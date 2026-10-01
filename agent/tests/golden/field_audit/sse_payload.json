@@ -21,6 +21,16 @@
      "type"
     ]
    },
+   "campaign.control_trace": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
    "campaign.hypothesis": {
     "closed": true,
     "keys": [
@@ -471,6 +481,7 @@
   "event_bus": {
    "agent.step.retrying": [],
    "campaign.budget_exhausted": [],
+   "campaign.control_trace": [],
    "campaign.hypothesis": [],
    "campaign.iteration": [],
    "campaign.refine": [],

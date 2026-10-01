@@ -1,6 +1,7 @@
 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.retry
 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.suspect
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.budget_exhausted
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.control_trace
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): cognitive.csm.transition
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.done
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.error
@@ -16,6 +17,7 @@
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.done
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.start
 同轴惩罚候选 (轮次): efficiency_discount, idle_turn_penalty
+工作流 mode 未在 planner 提示暴露: code_lab
 工作流 mode 未在 planner 提示暴露: dynamic_workflow
 模式: 各来源词表互相不一致
 模式有 prompt 段却无 set_mode 生产者: code

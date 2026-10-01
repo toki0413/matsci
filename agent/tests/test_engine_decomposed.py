@@ -285,13 +285,14 @@ def test_build_author_prompt_focus_changes_prompt() -> None:
 
 
 def test_codelab_focus_injects_hard_variation_directive() -> None:
-    """v12: 重复执行越阈值后, 强制变异令必须进**实验作者**提示(而非只进假设提示).
+    """v12 / B1: 重复执行越阈值后, 强制变异令必须进**实验作者**提示(而非只进假设提示).
 
     run50 实测: 软 pivot hint 只进 _speculator_hint(假设生成提示), 写实验的
     build_author_prompt 不读它 → streak 1-4 指纹恒同, 循环撞收敛提前离场.
-    这里验证 _force_exec_variation 置位后, focus 带上硬指令与上一轮真实结果.
+    B1 后无独立标志状态机 —— focus 直接按 _repeat_exec_streak 现算硬指令.
     """
     from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
 
     class _StubEngine:
         _objective = "恒定研究目标"
@@ -299,11 +300,11 @@ def test_codelab_focus_injects_hard_variation_directive() -> None:
 
     eng = _StubEngine()
     act = EngineAct(eng)
-    # 未置位 → 无硬指令 (不误伤正常探索)
+    # 未越阈值 → 无硬指令 (不误伤正常探索)
     assert "强制变异" not in act._build_codelab_focus("扫描 w=10")
-    # 置位 → 硬指令 + 上一轮真实结果一并注入
-    eng._force_exec_variation = True
-    eng._repeat_exec_last_result = '{"o": {"Nc": [2, 36, 65]}}'
+    # 越阈值 → 硬指令 + 上一轮真实结果一并注入
+    eng._repeat_exec_streak = _REPEAT_HARD_STREAK
+    eng._prev_exec_fp_src = '{"o": {"Nc": [2, 36, 65]}}'
     focus = act._build_codelab_focus("扫描 w=10")
     assert "强制变异" in focus
     assert "family" in focus
@@ -437,10 +438,11 @@ def _lab_result(script: str, nc: float = 4.0) -> dict:
 
 
 def test_repeat_chain_lights_hard_directive_after_threshold() -> None:
-    """定点验证: 同代码重跑 → streak 累积 → 越阈值置硬标志 → 作者提示带强制变异令.
+    """定点验证: 同代码重跑 → streak 累积 → 越阈值 → 作者提示带强制变异令.
 
-    这是 pivot 硬约束的端到端(harness 内)证据: 不经 LLM, 直接驱动真实代码路径,
-    补上 run53/run54 都没能自然触发的那一环.
+    B1 后无独立标志状态机: `_build_codelab_focus` 直接按 `_repeat_exec_streak`
+    现算硬指令. 这是 pivot 硬约束的端到端(harness 内)证据: 不经 LLM, 直接驱动
+    真实代码路径, 补上 run53/run54 都没能自然触发的那一环.
     """
     from huginn.autoloop.engine_act import EngineAct
     from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
@@ -463,11 +465,59 @@ def test_repeat_chain_lights_hard_directive_after_threshold() -> None:
         assert rn["repeat_execution"] is True
 
     assert eng._repeat_exec_streak == _REPEAT_HARD_STREAK
-    assert eng._force_exec_variation is True
     # 硬指令真的进得了**实验作者**提示 (run50 的病根是软提示进不去)
     focus = act._build_codelab_focus("扫描 w=10")
     assert "强制变异" in focus
     assert "Nc" in focus  # 上一轮真实结果回灌
+
+
+def test_control_trace_emits_uniform_schema() -> None:
+    """控制面观测契约: `_control_trace` 必须发 `campaign.control_trace` 且 schema 统一.
+
+    触发率统计依赖该 schema (name/iteration/evidence/action/advisory). 这里锁定它,
+    防止后续机制各写各的字段导致"跑若干轮后按数据删减"无法聚合.
+    """
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    captured: list[tuple[str, dict]] = []
+
+    class _Stub:
+        _iteration = 7
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            captured.append((event_type, data))
+
+    CognitiveRunner._control_trace(
+        _Stub(), "failure_budget", "type=tool_error count=20 limit=20",
+        action="stop",
+    )
+    assert captured[0][0] == "campaign.control_trace"
+    _d = captured[0][1]
+    assert _d["name"] == "failure_budget"
+    assert _d["iteration"] == 7
+    assert _d["action"] == "stop"
+    assert _d["evidence"] == "type=tool_error count=20 limit=20"
+    assert "advisory" in _d
+
+
+def test_reflect_control_trace_forwards_uniform_schema() -> None:
+    """engine_reflect 侧 trace 与 cognitive_loop 同 schema (B4 effort_floor 用它)."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    captured: list[tuple[str, dict]] = []
+
+    class _StubEngine:
+        _iteration = 3
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            captured.append((event_type, data))
+
+    EngineReflect(_StubEngine())._emit_control_trace(
+        "effort_floor", "deficits=x", action="advisory_hint"
+    )
+    assert captured[0][0] == "campaign.control_trace"
+    assert captured[0][1]["name"] == "effort_floor"
+    assert captured[0][1]["action"] == "advisory_hint"
 
 
 def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:
@@ -480,13 +530,13 @@ def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:
     act = EngineAct(eng)
     for _ in range(_REPEAT_HARD_STREAK + 1):
         ref._detect_repeat_execution(_lab_result("W = [2, 4, 6]\n"), {})
-    assert eng._force_exec_variation is True
+    assert eng._repeat_exec_streak >= _REPEAT_HARD_STREAK
+    assert "强制变异" in act._build_codelab_focus("扫描 w=10")
 
     changed: dict = {}
     ref._detect_repeat_execution(_lab_result("W = [2, 4, 8]\n"), changed)
     assert not changed.get("repeat_execution")
     assert eng._repeat_exec_streak == 0
-    assert eng._force_exec_variation is False
     assert "强制变异" not in act._build_codelab_focus("扫描 w=10")
 
 
@@ -601,7 +651,6 @@ async def test_hard_directive_reaches_real_author_prompt() -> None:
         first = out
     assert first.get("repeat_execution") is True
     assert getattr(eng, "_repeat_exec_streak", 0) >= _REPEAT_HARD_STREAK
-    assert eng._force_exec_variation is True
 
     # 3) 下一轮作者提示: 真实 build_author_prompt 里必须带硬指令 + 上轮真实结果
     focus = act._build_codelab_focus("扫描 w")
@@ -610,7 +659,190 @@ async def test_hard_directive_reaches_real_author_prompt() -> None:
     assert "上一轮真实结果" in eng.prompts[-1]
 
 
+async def test_codelab_repair_loop_stops_on_wall_clock_expiry(monkeypatch) -> None:
+    """挂钟预算是合法硬出口: 修复循环不得越过它继续起新沙箱尝试.
+
+    run56 实测: 3600s 预算下跑到 ~65min 仍卡在修复循环 (每次尝试可烧满
+    HUGINN_CODELAB_TIMEOUT_S, 最多 max_repairs+1 次), 单轮越限近 1h. 迭代内不查
+    预算 → "挂钟耗尽即停" 失效. 修复: 每次尝试前查一次.
+    """
+    import huginn.autoloop.goal_store as _goal_store
+    from huginn.autoloop.engine_act import EngineAct
+
+    monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+    monkeypatch.setenv("HUGINN_CODELAB_REPAIR_ATTEMPTS", "3")
+
+    attempts: list[int] = []
+
+    class _FakeGS:
+        def get_active(self):  # noqa: ANN201
+            return type("_G", (), {"id": "g1"})()
+
+        def wall_clock_expired(self, gid: str) -> bool:
+            return True
+
+    monkeypatch.setattr(_goal_store, "get_goal_store", lambda: _FakeGS())
+    monkeypatch.setattr(EngineAct, "_build_codelab_focus", lambda self, d: "")
+
+    async def _fake_author(self, goal, **kw):  # noqa: ANN001
+        return "def run(cfg):\n    return {'success': True, 'objectives': {}}\n"
+
+    monkeypatch.setattr(EngineAct, "_request_code_lab_experiment", _fake_author)
+
+    def _fake_run(self, code):  # noqa: ANN001
+        attempts.append(1)
+        return None, "执行超时"
+
+    monkeypatch.setattr(EngineAct, "_run_code_lab", _fake_run)
+
+    act = EngineAct(object())
+    out = await act._execute_code_lab("扫描 w", {})
+
+    assert attempts == [], "挂钟已耗尽, 修复循环不应再起新的沙箱尝试"
+    assert out["success"] is False
+
+
+async def test_codelab_repair_loop_runs_when_no_long_horizon(monkeypatch) -> None:
+    """短程模式不查挂钟: 修复循环照旧跑满 max_repairs+1 次 (防误伤)."""
+    from huginn.autoloop.engine_act import EngineAct
+
+    monkeypatch.delenv("HUGINN_PERSISTENT_GOAL_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_CODELAB_REPAIR_ATTEMPTS", "2")
+
+    attempts: list[int] = []
+    monkeypatch.setattr(EngineAct, "_build_codelab_focus", lambda self, d: "")
+
+    async def _fake_author(self, goal, **kw):  # noqa: ANN001
+        return "code"
+
+    monkeypatch.setattr(EngineAct, "_request_code_lab_experiment", _fake_author)
+
+    def _fake_run(self, code):  # noqa: ANN001
+        attempts.append(1)
+        return None, "执行异常"
+
+    monkeypatch.setattr(EngineAct, "_run_code_lab", _fake_run)
+
+    act = EngineAct(object())
+    out = await act._execute_code_lab("扫描 w", {})
+
+    assert len(attempts) == 3, f"短程模式应跑满 max_repairs+1=3 次, 实际 {len(attempts)}"
+    assert out["success"] is False
+
+
+# ===== 报告 citation 门 (C2: 数值必须溯源到本轮真实 execution_result) =====
+
+
+def test_execution_ledger_appends_drops_script_and_caps() -> None:
+    """台账: 每次 execute 留一条数值面; 丢掉脚本体; 容量封顶."""
+    from huginn.autoloop.engine_act import _EXEC_LEDGER_MAX, EngineAct
+
+    class _Stub:
+        _execution_ledger: list = []
+
+    eng = _Stub()
+    act = EngineAct(eng)
+    act._append_execution_ledger(
+        "code_lab",
+        {"success": True, "objectives": {"Nc": 45}, "script": "x = 1\n" * 500},
+    )
+    assert len(eng._execution_ledger) == 1
+    entry = eng._execution_ledger[0]
+    assert entry["tool"] == "code_lab"
+    assert "45" in entry["result"]
+    assert "script" not in entry["result"]  # 脚本体不该进台账
+
+    for _ in range(_EXEC_LEDGER_MAX + 5):
+        act._append_execution_ledger("code_lab", {"objectives": {"Nc": 1}})
+    assert len(eng._execution_ledger) == _EXEC_LEDGER_MAX
+
+
+def test_citation_gap_flags_untraceable_numbers() -> None:
+    """报告 Results 里台账查无出处的数值计入 gap; 只审 Results, 不碰 Methods/Discussion."""
+    from huginn.autoloop.engine_reflect import _citation_gap
+
+    evidence = '[ev1] code_lab: {"objectives": {"Nc": 45}}'
+    fabricated = (
+        "## Methods\n训练 1000 轮, 宽度 999。\n\n"
+        "## Results\n\n| w | Nc |\n|---|---|\n| 10 | 12 |\n| 20 | 15 |\n"
+        "| 50 | 20 |\n\n## Discussion\n富集 1000 次。\n"
+    )
+    gap, total = _citation_gap(fabricated, evidence)
+    # Results 里 |值|>=10 的候选去重 {10,12,15,20,50}; 台账只有 45 → 全部未溯源
+    assert total == 5
+    assert gap == 5  # Methods/Discussion 的 1000/999 未进审
+
+
+def test_citation_gap_zero_when_numbers_traceable() -> None:
+    from huginn.autoloop.engine_reflect import _citation_gap
+
+    evidence = '[ev1] code_lab: {"objectives": {"Nc": 12, "w": 50}}'
+    gap, total = _citation_gap("## Results\n\nNc(w=50) = 12.\n", evidence)
+    assert total == 2  # {12, 50}
+    assert gap == 0
+
+
+def test_science_report_prompt_includes_citation_rule_with_ledger() -> None:
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    base = {"objective": "x", "total_time_seconds": 1.0, "phases": []}
+    with_ledger = EngineReflect._build_science_report_prompt(
+        dict(base), evidence_ledger="[ev1] code_lab: {Nc: 4}"
+    )
+    assert "Execution Evidence Ledger" in with_ledger
+    assert "CITATION RULE" in with_ledger
+    without = EngineReflect._build_science_report_prompt(dict(base))
+    assert "CITATION RULE" not in without
+    assert "Execution Evidence Ledger" not in without
+
+
+async def test_report_flags_untraceable_numbers_and_annotates(tmp_path) -> None:
+    """端到端(harness 内): 报告编造 Results 数值 → 落 trace + 附 Citation Audit 告示."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    captured: list[tuple[str, dict]] = []
+    fabricated = (
+        "## Results\n\n| w | Nc |\n|---|---|\n| 10 | 12 |\n| 20 | 15 |\n"
+        "| 50 | 20 |\n\n## Discussion\nok\n"
+    )
+
+    class _StubEngine:
+        workspace = tmp_path
+        _iteration = 4
+        _last_execution_result = {
+            "_tool_name": "code_lab",
+            "result": {"objectives": {"Nc": 45}},
+        }
+        _last_visual_context = ""
+        _last_validation = ""
+        _last_surprise = 0.0
+        _last_hypothesis = ""
+        _execution_ledger = [
+            {"idx": 1, "tool": "code_lab", "result": '{"objectives": {"Nc": 45}}'}
+        ]
+
+        def _build_kb_text(self, query):  # noqa: ANN001
+            return ""
+
+        def _render_report(self, data):  # noqa: ANN001
+            return "# Huginn Autoloop Report\n"
+
+        def _emit_campaign(self, event_type, data):  # noqa: ANN001
+            captured.append((event_type, data))
+
+        async def _llm_chat(self, prompt, **kw):  # noqa: ANN001
+            return fabricated
+
+    path = await EngineReflect(_StubEngine())._report("就业余命题", [], 1.0)
+    text = (tmp_path / path.split("/")[-1]).read_text(encoding="utf-8")
+    assert "Citation Audit" in text
+    assert "[ev1]" in text  # 证据台账随报告自包含, 供读者核对
+    traces = [d for _, d in captured if d.get("name") == "report_citation"]
+    assert traces and traces[0]["action"] == "annotate"
+
+
 # ===== 阶段5: EngineControl =====
+
 
 def test_no_control_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine

@@ -33,7 +33,15 @@ import time
 import uuid
 from typing import Any
 
+# 提示面升级阈值 (与 engine_reflect 同一旋钮): 由本对象在组装作者提示时**消费**,
+# 故常量必须同源. engine_reflect 不反向 import 本模块, 无循环风险.
+from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+
 logger = logging.getLogger(__name__)
+
+# 报告 citation 台账容量: 每条一次真实 execute, 只留紧凑"数值面".
+_EXEC_LEDGER_MAX = 24
+_EXEC_LEDGER_ENTRY_CHARS = 600
 
 
 class EngineAct:
@@ -355,13 +363,13 @@ class EngineAct:
         退回旧路径(向后兼容).
         """
         parts: list[str] = []
-        # v12 硬约束: engine_reflect 检测到"本轮执行指纹与上一轮完全一致"(无效重跑)
-        # 且 streak 越过阈值时置 _force_exec_variation. 该软提示原本只进假设生成
-        # 提示, 到不了**真正写实验**的作者提示 → 指纹照旧、循环撞收敛提前离场
-        # (run50 实测 streak 1-4 指纹恒同). 这里把强制变异令直接注入作者提示, 并附
-        # 上一轮真实结果, 逼书生改实验族/参数而非原样重跑.
-        if getattr(self, "_force_exec_variation", False):
-            _prev = str(getattr(self, "_repeat_exec_last_result", "") or "")
+        # v12 提示面升级 (B1): engine_reflect 检测到"本轮执行指纹与上一轮完全一致"
+        # (无效重跑) 并累计 _repeat_exec_streak. 该软提示原本只进假设生成提示, 到不了
+        # **真正写实验**的作者提示 → 指纹照旧、循环撞收敛提前离场 (run50 实测 streak
+        # 1-4 指纹恒同). 这里**按 streak 现算**强制变异令并注入作者提示, 附上一轮真实
+        # 结果(_prev_exec_fp_src), 逼书生改实验族/参数而非原样重跑. 无独立标志状态机.
+        if int(getattr(self, "_repeat_exec_streak", 0) or 0) >= _REPEAT_HARD_STREAK:
+            _prev = str(getattr(self, "_prev_exec_fp_src", "") or "")
             parts.append(
                 "【强制变异·硬约束】上一轮真实执行结果与更早一轮指纹完全一致"
                 "(=无效重跑, 未推进研究). 本轮实验**必须**至少改动一项结构: "
@@ -403,7 +411,34 @@ class EngineAct:
         import os as _os
         max_repairs = int(_os.environ.get("HUGINN_CODELAB_REPAIR_ATTEMPTS", "3"))
         last_err = ""
+
+        def _wall_clock_expired() -> bool:
+            """长程模式下挂钟预算是否耗尽 (控制面原则里两个**合法硬出口**之一).
+
+            修复循环每次 ``_run_code_lab`` 最长可烧满 ``HUGINN_CODELAB_TIMEOUT_S``
+            (默认 900s), 最多 ``max_repairs+1`` 次 → 单轮可越过挂钟上限近一小时
+            (run56 实测: 3600s 预算跑到 ~65min 仍卡在修复循环). 挂钟耗尽本该是硬终止,
+            却因**迭代内不查预算**而失效. 这里在每次尝试前查一次, 已耗尽就不再起新尝试
+            (最多再多跑一个已在飞的尝试). 纯时间边界, 不做科学判断; fail-open.
+            """
+            if _os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+                return False
+            try:
+                from huginn.autoloop.goal_store import get_goal_store
+
+                _gs = get_goal_store()
+                _ag = _gs.get_active()
+                return bool(_ag is not None and _gs.wall_clock_expired(_ag.id))
+            except Exception:  # 防御: 预算查询失败忽略
+                return False
+
         for attempt in range(max_repairs + 1):
+            if _wall_clock_expired():
+                last_err = "挂钟预算耗尽, 中止 code_lab 修复循环"
+                logger.warning(
+                    "code_lab 修复循环: 挂钟预算已耗尽, 停止第 %d 次尝试", attempt + 1
+                )
+                break
             res, reason = self._run_code_lab(code)
             if res is not None:
                 return {
@@ -660,6 +695,9 @@ class EngineAct:
         _execute) 就跳过, 不强求调用方先 setup. provenance 是 best-effort,
         快照挂了不能把 execute 带挂.
         """
+        # 报告 citation 台账: 每次真实 execute 都留一条, 与 provenance 是否
+        # 启用无关 (单测路径无 _provenance_record 也要能攒证据).
+        self._append_execution_ledger(tool_name, output)
         record = getattr(self, "_provenance_record", None)
         if record is None:
             return
@@ -671,6 +709,41 @@ class EngineAct:
             logger.warning(
                 "error in _record_provenance: capture snapshot failed", exc_info=True
             )
+
+    def _append_execution_ledger(self, tool_name: str, output: Any) -> None:
+        """把一次真实执行的紧凑快照追加进报告 citation 台账 (best-effort).
+
+        报告面此前只拿 `_last_execution_result` (**末轮**), 中间轮的真实数值全丢
+        ——run56 末轮 execute 全是超时/零证据, 报告仍写出干净的 N_c(w) 表 (编造).
+        台账把本轮**每次** execute 的数值面留下来, 供报告生成阶段做"数值必须溯源
+        到真实 execution_result"的 citation 门 (控制面审计 C 族诚实门).
+
+        只留数值来源字段 (objectives/summary/result...), 丢掉脚本体与标准输出;
+        容量与单条长度都封顶, 台账本身不成为新的状态负担. 纯 best-effort.
+        """
+        try:
+            ledger = getattr(self, "_execution_ledger", None)
+            if ledger is None:  # 引擎未初始化该字段 (老替身) → 跳过
+                return
+            import json
+
+            payload = output if isinstance(output, dict) else {"value": str(output)}
+            # 丢掉脚本体/标准输出等长文本, 保留 objectives/summary 等数值来源.
+            slim = {
+                k: v
+                for k, v in payload.items()
+                if k not in ("script", "code", "stdout", "stderr")
+            }
+            text = json.dumps(slim, ensure_ascii=False, default=str)
+            if len(text) > _EXEC_LEDGER_ENTRY_CHARS:
+                text = text[:_EXEC_LEDGER_ENTRY_CHARS]
+            ledger.append(
+                {"idx": len(ledger) + 1, "tool": tool_name, "result": text}
+            )
+            if len(ledger) > _EXEC_LEDGER_MAX:
+                del ledger[: len(ledger) - _EXEC_LEDGER_MAX]
+        except Exception:  # 防御: 台账 best-effort, 挂了不能带挂 execute
+            logger.debug("append execution ledger failed", exc_info=True)
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]

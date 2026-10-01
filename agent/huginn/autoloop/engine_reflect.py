@@ -40,11 +40,12 @@ from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
-# 重复执行硬约束阈值. 重复命中的软提示只进**假设生成**提示(_speculator_hint),
-# 而真正写实验的是 code_lab 作者提示(build_author_prompt) —— 它不读该提示, 于是
-# "改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测: repeat streak 1-4 指纹
-# 恒同, 提示零效果, 撞 6 窗口收敛提前离场). 故 streak 越过本阈值即置硬标志, 由
-# engine_act._build_codelab_focus 把"强制变异"令直接注入作者提示.
+# 重复执行的**提示面升级**阈值 (环境旋钮 HUGINN_REPEAT_EXEC_HARD_STREAK).
+# 重复命中的软提示只进**假设生成**提示(_speculator_hint), 而真正写实验的是
+# code_lab 作者提示(build_author_prompt) —— 它不读该提示, 于是"改变 family"
+# 永远到不了写实验的人, 指纹照旧 (run50 实测: repeat streak 1-4 指纹恒同, 提示
+# 零效果, 撞 6 窗口收敛提前离场). 故 streak 越过本阈值时, engine_act.
+# _build_codelab_focus 把"强制变异"令直接注入作者提示 (按 streak 现算, B1).
 _REPEAT_HARD_STREAK = int(os.environ.get("HUGINN_REPEAT_EXEC_HARD_STREAK", "2"))
 
 
@@ -93,6 +94,56 @@ def _non_finite_objective_keys(execution_result: Any) -> list[str]:
         if not math.isfinite(f):
             bad.append(str(k))
     return bad
+
+
+# ── 报告 citation 门 (控制面审计 C2: 数值必须溯源到本轮真实 execution_result) ──
+# 口径: 只看 Results 节里 |值| >= _CITATION_MIN_MAGNITUDE 的数字 (忽略章节号/量级
+# 下标之类结构小整数噪声), 与执行台账的数字集合比对. 未溯源数 >= _CITATION_MIN_UNTRACED
+# 且占比 >= _CITATION_MIN_RATIO 时, 在报告末尾附一条诚实告示 (C 族允许硬, 但只
+# **标注**不改结论、不终止任何东西); 同时每轮落一条 report_citation trace 供触发率统计.
+_NUM_TOKEN_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+_CITATION_MIN_UNTRACED = 3
+_CITATION_MIN_RATIO = 0.5
+_CITATION_MIN_MAGNITUDE = 10.0
+
+
+def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
+    """抽取文本里的数字并归一到统一写法 (12 / 12.0 / 1.2e1 → '12').
+
+    归一用 %g, 消除格式差异带来的假不匹配; 绝对值小于 min_magnitude 的丢弃, 用于
+    过滤章节号、指数下标等与"报告结论数值"无关的结构小整数.
+    """
+    out: set[str] = set()
+    for m in _NUM_TOKEN_RE.findall(text or ""):
+        try:
+            v = float(m)
+        except (TypeError, ValueError):
+            continue
+        if abs(v) < min_magnitude:
+            continue
+        out.add(f"{v:g}")
+    return out
+
+
+def _results_section(report_text: str) -> str:
+    """取 '## Results' 到下一个二级标题之间的正文; 找不到标题返回空 (fail-open).
+
+    只审 Results 节: Methods 里的超参 (epochs=1000 等) 本就不该在台账里, 拿全文
+    比对会把正常方法描述误判成"编造数值". 缺标题时不审 (不误伤).
+    """
+    m = re.search(
+        r"^##+\s*Results\b(.*?)(?=^##+\s|\Z)", report_text or "", re.S | re.M
+    )
+    return m.group(1) if m else ""
+
+
+def _citation_gap(report_text: str, evidence_text: str) -> tuple[int, int]:
+    """报告 citation 口径: 返回 (未溯源数值数, Results 里候选数值总数)."""
+    rep = _numeric_tokens(_results_section(report_text), _CITATION_MIN_MAGNITUDE)
+    if not rep:
+        return 0, 0
+    ev = _numeric_tokens(evidence_text, 0.0)
+    return len(rep - ev), len(rep)
 
 
 def _exec_fingerprint(execution_result: Any) -> tuple[str, str]:
@@ -172,6 +223,7 @@ class EngineReflect:
         "_safe_literature_comparison",
         "_literature_comparison",
         "_summarize_for_kb",
+        "_emit_control_trace",
         "_detect_thinking_collapse",
         "_find_tool_call_loops",
         "_load_trajectory_action_history",
@@ -594,6 +646,14 @@ class EngineReflect:
                     )
                     if len(self._speculator_hint) > 2000:
                         self._speculator_hint = self._speculator_hint[-2000:]
+                    # 控制面观测 B4: effort floor 是**诚实/证据门**(C 族)的提示面,
+                    #   每轮都可能触发. 加 trace 以便统计触发率 (长期 0 触发或长期
+                    #   误杀 → 删或降). 纯观测, 不改行为 (它本就只写 hint, 不终止).
+                    self._emit_control_trace(
+                        "effort_floor",
+                        _eff_why[:200],
+                        action="advisory_hint",
+                    )
         except Exception:  # 防御: 努力下限检查失败忽略
             logger.debug("AV7 effort floor check in _validate failed", exc_info=True)
 
@@ -1271,6 +1331,36 @@ class EngineReflect:
             return False
         return bool(self._run_snippet_to_output(snippet))
 
+    def _emit_control_trace(
+        self, name: str, evidence: str, action: str = "advisory_hint"
+    ) -> None:
+        """控制面观测 (reflect 侧): 转发到引擎的 campaign.control_trace.
+
+        与 cognitive_loop 的 `_control_trace` 同一 schema (name / iteration /
+        evidence / action), 供"长期 0 触发或长期误杀 → 删或降"的触发率统计.
+        纯观测, fail-open. 事件走 campaign.control_trace; 同时**总是**落一条带固定
+        tag 的 WARNING —— CLI autoloop 路径不装 audit 订阅器, campaign.* 事件不进
+        持久文件, 而 run.log 一定捕获 WARNING (离线触发率以 run.log 为准).
+        """
+        _iter = getattr(self, "_iteration", 0)
+        logger.warning(
+            "control_trace name=%s iteration=%s evidence=%s action=%s",
+            name, _iter, evidence, action,
+        )
+        try:
+            self._emit_campaign(
+                "campaign.control_trace",
+                {
+                    "name": name,
+                    "iteration": _iter,
+                    "evidence": evidence,
+                    "action": action,
+                    "advisory": "",
+                },
+            )
+        except Exception:  # 防御: 引擎无事件通道 (替身) → 日志已落, 忽略
+            pass
+
     def _detect_repeat_execution(
         self, execution_result: Any, results: dict[str, Any]
     ) -> None:
@@ -1283,9 +1373,9 @@ class EngineReflect:
 
         三件事都只看本轮执行指纹 (口径见 _exec_fingerprint):
           ① 与上轮指纹相同 → 记 repeat streak + 注入软纠偏提示 (_speculator_hint);
-          ② streak 越过 _REPEAT_HARD_STREAK → 置 `_force_exec_variation`, 由
-             engine_act._build_codelab_focus 把强制变异令注入**实验作者**提示
-             (软提示进不了作者提示, run50 实测提示零效果);
+          ② streak 越过 _REPEAT_HARD_STREAK → 由 engine_act._build_codelab_focus
+             按 streak 把强制变异令注入**实验作者**提示 (软提示进不了作者提示,
+             run50 实测提示零效果). 无独立标志状态机 (B1);
           ③ 最近 6 轮指纹去重后 ≤2 种 → `_exec_converged` (供 cognitive_loop
              写提示 + trace; **不**终止 run —— 控制面审计 A1 已降级).
 
@@ -1304,6 +1394,9 @@ class EngineReflect:
             self._fp_result_ref = execution_result
             _fp, _fp_src = _exec_fingerprint(execution_result)
             _prev_fp = getattr(self, "_prev_exec_fingerprint", "")
+            # 最新一轮真实结果, 每轮都刷新 (不只越阈值时). 这是**数据**, 不是状态机:
+            # 要不要注入强制变异令由 _build_codelab_focus 按 streak 现算 (B1).
+            self._prev_exec_fp_src = _fp_src[:600]
             if _fp and _fp == _prev_fp:
                 self._repeat_exec_streak = getattr(self, "_repeat_exec_streak", 0) + 1
                 _streak = self._repeat_exec_streak
@@ -1319,26 +1412,28 @@ class EngineReflect:
                     if self._speculator_hint
                     else _rep_hint
                 )
-                # 硬约束升级: 上面的软提示只进**假设生成**提示, 而真正写实验的是
+                # 提示面升级 (B1): 上面的软提示只进**假设生成**提示, 而真正写实验的是
                 # code_lab 作者提示(build_author_prompt) —— 它不读 _speculator_hint,
                 # 于是"改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测:
                 # repeat streak 1-4 指纹恒同, 提示零效果, 撞 6 窗口收敛提前离场).
-                # 故 streak 越过硬阈值即置标志, 由 _build_codelab_focus 把强制变异令
-                # 直接注入作者提示, 并附上一轮真实结果, 逼出不同的实验族/参数.
+                # 故越阈值时把强制变异令**也写进作者面**: _build_codelab_focus 直接按
+                # _repeat_exec_streak 现算 (消费 streak 与 _prev_exec_fp_src 两个已有
+                # 状态), 不再维护 _force_exec_variation 独立标志状态机.
                 if _streak >= _REPEAT_HARD_STREAK:
-                    self._force_exec_variation = True
-                    self._repeat_exec_last_result = _fp_src[:600]
+                    self._emit_control_trace(
+                        "pivot_directive",
+                        f"streak={_streak} threshold={_REPEAT_HARD_STREAK}",
+                        action="inject_directive",
+                    )
                 logger.warning(
                     "repeat execution detected (streak=%d): %s",
                     _streak,
-                    "force experiment variation (hard directive→code_lab author)"
-                    if getattr(self, "_force_exec_variation", False)
+                    "force experiment variation (directive→code_lab author)"
+                    if _streak >= _REPEAT_HARD_STREAK
                     else "inject pivot hint",
                 )
             else:
                 self._repeat_exec_streak = 0
-                self._force_exec_variation = False
-                self._repeat_exec_last_result = ""
             self._prev_exec_fingerprint = _fp
             # 收敛判定: 维护最近指纹窗口, 窗口填满且只剩 <=2 种不同结果 → 循环在
             # 有限几种结果间打转, 已无新信息. 为何用"窗口去重后 <=2"而非"连续相同
@@ -3493,6 +3588,15 @@ class EngineReflect:
             exec_summary = json.dumps(_res, ensure_ascii=False, default=str)[:1500]
             exec_summary = f"Tool: {_tool}\nResult: {exec_summary}"
 
+        # 报告 citation 门 (C2): 把本轮**每次** execute 的紧凑台账交给报告作者,
+        # 而不是只给末轮 —— 否则书生会把中间轮真实数值丢掉、凭印象编表 (run56).
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        evidence_text = "\n".join(
+            f"[ev{e.get('idx', i + 1)}] {e.get('tool', '?')}: {e.get('result', '')}"
+            for i, e in enumerate(_ledger)
+            if isinstance(e, dict)
+        )
+
         visual_ctx = getattr(self, "_last_visual_context", "")
         last_validation = getattr(self, "_last_validation", "")
         last_surprise = getattr(self, "_last_surprise", 0.0)
@@ -3513,6 +3617,7 @@ class EngineReflect:
                     last_validation,
                     last_hypothesis,
                     last_surprise,
+                    evidence_text,
                 ),
                 persona_name=_report_persona,
                 task="summarize",
@@ -3521,6 +3626,22 @@ class EngineReflect:
         except Exception:  # 防御: 报告叙事生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             report_narrative = ""
+
+        # 报告 citation 门 (C2): 统计 Results 节里无法溯源到执行台账的数值.
+        # 纯观测 + 条件标注: 只判"这条证据算不算数", 不替书生下任何科学判断,
+        # 也不终止任何东西 (符合控制面预算原则).
+        _gap, _total = _citation_gap(report_narrative, evidence_text)
+        _cite_flagged = (
+            _total > 0
+            and _gap >= _CITATION_MIN_UNTRACED
+            and _gap / _total >= _CITATION_MIN_RATIO
+        )
+        if _total > 0:
+            self._emit_control_trace(
+                "report_citation",
+                f"untraceable={_gap}/{_total}",
+                action="annotate" if _cite_flagged else "advisory_hint",
+            )
 
         report_path = (
             self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
@@ -3537,8 +3658,25 @@ class EngineReflect:
         else:
             if kb_text:
                 report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
+            if evidence_text:
+                # 报告自包含证据台账: 让 Citation Audit 的 "[ev#]" 引用可被读者核对.
+                report_content += (
+                    "\n\n## Execution Evidence Ledger\n\n"
+                    "本循环每次真实 execute 的紧凑数值记录 (报告 Results 的数值须溯源至此):\n\n"
+                    "```\n" + evidence_text + "\n```\n"
+                )
             if report_narrative:
                 report_content += "\n\n## Research Report\n\n" + report_narrative + "\n"
+        # 报告 citation 门 (C2): Results 里大部分数值在本轮执行台账中查无出处时,
+        # 附一条诚实告示 —— 与上面的 P0-5 同一风格 (只标注, 不改写书生结论).
+        if _cite_flagged and report_narrative:
+            report_content += (
+                "\n\n## Citation Audit\n\n"
+                f"**Results 数值溯源告警：** 本节 {_total} 个候选数值中有 {_gap} 个"
+                "无法在本轮真实 execution_result 台账中找到出处 (见上方 "
+                "`[ev#]` 记录)。这些数值不应作为结论引用, 需回到可复现的执行证据"
+                "重新核对。\n"
+            )
         report_path.write_text(report_content, encoding="utf-8")
 
         return str(report_path)
@@ -3909,6 +4047,7 @@ class EngineReflect:
         validation_summary: str = "",
         hypothesis: str = "",
         surprise: float = 0.0,
+        evidence_ledger: str = "",
     ) -> str:
         """Build a prompt for generating a structured scientific research report.
 
@@ -3927,6 +4066,21 @@ class EngineReflect:
             f"\n## Validation\n{validation_summary}\n" if validation_summary else ""
         )
         hyp_section = f"\n## Hypothesis Tested\n{hypothesis}\n" if hypothesis else ""
+        # 本轮**每次** execute 的紧凑台账. 报告面若只看末轮 Execution Data, 书生会
+        # 把中间轮真实数值丢掉、凭印象编一张干净的表 (run56). 有台账时给硬性口径:
+        # Results 数值只能取自台账, 无出处的必须显式声明"无证据", 不许编.
+        ledger_section = (
+            "\n## Execution Evidence Ledger (本轮每次真实 execute)\n"
+            f"{evidence_ledger}\n" if evidence_ledger else ""
+        )
+        citation_rule = (
+            "\nCITATION RULE (hard): every number you put in Results MUST be copied "
+            "from the Execution Evidence Ledger above (or the Execution Data). If the "
+            "evidence does not contain a number you wanted to report, state explicitly "
+            "that it is unavailable under 'no execution evidence' — do NOT invent, "
+            "interpolate, or idealize values. Reports with untraceable numbers are "
+            "flagged by a citation audit.\n" if evidence_ledger else ""
+        )
 
         return (
             "You are writing a structured scientific research report based on an "
@@ -3935,7 +4089,8 @@ class EngineReflect:
             f"Objective: {report_data['objective']}\n"
             f"Phases:\n{phases_blob}\n"
             f"Surprise score: {surprise:.2f} (0=predicted, 1=unexpected)"
-            f"{hyp_section}{exec_section}{visual_section}{val_section}{kb_section}"
+            f"{hyp_section}{exec_section}{ledger_section}{visual_section}{val_section}{kb_section}"
+            f"{citation_rule}"
             "\nWrite the report with these sections (Markdown):\n"
             "## Introduction\n"
             "State the scientific question and why it matters. Reference domain knowledge above.\n\n"
@@ -3943,7 +4098,9 @@ class EngineReflect:
             "Describe the computational approach: what tools were used, what parameters, "
             "what workflow. Be specific enough for reproducibility.\n\n"
             "## Results\n"
-            "Report the key findings with specific numbers. If visual primitives are "
+            "Report the key findings with specific numbers"
+            + (", all traceable to the Execution Evidence Ledger" if evidence_ledger else "")
+            + ". If visual primitives are "
             "available, describe the trends/peaks/anomalies they indicate.\n\n"
             "## Discussion\n"
             "Interpret the results: Do they support the hypothesis? What was surprising "

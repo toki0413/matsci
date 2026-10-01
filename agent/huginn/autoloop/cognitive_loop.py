@@ -1135,7 +1135,7 @@ class CognitiveRunner:
             # P2: stagnation 触发前先分类 (chaoxu 启发).
             # method_failure → pivot 换方法继续, 不 stop
             # evidence_against → counterexample hunt, 不 stop
-            # unclassifiable / 已试过 → 真 stop
+            # unclassifiable / 已试过 → 提示 + trace (原为 hard stop, 控制面审计 A3 降级)
             _stall_action = self._classify_stall()
             if _stall_action == "pivot":
                 logger.info(
@@ -1150,44 +1150,56 @@ class CognitiveRunner:
                 )
                 self._darwin_stagnation = 0
                 self._trigger_counterexample_hunt()
-            elif self._long_horizon_keep_going():
-                # 长程探索: 有 active goal 且挂钟预算未耗尽 → 不 early stop, 重置
-                # stagnation 继续推进, 直到目标达成 (F2/F17/arbiter) 或预算耗尽.
-                logger.info(
-                    "darwin ratchet: stagnation %d → stop, but long-horizon goal "
-                    "(wall_clock not expired), reset & continue",
-                    self._darwin_stagnation,
-                )
-                self._darwin_stagnation = 0
             else:
-                logger.info(
-                    "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
+                # 控制面审计 A3: 原为 early stop (self._should_stop = True), 现降为
+                #   提示 + trace. 理由 —— "有没有进展/该不该收结"是**科学判断**, 一律
+                #   下沉给书生; 长程模式本就有挂钟出口, 短程有步数上限兜底, 这个硬出口
+                #   只贡献误杀风险 (硬终止只保留挂钟耗尽与目标达成).
+                logger.warning(
+                    "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f "
+                    "→ advisory only (hint, no stop)",
                     self._darwin_stagnation,
                     self._darwin_best_score,
                 )
-                self._should_stop = True
+                self._speculator_hint = (
+                    (getattr(self, "_speculator_hint", "") or "")
+                    + f"\n[停滞·提示] 假设质量分连续 {self._darwin_stagnation} 轮无增益 "
+                    f"(best={self._darwin_best_score:.2f}): 换方法族或改变实验设计, "
+                    "不要继续微调同一条路线."
+                )
+                self._control_trace(
+                    "darwin_stagnation",
+                    f"stagnation={self._darwin_stagnation} "
+                    f"best={self._darwin_best_score:.2f}",
+                )
 
-        # P2-6 belief: σ² 收敛也作为 stop 信号. σ² < 0.1 = belief 不确定性低,
-        # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
-        # stagnation 测"score 不增", σ² 测" belief 不再变". 两者任一触发即 stop.
+        # P2-6 belief: σ² 收敛作为**提示**信号 (控制面审计 A4 已降级, 原为 early stop).
+        # σ² < 0.1 = belief 不确定性低, 后续观测不会显著改变 μ, 边际信息收益递减.
+        # 跟 stagnation 互补: stagnation 测"score 不增", σ² 测"belief 不再变".
+        # 同 A3: 信念收敛是**启发式**判断(σ² 小可能只是噪声小), 不是证据, 不该硬终止;
+        # 只提示书生考虑收结或换方向, 真终止交给挂钟/目标达成.
         if (
             FeatureFlags.shared().is_enabled("belief_darwin")
             and self._darwin_belief_sigma2 < 0.1
             and self._iteration > 2
         ):
-            if self._long_horizon_keep_going():
-                # 长程探索: 信念收敛不终止 run, 继续推进直到目标达成/预算耗尽.
-                logger.info(
-                    "darwin ratchet: belief converged σ²=%.4f μ=%.2f, "
-                    "long-horizon goal → continue",
-                    self._darwin_belief_sigma2, self._darwin_belief_mu,
-                )
-            else:
-                logger.info(
-                    "darwin ratchet: belief converged σ²=%.4f μ=%.2f, early stop",
-                    self._darwin_belief_sigma2, self._darwin_belief_mu,
-                )
-                self._should_stop = True
+            logger.warning(
+                "darwin ratchet: belief converged σ²=%.4f μ=%.2f "
+                "→ advisory only (hint, no stop)",
+                self._darwin_belief_sigma2, self._darwin_belief_mu,
+            )
+            self._speculator_hint = (
+                (getattr(self, "_speculator_hint", "") or "")
+                + f"\n[信念收敛·提示] 假设后验不确定性已很低 "
+                f"(σ²={self._darwin_belief_sigma2:.4f}, μ={self._darwin_belief_mu:.2f}): "
+                "继续观测的边际信息收益递减. 要么给出最终数值结论, 要么换一个能打破"
+                "当前信念的方向重新出发."
+            )
+            self._control_trace(
+                "belief_convergence",
+                f"sigma2={self._darwin_belief_sigma2:.4f} "
+                f"mu={self._darwin_belief_mu:.2f}",
+            )
 
         # v7 Meta-Trace: 每轮蒸馏成结构化科研要点, 对标 Oxelra Meta-Trace.
         # 目标: 长任务不靠完整 transcript, 用结构化要点保持 context 密度.
@@ -1368,6 +1380,42 @@ class CognitiveRunner:
             (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
         )
         logger.info("P2 counterexample hunt triggered, hint injected")
+    def _control_trace(
+        self,
+        name: str,
+        evidence: str,
+        *,
+        action: str = "advisory_hint",
+        advisory: str = "",
+        iteration: int | None = None,
+    ) -> None:
+        """控制面观测: 记录一次硬/半硬机制的触发 (控制面预算的触发率口径).
+
+        控制面审计要求每个硬控都能统计触发率, 才能执行"长期 0 触发或长期误杀 →
+        删或降". 统一 schema ``name / iteration / evidence / action``, 经
+        campaign.control_trace 发到 EventBus + SSE. 纯观测, 不改任何决策; fail-open.
+
+        另发一条**带固定 tag 的 WARNING 日志**: CLI autoloop 路径不装 audit 订阅器,
+        campaign.* 事件不进任何持久文件; 而 run.log 一定捕获 WARNING. 故离线触发率
+        统计以 ``run.log`` 里 ``control_trace name=...`` 的行为准 (见
+        control_surface_audit.md「观测口径」).
+        """
+        _iter = getattr(self, "_iteration", 0) if iteration is None else iteration
+        logger.warning(
+            "control_trace name=%s iteration=%s evidence=%s action=%s",
+            name, _iter, evidence, action,
+        )
+        self._emit_campaign(
+            "campaign.control_trace",
+            {
+                "name": name,
+                "iteration": _iter,
+                "evidence": evidence,
+                "action": action,
+                "advisory": advisory,
+            },
+        )
+
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.
 
@@ -1422,6 +1470,8 @@ class CognitiveRunner:
 
         self._iteration = 0
         self._should_stop = False
+        # 报告 citation 门: 执行台账随 run 重置 (跨 run 证据混入报告 = 溯源失真).
+        self._execution_ledger = []
         # v11 进展不变量: 换名债务随 run 重置 (跨 run 无进展记忆无意义).
         self._rename_debt = 0
         self._rename_streak = 0
@@ -2541,13 +2591,27 @@ Respond JSON only:
                         # v12 长程: LLM 自主选 stop 与启发式早停同源, 挂钟预算未耗尽时
                         # 一并让位 —— 否则 decider 一句 stop 就在 iterate 9/360、266s/3600s
                         # 处静默收口, 绕过 _long_horizon_keep_going 的全部守卫 (run50 即此).
-                        # 丢弃 stop 决策走规则版顺序推进; 真终止交给目标达成或挂钟耗尽.
+                        # 控制面审计 A5: 该拦截原为**静默**丢弃 stop 决策 (书生无从知道自己
+                        #   的判断被否), 现降为显式提示 + trace, 仍走规则版顺序推进; 真终止
+                        #   交给目标达成或挂钟耗尽. 非长程模式无挂钟出口, 保持原语义.
                         if llm_decision.action == "stop" and self._long_horizon_keep_going():
+                            _stop_why = (llm_decision.rationale or "")[:120]
                             logger.warning(
                                 "decider chose stop at iter %d but long-horizon goal "
                                 "(wall_clock not expired) → continue (rationale=%s)",
-                                state.iteration,
-                                (llm_decision.rationale or "")[:120],
+                                state.iteration, _stop_why,
+                            )
+                            self._speculator_hint = (
+                                (getattr(self, "_speculator_hint", "") or "")
+                                + "\n[收结被保留·提示] 你上一轮想收结, 但研究目标尚未达成且"
+                                "挂钟预算未尽: 若要收结, 请在最终答复里给出可溯源的数值"
+                                "结论; 否则换一个方向继续推进."
+                            )
+                            self._control_trace(
+                                "decider_stop",
+                                f"rationale={_stop_why}",
+                                action="advisory_continue",
+                                iteration=state.iteration,
                             )
                         else:
                             return llm_decision
@@ -2710,14 +2774,15 @@ Respond JSON only:
                     # 长程探索: 真实预算是挂钟, 而迭代档位(为短程设计)在 step 31-50
                     # 只放 coder, 会把 explore 类计算实验整段禁掉 —— execute 连续被
                     # 跳过 → 循环拿旧结果反复 validate → 执行指纹窗口填满同一指纹
-                    # → 假收敛提前结题 (run52 实测: 904s/3600s 就 conclude+stop,
-                    # 判别实验一次没跑). 挂钟已封顶总开销, 故让位给挂钟.
-                    _budget_ok = (
-                        True
-                        if self._long_horizon_keep_going()
-                        else self._check_budget(state.iteration, _plan)
-                    )
-                    if not _budget_ok:
+                    # (run52 实测: 904s/3600s 就据此 conclude+stop, 判别实验一次没跑).
+                    # 控制面审计 A6 (run56 数据: 长程下该门 7/7 直接 bypass = 零信息):
+                    # 长程模式下"阶段门"整类都不该存在, 故这里**整段收掉** —— 长程不再
+                    # 走预算门, 也不留 bypass trace (连观测都不必), 特判点 2→1.
+                    # 短程(非长程)行为不变: 保留原档位门.
+                    if (
+                        not self._long_horizon_keep_going()
+                        and not self._check_budget(state.iteration, _plan)
+                    ):
                         # budget 拒: hint 已被 _check_budget 写, 这里不重复.
                         # warning 级: 默认 root logger 无 handler, info 会被静默吞掉 —
                         # 而"execute 被跳过"必须可审计 (否则只会看到 validate 反复
@@ -2726,6 +2791,12 @@ Respond JSON only:
                             "execute skipped: budget rejected plan mode=%r at iter %d "
                             "(tier restricts modes) → validate 将复用上一轮结果",
                             _plan.get("mode"), state.iteration,
+                        )
+                        self._control_trace(
+                            "execute_budget_gate",
+                            f"rejected mode={_plan.get('mode')!r}",
+                            action="block_execute",
+                            iteration=state.iteration,
                         )
                         return None
                     if not self._check_gate(
@@ -3011,6 +3082,14 @@ Respond JSON only:
                             "cognitive stop: %d consecutive %s failures",
                             by_type[ftype], ftype,
                         )
+                        # 控制面观测 A8: 失败预算(按类)是**硬终止**, 触发率未知.
+                        #   加 trace 以便"长期 0 触发或长期误杀 → 删或降"的第二轮删减.
+                        self._control_trace(
+                            "failure_budget",
+                            f"type={ftype} count={by_type[ftype]} limit={_type_max}",
+                            action="stop",
+                            iteration=state.iteration,
+                        )
                         return ReflectionResult(
                             should_stop=True,
                             advice=f"{by_type[ftype]} consecutive {ftype} failures",
@@ -3036,6 +3115,15 @@ Respond JSON only:
                                     "cognitive stop: consecutive=%d 且窗口失败率 %.2f >= %.2f",
                                     self._consecutive_failures, _fail_rate, _wthresh,
                                 )
+                                # 控制面观测 A8: 同上, 硬终止加 trace (触发率统计).
+                                self._control_trace(
+                                    "failure_budget",
+                                    f"consecutive={self._consecutive_failures} "
+                                    f"limit={self._max_consecutive_failures} "
+                                    f"window_fail_rate={_fail_rate:.2f}",
+                                    action="stop",
+                                    iteration=state.iteration,
+                                )
                                 return ReflectionResult(
                                     should_stop=True,
                                     advice=f"{self._consecutive_failures} consecutive failures (window fail rate {_fail_rate:.2f})",
@@ -3044,6 +3132,14 @@ Respond JSON only:
                             logger.warning(
                                 "cognitive stop: %d consecutive failures (total cap)",
                                 self._consecutive_failures,
+                            )
+                            # 控制面观测 A8: 同上, 硬终止加 trace (触发率统计).
+                            self._control_trace(
+                                "failure_budget",
+                                f"consecutive={self._consecutive_failures} "
+                                f"limit={self._max_consecutive_failures}",
+                                action="stop",
+                                iteration=state.iteration,
                             )
                             return ReflectionResult(
                                 should_stop=True,
@@ -3499,26 +3595,27 @@ Respond JSON only:
                         _avg_noise = sum(s for _, s in _recent) / len(_recent)
                         _thr = max(0.08, 0.20 - 0.4 * _avg_noise)
                         if all(w < _thr for w in _worsts):
+                            # 控制面审计 A3 同族: surprise 收敛是**启发式**(可能只是
+                            #   噪声小), 不是证据, 不该硬终止; 降为提示 + trace, 真终止
+                            #   交给挂钟/目标达成. 完成审计仅作 advisory 记录.
                             _blk, _why = self._metacog_check_completion()
-                            if _blk:
-                                logger.info("v10 surprise audit blocked: %s", _why)
-                                self._speculator_hint = (
-                                    (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                )
-                            else:
-                                if self._long_horizon_keep_going():
-                                    # 长程探索: surprise 收敛不终止 run.
-                                    logger.info(
-                                        "v10 surprise converged < %.2f (noise=%.2f), "
-                                        "long-horizon goal → continue",
-                                        _thr, _avg_noise,
-                                    )
-                                else:
-                                    logger.info(
-                                        "v10 surprise converged < %.2f (noise=%.2f), stop",
-                                        _thr, _avg_noise,
-                                    )
-                                    state.should_stop = True
+                            logger.warning(
+                                "v10 surprise converged < %.2f (noise=%.2f) "
+                                "→ advisory only (hint, no stop)",
+                                _thr, _avg_noise,
+                            )
+                            self._speculator_hint = (
+                                self._speculator_hint
+                                + f"\n[surprise 收敛·提示] 最近 3 轮 surprise < {_thr:.2f} "
+                                f"(noise={_avg_noise:.2f}): 观测不再带来意外信息. "
+                                "要么给出最终数值结论, 要么换一个能产生高 surprise 的方向."
+                            ).strip()
+                            self._control_trace(
+                                "surprise_convergence",
+                                f"threshold={_thr:.2f} noise={_avg_noise:.2f}",
+                                iteration=state.iteration,
+                                advisory=_why if _blk else "",
+                            )
                     except Exception:  # 防御: 意外早停失败忽略
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
 
@@ -3547,15 +3644,11 @@ Respond JSON only:
                         "你在有限几种等价实验间打转, 已无新信息. 请改变实验族/参数, "
                         "或直接据此给出最终数值结论."
                     )
-                    self._emit_campaign(
-                        "campaign.control_trace",
-                        {
-                            "name": "exec_convergence",
-                            "iteration": state.iteration,
-                            "evidence": f"unique_fingerprints={_uniq}",
-                            "action": "advisory_hint",
-                            "advisory": _why if _blk else "",
-                        },
+                    self._control_trace(
+                        "exec_convergence",
+                        f"unique_fingerprints={_uniq}",
+                        iteration=state.iteration,
+                        advisory=_why if _blk else "",
                     )
 
                 # v11: 进展不变量 (假设层). **已降级为提示 + trace**
@@ -3580,19 +3673,17 @@ Respond JSON only:
                             "(无实质进展): 必须换方法族, 并给出**可与旧机制区分的"
                             "数值预测** (如同一被测量随参数的趋势), 仅换术语不算进展."
                         )
-                        self._emit_campaign(
-                            "campaign.control_trace",
-                            {
-                                "name": "rename_debt",
-                                "iteration": state.iteration,
-                                "evidence": f"debt={_debt} limit={_RENAME_DEBT_LIMIT}",
-                                "action": "advisory_hint",
-                                "advisory": _why if _blk else "",
-                            },
+                        self._control_trace(
+                            "rename_debt",
+                            f"debt={_debt} limit={_RENAME_DEBT_LIMIT}",
+                            iteration=state.iteration,
+                            advisory=_why if _blk else "",
                         )
 
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.
-                # 内部判 stagnation >= 5 设 self._should_stop; 这里同步到 state.
+                # 注意: A3/A4 降级后, _darwin_ratchet_check 自身**不再**置
+                #   self._should_stop (只提示 + trace). 这里仍做一次同步, 因为
+                #   self._should_stop 还承载**外部 stop()** 的语义 (见 observe 开头).
                 # ponytail: _darwin_ratchet_check 也更新 heat_engine T_cold + health,
                 #   不只是 stop 判定. run() 用 self._should_stop, run_cognitive 用 state.should_stop.
                 if not state.should_stop:

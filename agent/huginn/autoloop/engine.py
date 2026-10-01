@@ -564,6 +564,11 @@ class AutoloopEngine:
         self._grill_turns: int = 0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
+        # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
+        # _last_execution_result (仅最后一轮) 时, 书生会把中间轮的真实数值丢掉、
+        # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
+        # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
+        self._execution_ledger: list[dict[str, Any]] = []
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -1474,10 +1479,11 @@ class AutoloopEngine:
         report_data: dict[str, Any], kb_text: str = "", exec_summary: str = "",
         visual_ctx: str = "", validation_summary: str = "",
         hypothesis: str = "", surprise: float = 0.0,
+        evidence_ledger: str = "",
     ) -> str:
         return EngineReflect._build_science_report_prompt(
             report_data, kb_text, exec_summary, visual_ctx, validation_summary,
-            hypothesis, surprise)
+            hypothesis, surprise, evidence_ledger)
 
     # ── 去 mixin 阶段9: HypothesisLoop 薄委托 ─────────────────────
     # hypothesis 生成/管理方法族已下沉为 HypothesisLoop 协作对象 (self._hypothesis_loop).

@@ -43,8 +43,8 @@
 
 | 开关 | 已注册 | 默认 | 消费点 |
 |---|---|---|---|
-| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2322 |
-| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2323 |
+| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2671 |
+| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2672 |
 
 ## 工作流面: 执行 mode 分发 vs planner 提示面
 
@@ -52,14 +52,14 @@
 
 | 面 | 集合 |
 |---|---|
-| dispatch_table | `coder`, `dynamic_workflow`, `explore`, `skill`, `visual_inspect`, `workflow` |
-| engine_act 分支 | `coder`, `dynamic_workflow`, `explore`, `skill`, `visual_inspect`, `workflow` |
+| dispatch_table | `code_lab`, `coder`, `dynamic_workflow`, `explore`, `skill`, `visual_inspect`, `workflow` |
+| engine_act 分支 | `code_lab`, `coder`, `dynamic_workflow`, `explore`, `skill`, `visual_inspect`, `workflow` |
 | planner 提示 #1 | `coder`, `explore`, `skill`, `visual_inspect`, `workflow` |
 | planner 提示 #2 | `coder`, `explore`, `skill`, `visual_inspect`, `workflow` |
 
 - dispatch_table == 硬编码分支: ✅ 一致
 - planner 多处提示互相一致: ✅
-- dispatch 支持但 planner 未教 (非 prompt 路径触达): `dynamic_workflow`
+- dispatch 支持但 planner 未教 (非 prompt 路径触达): `code_lab`, `dynamic_workflow`
 
 ## 模式面: agent 顶层模式词表一致性
 
@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 263 站点, 按值域 Jaccard 重叠自动聚成 239 簇 (其中闭集簇 156). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 264 站点, 按值域 Jaccard 重叠自动聚成 240 簇 (其中闭集簇 156). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -327,9 +327,10 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:2124` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:2483` | `huginn/events/audit_log.py:571` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:2503` | `huginn/events/audit_log.py:571` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2410`, `huginn/autoloop/cognitive_loop.py:2446` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1408`, `huginn/autoloop/engine_observe.py:925`, `huginn/autoloop/engine_reflect.py:1351` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:2861` | `huginn/events/audit_log.py:571` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:2881` | `huginn/events/audit_log.py:571` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:337` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:159` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:153`, `huginn/knowledge/store.py:163`, `huginn/knowledge/store.py:261` | — |
@@ -362,7 +363,7 @@
 | 通道 | URL 片段 | 生产帧名 |
 |---|---|---|
 | `progress` | `progress` | `campaign`, `heartbeat`, `snapshot`, `update` |
-| `event_bus` | `event_bus` | `agent.step.retrying`, `campaign.budget_exhausted`, `campaign.hypothesis`, `campaign.iteration`, `campaign.refine`, `campaign.retry`, `campaign.suspect`, `cognitive.csm.transition`, `compact.end`, `compact.start`, `context.overflow`, `cost.narrative`, `decision.point`, `embedding.download.done`, `embedding.download.error`, `embedding.download.progress`, `embedding.download.start`, `event_bus.dropped`, `heat_engine.health`, `llm.response`, `pet.mood`, `pipeline.stage_change`, `pipeline.suggest`, `quality.check`, `session.end`, `session.start`, `snapshot.revert`, `snapshot.take`, `team.batch.start`, `team.member.done`, `team.member.start`, `team.member.tool`, `team.run.done`, `team.run.start`, `tool.blocked`, `tool.call`, `tool.error`, `tool.result` |
+| `event_bus` | `event_bus` | `agent.step.retrying`, `campaign.budget_exhausted`, `campaign.control_trace`, `campaign.hypothesis`, `campaign.iteration`, `campaign.refine`, `campaign.retry`, `campaign.suspect`, `cognitive.csm.transition`, `compact.end`, `compact.start`, `context.overflow`, `cost.narrative`, `decision.point`, `embedding.download.done`, `embedding.download.error`, `embedding.download.progress`, `embedding.download.start`, `event_bus.dropped`, `heat_engine.health`, `llm.response`, `pet.mood`, `pipeline.stage_change`, `pipeline.suggest`, `quality.check`, `session.end`, `session.start`, `snapshot.revert`, `snapshot.take`, `team.batch.start`, `team.member.done`, `team.member.start`, `team.member.tool`, `team.run.done`, `team.run.start`, `tool.blocked`, `tool.call`, `tool.error`, `tool.result` |
 | `pet` | `pet` | — (无名帧) |
 
 ### 前端帧监听 (按通道归属)
@@ -403,6 +404,7 @@
 - `progress` / `heartbeat`
 - `event_bus` / `agent.step.retrying`
 - `event_bus` / `campaign.budget_exhausted`
+- `event_bus` / `campaign.control_trace`
 - `event_bus` / `campaign.hypothesis` (经 payload 字段消费)
 - `event_bus` / `campaign.iteration` (经 payload 字段消费)
 - `event_bus` / `campaign.refine` (经 payload 字段消费)
@@ -967,6 +969,7 @@ SSE 消费面只核「帧名认不认」(监听挂没挂对 EventSource); 本面
 | `progress` | `update` | `_kind`, `completed_at`, `current_label`, `current_step`, `data`, `description`, `engine_kind`, `error`, `eta_seconds`, `event`, `metadata`, `percentage`, `stage_labels`, `started_at`, `status`, `task_id`, `timeout_seconds`, `total_steps`, `ts`, `updated_at` | 封闭 | `current_label`, `engine_kind`, `percentage`, `status` |
 | `event_bus` | `agent.step.retrying` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.budget_exhausted` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.control_trace` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.hypothesis` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.iteration` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.refine` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
@@ -1285,6 +1288,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 ## 发现汇总
 
 - 同轴惩罚候选 (轮次): efficiency_discount, idle_turn_penalty
+- 工作流 mode 未在 planner 提示暴露: code_lab
 - 工作流 mode 未在 planner 提示暴露: dynamic_workflow
 - 模式有 prompt 段却无 set_mode 生产者: code
 - 模式有 prompt 段却无 set_mode 生产者: extreme
@@ -1311,6 +1315,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_COMPACT
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_TOOL_USE_FAILURE
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.budget_exhausted
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.control_trace
 - 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.retry
 - 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.suspect
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): cognitive.csm.transition

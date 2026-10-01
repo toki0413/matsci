@@ -912,6 +912,26 @@ LUCID review (mandatory after generating hypothesis):
         curiosity_block = self._build_curiosity_block()
         if curiosity_block:
             hint_block = (hint_block + curiosity_block) if hint_block else curiosity_block
+            # 控制面观测 B7: curiosity hint 默认 off, 触发率未知 (审计列为"疑似可删").
+            #   这里只在**真的注入 prompt** 时记一条 trace, 供触发率统计; 纯观测, 不改行为.
+            #   带固定 tag 的 WARNING 进 run.log (CLI autoloop 不持久 campaign.* 事件);
+            #   事件走 campaign.control_trace, fail-open (测试替身无事件通道时静默).
+            logger.warning(
+                "control_trace name=curiosity_hint iteration=%s evidence=%s action=%s",
+                getattr(self, "_iteration", 0), "injected_into_hypothesis_prompt",
+                "advisory_hint",
+            )
+            with contextlib.suppress(Exception):
+                self._emit_campaign(
+                    "campaign.control_trace",
+                    {
+                        "name": "curiosity_hint",
+                        "iteration": getattr(self, "_iteration", 0),
+                        "evidence": "injected_into_hypothesis_prompt",
+                        "action": "advisory_hint",
+                        "advisory": "",
+                    },
+                )
         # 三路检索共用一个 query — 从 context 提取有意义的检索词,
         # 不用 json.dumps (JSON 语法噪声会淹没 embedding 语义锚点)
         ctx_query = self._extract_search_query(context)
