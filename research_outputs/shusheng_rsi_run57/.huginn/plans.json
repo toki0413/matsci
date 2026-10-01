@@ -716,6 +716,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_59c73436",
+      "objective": "[DIM: Computation] The Linear Capacity Scaling Hypothesis. Prediction: $N_c(w)$ scales linearly with $w$, leading to fatness (unattainable zero violation) for large $w$ within fixed width limits. Pro: Clear, testable scaling law. Con: Assumes optimization succeeds; refuted if $N_c$ saturates. Necessary condition: Target function complexity must exceed constant-width representational capacity.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the linear capacity scaling hypothesis test for small feedforward networks as described in the TargetChain. Design a numerical experiment to measure N_c(w) — the minimum hidden layer width achieving zero violation (max absolute error ≤ 1e-3 on held-out constraint points) — as a function of sample count w ∈ {10, 20, 30, 50, 100}. Use a 1-2 layer tanh network, Adam optimizer, fixed seeds, and scan widths N_h ∈ [4, 8, 16, 32, 64, 128]. Record training/holdout MSE and determine N_c(w) per w. Output a table and plot of N_c(w) vs w to test linear scaling vs saturation.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run57/.huginn/hypothesis_graph_loop_6728b315.json",
+            "/workspace/research_outputs/shusheng_rsi_run57/.huginn/engine_state/loop_6728b315.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:14:07.008998+00:00",
+      "confirmed_at": "2026-10-01T08:14:07.011961+00:00",
+      "completed_at": "2026-10-01T08:14:32.603136+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
