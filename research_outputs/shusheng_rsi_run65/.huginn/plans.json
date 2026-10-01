@@ -741,6 +741,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b2d3b152",
+      "objective": "[DIM: measure] Stochastic Constraint Fatness",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Correct the previously flawed experimental design for measuring Stochastic Constraint Fatness. Re-define the learning rate to a stable value of 1e-3 and align the maximum absolute error threshold with the hard constraint zero-violation threshold of 1e-3 (instead of the erroneous 1e³). Ensure the held-out error metric reflects the generalization bound strictly. Verify that training error remains lower than held-out error as per standard ML behavior. Add NaN/Inf checks during convergence monitoring to ensure all reported N_c(w) values are finite. Run the scan over hidden widths h ∈ {4, 8, ..., 32} and sample counts w ∈ {10, 20, ..., 50} with seeds {0, 1, 2} to determine the rigidity or fatness of the constraint landscape.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T15:54:04.336964+00:00",
+      "confirmed_at": "2026-10-01T15:54:04.339087+00:00",
+      "completed_at": "2026-10-01T15:54:59.081915+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

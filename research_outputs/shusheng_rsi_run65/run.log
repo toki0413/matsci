@@ -726,3 +726,76 @@ def run(cfg):
                 objectives['score'] -= 1.0 / (Nc + 1)
     summary['note'] = f'rigid_Nc={summary["rigid_Nc"]}, fat_Nc={summary["fat_Nc"]}'
     return {'success': True, 'summary': summary, 'objectives': objectives}
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=124 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> Stochastic Concentration Hypothesis 本质上是对原始问题中 '解空间刚性' 定义的重新表述，并未提供新的机制或证据来证明小型前馈网络能否作为探针。"] | 缺少显式不完整性自白 action=advisory_hint
+control_trace name=collab_blind_reconstruct iteration=124 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 8 rounds (Δ<0.5), best=5.00 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=124 evidence=stagnation=8 best=5.00 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0400 μ=2.78 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=124 evidence=sigma2=0.0400 mu=2.78 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Stochastic Fatness): [DIM: measure] Stochastic Constraint Fatness
+[exec-route] mode='explore' desc[:80]='Correct the previously flawed experimental design for measuring Stochastic Const' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2959 extracted_len=2944 prompt_len=4225
+[code-lab-run] res_none=True success=None nobj=0 reason='objectives 值须为数值: [4.0]'
+[code-lab-author] raw_len=2251 extracted_len=2236 prompt_len=7088
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: NameError: name 'kind_list' is not defined"
+[code-lab-author] raw_len=2284 extracted_len=2269 prompt_len=6849
+[code-lab-run] res_none=True success=None nobj=0 reason='objectives 值须为数值: [4]'
+[code-lab-author] raw_len=2285 extracted_len=2270 prompt_len=6855
+[code-lab-run] res_none=True success=None nobj=0 reason='objectives 值须为数值: [4]'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): objectives 值须为数值: [4]
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, 2.0])
+        y = poly_basis(X, 2) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 2) @ coeffs.reshape(-1, 1)
+    else:
+        n_coeffs = w
+        coeffs = rng.standard_normal(n_coeffs)
+        y = poly_basis(X, n_coeffs) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, n_coeffs) @ coeffs.reshape(-1, 1)
+    scale = np.std(np.concatenate([y.flatten(), yv.flatten()])) or 1.0
+    y /= scale
+    yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [5, 10, 20, 40]
+    h_list = [4, 8, 16, 32]
+    max_abs_err = 1e-3
+    summary = {'note': '', 'data': []}
+    objectives = {'score': 0.0, 'rigid_Nc': [], 'fat_Nc': []}
+    kind_list = ['rigid', 'fat']
+    
+    for kind in kind_list:
+        Nc_w = {}
+        for w in w_list:
+            Nc_for_w = None
+            for h in h_list:
+                data = family(kind, w, seed + w * 100 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                yv_pred = mlp_predict(model, Xv)
+                err = float(np.max(np.abs(yv_pred - yv)))
+                summary['data'].append({'kind': kind, 'w': w, 'h': h, 'err': err})
+                if err <= max_abs_err:
+                    if Nc_for_w is None or h < Nc_for_w:
+                        Nc_for_w = h
+            Nc_w[w] = Nc_for_w if Nc_for_w is not None else 1000.0
+        Nc_values = [Nc_w[w] for w in w_list]
+        Nc_min = min(Nc_values)
+        if kind == 'rigid':
+            objectives['rigid_Nc'].append(Nc_min)
+            summary['note'] += f"rigid w={w_list} -> N_c={Nc_min} "
+            if Nc_min <= 16:
+                objectives['score'] += 1.0
+        

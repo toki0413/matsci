@@ -177,5 +177,19 @@
     ],
     "mode": "explore",
     "description": "Design and execute a hypothesis-driven parameter scan for the Bounded Capacity hypothesis (H2) by: (1) defining the testable assertion that N_c(w) remains bounded as w increases, (2) implementing the "
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "72ddf5495bb7",
+    "reason": "Plan contains critical errors that prevent valid execution. First, the learning rate lr=1e³ is astronomically high (should likely be 1e-3), which would cause immediate divergence and NaN values, violating the 'finite numbers' requirement. Second, the maximum absolute error threshold of 1e³ is 1000x larger than the zero-violation threshold of 1e-3 specified in the hard constraints, creating a logical contradiction. Third, the prediction claims training errors < 2.5e³ while held-out errors < 1e³, which is impossible since training error should typically be lower than held-out error. These fundamental inconsistencies make the plan unexecutable as written.",
+    "missing_steps": [
+      "Correct learning rate from 1e³ to 1e-3",
+      "Align maximum absolute error threshold with zero-violation threshold (1e-3)",
+      "Fix training vs held-out error relationship (training should be lower)",
+      "Verify tanh activation function stability with large learning rates",
+      "Add convergence monitoring to detect NaN/inf before reporting"
+    ],
+    "mode": "explore",
+    "description": "Execute the stochastic constraint fatness hypothesis by scanning hidden layer widths h ∈ {4, 8, 12, 16, 20, 24, 28, 32} for constraint sample counts w ∈ {10, 20, 30, 40, 50}. For each (w, h) pair, tra"
   }
 ]
