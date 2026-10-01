@@ -1,0 +1,67 @@
+{
+  "goals": [
+    {
+      "id": "goal_b8b537c4",
+      "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "sub_goals": [],
+      "iteration": 1,
+      "status": "active",
+      "created_at": "2026-10-01T11:36:27.371958+00:00",
+      "updated_at": "2026-10-01T11:36:31.329642+00:00",
+      "session_id": "",
+      "metadata": {},
+      "unknowns": [
+        {
+          "id": "unk_c9d29f6a",
+          "text": "The core assumption that generalization behavior (performance on held-out constraints) directly probes the intrinsic dimensionality of the solution space is theoretically tenuous; a network might generalize well to specific test points due to implicit regularization or luck, while the underlying function space remains high-dimensional (\"fat\"), leading to a false positive for \"rigidity\".",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T11:36:31.323155+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_4b45344c",
+          "text": "The optimization landscape for training neural networks is highly non-convex; obtaining $N_c(w)$ requires finding *any* set of weights that satisfy the constraints, but standard gradient-based methods may get stuck in local minima that fail to exist even if a valid solution exists, causing an overestimation of required capacity (false negative for rigidity).",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T11:36:31.325559+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_bb1de1aa",
+          "text": "The definition of \"zero violation\" relies on a specific error metric (max absolute error $\\le 10^{-3}$). If the target functions exhibit high-frequency oscillations or sharp gradients between sampled points, a network could satisfy the discrete constraints with large interpolation errors elsewhere, meaning the discrete metric fails to capture the continuous nature of the analytic constraints.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T11:36:31.327613+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_8d8f0259",
+          "text": "The scaling behavior of $N_c(w)$ is sensitive to the specific functional form of the constraints. For certain pathological classes of functions (e.g., those requiring specific symmetries or cancellation effects), small width networks might fail completely regardless of width (saturation), making it impossible to distinguish between a \"fat\" space and a \"rigid\" one that is simply hard to represent with the chosen architecture.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T11:36:31.328557+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_ed8434eb",
+          "text": "Determining the minimal width $N_c$ typically involves a binary search or grid search over widths. This procedure is computationally expensive and prone to discretization errors; if the search granularity is too coarse, the identified $N_c$ might be an overestimate, potentially misclassifying a rigid system as fat if the true minimal width lies between tested values.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T11:36:31.329625+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        }
+      ],
+      "unknowns_discovered": 5,
+      "unknowns_resolved": 0,
+      "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "success_criteria": [],
+      "max_iterations": 360,
+      "completed_at": null,
+      "completion_condition": null,
+      "wall_clock_budget_seconds": 3600.0,
+      "started_at": "2026-10-01T11:36:27.373223+00:00",
+      "origin": "user"
+    }
+  ]
+}
