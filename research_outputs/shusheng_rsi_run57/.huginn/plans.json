@@ -628,6 +628,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_62fca147",
+      "objective": "[DIM: measure] Concentration of measure hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Design and implement a numerical experiment to test the concentration of measure hypothesis on small feedforward networks. The experiment will: (1) define an analytical constraint function (e.g., trigonometric or polynomial combination), (2) generate w training samples and a held-out validation set, (3) train networks with hidden widths N_h ∈ {4, 8, 16, 32, 64, 128}, (4) compute maximum absolute error on validation points, (5) determine N_c(w) as the minimal N_h achieving ≤1e-3 error, (6) repeat for w ∈ {10, 20, 30, 50, 100}, and (7) assess rigidity by checking if N_c(w) remains bounded as w increases. All runs use fixed random seeds, Adam optimizer, early stopping, and report finite numerical values.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/concentration_of_measure.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:09:02.474303+00:00",
+      "confirmed_at": "2026-10-01T08:09:02.476421+00:00",
+      "completed_at": "2026-10-01T08:09:58.410169+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
