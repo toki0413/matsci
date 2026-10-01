@@ -121,6 +121,34 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ae9d2b85",
+      "objective": "...`",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] We will design a reproducible numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution-space rigidity by measuring $N_c(w)$ — the minimum hidden layer width achieving zero violation (max absolute error ≤ 1e-3) on out-of-sample constraints as constraint count $w$ increases. We will define a target function $f(x) = \\sin(2\\pi x) + 0.5 \\cos(4\\pi x)$ on $[0,1]$ with analytical constraints: (1) point-wise values at $w$ collocation points, (2) first-order derivative constraints at $w/2$ points, and (3) integral constraint $\\int_0^1 f(x) dx = 0$. The network $N_h$-width architecture uses tanh activation and incorporates constraints via a composite loss: $\\mathcal{L} = \\text{MSE}_{data} + \\lambda_1 \\text{MSE}_{deriv} + \\lambda_2 (\\text{integral\\_error})^2$. We will train with Adam (lr=1e-3, early stopping on validation loss plateau 10 epochs) across widths $N_h \\in [4,8,16,32,64,128]$, record minimal $N_h$ satisfying zero violation per $w$, and visualize error landscapes to detect overfitting. Code will be structured in modular Python functions with fixed seeds for reproducibility.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T07:36:21.833997+00:00",
+      "confirmed_at": "2026-10-01T07:36:21.835025+00:00",
+      "completed_at": "2026-10-01T07:36:37.096362+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

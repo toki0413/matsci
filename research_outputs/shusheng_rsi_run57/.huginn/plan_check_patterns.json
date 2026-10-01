@@ -1,0 +1,32 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "87a73409c171",
+    "reason": "Plan specifies MODE: explore, but the task requires a Coder role to write reproducible code for a numerical experiment. The description lacks concrete implementation details (e.g., target function definition, constraint formulation, optimization setup, code structure). It also fails to specify how 'constraints' are mathematically defined (e.g., PDE constraints, functional constraints, or point-wise constraints?) which is critical for defining 'zero violation'. Without a concrete mathematical formulation of the 'constraints', the experiment cannot be executed or validated.",
+    "missing_steps": [
+      "Define the exact mathematical form of the 'analytical constraints' (e.g., functional equations, boundary conditions, integral constraints).",
+      "Specify the target function and its relationship to the constraints.",
+      "Detail the network architecture and loss function formulation (how constraints are incorporated into training).",
+      "Provide code structure or pseudocode for the numerical experiment.",
+      "Define the 'constraint count w' precisely (number of constraint points? number of constraint equations?)",
+      "Specify the optimization method and early stopping criteria in detail.",
+      "Define the metric for 'zero violation' on out-of-sample constraints with mathematical precision."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution-space rigidity by measuring N_c(w) — the minimum hidden layer width achieving zero violati"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "87a73409c171",
+    "reason": "The plan is invalid because it specifies MODE: explore, but the task requires a Coder role to write reproducible code for a numerical experiment. The description lacks concrete implementation details needed for execution (e.g., exact constraint formulation, code structure, optimization parameters). While the general approach is mathematically sound, the execution mode mismatch makes it impossible to proceed as specified.",
+    "missing_steps": [
+      "Change MODE to 'coder' for code writing task",
+      "Provide concrete mathematical formulation of constraints",
+      "Specify network architecture details and loss function implementation",
+      "Define optimization method and early stopping criteria precisely",
+      "Provide code structure or pseudocode for the numerical experiment"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] We will design a reproducible numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution-space rigidity by measuring $N_c(w)$ — t"
+  }
+]
