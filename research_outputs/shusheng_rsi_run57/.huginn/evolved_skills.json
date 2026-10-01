@@ -12,8 +12,8 @@
       "error",
       "constraint",
       "experiment",
-      "plan",
-      "prediction"
+      "space",
+      "plan"
     ],
     "workflow_steps": [
       {

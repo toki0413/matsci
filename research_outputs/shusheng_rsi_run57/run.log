@@ -71,3 +71,4 @@ Long-horizon goal: goal_0d8a3bf5
 [exec-route] mode='explore' desc[:80]='Conduct a targeted numerical experiment to test the concentration of measure hyp' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2940 extracted_len=2925 prompt_len=4233
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
