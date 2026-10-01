@@ -237,6 +237,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ba9e218d",
+      "objective": "\".",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the \"rigidity\" hypothesis: for a given set of $w$ linearly independent analytic constraints (e.g., monomials or trigonometric basis functions), define input dimension $d=1$, and scan hidden layer width $N$ of a small feedforward network to find the minimum $N_c(w)$ such that max absolute error on held-out constraints $\\le 10^{-3}$. Use a smooth target function (e.g., $f(x) = \\sin(\\pi x)$) on domain $[-1, 1]$, sample $w$ constraints via quadrature points or Fourier modes, construct validation set from independent samples, train networks with varying widths, record training and validation errors, and compute $N_c(w)$ trend. If $N_c(w)$ stays small and bounded as $w$ increases, conclude \"rigidity\"; if no finite $N_c$ is found, conclude \"fat\".",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:19:47.744026+00:00",
+      "confirmed_at": "2026-10-01T13:19:47.745523+00:00",
+      "completed_at": "2026-10-01T13:22:54.832255+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -322,6 +322,70 @@
       "r_phys": 1.0,
       "iteration": 30,
       "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: geometry] The solution manifold of constraints in network function space u",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:16.273253",
+      "last_seen": "2026-10-01T13:18:16.273253",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be large (>>999) for w=1,2 (fat manifold), and drop to a small constant (~4) for w≥3 (rigid affine subspace), exhibiting a sharp step-like transition at w=3.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution manifold of constraints in network function space u"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273292",
+      "last_seen": "2026-10-01T13:18:16.273292",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273302",
+      "last_seen": "2026-10-01T13:18:16.273302",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution manifold of constraints in network function space u",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:16.273383",
+      "last_seen": "2026-10-01T13:18:16.273383",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "137fb480613d5c41",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
     }
   ],
   "links": [
@@ -459,6 +523,33 @@
       "last_seen": "2026-10-01T13:12:17.405610",
       "mentions": 1,
       "target": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution manifold of constraints in network function space u",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cace2291"
     }
   ]
 }

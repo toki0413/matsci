@@ -85,5 +85,35 @@
     ],
     "mode": "explore",
     "description": "We will design a controlled numerical experiment to test the topological transition hypothesis in network function space. We will (1) construct w interpolation constraints on a smooth target function;"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make the hypothesis untestable. First, 'w' is overloaded: defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the mapping from constraint count to network input dimension is undefined—unclear whether input_dim equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These match exactly the documented failure modes for this scenario.",
+    "missing_steps": [
+      "Clarify variable notation: distinguish between hidden width (N) and constraint count (w) consistently throughout",
+      "Define how constraint count maps to network input dimension (e.g., input_dim = c?)",
+      "Specify target function generation method (random Fourier features details)",
+      "Define constraint sampling strategy on [-1, d] domain",
+      "Define constraint violation metric and validation set construction procedure",
+      "Specify training data generation process (sample size, distribution)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the \"rigidity\" hypothesis: for a given set of analytical constraints (e.g., a smooth target function), vary the number of constraints $w$ and scan the hidden laye"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make the hypothesis untestable. First, 'w' is overloaded: defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the mapping from constraint count to network input dimension is undefined—unclear whether input_dim equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These match exactly the documented failure modes previously listed for this scenario.",
+    "missing_steps": [
+      "Clarify variable notation: distinguish between hidden width (N) and constraint count (w) consistently throughout",
+      "Define how constraint count maps to network input dimension (e.g., input_dim = c?)",
+      "Specify target function generation method (random Fourier features details)",
+      "Define constraint sampling strategy on [-1, d] domain",
+      "Define constraint violation metric and validation set construction procedure",
+      "Specify training data generation process (sample size, distribution)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the \"rigidity\" hypothesis: for a given set of $w$ linearly independent analytic constraints (e.g., monomials or trigonometric basis functions), define input dimen"
   }
 ]

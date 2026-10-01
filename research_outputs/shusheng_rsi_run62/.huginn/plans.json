@@ -118,6 +118,36 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_bc077995",
+      "objective": "[Hypothesis Index]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Investigate the hypothesis that small feedforward networks probe bootstrap solution space rigidity by systematically scanning hidden layer width N across multiple constraint counts w (10, 20, 50, 100). For each w, train single-hidden-layer networks (width 1-50) on an analytic function (e.g., f(x)=sin(πx) + 0.1x²), measure max absolute error on held-out constraints, and determine N_c(w) = minimum width achieving ≤1e-3 error. Use 5 random seeds per w to verify stability. If N_c(w) remains ≤20 and bounded across w, rigidity is confirmed; otherwise, the space is \"fat\". The experiment uses MSE loss with Adam optimization, 10k steps, and learning rate decay. This directly tests the rigidity hypothesis by measuring capacity scaling with constraint density.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "None"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:19:53.685593+00:00",
+      "confirmed_at": "2026-10-01T13:19:53.686994+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

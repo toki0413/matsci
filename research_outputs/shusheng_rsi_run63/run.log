@@ -178,3 +178,14 @@ Traceback (most recent call last):
   File "/root/.pyenv/versions/3.11.15/lib/python3.11/json/decoder.py", line 355, in raw_decode
     raise JSONDecodeError("Expecting value", s, err.value) from None
 json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+darwin ratchet: stagnation 7 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=39 evidence=stagnation=7 best=2.50 action=advisory_hint
+plan_check failed (tier=light, scene=other, max_refines=1): The plan contains critical ambiguities that make the hypothesis untestable. First, 'w' is overloaded: defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the mapping from constraint count to network input dimension is undefined—unclear whether input_dim equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These match exactly the documented failure modes previously listed for this scenario.
+[exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the "rigidity" hypothesis: for a given set' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2079 extracted_len=2064 prompt_len=4183
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 5 is different from 20)'
+[code-lab-author] raw_len=1960 extracted_len=1945 prompt_len=6743
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 5 is different from 20)'
+[code-lab-author] raw_len=2157 extracted_len=2142 prompt_len=6624
+[code-lab-run] res_none=False success=True nobj=1 reason=''

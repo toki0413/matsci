@@ -52,11 +52,11 @@
       "value",
       "label",
       "algebraic",
-      "width",
       "error",
-      "polynomial",
-      "constraint",
-      "plan"
+      "width",
+      "hypothesis",
+      "plan",
+      "prediction"
     ],
     "workflow_steps": [
       {

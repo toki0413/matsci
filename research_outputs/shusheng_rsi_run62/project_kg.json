@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: Structure] Algebraic Independence Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:20.354617",
+      "last_seen": "2026-10-01T13:18:20.354617",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be ≤ 15 across all w values (10, 20, 50, 100) with standard deviation < 2 across 5 seeds, demonstrating that small networks achieve zero-violation capacity without scaling with w — indicat",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structure] Algebraic Independence Hypothesis"
+    },
+    {
+      "label": "plan_workflow_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354657",
+      "last_seen": "2026-10-01T13:18:20.354657",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354666",
+      "last_seen": "2026-10-01T13:18:20.354666",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structure] Algebraic Independence Hypothesis",
+        "Method:plan_workflow_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_12324489"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:20.354752",
+      "last_seen": "2026-10-01T13:18:20.354752",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f6081c652f5681e9",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-10-01T13:05:20.345889",
       "mentions": 1,
       "target": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structure] Algebraic Independence Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_12324489"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_12324489"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_12324489"
     }
   ]
 }
