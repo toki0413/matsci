@@ -89,3 +89,68 @@ json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 [code-lab-author] raw_len=2248 extracted_len=2233 prompt_len=7928
 [code-lab-run] res_none=False success=True nobj=2 reason=''
 [validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=If the constraints define a low-degree algebraic variety of dimension d, the solution space dimension is invariant of w; predict: N_c(w) converges to a constant (N_c ≤ d+1) as w increases, with N_c(w) = N_c(w') for w' > w ≥ d+1 in the scanned range): ** The structure hypothesis (algebraic variety) because it makes the clearest prediction (constant N
+[exec-route] mode='explore' desc[:80]='Systematically scan the capacity parameter space (hidden width N) vs constraint ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2767 extracted_len=2752 prompt_len=4427
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplot"
+[code-lab-author] raw_len=2316 extracted_len=2301 prompt_len=7592
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+[code-lab-author] raw_len=2316 extracted_len=2301 prompt_len=7092
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+[code-lab-author] raw_len=2096 extracted_len=2081 prompt_len=7092
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): code_lab 执行超时 (> 900.0s)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([2.0, 1.0])
+        X_poly = poly_basis(X, 2)
+        y = X_poly @ coeffs.reshape(-1, 1)
+        Xv_poly = poly_basis(Xv, 2)
+        yv = Xv_poly @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(3)
+        X_poly = poly_basis(X, 3)
+        y = X_poly @ coeffs.reshape(-1, 1)
+        Xv_poly = poly_basis(Xv, 3)
+        yv = Xv_poly @ coeffs.reshape(-1, 1)
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_values = [5, 10, 20, 50]
+    h_values = list(range(10, 201, 10))
+    summary = {'rigid_Nc': [], 'fat_Nc': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_for_w = []
+        for w in w_values:
+            Nc = None
+            for h in h_values:
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                scale = np.std(np.concatenate([y.flatten(), yv.flatten()]))
+                if scale == 0:
+                    scale = 1.0
+                y_norm = y / scale
+                yv_norm = yv / scale
+                model = mlp_fit(X.flatten(), y_norm.flatten(), h, seeds=3)
+                yv_pred = mlp_predict(model, Xv.flatten())
+                max_abs_err = np.max(np.abs(yv_pred - yv_norm.flatten()))
+                if max_abs_err <= 1e-3:
+                    Nc = h
+                    break
+            if Nc is None:
+                Nc = h_values[-1] + 1
+            Nc_for_w.append(Nc)
+            summary[f'{kind}_Nc_w_{w}'] = Nc
+        summary[f'{kind}_Nc_trend'] = Nc_for_w
+        if kind == 'rigid':
+            if all(Nc_for_w[i] <= Nc_for_w[0] + 5 for i in range(1, len(Nc_for_w))):
+                objectives['score'] 

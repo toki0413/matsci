@@ -59,6 +59,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_375dfa59",
+      "objective": "[Hypothesis]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the hypothesis that small feedforward networks exhibit solution space rigidity (N_c(w) remains bounded as w increases). Design a family of analytic constraints (e.g., polynomial or trigonometric functions), train small MLPs with varying hidden widths, measure the minimum width N_c required to achieve zero violation (max absolute error ≤ 1e-3) on held-out constraints, and verify whether N_c plateaus as w grows. Use symbolic_math_tool to define constraint functions and generate data, then train networks using a lightweight framework (e.g., PyTorch or JAX) with controlled hyperparameters. Ensure reproducibility and report N_c(w) trends explicitly.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/experiment_rigidity.py",
+            "src/constraint_generator.py",
+            "src/network_trainer.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T11:41:55.491049+00:00",
+      "confirmed_at": "2026-10-01T11:41:55.492298+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -59,6 +59,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_1e76a3e1",
+      "objective": "** The structure hypothesis (algebraic variety) because it makes the clearest prediction (constant N_c) that's easiest to test definitively - either N_c plateaus or it doesn't. This provides a binary test of rigidity vs fatness as specified in the problem statement.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Systematically scan the capacity parameter space (hidden width N) vs constraint count w to measure N_c(w). For each w, sweep N from a lower bound (e.g., 10) to an upper bound (e.g., 200) until zero-violation is achieved (max absolute error on held-out points ≤ 1e-3). Use a small synthetic function family to generate the bootstrap constraints. Record the minimum N for each w. If N_c plateaus at a finite value as w increases, the hypothesis is supported (rigid); if N_c grows without bound or never reaches zero-violation within the scan range, the hypothesis is rejected (fat).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T11:41:43.339542+00:00",
+      "confirmed_at": "2026-10-01T11:41:43.341687+00:00",
+      "completed_at": "2026-10-01T12:27:36.310756+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

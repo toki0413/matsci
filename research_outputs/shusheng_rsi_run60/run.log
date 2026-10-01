@@ -154,3 +154,9 @@ control_trace name=effort_floor iteration=9 evidence=努力下限未达标: fami
 [FINALLY-REFLECT] tool_results_this_turn=0
 [FINALLY-REFLECT] tool_results_this_turn=0
 branch incubator returned None, fallback to main+hot_model
+[exec-route] mode='coder' desc[:80]='Implement a numerical experiment to test the hypothesis that small feedforward n' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=3273 extracted_len=3258 prompt_len=4193
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+[code-lab-author] raw_len=2983 extracted_len=2968 prompt_len=7057
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+[code-lab-author] raw_len=2896 extracted_len=2881 prompt_len=7057

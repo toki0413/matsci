@@ -21,5 +21,36 @@
     ],
     "mode": "skill",
     "description": "Implement a small MLP (1 hidden layer) to learn an analytic function with varying constraint counts (w=10,20,50,100). For each w, sweep hidden width N from 4 to 64 (step 4), train with early stopping,"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7d96bbd64541",
+    "reason": "The plan uses MODE: explore but requires running a numerical experiment (coder/workflow) to generate data. It lacks concrete implementation details (specific target function, network architecture, training procedure) needed to actually produce the required N_c(w) values. Without actual code execution and numerical results, the hypothesis cannot be validated through the required 'real reproducible numerical experiment'. The prediction is speculative without the experimental execution.",
+    "missing_steps": [
+      "Define specific target function with known analytical constraints",
+      "Specify MLP architecture (activation functions, initialization, depth)",
+      "Define training procedure (optimizer, loss function, stopping criteria)",
+      "Implement the bootstrap sampling and constraint testing procedure",
+      "Execute the numerical experiment to generate N_c(w) data",
+      "Perform the convergence analysis on N_c(w) vs w"
+    ],
+    "mode": "explore",
+    "description": "I need to design a numerical experiment to test the \"Concentration of Measure in High-Dim Bootstrap\" hypothesis regarding solution space rigidity in small feedforward networks. The experiment will: (1"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7d96bbd64541",
+    "reason": "The plan correctly identifies the mathematical structure (concentration of measure in high dimensions) and proposes a relevant experimental setup (MLP on bootstrap samples). However, it fails the MODE match: the task requires running a numerical experiment to generate reproducible data, but the plan only describes a 'coder' workflow without providing actual executable code or specifying the precise implementation details needed to produce the N_c(w) values. It repeats the historical failure of being speculative without concrete implementation details for execution.",
+    "missing_steps": [
+      "Provide actual executable Python code for the numerical experiment",
+      "Specify exact target function with known analytical constraints",
+      "Define precise MLP architecture including initialization scheme",
+      "Detail training procedure with loss function and early stopping criteria",
+      "Implement bootstrap sampling and constraint testing procedure",
+      "Execute the numerical experiment to generate N_c(w) data",
+      "Perform convergence analysis on N_c(w) vs w"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] 编写 Python 脚本执行浓度测量实验。目标函数：$f(x) = \\sin(2\\pi x) + 0.5\\cos(4\\pi x)$，约束点 20 个均匀分布。Bootstrap 大小 $w \\in [20, 1000]$。MLP：2 隐藏层，ReLU，宽度 $N \\in [10, 200]$。训练：Adam，lr=1e-3，500 epoc"
   }
 ]

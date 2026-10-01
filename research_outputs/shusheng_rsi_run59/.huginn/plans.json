@@ -55,6 +55,34 @@
         "mode": "skill",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b03baa2a",
+      "objective": "** [DIM: measure] Concentration of Measure in High-Dim Bootstrap",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] 编写 Python 脚本执行浓度测量实验。目标函数：$f(x) = \\sin(2\\pi x) + 0.5\\cos(4\\pi x)$，约束点 20 个均匀分布。Bootstrap 大小 $w \\in [20, 1000]$。MLP：2 隐藏层，ReLU，宽度 $N \\in [10, 200]$。训练：Adam，lr=1e-3，500 epochs，早停。指标：约束点最大绝对误差。$N_c(w)$ 定义为误差 $\\le 1e-3$ 的最小 $N$。脚本输出 CSV 数据。",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T11:42:57.008369+00:00",
+      "confirmed_at": "2026-10-01T11:42:57.009383+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
