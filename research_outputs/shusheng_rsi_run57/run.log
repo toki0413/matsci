@@ -384,3 +384,74 @@ control_trace name=belief_convergence iteration=59 evidence=sigma2=0.0833 mu=2.5
 [exec-route] mode='workflow' desc[:80]='Execute the Python script for solution-space rigidity testing in small feedforwa' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2857 extracted_len=2843 prompt_len=3903
 [code-lab-run] res_none=False success=True nobj=5 reason=''
+[validate] mode='code_lab' success=True nobj=5 cf=False lab=True
+darwin ratchet: stagnation 12 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=64 evidence=stagnation=12 best=2.50 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0769 μ=2.50 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=64 evidence=sigma2=0.0769 mu=2.50 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the Universal Approximation Bo' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2210 extracted_len=2195 prompt_len=4255
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 4 is different from 20)'
+[code-lab-author] raw_len=2296 extracted_len=2281 prompt_len=6946
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 4 is different from 20)'
+[code-lab-author] raw_len=2400 extracted_len=2385 prompt_len=7032
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 4 is different from 20)'
+[code-lab-author] raw_len=2259 extracted_len=2244 prompt_len=7136
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 4 is different from 20)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 4 is different from 20)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, 0.5, -0.2, 0.1])
+        basis = poly_basis(X, 4)
+        y = basis @ coeffs.reshape(-1, 1)
+        basis_v = poly_basis(Xv, 4)
+        yv = basis_v @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(20)
+        basis = poly_basis(X, 20)
+        y = basis @ coeffs.reshape(-1, 1)
+        basis_v = poly_basis(Xv, 20)
+        yv = basis_v @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 20) @ coeffs.reshape(-1, 1))
+    if scale < 1e-10:
+        scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [10, 20, 30, 50, 100]
+    hs = [4, 8, 16, 32, 64, 128]
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_error': [], 'fat_error': []}
+    objectives = {'rigid_min_Nc': 0.0, 'fat_min_Nc': 0.0, 'rigid_max_err': 0.0, 'fat_max_err': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        err_list = []
+        for w in ws:
+            Nc = None
+            for h in hs:
+                data = family(kind, w, seed + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                yv_pred = mlp_predict(model, Xv)
+                err = float(np.max(np.abs(yv_pred - yv)))
+                if err <= 1e-3:
+                    if Nc is None or h < Nc:
+                        Nc = h
+            if Nc is None:
+                Nc = 999
+            Nc_list.append(Nc)
+            err_list.append(err)
+        summary[f'{kind}_Nc'] = Nc_list
+        summary[f'{kind}_error'] = err_list
+        if kind == 'rigid':
+            objectives['rigid_min_Nc'] = float(min(Nc_list))
+            objectives['rig
