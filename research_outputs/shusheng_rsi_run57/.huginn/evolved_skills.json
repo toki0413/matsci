@@ -10,10 +10,10 @@
       "label",
       "rigid",
       "error",
-      "constraint",
       "experiment",
-      "space",
-      "plan"
+      "constraint",
+      "plan",
+      "prediction"
     ],
     "workflow_steps": [
       {

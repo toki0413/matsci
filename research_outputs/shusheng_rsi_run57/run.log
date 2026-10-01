@@ -276,3 +276,12 @@ control_trace name=darwin_stagnation iteration=29 evidence=stagnation=5 best=2.5
 [exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the Algebraic dependency hypot' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1937 extracted_len=1922 prompt_len=4059
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+darwin ratchet: stagnation 6 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=34 evidence=stagnation=6 best=2.50 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Geometric rigidity of the solution manifold): ** **[DIM: geometry]** **Geometric rigidity of the solution manifold**
+[exec-route] mode='explore' desc[:80]='Conduct a systematic search over small feedforward network architectures to prob' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1981 extracted_len=1966 prompt_len=4251
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=2207 extracted_len=2192 prompt_len=6713
+[code-lab-run] res_none=False success=True nobj=1 reason=''

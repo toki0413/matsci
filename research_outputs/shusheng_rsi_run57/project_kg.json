@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure] **Algebraic dependency hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:40:54.323497",
+      "last_seen": "2026-10-01T07:40:54.323497",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (≤ 32) across w ∈ {10, 20, 30, 50, 100}, indicating algebraic rigidity; training error will converge to ~1e-5 while held-out error stays ≤ 1e-3 for N_h ≥ N_c(w).\nPLAN_SLOTS:",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] **Algebraic dependency hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323543",
+      "last_seen": "2026-10-01T07:40:54.323543",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323552",
+      "last_seen": "2026-10-01T07:40:54.323552",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] **Algebraic dependency hypothesis**",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:40:54.323634",
+      "last_seen": "2026-10-01T07:40:54.323634",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "708c6546e319fc64",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-10-01T07:30:16.542477",
       "mentions": 1,
       "target": "he_experiment_pipeline_bb94c11"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] **Algebraic dependency hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d885874d"
     }
   ]
 }
