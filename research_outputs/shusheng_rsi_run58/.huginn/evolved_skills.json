@@ -81,7 +81,7 @@
       "plan",
       "prediction",
       "hypothesis",
-      "small"
+      "solution"
     ],
     "workflow_steps": [
       {
@@ -126,9 +126,9 @@
       }
     ],
     "required_tools": [
-      "coder",
       "workflow",
-      "explore"
+      "explore",
+      "coder"
     ],
     "source_session": "loop_5",
     "extraction_confidence": 0.9,
