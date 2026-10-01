@@ -425,3 +425,84 @@ control_trace name=belief_convergence iteration=54 evidence=sigma2=0.0908 mu=2.9
 [exec-route] mode='workflow' desc[:80]='Conduct a controlled numerical experiment to test the Approximation Rank Hypothe' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2224 extracted_len=2209 prompt_len=4229
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=59 evidence=skip: node status=refuted action=skip
+control_trace name=goal_judge iteration=59 evidence=achieved=False score=0.25 llm=1 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0833 μ=2.93 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=59 evidence=sigma2=0.0833 mu=2.93 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='The previous hypothesis (Approximation Rank) failed (surprise=1.0). We must pivo' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3400 extracted_len=3385 prompt_len=4229
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: too many values to unpack (expected 2)'
+[code-lab-author] raw_len=3346 extracted_len=3331 prompt_len=7125
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: too many values to unpack (expected 2)'
+[code-lab-author] raw_len=3242 extracted_len=3227 prompt_len=7125
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: too many values to unpack (expected 2)'
+[code-lab-author] raw_len=3378 extracted_len=3363 prompt_len=7125
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: too many values to unpack (expected 2)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: too many values to unpack (expected 2)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        Xb = poly_basis(X, 3)
+        y = (Xb @ coeffs).reshape(-1, 1)
+        Xvb = poly_basis(Xv, 3)
+        yv = (Xvb @ coeffs).reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        Xb = poly_basis(X, 10)
+        y = (Xb @ coeffs).reshape(-1, 1)
+        Xvb = poly_basis(Xv, 10)
+        yv = (Xvb @ coeffs).reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10).flatten())
+    y /= scale
+    yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def mlp_fit(X, y, h, seeds=3):
+    import torch
+    from torch import nn, optim
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = nn.Linear(1, h)
+            self.l2 = nn.Linear(h, 1)
+        def forward(self, x):
+            return torch.tanh(self.l1(x))
+    X_t = torch.FloatTensor(X)
+    y_t = torch.FloatTensor(y)
+    best = None
+    best_loss = 1e10
+    for s in range(seeds):
+        torch.manual_seed(s + 1234)
+        model = Model()
+        loss_fn = nn.MSELoss()
+        opt = optim.LBFGS(model.parameters(), lr=0.1)
+        for _ in range(500):
+            def closure():
+                opt.zero_grad()
+                y_hat = model(X_t)
+                loss = loss_fn(y_hat, y_t)
+                loss.backward()
+                return loss
+            opt.step(closure)
+        with torch.no_grad():
+            loss = loss_fn(model(X_t), y_t).item()
+        if loss < best_loss:
+            best_loss = loss
+            best = (model.state_dict(), h)
+    return {'w': X.shape[0], 'h': h, 'params': best[0]}
+
+def mlp_predict(model, X):
+    import torch
+    X_t = torch.FloatTensor(X)
+    with torch.no_grad():
+        return model['params'], X_t
+
+def poly_basis(X, n):
+    X = 
