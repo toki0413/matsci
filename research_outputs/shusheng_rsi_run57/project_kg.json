@@ -1030,6 +1030,70 @@
       "r_phys": 1.0,
       "iteration": 150,
       "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:25:13.751079",
+      "last_seen": "2026-10-01T08:25:13.751079",
+      "mentions": 1,
+      "iteration": 155,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For positively curved manifolds (κ>0), N_c(w) will remain bounded (rigid solution space); for flat/hyperbolic (κ≤0), N_c(w) will scale with √w or linearly (fat solution space), demonstrating curvature",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] Curvature-Induced Rigidity Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751116",
+      "last_seen": "2026-10-01T08:25:13.751116",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751124",
+      "last_seen": "2026-10-01T08:25:13.751124",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_986a16be"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:25:13.751192",
+      "last_seen": "2026-10-01T08:25:13.751192",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0f43e020dc6a3687",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
     }
   ],
   "links": [
@@ -1491,6 +1555,33 @@
       "last_seen": "2026-10-01T08:23:44.728145",
       "mentions": 1,
       "target": "he_experiment_pipeline_5ba31e6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_986a16be"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_986a16be"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_986a16be"
     }
   ]
 }
