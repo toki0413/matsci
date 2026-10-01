@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:05:20.345822",
+      "last_seen": "2026-10-01T13:05:20.345822",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded and small (≤15) across all w values, showing weak or sub-logarithmic dependence on w, supporting the \"rigid\" classification. If N_c(w) grows significantly with w (e.g., >20",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345865",
+      "last_seen": "2026-10-01T13:05:20.345865",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345875",
+      "last_seen": "2026-10-01T13:05:20.345875",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:05:20.345968",
+      "last_seen": "2026-10-01T13:05:20.345968",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7a7a3d04cdab2cc5",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-10-01T13:02:46.315588",
       "mentions": 1,
       "target": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e93733d1"
     }
   ]
 }

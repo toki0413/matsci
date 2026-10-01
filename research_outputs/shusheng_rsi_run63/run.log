@@ -131,3 +131,7 @@ metacog: 假设可能为换名归约 (trap=, target=The 'Double Descent' / Inter
 [code-lab-author] raw_len=3489 extracted_len=3474 prompt_len=7113
 [code-lab-run] res_none=False success=True nobj=20 reason=''
 [validate] mode='code_lab' success=True nobj=20 cf=False lab=True
+plan_check failed (tier=medium, scene=dft, max_refines=1): The plan uses MODE: explore, but the task requires MODE: coder (executable Python code). The DESCRIPTION is a high-level workflow without actual code implementation, which matches the exact failure pattern listed in '同场景历史失败'. Missing critical details: no Python code provided, no specific target functions defined, no Gaussian curvature calculation method specified, no network architecture/training parameters defined.
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Generate executable Python code to numerically test' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1878 extracted_len=1863 prompt_len=4763
+[code-lab-run] res_none=False success=True nobj=1 reason=''

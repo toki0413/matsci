@@ -1,0 +1,33 @@
+[
+  {
+    "scene_tag": "dft",
+    "hyp_key": "309ad2c755d7",
+    "reason": "The plan fails to match the required MODE (coder). The task requires generating executable code for a numerical experiment, but the provided plan is a high-level experimental description (workflow/explore mode) without any code specification or implementation details. Additionally, the plan lacks specific details on how to measure Gaussian curvature at interpolation points, which is critical for the hypothesis.",
+    "missing_steps": [
+      "Specify MODE as 'coder' instead of 'explore'",
+      "Provide actual Python code implementation for the numerical experiment",
+      "Define specific target functions with known Gaussian curvature properties",
+      "Detail the method for calculating Gaussian curvature at interpolation points",
+      "Specify exact network architecture parameters and training procedures"
+    ],
+    "mode": "explore",
+    "description": "We will systematically investigate the hypothesis that minimal network capacity N_c(w) scales linearly with constraint count w when the target function has non-zero Gaussian curvature at interpolation"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "309ad2c755d7",
+    "reason": "The plan uses MODE: explore, but the task requires MODE: coder (executable Python code). The DESCRIPTION is a high-level workflow without actual code implementation, which matches the exact failure pattern listed in '同场景历史失败'. Missing critical details: no Python code provided, no specific target functions defined, no Gaussian curvature calculation method specified, no network architecture/training parameters defined.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder'",
+      "Provide actual executable Python code implementation",
+      "Define specific target functions with analytically computable Gaussian curvature (e.g., paraboloids)",
+      "Detail method for calculating Gaussian curvature at interpolation points using symbolic differentiation",
+      "Specify exact network architecture parameters (hidden layers, activation functions, etc.)",
+      "Define training procedures (optimization, loss function, convergence criteria)",
+      "Specify how to measure zero violation (max absolute error ≤ 1e-3 on held-out points)",
+      "Define the scan range for network widths and constraint counts"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Generate executable Python code to numerically test the hypothesis that minimal network capacity $N_c(w)$ scales linearly with constraint count $w$ for target functions wi"
+  }
+]
