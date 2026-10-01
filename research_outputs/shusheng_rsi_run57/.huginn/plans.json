@@ -817,6 +817,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_34cb944d",
+      "objective": "** [DIM: measure] The concentration of measure hypothesis | predict: N_c(w) grows as √w (sublinear scaling) | pro: grounded in VC-dimension theory and concentration of measure, makes a clear numerical prediction distinct from constant (structure) or logarithmic (computation); con: requires careful validation that constraints are not structured enough to reduce effective dimension. This is the most testable because it produces a specific functional form (√w) that can be directly compared against empirical N_c(w) values from the experiment. The previous failure mode showed N_c(w) was reported as constant (Nc=5 across w), which would refute this hypothesis if confirmed, making it a strong falsifiable test.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Conduct a numerical scan to test the Concentration of Measure Hypothesis (N_c(w) ~ √w) against the Algebraic Dependency Hypothesis (N_c(w) = constant). Design a small feed-forward network experiment to compute the minimal hidden layer width N_c(w) required to achieve zero violation (max absolute error ≤ 1e-3) on held-out constraints for varying sample counts w ∈ {10, 20, 30, 50, 100}. Fix random seeds for reproducibility, use tanh activations, and scan N_h ∈ [4, 8, 16, 32, 64, 128]. Record N_c(w) values and compare the scaling trend against the √w prediction and the constant baseline.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "None"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:19:23.414112+00:00",
+      "confirmed_at": "2026-10-01T08:19:23.416595+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

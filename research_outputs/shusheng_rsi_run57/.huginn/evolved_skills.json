@@ -80,8 +80,8 @@
       "rigidity",
       "plan",
       "prediction",
-      "hypothesis",
-      "small"
+      "small",
+      "hypothesis"
     ],
     "workflow_steps": [
       {
