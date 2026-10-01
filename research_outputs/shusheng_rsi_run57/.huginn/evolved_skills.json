@@ -8,9 +8,9 @@
       "huginn",
       "value",
       "label",
-      "rigid",
       "error",
       "experiment",
+      "rigid",
       "constraint",
       "plan",
       "prediction"
