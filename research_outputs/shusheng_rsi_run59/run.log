@@ -144,3 +144,5 @@ plan_check failed (tier=medium, scene=other, max_refines=1): The plan correctly 
 [code-lab-author] raw_len=2006 extracted_len=1991 prompt_len=6265
 [code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
 [code-lab-author] raw_len=2006 extracted_len=1991 prompt_len=6265
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+[code-lab-author] raw_len=2006 extracted_len=1991 prompt_len=6265

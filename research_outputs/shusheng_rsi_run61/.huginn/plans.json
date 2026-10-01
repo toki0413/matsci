@@ -87,6 +87,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d83ddf58",
+      "objective": "[DIM: dynamics] If the solution space is governed by a gradient flow with a sharp energy landscape, the minimal width N_c(w) required to achieve zero violation will grow logarithmically with the number of constraints w, i.e., N_c(w) ∼ log(w), reflecting the need for exponentially more capacity to resolve narrow basins of attraction in high-dimensional space.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "I will design a computational experiment to test the hypothesis that minimal network width N_c(w) grows logarithmically with constraint count w for a gradient-flow-governed solution space. The plan: (1) Define a constrained regression problem with w linear equality constraints sampled from a sharp energy landscape (e.g., high-frequency sinusoidal target with narrow basins). (2) Sweep hidden layer width N ∈ [4, 128] for each w ∈ {10, 20, 50, 100, 200}. (3) For each (w, N) triplet, train a small feedforward network (2 hidden layers, ReLU) on w constraint points and evaluate max absolute error on a held-out test set of w constraints. (4) Determine N_c(w) as the smallest N achieving zero violation (max error ≤ 1e-3). (5) Fit log(w) scaling to N_c(w) and compare against linear/exponential alternatives. This directly tests the numeric claim N_c(w) ∼ log(w) using the specified zero-violation criterion.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/gradient_flow_capacity_scan.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T12:30:04.005525+00:00",
+      "confirmed_at": "2026-10-01T12:30:04.185822+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
