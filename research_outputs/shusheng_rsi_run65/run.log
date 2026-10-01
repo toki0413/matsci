@@ -857,3 +857,83 @@ plan_check failed (tier=light, scene=auto_hypothesis, max_refines=1): The plan c
 [exec-route] mode='explore' desc[:80]='Algebraic Rank Hypothesis: implement executable training script with corrected h' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=1548 extracted_len=1533 prompt_len=4044
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=144 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 12 rounds (Δ<0.5), best=5.00 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=144 evidence=stagnation=12 best=5.00 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0345 μ=2.76 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=144 evidence=sigma2=0.0345 mu=2.76 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the stochastic Fourier mode hypothesis vi' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3481 extracted_len=3466 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (10,1) (200,1) '
+[code-lab-author] raw_len=2701 extracted_len=2686 prompt_len=7689
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (10,1) (200,1) '
+[code-lab-author] raw_len=2963 extracted_len=2948 prompt_len=7689
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (10,1) (200,1) '
+[code-lab-author] raw_len=3109 extracted_len=3094 prompt_len=7689
+code_lab 修复循环: 挂钟预算已耗尽, 停止第 4 次尝试
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 挂钟预算耗尽, 中止 code_lab 修复循环
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = rng.standard_normal(5)
+        Xb = poly_basis(X, 5)
+        y = Xb @ coeffs.reshape(-1, 1)
+        Xvb = poly_basis(Xv, 5)
+        yv = Xvb @ coeffs.reshape(-1, 1)
+    elif kind == 'fat':
+        M = 10
+        f_min, f_max = 1.0, 10.0
+        freqs = rng.uniform(f_min, f_max, M)
+        phases = rng.uniform(0, 2 * np.pi, M)
+        coeffs = rng.standard_normal(M)
+        term1 = 2 * np.pi * freqs[:, None] * X
+        y = np.sum(coeffs[:, None] * np.sin(term1 + phases[:, None]), axis=0)
+        term2 = 2 * np.pi * freqs[:, None] * Xv
+        yv = np.sum(coeffs[:, None] * np.sin(term2 + phases[:, None]), axis=0)
+    else:
+        y = np.zeros((w, 1))
+        yv = np.zeros((200, 1))
+    X_dense = np.linspace(0, 1, 1000).reshape(-1, 1)
+    if kind == 'rigid':
+        Xbd = poly_basis(X_dense, 5)
+        y_dense = Xbd @ coeffs.reshape(-1, 1)
+    else:
+        termd = 2 * np.pi * freqs[:, None] * X_dense
+        y_dense = np.sum(coeffs[:, None] * np.sin(termd + phases[:, None]), axis=0)
+    scale = np.std(y_dense)
+    if scale < 1e-10: scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def mlp_fit(X, y, h, seeds=3):
+    return {'h': h}
+
+def mlp_predict(model, X):
+    return np.zeros((X.shape[0], 1))
+
+def poly_basis(X, n):
+    return X ** np.arange(n)
+
+def _as_2d(x):
+    return x.reshape(-1, 1)
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [10, 20, 30, 40, 50]
+    h_list = [4, 8, 12, 16, 20, 24, 28, 32]
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        error_list = []
+        for w in w_list:
+            Nc_found = None
+            w_errors = []
+           
