@@ -208,3 +208,41 @@ class TestPerceiveCallableDirectly:
         # should return None (no activity) without raising.
         result = engine._perceive()
         assert result is None or isinstance(result, dict)
+
+
+class TestCliAgentCollabWiring:
+    """CLI autoloop 的多智能体协作通电开关.
+
+    盲重建 / failure_inverter / BranchIncubator 都靠 ``engine._agent_factory``;
+    CLI 此前从没注入它 → 三条协作路径静默空转. 这里锁定: 默认关 (None, 零成本),
+    开关打开时才构造 factory.
+    """
+
+    def test_default_off_returns_none(self, monkeypatch: pytest.MonkeyPatch):
+        from huginn.cli.commands import autoloop as cli_autoloop
+
+        monkeypatch.delenv("HUGINN_ENABLE_AGENT_COLLAB", raising=False)
+        assert cli_autoloop._maybe_agent_factory() is None
+
+    def test_flag_on_builds_factory(self, monkeypatch: pytest.MonkeyPatch):
+        from huginn.cli.commands import autoloop as cli_autoloop
+        from huginn import server_core
+
+        monkeypatch.setenv("HUGINN_ENABLE_AGENT_COLLAB", "1")
+        sentinel = object()
+        monkeypatch.setattr(server_core, "get_agent_factory", lambda: sentinel)
+        assert cli_autoloop._maybe_agent_factory() is sentinel
+
+    def test_factory_failure_falls_back_to_single_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from huginn.cli.commands import autoloop as cli_autoloop
+        from huginn import server_core
+
+        monkeypatch.setenv("HUGINN_ENABLE_AGENT_COLLAB", "1")
+
+        def _boom():
+            raise RuntimeError("no config")
+
+        monkeypatch.setattr(server_core, "get_agent_factory", _boom)
+        assert cli_autoloop._maybe_agent_factory() is None

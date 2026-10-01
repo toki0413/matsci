@@ -1,0 +1,16 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "80c159818d03",
+    "reason": "Plan fails to address the core hypothesis: the hypothesis concerns the independence of bootstrap samples and their information content (O(log w)), but the plan tests whether a neural network can fit the samples — which measures approximation capacity, not constraint independence or information complexity. The plan confuses 'capacity to fit' with 'information complexity of constraints'. Additionally, it does not define how bootstrap samples are generated or how their independence is quantified, which is central to the hypothesis. The use of Sobol indices for constraint independence is misapplied — Sobol indices measure sensitivity of outputs to inputs, not independence of constraints.",
+    "missing_steps": [
+      "Define bootstrap sample generation procedure with explicit statistical independence assumptions",
+      "Quantify information content of bootstrap constraint set (e.g., via mutual information or rank of constraint matrix)",
+      "Verify constraint independence using information-theoretic metrics (e.g., mutual information, correlation decay) before testing network capacity",
+      "Reframe hypothesis: test whether minimal N_c(w) scales with information content of constraints, not just sample count w",
+      "Include baseline: test with independent vs. correlated bootstrap samples to isolate effect of correlation"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that N_c(w) ≈ log₂(w) + O(1) for bootstrap-constrained function approximation. Define a family of smooth target functions with known bo"
+  }
+]

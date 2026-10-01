@@ -20,6 +20,30 @@ from huginn.autoloop import AutoloopEngine, save_autoloop_snapshot
 from huginn.cli.context import CliContext
 
 
+def _maybe_agent_factory() -> Any:
+    """多智能体协作通电开关 — 默认 None (纯单 agent, 零额外成本).
+
+    盲重建 / failure_inverter / BranchIncubator 三条协作路径都靠
+    ``engine._agent_factory``; 但 CLI 此前**从没注入**它, 于是它们在长程 run 里
+    全部静默空转 (engine.py 注释声称"由 RCBench runner / CLI 注入"—— 实际未接).
+    置 ``HUGINN_ENABLE_AGENT_COLLAB=1`` 才构造, 默认关 → 默认行为/成本不变.
+    """
+    if os.environ.get("HUGINN_ENABLE_AGENT_COLLAB", "0") != "1":
+        return None
+    try:
+        from huginn.server_core import get_agent_factory
+
+        return get_agent_factory()
+    except Exception:  # 防御: 工厂构造失败退回单 agent
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "agent collab factory build failed; fall back to single-agent",
+            exc_info=True,
+        )
+        return None
+
+
 @click.command()
 @click.argument("objective", required=False, default="")
 @click.option(
@@ -135,7 +159,10 @@ def autoloop(
             f"[yellow]Checkpoint resume failed, starting fresh:[/yellow] {_e}"
         )
     if engine is None:
-        engine = AutoloopEngine(workspace=obj.workspace)
+        engine = AutoloopEngine(
+            workspace=obj.workspace,
+            agent_factory=_maybe_agent_factory(),
+        )
 
     # Goal resolution: --goal resumes a persisted goal; --success-criteria
     # creates a new one. Neither → no goal, run() behaves as before.
