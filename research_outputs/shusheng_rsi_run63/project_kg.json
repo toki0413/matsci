@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: computation] The Universal Approximation Barrier Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:07:24.668326",
+      "last_seen": "2026-10-01T13:07:24.668326",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For geometrically simple targets (e.g., linear or low-curvature analytic functions), N_c(w) will remain small (≤10) and nearly constant as w increases from 10 to 100, indicating rigidity. For high-cur",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The Universal Approximation Barrier Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668371",
+      "last_seen": "2026-10-01T13:07:24.668371",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668381",
+      "last_seen": "2026-10-01T13:07:24.668381",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The Universal Approximation Barrier Hypothesis**",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:07:24.668472",
+      "last_seen": "2026-10-01T13:07:24.668472",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cf6b3d41ffdaf472",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-10-01T13:06:23.551646",
       "mentions": 1,
       "target": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The Universal Approximation Barrier Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b81518"
     }
   ]
 }

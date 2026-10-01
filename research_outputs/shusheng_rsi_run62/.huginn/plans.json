@@ -87,6 +87,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b483f81f",
+      "objective": "[DIM: Structure] Algebraic Independence Hypothesis",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the Algebraic Independence Hypothesis by constructing a small feedforward network with tanh activation and scanning hidden layer width N from 1 to 50 for increasing constraint sample counts w ∈ {10, 20, 50, 100}. For each (w, N) pair, train the network on w sampled points from a known analytic function (e.g., f(x) = sin(2πx) + x²), evaluate max absolute error on a held-out validation set, and record N_c(w) = minimum N achieving validation error ≤ 1e-3. Repeat with 5 random seeds per w to assess stability. Compute N_c(w) trend: if N_c(w) remains bounded (≤20) and non-increasing with w, the hypothesis supports \"rigidity\"; otherwise \"fatness\". All outputs must be finite real numbers.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/algebraic_independence_hypothesis.py",
+            "experiments/configs/scenario_1.json"
+          ]
+        }
+      ],
+      "status": "draft",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:08:01.286720+00:00",
+      "confirmed_at": null,
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

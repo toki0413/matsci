@@ -151,3 +151,8 @@ def run(cfg):
             objectives['score'] += sum(1 for n in Nc_list if n >= 50)
     summary['note'] = f'rigid_Nc={summary["rigid_Nc"]}, fat_Nc={summary["fat_Nc"]}'
     return {'success': True, 'summary': summary, 'objectives': objectives}
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=14 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 将'解空间刚性'这一抽象数学概念，通过定义'零违规'和'最小网络容量'，等价地重新表述为'小型前馈网络在特定误差阈值下的插值能力'。"] | 缺少显式不完整性自白 action=advisory_hint
+control_trace name=collab_blind_reconstruct iteration=14 evidence=skip: no current_hyp_id_for_plan action=skip
+control_trace name=goal_judge iteration=14 evidence=achieved=False score=0.25 llm=1 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Algebraic Independence Hypothesis): [DIM: Structure] Algebraic Independence Hypothesis

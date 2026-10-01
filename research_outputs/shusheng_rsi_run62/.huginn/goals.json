@@ -9,10 +9,10 @@
         "[Feynman known_unknown] I don’t understand how to concretely define or compute “minimal network capacity $ N_c(w) $” for a given constraint set $ w $, especially for “rigid functions.” Is this related to VC dimension? Rademacher complexity? Or something else entirely?",
         "[Feynman unknown_unknown] I never considered that the lack of test execution might stem from missing definitions or unimplemented components — I assumed the framework would handle it automatically, but apparently, explicit specification is required before computation can begin."
       ],
-      "iteration": 14,
+      "iteration": 17,
       "status": "active",
       "created_at": "2026-10-01T12:59:37.885269+00:00",
-      "updated_at": "2026-10-01T13:07:03.904742+00:00",
+      "updated_at": "2026-10-01T13:07:55.197846+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -167,9 +167,49 @@
           "discovered_at": "2026-10-01T13:05:25.038241+00:00",
           "resolved_at": null,
           "iteration": 10
+        },
+        {
+          "id": "unk_ceed2610",
+          "text": "The definition of \"rigid\" relies on a fixed error threshold (1e-3), which may not be scale-invariant; if output values are large, this tolerance becomes trivial, while for small outputs it may be overly strict—potentially misclassifying flexible solutions as rigid or vice versa.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:07:21.515789+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_7b0a4932",
+          "text": "N_c(w) is defined as the *minimum* width achieving zero violation, but in practice, optimization may converge to local minima that appear to satisfy constraints but do not represent true feasibility—leading to underestimation of required capacity and false rigidity claims.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:07:21.517468+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_3ab483b5",
+          "text": "No ground-truth analytic solution family is specified to validate whether observed low-dimensional solution sets are truly unique or merely approximations of high-dimensional manifolds trapped in narrow basins due to initialization or regularization.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:07:21.518685+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_c2f4e5f5",
+          "text": "The assumption that network width alone controls solution space rigidity ignores architectural choices (activation functions, skip connections, normalization) that can implicitly constrain function space independently of width—confounding the probe’s interpretability.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:07:21.519897+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_235e1e2d",
+          "text": "As w → ∞, the constraint set may become over-specified even for wide networks, causing N_c to jump discontinuously or fail entirely—this regime could mask whether rigidity stems from structural constraints or mere saturation of representational power.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:07:21.521113+00:00",
+          "resolved_at": null,
+          "iteration": 15
         }
       ],
-      "unknowns_discovered": 19,
+      "unknowns_discovered": 24,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

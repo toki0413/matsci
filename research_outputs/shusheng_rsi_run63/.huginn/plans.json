@@ -120,6 +120,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_99ee2d89",
+      "objective": "[DIM: structure] The algebraic independence of constraints dictates solution-space rigidity: for a target function defined by w linearly independent basis functions, the minimal network width N_c(w) remains constant (N_c ≈ 4) until w exceeds the algebraic rank of the network's activation manifold, after which N_c(w) jumps discontinuously to the rank threshold. | predict: N_c(w) = 4 for w ≤ 8; N_c(w) = 12 for w > 8 (step function) | pro: This aligns with the \"Algebraic Redundancy\" hypothesis and leverages the fact that small networks have limited expressive capacity; it offers a sharp, binary prediction of rigidity vs. fatness based on constraint independence. con: Requires careful selection of constraints to ensure independence; may be sensitive to the specific basis functions chosen.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] We will design a controlled numerical experiment to test the algebraic independence hypothesis. Specifically, we will (1) construct a target function defined by w linearly independent basis functions (e.g., polynomial or trigonometric basis), (2) train small single-hidden-layer ReLU networks of varying widths N on w constraints (training points), and (3) evaluate the maximum absolute error on a held-out set of constraints to determine N_c(w), defined as the minimal width achieving zero violation (max error ≤ 1e-3). We will scan w from 1 to 16 and N from 1 to 20, repeat for multiple random seeds, and compute the step-function prediction N_c(w) = 4 for w ≤ 8 and N_c(w) = 12 for w > 8. The workflow will generate training/validation error curves, N_c(w) values, and a comparison against the predicted step function.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run63/.huginn/experiment_design.py",
+            "/workspace/research_outputs/shusheng_rsi_run63/.huginn/run_nC_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:07:47.121104+00:00",
+      "confirmed_at": "2026-10-01T13:07:47.122421+00:00",
+      "completed_at": "2026-10-01T13:08:13.206839+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
