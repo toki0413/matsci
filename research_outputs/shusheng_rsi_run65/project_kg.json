@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "Hypothesis 1 (Algebraic Structure)**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:05:35.257771",
+      "last_seen": "2026-10-01T15:05:35.257771",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) remains finite and bounded across w: N_c(10)=8, N_c(20)=8, N_c(30)=8, N_c(40)=12, N_c(50)=12, all ≤32; holdout max errors ≤9.8e-4; training errors ≤2.3e-4; standard deviation across seeds <1. T",
+      "persona": "reviewer",
+      "id": "experiment:Hypothesis 1 (Algebraic Structure)**"
+    },
+    {
+      "label": "plan_skill_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:05:35.257814",
+      "last_seen": "2026-10-01T15:05:35.257814",
+      "mentions": 1,
+      "id": "Method:plan_skill_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:05:35.257826",
+      "last_seen": "2026-10-01T15:05:35.257826",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:05:35.257836",
+      "last_seen": "2026-10-01T15:05:35.257836",
+      "mentions": 1,
+      "members": [
+        "experiment:Hypothesis 1 (Algebraic Structure)**",
+        "Method:plan_skill_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_aeee9313"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:05:35.257936",
+      "last_seen": "2026-10-01T15:05:35.257936",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "32eb212b5a9ff223",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:Hypothesis 1 (Algebraic Structure)**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:05:35.257836",
+      "last_seen": "2026-10-01T15:05:35.257836",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aeee9313"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_skill_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:05:35.257836",
+      "last_seen": "2026-10-01T15:05:35.257836",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aeee9313"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:05:35.257836",
+      "last_seen": "2026-10-01T15:05:35.257836",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aeee9313"
+    }
+  ]
+}

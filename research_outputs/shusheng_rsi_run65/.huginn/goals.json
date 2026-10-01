@@ -3,11 +3,14 @@
     {
       "id": "goal_9b2c9a0d",
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
-      "sub_goals": [],
-      "iteration": 3,
+      "sub_goals": [
+        "[Feynman known_unknown] I don’t understand why the generative verifier flagged repeated phrases as evidence of hallucination — isn’t repetition sometimes intentional (e.g., in poetry or emphasis)? How does the system distinguish between meaningful repetition and empty looping?",
+        "[Feynman unknown_unknown] I never considered how the internal state of the model might cause it to default to constant outputs when faced with ambiguous or high-level prompts like “study your own research iteration” — especially when wrapped in meta-instructions about Feynman method or validation summaries."
+      ],
+      "iteration": 8,
       "status": "active",
       "created_at": "2026-10-01T15:03:23.594041+00:00",
-      "updated_at": "2026-10-01T15:04:54.018935+00:00",
+      "updated_at": "2026-10-01T15:06:44.531489+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -50,9 +53,65 @@
           "discovered_at": "2026-10-01T15:03:26.553031+00:00",
           "resolved_at": null,
           "iteration": 1
+        },
+        {
+          "id": "unk_d82cf082",
+          "text": "The proposed metric of \"minimum network width for zero violation\" may not accurately capture solution space rigidity, as a narrow network achieving low error could still represent just one of many possible solutions rather than indicating a rigid solution space.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:05:29.482690+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_1c36e4b0",
+          "text": "Optimization landscapes for neural networks are highly non-convex; finding the minimum width that achieves zero violation might be confounded by local minima or optimization failures rather than true architectural limitations.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:05:29.483723+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_2c1ae72e",
+          "text": "The definition relies on \"unseen constraint points,\" but it's unclear how these points should be sampled (e.g., uniformly, adversarially, or from the training distribution), which could dramatically affect N_c(w) measurements.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:05:29.484420+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_e822e3b6",
+          "text": "The analysis assumes that generalization behavior correlates with solution space rigidity, but this may not hold if the network learns spurious patterns that happen to satisfy constraints on both train and test sets without reflecting underlying mathematical structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:05:29.485086+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_7d6ca095",
+          "text": "At very small widths, the network may lack sufficient capacity to satisfy even trivial constraints due to discrete parameter effects or activation function saturation, creating artificial thresholds in N_c(w) that don't reflect true rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:05:29.485736+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_53297a40",
+          "text": "I don’t understand why the generative verifier flagged repeated phrases as evidence of hallucination — isn’t repetition sometimes intentional (e.g., in poetry or emphasis)? How does the system distinguish between meaningful repetition and empty looping?",
+          "type": "known_unknown",
+          "discovered_at": "2026-10-01T15:05:39.212803+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_ec7e246f",
+          "text": "I never considered how the internal state of the model might cause it to default to constant outputs when faced with ambiguous or high-level prompts like “study your own research iteration” — especially when wrapped in meta-instructions about Feynman method or validation summaries.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-10-01T15:05:39.214232+00:00",
+          "resolved_at": null,
+          "iteration": 5
         }
       ],
-      "unknowns_discovered": 5,
+      "unknowns_discovered": 12,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
