@@ -371,6 +371,70 @@
       "r_phys": 1.0,
       "iteration": 40,
       "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "DIM: optimization] The solution space is rigid because gradient-based optimizati",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T10:17:38.672235",
+      "last_seen": "2026-10-01T10:17:38.672235",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid constraints (e.g., linear), $N_c(w)$ will plateau at a small constant value (e.g., $N_c \\approx 3-6$) as $w$ increases from 10 to 100, with minimal variation. For smoother constraints, the p",
+      "persona": "reviewer",
+      "id": "experiment:DIM: optimization] The solution space is rigid because gradient-based optimizati"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:17:38.672268",
+      "last_seen": "2026-10-01T10:17:38.672268",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:17:38.672277",
+      "last_seen": "2026-10-01T10:17:38.672277",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T10:17:38.672285",
+      "last_seen": "2026-10-01T10:17:38.672285",
+      "mentions": 1,
+      "members": [
+        "experiment:DIM: optimization] The solution space is rigid because gradient-based optimizati",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_7a225335"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T10:17:38.672347",
+      "last_seen": "2026-10-01T10:17:38.672347",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ddb1874f69e555e1",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
     }
   ],
   "links": [
@@ -535,6 +599,33 @@
       "last_seen": "2026-10-01T10:14:09.511015",
       "mentions": 1,
       "target": "he_experiment_pipeline_fddbc328"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:DIM: optimization] The solution space is rigid because gradient-based optimizati",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:17:38.672285",
+      "last_seen": "2026-10-01T10:17:38.672285",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a225335"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:17:38.672285",
+      "last_seen": "2026-10-01T10:17:38.672285",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a225335"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:17:38.672285",
+      "last_seen": "2026-10-01T10:17:38.672285",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a225335"
     }
   ]
 }
