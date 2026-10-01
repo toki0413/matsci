@@ -115,5 +115,31 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the \"rigidity\" hypothesis: for a given set of $w$ linearly independent analytic constraints (e.g., monomials or trigonometric basis functions), define input dimen"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7a9c11a4d19e",
+    "reason": "The plan contains a fundamental variable definition error: it defines w as the number of constraint samples, but the hypothesis and prediction explicitly require w to be the network width (hidden layer size) over the range [5, 50]. N_c(w) is defined as the minimum network width needed, so w cannot simultaneously be the independent variable (width) and the number of constraints. This makes the proposed experiment logically incoherent as described.",
+    "missing_steps": [
+      "Correct the definition of w to represent network width, not constraint sample count",
+      "Clarify the relationship between constraint system size and network width",
+      "Define how constraint generation scales with network width if w is width"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the hypothesis test for algebraic redundancy in constraint sets by constructing rigid (redundant) and floppy (underdetermined) families of linear constraints, tr"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7a9c11a4d19e",
+    "reason": "The plan defines w ambiguously: it states w is 'hidden layer size' (network width) but then says 'w = constraint sample number' in the known failure note, and the DESCRIPTION says 'varying hidden widths w' while the hypothesis requires N_c(w) to be measured as a function of w. This variable definition conflict makes the experiment logically incoherent. Additionally, the plan does not specify how the constraint systems are generated or how the network is trained/evaluated, which are critical for verifying the hypothesis.",
+    "missing_steps": [
+      "Clarify the definition of w: it must be network width (hidden layer size), not constraint sample count",
+      "Specify how the rigid and floppy constraint families are constructed (mathematical formulation)",
+      "Define the network architecture and training procedure (loss function, optimizer, etc.)",
+      "Specify how N_c(w) is computed (search method for minimum width achieving violation ≤ 1e-3)",
+      "Ensure the constraint system size is fixed and independent of w"
+    ],
+    "mode": "explore",
+    "description": "Test the algebraic redundancy hypothesis by constructing two families of linear constraint systems: (1) Rigid family with fixed, highly redundant constraints (e.g., 100 constraints with only O(1) inde"
   }
 ]

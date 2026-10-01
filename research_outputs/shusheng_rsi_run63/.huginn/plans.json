@@ -295,6 +295,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d665077e",
+      "objective": "[DIM: structure] The algebraic redundancy of the constraint set induces a low-dimensional solution manifold; small feedforward networks exploit this redundancy to achieve zero violation with N_c(w) ≈ O(1) independent of w, provided w exceeds the intrinsic degrees of freedom. | predict: N_c(w) remains constant (≤ 10) for w ∈ [5, 50] in the rigid family, while N_c(w) grows linearly or saturates at the maximum tested width in the floppy family. pro: Directly tests the core hypothesis of algebraic redundancy as a probe of solution space rigidity; aligns with prior successful \"surprise=1.0\" results on algebraic independence. con: Requires careful construction of redundant constraints to ensure the rigidity/fat distinction is meaningful; risk of overfitting if redundancy is too strong.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Test the algebraic redundancy hypothesis by constructing two families of linear constraint systems: (1) Rigid family with fixed, highly redundant constraints (e.g., 100 constraints with only O(1) independent equations), and (2) Floppy family with underdetermined constraints (e.g., 100 constraints with O(w) independent equations where w is network width). For each family, train small feedforward networks with varying hidden widths w ∈ [5, 50] and measure N_c(w) = minimum width achieving max absolute violation ≤ 1e-3 on held-out constraints. Keep constraint system size fixed while sweeping w to isolate the effect of network capacity on exploiting algebraic structure.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:26:51.108291+00:00",
+      "confirmed_at": "2026-10-01T13:26:51.110005+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

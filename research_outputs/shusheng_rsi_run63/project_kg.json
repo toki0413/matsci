@@ -435,6 +435,70 @@
       "r_phys": 1.0,
       "iteration": 45,
       "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:26:26.718890",
+      "last_seen": "2026-10-01T13:26:26.718890",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For small w (e.g., w ≤ 10), N_c(w) will be small and approximately constant (indicating rigidity); for larger w, N_c(w) will increase significantly or become infeasible within the tested width range (",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718928",
+      "last_seen": "2026-10-01T13:26:26.718928",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718937",
+      "last_seen": "2026-10-01T13:26:26.718937",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:26:26.719015",
+      "last_seen": "2026-10-01T13:26:26.719015",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c729e2ea99981a73",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -626,6 +690,33 @@
       "last_seen": "2026-10-01T13:23:19.103469",
       "mentions": 1,
       "target": "he_experiment_pipeline_3123c4fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6149065d"
     }
   ]
 }
