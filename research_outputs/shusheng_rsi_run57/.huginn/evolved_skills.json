@@ -80,8 +80,8 @@
       "rigidity",
       "plan",
       "prediction",
-      "constraint",
-      "experiment"
+      "experiment",
+      "hypothesis"
     ],
     "workflow_steps": [
       {
