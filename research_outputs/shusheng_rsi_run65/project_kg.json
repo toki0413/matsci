@@ -563,6 +563,70 @@
       "r_phys": 0.75,
       "iteration": 65,
       "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "**[DIM: computation] Approximation Rank Threshold Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:33:25.929950",
+      "last_seen": "2026-10-01T15:33:25.929950",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect $N_c(w)$ to remain finite (e.g., $\\le 16$) across the scanned $w$ range, indicating the solution space is rigid for this function class. Validation errors will show a sharp transition from $",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: computation] Approximation Rank Threshold Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:33:25.929994",
+      "last_seen": "2026-10-01T15:33:25.929994",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:33:25.930002",
+      "last_seen": "2026-10-01T15:33:25.930002",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:33:25.930011",
+      "last_seen": "2026-10-01T15:33:25.930011",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: computation] Approximation Rank Threshold Hypothesis**",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_f8410d35"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:33:25.930080",
+      "last_seen": "2026-10-01T15:33:25.930080",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "61f07a469816675c",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
     }
   ],
   "links": [
@@ -808,6 +872,33 @@
       "last_seen": "2026-10-01T15:32:06.016789",
       "mentions": 1,
       "target": "he_experiment_pipeline_83e8c94"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: computation] Approximation Rank Threshold Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:33:25.930011",
+      "last_seen": "2026-10-01T15:33:25.930011",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f8410d35"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:33:25.930011",
+      "last_seen": "2026-10-01T15:33:25.930011",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f8410d35"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:33:25.930011",
+      "last_seen": "2026-10-01T15:33:25.930011",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f8410d35"
     }
   ]
 }
