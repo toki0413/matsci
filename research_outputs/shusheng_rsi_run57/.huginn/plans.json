@@ -61,6 +61,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_82ad6844",
+      "objective": "**[DIM: structure] Algebraic dependency hypothesis.**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will test the algebraic dependency hypothesis by measuring the minimal hidden layer width N_c(w) that achieves zero violation (max absolute error ≤ 1e-3) on a held-out constraint set, as w (constraint sample count) varies. We will use a small 2-layer tanh MLP, scan N_h ∈ {4,8,16,32,64,128}, and evaluate N_c(w) trend. If N_c(w) saturates at a small finite value, we conclude rigidity; if no N_h ≤ 128 achieves the criterion, we conclude fatness. We will fix random seeds, use Adam with early stopping, and report training vs. held-out error curves.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run57/.huginn/experiments/algebraic_dependency_test.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T07:32:04.919563+00:00",
+      "confirmed_at": "2026-10-01T07:32:04.920847+00:00",
+      "completed_at": "2026-10-01T07:32:37.389971+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
