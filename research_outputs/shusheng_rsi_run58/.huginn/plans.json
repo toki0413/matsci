@@ -89,6 +89,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_30811a01",
+      "objective": "[DIM: structure] The solution space is rigid when the constraint set induces a rank-deficient Jacobian in the network parameter space, causing an algebraic phase transition where N_c(w) remains bounded below a critical w_c; predict: N_c(w) = constant for w < w_c, then jumps to infinity at w ≥ w_c.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and run a bootstrap experiment to test the rigidity hypothesis: generate random linear constraints on a small feedforward network, vary the number of constraints w, and for each w find the minimum hidden-layer width N_c(w) that achieves zero violation (max absolute error ≤ 1e-3) on a held-out set. Sweep w from 1 up to the point where the Jacobian becomes rank-deficient, and record whether N_c(w) remains bounded (rigid) or diverges (fat). Use the autoloop high-reward workflow to scan widths efficiently and validate against the prior iteration's expectation of linear scaling.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/rigidity_bootstrap.py",
+            "tests/test_rigidity_bootstrap.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T09:51:44.760047+00:00",
+      "confirmed_at": "2026-10-01T09:51:44.761854+00:00",
+      "completed_at": "2026-10-01T09:51:51.746430+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
