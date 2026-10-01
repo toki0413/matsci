@@ -1411,6 +1411,16 @@ class EngineReflect:
             "control_trace name=%s iteration=%s evidence=%s action=%s",
             name, _iter, evidence, action,
         )
+        # 遥测面: 同 cognitive_loop, 落 OTel event 供 Langfuse 检索. 纯观测, fail-open.
+        try:
+            from huginn.telemetry import get_telemetry_collector
+
+            get_telemetry_collector().add_event(
+                "control_trace", name=name, iteration=_iter,
+                evidence=evidence, action=action,
+            )
+        except Exception:  # 防御: 遥测未接线/失败不打断控制流
+            logger.debug("control_trace telemetry emit failed (fail-open)", exc_info=True)
         try:
             self._emit_campaign(
                 "campaign.control_trace",

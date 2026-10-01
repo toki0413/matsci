@@ -1405,6 +1405,18 @@ class CognitiveRunner:
             "control_trace name=%s iteration=%s evidence=%s action=%s",
             name, _iter, evidence, action,
         )
+        # 遥测面: 同一事件也作为 OTel span event 落进 TelemetryCollector → 配了
+        # HUGINN_OTEL_ENDPOINT 时可在 Langfuse 里按 name 检索 (与 run.log 的 WARNING
+        # 互为补充: 日志离线可 grep, 遥测在线可查). 纯观测, fail-open.
+        try:
+            from huginn.telemetry import get_telemetry_collector
+
+            get_telemetry_collector().add_event(
+                "control_trace", name=name, iteration=_iter,
+                evidence=evidence, action=action,
+            )
+        except Exception:  # 防御: 遥测未接线/失败不打断控制流
+            logger.debug("control_trace telemetry emit failed (fail-open)", exc_info=True)
         self._emit_campaign(
             "campaign.control_trace",
             {
