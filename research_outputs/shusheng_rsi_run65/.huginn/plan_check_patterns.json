@@ -162,5 +162,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement a reproducible numerical experiment to test the \"Curvature-Driven Fatness\" hypothesis. Define a target function with specific curvature properties (e.g., high-fr"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "f09a91e85cf3",
+    "reason": "The plan correctly identifies the mathematical structure (bounded capacity vs. fatness) and defines the hypothesis clearly. However, it fails to address the critical 'Zero Intrusion' and 'Physical Reasonableness' principles by not specifying the concrete implementation details of the numerical experiment (e.g., network architecture, loss function, optimization method, data generation). Without these, the experiment cannot be reproduced or validated. Additionally, the plan does not account for potential overfitting or generalization issues that could affect N_c(w) measurements.",
+    "missing_steps": [
+      "Define the specific neural network architecture (layers, activation functions, initialization)",
+      "Specify the loss function and optimization algorithm (e.g., Adam, SGD with learning rate)",
+      "Describe the data generation process (distribution, size, noise level)",
+      "Detail the validation procedure (train/holdout split, stopping criteria)",
+      "Include error analysis and confidence intervals for N_c(w) estimates",
+      "Address potential overfitting and generalization concerns"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a hypothesis-driven parameter scan for the Bounded Capacity hypothesis (H2) by: (1) defining the testable assertion that N_c(w) remains bounded as w increases, (2) implementing the "
   }
 ]
