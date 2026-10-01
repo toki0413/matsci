@@ -660,3 +660,11 @@ renamed-reduction 5× consecutive: escalate — block dominant family + force re
 [exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the Concentration of Measure H' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2176 extracted_len=2161 prompt_len=4238
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+darwin ratchet: stagnation 25 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=129 evidence=stagnation=25 best=2.50 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0384 μ=2.50 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=129 evidence=sigma2=0.0384 mu=2.50 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='This is a mathematical/ML inquiry about "solution space rigidity" in small feedf' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3742 extracted_len=3727 prompt_len=4183
+[code-lab-run] res_none=False success=True nobj=3 reason=''
