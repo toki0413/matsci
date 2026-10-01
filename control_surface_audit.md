@@ -496,3 +496,47 @@ run63（baseline）`collab_*` 为 **0**，符合预期：调用点由 `HUGINN_BL
 > （pydantic/numpy/cryptography/langchain*/langgraph/networkx/pyyaml）后跑**定向**用例；
 > 全量 `83 passed` 的结论仍来自 §8.4 的运行环境，不在本沙箱复核。
 > 下一步：起 run64（同 run62 参数、含 v27 接线修复）复验两条 skip 是否转成真产出。
+
+### 8.6 run64 复验：id 修复生效，但 `summary_len=0` 另有真因（v28）
+
+**id 修复已生效**。run64（collab ON，含 v27）实测：iteration 4 仍是
+`skip: no current_hyp_id_for_plan`（此时确实还没成功加过假设，**合法**），
+而 run62 里同因跳过的 iteration 14 / 19 在 run64 中**不再因 id 跳过**，改为进入派发。
+
+**但 `summary_len=0` 未解决**（run64 iter 9/14/19 仍是
+`skip: dispatch returned nothing success=True summary_len=0`）→ §8.5 的
+`_extract_output` 反向取非空**不是真因**。
+
+**真因**（单次派发探针 `/tmp/probe_blind_recon.py` 直接观测到流事件序列）：
+
+```
+has_msgs=False  keys=['exec_mode','flags','trace_id','type','user_mode']   # mode_banner
+has_msgs=False  keys=['material','raw','reason','suggestion','type']       # clarification_request
+has_msgs=True   keys=['files','messages']                                  # ← 真状态
+has_msgs=False  keys=['_token']                                            # 流式 token
+has_msgs=True   keys=['files','messages']                                  # ← 真状态
+has_msgs=False  keys=['_auto_continue']                                    # ← 末条! 无 messages
+```
+
+[`streaming.py`](agent/huginn/agent/streaming.py) 的 `chat()` 除 langgraph state 外还会
+yield 一批**控制事件**（`_token` / `_reasoning` / `_compacted` / `_auto_continue` /
+`tool_break`）。子 agent 用尽 tool 预算时会触发 synthetic continue，于是**末条 yield 是
+`{"_auto_continue": True}`**。而 [`subagent.py`](agent/huginn/agents/subagent.py) `dispatch`
+旧实现 `final_state = state` 取最后一条 → 该 state **没有 `messages` 键** →
+`_extract_output` / `_extract_tool_calls` / `_estimate_tokens` 全读到空 →
+`success=True` 但 `summary_len=0`、`tool_calls=0`。
+
+**修法**（[`subagent.py`](agent/huginn/agents/subagent.py) `dispatch` 的流循环）：只把
+**带非空 `messages`** 的 state 认作 `final_state`（嵌套的 `{"state": {...}}` 解开一层），
+从未见过 messages 时才兜底留首条。§8.5 的"反向取非空"仍保留（同 state 内末条常空）。
+
+**探针实测**（同一 statement，修复后）：`success=True, summary_len=26, tool_calls=0`，
+且事件序列确认末条是 `_auto_continue`。即：修复前该派发必为 `summary_len=0`。
+
+新增回归守卫：`TestSubagentDispatch::test_dispatch_skips_control_events_when_picking_final_state`
+（构造 yield 控制事件的假 agent，断言 summary 取到真状态内容；绿）。
+`collab_blind_reconstruct` 空返回 trace 追加 `full_len=` / `tool_calls=` 两个字段，
+便于下一轮区分"没拿到状态" vs "拿到了但真为空"。
+
+> 下一步：起 run65（同 run62 参数、含 v28）——预期 `summary_len=0` 消失，
+> `collab_blind_reconstruct` 出现真产出（holds/derivation）或至少进入解析分支。

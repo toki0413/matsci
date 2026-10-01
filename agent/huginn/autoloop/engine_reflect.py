@@ -888,7 +888,9 @@ class EngineReflect:
             self._emit_control_trace(
                 "collab_blind_reconstruct",
                 f"skip: dispatch returned nothing success={_res.success} "
-                f"summary_len={len(_res.summary or '')}",
+                f"summary_len={len(_res.summary or '')} "
+                f"full_len={len(getattr(_res, 'full_output', '') or '')} "
+                f"tool_calls={len(getattr(_res, 'tool_calls', []) or [])}",
                 action="skip",
             )
             return

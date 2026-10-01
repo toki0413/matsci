@@ -344,7 +344,21 @@ class SubagentDispatch:
             final_state = None
             async for state in agent.chat(task, thread_id):
                 if isinstance(state, dict):
-                    final_state = state
+                    # chat() 除 langgraph state (含 "messages") 外, 还 yield 一批
+                    # **控制事件**: {"_token":..} / {"_reasoning":..} /
+                    # {"tool_break":True,"state":{...}} / {"_auto_continue":True} /
+                    # {"_compacted":..}. 末条常是控制事件 → 若直接取最后一条,
+                    # 后面的 _extract_output/_extract_tool_calls/_estimate_tokens
+                    # 读到的 state 根本没有 "messages", 整个子 agent 产出被判为空
+                    # (run62/64 实测: blind_recon dispatch success=True 却
+                    # summary_len=0, 6 次派发里 3 次空手).
+                    # 故只认带非空 messages 的真实状态; {"state": {...}} 一层解开.
+                    # 从未见过 messages 时兜底保留首条 dict (保持旧行为).
+                    _cand = state.get("state") if "messages" not in state else state
+                    if isinstance(_cand, dict) and _cand.get("messages"):
+                        final_state = _cand
+                    elif final_state is None:
+                        final_state = state
                     if on_state is not None:
                         try:
                             await on_state(state)
