@@ -473,3 +473,26 @@ run63（baseline）`collab_*` 为 **0**，符合预期：调用点由 `HUGINN_BL
 - 数据并入 §5.3 第二轮删减决策。
 
 单测全绿：`tests/test_engine_decomposed.py` **83 passed**（含 §8.1–§8.3 新增 5 例）。
+
+### 8.5 修 run62 暴露的两处接线（v27）
+
+§8.4 的两条 trace 各自指向一处**接线**缺陷，已按最小改动修掉：
+
+| 现象（run62） | 根因 | 修法 |
+|---------------|------|------|
+| `skip: no current_hyp_id_for_plan`（iter 4/14/19） | [`cognitive_loop.py`](agent/huginn/autoloop/cognitive_loop.py) `add_hypothesis` 对**空壳/精确重复**陈述返回 `None`，旧代码把它直接写回 `_current_hyp_id_for_plan` → **清掉上一轮的有效 id**，下游盲重建/plan_check 误判"无当前假设"而跳过 | 置位前加非空守卫：只有 `cog["current_hyp_id"]` 为真才覆盖 |
+| `skip: dispatch returned nothing success=True summary_len=0`（iter 9/24/29） | [`subagent.py`](agent/huginn/agents/subagent.py) `_extract_output` 只取**最后一条**消息；子 agent 用尽 tool 预算时末条是 `content=""` → 整个产出被判为 `""` | 反向遍历取**最后一条非空** content；全空才返回 `""` |
+
+两处均为**接线修复**，不改任何科学判断，也不新增控制面硬点（按 §3 过闸）。
+
+验证：
+- `_extract_output` 反向取非空 — 新增回归守卫
+  `TestSubagentDispatch::test_extract_output_takes_last_non_empty_message`（绿）。
+- 协作跳过路径 trace 未被破坏：
+  `test_blind_reconstruct_skip_emits_control_trace` / `test_branch_incubator_empty_candidates_emits_trace`
+  等 `tests/test_engine_decomposed.py` 相关 6 例全绿。
+
+> 注：本轮验证在无 `.venv` 的沙箱内进行，仅装了 import 链最小依赖
+> （pydantic/numpy/cryptography/langchain*/langgraph/networkx/pyyaml）后跑**定向**用例；
+> 全量 `83 passed` 的结论仍来自 §8.4 的运行环境，不在本沙箱复核。
+> 下一步：起 run64（同 run62 参数、含 v27 接线修复）复验两条 skip 是否转成真产出。

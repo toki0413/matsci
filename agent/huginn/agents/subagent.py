@@ -450,16 +450,23 @@ class SubagentDispatch:
 
     @staticmethod
     def _extract_output(state: Any) -> str:
-        """从 agent 最终 state 里取最后一条消息的文本."""
+        """从 agent 最终 state 里取**最后一条非空**消息的文本.
+
+        末条消息常为空 —— 子 agent 用尽 tool 预算 / max_iterations 时, 最后一条是
+        content="" 的 AI 或 tool 消息. 旧实现只取最后一条 → 整个子 agent 产出被判为 ""
+        (run62 实测 blind_reconstructor 6 次派发里 3 次 summary_len=0, 协作零产出).
+        故回退到最近一条非空 content; 全空才返回 "".
+        """
         if not isinstance(state, dict):
             return str(state) if state else ""
         messages = state.get("messages", [])
         if not messages:
             return ""
-        last = messages[-1]
-        if hasattr(last, "content"):
-            return str(last.content)
-        return str(last)
+        for msg in reversed(messages):
+            text = str(msg.content) if hasattr(msg, "content") else str(msg)
+            if text.strip():
+                return text
+        return ""
 
     @staticmethod
     def _extract_tool_calls(state: Any) -> list[dict[str, Any]]:

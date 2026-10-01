@@ -363,6 +363,25 @@ class TestSubagentDispatch:
         assert "coder" in SubagentDispatch.BUILTIN_SPECS
         assert "analyst" in SubagentDispatch.BUILTIN_SPECS
 
+    def test_extract_output_takes_last_non_empty_message(self):
+        """末条消息常为空 (tool 预算耗尽) → 必须回退到最近一条非空 content.
+
+        回归守卫: 旧实现只取最后一条 → 整个子 agent 产出被判为 "" (run62 实测
+        blind_reconstructor 6 次派发里 3 次 summary_len=0, 协作零产出).
+        """
+        from huginn.agents.subagent import SubagentDispatch
+
+        class _Msg:
+            def __init__(self, content):
+                self.content = content
+
+        state = {"messages": [_Msg("first finding"), _Msg(""), _Msg("   ")]}
+        assert SubagentDispatch._extract_output(state) == "first finding"
+        # 全空 / 无消息 → ""
+        assert SubagentDispatch._extract_output({"messages": [_Msg(""), _Msg(" ")]}) == ""
+        assert SubagentDispatch._extract_output({"messages": []}) == ""
+        assert SubagentDispatch._extract_output(None) == ""
+
     def test_register_custom_spec(self):
         from huginn.agents.subagent import SubagentDispatch, SubagentSpec
 

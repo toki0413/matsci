@@ -2954,7 +2954,12 @@ Respond JSON only:
                                 statement=phase.result,
                                 rationale=ctx.get("summary", ""),
                             )
-                            self._current_hyp_id_for_plan = cog["current_hyp_id"]
+                            # add_hypothesis 对**空壳/精确重复**陈述返回 None (守卫拒绝).
+                            # 不能把 None 写回 _current_hyp_id_for_plan —— 那会清掉上一轮
+                            # 的有效假设 id, 让下游 (盲重建/plan_check) 误判"无当前假设"
+                            # 而跳过 (run62 实测 6 次盲重建里 3 次因此空转).
+                            if cog["current_hyp_id"]:
+                                self._current_hyp_id_for_plan = cog["current_hyp_id"]
                         except Exception:  # 防御: 假设图新增失败忽略
                             logger.debug("hypothesis_graph add failed", exc_info=True)
                     # P0 Task 3: per-hyp 验证预算 — 创建时评估 informativeness + 分配 budget
