@@ -22,3 +22,9 @@ Statement: [DIM: geometry] Geometric Rigidity via Manifold Intersection: The con
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_7f9d336b] 2026-10-01T15:45:50+00:00
+Statement: H0 (rigid) — it is the most testable and novel because it directly addresses the boundedness of N_c for an analytic target, contrasting with H1 (fat) which predicts unbounded growth, and H2 which pred
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

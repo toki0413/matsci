@@ -947,6 +947,70 @@
       "r_phys": 1.0,
       "iteration": 95,
       "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "H0 (rigid) — it is the most testable and novel because it directly addresses the",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:45:59.698495",
+      "last_seen": "2026-10-01T15:45:59.698495",
+      "mentions": 1,
+      "iteration": 100,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain ≤12 across all w (w∈{10,20,30,40,50}), with N_c(10)=N_c(20)=N_c(30)=8 and N_c(40)=N_c(50)=12, and standard deviation <1 across 3 seeds. Hold-out errors will be ≤1e-3 for the minimal",
+      "persona": "reviewer",
+      "id": "experiment:H0 (rigid) — it is the most testable and novel because it directly addresses the"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:45:59.698537",
+      "last_seen": "2026-10-01T15:45:59.698537",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:45:59.698546",
+      "last_seen": "2026-10-01T15:45:59.698546",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:45:59.698558",
+      "last_seen": "2026-10-01T15:45:59.698558",
+      "mentions": 1,
+      "members": [
+        "experiment:H0 (rigid) — it is the most testable and novel because it directly addresses the",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_ea64532a"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:45:59.698639",
+      "last_seen": "2026-10-01T15:45:59.698639",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f653f03b6fe35109",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
     }
   ],
   "links": [
@@ -1354,6 +1418,33 @@
       "last_seen": "2026-10-01T15:42:05.556091",
       "mentions": 1,
       "target": "he_experiment_pipeline_142aecb4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:H0 (rigid) — it is the most testable and novel because it directly addresses the",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:45:59.698558",
+      "last_seen": "2026-10-01T15:45:59.698558",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea64532a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:45:59.698558",
+      "last_seen": "2026-10-01T15:45:59.698558",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea64532a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:45:59.698558",
+      "last_seen": "2026-10-01T15:45:59.698558",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea64532a"
     }
   ]
 }
