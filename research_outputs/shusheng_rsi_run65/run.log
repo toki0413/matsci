@@ -251,3 +251,7 @@ control_trace name=darwin_stagnation iteration=34 evidence=stagnation=6 best=5.0
 [exec-route] mode='explore' desc[:80]='Correct variable mapping: w = constraint sample count (x-axis sweep), N_c = mini' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2643 extracted_len=2628 prompt_len=3995
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=39 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 7 rounds (Δ<0.5), best=5.00 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=39 evidence=stagnation=7 best=5.00 action=advisory_hint

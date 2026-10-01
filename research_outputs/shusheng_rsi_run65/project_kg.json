@@ -71,10 +71,10 @@
       "label": "\".",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-10-01T15:07:33.070783",
-      "last_seen": "2026-10-01T15:07:33.070783",
-      "mentions": 1,
+      "last_seen": "2026-10-01T15:20:04.213180",
+      "mentions": 2,
       "iteration": 10,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -322,6 +322,55 @@
       "r_phys": 1.0,
       "iteration": 35,
       "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:20:04.213212",
+      "last_seen": "2026-10-01T15:20:04.213212",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:20:04.213231",
+      "last_seen": "2026-10-01T15:20:04.213231",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:20:04.213240",
+      "last_seen": "2026-10-01T15:20:04.213240",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_2c95560b"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:20:04.213307",
+      "last_seen": "2026-10-01T15:20:04.213307",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9c09406bc5c05fed",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
     }
   ],
   "links": [
@@ -360,6 +409,15 @@
       "last_seen": "2026-10-01T15:07:33.070955",
       "mentions": 1,
       "target": "he_experiment_pipeline_1b16231c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:20:04.213240",
+      "last_seen": "2026-10-01T15:20:04.213240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c95560b"
     },
     {
       "relation": "member_of",
@@ -459,6 +517,24 @@
       "last_seen": "2026-10-01T15:16:55.217404",
       "mentions": 1,
       "target": "he_experiment_pipeline_3a3188b4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:20:04.213240",
+      "last_seen": "2026-10-01T15:20:04.213240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c95560b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:20:04.213240",
+      "last_seen": "2026-10-01T15:20:04.213240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c95560b"
     }
   ]
 }

@@ -11,8 +11,8 @@
       "function",
       "constraint",
       "plan",
-      "prediction",
       "rigidity",
+      "prediction",
       "error"
     ],
     "workflow_steps": [

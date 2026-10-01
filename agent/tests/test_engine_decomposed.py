@@ -590,6 +590,65 @@ def test_blind_reconstruct_skip_emits_control_trace() -> None:
     assert "no current_hyp_id_for_plan" in trace["evidence"]
 
 
+def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
+    """成功派发的反证此前**只落 logger.info** → 控制面只见 skip, 会误判空转.
+
+    run65 实测 3 次真反证全靠 FAILED.md 才看出, run.log 里只有 "skip: node
+    status=refuted". 现在成功路径也必须落 trace.
+    """
+    import json as _json
+
+    import huginn.agents.subagent as sub_mod
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    captured: list[tuple[str, dict]] = []
+
+    class _Node:
+        status = "untested"
+        statement = "N_c(w) stays bounded as constraints grow"
+        evidence: dict = {}
+        dimension = ""
+
+    class _Graph:
+        _nodes = {"h1": _Node()}
+
+        def refute(self, hid, ev):  # 断言反证路径被走到
+            self.refuted = (hid, ev)
+
+    class _Res:
+        success = True
+        summary = _json.dumps({"holds": False, "derivation": "bounded counterexample"})
+        full_output = "bounded counterexample"
+        tool_calls = [{"name": "code_lab"}]
+        spec_name = "blind_reconstructor"
+
+    class _FakeDispatch:
+        async def dispatch(self, name, task, context=None):
+            return _Res()
+
+    monkeypatch.setattr(sub_mod, "SubagentDispatch", _FakeDispatch)
+    monkeypatch.delenv("HUGINN_PER_HYP_BUDGET", raising=False)
+
+    class _StubEngine:
+        _iteration = 7
+        _agent_factory = object()
+        hypothesis_graph = _Graph()
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            captured.append((event_type, data))
+
+    eng = EngineReflect(_StubEngine())
+    eng._current_hyp_id_for_plan = "h1"
+    # results.tests_passed=True → orig_holds=True, 盲重建 holds=False → mismatch → refute
+    asyncio.run(eng._blind_reconstruct_verify(None, {"tests_passed": True}))
+
+    trace = next(d for _, d in captured if d.get("name") == "collab_blind_reconstruct")
+    assert trace["action"] == "refute"
+    assert "blind_holds=False" in trace["evidence"]
+    assert "summary_len=" in trace["evidence"]
+    assert eng.hypothesis_graph.refuted[0] == "h1"
+
+
 def test_branch_incubator_empty_candidates_emits_trace() -> None:
     """孵化跑了但 N 路全空手 → 留 trace, 区分"没跑"与"跑了没结果"."""
     from huginn.autoloop.hypothesis_loop import HypothesisLoop
