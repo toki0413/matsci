@@ -584,3 +584,11 @@ control_trace name=belief_convergence iteration=89 evidence=sigma2=0.0555 mu=2.8
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] The previous hypothesis (Manifold Intersection) was' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2036 extracted_len=2021 prompt_len=4234
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=94 evidence=skip: node status=refuted action=skip
+darwin ratchet: belief converged σ²=0.0526 μ=2.82 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=94 evidence=sigma2=0.0526 mu=2.82 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=H0 (rigid): For analytic target f(x)=sin(2πx)+0.5cos(4πx), the minimal hidden width N_c(w) required to keep hold‑out max absolute error ≤1e‑3 stays ≤12 for all w∈{10,20,30,40,50}, i.e., N_c(w) is O(1) and does not diverge with w.): H0 (rigid) — it is the most testable and novel because it directly addresses the boundedness of N_c 
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute the full scan of hidden widths h and constr' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2159 extracted_len=2144 prompt_len=4763
+[code-lab-run] res_none=False success=True nobj=4 reason=''

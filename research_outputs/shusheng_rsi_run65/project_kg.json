@@ -883,6 +883,70 @@
       "r_phys": 1.0,
       "iteration": 90,
       "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "** **[DIM: structure]** **Algebraic Rank of Lattice Constraints**.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:42:05.556038",
+      "last_seen": "2026-10-01T15:42:05.556038",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will yield finite N_c(w) values for w ∈ {10, 20, 30, 40, 50}. We expect N_c(w) to remain small (≤ 12) and bounded as w increases, indicating \"rigidity\" rather than \"fatness.\" All traini",
+      "persona": "reviewer",
+      "id": "experiment:** **[DIM: structure]** **Algebraic Rank of Lattice Constraints**."
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:42:05.556075",
+      "last_seen": "2026-10-01T15:42:05.556075",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:42:05.556083",
+      "last_seen": "2026-10-01T15:42:05.556083",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:42:05.556091",
+      "last_seen": "2026-10-01T15:42:05.556091",
+      "mentions": 1,
+      "members": [
+        "experiment:** **[DIM: structure]** **Algebraic Rank of Lattice Constraints**.",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_142aecb4"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:42:05.556160",
+      "last_seen": "2026-10-01T15:42:05.556160",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6ba786df0d1beeec",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
     }
   ],
   "links": [
@@ -1263,6 +1327,33 @@
       "last_seen": "2026-10-01T15:40:59.791881",
       "mentions": 1,
       "target": "he_experiment_pipeline_a35104a4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** **[DIM: structure]** **Algebraic Rank of Lattice Constraints**.",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:42:05.556091",
+      "last_seen": "2026-10-01T15:42:05.556091",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_142aecb4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:42:05.556091",
+      "last_seen": "2026-10-01T15:42:05.556091",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_142aecb4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:42:05.556091",
+      "last_seen": "2026-10-01T15:42:05.556091",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_142aecb4"
     }
   ]
 }

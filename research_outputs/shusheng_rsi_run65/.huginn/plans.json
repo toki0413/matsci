@@ -559,6 +559,43 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b6489a92",
+      "objective": "H0 (rigid) — it is the most testable and novel because it directly addresses the boundedness of N_c for an analytic target, contrasting with H1 (fat) which predicts unbounded growth, and H2 which predicts a different geometric mechanism but same bounded prediction; H0 can be distinguished by whether N_c stays ≤12 as w increases, whereas H1 would show N_c exceeding 32 before w=50. The governing condition is the analyticity of f; the numerical experiment should scan w∈{10,20,30,40,50}, hidden widths h∈{4,8,12,16,20,24,28,32}, train with Adam (lr=1e‑3, batch=16, max 10k epochs, early‑stopping on hold‑out), and record the minimal h achieving max|error|≤1e‑3 on a separate set of 100 hold‑out points; repeat with 3 random seeds for robustness. If N_c(w) remains ≤12 and stable across seeds, H0 is supported; if N_c(w) grows beyond 32, H1 is favored; if N_c(w) stays bounded but the error landscape shows high curvature (e.g., large Hessian norms), H2 may be relevant.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Execute the full scan of hidden widths h and constraint counts w using the specified small feedforward network (tanh activation, Adam lr=1e-3, batch=16, max 10k epochs, early stopping). For each w ∈ {10,20,30,40,50} and h ∈ {4,8,12,16,20,24,28,32}, train on w sampled points from the analytic target f(x)=sin(2πx)+0.5cos(4πx) and evaluate on 100 hold-out points. Record the minimal h achieving max|error|≤1e-3 on the hold-out set (N_c(w)). Repeat for 3 random seeds (0,1,2) and report the mean N_c(w) with standard deviation. Generate a plot of N_c(w) vs w to assess boundedness (rigid) vs unbounded growth (fat). All reported values must be finite real numbers.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_scan.py",
+            "(new",
+            "script",
+            "to",
+            "be",
+            "written",
+            "and",
+            "executed)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T15:42:36.372503+00:00",
+      "confirmed_at": "2026-10-01T15:42:36.374478+00:00",
+      "completed_at": "2026-10-01T15:45:41.587582+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
