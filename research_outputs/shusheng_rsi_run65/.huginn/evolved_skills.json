@@ -8,12 +8,12 @@
       "huginn",
       "value",
       "label",
-      "constraint",
       "function",
+      "constraint",
       "plan",
-      "rigidity",
-      "space",
-      "prediction"
+      "prediction",
+      "error",
+      "rigidity"
     ],
     "workflow_steps": [
       {

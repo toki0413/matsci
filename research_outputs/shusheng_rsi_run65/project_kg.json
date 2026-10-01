@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "**Loss Landscape Flatness Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:14:42.185328",
+      "last_seen": "2026-10-01T15:14:42.185328",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain ≤ 12 for w ≤ 50 and jump to ≥ 16 at w=60, indicating a sharp transition from rigid to fat behavior; holdout errors will stay ≤ 1e-3 for N_c(w) widths and > 1e-3 otherwise; training",
+      "persona": "reviewer",
+      "id": "experiment:**Loss Landscape Flatness Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:14:42.185365",
+      "last_seen": "2026-10-01T15:14:42.185365",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:14:42.185374",
+      "last_seen": "2026-10-01T15:14:42.185374",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:14:42.185382",
+      "last_seen": "2026-10-01T15:14:42.185382",
+      "mentions": 1,
+      "members": [
+        "experiment:**Loss Landscape Flatness Hypothesis**",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_60194075"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:14:42.185443",
+      "last_seen": "2026-10-01T15:14:42.185443",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1fa6ebb7fa7b3ed6",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-10-01T15:13:10.613513",
       "mentions": 1,
       "target": "he_experiment_pipeline_d3306730"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**Loss Landscape Flatness Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:14:42.185382",
+      "last_seen": "2026-10-01T15:14:42.185382",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_60194075"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:14:42.185382",
+      "last_seen": "2026-10-01T15:14:42.185382",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_60194075"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:14:42.185382",
+      "last_seen": "2026-10-01T15:14:42.185382",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_60194075"
     }
   ]
 }
