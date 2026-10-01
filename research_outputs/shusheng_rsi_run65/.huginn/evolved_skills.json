@@ -8,10 +8,10 @@
       "huginn",
       "value",
       "label",
-      "function",
-      "constraint",
       "plan",
       "rigidity",
+      "constraint",
+      "function",
       "prediction",
       "error"
     ],

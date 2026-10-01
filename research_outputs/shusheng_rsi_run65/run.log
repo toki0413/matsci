@@ -259,3 +259,80 @@ metacog: 假设可能为换名归约 (trap=, target=Constraint Overload Phase Tr
 [exec-route] mode='explore' desc[:80]='Corrected plan: Adam learning rate reduced to 1e-3 (standard for convergence). A' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=3920 extracted_len=3905 prompt_len=4221
 [code-lab-run] res_none=False success=True nobj=4 reason=''
+[validate] mode='code_lab' success=True nobj=4 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=44 evidence=skip: node status=refuted action=skip
+control_trace name=goal_judge iteration=44 evidence=achieved=False score=0.35 llm=1 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Stochastic Initialization Boundedness Hypothesis (The solution space is fat because stochastic initialization leads to multiple local minima that cannot be bridged by gradient flow, causing N_c(w) to grow without bound as w increases, even for smooth target functions.)): [DIM: measure] Stochastic Initialization Boundedness Hypothesis
+[exec-route] mode='explore' desc[:80]='The previous iteration reported surprise=1.0, indicating the hypothesis that N_c' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3841 extracted_len=3826 prompt_len=4244
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=4596 extracted_len=4581 prompt_len=7240
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=3934 extracted_len=3919 prompt_len=7240
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=3947 extracted_len=3932 prompt_len=7240
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10) @ coeffs)
+    scale = max(scale, 1e-6)
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def poly_basis(X, n):
+    X = X.flatten()
+    return np.array([X**i for i in range(n)]).T
+
+def _as_2d(x):
+    return x.reshape(-1, 1) if x.ndim == 1 else x
+
+def mlp_fit(X, y, h, seeds=3):
+    from scipy.optimize import minimize
+    X, y = _as_2d(X), _as_2d(y)
+    N, D = X.shape
+    W1 = np.random.randn(D, h) * np.sqrt(2.0 / D)
+    b1 = np.zeros((1, h))
+    W2 = np.random.randn(h, 1) * np.sqrt(2.0 / h)
+    b2 = np.zeros((1, 1))
+    def params():
+        return np.concatenate([W1.flatten(), b1.flatten(), W2.flatten(), b2.flatten()])
+    def set_params(p):
+        nonlocal W1, b1, W2, b2
+        idx1 = D * h
+        idx2 = idx1 + h
+        idx3 = idx2 + 1
+        W1 = p[:idx1].reshape(D, h)
+        b1 = p[idx1:idx2].reshape(1, h)
+        W2 = p[idx2:idx3].reshape(h, 1)
+        b2 = p[idx3:].reshape(1, 1)
+    def forward(X):
+        Z = np.tanh(X @ W1 + b1)
+        return Z @ W2 + b2
+    def loss_func(p):
+        set_params(p)
+        pred = forward(X)
+        return np.mean((pred - y) ** 2)
+    best_loss = np.inf
+    best_p = None
+    for s in range(seeds):
+        rng = np.random.default_rng(s)
+        W1 = rng.randn(D, h) * np.sqrt(2.0 / D)
+        b1 = rng.randn(1, h) * 0.01
+        W2 = rng.randn(h, 1) * np.sqrt(2.0 / h)
+        b2 = rng.randn(1, 1) * 0.01
+        p = 

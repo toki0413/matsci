@@ -371,6 +371,70 @@
       "r_phys": 1.0,
       "iteration": 40,
       "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: measure] **Constraint Overload Phase Transition Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:22:17.079438",
+      "last_seen": "2026-10-01T15:22:17.079438",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) remains ≤ 12 across all w, confirming rigidity phase transition. Max error on held-out points will converge to ≤ 1e-3 for h ≥ 8 when w ≤ 30; for w ≥ 40, h=32 may still exceed threshold, but N_c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] **Constraint Overload Phase Transition Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:22:17.079474",
+      "last_seen": "2026-10-01T15:22:17.079474",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:22:17.079482",
+      "last_seen": "2026-10-01T15:22:17.079482",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:22:17.079491",
+      "last_seen": "2026-10-01T15:22:17.079491",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] **Constraint Overload Phase Transition Hypothesis**",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_f1da0e58"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:22:17.079562",
+      "last_seen": "2026-10-01T15:22:17.079562",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "71532ef3ee380fb4",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
     }
   ],
   "links": [
@@ -535,6 +599,33 @@
       "last_seen": "2026-10-01T15:20:04.213240",
       "mentions": 1,
       "target": "he_experiment_pipeline_2c95560b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] **Constraint Overload Phase Transition Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:22:17.079491",
+      "last_seen": "2026-10-01T15:22:17.079491",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f1da0e58"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:22:17.079491",
+      "last_seen": "2026-10-01T15:22:17.079491",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f1da0e58"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:22:17.079491",
+      "last_seen": "2026-10-01T15:22:17.079491",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f1da0e58"
     }
   ]
 }
