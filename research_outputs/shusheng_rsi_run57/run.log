@@ -64,3 +64,6 @@ Long-horizon goal: goal_0d8a3bf5
 │ Max iterations: 60                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
+[exec-route] mode='coder' desc[:80]='Design and execute a numerical experiment to test the hypothesis on "solution sp' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=4435 extracted_len=4420 prompt_len=3739
+[code-lab-run] res_none=False success=True nobj=3 reason=''
