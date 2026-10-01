@@ -91,6 +91,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_e54857b3",
+      "objective": "[DIM: structure] The bootstrap solution space of small feedforward networks exhibits an algebraic dependency structure that remains low-dimensional (rank ≤ 3) even as w increases, causing N_c(w) to saturate at a finite value independent of w in the scanned range. | predict: N_c(w) ∈ {8, 16, 32} for all w ∈ {10, 20, 50, 100} (≤ 2× variation threshold). | pro: Directly tests the \"rigidity via low-rank structure\" hypothesis; aligns with concentration of measure and solvability of overconstrained systems; easy to verify via SVD or neural tangent kernel analysis. | con: May fail if the problem is inherently high-dimensional or if the network lacks sufficient capacity to exploit structural constraints; requires careful choice of basis functions.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the rigidity hypothesis. Construct a small feedforward network (1-2 hidden layers, tanh activation) to approximate a target function (e.g., polynomial/trigonometric). For each w in {10, 20, 50, 100}, generate w random training samples and a large independent validation set (1000 points). For each hidden width N_h in [4, 8, 16, 32, 64, 128], train the network with Adam optimizer and early stopping. Record the minimum N_h achieving max absolute error ≤ 1e-3 on the validation set (N_c(w)). Compare N_c(w) across w to verify saturation (rank ≤ 3 algebraic dependency). Use fixed random seeds for reproducibility.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "bootstrap_rigidity_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T07:33:08.915890+00:00",
+      "confirmed_at": "2026-10-01T07:34:09.000837+00:00",
+      "completed_at": "2026-10-01T07:34:39.195535+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

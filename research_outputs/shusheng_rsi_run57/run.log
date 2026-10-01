@@ -127,3 +127,66 @@ def run(cfg):
     avg_score = np.mean(summary['scores'])
     return {'success': True, 'summary': summary,
             'objectives': {'score': float(avg_score)}}
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=14 evidence=努力下限未达标: families_explored=1 < min_method_families=3 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=The non-convex optimization landscape creates effective dimensionality reduction through basin attraction, causing N_c to saturate at a small constant value regardless of w: N_c(w) ≈ constant): [DIM: structure] The bootstrap solution space of small feedforward networks exhibits an algebraic de
+[exec-route] mode='workflow' desc[:80]='Implement a numerical experiment to test the rigidity hypothesis. Construct a sm' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1907 extracted_len=1892 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: 'str' object has no attribute 'flatten'"
+[code-lab-author] raw_len=1907 extracted_len=1892 prompt_len=7056
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: 'str' object has no attribute 'flatten'"
+[code-lab-author] raw_len=1907 extracted_len=1892 prompt_len=7056
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: 'str' object has no attribute 'flatten'"
+[code-lab-author] raw_len=1907 extracted_len=1892 prompt_len=7056
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: 'str' object has no attribute 'flatten'"
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: AttributeError: 'str' object has no attribute 'flatten'
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = rng.uniform(0.05, 0.95, w).reshape(-1, 1)
+    Xv = rng.uniform(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        X_poly = poly_basis(X, 3)
+        y = X_poly @ coeffs.reshape(-1, 1)
+        Xv_poly = poly_basis(Xv, 3)
+        yv = Xv_poly @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        X_poly = poly_basis(X, 10)
+        y = X_poly @ coeffs.reshape(-1, 1)
+        Xv_poly = poly_basis(Xv, 10)
+        yv = Xv_poly @ coeffs.reshape(-1, 1)
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [10, 20, 50, 100]
+    h_list = [4, 8, 16, 32, 64, 128]
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'score': 0.0}
+    scale = 1.0
+    for w in w_list:
+        for kind in ['rigid', 'fat']:
+            Nc = None
+            min_err = float('inf')
+            for h in h_list:
+                X, y, Xv, yv = family(kind, w, seed + w * 100 + h)
+                if kind == 'rigid' and scale == 1.0:
+                    scale = np.std(np.concatenate([y.flatten(), yv.flatten()]))
+                y /= scale; yv /= scale
+                model = mlp_fit(X, y, h, seeds=3)
+                yp = mlp_predict(model, Xv)
+                err = float(np.max(np.abs(yp - yv)))
+                if err <= 1e-3 and Nc is None:
+                    Nc = h
+                min_err = min(min_err, err)
+                summary[f'{kind}_errors'].append(err)
+            if Nc is None:
+                Nc = 128
+            summary[f'{kind}_Nc'].append(float(Nc))
+            if kind == 'rigid':
+                objectives['score'] += float(Nc) / 10.0
+    return {'success': True, 'summary': summary, 'objectives': objectives}

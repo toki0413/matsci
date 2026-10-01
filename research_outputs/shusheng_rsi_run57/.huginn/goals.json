@@ -7,10 +7,10 @@
         "[Feynman known_unknown] I don’t understand why the generative verification scored zero despite the computation technically “passing” constraints—was the issue purely presentational, or was there a deeper mismatch in expected output format?",
         "[Feynman unknown_unknown] I never considered that the test harness might expect annotated output or structured reasoning alongside numerical results until the validation summary highlighted the absence of a data→inference→conclusion chain."
       ],
-      "iteration": 13,
+      "iteration": 18,
       "status": "active",
       "created_at": "2026-10-01T07:25:23.271922+00:00",
-      "updated_at": "2026-10-01T07:32:04.923293+00:00",
+      "updated_at": "2026-10-01T07:34:09.005010+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -149,9 +149,49 @@
           "discovered_at": "2026-10-01T07:30:19.836138+00:00",
           "resolved_at": null,
           "iteration": 10
+        },
+        {
+          "id": "unk_834fbdff",
+          "text": "The definition of \"generalization behavior\" as a probe for solution space rigidity may be circular or ill-defined without a clear theoretical link between test error and intrinsic dimensionality of the solution manifold.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:32:48.564566+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_37666901",
+          "text": "The requirement of zero violation (max abs error ≤ 1e-3) on out-of-sample constraints may be numerically fragile due to optimization landscape non-convexity, leading to false negatives in N_c estimation even if a solution exists.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:32:48.565872+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_3507f7cc",
+          "text": "For very small w, the network may trivially memorize constraints without capturing underlying structure, making N_c(w) artificially low and misleadingly suggesting rigidity where none exists.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:32:48.566781+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_f432793a",
+          "text": "No ground-truth analytical solutions are provided for validation; thus, empirical N_c(w) curves cannot be benchmarked against theoretical rigidity predictions, risking misclassification of rigidity vs. fatness.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:32:48.567623+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_e9bd9afe",
+          "text": "The assumption that hidden layer width is a sufficient proxy for network capacity ignores depth, activation functions, and initialization effects — potentially collapsing distinct architectural classes into a single scalar measure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:32:48.568448+00:00",
+          "resolved_at": null,
+          "iteration": 15
         }
       ],
-      "unknowns_discovered": 17,
+      "unknowns_discovered": 22,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
