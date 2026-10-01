@@ -376,6 +376,39 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7d3b886f",
+      "objective": "**[DIM: computation] Approximation Rank Threshold Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "The previous Spectral Alignment Hypothesis (iter 65) failed (surprise=1.0). This iteration tests the Approximation Rank Threshold Hypothesis regarding \"solution space rigidity\" in small MLPs. We will scan constraint sample counts $w \\in \\{10, 20, 30, 40, 50\\}$ and hidden widths $h \\in \\{4, \\dots, 32\\}$ to find the threshold $N_c(w)$ where max absolute error on validation points drops $\\le 10^{-3}$. We will use a deterministic analytic target function (polynomial/trigonometric) and fixed seeds to verify if $N_c(w)$ remains bounded (rigid) or grows unbounded (fat). If the scan confirms a bounded threshold, we conclude rigidity is achievable for this function class; otherwise we will broaden the function class or constraints.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run65/.huginn/goals.json",
+            "(update",
+            "goal",
+            "status)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T15:32:39.352696+00:00",
+      "confirmed_at": "2026-10-01T15:32:39.354378+00:00",
+      "completed_at": "2026-10-01T15:33:08.413162+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

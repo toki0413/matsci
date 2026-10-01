@@ -499,6 +499,70 @@
       "r_phys": 1.0,
       "iteration": 60,
       "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "**[DIM: measure] Spectral Alignment Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.75,
+      "created_at": "2026-10-01T15:32:06.016734",
+      "last_seen": "2026-10-01T15:32:06.016734",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 0.75,
+      "surprise": 1.0,
+      "predicted": "We expect to find that for $w < 40$, the Gram matrix eigenvalues decay rapidly or show a specific alignment with the target function's Fourier modes, enabling low-capacity fitting. At $w=40$, we predi",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: measure] Spectral Alignment Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:32:06.016772",
+      "last_seen": "2026-10-01T15:32:06.016772",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:32:06.016781",
+      "last_seen": "2026-10-01T15:32:06.016781",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:32:06.016789",
+      "last_seen": "2026-10-01T15:32:06.016789",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: measure] Spectral Alignment Hypothesis**",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_83e8c94"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 0.75,
+      "created_at": "2026-10-01T15:32:06.016856",
+      "last_seen": "2026-10-01T15:32:06.016856",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9c674160193ed09e",
+      "r_phys": 0.75,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
     }
   ],
   "links": [
@@ -717,6 +781,33 @@
       "last_seen": "2026-10-01T15:30:03.256562",
       "mentions": 1,
       "target": "he_experiment_pipeline_ba1ae468"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: measure] Spectral Alignment Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:32:06.016789",
+      "last_seen": "2026-10-01T15:32:06.016789",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_83e8c94"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:32:06.016789",
+      "last_seen": "2026-10-01T15:32:06.016789",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_83e8c94"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:32:06.016789",
+      "last_seen": "2026-10-01T15:32:06.016789",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_83e8c94"
     }
   ]
 }
