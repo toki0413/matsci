@@ -122,3 +122,5 @@ def run(cfg):
         fat_fail = all(n >= 999 for n in summary['fat_Nc'])
         objectives['score'] = (1.0 if rigid_plateau else 0.0) + (1.0 if fat_fail else 0.0)
     return {'success': True, 'summary': summary, 'objectives': objectives}
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=4 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 将'解空间刚性'这一抽象数学概念，通过定义'零违规'和'最小网络容量'，等价地重新表述为'小型前馈网络的泛化行为'。这本质上是用机器学习术语对原命题进行了重命名，而非通过物理或数学机制解释刚性为何存在或如何变化。"] | 缺少显式不完整性自白 action=advisory_hint

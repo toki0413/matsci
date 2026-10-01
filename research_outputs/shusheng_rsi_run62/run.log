@@ -65,3 +65,6 @@ Long-horizon goal: goal_7c64f6aa
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 plan_check failed (tier=medium, scene=workflow, max_refines=1): The plan conflates approximation capacity (neural network generalization on a smooth function) with algebraic independence (existence of polynomial relations between functions). The hypothesis is about whether {1, x, x², sin(2πx)} satisfy any non-trivial polynomial identity over ℚ, which is a symbolic/combinatorial property of function spaces, not a numerical approximation problem. The previous failure explicitly warned against this conflation. The plan describes testing via neural network training and 'zero violation' on held-out points, which measures approximation error—not algebraic dependence. A valid approach would use symbolic algebra tools (SymPy, Lean) to perform polynomial identity testing or Gröbner basis elimination.
+[exec-route] mode='workflow' desc[:80]='Reframe the Algebraic Independence Hypothesis as a symbolic polynomial identity ' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2496 extracted_len=2481 prompt_len=4217
+[code-lab-run] res_none=False success=True nobj=1 reason=''

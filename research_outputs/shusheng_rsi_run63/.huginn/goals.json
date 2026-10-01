@@ -4,10 +4,10 @@
       "id": "goal_0b476691",
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "sub_goals": [],
-      "iteration": 3,
+      "iteration": 5,
       "status": "active",
       "created_at": "2026-10-01T12:59:37.573180+00:00",
-      "updated_at": "2026-10-01T13:01:41.934652+00:00",
+      "updated_at": "2026-10-01T13:02:26.393428+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -50,9 +50,49 @@
           "discovered_at": "2026-10-01T12:59:40.641555+00:00",
           "resolved_at": null,
           "iteration": 1
+        },
+        {
+          "id": "unk_710167d1",
+          "text": "The definition of \"rigid\" as a binary outcome based on finite $N_c$ may oversimplify the continuous nature of generalization transitions; phase-like behavior might exist without sharp thresholds, leading to misclassification of rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:02:26.386908+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_8353754c",
+          "text": "Optimization landscape of small networks may have many local minima or flat regions, causing $N_c(w)$ estimates to be highly sensitive to initialization and optimizer settings — potentially yielding false \"fat\" conclusions due to failure to find minimal sufficient width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:02:26.388195+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_28c49bdb",
+          "text": "No ground-truth analytic solutions are provided for validation; without known target functions with known solution-space dimensionality, the probe’s calibration against true rigidity is unverified.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:02:26.389164+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_0403c7ec",
+          "text": "Assumption that zero error on holdout points implies low-dimensional solution space ignores the possibility of multiple distinct narrow manifolds achieving error < 1e-3 — which would still register as “rigid” under current definition but are actually degenerate or spurious.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:02:26.392426+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_1ecfd8b9",
+          "text": "For very small $w$, noise or numerical precision limits (e.g., floating point rounding at 1e-3 tolerance) may artificially satisfy zero-violation criteria even when no meaningful function exists — creating false positives for rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T13:02:26.393418+00:00",
+          "resolved_at": null,
+          "iteration": 5
         }
       ],
-      "unknowns_discovered": 5,
+      "unknowns_discovered": 10,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
