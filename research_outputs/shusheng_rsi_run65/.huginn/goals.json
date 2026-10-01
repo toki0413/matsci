@@ -21,10 +21,10 @@
         "[Feynman unknown_unknown] I never considered whether the lack of test execution was due to a hidden initialization failure before the constraints even took effect.",
         "[Feynman known_unknown] I’m unclear on why R_phys = 1.0 and Surprise = 1.0 were chosen together—does this combination inherently cause system paralysis?"
       ],
-      "iteration": 48,
+      "iteration": 53,
       "status": "active",
       "created_at": "2026-10-01T15:03:23.594041+00:00",
-      "updated_at": "2026-10-01T15:22:46.805119+00:00",
+      "updated_at": "2026-10-01T15:24:15.958590+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -555,9 +555,49 @@
           "discovered_at": "2026-10-01T15:22:21.171505+00:00",
           "resolved_at": null,
           "iteration": 45
+        },
+        {
+          "id": "unk_c0da1977",
+          "text": "The assumption that \"generalization behavior\" of small feedforward networks directly probes solution space rigidity may be flawed—generalization reflects test performance on unseen data, while solution space rigidity concerns the intrinsic dimensionality of functions satisfying constraints; these are not equivalent without further theoretical justification.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:23:53.078163+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_d762226a",
+          "text": "Achieving zero violation (max abs error ≤ 1e-3) on held-out points may require optimization to extremely high precision, which could be numerically unstable or practically unattainable due to floating-point limitations or poor conditioning of the loss landscape.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:23:53.080083+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_c5f1e121",
+          "text": "There is no guarantee that the set of sampled constraints (both training and held-out) is representative of the full constraint manifold; if constraints are sparse or adversarially placed, N_c(w) may not reflect true rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:23:53.081498+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_9dde3b80",
+          "text": "For very small w (e.g., w=1), even a trivial constant function might achieve zero violation, making N_c(w) artificially low and misleadingly suggesting rigidity where none exists in broader contexts.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:23:53.082924+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_11c7ddb2",
+          "text": "The model class (feedforward networks with fixed activation/skip connections) may not be expressive enough to capture the true solution space, leading to false conclusions about fatness due to model misspecification rather than actual lack of rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:23:53.084331+00:00",
+          "resolved_at": null,
+          "iteration": 50
         }
       ],
-      "unknowns_discovered": 66,
+      "unknowns_discovered": 71,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

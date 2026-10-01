@@ -336,3 +336,85 @@ def mlp_fit(X, y, h, seeds=3):
         W2 = rng.randn(h, 1) * np.sqrt(2.0 / h)
         b2 = rng.randn(1, 1) * 0.01
         p = 
+[validate] mode='probe_exec' success=True nobj=0 cf=True lab=False
+control_trace name=collab_blind_reconstruct iteration=49 evidence=skip: node status=refuted action=skip
+darwin ratchet: belief converged σ²=0.0999 μ=2.97 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=49 evidence=sigma2=0.0999 mu=2.97 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Geometric Codimension Hypothesis): [DIM: geometry] Geometric Rigidity via Manifold Intersection: The constraint set defines a codimensi
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='The previous experiment (iter 5) used a smooth analytic target function (sin/cos' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2489 extracted_len=2474 prompt_len=4763
+/workspace/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3862: RuntimeWarning: Mean of empty slice
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/workspace/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 5 and the array at index 1 has size 200'
+[code-lab-author] raw_len=2318 extracted_len=2303 prompt_len=7772
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 5 and the array at index 1 has size 200'
+[code-lab-author] raw_len=2108 extracted_len=2093 prompt_len=7601
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 5 and the array at index 1 has size 200'
+[code-lab-author] raw_len=2116 extracted_len=2101 prompt_len=7391
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 5 and the array at index 1 has size 200'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 5 and the array at index 1 has size 200
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        y = np.sign(X - 0.5)
+        yv = np.sign(Xv - 0.5)
+    elif kind == 'fat':
+        coeffs = rng.standard_normal(10)
+        X_poly = poly_basis(X, 10)
+        y = X_poly @ coeffs
+        Xv_poly = poly_basis(Xv, 10)
+        yv = Xv_poly @ coeffs
+    else:
+        y = np.zeros((w, 1))
+        yv = np.zeros((200, 1))
+    scale = np.std(np.vstack([y, yv]))
+    if scale > 1e-10:
+        y = y / scale
+        yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [5, 10, 15, 20, 25, 30, 35, 40]
+    hs = [4, 8, 16, 24, 32]
+    max_Nc = 32
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        err_list = []
+        for w in ws:
+            Nc_found = max_Nc + 1
+            err_w = 0.0
+            for h in hs:
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                yp = mlp_predict(model, Xv)
+                err = np.max(np.abs(yp - yv))
+                err_w = err
+                if err <= 1e-3:
+                    Nc_found = h
+                    break
+            Nc_list.append(Nc_found)
+            err_list.append(err_w)
+        summary[f'{kind}_Nc'] = Nc_list
+        summary[f'{kind}_errors'] = err_list
+    rigid_Nc = summary['rigid_Nc']
+    fat_Nc = summary['fat_Nc']
+    rigid_mean = np.mean([v for v in rigid_Nc if v <= max_Nc])
+    fat_mean = np.mean([v for v in fat_Nc if v <= max_Nc])
+    if rigid_mean > 0 and fat_mean > 0:
+        score = rigid_mean / fat_mean
+    else:
+        score = 0.0
+    objectiv
