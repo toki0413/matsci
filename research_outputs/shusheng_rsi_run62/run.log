@@ -90,3 +90,64 @@ json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 [validate] mode='code_lab' success=True nobj=2 cf=False lab=True
 [FINALLY-REFLECT] tool_results_this_turn=0
 control_trace name=collab_blind_reconstruct iteration=9 evidence=skip: dispatch returned nothing success=True summary_len=0 action=skip
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test whether small feedforward netw' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1902 extracted_len=1887 prompt_len=4062
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1902 extracted_len=1887 prompt_len=6445
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1903 extracted_len=1888 prompt_len=6445
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1903 extracted_len=1888 prompt_len=6446
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.5, 1.5])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 100), 10) @ coeffs)
+    if scale > 1e-10:
+        y = y / scale
+        yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [5, 10, 20]
+    hs = list(range(1, 51))
+    summary = {'rigid_Nc': [], 'fat_Nc': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        for w in ws:
+            Nc = None
+            for h in hs:
+                data = family(kind, w, seed + w * 100 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3:
+                    Nc = h
+                    break
+            Nc_list.append(Nc if Nc is not None else 51)
+        if kind == 'rigid':
+            summary['rigid_Nc'].append(Nc_list)
+            objectives['score'] += min(Nc_list) if min(Nc_list) < 50 else 0.0
+        else:
+            summary['fat_Nc'].append(Nc_list)
+            objectives['score'] += sum(1 for n in Nc_list if n >= 50)
+    summary['note'] = f'rigid_Nc={summary["rigid_Nc"]}, fat_Nc={summary["fat_Nc"]}'
+    return {'success': True, 'summary': summary, 'objectives': objectives}

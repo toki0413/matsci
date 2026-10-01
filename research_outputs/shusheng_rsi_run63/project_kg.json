@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: geometry] The target function's solution manifold possesses non-zero Gauss",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:06:23.551584",
+      "last_seen": "2026-10-01T13:06:23.551584",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w) \\approx w + O(1)$ for curved targets (slope $\\approx 1$), while flat targets (linear/polynomial) will show sub-linear or constant scaling. The curvature verification step will confirm non-zero",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The target function's solution manifold possesses non-zero Gauss"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551626",
+      "last_seen": "2026-10-01T13:06:23.551626",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551636",
+      "last_seen": "2026-10-01T13:06:23.551636",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The target function's solution manifold possesses non-zero Gauss",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:06:23.551724",
+      "last_seen": "2026-10-01T13:06:23.551724",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fd97903956e1e1b7",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-10-01T13:04:18.811672",
       "mentions": 1,
       "target": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The target function's solution manifold possesses non-zero Gauss",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b93e12e8"
     }
   ]
 }

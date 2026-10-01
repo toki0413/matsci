@@ -455,8 +455,21 @@ run59/60/61 是**改前**代码（无 `collab_*`/`code_lab_timeout` trace，且�
 故起 **run62（collab ON + 盲重建）/ run63（baseline off）**，同 objective / 同旋钮 /
 同 3600s / 同 run57 继承点，用新代码复验：
 
-- 期望点亮：`collab_blind_reconstruct`（至少 skip 行）与 `code_lab_timeout`；
-- run63 作对照，期望 `collab_*` 仅出现 `skip: no agent_factory`（或 0）；
+**开跑即点亮，观测面立刻抓到两条真问题**（run62）：
+
+| iteration | `collab_blind_reconstruct` evidence | 含义 |
+|-----------|-------------------------------------|------|
+| 4 | `skip: no current_hyp_id_for_plan` | **接线缺口**：verify 时 `_current_hyp_id_for_plan` 未置位 → 协作即使通电也常被跳过 |
+| 9 | `skip: dispatch returned nothing success=True summary_len=0` | **跑了但空手**：盲重建子 agent 派发成功、却返回空 summary → 零产出 |
+
+run63（baseline）`collab_*` 为 **0**，符合预期：调用点由 `HUGINN_BLIND_RECONSTRUCTION`
+门控（[`engine_reflect.py:782`](agent/huginn/autoloop/engine_reflect.py)），未开则连方法都不进。
+
+> 这正是补 trace 的价值：此前只能说"协作 returned None, fallback"，现在能精确定位到
+> **是没通电 / 没置位 / 跑了空手**。两条都指向下一步要修的是**接线**（`_current_hyp_id_for_plan`
+> 的置位时机 + 子 agent 空 summary），而不是加更多协作角色。
+
+- `code_lab_timeout` 待本轮 execute 阶段出现后并入统计；
 - 数据并入 §5.3 第二轮删减决策。
 
 单测全绿：`tests/test_engine_decomposed.py` **83 passed**（含 §8.1–§8.3 新增 5 例）。

@@ -135,3 +135,7 @@ plan_check failed (tier=medium, scene=dft, max_refines=1): The plan uses MODE: e
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Generate executable Python code to numerically test' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=1878 extracted_len=1863 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=goal_judge iteration=14 evidence=achieved=False score=0.25 llm=1 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='This is a pure mathematical/ML hypothesis about function space rigidity. The pre' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2331 extracted_len=2316 prompt_len=4248
