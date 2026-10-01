@@ -80,3 +80,71 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Independence Hypot
 [FINALLY-REFLECT] tool_results_this_turn=0
 [FINALLY-REFLECT] tool_results_this_turn=0
 branch incubator returned None, fallback to main+hot_model
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] This is a pure ML/math hypothesis test concerning n' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2238 extracted_len=2223 prompt_len=4701
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2238 extracted_len=2223 prompt_len=7420
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2131 extracted_len=2116 prompt_len=7420
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2170 extracted_len=2155 prompt_len=7313
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10) @ coeffs)
+    if scale == 0:
+        scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [4, 8, 12, 16]
+    hs = range(2, 17)
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_log_pred': [], 'fat_failures': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        log_pred_list = []
+        fail_count = 0
+        for w in ws:
+            Nc = None
+            log_pred = int(np.ceil(np.log2(w)))
+            log_pred_list.append(log_pred)
+            for h in hs:
+                data = family(kind, w, seed + w + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                yv_pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(yv_pred - yv))
+                if err <= 1e-3:
+                    Nc = h
+                    break
+            if Nc is None:
+                Nc = 999
+                if kind == 'fat':
+                    fail_count += 1
+            Nc_list.append(Nc)
+        if kind == 'rigid':
+            summary['rigid_Nc'] = Nc_list
+            summary['rigid_log_pred'] = log_pred_list
+            match = all(Nc == lp for Nc, lp in zip(Nc_list, log_pred_list))
+            objectives['score'] = float(match)
+        else:
+        

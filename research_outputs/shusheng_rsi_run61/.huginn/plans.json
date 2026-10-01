@@ -27,6 +27,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_656885c8",
+      "objective": "[DIM: structure] If the constraints define a low-degree algebraic variety of dimension d, then the minimal width N_c(w) required to achieve zero violation on out-of-sample points is bounded by a constant independent of w, specifically N_c(w) ≤ d+1, reflecting the intrinsic dimensionality of the constraint manifold. | predict: N_c(w) remains constant (≤ 5) as w increases from 5 to 40, with out-of-sample error ≤ 1e-3 achieved at fixed width across all w. | pro: This hypothesis directly addresses the core question of whether network capacity scales with sample size or is constrained by algebraic structure; it aligns with known results in algebraic geometry where polynomial interpolation requires width proportional to degree. con: Assumes constraints are exactly polynomial; real-world constraints may involve noise or transcendental functions that break this structure.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and run a numerical experiment to test the hypothesis that the minimal width N_c(w) for zero violation on out-of-sample points is bounded by a constant (≤ d+1) independent of sample size w. We will: (1) construct a low-degree algebraic constraint manifold of known dimension d (e.g., a 2D polynomial surface in R^3); (2) sample w points from w=5 to 40; (3) train small feedforward networks of varying width N to interpolate training points; (4) measure out-of-sample max absolute error on held-out points; (5) determine N_c(w) as the smallest width achieving max error ≤ 1e-3. We will compare against the prediction that N_c(w) remains ≤ d+1 (e.g., ≤3) across all w. This directly tests the algebraic geometry claim about intrinsic dimensionality limiting network capacity.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/n_c_scan.py",
+            "src/algebraic_constraint.py",
+            "src/network_utils.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T11:40:08.482151+00:00",
+      "confirmed_at": "2026-10-01T11:40:08.486080+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

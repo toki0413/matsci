@@ -130,3 +130,5 @@ def run(cfg):
         objectives['rigid_min_Nc'] = max_h + 1
     if objectives['fat_min_Nc'] > max_h:
         objectives['fat_min_Nc'] = max_h + 1
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=4 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 原始命题中关于'解空间刚性'与'泛化行为'关系的抽象理论问题被替换为对 N_c(w) 的数值计算，但未提供 N_c(w) 与刚性判据之间的理论联系或机制解释。"] | 缺少显式不完整性自白 action=advisory_hint

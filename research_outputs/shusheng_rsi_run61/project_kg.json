@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T11:39:46.566475",
+      "last_seen": "2026-10-01T11:39:46.566475",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain small and bounded (e.g., N_c ≤ 16) for w up to ~20, indicating rigidity; if no width achieves zero violation within scan range (e.g., N ≤ 128), then fat. Expected trend: flat or sub",
+      "persona": "dft_expert",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:46.566515",
+      "last_seen": "2026-10-01T11:39:46.566515",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:46.566525",
+      "last_seen": "2026-10-01T11:39:46.566525",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T11:39:46.566536",
+      "last_seen": "2026-10-01T11:39:46.566536",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_89bb0cf6"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T11:39:46.566636",
+      "last_seen": "2026-10-01T11:39:46.566636",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "abfb9f764580782b",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:46.566536",
+      "last_seen": "2026-10-01T11:39:46.566536",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_89bb0cf6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:46.566536",
+      "last_seen": "2026-10-01T11:39:46.566536",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_89bb0cf6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:46.566536",
+      "last_seen": "2026-10-01T11:39:46.566536",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_89bb0cf6"
+    }
+  ]
+}
