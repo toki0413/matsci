@@ -17,10 +17,10 @@
         "[Feynman known_unknown] I don’t understand how to connect raw numerical output (e.g., array values of error vs. $ N_c $) to a physical conclusion about saturation — what criteria actually count as “saturation” in this context?",
         "[Feynman unknown_unknown] I never considered whether the lack of reasoning in the generative verify score might reflect a deeper issue with how our validation framework interprets scientific conclusions versus computational correctness."
       ],
-      "iteration": 68,
+      "iteration": 73,
       "status": "active",
       "created_at": "2026-10-01T07:25:23.271922+00:00",
-      "updated_at": "2026-10-01T07:52:47.826693+00:00",
+      "updated_at": "2026-10-01T07:54:44.232476+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -679,9 +679,49 @@
           "discovered_at": "2026-10-01T07:51:30.900124+00:00",
           "resolved_at": null,
           "iteration": 65
+        },
+        {
+          "id": "unk_941b4362",
+          "text": "定义中的“刚性”依赖于扫描范围内的有限N_c，但未指定扫描范围的上限（如最大隐藏层宽度），可能导致误判胖/刚性。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:53:27.153225+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_a4a0e044",
+          "text": "零违规要求最大绝对误差 ≤ 1e-3，但优化过程可能因局部极小或数值不收敛而无法达到该精度，即使存在满足条件的权重。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:53:27.155770+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_cf64b14f",
+          "text": "未说明约束样本w的生成方式（是否独立、是否覆盖解空间关键区域），若样本稀疏或偏差大，N_c(w)不能反映真实解空间结构。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:53:27.157867+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_e8ceef0f",
+          "text": "当w接近或超过网络表达能力上限时，零违规可能永远无法实现，但此时N_c不可达是否应归为“胖”需明确边界定义。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:53:27.159777+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_7617e4b5",
+          "text": "假设前馈网络能充分逼近所有满足解析约束的函数，但未考虑激活函数、初始化、正则化等对解空间探索能力的隐性限制。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:53:27.161685+00:00",
+          "resolved_at": null,
+          "iteration": 70
         }
       ],
-      "unknowns_discovered": 82,
+      "unknowns_discovered": 87,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

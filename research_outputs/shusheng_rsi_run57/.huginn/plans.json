@@ -419,6 +419,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_eb07c99f",
+      "objective": "\".",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and implement a reproducible numerical experiment to test the \"solution space rigidity\" hypothesis for small feedforward networks. Construct a target function with analytic constraints, train networks of varying hidden widths N_h ∈ [4,8,16,32,64,128] for different constraint counts w ∈ {10,20,30,50,100}, and record the minimum N_c(w) achieving zero violation (max absolute error ≤ 1e-3) on held-out constraint points. Use fixed seeds, Adam optimizer, and early stopping. Output N_c(w) values and trends to determine rigidity vs. fatness.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_probe.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T07:54:44.226371+00:00",
+      "confirmed_at": "2026-10-01T07:54:44.228379+00:00",
+      "completed_at": "2026-10-01T07:55:25.703043+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
