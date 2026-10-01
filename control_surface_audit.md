@@ -327,10 +327,56 @@ GoalJudge(LLM)  →  achieved?  ── 否 ──→  hint=gaps, 返回 (不停)
 `..._dedups_same_iteration`（端到端）；`test_cognitive_loop_has_single_completion_exit`
 （回归守卫：旧散装 F2/F17 与 `_use_unified_decision` / `_use_gate` 不得复活）。
 
-### 6.5 待办：起观测 run 采新出口触发率
+### 6.5 待办：起观测 run 采新出口触发率（✅ 已起 run58）
 
 run57 已于 `2026-10-01 08:26` 结束（55 条 trace：`darwin_stagnation` 26 /
 `belief_convergence` 22 / `effort_floor` 6 / `report_citation` 1），但它是**改前**代码
 （v24 改动落盘于 09:24），故 **`goal_judge` / `goal_acceptance` / `goal_skeptic` 全为 0**，
 新出口尚无野外样本。**下一步**：起一轮同参数 run，确认这四条新 trace 能被点亮，
 并把触发率并入 §5.3 的第二轮删减决策。
+
+**run58 已起**（同 objective / 同旋钮 / 3600s），开跑即点亮 `goal_judge`（前 7 轮已 2 次）
+→ v24 单一出口在野外生效。
+
+---
+
+## 7. 多智能体协作：意图写了，线从没接（v25）
+
+起因：讨论"是否需要更多智能体协作"。查证后发现，**生产路径上协作角色是 0 个** ——
+不是"要不要更多"，而是已有的全部没通电。
+
+### 7.1 断电链路
+
+| 环节 | 事实 |
+|------|------|
+| CLI 构造引擎 | `AutoloopEngine(workspace=obj.workspace)`，**不传 `agent_factory`**（[`autoloop.py`](agent/huginn/cli/commands/autoloop.py)） |
+| 引擎默认 | `agent_factory: Any = None`（[`engine.py`](agent/huginn/autoloop/engine.py) `__init__`） |
+| 盲重建 | `if self._agent_factory is None: return` —— 静默空转 |
+| failure_inverter | 同上 |
+| BranchIncubator | `if self._agent_factory is None: return None` —— 静默回退 2 路 |
+
+`engine.py` 注释写着"由 RCBench runner / CLI 在需要 N=3 隔离采样时注入"——
+**意图存在，线从没接**。故 runs 50–58 全是纯单 agent，是漏接，不是判断。
+
+### 7.2 已写好的协作资产（无需新造）
+
+- [`subagent.py`](agent/huginn/agents/subagent.py) 内置 6 spec：`explore / coder / analyst /
+  support / blind_reconstructor / failure_inverter`，含递归深度保护、token 摘要。
+- [`branch_incubator.py`](agent/huginn/metacog/branch_incubator.py)：N 路隔离探索
+  （`ContextBundle` 裁上下文，族间互不可见），并发 `asyncio.gather`。
+- [`personas.py`](agent/huginn/personas.py) 8 persona + [`templates.py`](agent/huginn/workflows/templates.py)
+  `reviewer_workflow` 4 阶段流水线（库，主循环未用）。
+
+### 7.3 动作：接线并门控（默认关）
+
+`HUGINN_ENABLE_AGENT_COLLAB=1` 时，CLI 才 `get_agent_factory()` 注入；
+默认 `None` → 默认行为与成本**零变化**（符合 §3：先证明挣得到成本，再谈开）。
+工厂构造失败 fail-open 回退单 agent。单测锁定：
+`test_default_off_returns_none` / `test_flag_on_builds_factory` /
+`test_factory_failure_falls_back_to_single_agent`。
+
+### 7.4 待办：A/B 测量（未起）
+
+接线只是前置。真正要回答的是"增加协作有没有增量"，唯一办法是 A/B：baseline（run58）
+vs `HUGINN_BLIND_RECONSTRUCTION=1` vs `HUGINN_USE_BRANCH_INCUBATOR=1`，
+比 真进展率 / 换名打转率 / `report_citation` 未溯源数。**未跑，等确认。**

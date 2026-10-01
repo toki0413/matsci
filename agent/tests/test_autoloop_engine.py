@@ -225,8 +225,8 @@ class TestCliAgentCollabWiring:
         assert cli_autoloop._maybe_agent_factory() is None
 
     def test_flag_on_builds_factory(self, monkeypatch: pytest.MonkeyPatch):
-        from huginn.cli.commands import autoloop as cli_autoloop
         from huginn import server_core
+        from huginn.cli.commands import autoloop as cli_autoloop
 
         monkeypatch.setenv("HUGINN_ENABLE_AGENT_COLLAB", "1")
         sentinel = object()
@@ -236,8 +236,8 @@ class TestCliAgentCollabWiring:
     def test_factory_failure_falls_back_to_single_agent(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        from huginn.cli.commands import autoloop as cli_autoloop
         from huginn import server_core
+        from huginn.cli.commands import autoloop as cli_autoloop
 
         monkeypatch.setenv("HUGINN_ENABLE_AGENT_COLLAB", "1")
 

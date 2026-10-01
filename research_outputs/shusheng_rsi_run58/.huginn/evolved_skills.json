@@ -80,8 +80,8 @@
       "error",
       "plan",
       "prediction",
-      "solution",
-      "constraint"
+      "constraint",
+      "solution"
     ],
     "workflow_steps": [
       {
