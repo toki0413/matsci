@@ -8,12 +8,12 @@
       "huginn",
       "value",
       "label",
-      "function",
       "constraint",
-      "error",
+      "function",
       "plan",
-      "prediction",
-      "space"
+      "rigidity",
+      "space",
+      "prediction"
     ],
     "workflow_steps": [
       {
@@ -34,6 +34,14 @@
       },
       {
         "tool": "skill",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "explore",
         "input_keys": [
           "hypothesis",
           "plan"
