@@ -16,3 +16,9 @@ Statement: **Loss Landscape Flatness Hypothesis**
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_c699f0b4] 2026-10-01T15:25:31+00:00
+Statement: [DIM: geometry] Geometric Rigidity via Manifold Intersection: The constraint set defines a codimension-$w$ manifold in input space; for smooth target functions, the neural network solution manifold in
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

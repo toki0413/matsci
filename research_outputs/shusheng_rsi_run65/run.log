@@ -418,3 +418,10 @@ def run(cfg):
     else:
         score = 0.0
     objectiv
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=54 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 将'解空间刚性'这一代数/分析性质的定义，通过几何语言（流形相交、余维数、横截性）进行了重新表述，本质上是用几何术语包装了原有的代数约束问题，未提供新的计算机制或物理洞察。"] | 缺少显式不完整性自白 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0908 μ=2.95 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=54 evidence=sigma2=0.0908 mu=2.95 action=advisory_hint
+[exec-route] mode='workflow' desc[:80]='Conduct a controlled numerical experiment to test the Approximation Rank Hypothe' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2224 extracted_len=2209 prompt_len=4229
+[code-lab-run] res_none=False success=True nobj=1 reason=''
