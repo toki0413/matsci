@@ -29,10 +29,10 @@
         "[Feynman known_unknown] I haven’t verified whether basin attraction truly reduces effective dimensionality in practice — is there literature or simulation evidence that large minima absorb sub-critical points in a way that suppresses N_c growth below linear?",
         "[Feynman unknown_unknown] I never considered that the prediction N_c(w) ≈ a * log(w) might be invalid even qualitatively — perhaps N_c grows polynomially or exponentially before saturating, and my logarithmic guess came from intuition, not derivation or prior data."
       ],
-      "iteration": 98,
+      "iteration": 103,
       "status": "active",
       "created_at": "2026-10-01T07:25:23.271922+00:00",
-      "updated_at": "2026-10-01T08:03:05.121855+00:00",
+      "updated_at": "2026-10-01T08:07:43.274217+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1027,9 +1027,49 @@
           "discovered_at": "2026-10-01T08:02:33.198566+00:00",
           "resolved_at": null,
           "iteration": 95
+        },
+        {
+          "id": "unk_4f685e4c",
+          "text": "The definition of \"zero violation\" relies on maximum absolute error ≤ 1e-3, which may be too strict for functions with high-frequency components or near-singularities, leading to false classification of \"fat\" solution spaces even when a valid function exists within numerical tolerance.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T08:06:09.560949+00:00",
+          "resolved_at": null,
+          "iteration": 100
+        },
+        {
+          "id": "unk_1721e5e9",
+          "text": "Optimization landscapes for small networks are highly non-convex; local minima may prevent convergence to a zero-violation solution even if one theoretically exists, causing N_c(w) to be overestimated.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T08:06:09.670284+00:00",
+          "resolved_at": null,
+          "iteration": 100
+        },
+        {
+          "id": "unk_f1730924",
+          "text": "For very small w (e.g., w=1 or 2), the constraint set is underdetermined by design — any width can fit, but this does not imply rigidity; the metric N_c(w) may misinterpret trivial cases as rigid when they are not structurally constrained.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T08:06:09.673495+00:00",
+          "resolved_at": null,
+          "iteration": 100
+        },
+        {
+          "id": "unk_cbdf0ab2",
+          "text": "No ground-truth reference functions or analytical bounds on solution space dimension are provided for validation; without known benchmarks, the binary classification of rigid vs. fat lacks empirical calibration.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T08:06:09.701798+00:00",
+          "resolved_at": null,
+          "iteration": 100
+        },
+        {
+          "id": "unk_a0798dea",
+          "text": "The assumption that hidden layer width alone captures network capacity ignores depth, activation function choice, and initialization — these factors significantly influence expressivity and may invalidate N_c(w) as a sole proxy for generalization behavior.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T08:06:10.084381+00:00",
+          "resolved_at": null,
+          "iteration": 100
         }
       ],
-      "unknowns_discovered": 124,
+      "unknowns_discovered": 129,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

@@ -127,5 +127,18 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the stochastic resonance hypothesis regarding solution space rigidity in small feedforward networks: (1) Define a target function with a hidden signal (e.g., low-"
+  },
+  {
+    "scene_tag": "auto_will",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is fundamentally invalid because it attempts to run a Python script (MODE: coder) without actually executing it. The plan describes writing and saving the script but never includes a step to execute it or analyze the results. Without execution, no numerical values, error trends, or N_c(w) data can be produced to validate the hypothesis about solution-space rigidity.",
+    "missing_steps": [
+      "Execute the generated Python script to produce actual numerical results",
+      "Analyze the output to extract N_c(w) values and error trends",
+      "Validate whether N_c(w) remains bounded as w increases based on actual computed data",
+      "Check if the script actually achieves zero violation (max absolute error <= 1e-3) on validation sets"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to probe the rigidity of the solution space for small feedforward networks. Specifically, we will define a set of analytic constraints (e.g., polynomial/trigo"
   }
 ]
