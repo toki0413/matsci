@@ -76,12 +76,12 @@
       "huginn",
       "value",
       "label",
+      "rigidity",
       "error",
       "plan",
-      "rigidity",
       "prediction",
       "constraint",
-      "rigid"
+      "experiment"
     ],
     "workflow_steps": [
       {

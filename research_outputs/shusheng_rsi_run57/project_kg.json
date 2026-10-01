@@ -484,6 +484,70 @@
       "r_phys": 1.0,
       "iteration": 85,
       "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "'.\"",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:01:12.091295",
+      "last_seen": "2026-10-01T08:01:12.091295",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will be a finite integer for each $w$ (e.g., $N_c(10)=16, N_c(20)=16, N_c(50) \\le 32$), demonstrating solution space rigidity within the scanned capacity range. Training and validation errors",
+      "persona": "reviewer",
+      "id": "experiment:'.\""
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091334",
+      "last_seen": "2026-10-01T08:01:12.091334",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091344",
+      "last_seen": "2026-10-01T08:01:12.091344",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "members": [
+        "experiment:'.\"",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:01:12.091417",
+      "last_seen": "2026-10-01T08:01:12.091417",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cfe1fc07af7e796f",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
     }
   ],
   "links": [
@@ -702,6 +766,33 @@
       "last_seen": "2026-10-01T07:59:31.756833",
       "mentions": 1,
       "target": "he_experiment_pipeline_5e45c894"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'.\"",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4041eeaf"
     }
   ]
 }
