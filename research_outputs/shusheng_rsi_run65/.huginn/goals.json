@@ -31,12 +31,14 @@
         "[Feynman known_unknown] I don’t understand why the system produced only a sequence of numbers without any contextual labeling or unit specification — was this intentional design or a failure mode?",
         "[Feynman unknown_unknown] I never considered whether the lack of test execution (0.00s, no tests ran) itself could be a signal — perhaps the environment wasn’t initialized properly, or the test harness was misconfigured.",
         "[Feynman known_unknown] I don’t fully understand why the generative verification scored 0.0 when the system technically passed all constraints — is it due to lack of human-readable reasoning in output, or something deeper about how validation agents interpret numerical sequences?",
-        "[Feynman unknown_unknown] I never considered that skipping two benchmarks might indicate missing edge cases in the test suite — perhaps those skipped tests would have revealed hidden instability under different initialization seeds."
+        "[Feynman unknown_unknown] I never considered that skipping two benchmarks might indicate missing edge cases in the test suite — perhaps those skipped tests would have revealed hidden instability under different initialization seeds.",
+        "[Feynman known_unknown] I don’t understand why the generative verification scored 0.0 — was it because the output format was wrong, or because the model expected actual numerical/geometric data and got none instead?",
+        "[Feynman unknown_unknown] I never considered that skipping two benchmarks might mean those tests are incompatible with the current manifold definition — now I’m wondering if those benchmarks were meant to catch edge cases we haven’t accounted for yet."
       ],
-      "iteration": 88,
+      "iteration": 93,
       "status": "active",
       "created_at": "2026-10-01T15:03:23.594041+00:00",
-      "updated_at": "2026-10-01T15:39:55.643259+00:00",
+      "updated_at": "2026-10-01T15:41:32.470755+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -951,9 +953,65 @@
           "discovered_at": "2026-10-01T15:39:35.422278+00:00",
           "resolved_at": null,
           "iteration": 85
+        },
+        {
+          "id": "unk_a5d4ad8c",
+          "text": "The definition of \"zero violation\" as max absolute error ≤ 1e-3 may be too strict or too loose depending on the target function's scale; if the true solution has inherent noise or high-frequency components, this threshold might incorrectly penalize valid solutions or accept poor fits.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:40:53.960001+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_a53cd8fd",
+          "text": "The optimization landscape for small networks is highly non-convex and prone to local minima; N_c(w) estimates may be biased upward due to optimization failure rather than true capacity limits.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:40:53.962345+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_c01bb5d2",
+          "text": "No ground-truth analytical solution is provided for validation; without a known reference, it's impossible to distinguish between \"rigid\" behavior and mere lack of expressivity in the tested architectures.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:40:53.964200+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_bafdeb47",
+          "text": "As w increases, the constraint set may become over-constrained in a way that no network width can satisfy — but this could stem from inconsistent constraints rather than inherent rigidity of the solution space.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:40:53.965946+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_a77b6923",
+          "text": "The assumption that hidden layer width is a sufficient proxy for network capacity ignores other architectural factors (e.g., depth, activation functions, initialization) that significantly affect expressivity and generalization.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T15:40:53.967793+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_6580fd84",
+          "text": "I don’t understand why the generative verification scored 0.0 — was it because the output format was wrong, or because the model expected actual numerical/geometric data and got none instead?",
+          "type": "known_unknown",
+          "discovered_at": "2026-10-01T15:41:03.160660+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_ee67d028",
+          "text": "I never considered that skipping two benchmarks might mean those tests are incompatible with the current manifold definition — now I’m wondering if those benchmarks were meant to catch edge cases we haven’t accounted for yet.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-10-01T15:41:03.164268+00:00",
+          "resolved_at": null,
+          "iteration": 90
         }
       ],
-      "unknowns_discovered": 114,
+      "unknowns_discovered": 121,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
