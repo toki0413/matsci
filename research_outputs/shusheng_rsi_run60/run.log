@@ -75,3 +75,8 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Independence Hypot
 [code-lab-run] res_none=True success=None nobj=0 reason="执行异常: NameError: name 'rng' is not defined"
 [code-lab-author] raw_len=2174 extracted_len=2159 prompt_len=6823
 [code-lab-run] res_none=False success=True nobj=3 reason=''
+[validate] mode='code_lab' success=True nobj=3 cf=False lab=True
+[FINALLY-REFLECT] tool_results_this_turn=0
+[FINALLY-REFLECT] tool_results_this_turn=0
+[FINALLY-REFLECT] tool_results_this_turn=0
+branch incubator returned None, fallback to main+hot_model

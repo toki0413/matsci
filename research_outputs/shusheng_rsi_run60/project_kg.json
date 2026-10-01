@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "**[DIM: structure] Algebraic Independence Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T11:39:16.137441",
+      "last_seen": "2026-10-01T11:39:16.137441",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will reveal whether N_c(w) reaches a finite plateau as w increases, indicating algebraic rigidity in the function space of small networks. Expected outcome: N_c saturates at a small val",
+      "persona": "dft_expert",
+      "id": "experiment:**[DIM: structure] Algebraic Independence Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:16.137486",
+      "last_seen": "2026-10-01T11:39:16.137486",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:16.137497",
+      "last_seen": "2026-10-01T11:39:16.137497",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T11:39:16.137509",
+      "last_seen": "2026-10-01T11:39:16.137509",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: structure] Algebraic Independence Hypothesis**",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_b8912e95"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T11:39:16.137617",
+      "last_seen": "2026-10-01T11:39:16.137617",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "01bc35aeb1bb0bcd",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: structure] Algebraic Independence Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:16.137509",
+      "last_seen": "2026-10-01T11:39:16.137509",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8912e95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:16.137509",
+      "last_seen": "2026-10-01T11:39:16.137509",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8912e95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T11:39:16.137509",
+      "last_seen": "2026-10-01T11:39:16.137509",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8912e95"
+    }
+  ]
+}

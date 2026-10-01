@@ -65,3 +65,6 @@ Long-horizon goal: goal_b8b537c4
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 empty required_results for target_1 — fallback
+[exec-route] mode='explore' desc[:80]='Design a numerical experiment to test if small feedforward networks can probe so' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3411 extracted_len=3396 prompt_len=4183
+[code-lab-run] res_none=False success=True nobj=1 reason=''
