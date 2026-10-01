@@ -52,5 +52,32 @@
     ],
     "mode": "workflow",
     "description": "Define target function f(x) = sin(2πx) and generate w constraint samples from uniform distribution on [0,1]. Construct training/validation splits (80/20) for each w. Use a 1-input, tanh-hidden, linear"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "af91e35d9a3f",
+    "reason": "The plan correctly identifies the MODE (explore) as appropriate for hypothesis testing and the PREDICTION is theoretically grounded in the hypothesis. However, the DESCRIPTION lacks critical operational details required for a rigorous test of the 'rigidity' vs 'fatness' dichotomy. Specifically, it does not define the network architecture (hidden layers, activation functions, depth), the optimization algorithm (optimizer, learning rate, epochs), or the sampling strategy for the constraint points (w). Without these, the experiment is not reproducible, and the results (N_c(w)) cannot be validated against the hard criterion (zero violation ≤ 1e-3). The plan also fails to specify how 'intrinsic dimensionality' will be quantified (e.g., specific Fourier bandwidth threshold or polynomial degree cutoff) to correlate with N_c(w), making the correlation analysis ambiguous.",
+    "missing_steps": [
+      "Define specific network architecture (number of hidden layers, neurons per layer, activation function).",
+      "Specify optimization settings (optimizer type, learning rate schedule, maximum epochs, convergence criteria).",
+      "Detail the constraint point sampling method (random, uniform, adaptive) and how 'w' is implemented as a constraint count.",
+      "Define the metric for 'intrinsic dimensionality' (e.g., Fourier bandwidth threshold) and how it will be computed for each function family.",
+      "Specify the validation protocol for 'zero violation' (e.g., number of test points, averaging over seeds)."
+    ],
+    "mode": "explore",
+    "description": "Re-examine the rigidity hypothesis with a broader set of analytic functions and a wider scan of constraint counts to verify whether the observed N_c(w) = constant behavior is specific to the previous "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "af91e35d9a3f",
+    "reason": "The plan fundamentally misdefines N_c(w), making it impossible to test the hypothesis. N_c(w) is defined as 'the minimal number of constraints required to achieve zero violation', which is conceptually incoherent (the number of constraints required cannot depend on the number of constraints w). The hypothesis concerns N_c(w) as the minimal network capacity (width) required to satisfy w constraints, but the plan defines it as a function of w itself while fixing the network width. This confuses the independent variable (w) with the dependent variable (width). Additionally, the plan uses 'zero violation' on a test set of 1000 points, which is an unrealistic criterion for neural network training and does not match the defined constraint satisfaction problem.",
+    "missing_steps": [
+      "Correctly define N_c(w) as the minimal network width (hidden neurons) needed to satisfy w constraints with error ≤ 1e-3 on the constraint points themselves (not a separate test set)",
+      "Fix the network architecture to vary width while keeping depth fixed (or vary both systematically)",
+      "Define the constraint satisfaction problem properly: training on w constraint points and evaluating on those same points, not on a separate test set",
+      "Clarify the relationship between w (constraint count) and N_c (network capacity) - N_c should be a function of w, not defined in terms of w"
+    ],
+    "mode": "explore",
+    "description": "We will test the geometric rigidity hypothesis by training two-layer neural networks on 1D analytic function families (polynomials of degree d∈{2,4,6}, trigonometric sums, and exponentials) with incre"
   }
 ]

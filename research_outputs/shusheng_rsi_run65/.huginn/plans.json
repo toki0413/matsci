@@ -113,6 +113,34 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_2da2e788",
+      "objective": "[DIM: geometry] Geometric manifold rigidity: for smooth target functions with low intrinsic dimensionality (e.g., analytic functions on a 1D domain), the solution space forms a low-dimensional submanifold; thus N_c(w) remains bounded as w grows because the manifold's dimension is fixed, independent of constraint count. predict: N_c(w) = constant (e.g., N_c = 8) for all w ≤ W_max, showing no growth as w increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will test the geometric rigidity hypothesis by training two-layer neural networks on 1D analytic function families (polynomials of degree d∈{2,4,6}, trigonometric sums, and exponentials) with increasing constraint counts w ∈ {5, 10, 20, 30, 50, 100, 200}. Network architecture: 2 hidden layers, 64 neurons per layer, tanh activation. Optimization: Adam optimizer, learning rate 1e-3, batch size 32, max 5000 epochs, early stopping if validation loss plateaus for 100 epochs. Constraint sampling: uniform random sampling over domain [-1, 1]. Intrinsic dimensionality quantified via Fourier bandwidth (for trig functions) or polynomial degree (for polynomials). N_c(w) defined as the minimal number of constraints required to achieve zero violation ≤ 1e-3 on a test set of 1000 points. We will average N_c(w) over 5 random seeds per function class and w value, and plot N_c(w) vs w to determine if it remains constant (rigidity) or grows (fatness).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T15:12:04.155558+00:00",
+      "confirmed_at": "2026-10-01T15:12:04.156645+00:00",
+      "completed_at": "2026-10-01T15:12:55.780323+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
