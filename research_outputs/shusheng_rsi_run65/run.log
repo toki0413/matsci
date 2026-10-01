@@ -799,3 +799,25 @@ def run(cfg):
             if Nc_min <= 16:
                 objectives['score'] += 1.0
         
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=129 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 原始命题中的'胖'（Fatness）定义"] | 缺少显式不完整性自白 action=advisory_hint
+control_trace name=collab_blind_reconstruct iteration=129 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 9 rounds (Δ<0.5), best=5.00 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=129 evidence=stagnation=9 best=5.00 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0384 μ=2.77 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=129 evidence=sigma2=0.0384 mu=2.77 action=advisory_hint
+[exec-route] mode='coder' desc[:80]='Implement a PyTorch-based numerical experiment to test the rigidity hypothesis. ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2041 extracted_len=2026 prompt_len=4184
+/workspace/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3862: RuntimeWarning: Mean of empty slice
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/workspace/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
+[code-lab-author] raw_len=2034 extracted_len=2019 prompt_len=6616
+/workspace/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3862: RuntimeWarning: Mean of empty slice
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/workspace/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
+[code-lab-author] raw_len=2011 extracted_len=1996 prompt_len=6609
+[code-lab-run] res_none=False success=True nobj=4 reason=''
