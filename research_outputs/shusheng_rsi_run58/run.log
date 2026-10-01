@@ -113,3 +113,62 @@ control_trace name=goal_judge iteration=14 evidence=achieved=False score=0.1 llm
 [exec-route] mode='explore' desc[:80]='Design and run a bootstrap experiment to test the rigidity hypothesis: generate ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2007 extracted_len=1992 prompt_len=4466
 [code-lab-run] res_none=False success=True nobj=3 reason=''
+[validate] mode='code_lab' success=True nobj=3 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute a bootstrap rigidity scan for small feedfor' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1972 extracted_len=1957 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1972 extracted_len=1957 prompt_len=7216
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1894 extracted_len=1879 prompt_len=7216
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1894 extracted_len=1879 prompt_len=7138
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 100), 10) @ coeffs)
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [5, 10, 20, 30, 40, 50, 60]
+    hs = list(range(10, 201, 10))
+    summary = {'rigid_Nc': [], 'fat_Nc': []}
+    objectives = {'rigid_Nc_mean': 0.0, 'fat_Nc_mean': 0.0, 'rigid_fat_ratio': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        for w in ws:
+            Nc = hs[-1] + 1
+            for h in hs:
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3:
+                    Nc = h
+                    break
+            Nc_list.append(Nc)
+        summary[kind + '_Nc'] = Nc_list
+        valid = [n for n in Nc_list if n <= hs[-1]]
+        mean_val = float(np.mean(valid)) if valid else float(hs[-1] + 1)
+        objectives[kind + '_Nc_mean'] = mean_val
+    r0, f0 = summary['rigid_Nc'][0], summary['fat_Nc'][0]
+    objectives['rigid_fat_ratio'] = r0 / f0 if f0 > 0 else 1.0
+    return {'success': True, 'summary': summary, 'objectives': objectives}
