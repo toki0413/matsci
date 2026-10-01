@@ -21,5 +21,36 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement a modular neural network training framework (using PyTorch) to simulate the TargetChain setup with tanh activation and Adam optimizer, implementing gradient flow"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "3be0e22a8395",
+    "reason": "The plan has critical flaws: 1) lr=1e3 is orders of magnitude too high for Adam (typical range 1e-4 to 1e-3), causing immediate divergence; 2) No validation of the function being approximated (no target function defined); 3) No data generation strategy for constraints; 4) No mention of how 'zero violation' is evaluated on held-out points; 5) No network initialization or activation specification beyond 'tanh'. Without these, the experiment cannot be executed as described.",
+    "missing_steps": [
+      "Define target function f(x) to be approximated by the network",
+      "Generate constraint samples (input-output pairs) for w values",
+      "Set reasonable learning rate (e.g., 1e-3 or 1e-4) for Adam optimizer",
+      "Specify network initialization scheme (e.g., Xavier/Glorot)",
+      "Define validation set construction strategy for held-out constraints",
+      "Add network capacity scaling verification (monitor training convergence)"
+    ],
+    "mode": "workflow",
+    "description": "Execute a systematic scan of constraint sample size w ∈ {10,20,30,40,50} on a small feedforward network (1-input, tanh hidden, linear output) to compute N_c(w) — the minimum hidden layer width achievi"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "3be0e22a8395",
+    "reason": "The plan is fundamentally incomplete and contains critical omissions that would cause execution failure or uninterpretable results. Specifically, it lacks explicit target function definition, constraint sampling strategy, and validation set construction method. While it mentions Adam with lr=1e-4 (corrected from the historical failure), the plan still fails to specify how the 'zero violation' metric is computed on held-out points beyond a vague reference. The plan also lacks proper network architecture specification (Xavier initialization is mentioned but not implemented). These gaps make the experiment non-reproducible and the results uninterpretable for testing the phase transition hypothesis.",
+    "missing_steps": [
+      "Define explicit target function f(x) to be approximated (e.g., sin(2πx) as mentioned but not formally specified)",
+      "Specify constraint sampling strategy: how w constraint samples are generated from uniform distribution on [0,1]",
+      "Define validation set construction: how training/validation splits are created for each w value",
+      "Implement proper zero-violation evaluation on held-out constraints with clear threshold checking",
+      "Add network architecture specification beyond activation function (layer structure, Xavier initialization implementation)",
+      "Include convergence monitoring and training validation to ensure models actually learn",
+      "Define how N_c(w) is measured: minimum hidden width achieving error ≤ 1e-3"
+    ],
+    "mode": "workflow",
+    "description": "Define target function f(x) = sin(2πx) and generate w constraint samples from uniform distribution on [0,1]. Construct training/validation splits (80/20) for each w. Use a 1-input, tanh-hidden, linear"
   }
 ]
