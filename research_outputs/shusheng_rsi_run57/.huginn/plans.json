@@ -686,6 +686,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_56f06070",
+      "objective": "[DIM: geometry] Curvature-Induced Rigidity Hypothesis",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Execute a reproducible numerical experiment to test the Curvature-Induced Rigidity Hypothesis. Construct an analytical target function (e.g., a trigonometric polynomial with controlled curvature), sample w points uniformly from its domain, and train small feedforward networks (widths N_h ∈ {4,8,16,32,64,128}) to satisfy the zero-violation criterion (max absolute error ≤ 1e-3 on an independent validation set). Measure N_c(w) as the minimum width achieving this for each w ∈ {10,20,30,50,100}. Compare N_c(w) trends: if N_c(w) remains bounded (≤ 2×N_c(10)), the hypothesis is validated (rigid); if all N_h fail or N_c(w) diverges, it is fat. Use fixed seeds, Adam optimizer, and early stopping. Record training/validation MSE, N_c(w), and convergence behavior.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/curvature_rigidity_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:12:42.391074+00:00",
+      "confirmed_at": "2026-10-01T08:12:42.393396+00:00",
+      "completed_at": "2026-10-01T08:13:30.359026+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
