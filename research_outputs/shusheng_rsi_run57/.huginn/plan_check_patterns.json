@@ -176,5 +176,19 @@
     ],
     "mode": "explore",
     "description": "Design and execute a numerical experiment to probe the \"rigidity\" of the solution space for small feedforward networks. Specifically, we will vary the number of constraints (w) and the network width ("
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "ccb72ea252c6",
+    "reason": "The plan is fundamentally invalid because it attempts to test a hypothesis about 'Curvature-Induced Rigidity' (a geometry/physics concept) using a generic MLP training experiment with arbitrary polynomial/trigonometric functions. This creates a category error: the hypothesis concerns the geometric structure of solution spaces (likely related to manifold curvature), while the plan tests merely the capacity of a neural network to fit arbitrary functions without any geometric constraint or curvature analysis. The prediction about N_c(w) growth says nothing about curvature-induced rigidity — it only reports network capacity vs sample size, which is unrelated to the geometric structure of the solution space.",
+    "missing_steps": [
+      "Define what 'curvature' means in the context of the solution space (e.g., Hessian curvature, manifold curvature, etc.)",
+      "Specify the geometric constraint or curvature mechanism that should induce rigidity",
+      "Design experiments that explicitly measure curvature (e.g., Hessian eigenvalues, geodesic distances, manifold embeddings)",
+      "Establish a mathematical link between curvature and solution space rigidity before testing",
+      "Replace arbitrary functions with geometry-aware constraints (e.g., manifold-constrained optimization, curvature-regularized losses)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Test the small forward-pass network's generalization behavior as a probe for bootstrap solution space rigidity. Generate analytic constraint functions (e.g., polynomial/tr"
   }
 ]

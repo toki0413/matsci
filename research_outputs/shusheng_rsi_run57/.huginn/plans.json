@@ -903,6 +903,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_979d7455",
+      "objective": "[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Test the Curvature-Induced Rigidity Hypothesis by constructing a constrained optimization manifold with tunable Gaussian curvature, measuring solution space rigidity via Hessian spectrum analysis and geodesic distance stability. Generate synthetic data on embedded manifolds (spherical/flat/hyperbolic) with curvature κ ∈ {-1, 0, 1}, train geometry-aware networks with curvature-regularized losses, and compute N_c(w) as the minimum width achieving stable geodesic reconstruction (error ≤ 1e-3) across w ∈ {10, 50, 100, 500}. Rigidity is confirmed if N_c(w) remains bounded (≤ 2× baseline) under increasing curvature and sample size, while fat solution spaces show unbounded N_c(w) growth.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:24:21.548103+00:00",
+      "confirmed_at": "2026-10-01T08:24:21.550682+00:00",
+      "completed_at": "2026-10-01T08:24:57.906391+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
