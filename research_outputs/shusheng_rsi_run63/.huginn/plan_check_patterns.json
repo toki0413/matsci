@@ -141,5 +141,37 @@
     ],
     "mode": "explore",
     "description": "Test the algebraic redundancy hypothesis by constructing two families of linear constraint systems: (1) Rigid family with fixed, highly redundant constraints (e.g., 100 constraints with only O(1) inde"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "edcbc563ba7d",
+    "reason": "The plan uses MODE: explore which is inappropriate for this task requiring a concrete numerical experiment with specific metrics (N_c(w)). The DESCRIPTION fails to define critical parameters: w range, N range, network architecture details, and most importantly, the specific mechanism for computing the Hessian spectrum at minima. The PREDICTION is qualitative rather than quantitative. The plan also lacks the necessary implementation details required to reproduce results, and doesn't address how to handle the 'rigid vs floppy' classification boundary rigorously.",
+    "missing_steps": [
+      "Define explicit w and N ranges for scanning",
+      "Specify network architecture (layers, activation functions)",
+      "Detail the method for computing Hessian spectrum at minima",
+      "Define the threshold for 'large eigenvalues' in the spectrum",
+      "Specify training procedure (optimizer, epochs, convergence criteria)",
+      "Define how N_c(w) is computed from the data",
+      "Include error bars and statistical significance analysis"
+    ],
+    "mode": "explore",
+    "description": "We will design and execute a numerical experiment to test the phase transition hypothesis in the loss landscape curvature of small feedforward networks. Specifically, we will vary the number of constr"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "edcbc563ba7d",
+    "reason": "The plan uses MODE: explore which is inappropriate for this task requiring a concrete numerical experiment with specific metrics (N_c(w)). The DESCRIPTION fails to define critical parameters: w range, N range, network architecture details, and most importantly, the specific mechanism for computing the Hessian spectrum at minima. The PREDICTION is qualitative rather than quantitative. The plan also lacks the necessary implementation details required to reproduce results, and doesn't address how to handle the 'rigid vs floppy' classification boundary rigorously. This matches the exact failure pattern documented in the scene history.",
+    "missing_steps": [
+      "Define explicit w and N ranges for scanning",
+      "Specify network architecture (layers, activation functions)",
+      "Detail the method for computing Hessian spectrum at minima",
+      "Define the threshold for 'large eigenvalues' in the spectrum",
+      "Specify training procedure (optimizer, epochs, convergence criteria)",
+      "Define how N_c(w) is computed from the data",
+      "Include error bars and statistical significance analysis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] We will implement a concrete numerical experiment to test the phase transition hypothesis in the loss landscape curvature of small feedforward networks. The implementation"
   }
 ]
