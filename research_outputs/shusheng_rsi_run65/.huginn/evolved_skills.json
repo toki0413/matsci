@@ -76,8 +76,8 @@
       "huginn",
       "value",
       "label",
-      "function",
       "rigidity",
+      "function",
       "plan",
       "prediction",
       "error",
@@ -131,7 +131,7 @@
       "workflow"
     ],
     "source_session": "loop_5",
-    "extraction_confidence": 0.8928571428571428,
+    "extraction_confidence": 0.8933333333333333,
     "usage_count": 0,
     "success_count": 0,
     "created_at": "2026-10-01T15:30:03.253644"
