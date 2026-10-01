@@ -209,6 +209,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_9721d40c",
+      "objective": "[DIM: geometry] The solution manifold of constraints in network function space undergoes a topological transition from high-dimensional curved manifold (w≤2) to low-dimensional affine subspace (w≥3), causing N_c(w) to be fat (large N_c) for w≤2 and rigid (small constant N_c) for w≥3. | predict: N_c(w) = ∞ (or >999) for w=1,2; N_c(w) = 4 for w≥3 (step function). | pro: aligns with previous experiment's abrupt drop; provides geometric interpretation of bootstrap rigidity. con: requires validation of manifold dimension; may not hold for non-smooth constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will design a controlled numerical experiment to test the topological transition hypothesis in network function space. We will (1) construct w interpolation constraints on a smooth target function; (2) use analytical tools (symbolic algebra) to determine the dimension of the solution manifold for small widths w, then use numerical sampling to estimate capacity N_c(w) as the number of linearly independent solutions available at width w; (3) explicitly define N_c(w) as the dimension of the solution manifold (or the number of free parameters remaining after constraints), so that N_c(w) is large (fat) when w≤2 and becomes constant (rigid) when w≥3; (4) scan w from 1 to 10 and verify the predicted step-function transition. We will validate the manifold dimension using rank analysis of the Jacobian of the constraint map and compare against the theoretical prediction N_c(1,2) > 999 (effectively infinite for practical purposes) and N_c(w≥3)=4.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:17:30.238223+00:00",
+      "confirmed_at": "2026-10-01T13:17:30.239461+00:00",
+      "completed_at": "2026-10-01T13:17:57.314328+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

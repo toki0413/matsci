@@ -57,5 +57,33 @@
     ],
     "mode": "explore",
     "description": "Conduct a grid search to measure N_c(w) — the minimum hidden width achieving zero constraint violation (max abs error ≤ 1e-3) on held-out constraints — by varying hidden layer widths w_samples = [4, 8"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "584c6720e9bd",
+    "reason": "The plan contains a critical logical contradiction between the hypothesis and the experimental definition. The hypothesis posits that for w≤2 the solution manifold is high-dimensional (fat), implying infinite capacity N_c(w) > 999. However, the plan defines N_c(w) as the minimum width achieving zero violation. If N_c(w) > 999 for w=1,2, this means even a width of 1000 fails to achieve zero violation, which directly contradicts the hypothesis that these widths should have infinite capacity (i.e., should easily satisfy constraints). The experimental design reverses the expected relationship between manifold dimension and capacity.",
+    "missing_steps": [
+      "Reconcile the definition of N_c(w) with the hypothesis: if w≤2 has infinite capacity, N_c(w) should be small (easily achievable), not large. The current definition measures difficulty of satisfying constraints, which is inversely related to manifold dimension.",
+      "Clarify whether w represents hidden layer width or number of constraints (ambiguous in description).",
+      "Add validation that the constraint set is well-posed and the function space is appropriate for testing the topological transition.",
+      "Include baseline comparison with known theoretical results for function space capacity."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and execute a numerical experiment to test the topological transition hypothesis in network function space. The plan involves: (1) constructing a set of analytical "
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "584c6720e9bd",
+    "reason": "The plan contains a critical definition mismatch between the hypothesis and the hard constraint. The hypothesis defines N_c(w) as the dimension of the solution manifold (a geometric property), but the hard constraint defines N_c(w) as the minimal network capacity (hidden width) required to achieve zero violation on holdout points (a training capacity property). These are fundamentally different quantities. The plan attempts to validate a geometric manifold transition using a metric defined by training capacity, which cannot directly prove the topological transition claim. Additionally, the plan describes using symbolic algebra to determine manifold dimension for 'small widths w' without specifying which widths or providing the mathematical framework for this analysis, leaving the core validation method undefined.",
+    "missing_steps": [
+      "Clarify whether N_c(w) refers to manifold dimension (hypothesis) or minimal network capacity (hard constraint) — these must be aligned",
+      "Define the specific network architecture (activation functions, depth, etc.) for the numerical experiment",
+      "Specify the target function and constraint generation method for the interpolation problems",
+      "Detail the procedure for estimating N_c(w) as minimal capacity required for zero violation",
+      "Define what constitutes 'zero violation' on holdout points (currently only defined as max abs error <= 1e-3, but need to specify how holdout points are chosen)",
+      "Provide the symbolic algebra approach for determining manifold dimension (currently too vague)"
+    ],
+    "mode": "explore",
+    "description": "We will design a controlled numerical experiment to test the topological transition hypothesis in network function space. We will (1) construct w interpolation constraints on a smooth target function;"
   }
 ]
