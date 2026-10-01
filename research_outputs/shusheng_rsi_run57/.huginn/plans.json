@@ -449,6 +449,34 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_198ff46f",
+      "objective": "[DIM: geometry] The solution space is rigid because the neural network manifold and the constraint hyperplanes intersect transversely in a low-dimensional subspace; predict: $N_c(w)$ remains constant (flat) for all $w$ up to the dimension of the manifold, then abruptly jumps to infinity (fat) when constraints exceed the manifold's degrees of freedom.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Construct a target function with analytic constraints, train small feedforward networks (tanh activation, 1 hidden layer) with fixed width N_h, and for each constraint count w, compute the rank of the constraint Jacobian (∂g/∂w) and the null-space dimension of the Hessian at the solution. Rigidity is indicated by a constant null-space dimension (solution manifold dimension) as w increases until the transversal intersection condition breaks, at which point the null-space dimension drops abruptly. Use numerical differentiation and SVD to compute ranks and null-space dimensions, comparing against the theoretical prediction of a flat then jump behavior.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T07:56:14.441736+00:00",
+      "confirmed_at": "2026-10-01T07:56:14.443377+00:00",
+      "completed_at": "2026-10-01T07:56:45.550727+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

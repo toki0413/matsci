@@ -75,5 +75,32 @@
     ],
     "mode": "coder",
     "description": "Write a Python script that implements the hypothesis test for solution-space rigidity in small feedforward networks. The script will: (1) define an analytic target function (e.g., a polynomial/trigono"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "5176c2b69be4",
+    "reason": "Plan is fundamentally flawed because it misidentifies the hypothesis. The hypothesis concerns the geometry of the solution space (rigid vs fat) based on the intersection of the neural network manifold and constraint hyperplanes, which relates to the number of parameters (N_p) relative to constraints (w). However, the plan measures N_c(w) as the minimal hidden layer width required to achieve zero error, which is a measure of model capacity/expressivity, not solution space rigidity. A 'flat' N_c(w) would indicate that network capacity doesn't need to grow with more constraints to fit them, which is about approximation capability, not the geometric structure of the solution space. To properly test rigidity, one should measure the dimensionality of the solution space (number of independent solutions) as w increases, not the minimal network width needed.",
+    "missing_steps": [
+      "Define N_c(w) correctly as the dimension of the solution space (number of independent parameters in the solution manifold), not minimal network width",
+      "Measure the actual dimensionality of the solution space by counting linearly independent solutions at different constraint counts",
+      "Verify the transversal intersection condition mathematically before running simulations",
+      "Use proper tools to analyze the solution space geometry (e.g., Hessian analysis, rank of constraint Jacobian)"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the rigidity hypothesis by scanning hidden layer widths N_h and constraint counts w. Construct a target analytical function (e.g., a 1D smooth functio"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "5176c2b69be4",
+    "reason": "Plan uses 'explore' mode (acceptable) but DESCRIPTION misaligns with hypothesis: hypothesis defines N_c(w) as minimum hidden width achieving zero violation on holdout constraints, while DESCRIPTION computes null-space dimension of Jacobian/Hessian—a different quantity. Prediction about null-space dimension drop does not directly test N_c(w) behavior (flat then jump to infinity). Also, no explicit mention of sweep over network widths to determine N_c(w), nor definition of 'zero violation' threshold in DESCRIPTION (though hard rule specifies it). The plan risks measuring manifold geometry instead of capacity rigidity as defined.",
+    "missing_steps": [
+      "Define N_c(w) as minimum hidden width N_h such that max absolute error on holdout constraints ≤ 1e-3, for each constraint count w",
+      "Scan N_h from small to large for each w to find minimal N_h achieving zero violation",
+      "Plot N_c(w) vs w to verify flat region then abrupt jump (infinity) when constraints exceed manifold DOF",
+      "Ensure training uses fixed-width networks as per hypothesis; null-space analysis is secondary at best",
+      "Specify how constraints are constructed (analytic form, number w, distribution) to ensure transversal intersection test"
+    ],
+    "mode": "explore",
+    "description": "Construct a target function with analytic constraints, train small feedforward networks (tanh activation, 1 hidden layer) with fixed width N_h, and for each constraint count w, compute the rank of the"
   }
 ]
