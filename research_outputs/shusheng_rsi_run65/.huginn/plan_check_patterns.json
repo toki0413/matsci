@@ -134,5 +134,33 @@
     ],
     "mode": "explore",
     "description": "Execute a controlled sweep experiment to test Stochastic Initialization Boundedness against the Algebraic Rigidity hypothesis. Define two function classes: (1) Polynomials f_d(x) of degree d ∈ {2,4,6,"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "133fd48fb3fb",
+    "reason": "The plan fails to match the task type. The task requires a 'coder' mode to write and execute reproducible numerical experiments, but the plan is set to 'explore' (a qualitative mode). Additionally, the plan lacks critical implementation details: it does not specify the network architecture (depth, activation function), the optimization algorithm, or the exact procedure for calculating N_c(w) (e.g., how width is increased until zero-violation is achieved). Without these, the prediction cannot be verified.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' to indicate code generation and execution.",
+      "Define the neural network architecture explicitly (e.g., number of hidden layers, activation function like ReLU).",
+      "Define the optimization strategy for training (e.g., Adam, SGD, loss function details).",
+      "Specify the algorithm for determining N_c(w): how to incrementally search the width space and verify the 'zero-violation' condition (max abs error <= 1e-3).",
+      "Provide the specific code or pseudocode that will be executed to generate the data."
+    ],
+    "mode": "explore",
+    "description": "Re-run the experiment with a simpler, analytically well-understood target function (e.g., a single monomial) to verify that N_c(w) remains bounded at small widths (rigid) before proceeding to more com"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "133fd48fb3fb",
+    "reason": "The plan sets MODE='explore' but the task requires a 'coder' mode to write and execute reproducible numerical experiments. The DESCRIPTION lacks critical implementation details including network architecture (depth, specific width range), optimization algorithm, and exact procedure for calculating N_c(w). This matches the exact historical failure pattern identified in the scene history.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' to indicate code generation and execution",
+      "Define the neural network architecture explicitly (number of hidden layers, activation function like ReLU, width search range)",
+      "Define the optimization strategy for training (e.g., Adam, SGD, loss function details)",
+      "Specify the algorithm for determining N_c(w): how to incrementally search the width space and verify the 'zero-violation' condition (max abs error <= 1e-3)",
+      "Provide the specific code or pseudocode that will be executed to generate the data"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement a reproducible numerical experiment to test the \"Curvature-Driven Fatness\" hypothesis. Define a target function with specific curvature properties (e.g., high-fr"
   }
 ]

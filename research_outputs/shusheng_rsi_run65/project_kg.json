@@ -1075,6 +1075,70 @@
       "r_phys": 1.0,
       "iteration": 105,
       "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "[DIM: structure] Algebraic Rigidity Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:49:26.053843",
+      "last_seen": "2026-10-01T15:49:26.053843",
+      "mentions": 1,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be 8 for w ∈ {10,20,30} and jump to 12 for w ∈ {40,50}, with all validation errors ≤ 1e-3 and no inf/nan; N_c remains bounded within scan limit 32, indicating algebraic rigidity.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] Algebraic Rigidity Hypothesis**"
+    },
+    {
+      "label": "plan_workflow_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:49:26.053905",
+      "last_seen": "2026-10-01T15:49:26.053905",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:49:26.053920",
+      "last_seen": "2026-10-01T15:49:26.053920",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:49:26.053940",
+      "last_seen": "2026-10-01T15:49:26.053940",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic Rigidity Hypothesis**",
+        "Method:plan_workflow_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_ff5d6ae"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:49:26.054040",
+      "last_seen": "2026-10-01T15:49:26.054040",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4198ff990aa64d50",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
     }
   ],
   "links": [
@@ -1536,6 +1600,33 @@
       "last_seen": "2026-10-01T15:48:17.235146",
       "mentions": 1,
       "target": "he_experiment_pipeline_acf76674"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic Rigidity Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:49:26.053940",
+      "last_seen": "2026-10-01T15:49:26.053940",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff5d6ae"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:49:26.053940",
+      "last_seen": "2026-10-01T15:49:26.053940",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff5d6ae"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:49:26.053940",
+      "last_seen": "2026-10-01T15:49:26.053940",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff5d6ae"
     }
   ]
 }
