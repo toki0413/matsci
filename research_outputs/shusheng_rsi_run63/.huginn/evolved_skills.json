@@ -52,9 +52,9 @@
       "value",
       "label",
       "constraints",
+      "width",
       "function",
       "target",
-      "width",
       "error",
       "small"
     ],
