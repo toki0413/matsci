@@ -375,3 +375,12 @@ def run(cfg):
         finite_Nc = [x for x in Nc_w if np.isfinite(x)]
         if kind == 'rigid':
             if len(finite_Nc) > 0 and max(finite_Nc) <=
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=59 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 将'刚性'这一基于网络容量（N_c）和样本数（w）的几何/计算性质，重新表述为代数几何中的'代数簇'（algebraic variety）及其'Kolmogorov N-width'的衰减速率。"] | 缺少显式不完整性自白 action=advisory_hint
+darwin ratchet: stagnation 11 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=59 evidence=stagnation=11 best=2.50 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0833 μ=2.50 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=59 evidence=sigma2=0.0833 mu=2.50 action=advisory_hint
+[exec-route] mode='workflow' desc[:80]='Execute the Python script for solution-space rigidity testing in small feedforwa' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2857 extracted_len=2843 prompt_len=3903
+[code-lab-run] res_none=False success=True nobj=5 reason=''

@@ -62,5 +62,18 @@
     ],
     "mode": "explore",
     "description": "I will test the bootstrap rigidity hypothesis for small feedforward networks by defining the target function class precisely (polynomials and trigonometric combinations up to degree 5), specifying the"
+  },
+  {
+    "scene_tag": "auto_will",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is fundamentally invalid because it attempts to run a Python script (MODE: coder) without actually executing it. The plan describes writing and saving the script but never includes a step to execute it or analyze the results. Without execution, no numerical values, error trends, or N_c(w) data can be produced to validate the hypothesis about solution-space rigidity. The hypothesis requires empirical validation through running the experiments, which the plan omits entirely.",
+    "missing_steps": [
+      "Execute the generated Python script to produce actual numerical results",
+      "Analyze the output to extract N_c(w) values and error trends",
+      "Validate whether N_c(w) remains bounded as w increases based on actual computed data",
+      "Check if the script actually achieves zero violation (max absolute error <= 1e-3) on validation sets"
+    ],
+    "mode": "coder",
+    "description": "Write a Python script that implements the hypothesis test for solution-space rigidity in small feedforward networks. The script will: (1) define an analytic target function (e.g., a polynomial/trigono"
   }
 ]
