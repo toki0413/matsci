@@ -88,3 +88,4 @@ json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 [code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplot"
 [code-lab-author] raw_len=2248 extracted_len=2233 prompt_len=7928
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
