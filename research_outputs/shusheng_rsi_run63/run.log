@@ -130,3 +130,4 @@ metacog: 假设可能为换名归约 (trap=, target=The 'Double Descent' / Inter
 [code-lab-run] res_none=True success=None nobj=0 reason='objectives 值须为数值: [65, 65, 65, 65, 65]'
 [code-lab-author] raw_len=3489 extracted_len=3474 prompt_len=7113
 [code-lab-run] res_none=False success=True nobj=20 reason=''
+[validate] mode='code_lab' success=True nobj=20 cf=False lab=True

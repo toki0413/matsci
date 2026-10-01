@@ -72,3 +72,4 @@ plan_check failed (tier=medium, scene=workflow, max_refines=1): The plan conflat
 control_trace name=collab_blind_reconstruct iteration=4 evidence=skip: no current_hyp_id_for_plan action=skip
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that minimal network capaci' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2636 extracted_len=2621 prompt_len=4744
+[code-lab-run] res_none=False success=True nobj=2 reason=''

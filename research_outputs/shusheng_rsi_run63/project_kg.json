@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:04:18.811608",
+      "last_seen": "2026-10-01T13:04:18.811608",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will likely show that for a simple target function (e.g., a low-degree polynomial), N_c(w) remains small and constant (rigid) for w up to a certain point, but may grow or fail (fat) if the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] **Interpolation Threshold Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811649",
+      "last_seen": "2026-10-01T13:04:18.811649",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811660",
+      "last_seen": "2026-10-01T13:04:18.811660",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+        "Method:plan_coder_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:04:18.811751",
+      "last_seen": "2026-10-01T13:04:18.811751",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b8e24fba05c03913",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_24323f20"
+    }
+  ]
+}
