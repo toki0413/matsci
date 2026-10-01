@@ -77,11 +77,11 @@
       "value",
       "label",
       "plan",
-      "function",
       "rigidity",
-      "constraint",
-      "hypothesis",
-      "prediction"
+      "function",
+      "error",
+      "prediction",
+      "constraint"
     ],
     "workflow_steps": [
       {
@@ -131,7 +131,7 @@
       "workflow"
     ],
     "source_session": "loop_5",
-    "extraction_confidence": 0.8916666666666666,
+    "extraction_confidence": 0.8923076923076922,
     "usage_count": 0,
     "success_count": 0,
     "created_at": "2026-10-01T15:30:03.253644"

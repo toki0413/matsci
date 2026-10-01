@@ -538,3 +538,13 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Rigidity Hypothesi
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute a numerical experiment to test the Algebrai' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=3602 extracted_len=3587 prompt_len=4216
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=74 evidence=skip: node status=refuted action=skip
+control_trace name=goal_judge iteration=74 evidence=achieved=False score=0.2 llm=1 action=advisory_hint
+darwin ratchet: stagnation 6 rounds (Δ<0.5), best=5.00 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=74 evidence=stagnation=6 best=5.00 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0666 μ=2.88 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=74 evidence=sigma2=0.0666 mu=2.88 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Re-design the experiment using a more challenging constraint function (e.g., hig' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3607 extracted_len=3592 prompt_len=4186
+[code-lab-run] res_none=False success=True nobj=2 reason=''
