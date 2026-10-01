@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "** [DIM: structure] Algebraic Independence Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:02:46.315508",
+      "last_seen": "2026-10-01T13:02:46.315508",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The set $\\{1, x, x^2, \\sin(2\\pi x)\\}$ is algebraically independent over $\\mathbb{Q}$, as no non-trivial polynomial identity exists that vanishes identically on the real line. This will be verified by",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] Algebraic Independence Hypothesis"
+    },
+    {
+      "label": "plan_workflow_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315557",
+      "last_seen": "2026-10-01T13:02:46.315557",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315570",
+      "last_seen": "2026-10-01T13:02:46.315570",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] Algebraic Independence Hypothesis",
+        "Method:plan_workflow_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:02:46.315710",
+      "last_seen": "2026-10-01T13:02:46.315710",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f80c79d05df887ad",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] Algebraic Independence Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9edc41f2"
+    }
+  ]
+}

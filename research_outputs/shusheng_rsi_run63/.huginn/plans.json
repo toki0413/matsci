@@ -30,6 +30,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_eba09b83",
+      "objective": "[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Create a Python script to test the Interpolation Threshold Hypothesis. The script will: (1) Define a set of analytical constraints (e.g., linear equations, polynomial evaluations) to form the \"analytical constraints\" mentioned in the hypothesis; (2) Implement a small feedforward network (single hidden layer) with variable width N; (3) For increasing numbers of constraints w, train the network to satisfy these constraints (training error <= 1e-3); (4) Evaluate the maximum absolute error on a held-out set of constraints (leave-one-out or separate validation set); (5) Record the minimum width N_c(w) required to achieve \"zero violation\" (max error <= 1e-3) on the held-out set; (6) Plot N_c(w) vs w to determine if the solution space is \"rigid\" (N_c plateaus at small value) or \"fat\" (N_c grows or is unattainable). We will use a simple function like sin(x) or a polynomial as the target function to generate constraints.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/interpolation_threshold.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:02:45.233490+00:00",
+      "confirmed_at": "2026-10-01T13:02:45.234703+00:00",
+      "completed_at": "2026-10-01T13:03:59.338401+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
