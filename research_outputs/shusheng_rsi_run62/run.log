@@ -162,3 +162,4 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Independence Hypot
   return _methods._mean(a, axis=axis, dtype=dtype,
 /workspace/.venv/lib/python3.11/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
   ret = ret.dtype.type(ret / rcount)
+[code-lab-run] res_none=False success=True nobj=4 reason=''
