@@ -29,5 +29,33 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Generate executable Python code to numerically test the hypothesis that minimal network capacity $N_c(w)$ scales linearly with constraint count $w$ for target functions wi"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make the hypothesis untestable in its current form. First, the variable 'w' is overloaded: it is defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the relationship between the number of constraints and the network input dimension is undefined—without specifying how constraints map to inputs, the grid search cannot be implemented. Third, the training data generation (function to approximate, sampling method) is unspecified, which is essential for defining the constraints and errors.",
+    "missing_steps": [
+      "Clarify the definition of 'w' (constraint count vs. width) and ensure consistent notation",
+      "Specify the mapping from constraint count to network input dimension",
+      "Define the target function and sampling strategy for generating constraints and training data",
+      "Detail the constraint violation metric and validation set construction"
+    ],
+    "mode": "explore",
+    "description": "Conduct a grid search over hidden layer widths (w_samples = [4, 8, 12, 16, 20, 24]) and constraint counts (w = [2, 4, 6, 8, 10]) to measure N_c(w) — the minimum width achieving zero violation (max abs"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make it untestable. First, variable 'w' is overloaded: defined as 'hidden layer width' in the plan but used as 'constraint counts' in the prediction N_c(w). Second, the mapping from constraint count to network input dimension is undefined — it's unclear whether input dimension equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These issues match the exact failure modes previously documented for this scenario.",
+    "missing_steps": [
+      "Clarify variable notation: distinguish between hidden width (w) and constraint count (c) consistently throughout",
+      "Define how constraint count maps to network input dimension (e.g., input_dim = c?)",
+      "Specify target function generation method (random Fourier features details)",
+      "Define constraint sampling strategy on [-1, d] domain",
+      "Define constraint violation metric and validation set construction procedure",
+      "Specify training data generation process (sample size, distribution)"
+    ],
+    "mode": "explore",
+    "description": "Conduct a grid search to measure N_c(w) — the minimum hidden width achieving zero constraint violation (max abs error ≤ 1e-3) on held-out constraints — by varying hidden layer widths w_samples = [4, 8"
   }
 ]

@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The algebraic independence of constraints dictates solution-spa",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:08:27.766268",
+      "last_seen": "2026-10-01T13:08:27.766268",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For w ≤ 8, N_c(w) = 4 (all widths ≥ 4 achieve zero violation); for w > 8, N_c(w) = 12 (widths < 12 fail, width 12 succeeds). The plot of N_c(w) vs w will show a sharp step at w=8. Error bars across se",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The algebraic independence of constraints dictates solution-spa"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766306",
+      "last_seen": "2026-10-01T13:08:27.766306",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766318",
+      "last_seen": "2026-10-01T13:08:27.766318",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The algebraic independence of constraints dictates solution-spa",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:08:27.766405",
+      "last_seen": "2026-10-01T13:08:27.766405",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "70f3f05aa6234034",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-10-01T13:07:24.668392",
       "mentions": 1,
       "target": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The algebraic independence of constraints dictates solution-spa",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc8c14c8"
     }
   ]
 }

@@ -144,3 +144,8 @@ control_trace name=goal_judge iteration=14 evidence=achieved=False score=0.25 ll
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] We will design a controlled numerical experiment to' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2407 extracted_len=2392 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+plan_check failed (tier=medium, scene=other, max_refines=1): The plan contains critical ambiguities that make it untestable. First, variable 'w' is overloaded: defined as 'hidden layer width' in the plan but used as 'constraint counts' in the prediction N_c(w). Second, the mapping from constraint count to network input dimension is undefined — it's unclear whether input dimension equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These issues match the exact failure modes previously documented for this scenario.
+[exec-route] mode='explore' desc[:80]='Conduct a grid search to measure N_c(w) — the minimum hidden width achieving zer' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2278 extracted_len=2263 prompt_len=4183
+[code-lab-run] res_none=False success=True nobj=1 reason=''
