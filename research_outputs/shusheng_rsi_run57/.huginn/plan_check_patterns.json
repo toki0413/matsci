@@ -140,5 +140,28 @@
     ],
     "mode": "explore",
     "description": "Design and execute a numerical experiment to probe the rigidity of the solution space for small feedforward networks. Specifically, we will define a set of analytic constraints (e.g., polynomial/trigo"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "971654fce698",
+    "reason": "The hypothesis concerns the minimal width N_c required to satisfy w constraints (equivalent to interpolation), whereas the plan uses a held-out validation set of 100 independent points to measure generalization error. This tests whether the network can generalize to unseen data, not whether it can satisfy the original constraints. The plan's PREDICTION also incorrectly expects low validation error (generalization) rather than low constraint error (interpolation).",
+    "missing_steps": [
+      "Define the validation set as the constraint set itself (not an independent held-out set), or add a separate interpolation check on the constraint points."
+    ],
+    "mode": "explore",
+    "description": "Perform a systematic width scan to test the algebraic phase transition hypothesis in solution space rigidity. For each constraint count w ∈ {10, 20, 30, 50, 100}, scan hidden layer widths N_h ∈ {4, 8,"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "971654fce698",
+    "reason": "The plan is fundamentally flawed because it tests generalization error on an independent held-out validation set, whereas the hypothesis concerns constraint satisfaction (interpolation) error on the constraint points themselves. The plan will measure how well the network generalizes to new data, not whether it can satisfy the original w constraints. This is a critical misalignment: the hypothesis is about the minimal width needed for interpolation (zero error on constraint points), not generalization to unseen points. The historical failure explicitly warned about this exact mistake.",
+    "missing_steps": [
+      "Define the constraint set as the training target, not a held-out validation set",
+      "Measure constraint satisfaction error (max absolute residual on the w constraint points) directly",
+      "Determine N_c(w) as the minimal width achieving zero constraint error (≤1e-3) on the constraint points",
+      "Remove the independent held-out validation set from the evaluation metric"
+    ],
+    "mode": "explore",
+    "description": "Perform a systematic width scan to test the algebraic phase transition hypothesis. For each constraint count w ∈ {10, 20, 30, 50, 100}, scan hidden layer widths N_h ∈ {4, 8, 16, 32, 64, 128} to determ"
   }
 ]
