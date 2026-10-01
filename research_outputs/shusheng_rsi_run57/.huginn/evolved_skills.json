@@ -9,11 +9,11 @@
       "value",
       "label",
       "error",
-      "experiment",
+      "prediction",
       "rigid",
-      "constraint",
       "plan",
-      "prediction"
+      "experiment",
+      "rigidity"
     ],
     "workflow_steps": [
       {

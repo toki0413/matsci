@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 40,
       "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:43:45.078578",
+      "last_seen": "2026-10-01T07:43:45.078578",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will increase with w (e.g., N_c(10)=8, N_c(100)=64), indicating fat behavior (no rigidity), contradicting the previous rigidity hypothesis. Validation error will exceed 1e-3 for small N_h at la",
+      "persona": "reviewer",
+      "id": "experiment:** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078617",
+      "last_seen": "2026-10-01T07:43:45.078617",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078626",
+      "last_seen": "2026-10-01T07:43:45.078626",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "members": [
+        "experiment:** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:43:45.078700",
+      "last_seen": "2026-10-01T07:43:45.078700",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4f5f5ce6630ea618",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-10-01T07:42:17.414574",
       "mentions": 1,
       "target": "he_experiment_pipeline_21468f75"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ae3db18"
     }
   ]
 }

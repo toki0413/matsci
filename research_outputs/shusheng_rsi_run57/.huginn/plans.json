@@ -270,6 +270,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d8e9f1c9",
+      "objective": "**[DIM: measure]** The information-theoretic capacity hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will conduct a numerical experiment to test the \"information-theoretic capacity hypothesis\" regarding the rigidity of small feedforward networks under analytical constraints. The goal is to determine if the minimum hidden layer width N_c(w) needed to achieve zero violation (max absolute error ≤ 1e-3 on held-out points) remains bounded as the number of constraints w increases. We will define a test function with known analytical properties, generate w training samples, scan N_h ∈ [4, 8, 16, 32, 64, 128], compute training and held-out errors for each (w, N_h) pair, and record N_c(w). We will fix random seeds for reproducibility and use Adam with early stopping. The rigidity vs. fatness decision will be based on whether N_c(w) stays finite and stable (rigid) or grows unbounded or fails to reach zero violation within the scan range (fat).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "None"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T07:44:13.029674+00:00",
+      "confirmed_at": "2026-10-01T07:44:13.031290+00:00",
+      "completed_at": "2026-10-01T07:44:35.008809+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
