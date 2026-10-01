@@ -7,10 +7,10 @@
         "[Feynman known_unknown] I don’t understand why the generative verification scored zero despite the computation technically “passing” constraints—was the issue purely presentational, or was there a deeper mismatch in expected output format?",
         "[Feynman unknown_unknown] I never considered that the test harness might expect annotated output or structured reasoning alongside numerical results until the validation summary highlighted the absence of a data→inference→conclusion chain."
       ],
-      "iteration": 23,
+      "iteration": 28,
       "status": "active",
       "created_at": "2026-10-01T07:25:23.271922+00:00",
-      "updated_at": "2026-10-01T07:36:21.837493+00:00",
+      "updated_at": "2026-10-01T07:38:05.217312+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -229,9 +229,49 @@
           "discovered_at": "2026-10-01T07:34:50.571901+00:00",
           "resolved_at": null,
           "iteration": 20
+        },
+        {
+          "id": "unk_4a78364d",
+          "text": "The core question assumes that \"zero violation\" on hold-out points is a sufficient proxy for solution space rigidity, but this may conflate interpolation accuracy with uniqueness; a network could achieve low error on test points while still belonging to a high-dimensional manifold of solutions (i.e., being \"fat\" yet generalizing well due to regularization or implicit bias).",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:36:49.253264+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_55c1b30d",
+          "text": "The optimization landscape of small feedforward networks is highly non-conventril and sensitive to initialization; different seeds may converge to different local minima with varying effective capacities, leading to unreliable estimation of N_c(w) unless exhaustive or probabilistic sampling is used.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:36:49.254782+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_98070451",
+          "text": "As w increases beyond the number of parameters, the system becomes overdetermined — but if the constraints are not in general position (e.g., redundant or near-collinear), N_c(w) may remain artificially low, falsely suggesting rigidity when the true solution space is actually degenerate or ill-conditioned.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:36:49.255892+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_3b0664d7",
+          "text": "There is no ground-truth definition of “solution space rigidity” provided for validation; without synthetic or analytically tractable benchmarks (e.g., linear systems, polynomial interpolation), it’s impossible to verify whether observed N_c(w) trends reflect true structural properties or artifacts of the experimental setup.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:36:49.256984+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_8af2e390",
+          "text": "The assumption that hidden layer width alone captures network capacity ignores depth, activation function choice, and parameter scaling — two networks with same width but different depths or activations may exhibit vastly different effective N_c(w), making width an incomplete proxy for capacity in this context.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T07:36:49.258058+00:00",
+          "resolved_at": null,
+          "iteration": 25
         }
       ],
-      "unknowns_discovered": 27,
+      "unknowns_discovered": 32,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

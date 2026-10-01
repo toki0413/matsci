@@ -28,5 +28,39 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] We will design a reproducible numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution-space rigidity by measuring $N_c(w)$ — t"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "1ce1e99db0dc",
+    "reason": "The plan contains a critical logical contradiction in the hypothesis definition. It defines 'rigid' as N_c(w) being small and finite (e.g., 8-16) that does NOT grow with w, but then claims N_c(w) saturates at this small value for w up to a threshold w_th. This is contradictory: if N_c(w) is truly independent of w (rigid), it shouldn't depend on w at all, not just up to a threshold. Furthermore, the hypothesis string is empty ('.'), making the target undefined. The prediction also uses ambiguous language ('will saturate') without specifying what happens beyond w_th or whether N_c(w) actually remains constant.",
+    "missing_steps": [
+      "Define a clear, non-contradictory hypothesis statement (currently empty)",
+      "Clarify whether N_c(w) should be constant for all w or only up to some threshold w_th",
+      "Specify what happens when w exceeds the threshold w_th",
+      "Define the exact analytical target functions to be used (currently only mentioned as 'polynomials, trigonometric combinations')",
+      "Specify the network architecture details (number of hidden layers, activation functions, initialization scheme)",
+      "Define the training procedure (optimizer, learning rate, number of epochs, convergence criteria)",
+      "Specify how the 'zero-violation criterion' is checked (is it on a single point or all 100 held-out points?)",
+      "Define what 'bootstrap rigidity' means in this context"
+    ],
+    "mode": "explore",
+    "description": "I will design a numerical experiment to probe the \"bootstrap rigidity\" of small feedforward networks. Using PyTorch, I will scan over sample counts $w \\in \\{10, 20, 30, 50, 100\\}$ and hidden widths $N"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "1ce1e99db0dc",
+    "reason": "The plan contains a critical logical contradiction in the hypothesis definition. It defines 'rigid' as N_c(w) being small and finite that does NOT grow with w, but then claims N_c(w) saturates at this small value for w up to a threshold w_th. This is contradictory: if N_c(w) is truly independent of w (rigid), it shouldn't depend on w at all, not just up to a threshold. Furthermore, the hypothesis string is empty ('.'), making the target undefined. The prediction also uses ambiguous language without specifying what happens beyond w_th or whether N_c(w) actually remains constant.",
+    "missing_steps": [
+      "Define a clear, non-contradictory hypothesis statement (currently empty)",
+      "Clarify whether N_c(w) should be constant for all w or only up to some threshold w_th",
+      "Specify what happens when w exceeds the threshold w_th",
+      "Define the exact analytical target functions to be used (currently only mentioned as 'polynomials, trigonometric combinations')",
+      "Define the network architecture details (number of hidden layers, activation functions, initialization scheme) - partially specified but needs formalization",
+      "Define the training procedure (optimizer, learning rate, number of epochs, convergence criteria) - partially specified but needs formalization",
+      "Define how the 'zero-violation criterion' is checked (is it on a single point or all 100 held-out points?) - specified but needs verification",
+      "Define what 'bootstrap rigidity' means in this context"
+    ],
+    "mode": "explore",
+    "description": "I will test the bootstrap rigidity hypothesis for small feedforward networks by defining the target function class precisely (polynomials and trigonometric combinations up to degree 5), specifying the"
   }
 ]
