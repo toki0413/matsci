@@ -284,6 +284,30 @@ def test_build_author_prompt_focus_changes_prompt() -> None:
     assert p_a != p_plain and p_a != p_b
 
 
+def test_build_author_prompt_timeout_hint_reduces_compute() -> None:
+    """超时失败要回灌**降算力**指令, 不能套用 NameError/形状那套对症提示.
+
+    run59/60 实测: 三组都被 900s 超时饿死, 报错里没有语法线索, 但提示仍讲
+    NameError → 书生继续产出同样重的扫描. 这里锁定"超时 → 削减计算量".
+    """
+    from huginn.research.code_lab import build_author_prompt
+
+    p = build_author_prompt("恒定目标", repair_hint="code_lab 执行超时 (> 900.0s)")
+    assert "削减计算量" in p
+    assert "NameError" not in p  # 不再误导书生去查语法
+
+
+def test_build_author_prompt_bug_hint_keeps_syntax_advice() -> None:
+    """非超时失败仍走原"对症改 bug"分支 (回归保护)."""
+    from huginn.research.code_lab import build_author_prompt
+
+    p = build_author_prompt(
+        "恒定目标", repair_hint="NameError: name 'foo' is not defined"
+    )
+    assert "NameError" in p
+    assert "削减计算量" not in p
+
+
 def test_codelab_focus_injects_hard_variation_directive() -> None:
     """v12 / B1: 重复执行越阈值后, 强制变异令必须进**实验作者**提示(而非只进假设提示).
 
@@ -518,6 +542,104 @@ def test_reflect_control_trace_forwards_uniform_schema() -> None:
     assert captured[0][0] == "campaign.control_trace"
     assert captured[0][1]["name"] == "effort_floor"
     assert captured[0][1]["action"] == "advisory_hint"
+
+
+def test_control_trace_emits_telemetry_event() -> None:
+    """观测面: control_trace 除 WARNING/campaign 外还落 OTel event → Langfuse 可查."""
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.telemetry import TelemetryCollector, set_telemetry_collector
+
+    collector = TelemetryCollector()
+    set_telemetry_collector(collector)
+
+    class _Stub:
+        _iteration = 5
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            pass
+
+    try:
+        CognitiveRunner._control_trace(
+            _Stub(), "goal_judge", "achieved=False", action="advisory_hint"
+        )
+        roots = collector.to_dict()
+        ev = next(r for r in roots if r["name"] == "control_trace")
+        assert ev["metadata"]["name"] == "goal_judge"
+        assert ev["metadata"]["action"] == "advisory_hint"
+    finally:
+        set_telemetry_collector(None)
+
+
+def test_blind_reconstruct_skip_emits_control_trace() -> None:
+    """无当前假设时盲重建此前**静默 return** → 现在必须留 trace (A/B 才测得出来)."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    captured: list[tuple[str, dict]] = []
+
+    class _StubEngine:
+        _iteration = 2
+        _agent_factory = object()
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            captured.append((event_type, data))
+
+    # 无 _current_hyp_id_for_plan → 命中第一个静默 return 分支
+    asyncio.run(EngineReflect(_StubEngine())._blind_reconstruct_verify(None, {}))
+    trace = next(d for _, d in captured if d.get("name") == "collab_blind_reconstruct")
+    assert trace["action"] == "skip"
+    assert "no current_hyp_id_for_plan" in trace["evidence"]
+
+
+def test_branch_incubator_empty_candidates_emits_trace() -> None:
+    """孵化跑了但 N 路全空手 → 留 trace, 区分"没跑"与"跑了没结果"."""
+    from huginn.autoloop.hypothesis_loop import HypothesisLoop
+
+    captured: list[dict] = []
+
+    class _EmptyIncubator:
+        async def run_round(self, **kwargs):
+            class _R:
+                success = False
+                hypothesis = ""
+                tokens_used = 1
+
+            return [_R(), _R(), _R()]
+
+    class _StubEngine:
+        _iteration = 4
+        _max_pivots = 2
+        _agent_factory = object()
+        _branch_incubator = None
+
+        def _emit_control_trace(
+            self, name: str, evidence: str, action: str = "advisory_hint"
+        ) -> None:
+            captured.append({"name": name, "evidence": evidence, "action": action})
+
+        async def _symreg_hint(self, context):
+            return ""
+
+        def _conjecture_hint(self, context):
+            return ""
+
+        def _build_hypothesis_prompt(self, context):
+            return "prompt"
+
+    eng = _StubEngine()
+    eng._branch_incubator = _EmptyIncubator()
+    loop = HypothesisLoop(eng)
+    out = asyncio.run(loop._hypothesize_via_branch_incubator({}))
+    assert out is None
+    trace = next(d for d in captured if d["name"] == "collab_branch_incubator")
+    assert trace["action"] == "skip"
+    assert "empty" in trace["evidence"]
+
+
+def test_engine_exposes_emit_control_trace_delegation() -> None:
+    """协作对象经 __getattr__ 走 engine._emit_control_trace → 必须有该委托方法."""
+    from huginn.autoloop.engine import AutoloopEngine
+
+    assert hasattr(AutoloopEngine, "_emit_control_trace")
 
 
 def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:

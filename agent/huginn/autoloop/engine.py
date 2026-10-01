@@ -1597,6 +1597,13 @@ class AutoloopEngine:
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         self._cognitive_runner._emit_campaign(event_type, data)
 
+    def _emit_control_trace(
+        self, name: str, evidence: str, action: str = "advisory_hint"
+    ) -> None:
+        # 控制面观测统一入口: HypothesisLoop / EngineAct 等协作对象经 __getattr__
+        # 转发到这里 (EngineReflect 有自己的同名实现走 _OWN_ATTRS).
+        self._engine_reflector._emit_control_trace(name, evidence, action)
+
     def _prepare_run(
         self, objective: str, progressive_budget: bool, goal: Any | None,
     ) -> tuple[str, Any, Any]:

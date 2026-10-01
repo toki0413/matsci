@@ -122,6 +122,38 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
     builtin_ref = ("、".join(scaffold.primitive_names)
                    if scaffold and scaffold.primitive_names
                    else "沙箱内置的数值工具")
+    # 超时是跟"代码写错"完全不同的一类失败: 报错里没有语法/形状线索, 只有"执行超时".
+    # 若仍套用 NameError/形状 那套对症提示, 书生会继续产出同样重的扫描 → 反复超时
+    # (run59/60 实测: 三组都被 900s 超时饿死, 无一产生执行证据). 故单独给一条
+    # **可执行的降算力**指令 (命题无关, 只谈算力预算, 不碰科学判断).
+    _timeout_like = ("超时" in repair_hint) or ("timeout" in repair_hint.lower())
+    if not repair_hint:
+        _repair_block = ""
+    else:
+        if _timeout_like:
+            _repair_block = (
+                "上一轮该代码在沙箱**执行超时**(算力预算耗尽), 请**大幅削减计算量**后重写:\n"
+                "对症改(极常见): (a) 扫描组合数太多 → 砍掉 (kind × w × h × seeds) 的组合数, "
+                "例如 w 只取 2-3 个值、h 只取 3-4 个宽度、seeds 降到 1; "
+                "(b) 单次拟合太慢 → 降低 mlp_fit 的 maxiter; "
+                "(c) 先跑最小可判的配置拿到证据, 再考虑扩大扫描。\n"
+                "报错原文:\n" + repair_hint[:800] + "\n"
+            )
+        else:
+            _repair_block = (
+                "上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
+                "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 "
+                + builtin_ref + ", 不要自己重写已有工具; "
+                "(b) 形状不匹配(matmul/广播/concatenate) → 数组一律 .reshape(-1, 1) 对齐二维; "
+                "(c) Generator 没有 randn → 用 rng.standard_normal(n); "
+                "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值。\n"
+                "报错原文:\n" + repair_hint[:800] + "\n"
+            )
+        if prev_code:
+            _repair_block += (
+                "你上一版失败的代码(请在其基础上做**最小改动**修正它, 保留其余已正确的部分, "
+                "不要凭空重写):\n" + prev_code[:2500] + "\n"
+            )
     return (
         "你是实验代码作者。请写一段 Python 实验脚本推进下面的研究目标。\n"
         "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class; "
@@ -132,16 +164,7 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
         "严禁把 cfg 整体解包成多个变量。\n"
         + (scaffold.hints if scaffold and scaffold.hints else "")
         + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
-        + (("上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
-           "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 "
-           + builtin_ref + ", 不要自己重写已有工具; "
-           "(b) 形状不匹配(matmul/广播/concatenate) → 数组一律 .reshape(-1, 1) 对齐二维; "
-           "(c) Generator 没有 randn → 用 rng.standard_normal(n); "
-           "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值。\n"
-           "报错原文:\n" + repair_hint[:800] + "\n"
-           + (("你上一版失败的代码(请在其基础上做**最小改动**修正它, 保留其余已正确的部分, "
-               "不要凭空重写):\n" + prev_code[:2500] + "\n") if prev_code else "")
-           if repair_hint else ""))
+        + _repair_block
         + "**必须直接采用下面这份模板作为完整脚本骨架**: "
         + template +
         "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"

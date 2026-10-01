@@ -819,6 +819,12 @@ class EngineReflect:
         """
         _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
         if not _hyp_id:
+            # 观测: 未接线/无当前假设时此前是**静默 return** → 野外看不出开没开.
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                "skip: no current_hyp_id_for_plan",
+                action="skip",
+            )
             return
         try:
             _node = self.hypothesis_graph._nodes.get(_hyp_id)
@@ -826,6 +832,11 @@ class EngineReflect:
             logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None or _node.status != "untested":
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"skip: node status={getattr(_node, 'status', 'missing')}",
+                action="skip",
+            )
             return
         _statement = _node.statement
         if not _statement or len(_statement) < 10:
@@ -851,6 +862,11 @@ class EngineReflect:
                 logger.debug("per-hyp blind budget check failed", exc_info=True)
         if self._agent_factory is None:
             logger.debug("P1 blind reconstruct: no agent_factory, skip")
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                "skip: no agent_factory (HUGINN_ENABLE_AGENT_COLLAB 未开)",
+                action="skip",
+            )
             return
         from huginn.agents.subagent import SubagentDispatch
         _dispatch = SubagentDispatch()
@@ -864,8 +880,17 @@ class EngineReflect:
             _res = await _dispatch.dispatch("blind_reconstructor", _task, context=_ctx)
         except Exception:  # 防御: 盲重建派发失败返回
             logger.debug("P1 blind reconstruct dispatch failed", exc_info=True)
+            self._emit_control_trace(
+                "collab_blind_reconstruct", "skip: dispatch raised", action="skip"
+            )
             return
         if not _res.success or not _res.summary:
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"skip: dispatch returned nothing success={_res.success} "
+                f"summary_len={len(_res.summary or '')}",
+                action="skip",
+            )
             return
         # 解析盲重建结果 (JSON summary)
         import json as _json
@@ -1065,8 +1090,17 @@ class EngineReflect:
             _res = await _dispatch.dispatch("failure_inverter", _task, context=_ctx)
         except Exception:  # 防御: 失败反推派发失败返回空
             logger.debug("failure inversion dispatch failed", exc_info=True)
+            self._emit_control_trace(
+                "collab_failure_inverter", "skip: dispatch raised", action="skip"
+            )
             return ""
         if not _res.success or not _res.summary:
+            self._emit_control_trace(
+                "collab_failure_inverter",
+                f"skip: dispatch returned nothing success={_res.success} "
+                f"summary_len={len(_res.summary or '')}",
+                action="skip",
+            )
             return ""
         import json as _json_inv
         try:

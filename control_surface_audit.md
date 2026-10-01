@@ -170,6 +170,10 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `goal_acceptance` | 验收门·证据 | `action=block` = 台账无有限数值被拦；长期 100% block = judge 提前宣布达成 |
 | `goal_metacog_audit` | 验收门·元认知 | 完成度审计拦截次数 |
 | `goal_skeptic` | 验收门·对抗 | `verdict` 分布；`block` 高频 = judge 过于乐观或常识证伪未过 |
+| `collab_blind_reconstruct` | 协作·盲重建 | `action=skip` 携带跳过原因；**长期全 skip 或 0 条 = 该协作没通电/没生效**（见 §7.5） |
+| `collab_branch_incubator` | 协作·N 路孵化 | 同上；`empty:` = 跑了但 N 路子 agent 全空手 |
+| `collab_failure_invert` | 协作·失败反推 | 同上 |
+| `code_lab_timeout` | 证据·算力 | 被沙箱超时饿死的修复尝试数；高频 = 作者提示仍产出过重扫描（见 §7.5） |
 
 ---
 
@@ -375,8 +379,84 @@ run57 已于 `2026-10-01 08:26` 结束（55 条 trace：`darwin_stagnation` 26 /
 `test_default_off_returns_none` / `test_flag_on_builds_factory` /
 `test_factory_failure_falls_back_to_single_agent`。
 
-### 7.4 待办：A/B 测量（未起）
+### 7.4 A/B 测量（run59/60/61 已完成，结论：无显著增量）
 
-接线只是前置。真正要回答的是"增加协作有没有增量"，唯一办法是 A/B：baseline（run58）
-vs `HUGINN_BLIND_RECONSTRUCTION=1` vs `HUGINN_USE_BRANCH_INCUBATOR=1`，
-比 真进展率 / 换名打转率 / `report_citation` 未溯源数。**未跑，等确认。**
+接线只是前置。真正要回答的是"增加协作有没有增量"。**已跑 A/B 三组**
+（同 objective / 同旋钮 / 同 3600s / 同继承起点 run57 的 `evolved_skills.json`）：
+
+| run | 协作配置 | 时长 | `control_trace` | 换名审计命中 | `report_citation` | 达成 |
+|-----|---------|------|-----------------|------------|-------------------|------|
+| run59 | collab ON + `BLIND_RECONSTRUCTION=1` | 满预算耗尽 | `effort_floor`×1 | 2 | — | 未达成 |
+| run60 | collab ON + `USE_BRANCH_INCUBATOR=1` | 满预算耗尽 | `effort_floor`×1, `report_citation` 4/6 | 3 | 4/6（`annotate`） | 未达成 |
+| run61 | **baseline**（collab off） | 满预算耗尽 | `effort_floor`×1, `report_citation` 3/8, `goal_judge`×1 | 4 | 3/8 | `achieved=False score=0.0` |
+
+**判读**：
+
+1. **三组均满预算耗尽、均未达成目标**，差异不显著（每组 n=1，换名命中 2/3/4 无趋势）。
+   单轮 A/B 不足以判定"协作有效/无效"——**先不下结论**。
+2. **决定性发现：三组 run.log 里 `collab_*` trace 全为 0。** 但 run59/60 明明开了
+   `HUGINN_ENABLE_AGENT_COLLAB=1`。查证：该批 run 跑的是**加 trace 之前**的代码，
+   协作跳过路径当时全是**静默 return** → 野外根本分不清"没通电"与"跑了但没结果"。
+   这是本轮真正的产出：**协作的 A/B 此前无法测量，因为观测面是黑的**（见 §7.5）。
+
+---
+
+## 8. 协作可观测性 + code_lab 超时（v26）
+
+两大类问题一起修：**协作机制静默空转看不见**，**code_lab 超时被当成语法 bug 反复喂同样的重代码**。
+
+### 8.1 协作跳过路径补 trace（D 观测类，按 §3 过闸：只观不判）
+
+此前盲重建 / failure_inverter / BranchIncubator 的每个"不适用"分支都是**静默 return**。
+野外只看到上层"returned None, fallback"，分不清是**没通电**、**跑了没结果**、还是**条件不满足**。
+现给每条跳过路径补 `campaign.control_trace`（`action=skip`，`evidence` 携带原因）：
+
+| 机制 | 位置 | 新增 skip 原因 |
+|------|------|---------------|
+| 盲重建 | [`engine_reflect.py`](agent/huginn/autoloop/engine_reflect.py) `_blind_reconstruct_verify` | 无 `_current_hyp_id_for_plan` / 节点非 `untested` / 无 `agent_factory`（协作未开）/ dispatch 抛异常 / 返回空 |
+| 失败反推 | 同上 `_invert_failure_trace` | 跳过原因 |
+| BranchIncubator | [`hypothesis_loop.py`](agent/huginn/autoloop/hypothesis_loop.py) `_hypothesize_via_branch_incubator` | 无 `agent_factory` / 导入失败 / `run_round` 抛异常 / `empty:`（跑了但 N 路全空手，带 `branches`/`ok` 计数） |
+
+统一入口：`EngineReflect._emit_control_trace`（经 `engine.py::_emit_control_trace` 供协作对象
+`__getattr__` 转发）。三者均为**纯观测**，不改任何决策路径。
+
+### 8.2 control_trace 增加 OTel 遥测面（对齐 Langfuse）
+
+`_control_trace` 除既有 `campaign.control_trace` 事件 + WARNING 日志外，新增
+`get_telemetry_collector().add_event("control_trace", name=..., iteration=..., evidence=..., action=...)`
+→ 配了 `HUGINN_OTEL_ENDPOINT`（Langfuse: `https://cloud.langfuse.com/api/public/otel/v1/traces`）
+即可在 Langfuse 按 `name` 检索。双通道互补：**日志离线可 grep，遥测在线可查**；fail-open。
+
+> **修了一个静默 bug**：`TelemetryCollector.add_event(self, name, **metadata)` 的位置参数名
+> 恰是 `name`，而调用方传 `add_event("control_trace", name=<机制名>, ...)` → 位置 + 关键字
+> 撞名 `TypeError`，被 fail-open 的 `except` 吞掉 → **遥测面实际从未落过一条事件**。
+> 修法：位置参数改名 `event_name`，让 metadata 可自由含 `name`。单测
+> `test_control_trace_emits_telemetry_event` 锁定（此前红，现已绿）。
+
+### 8.3 code_lab 超时：对症提示 + 观测
+
+**现象**（run59/60/61 实测）：三组 run.log 各有 **5 次** `code_lab 执行超时`，是最高频失败模式；
+run61 iteration 14 的 execute 单阶段烧掉 **3973s**、修复循环被"挂钟预算耗尽"中止。
+
+**根因**：[`code_lab.py`](agent/huginn/research/code_lab.py) `build_author_prompt` 对**超时**仍套用
+NameError/形状那套**语法类对症提示** → 书生以为代码写错，重生同样重的扫描 → 反复超时。
+超时是**算力预算**问题，跟"代码写错"是两类失败，必须分开。
+
+**修法**（命题无关，只谈算力、不碰科学判断）：
+`_timeout_like` 命中时单独回灌**可执行的降算力**指令（砍扫描组合数 / 降 `mlp_fit.maxiter` /
+先跑最小可判配置），不再提语法。并新增 `code_lab_timeout` trace（`action=advisory_hint`，
+带 `attempt=x/y`）量化"被超时饿死的迭代占比"。单测
+`test_build_author_prompt_timeout_hint_reduces_compute` /
+`..._bug_hint_keeps_syntax_advice` 锁定两条分支不串。
+
+### 8.4 复验 run（进行中）
+
+run59/60/61 是**改前**代码（无 `collab_*`/`code_lab_timeout` trace，且无超时提示修复）。
+故起 **run62（collab ON + 盲重建）/ run63（baseline off）**，同 objective / 同旋钮 /
+同 3600s / 同 run57 继承点，用新代码复验：
+
+- 期望点亮：`collab_blind_reconstruct`（至少 skip 行）与 `code_lab_timeout`；
+- run63 作对照，期望 `collab_*` 仅出现 `skip: no agent_factory`（或 0）；
+- 数据并入 §5.3 第二轮删减决策。
+
+单测全绿：`tests/test_engine_decomposed.py` **83 passed**（含 §8.1–§8.3 新增 5 例）。

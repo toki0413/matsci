@@ -1,0 +1,67 @@
+{
+  "goals": [
+    {
+      "id": "goal_0b476691",
+      "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "sub_goals": [],
+      "iteration": 3,
+      "status": "active",
+      "created_at": "2026-10-01T12:59:37.573180+00:00",
+      "updated_at": "2026-10-01T13:01:41.934652+00:00",
+      "session_id": "",
+      "metadata": {},
+      "unknowns": [
+        {
+          "id": "unk_b8a43b9c",
+          "text": "The definition of \"zero violation\" as max absolute error ≤ 1e-3 on held-out constraints may not reflect true out-of-sample generalization if the constraint manifold is high-dimensional or non-uniformly sampled; this metric could be misleading for detecting solution space rigidity if the network exploits local flatness rather than global structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T12:59:40.637893+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_b9b8f4d7",
+          "text": "Gradient-based optimization in small feedforward networks may converge to spurious local minima that satisfy training constraints but fail on held-out points, causing N_c(w) to be overestimated — especially since the problem involves discrete width scanning and stochastic initialization, which can induce seed sensitivity in determining minimal feasible width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T12:59:40.639119+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_4fd4f975",
+          "text": "There is no reference dataset or ground-truth analytical solution provided for validation; without known rigid vs. fat regimes (e.g., from symbolic regression or polynomial interpolation benchmarks), it’s impossible to verify whether observed N_c(w) behavior correctly reflects underlying solution space geometry.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T12:59:40.639941+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_324a8acd",
+          "text": "The assumption that hidden layer width alone captures network capacity may be invalid if depth, activation function, or weight decay significantly influence expressivity and generalization — particularly for small networks where architectural choices interact non-trivially with constraint satisfaction.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T12:59:40.640739+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_b5c0d3d5",
+          "text": "For very large w (many constraints), the system may become overdetermined even for infinite-width networks, leading to inevitable violations regardless of capacity — making N_c(w) undefined or infinite, which blurs the binary distinction between “rigid” and “fat” unless a clear saturation threshold is predefined.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T12:59:40.641555+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        }
+      ],
+      "unknowns_discovered": 5,
+      "unknowns_resolved": 0,
+      "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "success_criteria": [],
+      "max_iterations": 360,
+      "completed_at": null,
+      "completion_condition": null,
+      "wall_clock_budget_seconds": 3600.0,
+      "started_at": "2026-10-01T12:59:37.574078+00:00",
+      "origin": "user"
+    }
+  ]
+}

@@ -451,6 +451,14 @@ class EngineAct:
                     "reproducible": True,
                 }
             last_err = reason
+            # 观测: 超时是"算力预算"问题而非代码 bug, 单独记 trace, 便于统计
+            # "被超时饿死的迭代占比" (run59/60 实测三组均被 900s 超时饿死).
+            if ("超时" in (reason or "")) or ("timeout" in (reason or "").lower()):
+                self._emit_control_trace(
+                    "code_lab_timeout",
+                    f"attempt={attempt + 1}/{max_repairs + 1} {str(reason)[:120]}",
+                    action="advisory_hint",
+                )
             if attempt < max_repairs:
                 repaired = await self._request_code_lab_experiment(
                     goal, repair_hint=last_err, prev_code=code, focus=focus

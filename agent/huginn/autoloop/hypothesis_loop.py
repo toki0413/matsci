@@ -2010,6 +2010,11 @@ class HypothesisLoop:
         全失败时返回 None 让 caller fallback 到原 2 路. 异常吞掉 + log, 不 raise.
         """
         if self._agent_factory is None:
+            self._emit_control_trace(
+                "collab_branch_incubator",
+                "skip: no agent_factory (HUGINN_ENABLE_AGENT_COLLAB 未开)",
+                action="skip",
+            )
             return None
         try:
             from huginn.metacog.branch_incubator import BranchIncubator
@@ -2017,6 +2022,9 @@ class HypothesisLoop:
             logger.warning(
                 "BranchIncubator import failed, fallback to main+hot_model",
                 exc_info=True,
+            )
+            self._emit_control_trace(
+                "collab_branch_incubator", "skip: import failed", action="skip"
             )
             return None
 
@@ -2050,6 +2058,9 @@ class HypothesisLoop:
                 "branch incubator run_round failed, fallback to main+hot_model",
                 exc_info=True,
             )
+            self._emit_control_trace(
+                "collab_branch_incubator", "skip: run_round raised", action="skip"
+            )
             return None
 
         # 选 success + hypothesis 非空 + tokens_used 最小 (省 token)
@@ -2057,6 +2068,14 @@ class HypothesisLoop:
             r for r in results if r.success and r.hypothesis
         ]
         if not candidates:
+            # 观测: 孵化**跑了**但 N 路子 agent 全没产出可用假设 → 静默回退.
+            # 之前野外只看到"returned None, fallback"却不知是没跑还是空手.
+            self._emit_control_trace(
+                "collab_branch_incubator",
+                f"empty: branches={len(results)} "
+                f"ok={sum(1 for r in results if r.success)}",
+                action="skip",
+            )
             return None
         best = min(candidates, key=lambda r: r.tokens_used)
         return best.hypothesis
