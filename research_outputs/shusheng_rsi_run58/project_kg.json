@@ -435,6 +435,70 @@
       "r_phys": 1.0,
       "iteration": 45,
       "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: measure] The solution space is rigid because the constraint set induces a ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T10:19:57.312297",
+      "last_seen": "2026-10-01T10:19:57.312297",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ remains approximately constant ($\\approx 8$) across all $w$, confirming low-dimensional solution manifold structure.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The solution space is rigid because the constraint set induces a"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:19:57.312329",
+      "last_seen": "2026-10-01T10:19:57.312329",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:19:57.312337",
+      "last_seen": "2026-10-01T10:19:57.312337",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T10:19:57.312344",
+      "last_seen": "2026-10-01T10:19:57.312344",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The solution space is rigid because the constraint set induces a",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_bf958ee9"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T10:19:57.312412",
+      "last_seen": "2026-10-01T10:19:57.312412",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fe9a80159643b80e",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -626,6 +690,33 @@
       "last_seen": "2026-10-01T10:17:38.672285",
       "mentions": 1,
       "target": "he_experiment_pipeline_7a225335"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The solution space is rigid because the constraint set induces a",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:19:57.312344",
+      "last_seen": "2026-10-01T10:19:57.312344",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf958ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:19:57.312344",
+      "last_seen": "2026-10-01T10:19:57.312344",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf958ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T10:19:57.312344",
+      "last_seen": "2026-10-01T10:19:57.312344",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf958ee9"
     }
   ]
 }
