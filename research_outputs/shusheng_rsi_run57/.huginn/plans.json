@@ -507,6 +507,41 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_8de2e9da",
+      "objective": "'.\"",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test the \"solution space rigidity\" hypothesis for small feedforward networks. Construct a deterministic target function with known analytical constraints (e.g., smooth polynomial or trigonometric combination), generate training sets of varying size $w \\in \\{10, 20, 30, 50, 100\\}$, and scan hidden layer widths $N_h \\in [4, 8, 16, 32, 64, 128]$. For each $(w, N_h)$, train the network (Adam, fixed seed, early stopping) and evaluate the maximum absolute error on a held-out constraint set (size $\\ge 100$). Determine $N_c(w)$ as the minimal $N_h$ yielding max error $\\le 10^{-3}$. Compare $N_c(w)$ across $w$: if $N_c(w)$ remains finite and stable (e.g., $\\le 2 \\times N_c(10)$), the hypothesis supports \"rigidity\"; otherwise, it is \"fatness\".",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_probe.py",
+            "(new",
+            "script",
+            "to",
+            "be",
+            "created)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:00:36.264301+00:00",
+      "confirmed_at": "2026-10-01T08:00:36.266259+00:00",
+      "completed_at": "2026-10-01T08:00:54.119055+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

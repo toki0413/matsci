@@ -78,8 +78,8 @@
       "label",
       "error",
       "plan",
-      "prediction",
       "rigidity",
+      "prediction",
       "constraint",
       "rigid"
     ],

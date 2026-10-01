@@ -511,3 +511,11 @@ control_trace name=belief_convergence iteration=79 evidence=sigma2=0.0625 mu=2.5
 [exec-route] mode='explore' desc[:80]='Design and run a numerical experiment to test the rigidity hypothesis for small ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1929 extracted_len=1914 prompt_len=4183
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+darwin ratchet: stagnation 16 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=84 evidence=stagnation=16 best=2.50 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0588 μ=2.50 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=84 evidence=sigma2=0.0588 mu=2.50 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the "solution space rigidity" ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2178 extracted_len=2163 prompt_len=4184
+[code-lab-run] res_none=False success=True nobj=2 reason=''
