@@ -222,3 +222,6 @@ metacog: 假设可能为换名归约 (trap=, target=[DIM: structure] The algebra
 plan_check failed (tier=light, scene=other, max_refines=1): The plan defines w ambiguously: it states w is 'hidden layer size' (network width) but then says 'w = constraint sample number' in the known failure note, and the DESCRIPTION says 'varying hidden widths w' while the hypothesis requires N_c(w) to be measured as a function of w. This variable definition conflict makes the experiment logically incoherent. Additionally, the plan does not specify how the constraint systems are generated or how the network is trained/evaluated, which are critical for verifying the hypothesis.
 [exec-route] mode='explore' desc[:80]='Test the algebraic redundancy hypothesis by constructing two families of linear ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=3236 extracted_len=3221 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+control_trace name=code_lab_timeout iteration=53 evidence=attempt=1/4 code_lab 执行超时 (> 900.0s) action=advisory_hint
+[code-lab-author] raw_len=2452 extracted_len=2437 prompt_len=7549

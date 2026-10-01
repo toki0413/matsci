@@ -172,3 +172,75 @@ metacog: 假设可能为换名归约 (trap=, target=Manifold Curvature Hypothesi
 control_trace name=code_lab_timeout iteration=23 evidence=attempt=1/4 code_lab 执行超时 (> 900.0s) action=advisory_hint
 [code-lab-author] raw_len=2299 extracted_len=2284 prompt_len=6961
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+[FINALLY-REFLECT] tool_results_this_turn=0
+control_trace name=collab_blind_reconstruct iteration=24 evidence=skip: dispatch returned nothing success=True summary_len=0 action=skip
+metacog: 假设可能为换名归约 (trap=, target=Gradient Flow Rigidity Hypothesis): [DIM: Dynamics] The solvability of the bootstrap problem is governed by a phase transition in the lo
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='We will test the hypothesis of a phase transition in the loss landscape by scann' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2502 extracted_len=2487 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=2503 extracted_len=2488 prompt_len=7746
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=2599 extracted_len=2584 prompt_len=7747
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=2598 extracted_len=2584 prompt_len=7759
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        basis = poly_basis(X, 3)
+        y = basis @ coeffs.reshape(-1, 1)
+        basis_v = poly_basis(Xv, 3)
+        yv = basis_v @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(50)
+        basis = poly_basis(X, 50)
+        y = basis @ coeffs.reshape(-1, 1)
+        basis_v = poly_basis(Xv, 50)
+        yv = basis_v @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 50) @ coeffs)
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [10, 20, 50, 100]
+    N_scan = list(range(1, 201))
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'rigid_mean_Nc': 0.0, 'fat_mean_Nc': 0.0, 'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        err_list = []
+        for w in w_list:
+            Nc_found = None
+            best_err = np.inf
+            for N in N_scan:
+                data = family(kind, w, seed + w * 1000 + N)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, N, seeds=3)
+                yp = mlp_predict(model, Xv)
+                err = float(np.max(np.abs(yp - yv)))
+                err_list.append(err)
+                if err <= 1e-3 and Nc_found is None:
+                    Nc_found = N
+                if Nc_found is not None:
+                    break
+            if Nc_found is None:
+                Nc_found = 9999
+            Nc_list.append(Nc_found)
+            if kind == 'rigid':
+                summary['rigid_Nc'].append(Nc_found)
+                summary['rigid_errors'].append(err_list[-1])
+            else:
+        
