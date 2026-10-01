@@ -757,3 +757,11 @@ plan_check failed (tier=light, scene=auto_test, max_refines=1): The plan is fund
 [exec-route] mode='explore' desc[:80]='Perform a systematic width scan to test the algebraic phase transition hypothesi' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=3249 extracted_len=3234 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=4 reason=''
+[validate] mode='code_lab' success=True nobj=4 cf=False lab=True
+darwin ratchet: stagnation 28 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=144 evidence=stagnation=28 best=2.50 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0345 μ=2.50 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=144 evidence=sigma2=0.0345 mu=2.50 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Execute the numerical experiment to probe solution space rigidity by varying net' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=4128 extracted_len=4113 prompt_len=4149
+[code-lab-run] res_none=False success=True nobj=1 reason=''
