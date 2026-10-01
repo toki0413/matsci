@@ -660,3 +660,69 @@ renamed-reduction 5× consecutive: escalate — block dominant family + force re
 [exec-route] mode='explore' desc[:80]='Execute a rigorous numerical experiment to test the Bounded Capacity hypothesis ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=4010 extracted_len=3995 prompt_len=4327
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+control_trace name=goal_judge iteration=119 evidence=achieved=False score=0.35 llm=1 action=advisory_hint
+darwin ratchet: stagnation 7 rounds (Δ<0.5), best=5.00 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=119 evidence=stagnation=7 best=5.00 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0416 μ=2.78 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=119 evidence=sigma2=0.0416 mu=2.78 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='The previous numerical experiment reported N_c(w) values that appear inconsisten' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1921 extracted_len=1906 prompt_len=4235
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1924 extracted_len=1909 prompt_len=6637
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1924 extracted_len=1909 prompt_len=6640
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1941 extracted_len=1926 prompt_len=6640
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.5, 1.5])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10) @ coeffs)
+    y /= scale
+    yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [5, 10, 15, 20]
+    h_list = [4, 8, 16, 32]
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        for w in w_list:
+            Nc = None
+            errs = []
+            for h in h_list:
+                data = family(kind, w, seed + w * 100 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                y_pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(y_pred - yv))
+                errs.append(float(err))
+                if err <= 1e-3 and Nc is None:
+                    Nc = h
+            if Nc is None:
+                Nc = int(max(h_list) + 1)
+            summary[f'{kind}_Nc'].append(int(Nc))
+            summary[f'{kind}_errors'].append(errs)
+            if kind == 'rigid':
+                objectives['score'] += 1.0 / (Nc + 1)
+            else:
+                objectives['score'] -= 1.0 / (Nc + 1)
+    summary['note'] = f'rigid_Nc={summary["rigid_Nc"]}, fat_Nc={summary["fat_Nc"]}'
+    return {'success': True, 'summary': summary, 'objectives': objectives}

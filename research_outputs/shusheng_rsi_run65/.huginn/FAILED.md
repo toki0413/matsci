@@ -28,3 +28,9 @@ Statement: H0 (rigid) — it is the most testable and novel because it directly 
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_0d35ad53] 2026-10-01T15:52:18+00:00
+Statement: ** H2 (Bounded Capacity) — Most testable and novel, directly probing rigidity vs. fatness via N_c(w) boundedness, distinct from H1/H3 predictions.
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
