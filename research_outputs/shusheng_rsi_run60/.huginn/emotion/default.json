@@ -6,10 +6,10 @@
   "fatigue": 0.02,
   "loneliness": 0.0,
   "interest": 0.5,
-  "timestamp": "2026-10-01T11:37:39.292015+00:00",
+  "timestamp": "2026-10-01T11:38:21.527571+00:00",
   "events": [
     {
-      "timestamp": "2026-10-01T11:37:39.291996+00:00",
+      "timestamp": "2026-10-01T11:38:21.527558+00:00",
       "source": "user",
       "type": "message",
       "deltas": {
