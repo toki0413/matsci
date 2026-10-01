@@ -146,6 +146,70 @@ def _citation_gap(report_text: str, evidence_text: str) -> tuple[int, int]:
     return len(rep - ev), len(rep)
 
 
+def _ledger_evidence_text(ledger: Any) -> str:
+    """把执行台账渲染成 ``[ev#] tool: result`` 文本 (报告面与验收门共用)."""
+    if not isinstance(ledger, list):
+        return ""
+    return "\n".join(
+        f"[ev{e.get('idx', i + 1)}] {e.get('tool', '?')}: {e.get('result', '')}"
+        for i, e in enumerate(ledger)
+        if isinstance(e, dict)
+    )
+
+
+# 台账里与"测量到的数值"无关的结构字段 (exec 元信息), 不算执行证据.
+_EVIDENCE_STRUCTURAL_KEYS = frozenset({
+    "idx", "exit_code", "returncode", "seed", "iteration", "elapsed",
+    "duration", "time", "timestamp", "round", "step", "attempt",
+})
+
+
+def _ledger_has_finite_evidence(ledger: Any) -> bool:
+    """台账里是否至少有一条含**有限数值**的真实执行证据 (完成验收门的证据口径).
+
+    "有台账条目"不够 —— 条目可能是纯文本报错; 必须真出现一个有限数值才算本轮
+    真的算出了可溯源的结果. 优先看 ``objectives`` (code_lab 口径), 无则看顶层
+    数值字段但排除 exec 结构字段 (exit_code/seed 之类). 与
+    ``_non_finite_objective_keys`` 同一数值卫生口径. 纯判定, 不抛.
+    """
+    import json
+    import math
+
+    if not isinstance(ledger, list):
+        return False
+
+    def _finite_nums(mapping: Any) -> bool:
+        if not isinstance(mapping, dict):
+            return False
+        for k, v in mapping.items():
+            if str(k) in _EVIDENCE_STRUCTURAL_KEYS:
+                continue
+            if isinstance(v, bool):
+                continue
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(f):
+                return True
+        return False
+
+    for e in ledger:
+        if not isinstance(e, dict):
+            continue
+        try:
+            payload = json.loads(str(e.get("result", "")))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if _finite_nums(payload.get("objectives")):
+            return True
+        if _finite_nums(payload):
+            return True
+    return False
+
+
 def _exec_fingerprint(execution_result: Any) -> tuple[str, str]:
     """算本轮执行指纹, 返回 ``(指纹, 人读结果摘要)``.
 
@@ -3591,11 +3655,7 @@ class EngineReflect:
         # 报告 citation 门 (C2): 把本轮**每次** execute 的紧凑台账交给报告作者,
         # 而不是只给末轮 —— 否则书生会把中间轮真实数值丢掉、凭印象编表 (run56).
         _ledger = getattr(self, "_execution_ledger", None) or []
-        evidence_text = "\n".join(
-            f"[ev{e.get('idx', i + 1)}] {e.get('tool', '?')}: {e.get('result', '')}"
-            for i, e in enumerate(_ledger)
-            if isinstance(e, dict)
-        )
+        evidence_text = _ledger_evidence_text(_ledger)
 
         visual_ctx = getattr(self, "_last_visual_context", "")
         last_validation = getattr(self, "_last_validation", "")

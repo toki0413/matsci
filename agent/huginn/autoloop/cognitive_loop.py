@@ -1472,6 +1472,8 @@ class CognitiveRunner:
         self._should_stop = False
         # 报告 citation 门: 执行台账随 run 重置 (跨 run 证据混入报告 = 溯源失真).
         self._execution_ledger = []
+        # 单一完成出口: 上次判定所在一轮 (防同轮重复判/重复 LLM 调用).
+        self._last_completion_iter = -1
         # v11 进展不变量: 换名债务随 run 重置 (跨 run 无进展记忆无意义).
         self._rename_debt = 0
         self._rename_streak = 0
@@ -2231,6 +2233,255 @@ Respond JSON only:
                 )
         except Exception as exc:
             logger.debug("provenance rollback failed (non-fatal)", exc_info=True)
+
+    async def _evaluate_completion(
+        self,
+        goal: Any,
+        cog: dict[str, Any],
+        state: LoopState,
+        max_iterations: int,
+    ) -> dict[str, Any]:
+        """单一完成判定出口 (控制面审计: 合并 F2/F17/Unified/CompletionGate).
+
+        此前循环里判"是否完成"有三套并行实现 —— 默认 F2+F17 散装、可选
+        Unified+Arbiter、可选 CompletionGate —— 各自独立重算、各自写
+        ``should_stop``, 且默认路径用的是**规则版** GoalJudge (关键词覆盖),
+        于是这条仅存的硬出口不可信. 这里收敛为**一次判定**: 产出一个 completion
+        signal 交给当前启用的决策变体, 但 stop 只有一个来源.
+
+        判定顺序: (1) GoalJudge (有模型走 LLM, 否则规则降级) 出 achieved/gaps;
+        (2) 可选变体 (统一决策 / 完成门) 消费同一 judge 结果, 只决定 stop 之外的
+        switch_tool/requery; (3) **统一验收门** ``_accept_completion`` 对任何
+        "完成"信号做证据门 + SKEPTIC 对抗审查.
+
+        返回 ``{"ran", "stop", "reason", "hint"}``; 纯判定, 不写 state.should_stop
+        (由调用方写一次, 便于审计与触发率观测).
+        """
+        out: dict[str, Any] = {"ran": False, "stop": False, "reason": "", "hint": ""}
+        if goal is None or getattr(state, "should_stop", False):
+            return out
+
+        _every = 3
+        _due = (
+            state.iteration % _every == 2
+            or state.iteration >= max_iterations - 1
+        )
+        if not _due or int(getattr(self, "_last_completion_iter", -1)) == state.iteration:
+            return out
+        self._last_completion_iter = state.iteration
+        out["ran"] = True
+
+        from huginn.autoloop.engine_reflect import _ledger_evidence_text
+
+        _final_text = str(
+            (cog.get("validation") or {}).get("summary")
+            or (cog.get("validation") or {}).get("result_data")
+            or (cog.get("execution_result") or {}).get("summary", "")
+        )
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        _claim_text = (_ledger_evidence_text(_ledger) + "\n" + _final_text).strip()
+
+        # (1) GoalJudge: 循环内口径对齐出口路径 (run() L2072) —— 用真模型判,
+        #     判据是证据台账 + 本轮产出, 而不是中间摘要上的关键词覆盖.
+        _judge_llm = getattr(self, "verification_model", None) or getattr(self, "model", None)
+        try:
+            from huginn.evaluation.goal_judge import GoalJudge
+
+            _gj = GoalJudge(llm=_judge_llm).judge(goal.objective, None, _claim_text)
+        except Exception:  # 防御: 判定失败按未达成处理
+            logger.debug("completion GoalJudge failed (non-fatal)", exc_info=True)
+            _gj = {"achieved": False, "score": 0.0, "evidence": [], "gaps": []}
+        _achieved = bool(_gj.get("achieved"))
+        self._control_trace(
+            "goal_judge",
+            f"achieved={_achieved} score={_gj.get('score')} "
+            f"llm={'1' if _judge_llm is not None else '0'}",
+            iteration=state.iteration,
+            action="stop_candidate" if _achieved else "advisory_hint",
+        )
+
+        _stop = _achieved
+        _reason = f"goal judge achieved (score={_gj.get('score')})"
+
+        # (2) 可选变体: 消费**同一** judge 结果, 不重复判 goal.
+        if os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1":
+            try:
+                from huginn.evaluation.unified_evaluator import UnifiedEvaluator
+                from huginn.metacog.decision_arbiter import DecisionArbiter
+
+                _unified = UnifiedEvaluator().evaluate({
+                    "goal_judge": {
+                        "achieved": _achieved,
+                        "score": _gj.get("score", 0.0),
+                        "evidence": _gj.get("evidence", []),
+                        "gaps": _gj.get("gaps", []),
+                    },
+                })
+                _bandit = None
+                try:
+                    from huginn.agent.bandit_controller import EffortBandit
+
+                    _bandit = EffortBandit.get_instance()
+                except Exception:  # 防御: 老虎机不可用跳过仲裁
+                    logger.debug("bandit unavailable for arbiter", exc_info=True)
+                _arbiter = DecisionArbiter()
+                _dctx = _arbiter.build_context(
+                    csm_state=getattr(self, "_current_phase", "") or "",
+                    bandit=_bandit,
+                    iteration=state.iteration,
+                    max_iterations=max_iterations,
+                    turns_count=getattr(self, "_turn_count", 0),
+                    tool_calls_count=getattr(self, "_tool_calls_count", 0),
+                )
+                _dctx.gate_status = "pass" if _unified.achieved else "gaps_hint"
+                _dctx.gate_should_stop = _unified.achieved
+                _dctx.gate_reason = (
+                    "; ".join(_unified.gaps[:3])
+                    if _unified.gaps
+                    else f"score={_unified.score:.2f}"
+                )
+                _decision = _arbiter.evaluate(_dctx)
+                _stop = _decision.action == "stop"
+                _reason = f"unified: {_decision.reason}"
+                if _decision.action in ("switch_tool", "requery"):
+                    out["hint"] = f"[unified] {_decision.action}: {_decision.reason}"
+            except Exception:  # 防御: 统一决策失败回退单一出口
+                logger.debug("unified decision failed, fallback to single exit", exc_info=True)
+        elif os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1":
+            try:
+                from huginn.metacog.completion_gate import CompletionGate, GateContext
+
+                _families = 0
+                with contextlib.suppress(Exception):
+                    _families = len([
+                        f for f in self._get_metacog_method_registry().all()
+                        if f.member_agent_ids
+                    ])
+                _gate = CompletionGate(
+                    auditor_factory=self._get_metacog_completion_auditor,
+                    goal_judge_llm=_judge_llm,
+                    judge_every_n=_every,
+                )
+                _gctx = GateContext(
+                    iteration=state.iteration,
+                    max_iterations=max_iterations,
+                    families_explored=_families,
+                    live_components=(
+                        self.hypothesis_graph.component_count()
+                        if hasattr(self, "hypothesis_graph") else 0
+                    ),
+                    last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
+                    objective=goal.objective,
+                )
+                _gd = _gate.review(goal, cog.get("validation"), _gctx)
+                _stop = bool(_gd.should_stop)
+                _reason = f"completion gate: {getattr(_gd, 'reason', '')}"
+                if getattr(_gd, "status", "") == "block":
+                    out["hint"] = f"[completion gate] {getattr(_gd, 'reason', '')}"
+            except Exception:  # 防御: 完成门失败回退单一出口
+                logger.debug("completion gate failed, fallback to single exit", exc_info=True)
+
+        if not _stop:
+            if _gj.get("gaps"):
+                _gap_hint = "; ".join(str(g) for g in _gj["gaps"][:3])
+                out["hint"] = (out["hint"] + "\n" + _gap_hint).strip() if out["hint"] else _gap_hint
+            return out
+
+        # (3) 统一验收门: "完成" ≠ "验收".
+        _ok, _why = await self._accept_completion(goal, _claim_text, state)
+        if not _ok:
+            out["stop"] = False
+            out["hint"] = _why
+            return out
+
+        out["stop"] = True
+        out["reason"] = _reason
+        return out
+
+    async def _accept_completion(
+        self, goal: Any, claim_text: str, state: LoopState
+    ) -> tuple[bool, str]:
+        """完成信号的验收门 — 把"完成"与"验收"分开.
+
+        竞品共性 (Kosmos / Co-Scientist / AlphaEvolve): producer 之外有独立
+        verifier. 这里两道:
+
+        (1) **证据门**: 完成声明必须有本轮真实执行证据 (台账里有有限数值). 无证据
+            的"达成"不可终止 —— 只判"这条证据算不算数", 不替书生下科学判断.
+        (2) **SKEPTIC**: 独立 LLM 对抗审查, 拿证据尝试证伪声明; 不通过则把反例
+            作为 hint 回灌, 不终止. 无模型时 fail-open (退化为只看证据门).
+        """
+        from huginn.autoloop.engine_reflect import (
+            _ledger_evidence_text,
+            _ledger_has_finite_evidence,
+        )
+
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        if not _ledger_has_finite_evidence(_ledger):
+            self._control_trace(
+                "goal_acceptance",
+                f"blocked: no finite execution evidence (ledger={len(_ledger)})",
+                iteration=state.iteration,
+                action="block",
+            )
+            return False, (
+                "[验收门] 完成声明缺少本轮真实执行证据 (台账中无有限数值): "
+                "请先跑出可溯源的数值结果, 或显式说明证据缺口, 不要停在无证据的结论上."
+            )
+
+        # (1b) 元认知完成度审计 (推导链/复现证据/证据强度启发式, 无 LLM).
+        #      原 F2/F17 用它作硬阻断, 这里保留为验收门的一层.
+        _blk, _why = self._metacog_check_completion()
+        if _blk:
+            self._control_trace(
+                "goal_metacog_audit",
+                f"blocked: {_why}",
+                iteration=state.iteration,
+                action="block",
+            )
+            return False, f"[验收门·完成度审计] {_why}"
+
+        _model = getattr(self, "verification_model", None) or getattr(self, "model", None)
+        if _model is not None and hasattr(_model, "ainvoke"):
+            try:
+                from huginn.metacog.critique import adversarial_critique
+
+                _crit = await adversarial_critique(
+                    model=_model,
+                    report=(
+                        f"## 完成声明 (待证伪)\n{claim_text[:4000]}\n\n"
+                        f"## 本轮真实执行证据台账\n{_ledger_evidence_text(_ledger)[:6000]}"
+                    ),
+                    checklist=(
+                        f"目标: {getattr(goal, 'objective', '')}\n"
+                        "核对: 声明中的每个数值/结论是否能在**证据台账**中查到出处; "
+                        "凡是优于合理基线、或台账中查无出处的数值, 一律作为 red flag."
+                    ),
+                )
+                _verdict = str(_crit.get("overall_verdict", "fix_needed"))
+                _flags = _crit.get("implausible_metrics") or []
+                if _verdict != "pass":
+                    _why = "; ".join(
+                        f"{m.get('metric', '?')}({m.get('red_flag', '')})"
+                        for m in _flags[:3] if isinstance(m, dict)
+                    ) or f"skeptic verdict={_verdict}"
+                    self._control_trace(
+                        "goal_skeptic",
+                        f"verdict={_verdict} flags={len(_flags)}",
+                        iteration=state.iteration,
+                        action="block",
+                    )
+                    return False, (
+                        f"[验收门·SKEPTIC] 独立对抗审查未通过 ({_verdict}): {_why}. "
+                        "请修正声明或补齐证据后重报."
+                    )
+                self._control_trace(
+                    "goal_skeptic", "verdict=pass",
+                    iteration=state.iteration, action="allow_stop",
+                )
+            except Exception:  # 防御: 对抗审查失败 fail-open (证据门已过)
+                logger.debug("goal skeptic failed (fail-open)", exc_info=True)
+        return True, ""
 
     async def run_cognitive(
         self,
@@ -3341,249 +3592,36 @@ Respond JSON only:
                 except Exception:  # 防御: 应暂停判断失败忽略
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
-                # v23 Unified Decision: HUGINN_USE_UNIFIED_DECISION=1 时走
-                # UnifiedEvaluator + DecisionArbiter 单一决策出口. 收集 GoalJudge /
-                # Step 评估信号 → UnifiedEvaluator 聚合 → DecisionArbiter 仲裁 →
-                # 唯一 Decision (stop/continue/switch_tool/requery). 默认 off,
-                # 走原 _use_gate + F2/F17/F4/F3 散装逻辑 (向后兼容).
-                # 落地承诺: DecisionArbiter / UnifiedEvaluator 不再是孤立模块.
-                _use_unified_decision = (
-                    os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1"
-                    and goal is not None
-                    and not state.should_stop
-                )
-                if _use_unified_decision:
-                    try:
-                        from huginn.evaluation.unified_evaluator import (
-                            UnifiedEvaluator,
+                # v24 单一完成出口 (控制面审计: 合并 F2/F17/Unified/CompletionGate).
+                # 判定 + 验收都在 _evaluate_completion 内完成, 这里只写**一次**
+                # should_stop. 可选统一决策 / 完成门退化为方法内的两个变体, 消费
+                # 同一 judge 结果, 不再各自重判、各自写 stop.
+                # goal 达标 → 过证据门 + SKEPTIC 后才允许收结 (完成 ≠ 验收).
+                try:
+                    _completion = await self._evaluate_completion(
+                        goal, cog, state, max_iterations
+                    )
+                    if _completion.get("hint") and not state.should_stop:
+                        self._speculator_hint = (
+                            (self._speculator_hint + "\n" + _completion["hint"]).strip()
+                            if self._speculator_hint
+                            else _completion["hint"]
                         )
-                        from huginn.metacog.decision_arbiter import (
-                            DecisionArbiter,
+                    if _completion.get("stop") and not state.should_stop:
+                        logger.info(
+                            "completion accepted: %s", _completion.get("reason", "")
                         )
-
-                        _final_text = str(
-                            (cog["validation"] or {}).get("summary")
-                            or (cog["validation"] or {}).get("result_data")
-                            or (cog.get("execution_result") or {}).get("summary", "")
-                        )
-                        _eval_ctx: dict = {
-                            "goal_judge": {
-                                "objective": goal.objective,
-                                "trajectory": None,
-                                "final_output": _final_text,
-                            },
-                        }
-                        # validation 里若带 on_track 信号, 也喂给 Step 分支.
-                        _val = cog.get("validation") or {}
-                        if isinstance(_val, dict) and "on_track" in _val:
-                            _eval_ctx["step"] = _val
-
-                        _unified = UnifiedEvaluator().evaluate(_eval_ctx)
-
-                        _bandit = None
-                        try:
-                            from huginn.agent.bandit_controller import (
-                                EffortBandit,
-                            )
-
-                            _bandit = EffortBandit.get_instance()
-                        except Exception:  # 防御: 老虎机不可用跳过仲裁
-                            logger.debug("bandit unavailable for arbiter", exc_info=True)
-
-                        _arbiter = DecisionArbiter()
-                        _dctx = _arbiter.build_context(
-                            csm_state=getattr(self, "_current_phase", "") or "",
-                            bandit=_bandit,
-                            gate_decision=None,
-                            iteration=state.iteration,
-                            max_iterations=max_iterations,
-                            turns_count=getattr(self, "_turn_count", 0),
-                            tool_calls_count=getattr(self, "_tool_calls_count", 0),
-                        )
-                        # UnifiedEvaluator 替代 CompletionGate 信号: achieved→pass,
-                        # 否则 gaps_hint. gate_should_stop 仅在 achieved 时 True.
-                        _dctx.gate_status = (
-                            "pass" if _unified.achieved else "gaps_hint"
-                        )
-                        _dctx.gate_should_stop = _unified.achieved
-                        _dctx.gate_reason = (
-                            "; ".join(_unified.gaps[:3])
-                            if _unified.gaps
-                            else f"score={_unified.score:.2f}"
-                        )
-
-                        _decision = _arbiter.evaluate(_dctx)
-
-                        if _decision.action == "stop":
-                            state.should_stop = True
-                            if _unified.achieved:
-                                goal.status = "completed"
-                                if self._goal_scheduler is not None:
-                                    try:
-                                        self._goal_scheduler.complete_goal(goal.id)
-                                    except Exception:  # 防御: 目标完成处理失败忽略
-                                        logger.debug(
-                                            "complete_goal failed (non-fatal)",
-                                            exc_info=True,
-                                        )
-                            logger.info(
-                                "unified decision: stop (%s, score=%.2f)",
-                                _decision.reason,
-                                _unified.score,
-                            )
-                        elif _decision.action == "switch_tool":
-                            self._speculator_hint = (
-                                self._speculator_hint
-                                + f"\n[unified] switch_tool: {_decision.reason}"
-                            ).strip()
-                        elif _decision.action == "requery":
-                            self._speculator_hint = (
-                                self._speculator_hint
-                                + f"\n[unified] requery: {_decision.reason}"
-                            ).strip()
-                        elif _unified.gaps:
-                            _gap_hint = "; ".join(_unified.gaps[:3])
-                            self._speculator_hint = (
-                                self._speculator_hint + "\n" + _gap_hint
-                                if self._speculator_hint
-                                else _gap_hint
-                            )
-                            logger.info("unified eval gaps: %s", _gap_hint)
-                    except Exception:  # 防御: 统一决策失败回退旧路径
-                        logger.debug(
-                            "Unified decision failed, fallback to F2/F17/F4",
-                            exc_info=True,
-                        )
-                        _use_unified_decision = False
-
-                # v10-F2/F17 收敛: HUGINN_USE_COMPLETION_GATE=1 时用 CompletionGate
-                # 三审 (Criteria + Metacog + GoalJudge) 替代下面散装 F2+F17 顺序拼装.
-                # 默认 off 走原逻辑 (向后兼容). 对照组 BranchIncubator 已正常接入.
-                _use_gate = (
-                    os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1"
-                    and goal is not None
-                    and not state.should_stop
-                    and not _use_unified_decision  # 统一决策已运行, 跳过 CompletionGate 避免双重判定
-                )
-                if _use_gate:
-                    try:
-                        from huginn.metacog.completion_gate import (
-                            CompletionGate,
-                            GateContext,
-                        )
-                        _gate = CompletionGate(
-                            auditor_factory=self._get_metacog_completion_auditor,
-                            goal_judge_llm=None,
-                            judge_every_n=3,
-                        )
-                        _families = 0
-                        with contextlib.suppress(Exception):
-                            _families = len([
-                                f for f in self._get_metacog_method_registry().all()
-                                if f.member_agent_ids
-                            ])
-                        _gctx = GateContext(
-                            iteration=state.iteration,
-                            max_iterations=max_iterations,
-                            families_explored=_families,
-                            live_components=(
-                                self.hypothesis_graph.component_count()
-                                if hasattr(self, "hypothesis_graph") else 0
-                            ),
-                            last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
-                            objective=goal.objective,
-                        )
-                        _decision = _gate.review(goal, cog.get("validation"), _gctx)
-                        if _decision.should_stop:
-                            state.should_stop = True
-                        if _decision.should_complete_goal and goal is not None:
-                            goal.status = "completed"
-                            if self._goal_scheduler is not None:
-                                try:
-                                    self._goal_scheduler.complete_goal(goal.id)
-                                except Exception:  # 防御: 目标完成处理失败忽略
-                                        logger.debug("complete_goal failed (non-fatal)", exc_info=True)
-                        if _decision.status == "block" and _decision.reason:
-                            logger.info("completion gate blocked: %s", _decision.reason)
-                            self._speculator_hint = (
-                                (self._speculator_hint + f"\n[completion gate] {_decision.reason}").strip()
-                            )
-                        elif _decision.status == "gaps_hint" and _decision.reason:
-                            self._speculator_hint = (
-                                (self._speculator_hint + f"\n{_decision.reason}").strip()
-                            )
-                            logger.info("completion gate gaps: %s", _decision.reason)
-                    except Exception:  # 防御: 完成门失败回退旧判断
-                        logger.debug("CompletionGate failed, fallback to F2+F17", exc_info=True)
-                        _use_gate = False
-
-                if not _use_gate and not _use_unified_decision:
-                    # v10-F2: completion audit — 对齐 run() L1878-1897.
-                    # goal 达标 + metacog 不阻断 → goal.status=completed + should_stop.
-                    # ponytail: check_completion 在 goal 无 criteria 时返回 False, 不影响.
-                    if goal is not None and not state.should_stop:
-                        try:
-                            _val_for_goal = cog["validation"] or {}
-                            if GoalScheduler.check_completion(goal, _val_for_goal):
-                                _blk, _why = self._metacog_check_completion()
-                                if _blk:
-                                    logger.info("v10 completion audit blocked: %s", _why)
-                                    self._speculator_hint = (
-                                        (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                    )
-                                else:
-                                    logger.info("v10 goal completed: %s", goal.objective)
-                                    goal.status = "completed"
-                                    if self._goal_scheduler is not None:
-                                        try:
-                                            self._goal_scheduler.complete_goal(goal.id)
-                                        except Exception:  # 防御: 目标完成处理失败忽略
-                                            logger.debug("complete_goal failed (non-fatal)", exc_info=True)
-                                    state.should_stop = True
-                        except Exception:  # 防御: 完成审计失败忽略
-                            logger.debug("v10 F2 completion audit failed (non-fatal)", exc_info=True)
-
-                    # v10-F17: GoalJudge — 对齐 run() L1899-1945.
-                    # 每 3 轮或最后一轮调 GoalJudge.judge 判 goal_achieved.
-                    # achieved + metacog 不阻断 → should_stop; gaps → 注入 hint.
-                    # ponytail: GoalJudge(llm=None) 走规则版, LLM judge 留 exit 阶段.
-                    if (
-                        goal is not None
-                        and not state.should_stop
-                        and (
-                            state.iteration % 3 == 2
-                            or state.iteration >= max_iterations - 1
-                        )
-                    ):
+                        state.should_stop = True
+                        goal.status = "completed"
+                        if self._goal_scheduler is not None:
                             try:
-                                from huginn.evaluation.goal_judge import GoalJudge
-
-                                _judge = GoalJudge(llm=None)
-                                _final_text = str(
-                                    (cog["validation"] or {}).get("summary")
-                                    or (cog["validation"] or {}).get("result_data")
-                                    or (cog.get("execution_result") or {}).get("summary", "")
+                                self._goal_scheduler.complete_goal(goal.id)
+                            except Exception:  # 防御: 目标完成处理失败忽略
+                                logger.debug(
+                                    "complete_goal failed (non-fatal)", exc_info=True
                                 )
-                                _gj = _judge.judge(goal.objective, None, _final_text)
-                                if _gj.get("achieved"):
-                                    _blk, _why = self._metacog_check_completion()
-                                    if _blk:
-                                        logger.info("v10 GoalJudge audit blocked: %s", _why)
-                                        self._speculator_hint = (
-                                            (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                        )
-                                    else:
-                                        logger.info("v10 GoalJudge achieved (score=%s)", _gj.get("score"))
-                                        state.should_stop = True
-                                elif _gj.get("gaps"):
-                                    _gap_hint = "; ".join(_gj["gaps"][:3])
-                                    self._speculator_hint = (
-                                        (self._speculator_hint + "\n" + _gap_hint).strip()
-                                        if self._speculator_hint else _gap_hint
-                                    )
-                                    logger.info("v10 GoalJudge gaps: %s", _gap_hint)
-                            except Exception:  # 防御: 目标评审失败忽略
-                                logger.debug("v10 F17 GoalJudge failed (non-fatal)", exc_info=True)
+                except Exception:  # 防御: 完成判定失败忽略 (不阻断循环)
+                    logger.debug("evaluate_completion failed (non-fatal)", exc_info=True)
 
                 # v10-F4: surprise 早停 — 对齐 run() L1967-1999.
                 # 连续 3 轮低 surprise + audit 不阻断 → should_stop.

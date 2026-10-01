@@ -841,6 +841,222 @@ async def test_report_flags_untraceable_numbers_and_annotates(tmp_path) -> None:
     assert traces and traces[0]["action"] == "annotate"
 
 
+# ===== 单一完成出口 + 验收门 (完成 ≠ 验收) =====
+
+def test_ledger_has_finite_evidence_accepts_finite_objectives() -> None:
+    from huginn.autoloop.engine_reflect import _ledger_has_finite_evidence
+
+    assert _ledger_has_finite_evidence(
+        [{"idx": 1, "tool": "code_lab", "result": '{"objectives": {"gap": 1.17}}'}]
+    )
+
+
+def test_ledger_has_finite_evidence_rejects_nonfinite_and_text() -> None:
+    from huginn.autoloop.engine_reflect import _ledger_has_finite_evidence
+
+    # inf/nan 不是"测量到的数值", 纯文本错误与 exec 结构字段也不算证据.
+    assert not _ledger_has_finite_evidence(
+        [{"idx": 1, "tool": "code_lab", "result": '{"objectives": {"gap": Infinity}}'}]
+    )
+    assert not _ledger_has_finite_evidence(
+        [{"idx": 1, "tool": "code_lab", "result": "Traceback: timeout"}]
+    )
+    assert not _ledger_has_finite_evidence(
+        [{"idx": 1, "tool": "code_lab", "result": '{"exit_code": 0}'}]
+    )
+    assert not _ledger_has_finite_evidence([])
+
+
+def test_ledger_evidence_text_renders_indexed_lines() -> None:
+    from huginn.autoloop.engine_reflect import _ledger_evidence_text
+
+    text = _ledger_evidence_text(
+        [{"idx": 1, "tool": "code_lab", "result": "a"}, {"tool": "x", "result": "b"}]
+    )
+    assert "[ev1] code_lab: a" in text
+    assert "[ev2] x: b" in text
+
+
+def _goal():
+    from huginn.autoloop.goal_store import Goal
+
+    return Goal(
+        id="g-test",
+        text="计算 Si 间接带隙并给出机制",
+        objective="计算 Si 间接带隙并给出机制",
+        status="active",
+    )
+
+
+class _LoopState:
+    def __init__(self, iteration: int = 2) -> None:
+        self.iteration = iteration
+        self.should_stop = False
+
+
+def _fake_judge(achieved: bool):
+    class _J:
+        def __init__(self, llm=None):  # noqa: ANN001
+            self._llm = llm
+
+        def judge(self, objective, trajectory=None, final_output=""):  # noqa: ANN001
+            return {
+                "achieved": achieved,
+                "score": 0.9 if achieved else 0.1,
+                "evidence": [],
+                "gaps": [] if achieved else ["缺机制解释"],
+            }
+
+    return _J
+
+
+async def test_evaluate_completion_stops_only_with_evidence(monkeypatch) -> None:
+    """有证据 + judge achieved + 无需 LLM skeptic → 单一出口收结."""
+    import huginn.evaluation.goal_judge as gj_mod
+
+    monkeypatch.setattr(gj_mod, "GoalJudge", _fake_judge(True))
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    captured: list[tuple[str, dict]] = []
+    # _emit_campaign 是 CognitiveRunner 的 own-method, 实例化后不走 engine 转发,
+    # 故直接 patch 类方法以捕获 trace (与 test_control_trace_emits_uniform_schema 同源).
+    monkeypatch.setattr(
+        CognitiveRunner,
+        "_emit_campaign",
+        lambda self, et, data: captured.append((et, data)),  # noqa: ANN001
+    )
+
+    class _Stub:
+        _execution_ledger = [
+            {"idx": 1, "tool": "code_lab", "result": '{"objectives": {"gap": 1.17}}'}
+        ]
+        _last_completion_iter = -1
+        _speculator_hint = ""
+
+        def _metacog_check_completion(self):
+            return (False, "")
+
+    res = await CognitiveRunner(_Stub())._evaluate_completion(
+        _goal(), {}, _LoopState(2), 5
+    )
+    assert res["ran"] and res["stop"] is True
+    assert any(d.get("name") == "goal_judge" for _, d in captured)
+
+
+async def test_evaluate_completion_blocks_without_execution_evidence(monkeypatch) -> None:
+    """judge 说达成但台账无有限数值 → 证据门拦截 (完成 ≠ 验收)."""
+    import huginn.evaluation.goal_judge as gj_mod
+
+    monkeypatch.setattr(gj_mod, "GoalJudge", _fake_judge(True))
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    captured: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        CognitiveRunner,
+        "_emit_campaign",
+        lambda self, et, data: captured.append((et, data)),  # noqa: ANN001
+    )
+
+    class _Stub:
+        _execution_ledger: list = []
+        _last_completion_iter = -1
+        _speculator_hint = ""
+
+        def _metacog_check_completion(self):
+            return (False, "")
+
+    res = await CognitiveRunner(_Stub())._evaluate_completion(
+        _goal(), {}, _LoopState(2), 5
+    )
+    assert res["ran"] and res["stop"] is False
+    assert "验收门" in res["hint"]
+    assert any(d.get("name") == "goal_acceptance" for _, d in captured)
+
+
+async def test_evaluate_completion_skeptic_can_block(monkeypatch) -> None:
+    """证据门过了, 但独立对抗审查未通过 → 不终止, 反例回灌为 hint."""
+    import huginn.evaluation.goal_judge as gj_mod
+
+    monkeypatch.setattr(gj_mod, "GoalJudge", _fake_judge(True))
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    captured: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        CognitiveRunner,
+        "_emit_campaign",
+        lambda self, et, data: captured.append((et, data)),  # noqa: ANN001
+    )
+
+    class _Resp:
+        content = (
+            '{"overall_verdict": "fail", "implausible_metrics": '
+            '[{"metric": "gap", "paper": 1.1, "yours": 0.4, "red_flag": "beats baseline"}]}'
+        )
+
+    class _Model:
+        async def ainvoke(self, messages):  # noqa: ANN001
+            return _Resp()
+
+    class _Stub:
+        _execution_ledger = [
+            {"idx": 1, "tool": "code_lab", "result": '{"objectives": {"gap": 0.4}}'}
+        ]
+        _last_completion_iter = -1
+        _speculator_hint = ""
+        verification_model = _Model()
+        model = _Model()
+
+        def _metacog_check_completion(self):
+            return (False, "")
+
+    res = await CognitiveRunner(_Stub())._evaluate_completion(
+        _goal(), {}, _LoopState(2), 5
+    )
+    assert res["ran"] and res["stop"] is False
+    assert "SKEPTIC" in res["hint"]
+    assert any(d.get("name") == "goal_skeptic" for _, d in captured)
+
+
+async def test_evaluate_completion_dedups_same_iteration(monkeypatch) -> None:
+    import huginn.evaluation.goal_judge as gj_mod
+
+    monkeypatch.setattr(gj_mod, "GoalJudge", _fake_judge(False))
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    monkeypatch.setattr(
+        CognitiveRunner,
+        "_emit_campaign",
+        lambda self, et, data: None,  # noqa: ANN001
+    )
+
+    class _Stub:
+        _execution_ledger: list = []
+        _last_completion_iter = -1
+        _speculator_hint = ""
+
+        def _metacog_check_completion(self):
+            return (False, "")
+
+    stub = _Stub()
+    first = await CognitiveRunner(stub)._evaluate_completion(_goal(), {}, _LoopState(2), 5)
+    second = await CognitiveRunner(stub)._evaluate_completion(_goal(), {}, _LoopState(2), 5)
+    assert first["ran"] is True
+    assert second["ran"] is False
+
+
+def test_cognitive_loop_has_single_completion_exit() -> None:
+    """回归守卫: 三条判停路径已合并, 旧散装 F2/F17 不应复活."""
+    import inspect
+
+    from huginn.autoloop import cognitive_loop as cl
+
+    src = inspect.getsource(cl)
+    assert "_evaluate_completion(" in src
+    assert "_use_unified_decision" not in src
+    assert "_use_gate" not in src
+    assert "v10 F17 GoalJudge" not in src
+
+
 # ===== 阶段5: EngineControl =====
 
 

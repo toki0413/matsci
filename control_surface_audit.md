@@ -166,6 +166,10 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `curiosity_hint` | B7 | 默认 off；若开启后频繁注入但不改行为 → 删 |
 | `pivot_directive` | B1 | 越阈值注入强制变异令的次数 |
 | `report_citation` | C2 | 报告 Results 未溯源数值数/总数；长期低触发 = 提示面已够，长期高 = 需收紧 |
+| `goal_judge` | 出口 | 每次到期完成判定（每 3 轮）一条；`action=stop_candidate` 占比 = judge 认为达成的频率 |
+| `goal_acceptance` | 验收门·证据 | `action=block` = 台账无有限数值被拦；长期 100% block = judge 提前宣布达成 |
+| `goal_metacog_audit` | 验收门·元认知 | 完成度审计拦截次数 |
+| `goal_skeptic` | 验收门·对抗 | `verdict` 分布；`block` 高频 = judge 过于乐观或常识证伪未过 |
 
 ---
 
@@ -253,3 +257,80 @@ gaps 直指"**缺乏真实运行的数值实验证据……仅呈现了经过理
 
 > 与 §3 原则一致：这是**证据门**（不是科学判断门），且只在"查无出处"时标注，不越权替
 > 书生下结论；`report_citation` 触发率进同一观测口径，供后续按数据决定是否收紧/放宽。
+
+---
+
+## 6. 目标达成硬出口：合并 + 验收门（v24）
+
+§3 原则说"硬终止只保留两个出口：挂钟预算耗尽 与 **目标达成**"。A1–A6 降级后，
+"目标达成"成了唯一保留的**语义硬出口** —— 但它的实现本身是散的，必须先收干净，
+否则原则只落了一半。
+
+### 6.1 问题：目标达成判定有三套并行实现，且默认口径不可信
+
+循环内判"是否完成"此前有 **三条各自独立** 的实现，各自重算、各自写 `should_stop`：
+
+| 路径 | 位置 | 口径 | 问题 |
+|------|------|------|------|
+| 默认散装 F2 + v10-F17 | `cognitive_loop.py`（旧） | **规则版** GoalJudge（关键词覆盖） | 与出口路径的 LLM 版不一致 → 循环内误判 |
+| Unified + Arbiter | `HUGINN_USE_UNIFIED_DECISION=1` | 统一评估器 | 独立重判 goal，与默认路径结论可能打架 |
+| CompletionGate | `HUGINN_USE_COMPLETION_GATE=1` | 完成门 | 同上，且第三条 stop 来源 |
+
+三套并存 = 控制面分叉（§1 的病灶在同一处复发）。且默认路径用规则版判据，
+是**唯一合法自动出口**上最不该省的地方。
+
+### 6.2 动作（用户选定四项，组合实施）
+
+1. **修目标达成硬出口** —— 循环内改用 **LLM 版 GoalJudge**（`verification_model`
+   → `model` 降级；无模型才退规则），判据是**证据台账 + 本轮产出**，不再是中间摘要的
+   关键词覆盖。与出口路径口径对齐。
+2. **用证据台账做验收门** —— "完成"与"验收"分离：judge 说达成后，先过
+   `_ledger_has_finite_evidence`（台账须至少一条**含有限数值**的真实执行证据；
+   `inf/nan`、纯文本错误、exec 结构字段如 `exit_code` 都不算）。
+3. **加独立对抗验收 SKEPTIC** —— 证据门过后，用**独立** LLM 走
+   `adversarial_critique` 尝试**证伪**声明（核对每个数值能否在台账查到出处；
+   优于合理基线的数值一律 red flag），未过则拦回、反例回灌为 hint。
+4. **合并三条停止路径** —— 收敛为单一出口 `_evaluate_completion`：
+   `GoalJudge → (可选变体消费同一 judge 结果) → 验收门`，默认路径不再各自 `should_stop`；
+   Unified / CompletionGate 退化为方法内两个**变体**，只决定 stop 之外的
+   switch_tool/requery，stop 只有一个来源。`_last_completion_iter` 去重同迭代重复判定。
+
+判定顺序（`_evaluate_completion`，每 3 轮到期一次）：
+
+```
+GoalJudge(LLM)  →  achieved?  ── 否 ──→  hint=gaps, 返回 (不停)
+                      │是
+                      ▼
+        _accept_completion(验收门)
+          ├─ 证据门: 台账无有限数值 → block (goal_acceptance)
+          ├─ 元认知完成度审计       → block (goal_metacog_audit)
+          └─ SKEPTIC 对抗审查       → 未过 block (goal_skeptic)
+                      │全过
+                      ▼
+              stop=True  →  调用方写**一次** should_stop
+```
+
+### 6.3 定性（按 §3 过闸）
+
+- **验收门属于 C 族（诚实/证据门）**：只判"这条证据算不算数"，不替书生做科学判断
+  → 允许硬。
+- **合并是减控制面**：3 条 stop 来源 → 1 处写 `should_stop`；2 条可选变体降为方法内分支，
+  不再是独立判停路径。
+- **唯一语义硬出口**：目标达成 + 证据 + 独立对抗三者齐备才收结；其余一律提示。
+
+### 6.4 单测
+
+`test_ledger_has_finite_evidence_accepts_finite_objectives` /
+`..._rejects_nonfinite_and_text` / `test_ledger_evidence_text_renders_indexed_lines`
+（证据口径）；`test_evaluate_completion_stops_only_with_evidence` /
+`..._blocks_without_execution_evidence` / `..._skeptic_can_block` /
+`..._dedups_same_iteration`（端到端）；`test_cognitive_loop_has_single_completion_exit`
+（回归守卫：旧散装 F2/F17 与 `_use_unified_decision` / `_use_gate` 不得复活）。
+
+### 6.5 待办：起观测 run 采新出口触发率
+
+run57 已于 `2026-10-01 08:26` 结束（55 条 trace：`darwin_stagnation` 26 /
+`belief_convergence` 22 / `effort_floor` 6 / `report_citation` 1），但它是**改前**代码
+（v24 改动落盘于 09:24），故 **`goal_judge` / `goal_acceptance` / `goal_skeptic` 全为 0**，
+新出口尚无野外样本。**下一步**：起一轮同参数 run，确认这四条新 trace 能被点亮，
+并把触发率并入 §5.3 的第二轮删减决策。
