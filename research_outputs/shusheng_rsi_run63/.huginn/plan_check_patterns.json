@@ -173,5 +173,37 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] We will implement a concrete numerical experiment to test the phase transition hypothesis in the loss landscape curvature of small feedforward networks. The implementation"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "3c01e6b09a19",
+    "reason": "The plan's MODE is 'explore' (探索), but the task requires a rigorous numerical experiment with specific validation criteria ('coder 写代码' or workflow execution). The description lacks concrete implementation details (e.g., architecture, loss function, optimization settings) necessary to verify the Double Descent Interpolation Hypothesis. Additionally, it does not address the 'rigid' vs 'fat' classification criteria explicitly required by the hard constraints.",
+    "missing_steps": [
+      "Define specific network architecture (layers, activation functions)",
+      "Specify optimization algorithm and hyperparameters (learning rate, epochs)",
+      "Detail synthetic constraint generation method (linear/nonlinear)",
+      "Implement validation metric for 'zero violation' (max abs error ≤ 1e-3)",
+      "Define scanning range for network widths N",
+      "Include convergence criteria for training",
+      "Address how to handle cases where N_c(w) is not reachable"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the Double Descent Interpolation Hypothesis experiment: design a numerical study measuring the minimal network width N_c(w) achieving zero violation (max abs err"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "3c01e6b09a19",
+    "reason": "The plan's MODE is 'explore' but the task requires a rigorous numerical experiment with concrete implementation details (coder 写代码 / workflow 跑流程). The DESCRIPTION lacks essential implementation specifics: it doesn't define the exact network architecture (number of hidden units, layer sizes), loss function formulation for constraints, synthetic constraint generation method (distribution, dimensionality), or how to handle cases where N_c(w) is not reachable (fat regime). It also doesn't address the critical need for code generation and execution rather than just experimental design. This matches the historical failure mode where the plan was too vague and lacked concrete implementation details necessary to verify the Double Descent Interpolation Hypothesis.",
+    "missing_steps": [
+      "Define specific network architecture (exact layer dimensions, activation functions, output layer)",
+      "Specify loss function formulation for handling linear and nonlinear manifold constraints",
+      "Detail synthetic constraint generation method (sample distribution, dimensionality, constraint types)",
+      "Implement code to generate and execute the numerical experiment",
+      "Define handling for fat regime cases where N_c(w) is not reachable",
+      "Specify convergence criteria beyond loss < 1e-6 (e.g., gradient norms, stability checks)",
+      "Include validation metric implementation for 'zero violation' (max abs error ≤ 1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement Double Descent Interpolation Hypothesis experiment: (1) Define ReLU network architecture (width N, depth 2, linear output), (2) Generate synthetic constraint fam"
   }
 ]

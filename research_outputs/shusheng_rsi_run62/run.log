@@ -257,3 +257,68 @@ control_trace name=darwin_stagnation iteration=29 evidence=stagnation=5 best=2.5
 [code-lab-author] raw_len=2274 extracted_len=2259 prompt_len=6788
 [code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ValueError: could not convert string to float: 'X'"
 [code-lab-author] raw_len=2642 extracted_len=2627 prompt_len=6888
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+control_trace name=code_lab_timeout iteration=33 evidence=attempt=3/4 code_lab 执行超时 (> 900.0s) action=advisory_hint
+[code-lab-author] raw_len=2642 extracted_len=2627 prompt_len=7019
+code_lab 修复循环: 挂钟预算已耗尽, 停止第 4 次尝试
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 挂钟预算耗尽, 中止 code_lab 修复循环
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    idx = seed % 5
+    if kind == 'rigid':
+        if idx == 0:
+            y = (X - 1.0) ** 2
+            yv = (Xv - 1.0) ** 2
+        elif idx == 1:
+            y = np.sin(2 * np.pi * X)
+            yv = np.sin(2 * np.pi * Xv)
+        elif idx == 2:
+            y = np.exp(-X)
+            yv = np.exp(-Xv)
+        elif idx == 3:
+            y = X ** 3 - X ** 2 + X
+            yv = Xv ** 3 - Xv ** 2 + Xv
+        else:
+            y = np.cos(4 * np.pi * X)
+            yv = np.cos(4 * np.pi * Xv)
+    else:
+        coeffs = rng.standard_normal(50)
+        y = poly_basis(X, 50) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 50) @ coeffs.reshape(-1, 1)
+    scale = np.std(np.concatenate([y, yv]))
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [10, 20, 50, 100]
+    Ns = list(range(1, 21))
+    summary = {'rigid': {}, 'fat': {}}
+    objectives = {'score': 0.0, 'rigid_Nc_avg': 0.0, 'fat_Nc_count': 0}
+    for kind in ['rigid', 'fat']:
+        summary[kind] = {}
+        Nc_results = {}
+        Nc_list = []
+        for w in ws:
+            summary[kind][w] = []
+            min_Nc = None
+            for N in Ns:
+                err_list = []
+                for s in range(1):
+                    data = family(kind, w, seed + s * 100)
+                    X, y = data['X'], data['y']
+                    Xv, yv = data['Xv'], data['yv']
+                    model = mlp_fit(X, y, N, seeds=1)
+                    yp = mlp_predict(model, Xv)
+                    err = float(np.max(np.abs(yp - yv)))
+                    err_list.append(err)
+                min_err = min(err_list)
+                summary[kind][w].append(min_err)
+                if min_err <= 1e-3 and min_Nc is None:
+                    min_Nc

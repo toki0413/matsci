@@ -51,10 +51,10 @@
       "huginn",
       "value",
       "label",
-      "constraints",
       "width",
-      "function",
+      "constraints",
       "target",
+      "function",
       "algebraic",
       "small"
     ],
