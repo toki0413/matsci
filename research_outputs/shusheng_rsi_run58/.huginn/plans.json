@@ -151,6 +151,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_4dc28be8",
+      "objective": "[DIM: computation] The solution space is fat because each independent constraint consumes a degree of freedom; network width must scale linearly with sample count to maintain zero-violation capacity. | predict: N_c(w) ≈ α·w + β where α≈1 (linear growth), with saturation only if w exceeds total parameters. pro: Aligns with classical VC-dimension intuition for shallow networks; directly testable via width scan. con: May overlook overparameterization effects common in modern NNs; could be refuted if N_c plateaus. | Necessary condition: The constraints must be linearly independent in the function space; otherwise, N_c(w) may not scale linearly. Hidden assumption: The network activation function (e.g., ReLU) does not cause pathological saturation that artificially limits representational capacity. Falsifiable test: If N_c(w) plateaus or grows sublinearly (e.g., logarithmically) with w, the hypothesis is refuted.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Create a Python script to test the hypothesis that solution space \"fatness\" (N_c(w) scaling linearly with constraint count w) holds for small feedforward networks. The script will: (1) define a target function with increasing numbers of constraints (w), (2) train small networks with varying hidden widths (w) to satisfy these constraints, (3) measure the minimum width N_c(w) achieving zero violation (max absolute error ≤ 1e-3 on held-out constraints), and (4) plot N_c(w) vs w to test linear scaling vs plateau. This directly tests the claim that N_c(w) ≈ α·w with α≈1, or if it plateaus (refuting the hypothesis).",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/test_solution_space_fatness.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T09:53:37.637258+00:00",
+      "confirmed_at": "2026-10-01T09:53:37.638728+00:00",
+      "completed_at": "2026-10-01T09:58:51.363718+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }

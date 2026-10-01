@@ -14,10 +14,10 @@
         "[Feynman unknown_unknown] What does $N_c(w)$ actually represent in this context? Is it counting configurations, states, or something else entirely — and how does it relate to the Jacobian rank deficiency?",
         "[Feynman unknown_unknown] What caused the generative verifier to reject the output as just “a raw list of floating-point numbers”? Did I misinterpret what kind of output was expected?"
       ],
-      "iteration": 23,
+      "iteration": 28,
       "status": "active",
       "created_at": "2026-10-01T09:42:50.658503+00:00",
-      "updated_at": "2026-10-01T09:52:31.044146+00:00",
+      "updated_at": "2026-10-01T09:53:37.641871+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -292,9 +292,49 @@
           "discovered_at": "2026-10-01T09:52:10.552636+00:00",
           "resolved_at": null,
           "iteration": 20
+        },
+        {
+          "id": "unk_5a190a3c",
+          "text": "Assuming that \"zero violation\" on out-of-sample points implies generalization across the entire input domain; local accuracy does not guarantee global rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:53:16.790939+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_45469cdb",
+          "text": "Optimization may converge to spurious local minima due to non-convex loss landscapes, leading to underestimation of required network width N_c(w).",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:53:16.793082+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_40054982",
+          "text": "Using hidden layer width as sole proxy for model capacity ignores depth, activation functions, and initialization effects—potentially misrepresenting true solvability.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:53:16.794778+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_f39efb00",
+          "text": "For very small w, overfitting may allow zero violation even with tiny N_c, falsely suggesting high rigidity when it's merely memorization.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:53:16.796269+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_8fab5ce8",
+          "text": "No ground-truth analytic solution or benchmark function class provided—validation of “rigid vs. fat” lacks objective reference.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:53:16.797559+00:00",
+          "resolved_at": null,
+          "iteration": 25
         }
       ],
-      "unknowns_discovered": 34,
+      "unknowns_discovered": 39,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
