@@ -1,0 +1,8 @@
+Testing constant target f(x) = 0.5
+w=10, N=16: train_max_err=0.000683, holdout_max_err=0.000531, zero_violation=True
+
+Testing polynomial target f(x) = x^2 - x + 0.25
+w=10, N=64: train_max_err=0.002183, holdout_max_err=0.002052, zero_violation=False
+
+Polynomial target not achieving zero violation. Need to debug.
+Train max err: 0.002183, Holdout max err: 0.002052

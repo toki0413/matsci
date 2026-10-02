@@ -695,3 +695,118 @@ run65 **无 `rename_debt` trace** ⇒ 线上债务从未越限（与离线反推
 传入 `self._get_active_cognitive_map()`。验证：给一个带 `lattice` 的假 map 后
 `[1.0, 0, 0, 0, 0, 0.978…]`（配位数 / 空间群 225 归一）—— 通道在结构类目标下可用；
 非结构目标仍全 0（正确）。
+
+---
+
+## 9. 协作"跑了但空手"的真因：internlm 消息序（v32）
+
+### 9.1 现象：§8 所有"空手"都指向同一串
+
+run69（含 v31）实测控制面：
+
+| iteration | trace | 含义 |
+|-----------|-------|------|
+| 24 | `collab_branch_incubator ... evidence=empty: branches=3 ok=0` | 3 路孵化全空手 |
+| 4 | `collab_blind_reconstruct ... refute: blind_holds=False vs orig_holds=True summary_len=26` | 反证依据只有 26 字 |
+| 9/14/19 | `collab_blind_reconstruct ... skip: node status=refuted` | 后续因节点已 refuted 跳过 |
+
+26 字正是 `in prompt processing error` 的长度 —— 即**子智能体整轮返回的是错误串**，
+不是空产出。§8.5/§8.6 修的 `_extract_output` / `skip control event` 都是**必要但不充分**：
+它们解决"拿到真状态却读到空"，这次是"模型压根没产出"。
+
+### 9.2 真因：端点只收「至多一条、且在首条」的 system 消息
+
+三层坐实（非推断）：
+
+1. **合成探针** `_scratch/test_msg_order.py` 对 `intern-s2-preview`：
+
+   | 消息序 | 结果 |
+   |--------|------|
+   | `[S,H]` / `[S,H,H]` | `HELLO_RIGIDITY` |
+   | `[H,S,H,S]` / `[S,S,H]` / `[S,S,S,H]` / `[H,S,A,H,S]` | `in prompt processing error` |
+
+   即：多条 system，或 system 不在首条，一律报错。
+
+2. **真实 agent 路径** `_scratch/test_subagent_chat.py` 抓到实际消息序：
+   `[H, S(风格指令), H(inner_state), S(预算)]` —— 与探针命中的形状完全一致，
+   模型回复 `in prompt processing error`。
+
+3. **链路成因**：图框架把顶层 `system_prompt` 单独前置（langgraph 的
+   `_get_prompt_runnable`：`[prompt] + llm_input_messages`），而 huginn 又在会话中间
+   注入风格 / 预算 / context hints 等 system → 最终 prompt 天然是 `[S, H, S, …]`。
+   这是**所有** OpenAI 兼容端点的公共路径，不是 internlm 独有写法。
+
+### 9.3 修法：模型边界归一（不碰图拓扑）
+
+按 §3 过闸：这不是科学判断，也不是新控制面 —— 是让「该通的线」通起来。
+
+- [`registry._merge_system_messages`](file:///workspace/agent/huginn/models/registry.py)：
+  把全部 `SystemMessage` 正文按出现顺序合并为**一条**置于队首，其余消息保持相对顺序；
+  未命中（无需改动）时原样返回同一列表对象。
+- `_normalizing_chat_openai_cls()`：`ChatOpenAI` 子类重写 `_get_request_payload`
+  —— 它是 `invoke/ainvoke/stream/astream/bind_tools` 的**唯一出口**，一处覆盖
+  deepagents / react fallback / 子智能体全部路径。**每次现建子类、import 在函数内**，
+  以便测试 monkeypatch `langchain_openai.ChatOpenAI` 时取到被替换的基类。
+- 所有 OpenAI 兼容构造点统一改用该子类：`openai/vllm/local`、`deepseek`、`openrouter`、
+  `_LOCAL_PRESETS`、`_DOMESTIC_OPENAI_COMPATIBLE`（[registry.py](file:///workspace/agent/huginn/models/registry.py)）。
+
+### 9.4 验证
+
+| 探针 / 用例 | 改前 | 改后 |
+|-------------|------|------|
+| `_scratch/test_msg_order.py` | 4/6 报错 | **6/6 全绿** |
+| `_scratch/test_subagent_chat.py`（真实 chat） | 错误串 | `HELLO_RIGIDITY`（tools 开/关均） |
+| `_scratch/test_branch_dispatch.py`（dispatch） | `summary_len=0` | `success=True summary_len=1182 tool_calls=2` |
+| `tests/test_domestic_llm.py::TestSystemMessageNormalization` | — | 5 例绿 |
+| 模型 / 引擎回归（model_tier / model_router / model_thinking / engine_decomposed / engine_signals） | — | **131 passed** |
+
+> 下一步：run70（同 run69 参数、含 v32）复验
+> `collab_branch_incubator` 是否 `ok>0`、`collab_blind_reconstruct` 是否出现
+> `action=refute/support` 真产出（而非 26 字错误串）。
+
+## 10. run70 暴露的两处「通而未电」（v33）
+
+run70 复验确认 §9 修复生效：`collab_branch_incubator ... branches=3 ok=2`
+（错误串已消除，子智能体真产出）。但同一轮暴露两处「线接上了、电没到」：
+
+### 10.1 PRM rollout value 恒空（valued=0）
+
+- **现象**：`collab_branch_incubator ... valued=0 winner_value=None` —— 有分支、
+  有候选，但树搜索的剪枝价值全空，退化成按 token 剪枝。
+- **根因**：[step_verifier.make_default_llm_chat_fn](file:///workspace/agent/huginn/runtime/step_verifier.py)
+  硬编码 `provider="deepseek", model_name="deepseek-chat"`。run70 用
+  `HUGINN_PROVIDER=internlm` 且未配 `DEEPSEEK_API_KEY` → 构造抛错 → 返回
+  `None` → `make_branch_value_fn` 恒 `None` → `valued=0`。
+- **修法**：改为跟随当前配置 —— `huginn.llm.get_model()` 读
+  `get_config()`（`HUGINN_PROVIDER/MODEL/BASE_URL`），与主 agent 同源；
+  另设 `HUGINN_PRM_PROVIDER / HUGINN_PRM_MODEL` 显式覆盖（verification 与
+  main 异槽，保留「不用同一模型自评」的设计意图）。
+
+### 10.2 S7 meta-critique 跨事件循环（bound to a different event loop）
+
+- **现象**：`meta_critique failed: <asyncio.locks.Event ...> is bound to a
+  different event loop`。S7 自修改恒走 except → 全 reject → 死循环。
+- **根因**：reflection 的 S7 分支用
+  [async_bridge.run_async](file:///workspace/agent/huginn/utils/async_bridge.py)
+  在**独立线程开新 loop** 跑 `_handle_s7_self_modify`；该 handler 复用
+  `self.model`，其 httpx `AsyncClient` 绑定在创建它的**主 loop** 上 → 换 loop
+  必炸。（此前「改 await」的修法未落到调用点，`run_async` 仍在。）
+- **修法**：新增
+  [`_schedule_s7_self_modify`](file:///workspace/agent/huginn/agent/reflection.py)：
+  有 running loop 时 `loop.create_task` 挂**主循环**（fire-and-forget，S7 副作用
+  是写 stable_principle / rejection 并回 S1，不阻塞本轮反思）；纯 sync CLI
+  无 loop 才退回 `asyncio.run`。持强引用防 task 被 GC。
+
+### 10.3 验证
+
+| 探针 | 改前 | 改后 |
+|------|------|------|
+| `step_verifier.py` 自检 | — | All passed |
+| `make_default_llm_chat_fn`（internlm 环境） | 抛错→None | `model_name=intern-s2-preview` |
+| `_schedule_s7_self_modify`（in-loop / no-loop 探针） | — | 主 loop 命中 / fallback OK |
+| **run71**（同 run70 参数） | `valued=0 winner_value=None` | **`valued=3 winner_value=1.0`** |
+| **run71** 错误扫描 | `bound to a different event loop` | **NONE（clean）** |
+
+> run71：`control_trace name=collab_branch_incubator iteration=1
+> evidence=use: branches=3 ok=3 valued=3 winner_value=1.0 winner_tokens=13819
+> depth=2 action=use`。

@@ -49,6 +49,11 @@ logger = logging.getLogger(__name__)
 # _build_codelab_focus 把"强制变异"令直接注入作者提示 (按 streak 现算, B1).
 _REPEAT_HARD_STREAK = int(os.environ.get("HUGINN_REPEAT_EXEC_HARD_STREAK", "2"))
 
+# 秩归一 surprise 的历史直方图每桶上限. 直方图现随 engine_state 落盘 (resume 不断档),
+# 不设上限则长程 run 里每轮 append 会让 JSON 与内存无界增长; 滑动窗口保留最近样本,
+# 秩估计足够稳定.
+_SURPRISE_HIST_CAP = int(os.environ.get("HUGINN_SURPRISE_HIST_CAP", "200"))
+
 
 def _normalize_script_for_fp(script: str) -> str:
     """把实验代码归一成**结构指纹**源 (忽略注释/格式/空行, 保留标识符与常量).
@@ -2452,6 +2457,9 @@ class EngineReflect:
             _below = sum(1 for x in hist if x < cur)
             _equal = sum(1 for x in hist if x == cur)
             hist.append(cur)
+            # 滑动窗口: 直方图随 engine_state 落盘, 无界 append 会让 JSON/内存膨胀.
+            if len(hist) > _SURPRISE_HIST_CAP:
+                del hist[: len(hist) - _SURPRISE_HIST_CAP]
             if _n == 0:
                 return 0.5
             return max(0.0, min(1.0, (_below + 0.5 * _equal) / _n))

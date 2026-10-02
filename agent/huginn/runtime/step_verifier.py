@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -283,33 +284,44 @@ class StepVerifierHook:
 
 
 def make_default_llm_chat_fn() -> Callable[[str], Awaitable[str]] | None:
-    """懒加载一个默认 LLM (deepseek-chat) 给 StepVerifierHook 用.
+    """懒加载一个 PRM 评分模型给 StepVerifierHook 用.
+
+    跟随当前模型配置 (HUGINN_PROVIDER / HUGINN_MODEL / HUGINN_BASE_URL),
+    不再硬编码 deepseek-chat —— 硬编码在非 deepseek 后端 (如 internlm / vllm)
+    下会因缺 DEEPSEEK_API_KEY 静默失败, 使 rollout value 恒空 (valued=0),
+    树搜索退化成按 token 剪枝.
+
+    HUGINN_PRM_PROVIDER / HUGINN_PRM_MODEL 可显式指定独立 PRM 模型
+    (verification 与 main 异槽, 避免"自己评自己"的确认偏差).
 
     失败 (没 key / 包没装 / 网络挂) 返回 None, 调用方自己降级.
-
-    ponytail: 复用 anomaly_llm_hook 的同款 deepseek-chat, 不另开模型.
     """
+    prm_provider = os.environ.get("HUGINN_PRM_PROVIDER", "").strip()
+    prm_model = os.environ.get("HUGINN_PRM_MODEL", "").strip()
     try:
-        from huginn.models.registry import create_langchain_model
+        if prm_provider:
+            from huginn.models.registry import create_langchain_model
 
-        model = create_langchain_model(
-            provider="deepseek",
-            model_name="deepseek-chat",
-            temperature=0.0,
-            max_tokens=300,
-        )
+            model = create_langchain_model(
+                provider=prm_provider,  # type: ignore[arg-type]
+                model_name=prm_model or None,
+                temperature=0.0,
+                max_tokens=300,
+            )
+        else:
+            # 复用主 agent 同款配置 (huginn.llm.get_model 读 get_config()).
+            from huginn.llm import get_model
+
+            model = get_model(temperature=0.0, max_tokens=300)
     except Exception as exc:
         logger.debug("StepVerifierHook 默认模型初始化失败: %s", exc)
         return None
 
     async def _chat(prompt: str) -> str:
         from langchain_core.messages import HumanMessage
-        try:
-            resp = await model.ainvoke([HumanMessage(content=prompt)])
-            # langchain 返回的是 AIMessage, .content 是 str
-            return getattr(resp, "content", str(resp))
-        except Exception:
-            raise
+        resp = await model.ainvoke([HumanMessage(content=prompt)])
+        # langchain 返回的是 AIMessage, .content 是 str
+        return getattr(resp, "content", str(resp))
 
     return _chat
 
