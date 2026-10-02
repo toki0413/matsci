@@ -676,6 +676,70 @@
       "r_phys": 1.0,
       "iteration": 70,
       "id": "persona_use:dft_expert_iter70"
+    },
+    {
+      "label": "** [DIM: structure] Algebraic Threshold Rigidity. This hypothesis is the most te",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:53:07.273845",
+      "last_seen": "2026-10-02T08:53:07.273845",
+      "mentions": 1,
+      "iteration": 75,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The scan will reveal that for small $w$, $N_c(w)$ decreases or stays constant, but beyond a critical $w^*$, $N_c(w)$ plateaus at a small finite value (e.g., 8-16 units) rather than growing linearly wi",
+      "persona": "dft_expert",
+      "id": "experiment:** [DIM: structure] Algebraic Threshold Rigidity. This hypothesis is the most te"
+    },
+    {
+      "label": "plan_coder_iter75",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:53:07.273880",
+      "last_seen": "2026-10-02T08:53:07.273880",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter75"
+    },
+    {
+      "label": "pass_iter75",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:53:07.273890",
+      "last_seen": "2026-10-02T08:53:07.273890",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter75"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T08:53:07.273900",
+      "last_seen": "2026-10-02T08:53:07.273900",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] Algebraic Threshold Rigidity. This hypothesis is the most te",
+        "Method:plan_coder_iter75",
+        "Fact:pass_iter75"
+      ],
+      "iteration": 75,
+      "id": "he_experiment_pipeline_bf0e03e7"
+    },
+    {
+      "label": "dft_expert_iter75",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:53:07.273972",
+      "last_seen": "2026-10-02T08:53:07.273972",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "766b0ee3dd9248fe",
+      "r_phys": 1.0,
+      "iteration": 75,
+      "id": "persona_use:dft_expert_iter75"
     }
   ],
   "links": [
@@ -975,6 +1039,33 @@
       "last_seen": "2026-10-02T08:51:19.252056",
       "mentions": 1,
       "target": "he_experiment_pipeline_e3738f66"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] Algebraic Threshold Rigidity. This hypothesis is the most te",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:53:07.273900",
+      "last_seen": "2026-10-02T08:53:07.273900",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf0e03e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:53:07.273900",
+      "last_seen": "2026-10-02T08:53:07.273900",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf0e03e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:53:07.273900",
+      "last_seen": "2026-10-02T08:53:07.273900",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf0e03e7"
     }
   ]
 }

@@ -436,6 +436,41 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_8900168a",
+      "objective": "[Hypothesis Index].",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "To test the hypothesis on solution space rigidity in small MLPs, I will design a numerical experiment: (1) define an analytical target function with known constraints (e.g., a smooth interpolating function with bounded derivatives); (2) generate w constraint points (training data) from this function; (3) train small MLPs with varying hidden layer widths N_c on these w points; (4) evaluate max absolute error on a held-out validation set (w' points); (5) determine N_c(w) as the minimal width achieving max error ≤ 1e-3 on validation; (6) sweep w to see if N_c(w) remains small/bounded (rigid) or grows unbounded (fat). I will use a standard training protocol (Adam, early stopping, fixed seed) and report N_c(w) values and trends. This is a pure ML/math investigation as required.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "ml_experiments/rigidity_probe.py",
+            "(new",
+            "script",
+            "to",
+            "be",
+            "created)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T08:54:21.323202+00:00",
+      "confirmed_at": "2026-10-02T08:54:21.325202+00:00",
+      "completed_at": "2026-10-02T08:54:39.544880+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
