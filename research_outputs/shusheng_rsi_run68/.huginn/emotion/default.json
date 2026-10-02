@@ -1,0 +1,38 @@
+{
+  "valence": -0.19999125945089716,
+  "arousal": 0.1599967223298984,
+  "trust": 0.44000065556267054,
+  "affection": 0.2,
+  "fatigue": 0.03999672241942604,
+  "loneliness": 0.0,
+  "interest": 0.5,
+  "timestamp": "2026-10-02T09:58:48.750403+00:00",
+  "events": [
+    {
+      "timestamp": "2026-10-02T09:58:44.816938+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "valence": -0.1,
+        "trust": -0.03,
+        "fatigue": 0.02,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; greeting detected"
+    },
+    {
+      "timestamp": "2026-10-02T09:58:48.750393+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "valence": -0.1,
+        "trust": -0.03,
+        "fatigue": 0.02,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; greeting detected"
+    }
+  ]
+}
