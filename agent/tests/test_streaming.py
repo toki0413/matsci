@@ -2,7 +2,8 @@
 
 覆盖范围:
 - 模块级纯函数: ``_strip_dangling_tool_calls`` / ``_load_root_markers`` /
-  ``_thinking_scale_timeout`` / ``_thinking_stream_idle`` / ``_is_root_message``
+  ``_thinking_scale_timeout`` / ``_thinking_stream_idle`` / ``_is_root_message`` /
+  ``_fallback_stream_idle`` / ``_fallback_collect_inputs``
 - 异步 watchdog: ``_astream_with_watchdog`` (超时 / 透传 / 空流)
 - ``StreamingMixin`` 纯逻辑方法: ``_extract_last_ai_content`` / ``_check_phase_transition``
 - 消息压缩: ``compact_messages`` (drop-oldest / root 保护 / thinking 块保护 /
@@ -41,6 +42,8 @@ from huginn.agent.streaming import (
     _load_root_markers,
     _reconstruct_completion_records,
     _strip_dangling_tool_calls,
+    _fallback_collect_inputs,
+    _fallback_stream_idle,
     _thinking_scale_timeout,
     _thinking_stream_idle,
 )
@@ -184,6 +187,73 @@ class TestThinkingTimeouts:
         # 默认档 → 回退到模块常量 _STREAM_IDLE_TIMEOUT (不重读 env)
         monkeypatch.setenv("HUGINN_THINKING", "")
         assert _thinking_stream_idle() == _STREAM_IDLE_TIMEOUT
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _fallback_stream_idle — 降级空闲阈值必须比刚失败的那次更宽 (run72 修复)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFallbackStreamIdle:
+    def test_never_narrower_than_primary(self, monkeypatch):
+        # 核心不变量: 降级空闲 ≥ 主流空闲; 否则重演同一失败.
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        for tier in ("", "high", "medium"):
+            monkeypatch.setenv("HUGINN_THINKING", tier)
+            primary = _thinking_stream_idle()
+            assert _fallback_stream_idle(300.0) >= primary
+
+    def test_run72_exact_case(self, monkeypatch):
+        # run72: 无 HUGINN_THINKING → primary 60s, total 300s.
+        # 旧行为降级也用 60s → 必败; 新行为放宽到 300s → 只在真死时终止.
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _thinking_stream_idle() == 60.0
+        assert _fallback_stream_idle(300.0) == 300.0
+
+    def test_scales_with_total_when_total_is_larger(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "high")  # primary 180s
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(900.0) == 900.0
+
+    def test_keeps_primary_when_total_is_smaller(self, monkeypatch):
+        # 总预算比主流空闲还小 → 不应把阈值压到低于主流.
+        monkeypatch.setenv("HUGINN_THINKING", "high")  # primary 180s
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(30.0) == 180.0
+
+    def test_env_override_wins(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "45")
+        assert _fallback_stream_idle(300.0) == 45.0
+
+    def test_bad_env_override_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "not-a-number")
+        assert _fallback_stream_idle(300.0) == 300.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _fallback_collect_inputs — 有进度续跑(None), 别重放整个 turn (run72 根因)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFallbackCollectInputs:
+    def test_with_progress_resumes(self, monkeypatch):
+        # 主流已 yield 42 步 (run72 实测) → 回 None 让 langgraph 从 checkpoint 续跑.
+        monkeypatch.delenv("HUGINN_STREAM_FALLBACK_RESUME", raising=False)
+        assert _fallback_collect_inputs(42, {"messages": ["m"]}) is None
+
+    def test_without_progress_replays(self, monkeypatch):
+        # 零进度 → 无 checkpoint 可续, 只能重放 inputs.
+        monkeypatch.delenv("HUGINN_STREAM_FALLBACK_RESUME", raising=False)
+        inputs = {"messages": ["m"]}
+        assert _fallback_collect_inputs(0, inputs) is inputs
+
+    def test_env_kill_switch_forces_replay(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_STREAM_FALLBACK_RESUME", "0")
+        inputs = {"messages": ["m"]}
+        assert _fallback_collect_inputs(42, inputs) is inputs
 
 
 # ═══════════════════════════════════════════════════════════════════════════
