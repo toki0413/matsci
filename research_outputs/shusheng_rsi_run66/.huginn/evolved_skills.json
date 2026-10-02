@@ -10,10 +10,10 @@
       "label",
       "rigidity",
       "error",
-      "space",
       "solution",
-      "constraints",
-      "plan"
+      "space",
+      "plan",
+      "constraints"
     ],
     "workflow_steps": [
       {

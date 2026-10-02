@@ -322,6 +322,70 @@
       "r_phys": 1.0,
       "iteration": 40,
       "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:49:12.623365",
+      "last_seen": "2026-10-02T05:49:12.623365",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the solution space is rigid due to low-rank constraints, $N_c$ will grow slowly with $w$, consistent with a logarithmic scaling ($N_c \\sim \\log w$). If the scaling is linear or constant, the hypoth",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c"
+    },
+    {
+      "label": "plan_coder_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623401",
+      "last_seen": "2026-10-02T05:49:12.623401",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623411",
+      "last_seen": "2026-10-02T05:49:12.623411",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c",
+        "Method:plan_coder_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:49:12.623494",
+      "last_seen": "2026-10-02T05:49:12.623494",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c595172178a9e7de",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -459,6 +523,33 @@
       "last_seen": "2026-10-02T05:45:04.153970",
       "mentions": 1,
       "target": "he_experiment_pipeline_30427f84"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_26613ea8"
     }
   ]
 }

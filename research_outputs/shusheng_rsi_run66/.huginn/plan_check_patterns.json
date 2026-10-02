@@ -74,5 +74,19 @@
     ],
     "mode": "coder",
     "description": "Implement a numerical experiment to test the hypothesis that the minimum network width $N_c$ required to achieve a target error threshold scales logarithmically with the number of samples $w$. Fix the"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "f83a7bab35f5",
+    "reason": "该plan未包含任何计算或实验步骤来实际测量N_c(w)（网络容量随约束样本数w的变化）。DESCRIPTION仅描述了改变训练超参数（噪声、激活函数、优化器）以降低训练损失，但完全没有提及如何执行核心实验：即扫描隐藏层宽度w，在留出约束点上验证零违规条件（最大绝对误差≤1e-3），并计算满足条件的最小N_c。因此无法验证hypothesis中关于N_c(w)是否保持常数的预测。",
+    "missing_steps": [
+      "定义目标函数流形及其约束条件",
+      "设计扫描流程：固定约束样本数w，逐步增加隐藏层宽度直至达到零违规",
+      "在留出约束集上验证零违规条件（最大绝对误差≤1e-3）",
+      "记录每个w对应的最小网络容量N_c(w)",
+      "绘制N_c(w) vs w曲线并分析其渐近行为"
+    ],
+    "mode": "explore",
+    "description": "Perform a targeted hyperparameter scan to investigate why the initial experiment yielded high surprise (0.67). Vary the noise level, activation function (ReLU vs. tanh), and optimization schedule (Ada"
   }
 ]
