@@ -120,11 +120,11 @@
       "value",
       "label",
       "constraint",
-      "constraints",
       "plan",
-      "small",
       "rigidity",
-      "error"
+      "constraints",
+      "small",
+      "width"
     ],
     "workflow_steps": [
       {

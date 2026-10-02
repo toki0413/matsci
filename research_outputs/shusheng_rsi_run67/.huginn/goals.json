@@ -25,12 +25,14 @@
         "[Feynman unknown_unknown] I never considered that the absence of test execution itself might be flagged as a structural failure mode separate from incorrect results — now I realize validation pipelines may treat “no output” differently than “wrong output.”",
         "[Feynman known_unknown] I don’t understand why the predicted plateau value is 4 instead of 3 for quadratic polynomials — this contradicts the stated dimensionality rule ($d+1$) unless additional constraints or basis functions are implicitly included.",
         "[Feynman unknown_unknown] I never considered that the generative model might collapse into repetitive token sequences under certain reward configurations; this mode of failure wasn’t anticipated during planning.",
-        "[Feynman known_unknown] The meaning and role of $N_c(w)$ as a function of width are unclear — is it counting active parameters? Degrees of freedom? Constraint ranks? Without precise definition, the plateau claim lacks operational grounding."
+        "[Feynman known_unknown] The meaning and role of $N_c(w)$ as a function of width are unclear — is it counting active parameters? Degrees of freedom? Constraint ranks? Without precise definition, the plateau claim lacks operational grounding.",
+        "[Feynman known_unknown] I don’t understand why the validation output contains repeated nonsensical values like “21” with no context or source—was this a bug in the test runner, a memory corruption, or intentional placeholder data?",
+        "[Feynman unknown_unknown] I never considered that the generative verification module might default to emitting dummy outputs when internal state is invalid, which could explain the lack of actual test execution without triggering an error flag."
       ],
-      "iteration": 68,
+      "iteration": 73,
       "status": "active",
       "created_at": "2026-10-02T08:11:04.439487+00:00",
-      "updated_at": "2026-10-02T08:50:32.655660+00:00",
+      "updated_at": "2026-10-02T08:52:35.070193+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -769,9 +771,65 @@
           "discovered_at": "2026-10-02T08:49:46.899112+00:00",
           "resolved_at": null,
           "iteration": 65
+        },
+        {
+          "id": "unk_78ef9b88",
+          "text": "The definition of \"zero violation\" as max absolute error ≤ 1e-3 may be too lenient or too strict depending on the underlying function's scale and smoothness, potentially misclassifying near-solutions as valid or vice versa.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T08:51:13.375308+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_54288280",
+          "text": "Gradient-based optimization in small networks may frequently converge to local minima that satisfy training constraints but fail on held-out points, leading to overestimation of N_c(w).",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T08:51:13.378677+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_a56dce11",
+          "text": "For very small w (e.g., w=1), many high-dimensional functions can interpolate trivially, making N_c(w) artificially low and not reflective of true solution space rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T08:51:13.381501+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_607313a7",
+          "text": "No ground-truth analytical solution is provided for comparison; thus, observed N_c(w) cannot be validated against theoretical expectations of solution space dimensionality.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T08:51:13.384252+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_c0680818",
+          "text": "The assumption that hidden layer width alone captures network capacity ignores other architectural factors (activation depth, skip connections, normalization) that may significantly affect representational power.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T08:51:13.386985+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_8c970fed",
+          "text": "I don’t understand why the validation output contains repeated nonsensical values like “21” with no context or source—was this a bug in the test runner, a memory corruption, or intentional placeholder data?",
+          "type": "known_unknown",
+          "discovered_at": "2026-10-02T08:51:23.204748+00:00",
+          "resolved_at": null,
+          "iteration": 70
+        },
+        {
+          "id": "unk_38e89234",
+          "text": "I never considered that the generative verification module might default to emitting dummy outputs when internal state is invalid, which could explain the lack of actual test execution without triggering an error flag.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-10-02T08:51:23.210125+00:00",
+          "resolved_at": null,
+          "iteration": 70
         }
       ],
-      "unknowns_discovered": 92,
+      "unknowns_discovered": 99,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
