@@ -10,3 +10,9 @@ Statement: [DIM: geometry] The analytic constraints define a solution space cont
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_ca29bb3d] 2026-10-02T08:30:01+00:00
+Statement: [DIM: structure] Algebraic rigidity: For analytic constraints (e.g., sin(πx)), the solution space is a finite-dimensional linear manifold of dimension d; N_c(w) remains constant (plateaus) as w increa
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

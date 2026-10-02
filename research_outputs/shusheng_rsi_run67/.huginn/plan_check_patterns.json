@@ -57,5 +57,30 @@
     ],
     "mode": "explore",
     "description": "Define a concrete hypothesis about solution space rigidity for small MLPs. The hypothesis states that for a family of analytic constraints parameterized by width w (specifically, linear constraints on"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The hypothesis is an empty string ('.'), which makes it impossible to validate any prediction. The plan describes a methodology for testing solution space rigidity but lacks a concrete, non-empty claim to test (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X'). This matches the known failure history exactly. Without a defined hypothesis, the prediction about rigidity cannot be verified, and the experiment has no target to validate.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis statement (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X')",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w"
+    ],
+    "mode": "coder",
+    "description": "This task requires designing and running a numerical experiment to test the hypothesis about \"solution space rigidity\" in small feedforward networks. I need to create a Python script that: (1) defines"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is invalid because the hypothesis is an empty string ('.'), which makes it impossible to validate any prediction. As noted in the historical failure cases, a concrete non-empty hypothesis is required (e.g., 'N_c(w) plateaus as width increases for analytical constraint family X'). Without a defined hypothesis, the experiment lacks a target claim to verify, and the prediction about rigidity cannot be validated.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis statement specifying what is being tested (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as w increases for su(2) constraint manifold with width w' )",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w",
+      "Establish the relationship between w (constraint sample count) and N_c (minimum network width) in the hypothesis"
+    ],
+    "mode": "coder",
+    "description": "Create a standalone Python script to conduct a numerical experiment testing the rigidity hypothesis. The script will define a low-dimensional analytic constraint manifold (e.g., a d=3 dimensional su(2"
   }
 ]
