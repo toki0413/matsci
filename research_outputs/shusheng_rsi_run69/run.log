@@ -28,7 +28,7 @@ Tool huginn.tools.thermo_tool registered but its deps are missing — capability
 Tool huginn.tools.bench_infra.matrix_tool registered but its deps are missing — capability degraded: torch
 Tool huginn.tools.bench_infra.c2st_tool registered but its deps are missing — capability degraded: sklearn
 strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set allowed_work_dirs or HUGINN_WORKSPACE to enable.
-Long-horizon goal: goal_45a16e39
+Long-horizon goal: goal_9b30d42a
   wall-clock budget: 900s, iteration cap: 15
 ╭────────────────────────────────── Starting ──────────────────────────────────╮
 │ Autoloop                                                                     │
@@ -69,6 +69,9 @@ empty required_results for target_1 — fallback
 [FINALLY-REFLECT] tool_results_this_turn=0
 [FINALLY-REFLECT] tool_results_this_turn=0
 [FINALLY-REFLECT] tool_results_this_turn=0
-[exec-route] mode='explore' desc[:80]='This is a pure machine learning / mathematical inquiry into "solution space rigi' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=2446 extracted_len=2433 prompt_len=4435
+plan_check failed (tier=medium, scene=workflow, max_refines=1): The hypothesis is 'in prompt processing error', which is not a scientific hypothesis but a meta-indication of a system failure. The plan attempts to proceed with experimental design without first diagnosing and resolving the root cause of the prompt processing error. This directly repeats the '同场景历史失败' where the plan assumed a well-formed hypothesis when the actual input was an error message. The plan should first address the system-level issue before attempting any scientific analysis.
+[exec-route] mode='workflow' desc[:80]="Diagnose and resolve the 'prompt processing error' by checking input syntax and " obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=3251 extracted_len=3236 prompt_len=4022
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: NameError: name 'rng' is not defined"
+[code-lab-author] raw_len=2762 extracted_len=2747 prompt_len=6919
 [code-lab-run] res_none=False success=True nobj=1 reason=''
