@@ -16,3 +16,9 @@ Statement: [DIM: structure] Algebraic rigidity: For analytic constraints (e.g., 
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_8f820d27] 2026-10-02T08:39:56+00:00
+Statement: [Hypothesis Index/Label]"
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

@@ -263,6 +263,37 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_de7a92b3",
+      "objective": "\" at the end.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Conduct a numerical bootstrap rigidity experiment on small feedforward networks. Define a set of analytic constraints (e.g., polynomial or trigonometric functions with known derivatives/values) and vary the number of constraints w. For each w, train small MLPs with increasing hidden layer width N until the maximum absolute error on held-out constraints ≤ 1e-3. Record minimal N_c(w). Test rigidity (bounded N_c vs w) vs fatness (N_c grows unbounded). Use symbolic_math_tool to generate constraint functions and validation sets; train networks via codelab; validate results against theoretical capacity bounds.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/bootstrap_rigidity.py",
+            "experiments/generate_constraints.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T08:41:01.216979+00:00",
+      "confirmed_at": "2026-10-02T08:42:01.276563+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

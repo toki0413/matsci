@@ -49,13 +49,13 @@
     "trigger_keywords": [
       "autoloop",
       "huginn",
-      "constraint",
-      "value",
       "label",
+      "value",
+      "constraint",
       "small",
+      "plan",
       "width",
       "constraints",
-      "plan",
       "solution"
     ],
     "workflow_steps": [
