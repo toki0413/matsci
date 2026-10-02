@@ -566,6 +566,36 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c8f69ff9",
+      "objective": "[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected because it offers a continuous, quantifiable scaling law (linear growth) that is statistically robust to test against the constant (Rigid) and step-function (Critical Fat) alternatives. It directly probes the \"fatness\" of the solution space by linking the geometric complexity of the constraint set to network capacity, providing a clear metric (slope of $N_c$ vs $w$) for validation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a systematic hyperparameter scan to test the Interpolation Complexity Hypothesis. Construct a polynomial interpolation task with w constraint points (w ∈ {10, 20, 50, 100, 200}) using a ReLU-based small feedforward network. For each w, scan hidden layer widths w_h ∈ {8, 16, 32, 64, 128, 256} and measure N_c(w) as the minimum width achieving zero violation (max abs error ≤ 1e-3 on 20 held-out points). Run 5 repetitions per (w, w_h) pair to account for stochastic initialization, then analyze the scaling trend of N_c(w) to distinguish between rigid (bounded) and fat (unbounded) solution space hypotheses.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "None"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T06:11:03.823027+00:00",
+      "confirmed_at": "2026-10-02T06:11:03.825490+00:00",
+      "completed_at": "2026-10-02T06:14:16.210134+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
