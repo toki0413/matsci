@@ -981,6 +981,70 @@
       "r_phys": 1.0,
       "iteration": 95,
       "id": "persona_use:dft_expert_iter95"
+    },
+    {
+      "label": "[DIM: geometry] For analytic constraints defining a smooth one-dimensional solut",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T09:02:44.865746",
+      "last_seen": "2026-10-02T09:02:44.865746",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the hypothesis holds, N_c(w) will increase approximately linearly with w, with slope α proportional to the maximum curvature of the solution curve. If not, the scaling may be sublinear, superlinear",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: geometry] For analytic constraints defining a smooth one-dimensional solut"
+    },
+    {
+      "label": "plan_workflow_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:02:44.865781",
+      "last_seen": "2026-10-02T09:02:44.865781",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:02:44.865793",
+      "last_seen": "2026-10-02T09:02:44.865793",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T09:02:44.865806",
+      "last_seen": "2026-10-02T09:02:44.865806",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] For analytic constraints defining a smooth one-dimensional solut",
+        "Method:plan_workflow_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_c99578fc"
+    },
+    {
+      "label": "dft_expert_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T09:02:44.865874",
+      "last_seen": "2026-10-02T09:02:44.865874",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "510df01b40cd3a0a",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:dft_expert_iter105"
     }
   ],
   "links": [
@@ -1415,6 +1479,33 @@
       "last_seen": "2026-10-02T09:00:20.047910",
       "mentions": 1,
       "target": "he_experiment_pipeline_6c73b5df"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] For analytic constraints defining a smooth one-dimensional solut",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:02:44.865806",
+      "last_seen": "2026-10-02T09:02:44.865806",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c99578fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:02:44.865806",
+      "last_seen": "2026-10-02T09:02:44.865806",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c99578fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:02:44.865806",
+      "last_seen": "2026-10-02T09:02:44.865806",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c99578fc"
     }
   ]
 }

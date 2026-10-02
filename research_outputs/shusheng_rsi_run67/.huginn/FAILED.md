@@ -58,3 +58,9 @@ Statement: [DIM: geometry] The solution space manifold for analytic constraints 
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_659c6fcc] 2026-10-02T09:02:31+00:00
+Statement: [DIM: geometry] For analytic constraints defining a smooth one-dimensional solution curve in function space, the minimal network width $N_c(w)$ grows proportionally to the number of constraints $w$ (l
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

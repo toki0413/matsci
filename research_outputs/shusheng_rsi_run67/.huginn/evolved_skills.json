@@ -122,8 +122,8 @@
       "constraint",
       "rigidity",
       "small",
-      "plan",
       "error",
+      "plan",
       "constraints"
     ],
     "workflow_steps": [

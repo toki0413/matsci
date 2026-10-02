@@ -624,6 +624,36 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_042239ec",
+      "objective": "** [DIM: structure] Algebraic Threshold Rigidity. This is the most testable and novel in the context of the provided \"rigid\" vs \"fat\" dichotomy. It directly addresses the core question of whether the bootstrap solution space is intrinsically low-dimensional. The previous failures were likely due to incorrect functional forms or insufficient width to trigger the threshold. By selecting a function with a known finite basis (e.g., a low-degree polynomial or a specific trigonometric sum), we can create a clear numerical experiment to verify the plateau.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Create a standalone Python script implementing the algebraic threshold rigidity experiment. The script will: (1) define a target function with a known finite basis (e.g., a low-degree polynomial or trigonometric sum), (2) sample w constraint points, (3) sweep hidden layer width w to find N_c(w) where max absolute error on held-out constraints ≤ 1e-3, and (4) output N_c(w) values and a plot of N_c vs w to verify if N_c plateaus (rigid) or grows unbounded (fat). This tests the core hypothesis that bootstrap solution space dimensionality is low.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T09:04:36.230494+00:00",
+      "confirmed_at": "2026-10-02T09:04:36.233188+00:00",
+      "completed_at": "2026-10-02T09:04:45.824440+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
