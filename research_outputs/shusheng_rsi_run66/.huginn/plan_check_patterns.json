@@ -49,5 +49,30 @@
     ],
     "mode": "explore",
     "description": "Design and execute a numerical experiment to measure the solution space rigidity of small ReLU feedforward networks. Define \"rigidity\" as the existence of a finite, bounded minimum network width N_c(w"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "48489fad4057",
+    "reason": "The plan does not align with the hypothesis because it tests the wrong variable. The hypothesis explicitly concerns the scaling of capacity with the *number of samples* (log w), but the plan's prediction and description focus on testing the effect of hidden layer width (w_h) on error, while treating sample count (w) as a secondary grouping factor. To test the hypothesis, the experiment must fix the network width (capacity) and vary the sample count (w) to observe if N_c grows logarithmically, or fix the target error and measure the required capacity as a function of w. The current design measures error vs width, which is a standard capacity test but does not isolate the sample-complexity scaling (log w vs linear) required by the hypothesis.",
+    "missing_steps": [
+      "Redesign the experiment to vary sample count (w) as the primary independent variable while measuring the minimum required network width (N_c) to achieve the error threshold.",
+      "Ensure the hypothesis's specific scaling law (log w) is explicitly tested by plotting N_c against w on a log-linear or log-log scale.",
+      "Validate that the 'rigidity' condition (N_c remaining small and constant as w increases) is directly addressed by the proposed sweep, rather than just measuring error for fixed widths."
+    ],
+    "mode": "coder",
+    "description": "Implement a numerical experiment to test the rigidity of the solution space for small feedforward networks. The script will define the target function $f(x) = \\sin(\\pi x)$ on $[0,1]$ with added Gaussi"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "48489fad4057",
+    "reason": "The plan correctly identifies the hypothesis and prediction but fails to address the core issue of 'rigidity' as defined in the constraints. The description focuses on varying sample count $w$ and measuring minimum width $N_c$, but does not explicitly define or test for the rigid regime (where $N_c$ remains small and constant as $w$ increases) versus the fat regime (where $N_c$ is unbounded). Additionally, the plan does not include a systematic check for whether $N_c$ actually saturates or grows logarithmically, which is critical to distinguishing between the predicted logarithmic scaling and the constant behavior of rigidity. The historical failure also highlights that the plan may be testing the wrong variable relationship without isolating the sample-complexity scaling.",
+    "missing_steps": [
+      "Define explicit criteria for 'rigidity' (e.g., $N_c < \\text{threshold}$ for all $w$ in range).",
+      "Include a baseline constant-width experiment to verify if $N_c$ saturates as $w$ increases.",
+      "Add a comparison to linear scaling hypothesis (e.g., fit log-linear and linear trends to $N_c$ vs. $w$).",
+      "Ensure the error threshold ($10^{-3}$) is consistently applied across all runs and that early stopping does not bias $N_c$ estimates."
+    ],
+    "mode": "coder",
+    "description": "Implement a numerical experiment to test the hypothesis that the minimum network width $N_c$ required to achieve a target error threshold scales logarithmically with the number of samples $w$. Fix the"
   }
 ]

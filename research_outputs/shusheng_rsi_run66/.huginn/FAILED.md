@@ -4,3 +4,9 @@ Statement: [DIM: structure] The solution space is rigid because the constraints 
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_8760e4e3] 2026-10-02T05:46:41+00:00
+Statement: Hypothesis 1 (dynamics)
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

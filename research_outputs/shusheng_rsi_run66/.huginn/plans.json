@@ -274,6 +274,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_829083af",
+      "objective": "** [DIM: computation] Hypothesis 1. This is the most testable and novel in the context of the \"blind_reconstruction\" failures which likely assumed algebraic rank (Structure) without considering the *growth* of capacity. It offers a clear scaling law ($\\log w$) that can be distinguished from linear (Geometry) or constant (failed previous attempts) behaviors. It aligns with the \"persistent cluster\" in topology insights, suggesting a stable, low-complexity solution structure exists.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the hypothesis that the minimum network width $N_c$ required to achieve a target error threshold scales logarithmically with the number of samples $w$. Fix the hidden layer width $w_h$ as a secondary variable (e.g., start with a moderate width and increase if needed) and vary the sample count $w$ across a range (e.g., $w \\in \\{10, 20, 50, 100, 200, 500, 1000\\}$). For each $w$, train a single-hidden-layer ReLU network to approximate $f(x) = \\sin(\\pi x)$ on $[0,1]$ with Gaussian noise ($\\sigma=10^{-4}$), using Adam (lr=1e-3, max 10k iters, early stopping). Record the minimum $w_h$ such that the maximum absolute error on a held-out set of 20 points is $\\le 10^{-3}$. Repeat 5 times per $w$ for statistical stability. Plot $N_c$ vs. $w$ on a log-linear scale to test for logarithmic growth.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T05:48:33.425646+00:00",
+      "confirmed_at": "2026-10-02T05:48:33.427133+00:00",
+      "completed_at": "2026-10-02T05:48:52.820268+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
