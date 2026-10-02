@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:dft_expert_iter10"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:19:00.498944",
+      "last_seen": "2026-10-02T08:19:00.498944",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will plateau at a constant value as $w$ increases, indicating that small networks probe rigid solution spaces where additional capacity does not significantly expand the set of satisfiable co",
+      "persona": "dft_expert",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:19:00.498980",
+      "last_seen": "2026-10-02T08:19:00.498980",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:19:00.498991",
+      "last_seen": "2026-10-02T08:19:00.498991",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T08:19:00.499000",
+      "last_seen": "2026-10-02T08:19:00.499000",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_9dc7dc7f"
+    },
+    {
+      "label": "dft_expert_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:19:00.499076",
+      "last_seen": "2026-10-02T08:19:00.499076",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "80ff5a2b25eb1749",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:dft_expert_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-10-02T08:16:58.506022",
       "mentions": 1,
       "target": "he_experiment_pipeline_c2d927aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:19:00.499000",
+      "last_seen": "2026-10-02T08:19:00.499000",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9dc7dc7f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:19:00.499000",
+      "last_seen": "2026-10-02T08:19:00.499000",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9dc7dc7f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:19:00.499000",
+      "last_seen": "2026-10-02T08:19:00.499000",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9dc7dc7f"
     }
   ]
 }
