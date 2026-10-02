@@ -654,6 +654,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ea48fdfb",
+      "objective": "[DIM: structure] Algebraic rigidity for analytic constraints",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a bootstrap rigidity scan for small feedforward networks on analytic constraints (sin(πx) and a piecewise analytic function). Sweep constraint count w and hidden width N, train to zero training error, evaluate max absolute error on a held-out test set, and record the minimum width N_c(w) achieving zero violation (max test error ≤ 1e-3). If N_c(w) remains constant as w increases, the hypothesis of algebraic rigidity is supported; otherwise, it is rejected.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "rigidity_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T09:06:12.290481+00:00",
+      "confirmed_at": "2026-10-02T09:06:12.292851+00:00",
+      "completed_at": "2026-10-02T09:06:31.707673+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
