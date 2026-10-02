@@ -643,3 +643,72 @@ control_trace name=belief_convergence iteration=104 evidence=sigma2=0.0476 mu=2.
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the solution space rigidity hypothesis by ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2693 extracted_len=2678 prompt_len=4610
 [code-lab-run] res_none=False success=True nobj=3 reason=''
+[validate] mode='code_lab' success=True nobj=3 cf=False lab=True
+[FINALLY-REFLECT] tool_results_this_turn=0
+control_trace name=collab_blind_reconstruct iteration=109 evidence=refute: blind_holds=False vs orig_holds=True summary_len=26 action=refute
+darwin ratchet: belief converged σ²=0.0454 μ=2.60 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=109 evidence=sigma2=0.0454 mu=2.60 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Statement: Solution space is fat due to linear independence of constraints in feature space. Predict: $N_c(w) \approx \lceil w/3 \rceil$ (Linear growth).): [DIM: structure] The solution space exhibits algebraic rigidity due to the ReLU basis' piecewise lin
+[exec-route] mode='workflow' desc[:80]='We will implement a numerical experiment to test the Algebraic Rigidity Hypothes' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2139 extracted_len=2124 prompt_len=4763
+/workspace/.venv/lib/python3.11/site-packages/numpy/_core/fromnumeric.py:3824: RuntimeWarning: Mean of empty slice
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/workspace/.venv/lib/python3.11/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+control_trace name=code_lab_timeout iteration=113 evidence=attempt=1/4 code_lab 执行超时 (> 900.0s) action=advisory_hint
+[code-lab-author] raw_len=2329 extracted_len=2314 prompt_len=7173
+code_lab 修复循环: 挂钟预算已耗尽, 停止第 2 次尝试
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 挂钟预算耗尽, 中止 code_lab 修复循环
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = rng.standard_normal(w + 1)
+        y = poly_basis(X, w + 1) @ coeffs
+        yv = poly_basis(Xv, w + 1) @ coeffs
+    else:
+        coeffs = rng.standard_normal(w + 10)
+        y = poly_basis(X, w + 10) @ coeffs
+        yv = poly_basis(Xv, w + 10) @ coeffs
+    scale = np.std(poly_basis(np.linspace(0, 1, 100), w + 10) @ coeffs)
+    y /= scale; yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [4, 8, 16, 32]
+    h_min = 2; h_max = 32
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'score': 0.0, 'rigid_Nc_mean': 0.0, 'fat_Nc_mean': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        err_list = []
+        for w in ws:
+            Nc_val = None
+            min_err = np.inf
+            for h in range(h_min, h_max + 1):
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=1)
+                yp = mlp_predict(model, Xv)
+                err = np.max(np.abs(yp - yv))
+                if err <= 1e-3 and Nc_val is None:
+                    Nc_val = h
+                if err < min_err:
+                    min_err = err
+            if Nc_val is None:
+                Nc_val = h_max + 1
+            Nc_list.append(Nc_val)
+            err_list.append(min_err)
+            summary[f'{kind}_Nc'].append(float(Nc_val))
+            summary[f'{kind}_errors'].append(float(min_err))
+        Nc_arr = np.array(Nc_list, dtype=float)
+        if kind == 'rigid':
+            objectives['rigid_Nc_mean'] = float(np.mean(Nc_arr[Nc_arr < h_max + 1]))
+            if np.all(Nc_arr < h_max + 1) and np.std(

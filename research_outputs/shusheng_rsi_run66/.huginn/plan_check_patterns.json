@@ -197,5 +197,19 @@
     ],
     "mode": "explore",
     "description": "Design and run a numerical experiment to test the hypothesis on solution space rigidity by measuring N_c(w) (minimum hidden layer width achieving zero violation on held-out constraints) as a function "
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "62fba7cd0a6a",
+    "reason": "The plan is invalid because it fails to address the core hypothesis which is about the algebraic rigidity of the solution space due to the ReLU basis' piecewise linear structure. The current plan is just a generic width-scan experiment that doesn't specifically test the theoretical prediction that N_c(w) = ⌈w/2⌉. It uses w values (10,20,50,100,200) that are much larger than the hypothesis range [4,64], and the experimental design doesn't properly isolate the ReLU basis algebra effects. The hypothesis is about minimal width needed to encode w linear constraints through active ReLU regions, but the plan uses sin(πx) with noise which doesn't directly relate to the linear constraint formulation in the hypothesis.",
+    "missing_steps": [
+      "Refine the hypothesis testing to match the specific range w ∈ [4,64] mentioned in the hypothesis",
+      "Design experiments that specifically test the ReLU basis algebra and piecewise linear structure",
+      "Include theoretical analysis of the ReLU basis degrees of freedom per neuron",
+      "Create constraints that directly relate to the active ReLU regions formulation",
+      "Add analysis of constraint correlation structure which is mentioned as a concern in the hypothesis"
+    ],
+    "mode": "workflow",
+    "description": "Implement a systematic width-scan experiment to test the hypothesis that the minimum network width N_c(w) required to satisfy w ReLU constraints grows linearly as ⌈w/2⌉. Construct a 1D ReLU network (1"
   }
 ]

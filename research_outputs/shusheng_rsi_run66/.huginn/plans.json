@@ -652,6 +652,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_a46b260e",
+      "objective": "[DIM: structure] The solution space exhibits algebraic rigidity due to the ReLU basis' piecewise linear structure, where each hidden neuron provides at most 2 independent degrees of freedom for constraint satisfaction; predict: N_c(w) grows linearly as N_c(w) = ⌈w/2⌉ for w ∈ [4, 64], reflecting the minimal width needed to encode w linear constraints through active ReLU regions | pro: grounded in explicit ReLU basis algebra (each neuron contributes 2 DOF for kink placement); directly testable via systematic width scan; con: assumes all constraints are equally difficult and independent, ignoring correlation structure | con: assumes ReLU activations remain stable during training without saturation",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will implement a numerical experiment to test the Algebraic Rigidity Hypothesis on small ReLU feedforward networks. We construct an analytical constraint set (1D function interpolation) where each constraint $i$ requires the network $f(x_i) = y_i$ at specific points $x_i$. We design constraints to explicitly probe the active ReLU region count, using a piecewise linear target function with $w$ kinks. For $w \\in [4, 64]$ in steps of 4, we vary hidden width $h$ from $w/2$ to $w$ and measure the minimal $h$ required to satisfy all constraints with error $\\leq 10^{-6}$. We track the number of active ReLU neurons during training to verify the 2 DOF per neuron claim and analyze constraint correlation via the Hessian of the loss landscape at convergence. This isolates the algebraic structure from generalization noise.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T06:20:22.729074+00:00",
+      "confirmed_at": "2026-10-02T06:20:22.731731+00:00",
+      "completed_at": "2026-10-02T06:35:42.493729+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

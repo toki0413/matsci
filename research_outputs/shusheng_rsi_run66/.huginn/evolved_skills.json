@@ -76,11 +76,11 @@
       "huginn",
       "value",
       "label",
-      "rigidity",
       "solution",
       "space",
-      "error",
       "plan",
+      "rigidity",
+      "error",
       "constraint"
     ],
     "workflow_steps": [

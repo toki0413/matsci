@@ -40,3 +40,9 @@ Statement: " followed by the chosen one.
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_4e9ad1ba] 2026-10-02T06:18:48+00:00
+Statement: [DIM: measure] The solution space is rigid due to the concentration of measure in high-dimensional weight spaces; predict: N_c(w) remains constant at 8 for w ≤ 32, then jumps to 32 at w=64 and stays c
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
