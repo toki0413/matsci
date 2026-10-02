@@ -1237,6 +1237,70 @@
       "r_phys": 1.0,
       "iteration": 120,
       "id": "persona_use:dft_expert_iter120"
+    },
+    {
+      "label": "** [DIM: geometry] The analytic constraints define a solution space contained wi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T09:10:07.379325",
+      "last_seen": "2026-10-02T09:10:07.379325",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For a low-dimensional subspace (e.g., constraints defining a line or plane in function space), we expect $N_c(w)$ to plateau at a small finite value (e.g., $N_c \\approx 5-20$) as $w$ increases up to t",
+      "persona": "dft_expert",
+      "id": "experiment:** [DIM: geometry] The analytic constraints define a solution space contained wi"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:10:07.379360",
+      "last_seen": "2026-10-02T09:10:07.379360",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:10:07.379370",
+      "last_seen": "2026-10-02T09:10:07.379370",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T09:10:07.379380",
+      "last_seen": "2026-10-02T09:10:07.379380",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: geometry] The analytic constraints define a solution space contained wi",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_e92dabd5"
+    },
+    {
+      "label": "dft_expert_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T09:10:07.379448",
+      "last_seen": "2026-10-02T09:10:07.379448",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "f70c0089bd873b1f",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:dft_expert_iter130"
     }
   ],
   "links": [
@@ -1779,6 +1843,33 @@
       "last_seen": "2026-10-02T09:07:51.646067",
       "mentions": 1,
       "target": "he_experiment_pipeline_30dbaef6"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: geometry] The analytic constraints define a solution space contained wi",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:10:07.379380",
+      "last_seen": "2026-10-02T09:10:07.379380",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e92dabd5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:10:07.379380",
+      "last_seen": "2026-10-02T09:10:07.379380",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e92dabd5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:10:07.379380",
+      "last_seen": "2026-10-02T09:10:07.379380",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e92dabd5"
     }
   ]
 }
