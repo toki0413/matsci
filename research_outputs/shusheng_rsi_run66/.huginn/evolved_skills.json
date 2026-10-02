@@ -9,10 +9,10 @@
       "value",
       "label",
       "rigidity",
-      "constraints",
       "error",
       "space",
       "solution",
+      "constraints",
       "plan"
     ],
     "workflow_steps": [
@@ -42,6 +42,14 @@
       },
       {
         "tool": "explore",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "coder",
         "input_keys": [
           "hypothesis",
           "plan"
