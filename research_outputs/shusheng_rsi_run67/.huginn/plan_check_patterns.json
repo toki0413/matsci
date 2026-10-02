@@ -164,5 +164,19 @@
     ],
     "mode": "workflow",
     "description": "Execute a numerical experiment to evaluate the solution space rigidity of small feedforward networks. We define a target function (e.g., a smooth analytic function) and generate $w$ training constrain"
+  },
+  {
+    "scene_tag": "auto_experiment",
+    "hyp_key": "f9efa55d357a",
+    "reason": "The plan fundamentally misinterprets the hypothesis by reversing the definition of the variable w. The hypothesis describes 'w' as network width (hidden layer size), but the plan explicitly defines 'w = constraint sample count'. This is a critical variable swap that invalidates the entire experimental design. The hypothesis claims N_c(w) (minimum width to satisfy constraints) grows super-linearly as network width w increases — but the plan is measuring N_c as a function of constraint sample size, which tests a completely different relationship (data scaling vs. capacity scaling). This is not just a minor error; it's a category error that makes the experiment unanswerable for the stated hypothesis.",
+    "missing_steps": [
+      "Correct the definition of w: w must be network width (hidden layer size), not constraint sample count",
+      "Define N_c(w) correctly: for each fixed width w, find the minimum number of bootstrap samples needed to achieve zero violation on held-out constraints",
+      "Alternatively, if N_c is defined as minimum width needed, then w should be constraint count, and we'd measure how width requirements grow with data size",
+      "Clarify the exact mapping between the hypothesis variables and experimental parameters before proceeding",
+      "Design the scan to vary the correct independent variable (width w) and measure the dependent variable (N_c = minimum width achieving zero violation)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the bootstrap constraint set's effect on loss landscape ruggedness. Specifically, implement a small feedforward network with varying hidden widths (w), train on b"
   }
 ]

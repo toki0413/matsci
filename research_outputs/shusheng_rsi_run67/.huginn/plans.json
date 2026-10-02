@@ -714,6 +714,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_866365d9",
+      "objective": "** [DIM: measure] The bootstrap constraint set induces a high-variance, multimodal loss landscape where the probability of finding the global rigid solution drops exponentially with $w$ due to combinatorial explosion of local minima; predict: $N_c(w)$ grows super-linearly (e.g., quadratic or exponential) as $w$ increases, because wider networks are required to navigate the rugged landscape and avoid spurious local minima that fit the training set but violate out-of-sample constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Correct the variable definition error: w is network width (hidden layer size), N_c(w) is the minimum number of bootstrap constraint samples needed for a network of width w to achieve zero violation (max abs error ≤ 1e-3) on held-out constraints. Design a numerical experiment: (1) Define an analytic constraint family (e.g., piecewise-smooth function with known discontinuities) that creates a multimodal loss landscape; (2) For each width w in [w_min, w_max], train on bootstrap samples of increasing count N, measure if max held-out violation ≤ 1e-3; (3) Find N_c(w) = minimum N achieving zero violation for each w; (4) Fit N_c(w) scaling (linear, quadratic, exponential) to test if wider networks require more samples to navigate rugged landscape. Use symbolic_math_tool to analyze functional form if data suggests scaling law.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T09:08:22.564800+00:00",
+      "confirmed_at": "2026-10-02T09:08:22.567115+00:00",
+      "completed_at": "2026-10-02T09:08:55.656633+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

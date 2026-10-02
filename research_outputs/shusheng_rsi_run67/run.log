@@ -568,3 +568,80 @@ control_trace name=belief_convergence iteration=114 evidence=sigma2=0.0435 mu=2.
 [exec-route] mode='explore' desc[:80]='I will design a pure ML experiment to test whether small feedforward networks pr' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=3061 extracted_len=3048 prompt_len=4410
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=119 evidence=skip: node status=refuted action=skip
+control_trace name=goal_judge iteration=119 evidence=achieved=False score=0.2 llm=1 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0416 μ=2.66 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=119 evidence=sigma2=0.0416 mu=2.66 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Correct the variable definition error: w is network width (hidden layer size), N' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2914 extracted_len=2901 prompt_len=4898
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2515 extracted_len=2500 prompt_len=7909
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2803 extracted_len=2788 prompt_len=7909
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2609 extracted_len=2594 prompt_len=7909
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = rng.uniform(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 100), 10) @ coeffs)
+    if scale > 0:
+        y /= scale
+        yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def mlp_fit(X, y, h, seeds=3):
+    return None
+
+def mlp_predict(model, Xv):
+    return None
+
+def poly_basis(X, n):
+    return None
+
+def _as_2d(x):
+    return x
+
+def zero_violation(err):
+    return err <= 1e-3
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    h_list = [5, 10, 20, 40, 80]
+    N_list = [4, 8, 16, 32, 64]
+    summary = {'rigid': {}, 'fat': {}}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        summary[kind] = {}
+        for w in h_list:
+            summary[kind][w] = None
+            for N in N_list:
+                rng = np.random.default_rng(seed + w * 1000 + N)
+                X_train = rng.uniform(0.05, 0.95, N).reshape(-1, 1)
+                y_train = np.zeros((N, 1))
+                if kind == 'rigid':
+                    coeffs = np.array([1.0, -2.0, 1.0])
+                    y_train = poly_basis(X_train, 3) @ coeffs.reshape(-1, 1)
+                else:
+                    coeffs = rng.standard_normal(10)
+                    y_train = poly_basis(X_train, 10) @ coeffs.reshape(-1, 1)
+                scale = np.std(poly_basis(np.linspace(0, 1, 100), 10) @ coeffs)
+                if scale > 0:
+                    y_train /= scale
+                Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+                if kind == 'rigid':
+         
