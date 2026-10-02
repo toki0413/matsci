@@ -172,5 +172,18 @@
     ],
     "mode": "workflow",
     "description": "Conduct a systematic numerical experiment to test the ReLU basis algebraic invariance under linear constraint interpolation. Construct a linear constraint interpolation task where a ReLU network must "
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "36ac1b155377",
+    "reason": "The plan contains a critical ambiguity in the variable mapping that invalidates the hypothesis test. It uses 'w' to represent both the number of constraint samples (step 2) and the network width (step 3), creating a logical contradiction in the prediction N_c(w). The hypothesis requires N_c to be a function of sample count (width being the dependent variable), but the plan treats width as the independent variable in the scan. This structural flaw means the experiment cannot test whether N_c(w) remains bounded as w (samples) increases, because the width is being varied independently rather than measured as the minimal capacity needed for a given sample size.",
+    "missing_steps": [
+      "Clarify variable definitions: distinguish between sample count (N_samples) and network width (width_h)",
+      "Rewrite the experiment to fix sample count and sweep width to find minimal width achieving zero violation",
+      "Define N_c(N_samples) as the minimal width required for zero violation at each sample count",
+      "Verify that the prediction tests boundedness of N_c(N_samples) as N_samples increases, not boundedness of width as width varies"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the \"solution space rigidity\" hypothesis for small feedforward networks. The experiment will: (1) construct an analytical constraint function (e.g., f"
   }
 ]

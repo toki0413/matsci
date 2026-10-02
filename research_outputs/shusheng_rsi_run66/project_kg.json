@@ -770,6 +770,70 @@
       "r_phys": 1.0,
       "iteration": 95,
       "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:14:32.123075",
+      "last_seen": "2026-10-02T06:14:32.123075",
+      "mentions": 1,
+      "iteration": 100,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the hypothesis is correct, N_c(w) will exhibit linear or sub-linear growth with w and remain ≤ 64 across the scan range; if the solution space is fat, N_c(w) will exceed 256 for w > 50 or show no c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123132",
+      "last_seen": "2026-10-02T06:14:32.123132",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123144",
+      "last_seen": "2026-10-02T06:14:32.123144",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:14:32.123226",
+      "last_seen": "2026-10-02T06:14:32.123226",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f394fd66eebdca36",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
     }
   ],
   "links": [
@@ -1096,6 +1160,33 @@
       "last_seen": "2026-10-02T06:09:35.364763",
       "mentions": 1,
       "target": "he_experiment_pipeline_846aa01f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e542888"
     }
   ]
 }
