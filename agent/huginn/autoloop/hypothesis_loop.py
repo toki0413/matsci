@@ -2108,6 +2108,17 @@ class HypothesisLoop:
             best = max(valued, key=lambda r: (r.value, -r.tokens_used))
         else:
             best = min(candidates, key=lambda r: r.tokens_used)
+        # 观测: 成功路径此前**不留痕**, 野外只能靠"没看到 skip/empty"反推已跑 —
+        # 无法区分"孵化真跑了且产出"vs"压根没进孵化门". 这里补一条 use trace,
+        # 带上 branches/ok/valued/winner_value/tokens, 供触发率与树是否真剪枝统计.
+        self._emit_control_trace(
+            "collab_branch_incubator",
+            f"use: branches={len(results)} ok={len(candidates)} "
+            f"valued={len(valued)} winner_value={best.value} "
+            f"winner_tokens={best.tokens_used} depth="
+            f"{int(os.environ.get('HUGINN_BRANCH_INCUBATOR_DEPTH', '2'))}",
+            action="use",
+        )
         return best.hypothesis
 
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:

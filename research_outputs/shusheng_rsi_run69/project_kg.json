@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "in prompt processing error",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T10:09:05.319333",
+      "last_seen": "2026-10-02T10:09:05.319333",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The error will be resolved by clarifying the input, and the user will provide a well-formed scientific hypothesis for further analysis.",
+      "persona": "unknown",
+      "id": "experiment:in prompt processing error"
+    },
+    {
+      "label": "plan_workflow_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T10:09:05.319376",
+      "last_seen": "2026-10-02T10:09:05.319376",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T10:09:05.319386",
+      "last_seen": "2026-10-02T10:09:05.319386",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T10:09:05.319399",
+      "last_seen": "2026-10-02T10:09:05.319399",
+      "mentions": 1,
+      "members": [
+        "experiment:in prompt processing error",
+        "Method:plan_workflow_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_79fca36a"
+    },
+    {
+      "label": "unknown_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T10:09:05.319465",
+      "last_seen": "2026-10-02T10:09:05.319465",
+      "mentions": 1,
+      "persona": "unknown",
+      "context_hash": "44136fa355b3678a",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:unknown_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:in prompt processing error",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T10:09:05.319399",
+      "last_seen": "2026-10-02T10:09:05.319399",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_79fca36a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T10:09:05.319399",
+      "last_seen": "2026-10-02T10:09:05.319399",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_79fca36a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T10:09:05.319399",
+      "last_seen": "2026-10-02T10:09:05.319399",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_79fca36a"
+    }
+  ]
+}
