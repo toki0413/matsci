@@ -29,7 +29,12 @@ from huginn.autoloop.hypothesis_events import HypothesisEventStore
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
 )
-from huginn.autoloop.signals import routing_surprise
+from huginn.autoloop.signals import (
+    hypothesis_strength,
+    routing_surprise,
+    strength_branch_depth,
+    strength_schedule_enabled,
+)
 from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
@@ -2064,6 +2069,14 @@ class HypothesisLoop:
                 )
                 value_fn = None
 
+        # Ataraxos 式强度调度: 假设弱→深搜/广探索, 强→浅搜/局部精修. env 的
+        # HUGINN_BRANCH_INCUBATOR_DEPTH 作基准 (base), 调度在其周围 [1,3] 摆动;
+        # HUGINN_STRENGTH_SCHEDULE=0 → 行为不变 (用 base).
+        _base_depth = int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "2"))
+        _depth = (
+            strength_branch_depth(hypothesis_strength(self), base=_base_depth)
+            if strength_schedule_enabled() else _base_depth
+        )
         try:
             results = await self._branch_incubator.run_round(
                 task=prompt,
@@ -2073,7 +2086,7 @@ class HypothesisLoop:
                 researcher_intuition=context.get("researcher_intuition", ""),
                 round_idx=self._iteration,
                 total_rounds=max(self._max_pivots * 3, 10),
-                depth=int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "2")),
+                depth=_depth,
                 width=2,
                 value_fn=value_fn,
             )
@@ -2115,8 +2128,7 @@ class HypothesisLoop:
             "collab_branch_incubator",
             f"use: branches={len(results)} ok={len(candidates)} "
             f"valued={len(valued)} winner_value={best.value} "
-            f"winner_tokens={best.tokens_used} depth="
-            f"{int(os.environ.get('HUGINN_BRANCH_INCUBATOR_DEPTH', '2'))}",
+            f"winner_tokens={best.tokens_used} depth={_depth}",
             action="use",
         )
         return best.hypothesis

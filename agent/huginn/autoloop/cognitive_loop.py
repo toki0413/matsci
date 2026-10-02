@@ -57,7 +57,12 @@ from huginn.autoloop.cognitive_persist import load_run_context, persist_run_cont
 from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
-from huginn.autoloop.signals import routing_surprise
+from huginn.autoloop.signals import (
+    hypothesis_strength,
+    routing_surprise,
+    strength_schedule_enabled,
+    strength_stagnation_limit,
+)
 from huginn.autoloop.types import AutoloopResult, LoopPhase
 from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME
@@ -1131,7 +1136,14 @@ class CognitiveRunner:
 
         # v7 长任务: stagnation 阈值 2→5. Oxelra 206 步允许长期低增益,
         # 2 轮就 early stop 太激进, 真正突破常在 10+ 轮停滞之后.
-        _stag_limit = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        # Ataraxos 式强度调度: 假设弱→更早 pivot (激进换向), 强→容忍更久
+        # (稳健微调). env 的 LIMIT 作基准, 调度在其周围 ±4 摆动;
+        # HUGINN_STRENGTH_SCHEDULE=0 → 行为不变 (用 base).
+        _base_stag = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        _stag_limit = (
+            strength_stagnation_limit(hypothesis_strength(self), base=_base_stag)
+            if strength_schedule_enabled() else _base_stag
+        )
         if self._darwin_stagnation >= _stag_limit and self._iteration > 2:
             # P2: stagnation 触发前先分类 (chaoxu 启发).
             # method_failure → pivot 换方法继续, 不 stop

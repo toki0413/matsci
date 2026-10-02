@@ -31,7 +31,13 @@ import os
 import re
 from typing import Any
 
-from huginn.autoloop.signals import routing_surprise
+from huginn.autoloop.signals import (
+    hypothesis_strength,
+    routing_surprise,
+    strength_global_proposal_prob,
+    strength_schedule_enabled,
+    strength_temperature,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -997,11 +1003,19 @@ LUCID review (mandatory after generating hypothesis):
                         if _cur is not None:
                             _prev = _cur
                             _rng = getattr(self, "_mcmc_rng", None)
+                            # Ataraxos 式强度调度: 假设弱→高温 + 多全局跳 (探索),
+                            # 强→低温 + 少全局跳 (锁定 MAP). 关掉则回旧常量 0.3/1.0.
+                            _sched = strength_schedule_enabled()
+                            _st = hypothesis_strength(self) if _sched else 0.5
                             _next_h, _next_logp = _manifold.mcmc_step(
                                 _obs, _cur, rng=_rng,
                                 cached_log_p_current=getattr(
                                     self, "_mcmc_cached_log_p", None),
-                                global_proposal_prob=0.3,
+                                temperature=(
+                                    strength_temperature(_st) if _sched else 1.0),
+                                global_proposal_prob=(
+                                    strength_global_proposal_prob(_st)
+                                    if _sched else 0.3),
                                 # Gramian 谱预条件: 沿假设空间高可控/高信息主轴提议,
                                 # 抑制各向同性随机游走. 数据不足自动退化, 默认开.
                                 gramian_enabled=(
