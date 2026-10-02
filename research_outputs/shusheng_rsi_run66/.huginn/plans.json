@@ -358,6 +358,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_79d310bf",
+      "objective": "Hypothesis A (Dynamics - Optimization Landscape)",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a grid search over hidden widths w_h ∈ {8,16,32,64,128,256} and constraint counts w ∈ {10,20,50,100,200} for a ReLU MLP approximating f(x)=sin(πx) on [0,1]. For each (w, w_h) pair, train with Adam (lr=1e-3, max 10k epochs, early stopping) on noisy data (σ=1e-4), then evaluate max absolute error on 20 held-out points. Record N_c(w) as the smallest w_h achieving ≤1e-3 error (or 256 if unmet). Repeat 5 times per w to ensure statistical significance. Plot N_c(w) vs w to test boundedness (rigid if N_c(w) ≤ 64 for all w; fat otherwise).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/ml_spatial_scan.py",
+            "src/evaluate_rigidity.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T05:54:19.620969+00:00",
+      "confirmed_at": "2026-10-02T05:54:19.622692+00:00",
+      "completed_at": "2026-10-02T05:55:08.436105+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
