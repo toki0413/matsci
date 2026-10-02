@@ -350,6 +350,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_0e8cd0e5",
+      "objective": "[DIM: structure] For analytic constraints defined by a polynomial basis of degree d, the solution manifold has dimension d+1; N_c(w) plateaus at a constant value N_c* = d+1 for all w ≥ d+1, since the network can exactly represent the polynomial solution. | predict: N_c(w) = 4 for w ≥ 4 (for quadratic constraints), flat line in scan. | pro: Most directly testable with clean numerical experiment; polynomial constraints have known exact solutions; clear prediction of rigidity (constant N_c) vs fat (no constant). con: Requires careful choice of polynomial degree; may not capture nonlinear interactions.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Create a Python script to numerically test the polynomial rigidity hypothesis. The script will: (1) define quadratic polynomial constraints (d=2) using monomial basis, (2) sample constraint points via uniform random sampling in [-1,1]^2, (3) train shallow MLPs (1 hidden layer, tanh activation) with varying widths w, (4) compute N_c(w) as the minimum width achieving max abs error ≤ 1e-3 on a held-out test set, (5) scan w from 1 to 10 to verify if N_c plateaus at d+1=3. Output will include error tables, N_c(w) trend plots, and convergence analysis.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T08:49:00.378997+00:00",
+      "confirmed_at": "2026-10-02T08:49:00.380686+00:00",
+      "completed_at": "2026-10-02T08:49:21.808511+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }

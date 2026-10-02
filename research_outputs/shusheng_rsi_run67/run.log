@@ -379,3 +379,16 @@ phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 ch
 [exec-route] mode='explore' desc[:80]='' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1709 extracted_len=1696 prompt_len=3802
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=59 evidence=skip: node status=refuted action=skip
+GoalJudge JSON parse failed, falling back to rules
+control_trace name=goal_judge iteration=59 evidence=achieved=False score=0.0345 llm=1 action=advisory_hint
+darwin ratchet: stagnation 11 rounds (Δ<0.5), best=2.69 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=59 evidence=stagnation=11 best=2.69 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0833 μ=2.64 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=59 evidence=sigma2=0.0833 mu=2.64 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Algebraic Rigidity. Prediction: Step function (Constant after threshold).): [DIM: structure] For analytic constraints defined by a polynomial basis of degree d, the solution ma
+plan_check failed (tier=light, scene=other, max_refines=1): The plan contains a critical conceptual error: the hypothesis states N_c* = d+1 = 3 for quadratic (d=2), but the prediction says N_c(w) = 4 for w ≥ 4, which directly contradicts the stated hypothesis. Additionally, the plan lacks essential details: specific polynomial basis functions, MLP architecture specifications (number of layers, activation function, initialization), sampling method for constraint points, and how N_c(w) is computed from the width scan. These omissions would lead to an ambiguous or untestable experiment, repeating the failures identified in the '同场景历史失败' section.
+[exec-route] mode='coder' desc[:80]='Create a Python script to numerically test the polynomial rigidity hypothesis. T' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2677 extracted_len=2662 prompt_len=4961
+[code-lab-run] res_none=False success=True nobj=3 reason=''
