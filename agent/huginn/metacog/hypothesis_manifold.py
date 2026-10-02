@@ -209,6 +209,13 @@ class HypothesisManifold:
         # hint_coordinator 读它, 把 least-visited 假设作为未探索方向提示,
         # 指导 _hypothesize 向稀疏区域生成新假设 (探索多样性).
         self._mcmc_visit_counts: dict[str, int] = {}
+        # R-NaD 式锚正则: MCMC 在均衡点附近易绕圈不收敛. 对假设空间中一个缓慢
+        # 移动的"锚点"施加正则 (接受比里加 -λ·(d_anchor(proposal)-d_anchor(current)))
+        # 提供向稳定点的漂移, 阻尼往返震荡. 锚点是已接受假设预测向量的 EMA
+        # (_anchor_pred, prediction 空间软锚 — 离散 h_id 没法直接 EMA).
+        # anchor_lambda=0 (默认) → 锚不更新也不参与, 行为 100% 不变.
+        self._anchor_pred: dict[str, float] = {}
+        self._anchor_alpha: float = 0.1
 
     @staticmethod
     def _gaussian_log_likelihood(h: Hypothesis, o: Observation) -> float:
@@ -681,6 +688,36 @@ class HypothesisManifold:
                 return hid
         return candidates[-1][0]
 
+    def _anchor_penalty(self, h_id: str) -> float:
+        """h 到锚点的 Fisher 距离 (无锚 / 无公共 key → 0, 即无正则)."""
+        if not self._anchor_pred:
+            return 0.0
+        h = self._hyp.get(h_id)
+        if h is None:
+            return 0.0
+        common = set(h.predictions) & set(self._anchor_pred)
+        if not common:
+            return 0.0
+        d2 = 0.0
+        for k in common:
+            d2 += (h.predictions[k] - self._anchor_pred[k]) ** 2
+        return math.sqrt(d2)
+
+    def _update_anchor(self, h_id: str) -> None:
+        """接受 h 后按 EMA 把锚点向其预测向量靠拢 (R-NaD 锚的慢更新)."""
+        h = self._hyp.get(h_id)
+        if h is None:
+            return
+        if not self._anchor_pred:
+            self._anchor_pred = dict(h.predictions)
+            return
+        a = self._anchor_alpha
+        for k, v in h.predictions.items():
+            self._anchor_pred[k] = (
+                (1.0 - a) * self._anchor_pred[k] + a * v
+                if k in self._anchor_pred else a * v
+            )
+
     def mcmc_step(
         self,
         obs: Iterable[Observation],
@@ -698,6 +735,7 @@ class HypothesisManifold:
         global_proposal_prob: float = 0.3,
         gramian_enabled: bool = False,
         gramian_k: int = 1,
+        anchor_lambda: float = 0.0,
     ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
@@ -822,12 +860,22 @@ class HypothesisManifold:
         log_p_proposal = self._log_posterior_single(obs, proposal)
 
         log_ratio = (log_p_proposal - log_p_current) / temperature
+        # R-NaD 式锚正则: 正则势 exp(-λ·d_anchor(h)) 的接受比 → log_ratio 加
+        # -λ·(d_anchor(proposal)-d_anchor(current)), 提供向锚点的漂移, 阻尼
+        # 均衡点附近绕圈. anchor_lambda=0 (默认) / 无锚 → 行为 100% 不变.
+        if anchor_lambda > 0.0 and self._anchor_pred:
+            log_ratio -= anchor_lambda * (
+                self._anchor_penalty(proposal)
+                - self._anchor_penalty(current_h_id))
         # 接受概率 min(1, exp(log_ratio))
         if math.log(rng.random()) < log_ratio:
             # #3: 记录访问分布 — 落在 proposal 上 (接受).
             self._mcmc_visit_counts[proposal] = (
                 self._mcmc_visit_counts.get(proposal, 0) + 1
             )
+            # 锚随接受缓慢移动 (仅正则开启时; 关闭时不动, 保证行为不变).
+            if anchor_lambda > 0.0:
+                self._update_anchor(proposal)
             return proposal, log_p_proposal
         # 拒绝 → 驻留 current, 也计一次访问 (体现"被探索").
         self._mcmc_visit_counts[current_h_id] = (

@@ -1022,6 +1022,14 @@ LUCID review (mandatory after generating hypothesis):
                                     os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1"),
                                 gramian_k=int(os.environ.get(
                                     "HUGINN_MCMC_GRAMIAN_K", "1")),
+                                # R-NaD 式锚正则: 向已接受假设的 EMA 锚点漂移,
+                                # 阻尼均衡点附近绕圈. 默认开, λ 由 env 调.
+                                anchor_lambda=(
+                                    float(os.environ.get(
+                                        "HUGINN_MCMC_ANCHOR_LAMBDA", "0.1"))
+                                    if os.environ.get(
+                                        "HUGINN_MCMC_ANCHOR", "1") == "1"
+                                    else 0.0),
                             )
                             self._mcmc_current = _next_h
                             self._mcmc_cached_log_p = _next_logp
