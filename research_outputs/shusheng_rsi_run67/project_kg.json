@@ -804,6 +804,70 @@
       "r_phys": 1.0,
       "iteration": 80,
       "id": "persona_use:dft_expert_iter80"
+    },
+    {
+      "label": "...",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:56:55.037963",
+      "last_seen": "2026-10-02T08:56:55.037963",
+      "mentions": 1,
+      "iteration": 85,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be small (≤ 16) and bounded across scanned w; no increase with w, indicating solution space rigidity. All values finite, no inf/nan.\nPLAN_SLOTS: w_values=[5, 10, 20, 50]; N_sweep=[4, 8, 16",
+      "persona": "dft_expert",
+      "id": "experiment:..."
+    },
+    {
+      "label": "plan_coder_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:56:55.037999",
+      "last_seen": "2026-10-02T08:56:55.037999",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:56:55.038009",
+      "last_seen": "2026-10-02T08:56:55.038009",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T08:56:55.038018",
+      "last_seen": "2026-10-02T08:56:55.038018",
+      "mentions": 1,
+      "members": [
+        "experiment:...",
+        "Method:plan_coder_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_86903686"
+    },
+    {
+      "label": "dft_expert_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:56:55.038085",
+      "last_seen": "2026-10-02T08:56:55.038085",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "1c0877f67191ed39",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:dft_expert_iter85"
     }
   ],
   "links": [
@@ -1157,6 +1221,33 @@
       "last_seen": "2026-10-02T08:54:58.265146",
       "mentions": 1,
       "target": "he_experiment_pipeline_bb9b8378"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:...",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:56:55.038018",
+      "last_seen": "2026-10-02T08:56:55.038018",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_86903686"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:56:55.038018",
+      "last_seen": "2026-10-02T08:56:55.038018",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_86903686"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:56:55.038018",
+      "last_seen": "2026-10-02T08:56:55.038018",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_86903686"
     }
   ]
 }

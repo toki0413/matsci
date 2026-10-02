@@ -433,3 +433,12 @@ control_trace name=belief_convergence iteration=79 evidence=sigma2=0.0625 mu=2.6
 [exec-route] mode='coder' desc[:80]='Design and implement a numerical experiment to probe the rigidity of the solutio' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2105 extracted_len=2090 prompt_len=4399
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=84 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 16 rounds (Δ<0.5), best=2.70 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=84 evidence=stagnation=16 best=2.70 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0588 μ=2.66 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=84 evidence=sigma2=0.0588 mu=2.66 action=advisory_hint
+[exec-route] mode='coder' desc[:80]='Implement a numerical experiment to test the Hard Constraint Projection Hypothes' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2433 extracted_len=2419 prompt_len=4470
+[code-lab-run] res_none=False success=True nobj=1 reason=''
