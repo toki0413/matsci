@@ -34,3 +34,9 @@ Statement: [DIM: structure] The solution space is rigid due to the algebraic inv
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_ca9cdde9] 2026-10-02T06:17:27+00:00
+Statement: " followed by the chosen one.
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

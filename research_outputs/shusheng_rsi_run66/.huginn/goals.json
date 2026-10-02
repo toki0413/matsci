@@ -33,12 +33,14 @@
         "[Feynman known_unknown] I don’t understand why the generative verification returned a score of 0.0 despite R_phys being 1.0 — is there a disconnect between physical reward scoring and logical/semantic validation criteria?",
         "[Feynman unknown_unknown] I never considered that the system might treat numerical output as valid even when devoid of explanatory context — this reveals a potential flaw in how “success” is defined in automated verification pipelines.",
         "[Feynman known_unknown] I don’t understand why the test runner returned repeated “999” values instead of executing the computation—was this a timeout, a syntax error, or a silent failure in the validation layer?",
-        "[Feynman unknown_unknown] I never considered that the benchmarking infrastructure might silently skip tests without logging why, especially when math_validation and generative_verify both returned empty or zero scores."
+        "[Feynman unknown_unknown] I never considered that the benchmarking infrastructure might silently skip tests without logging why, especially when math_validation and generative_verify both returned empty or zero scores.",
+        "[Feynman known_unknown] I don't understand why the raw list of numerical values was generated without any context or explanation.",
+        "[Feynman unknown_unknown] I never considered the importance of including logical derivations and data interpretations in the output until the result came back."
       ],
-      "iteration": 103,
+      "iteration": 108,
       "status": "active",
       "created_at": "2026-10-02T05:27:57.946484+00:00",
-      "updated_at": "2026-10-02T06:15:58.469703+00:00",
+      "updated_at": "2026-10-02T06:18:12.045007+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1121,9 +1123,65 @@
           "discovered_at": "2026-10-02T06:14:35.068590+00:00",
           "resolved_at": null,
           "iteration": 100
+        },
+        {
+          "id": "unk_fcb67dac",
+          "text": "The definition of \"zero violation\" (max absolute error ≤ 1e-3) may be too strict for high-dimensional or noisy solution spaces, causing false \"fat\" classification even when a flexible but stable solution exists.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:17:35.296657+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_a3175a1d",
+          "text": "N_c(w) is defined as the *minimum* width required, but finding this minimum via search (e.g., binary search on width) may get stuck in local minima due to non-convex optimization landscapes in neural networks, leading to overestimated N_c.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:17:35.300968+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_6149f789",
+          "text": "For very small w (few constraints), the network may trivially interpolate with minimal width, making N_c(w) appear artificially low and misleadingly suggesting rigidity where none exists at scale.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:17:35.304549+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_3cca753c",
+          "text": "The distribution and geometry of the \"held-out constraint points\" are unspecified; if they are adversarially placed or lie in a region of high curvature, N_c may spike spuriously, misrepresenting the global solution space structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:17:35.308100+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_322a46ec",
+          "text": "The analysis assumes hidden width is the only capacity parameter; depth, activation functions, and initialization schemes also critically affect representational power and generalization, potentially confounding the width-only metric N_c.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:17:35.311606+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_6851a1ec",
+          "text": "I don't understand why the raw list of numerical values was generated without any context or explanation.",
+          "type": "known_unknown",
+          "discovered_at": "2026-10-02T06:17:43.931136+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_9d97e1cf",
+          "text": "I never considered the importance of including logical derivations and data interpretations in the output until the result came back.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-10-02T06:17:43.938310+00:00",
+          "resolved_at": null,
+          "iteration": 105
         }
       ],
-      "unknowns_discovered": 135,
+      "unknowns_discovered": 142,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

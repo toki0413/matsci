@@ -77,11 +77,11 @@
       "value",
       "label",
       "rigidity",
-      "error",
       "solution",
       "space",
-      "constraint",
-      "plan"
+      "error",
+      "plan",
+      "constraint"
     ],
     "workflow_steps": [
       {

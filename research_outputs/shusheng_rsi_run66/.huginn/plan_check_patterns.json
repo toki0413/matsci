@@ -185,5 +185,17 @@
     ],
     "mode": "explore",
     "description": "Design and execute a numerical experiment to test the \"solution space rigidity\" hypothesis for small feedforward networks. The experiment will: (1) construct an analytical constraint function (e.g., f"
+  },
+  {
+    "scene_tag": "auto_relu",
+    "hyp_key": "a62ea45763c5",
+    "reason": "The hypothesis specifically predicts a step function with a jump at w=64, but the plan's experimental design only tests w ∈ {10,20,50,100,200}, completely missing the critical w=64 point where the prediction is made. Without testing w=64, the experiment cannot verify or refute the core prediction. Additionally, the hypothesis predicts N_c(w) remains constant at 8 for w ≤ 32, but the plan's w values (10, 20, 50) don't adequately cover this range to confirm constancy.",
+    "missing_steps": [
+      "Add w=64 to the constraint count scan range to test the critical jump point predicted by the hypothesis",
+      "Include w values in the range [1, 32] to properly test whether N_c(w) remains constant at 8 for w ≤ 32 as predicted",
+      "Ensure the scan includes sufficient resolution around the predicted transition points"
+    ],
+    "mode": "explore",
+    "description": "Design and run a numerical experiment to test the hypothesis on solution space rigidity by measuring N_c(w) (minimum hidden layer width achieving zero violation on held-out constraints) as a function "
   }
 ]
