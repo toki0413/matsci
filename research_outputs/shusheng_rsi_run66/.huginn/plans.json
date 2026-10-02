@@ -419,6 +419,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7e40a77d",
+      "objective": "[DIM: structure] The solution space is rigid due to the algebraic invariance of the ReLU basis under linear interpolation; predict: N_c(w) stays constant at 16 for all w ∈ [10, 200] | pro: Directly tests the linear algebra structure of the hypothesis; con: Previous similar hypothesis [h_181d077e] failed due to blind_holds mismatch.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Define the specific algebraic invariance property for ReLU basis under linear interpolation: for any two solutions f_1, f_2 satisfying the constraint set C_w, their convex combination f = αf_1 + (1-α)f_2 must also satisfy C_w. Generate constraints as polynomial interpolation conditions at w distinct points (x_i, y_i) with y_i = p(x_i) for a fixed polynomial p of degree d. Train ReLU networks with varying hidden widths N ∈ [8, 256] to minimize max_i |f(x_i) - y_i|. Measure minimum N_c(w) achieving error ≤ 1e-3 on held-out points (distinct from training points). Address blind_holds mismatch by using deterministic hold-out sets (e.g., fixed grid points) and ensuring training/evaluation split is reproducible. Analyze if N_c(w) remains constant (rigid) or grows with w (fat).",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T05:57:19.758441+00:00",
+      "confirmed_at": "2026-10-02T05:58:19.820506+00:00",
+      "completed_at": "2026-10-02T06:01:38.003790+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

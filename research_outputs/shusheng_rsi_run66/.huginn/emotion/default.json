@@ -2,11 +2,11 @@
   "valence": 0.0,
   "arousal": 0.1,
   "trust": 0.5,
-  "affection": 0.21497468021609295,
+  "affection": 0.219963728249413,
   "fatigue": 0.0,
   "loneliness": 0.0,
-  "interest": 0.5299157068507051,
-  "timestamp": "2026-10-02T05:55:18.200524+00:00",
+  "interest": 0.5398792502074964,
+  "timestamp": "2026-10-02T05:56:45.996576+00:00",
   "events": [
     {
       "timestamp": "2026-10-02T05:46:40.731446+00:00",
@@ -30,6 +30,16 @@
     },
     {
       "timestamp": "2026-10-02T05:55:18.200509+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "interest": 0.01,
+        "affection": 0.005
+      },
+      "note": "neutral"
+    },
+    {
+      "timestamp": "2026-10-02T05:56:45.996565+00:00",
       "source": "user",
       "type": "message",
       "deltas": {

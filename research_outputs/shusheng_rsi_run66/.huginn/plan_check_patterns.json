@@ -118,5 +118,32 @@
     ],
     "mode": "explore",
     "description": "Design a reproducible numerical experiment to test the hypothesis on solution space rigidity. Construct a low-dimensional target function (sin(πx) on [0,1]) with w constraint points (10 to 200), train"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "69c2330df8b4",
+    "reason": "The plan attempts to test a hypothesis about the rigidity of the solution space for ReLU networks under algebraic invariance. However, it lacks a clear definition of 'algebraic invariance' and the specific constraints being tested. The description is vague about the exact mathematical structure being probed, making it difficult to validate the hypothesis rigorously. Additionally, the plan does not address the previous failure mode related to blind_holds mismatch, which could lead to similar issues.",
+    "missing_steps": [
+      "Define the specific algebraic invariance property being tested",
+      "Specify the exact constraints and how they are generated",
+      "Address the previous failure mode related to blind_holds mismatch",
+      "Clarify the training and evaluation protocol to ensure reproducibility"
+    ],
+    "mode": "workflow",
+    "description": "Execute a computational scan to test the hypothesis that the solution space is rigid due to algebraic invariance of the ReLU basis. The plan involves: (1) generating a family of analytic constraints ("
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "69c2330df8b4",
+    "reason": "The plan has critical gaps. First, it does not specify the dimensionality of the input space (1D vs multi-D), which fundamentally changes the ReLU basis properties and rigidity. Second, the hypothesis involves w ∈ [10, 200], but the plan does not explicitly define how w varies (e.g., as the number of interpolation points) or how the polynomial degree d relates to w. Third, the plan mentions 'varying hidden widths N ∈ [8, 256]' but does not specify the training procedure, optimization algorithm, or convergence criteria for the ReLU networks, which are critical for measuring N_c(w) accurately. Finally, the plan lacks a clear method for determining the 'rigid' vs 'fat' outcome based on the measured N_c(w) values.",
+    "missing_steps": [
+      "Specify input space dimensionality (1D or multi-D)",
+      "Define relationship between w (number of constraints) and polynomial degree d",
+      "Detail training procedure (optimizer, loss function, convergence criteria)",
+      "Define explicit criteria for determining 'rigid' vs 'fat' outcome from N_c(w) data",
+      "Specify how w will be varied across the range [10, 200]"
+    ],
+    "mode": "workflow",
+    "description": "Define the specific algebraic invariance property for ReLU basis under linear interpolation: for any two solutions f_1, f_2 satisfying the constraint set C_w, their convex combination f = αf_1 + (1-α)"
   }
 ]
