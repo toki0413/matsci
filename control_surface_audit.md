@@ -579,3 +579,44 @@ control_trace，成功路径仅 `logger.info`（run.log 只收 WARNING，看不�
 
 > 下一步：起 run66（同参数、含 v29）——预期 run.log 直接出现
 > `control_trace ... action=refute`，不必再翻 FAILED.md。
+
+### 8.8 run65 终态 + replay_audit 判据对齐 A2（v30）
+
+**run65 终态**（iteration 148）：假设图 **128 节点**（122 untested / **6 refuted**），
+无 PROVED.md；`FAILED.md` 6 条全是 `Modality: blind_reconstruction` 反证。即 v28 后
+盲重建产出 **6 次真反证**（run62/64 均为 0）。但 run.log 里 23 条
+`collab_blind_reconstruct` **仍全是 `skip: node status=refuted`** —— 6 次成功一条都没
+上控制面，正是 §8.7 要补的那条 trace；v29 修的就是它。
+
+**replay_audit 与 A2 脱节**（`replay_audit` 即 §4 D2 "离线重放判据"）。用它重放 run65，
+发现判据还停在 A2 降级**前**：
+
+- v11 结论文案写"单调债务越界 ⇒ 第 9 次换名触发 `conclude+stop` ⇒ **必然终止**"，
+  而 §A2 早已把该出口降级为 advisory（[cognitive_loop.py](file:///workspace/agent/huginn/autoloop/cognitive_loop.py#L3709-L3736)
+  注释明写"不再自动终止 run"）。run65 实测 `可终止出口=0`，与其自相矛盾。
+- `scan_runlog` 把带 `advisory only ... no stop` 的行也计入 `terminal`（`rename debt`
+  命中 `TERMINAL_MARKERS`）⇒ 出口体检假阳性风险。
+- v12 verdict 把"旧码记录 11 次换名"当单值，但 11 是**离线反推**值；run.log 实际只记
+  了 **4** 次 streak 事件。用不同口径算，差集是 0 还是 6，结论差很大。
+
+**动作（v30，纯观测口径修正，不改任何终止行为）**：
+
+- 模块/`replay_rename_debt` 口径改为 **A2 前反事实**，新增 `stops_live=False` 显式标注；
+- `scan_runlog` 排除 `advisory only` 行，`terminal` 不再把提示当出口；
+- 出口体检由"是否终止"改判 **「无进展是否可观测」**，并新增 `control_traces` 统计
+  （`control_trace name=...` 落盘计数）作为实测证据；
+- v12 verdict 改成给**区间**（记录事件口径 / 反推口径两个差集），不再伪装单值。
+
+**重放复验（run62/64/65）**：出口体检现在直接给出落盘 trace ——
+
+```
+run62: collab_blind_reconstruct×6, effort_floor×2, goal_judge×2, code_lab_timeout×2,
+       darwin_stagnation×1, report_citation×1
+run65: collab_blind_reconstruct×23, belief_convergence×20, darwin_stagnation×14,
+       goal_judge×9, effort_floor×5, report_citation×1
+```
+
+run65 **无 `rename_debt` trace** ⇒ 线上债务从未越限（与离线反推的 11 次换名不符），
+这正说明离线反推的口径偏大 —— 故 v12 差集给区间是必要的。另 run65 仍有
+`surprise 恒定 [1.0]`（路由退化）与 `JEPA structure_desc 全 0`（结构通道无信息）两条
+待查。

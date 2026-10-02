@@ -3,12 +3,19 @@
 问题: 长程自主循环的空转症状一直靠"跑一轮(~1h) → 暴露一个症状 → 补一个补丁"
 来发现, 又慢又贵, 于是退化成"跑一次修一次". 本模块把历史 run 的**记录轨迹**
 (episodic shard + 假设图 + run.log) 重放一遍, 用**真实守卫函数**逐轮判定"有没有
-进展", 并核对每个无进展轮是否触发了**可终止**的出口. 秒级、确定性、不调 LLM.
+进展", 并核对每个无进展轮是否**可观测** (advisory trace 落盘; A2 前则核对是否触发
+可终止出口). 秒级、确定性、不调 LLM.
 
 判据 (进展不变量): 每一轮必须满足
     progress(轮) = ∃ { 假设图新增节点, 实质且非换名的新假设, 新执行指纹 }
 无进展的轮必须伴随一个**可终止出口** (收敛/结题/停机); 仅"提示/重定向/reset"
 这类软动作**不算出口** —— 这正是 run47/run49 无限打转的缺口.
+
+A2 更新 (控制面审计 §3/§A2): 收敛/换名债务/结题类硬终止已**降级为 advisory**
+(只提示 + trace, 不再 `should_stop`), 线上终止出口只保留**挂钟预算**与**目标达成**.
+故"无进展⇒必须终止"不再是线上不变量. 本工具据此改口径: 出口体检只核对
+"无进展轮是否**可观测**(advisory trace 是否落盘)", 换名债务重放给的是 **A2 前的
+反事实** (若仍终止会在第几次), 不再当作"必然终止"的证明.
 
 用法:
     PYTHONPATH=/workspace/agent python -m huginn.autoloop.replay_audit <run_dir> [...]
@@ -34,8 +41,8 @@ TERMINAL_MARKERS = ("exec convergence", "exec-convergence", "rename debt",
                     "goal completed", "conclude")
 # 软动作 (会改变方向但不终止, 单独统计)
 SOFT_MARKERS = ("renamed-reduction", "counterexample hunt", "repeat execution")
-# 与 cognitive_loop._RENAME_DEBT_LIMIT 同步 (同环境变量/同默认), 供离线重放证明
-# "换名债务越界 ⇒ 终止"这一不变量在旧轨迹上确实会被触发.
+# 与 cognitive_loop._RENAME_DEBT_LIMIT 同步 (同环境变量/同默认), 供离线重放给出
+# "A2 前该轨迹会在第几次换名越界"的**反事实** (A2 后越界只写 advisory trace, 不终止).
 _DEBT_LIMIT = int(os.environ.get("HUGINN_RENAME_DEBT_LIMIT", "8"))
 
 
@@ -103,7 +110,8 @@ def scan_runlog(run_dir: str) -> dict:
     p = Path(run_dir) / "run.log"
     ev = {"execs": 0, "exec_ok": 0, "nobj": Counter(), "prompt_lens": Counter(),
           "surprises": Counter(), "obj_lens": Counter(), "repeat_streaks": [],
-          "rename": [], "hunt": 0, "plan_fail": 0, "terminal": 0, "soft": 0}
+          "rename": [], "hunt": 0, "plan_fail": 0, "terminal": 0, "soft": 0,
+          "traces": Counter()}
     if not p.exists():
         return ev
     for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -131,10 +139,17 @@ def scan_runlog(run_dir: str) -> dict:
             ev["hunt"] += 1
         if "plan_check failed" in ln:
             ev["plan_fail"] += 1
-        if any(t in ln for t in TERMINAL_MARKERS):
+        # A2 后 "rename debt / exec convergence" 等命中 TERMINAL_MARKERS 的行**多带**
+        # "advisory only ... no stop" —— 那是**提示**不是终止. 不排除会把 advisory
+        # 误计成终止出口, 让出口体检假阳性 (run65 实测: 该前缀行存在但 terminal 语义为 0).
+        if any(t in ln for t in TERMINAL_MARKERS) and "advisory only" not in ln:
             ev["terminal"] += 1
         if any(s in ln for s in SOFT_MARKERS):
             ev["soft"] += 1
+        # 控制面 trace 落盘计数: A2 后"无进展是否**可观测**"就靠这个核对.
+        m = re.search(r"control_trace name=(\S+)", ln)
+        if m:
+            ev["traces"][m.group(1)] += 1
     return ev
 
 
@@ -254,13 +269,19 @@ def rename_oscillation(recorded: list[tuple[int, str]]) -> dict:
 
 
 def replay_rename_debt(recorded: list[tuple[int, str]]) -> dict:
-    """离线重放 v11"换名债务"不变量: 证明旧轨迹在新出口下**必然终止**.
+    """离线重放 v11"换名债务": 给出 **A2 前**该轨迹会在第几次换名越界.
+
+    A2 已把该出口降级为 advisory (cognitive_loop.py: "已降级为提示 + trace,
+    不再自动终止 run") —— 越界只写一条 `rename_debt` trace, 不 `should_stop`.
+    故 `terminal_at_rename_occurrence` / `terminates` 都是**反事实** (terminates
+    = "若沿用 A2 前语义会在第几次终止"), `stops_live` 恒为 False. run65 实测
+    可终止出口=0, 与 A2 一致.
 
     为何用 run.log 的**记录事件**而非字面 `_is_equivalent`: 线上 `_rename_streak`
     由 recall+LLM 等价审计驱动, 是**语义级**的 (本工具已证: 字面聚类抓不到换名),
     故字面重放会系统性低计. 记录事件 (streak, kind) 才是线上真实触发序列 ——
-    由它反推"换名发生次数", 再套新债务语义 (单调; 3/5 阶梯自复位不复位债务),
-    即可确定性地算出: 债务在第几次换名越界 ⇒ 触发 conclude+stop.
+    由它反推"换名发生次数", 再套债务语义 (单调; 3/5 阶梯自复位不复位债务),
+    即可确定性地算出越界点.
     """
     debt = 0
     max_debt = 0
@@ -279,7 +300,9 @@ def replay_rename_debt(recorded: list[tuple[int, str]]) -> dict:
     return {"limit": _DEBT_LIMIT, "max_debt": max_debt,
             "rename_occurrences": total_occ,
             "terminal_at_rename_occurrence": terminal_at_occ,
-            "terminates": terminal_at_occ is not None}
+            "terminates": terminal_at_occ is not None,
+            # A2: 线上该出口只提示不终止 ⇒ 上面 terminal_at_* 是反事实, 这里是事实.
+            "stops_live": False}
 
 
 # ── 审计 ─────────────────────────────────────────────────────────────
@@ -348,6 +371,9 @@ def audit(
             "hunt": log["hunt"],
             "plan_fail": log["plan_fail"],
             "repeat_streaks": log["repeat_streaks"],
+            # A2 后终止出口被降级, 判据从"是否终止"改为"无进展是否可观测" ⇒
+            # 落盘的 control_trace 计数就是这条判据的实测证据.
+            "control_traces": dict(log["traces"]),
         },
         "input_frozen": {
             "prompt_len_values": dict(log["prompt_lens"]),
@@ -384,14 +410,15 @@ def _verdict(a: dict) -> list[str]:
     dr = a.get("rename_debt_replay") or {}
     if dr.get("terminates"):
         out.append(
-            "v11 出口验证: 共 %d 次换名, 单调债务在 limit=%d 处越界 → 第 %d 次换名即"
-            " 触发 'conclude+stop' (而旧码 3/5 阶梯自复位, 可无限打转) ⇒ 该轨迹在"
-            "**离线重放**下已证明必然终止, 无需再跑一次修一次"
+            "v11 换名债务重放 (A2 前**反事实**): 共 %d 次换名, 单调债务在 limit=%d 处越界 →"
+            " 若沿用 A2 前语义, 第 %d 次换名即触发 'conclude+stop' (旧码 3/5 阶梯自复位,"
+            " 可无限打转). **A2 已把该出口降级为 advisory**(只提示+trace, 不 should_stop),"
+            " 故线上**不终止** —— 本行不是'必然终止'的证明"
             % (dr["rename_occurrences"], dr["limit"],
                dr["terminal_at_rename_occurrence"]))
     elif dr.get("max_debt", 0) > 0:
         out.append(
-            "v11 出口验证: 换名债务峰值 %d < limit=%d, 未形成持续换名闭环"
+            "v11 换名债务重放 (A2 前反事实): 峰值 %d < limit=%d, 未形成持续换名闭环"
             % (dr["max_debt"], dr["limit"]))
     if rn["violations"]:
         out.append(
@@ -415,19 +442,32 @@ def _verdict(a: dict) -> list[str]:
                 "采样模式 ⇒ 不做与旧码全量换名数的差集对比 (避免把采样当全量)"
                 % (_mode, ga["graph_based_rename_flags"], 100 * ga["flag_rate"]))
         else:
-            _old = dr.get("rename_occurrences", 0) or osc.get("events", 0)
-            _delta = max(0, _old - ga["graph_based_rename_flags"])
+            # 旧码"换名次数"有两种口径, 差别不小: (a) run.log **记录事件** = 实际打出的
+            # streak 触发数; (b) 离线按 delta 反推的**换名发生次数** (把 streak 自复位前的
+            # 递增也算上). 只报一个会把"差集"伪装成单值, 故给区间.
+            _ev = osc.get("events", 0)
+            _dr = dr.get("rename_occurrences", 0)
+            _d_ev = max(0, _ev - ga["graph_based_rename_flags"])
+            _d_dr = max(0, _dr - ga["graph_based_rename_flags"])
             out.append(
-                "v12 判据验证 [%s]: 图基审计(对假设图判)在 %d 个节点上标"
-                " %d 个换名 (%.0f%%); 旧码(对 objective 判)记录 %d 次换名 ⇒ 差集 %d 次是"
-                "**被误判的机制不同假设** (代数秩/流形维数/Rademacher 等), 正是被掐死的"
-                "有效探索"
+                "v12 判据验证 [%s]: 图基审计(对假设图判)在 %d 个节点上标 %d 个换名 (%.0f%%). "
+                "旧码(对 objective 判)基线两口径: run.log **记录事件** %d 次 → 差集 %d; "
+                "离线反推**换名发生** %d 次 → 差集 %d. 差集即被误判的机制不同假设"
+                "(代数秩/流形维数/Rademacher 等); 给区间而非单值, 是因为'旧码真正记为换名几次'"
+                "本身取决于口径"
                 % (_mode, ga["nodes"], ga["graph_based_rename_flags"],
-                   100 * ga["flag_rate"], _old, _delta))
+                   100 * ga["flag_rate"], _ev, _d_ev, _dr, _d_dr))
     if ex["terminal"] == 0 and ex["soft"] > 0:
+        _tr = ex.get("control_traces") or {}
+        _tr_s = ", ".join(
+            f"{k}×{v}" for k, v in sorted(_tr.items(), key=lambda kv: -kv[1])) or "**无**"
         out.append(
-            "出口体检失败: 软动作 %d 次, **可终止出口 0 次** → 不变量"
-            "(无进展⇒必须终止) 被违反" % ex["soft"])
+            "出口体检 (A2 语义): 软动作 %d 次, 可终止出口 0 次 —— A2 后终止出口只保留"
+            "**挂钟预算/目标达成**, 收敛·换名债务·结题类均已降级为 advisory, 故此**不是**"
+            "不变量违规; 改判「无进展是否**可观测**」" % ex["soft"])
+        out.append(
+            "  ⇒ 落盘 control_trace: " + _tr_s
+            + ("" if _tr else " —— 无进展却无任何 trace = 真·不可观测"))
     ifr = a["input_frozen"]
     if ifr["prompt_frozen"]:
         out.append(f"输入冻结: prompt_len 恒定 {list(ifr['prompt_len_values'])} → 同一问题反复问")
