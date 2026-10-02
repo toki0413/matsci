@@ -537,3 +537,75 @@ plan_check failed (tier=light, scene=workflow, max_refines=1): The plan fundamen
 [exec-route] mode='workflow' desc[:80]='Conduct a systematic numerical experiment to test the ReLU basis algebraic invar' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2030 extracted_len=2015 prompt_len=4450
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=84 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 11 rounds (Δ<0.5), best=2.69 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=84 evidence=stagnation=11 best=2.69 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0588 μ=2.59 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=84 evidence=sigma2=0.0588 mu=2.59 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the "probabilistic barrier" hy' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2187 extracted_len=2172 prompt_len=4233
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2309 extracted_len=2294 prompt_len=6901
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2309 extracted_len=2294 prompt_len=7023
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=2309 extracted_len=2294 prompt_len=7023
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        basis = poly_basis(X, 3)
+        y = basis @ coeffs.reshape(-1, 1)
+        basis_v = poly_basis(Xv, 3)
+        yv = basis_v @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        basis = poly_basis(X, 10)
+        y = basis @ coeffs.reshape(-1, 1)
+        basis_v = poly_basis(Xv, 10)
+        yv = basis_v @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 100), 10) @ coeffs.reshape(-1, 1))
+    if kind == 'fat':
+        scale = max(scale, 1e-5)
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [10, 20, 50, 100, 200]
+    hs = [8, 16, 32, 64, 128, 256]
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_final_err': [], 'fat_final_err': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        nc_list = []
+        final_errs = []
+        for w in ws:
+            nc_found = None
+            for h in hs:
+                data = family(kind, w, seed)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3:
+                    if nc_found is None or h < nc_found:
+                        nc_found = h
+                    break
+            if nc_found is None:
+                nc_found = 999999
+            nc_list.append(nc_found)
+            h_use = nc_found if nc_found != 999999 else hs[-1]
+            last_model = mlp_fit(X, y, h_use, seeds=3)
+            last_pred = mlp_predict(last_model, Xv)
+            final_errs.append(float(np.max(np.abs(last_p

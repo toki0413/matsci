@@ -505,6 +505,37 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_f2cb5d10",
+      "objective": "** [DIM: measure] Hypothesis (Probabilistic Barrier)",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test the \"probabilistic barrier\" hypothesis for ReLU network solution space rigidity. Specifically, I will construct a 1D polynomial interpolation problem (analytical constraints) and train small ReLU networks of varying widths (8 to 256) on increasing numbers of constraints (w=10 to 200). I will measure the minimum width N_c(w) required to achieve zero violation (max abs error ≤ 1e-3) on held-out points. This directly tests if the solution space is rigid (bounded N_c) or fat (unbounded/inf N_c). The experiment will be repeated 5 times for statistical significance. The goal is to determine if the observed rigidity is a property of the ReLU basis or a specific artifact of the previous iteration's setup.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_probe/rigidity_experiment.py",
+            "experiments/rigidity_probe/analysis_notebook.ipynb"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T06:06:04.625895+00:00",
+      "confirmed_at": "2026-10-02T06:06:04.628171+00:00",
+      "completed_at": "2026-10-02T06:06:32.877543+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
