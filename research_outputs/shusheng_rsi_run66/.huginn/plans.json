@@ -477,6 +477,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_e81f998a",
+      "objective": "[DIM: structure] The ReLU basis exhibits algebraic invariance under linear constraint interpolation, creating a low-rank effective representation; predict: N_c(w) remains bounded at ≤ 16 for all w ∈ [10, 200], specifically N_c(w) = min(16, ⌈w/10⌉) with saturation at 16",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Conduct a systematic numerical experiment to test the ReLU basis algebraic invariance under linear constraint interpolation. Construct a linear constraint interpolation task where a ReLU network must satisfy explicit linear relationships among constraint values (e.g., f(x_i) = c_i with ∑α_i f(x_i) = 0). For each w ∈ {10, 20, 50, 100, 200}, compute the effective rank of the ReLU basis matrix evaluated at constraint points via SVD, and determine N_c(w) as the minimum hidden width achieving rank saturation (≤16). Run 5 repetitions per w to assess stability. Verify that N_c(w) = min(16, ⌈w/10⌉) and confirm algebraic invariance via rank preservation under linear transformation of constraints.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T06:05:01.707495+00:00",
+      "confirmed_at": "2026-10-02T06:05:01.709433+00:00",
+      "completed_at": "2026-10-02T06:05:24.358351+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

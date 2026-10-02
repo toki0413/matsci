@@ -145,5 +145,32 @@
     ],
     "mode": "workflow",
     "description": "Define the specific algebraic invariance property for ReLU basis under linear interpolation: for any two solutions f_1, f_2 satisfying the constraint set C_w, their convex combination f = αf_1 + (1-α)"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "87ce252851b4",
+    "reason": "The plan contains a critical design flaw that makes it impossible to validate the hypothesis. The hypothesis concerns 'linear constraint interpolation' (specifically the basis invariance under such interpolation), but the plan tests 'point-wise function interpolation' (fitting sin(πx) at w points). These are fundamentally different mathematical structures: constraint interpolation requires the network to satisfy linear algebraic constraints on the output, whereas point-wise interpolation only requires matching values at discrete points. The proposed experiment measures generalization error on held-out points, which tests approximation capacity, not the algebraic invariance property described in the hypothesis. This mismatch means the experiment cannot produce evidence for or against the N_c(w) = min(16, ⌈w/10⌉) prediction.",
+    "missing_steps": [
+      "Replace point-wise function interpolation with a constraint interpolation setup where the network must satisfy explicit linear constraints (e.g., f(x_i) = c_i with linear relationships among the c_i)",
+      "Define N_c(w) based on the minimum width that satisfies the linear constraints exactly (zero violation in the constraint sense, not point-wise error)",
+      "Implement a method to measure the effective rank or dimensionality of the ReLU basis under constraint interpolation (e.g., via SVD of the basis functions evaluated at constraint points)",
+      "Ensure the constraint interpolation problem is well-posed and that the hypothesis's 'algebraic invariance' property is properly encoded in the experimental setup"
+    ],
+    "mode": "workflow",
+    "description": "Conduct a systematic numerical experiment to test the hypothesis on ReLU basis algebraic invariance under linear constraint interpolation. Construct a 1D function interpolation task using f(x) = sin(π"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "87ce252851b4",
+    "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis concerns 'linear constraint interpolation' where the network must satisfy explicit linear algebraic relationships among outputs (e.g., ∑α_i f(x_i) = 0), but the plan describes point-wise function interpolation (fitting sin(πx) at discrete points). These are different mathematical structures: constraint interpolation requires satisfying linear constraints on outputs, while point-wise interpolation only requires matching values. The plan measures generalization error on held-out points rather than constraint satisfaction, making it impossible to validate the algebraic invariance property or the N_c(w) prediction about rank saturation under linear constraints.",
+    "missing_steps": [
+      "Replace point-wise interpolation with constraint interpolation setup where network must satisfy explicit linear constraints (e.g., ∑α_i f(x_i) = 0)",
+      "Define N_c(w) based on minimum width that satisfies linear constraints exactly (zero violation in constraint sense)",
+      "Implement method to measure effective rank/dimensionality of ReLU basis under constraint interpolation (via SVD of basis functions at constraint points)",
+      "Ensure constraint interpolation problem is well-posed with proper linear constraint structure matching hypothesis",
+      "Verify algebraic invariance property is properly encoded in experimental design"
+    ],
+    "mode": "workflow",
+    "description": "Conduct a systematic numerical experiment to test the ReLU basis algebraic invariance under linear constraint interpolation. Construct a linear constraint interpolation task where a ReLU network must "
   }
 ]
