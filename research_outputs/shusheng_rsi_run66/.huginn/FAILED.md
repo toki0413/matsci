@@ -28,3 +28,9 @@ Statement: [DIM: optimization] The solution space is rigid because the constrain
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_2c1eb05c] 2026-10-02T06:01:49+00:00
+Statement: [DIM: structure] The solution space is rigid due to the algebraic invariance of the ReLU basis under linear interpolation; predict: N_c(w) stays constant at 16 for all w ∈ [10, 200] | pro: Directly te
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
