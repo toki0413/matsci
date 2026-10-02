@@ -31,10 +31,10 @@
         "[Feynman unknown_unknown] What specific condition or input triggered the collapse into repetitive output? Did the range of w ∈ [10, 200], the form of the ReLU basis, or the constraint interpolation method contribute?",
         "[Feynman known_unknown] How does the “thinking_collapse” metric relate to actual computational failure? Is it a proxy for gradient vanishing, attention collapse, or something else entirely?"
       ],
-      "iteration": 88,
+      "iteration": 93,
       "status": "active",
       "created_at": "2026-10-02T05:27:57.946484+00:00",
-      "updated_at": "2026-10-02T06:06:04.632449+00:00",
+      "updated_at": "2026-10-02T06:07:18.454257+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -965,9 +965,49 @@
           "discovered_at": "2026-10-02T06:05:47.737667+00:00",
           "resolved_at": null,
           "iteration": 85
+        },
+        {
+          "id": "unk_fc821c13",
+          "text": "The use of \"zero violation\" as a binary criterion may be overly sensitive to numerical noise; even if the network converges to a solution, floating-point errors or optimization stagnation could cause slight violations (>1e-3) at held-out points, falsely indicating non-rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:06:48.668063+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_bac8dd7a",
+          "text": "The definition of N_c(w) relies on finding the *minimum* width that achieves zero violation — but due to local minima in training small networks, a wider network might fail to converge while a narrower one succeeds, leading to non-monotonic and unreliable estimates of N_c.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:06:48.671966+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_cb0d2e29",
+          "text": "The assumption that generalization behavior reflects solution space rigidity may not hold if the training process favors certain solutions within a degenerate (fat) manifold due to optimization bias (e.g., gradient descent dynamics), rather than structural constraints alone.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:06:48.675182+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_1d1f3d65",
+          "text": "Without ground-truth analytic constraints or known target functions with verifiable solution-space dimensionality, there is no benchmark to validate whether observed N_c trends truly reflect rigidity or are artifacts of the specific function class used.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:06:48.678347+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_237bf61a",
+          "text": "For very small w (e.g., w=1 or 2), even infinite-width networks might trivially interpolate with near-zero error, making N_c appear artificially low — this could misclassify a fat system as rigid in low-data regimes.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-02T06:06:48.681536+00:00",
+          "resolved_at": null,
+          "iteration": 90
         }
       ],
-      "unknowns_discovered": 116,
+      "unknowns_discovered": 121,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

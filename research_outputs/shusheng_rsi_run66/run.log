@@ -609,3 +609,14 @@ def run(cfg):
             last_model = mlp_fit(X, y, h_use, seeds=3)
             last_pred = mlp_predict(last_model, Xv)
             final_errs.append(float(np.max(np.abs(last_p
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=89 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [' -> 原始问题中关于小型前馈网络解空间刚性（Rigidity）与泛化行为（Generalization Behavior）之间关系的探测问题。'] | 缺少显式不完整性自白 action=advisory_hint
+control_trace name=collab_blind_reconstruct iteration=89 evidence=skip: node status=refuted action=skip
+control_trace name=goal_judge iteration=89 evidence=achieved=False score=0.35 llm=1 action=advisory_hint
+darwin ratchet: stagnation 12 rounds (Δ<0.5), best=2.69 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=89 evidence=stagnation=12 best=2.69 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0555 μ=2.59 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=89 evidence=sigma2=0.0555 mu=2.59 action=advisory_hint
+[exec-route] mode='workflow' desc[:80]='We will implement a numerical experiment to test the Topological Constraint Satu' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2715 extracted_len=2700 prompt_len=4226
+[code-lab-run] res_none=False success=True nobj=4 reason=''
