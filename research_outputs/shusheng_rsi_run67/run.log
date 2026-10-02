@@ -75,3 +75,5 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Invariance): "? Ye
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
 [code-lab-author] raw_len=2191 extracted_len=2176 prompt_len=6594
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=4 evidence=skip: statement too short len=7 action=skip
