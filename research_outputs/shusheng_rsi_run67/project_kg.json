@@ -868,6 +868,70 @@
       "r_phys": 1.0,
       "iteration": 85,
       "id": "persona_use:dft_expert_iter85"
+    },
+    {
+      "label": "**[DIM: optimization] Hard Constraint Projection Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:57:50.719247",
+      "last_seen": "2026-10-02T08:57:50.719247",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (e.g., ≤ 32) across increasing w, indicating solution space rigidity; if N_c grows with w, the space is \"fat\". The maximum error on held-out points will drop below 1e-3 at t",
+      "persona": "dft_expert",
+      "id": "experiment:**[DIM: optimization] Hard Constraint Projection Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:57:50.719288",
+      "last_seen": "2026-10-02T08:57:50.719288",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:57:50.719297",
+      "last_seen": "2026-10-02T08:57:50.719297",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T08:57:50.719306",
+      "last_seen": "2026-10-02T08:57:50.719306",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: optimization] Hard Constraint Projection Hypothesis**",
+        "Method:plan_coder_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_509f5f42"
+    },
+    {
+      "label": "dft_expert_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:57:50.719383",
+      "last_seen": "2026-10-02T08:57:50.719383",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "2796756506b85f5e",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:dft_expert_iter90"
     }
   ],
   "links": [
@@ -1248,6 +1312,33 @@
       "last_seen": "2026-10-02T08:56:55.038018",
       "mentions": 1,
       "target": "he_experiment_pipeline_86903686"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: optimization] Hard Constraint Projection Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:57:50.719306",
+      "last_seen": "2026-10-02T08:57:50.719306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_509f5f42"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:57:50.719306",
+      "last_seen": "2026-10-02T08:57:50.719306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_509f5f42"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:57:50.719306",
+      "last_seen": "2026-10-02T08:57:50.719306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_509f5f42"
     }
   ]
 }
