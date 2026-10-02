@@ -32,6 +32,7 @@ import re
 from collections import Counter
 from typing import Any
 
+from huginn.autoloop.signals import routing_surprise
 from huginn.memory.longterm import load_stable_principles
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
@@ -366,9 +367,9 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         if rc >= 3:
             hints.append(f"NOTE: 已 refine {rc} 次. 如果再失败可能需要 pivot 换方向.")
         # surprise 高 → 预测误差大, 倾向 explore 重新假设.
-        # v31: 读秩归一信号 _routing_surprise() —— 原始 surprise 在 jaccard 回落时
+        # v31: 读秩归一信号 routing_surprise() —— 原始 surprise 在 jaccard 回落时
         # 饱和于 1.0, 会把"恒定"误当"高", 每轮都提示 explore.
-        surprise = self._routing_surprise()
+        surprise = routing_surprise(self)
         if surprise > 0.5:
             hints.append(
                 f"NOTE: 预测误差大 (surprise={surprise:.2f}). "
@@ -432,7 +433,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         cf = getattr(self, "_consecutive_failures", 0)
         # v31: 硬阈值改读秩归一信号. 原始 surprise 在 jaccard 回落时饱和 1.0 ⇒ 恒
         # >0.9 ⇒ 每轮强制 explore(路由退化). 秩下恒定信号 ≈0.5, 不再误触发.
-        surprise = self._routing_surprise()
+        surprise = routing_surprise(self)
         explore_reasons: list[str] = []
         if cf >= 5:
             explore_reasons.append(f"连续失败{cf}次")

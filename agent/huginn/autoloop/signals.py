@@ -113,6 +113,26 @@ class EngineSignals:
 SIGNAL_NAMES: tuple[str, ...] = tuple(f.name for f in dataclasses.fields(EngineSignals))
 
 
+def routing_surprise(engine: Any) -> float:
+    """路由 / 决策 / 记忆 / 展示**统一**的 surprise 信号(秩归一, [0,1]).
+
+    v31: 全系统一律读**相对秩** `_last_surprise_rel`(由 engine_reflect 的
+    `_relative_surprise` 产出), 不再各处读原始 `_last_surprise`. 原始值在"语义
+    embedder + JEPA predictor 双缺失"时回落 jaccard 且 `worst` 饱和在 1.0
+    (run65 实测) ⇒ 恒 >0.9 会每轮强制 explore / 报告恒写 "1=unexpected" /
+    episodic 相对秩因并列恒 1.0. 秩信号把"当前值相对历史分布的位置"映射到 [0,1]:
+    恒定 → ~0.5(中性), 只有真正相对异常才逼近 1.0.
+
+    用 getattr 容错: 协作对象 (EngineReflect / PlanCheck / HypothesisLoop /
+    EngineObserve) 经 ``__getattr__`` 转发到 engine, stub 缺字段时拾取默认值,
+    不做硬依赖; 秩未产出时回落原始值以保旧行为.
+    """
+    rel = getattr(engine, "_last_surprise_rel", None)
+    if rel is not None:
+        return float(rel)
+    return float(getattr(engine, "_last_surprise", 0.0))
+
+
 def _selfcheck() -> None:
     s = EngineSignals()
     s._iteration = 7

@@ -57,6 +57,7 @@ from huginn.autoloop.cognitive_persist import load_run_context, persist_run_cont
 from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+from huginn.autoloop.signals import routing_surprise
 from huginn.autoloop.types import AutoloopResult, LoopPhase
 from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME
@@ -3778,13 +3779,9 @@ Respond JSON only:
                     ),
                     # 桥 E: surprise + rule_hit 进 episodic shard, replay 可按信号检索,
                     # 不只按时间线性回溯. 缺失安全填 0.0 / "".
-                    # surprise 用 per-domain 相对秩(_last_surprise_rel) — 单调于原始值,
-                    # 免绝对阈值; 未启用相对化时回退原始 _last_surprise.
-                    "surprise": float(
-                        getattr(self, "_last_surprise_rel", None)
-                        if getattr(self, "_last_surprise_rel", None) is not None
-                        else getattr(self, "_last_surprise", 0.0)
-                    ),
+                    # surprise 用秩归一信号 routing_surprise() — 与路由 / observe 同源,
+                    # 单调于原始值、免绝对阈值; 秩未就绪时回落原始 _last_surprise.
+                    "surprise": routing_surprise(self),
                     "rule_hit": getattr(self, "_last_rule_hit_id", "") or "",
                 }
                 state.iteration_history.append(_snapshot)

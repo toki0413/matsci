@@ -31,6 +31,8 @@ import os
 import re
 from typing import Any
 
+from huginn.autoloop.signals import routing_surprise
+
 logger = logging.getLogger(__name__)
 
 
@@ -685,8 +687,10 @@ LUCID review (mandatory after generating hypothesis):
                 "phase": context.get("phase", ""),
                 "val_status": context.get("val_status", ""),
                 "structure_desc": context.get("structure_desc"),
-                # 桥 J: cue 带 surprise, 让 replay 能按 surprise 回溯高发现情境
-                "surprise": getattr(self, "_last_surprise", 0.0),
+                # 桥 J: cue 带 surprise, 让 replay 能按 surprise 回溯高发现情境.
+                # v31 统一: 与 episodic 快照 / 路由同源, 一律用秩归一信号
+                # routing_surprise() —— 原始值在 jaccard 回落时饱和 1.0, 无区分度.
+                "surprise": routing_surprise(self),
             }
             replays = replay.replay(cue, top_k=3)
             if not replays:
@@ -824,8 +828,9 @@ LUCID review (mandatory after generating hypothesis):
                 "val_status": "failed",
                 "mode": getattr(self, "_last_failure_mode", "") or "",
                 "phase": getattr(self, "_current_phase", "") or "",
-                # 桥 J: surprise 进 episodic, replay 能按 surprise 回溯 PMK 冲突
-                "surprise": float(getattr(self, "_last_surprise", 0.0)),
+                # 桥 J: surprise 进 episodic, replay 能按 surprise 回溯 PMK 冲突.
+                # v31 统一: 口径同 episodic 快照, 用秩归一信号(见 signals.routing_surprise).
+                "surprise": routing_surprise(self),
             }
             writer = getattr(self, "_episodic_writer", None)
             if writer is None:

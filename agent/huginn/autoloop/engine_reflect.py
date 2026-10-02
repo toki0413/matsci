@@ -34,6 +34,7 @@ import uuid
 from typing import Any
 
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
+from huginn.autoloop.signals import routing_surprise
 from huginn.autoloop.types import LoopPhase
 from huginn.core_types import ToolContext
 from huginn.utils.runtime import HUGINN_DIR_NAME
@@ -3001,10 +3002,14 @@ class EngineReflect:
         # 桥 A: surprise → hypothesis 触发. 高 surprise 说明结构预测跟实际对不上,
         # 喂回 _hypothesize 生成解释差异的新假设 (接通 trigger_alignment_surprise_hypothesis).
         # flag HUGINN_ALIGNMENT_SURPRISE_TRIGGER 默认 off, off 时行为不变. 失败非致命.
-        # ponytail: 复用 _last_surprise (validate 已算好), 不重算. 阈值 2.0 跟 spec 对齐.
+        # ponytail: 复用 validate 已算好的信号, 不重算.
+        # v31 统一: 信号改秩归一 routing_surprise(). 旧阈值 2.0 在任何口径下都
+        # **不可达**(surprise ∈ [0,1], 无论原始还是秩), 该 bridge 实际恒不触发;
+        # 现按秩刻度取 0.9 (top-decile 相对异常), 与 _override_plan_mode 硬改道阈值一致.
+        # flag 仍默认 off, 默认行为不变.
         if os.environ.get("HUGINN_ALIGNMENT_SURPRISE_TRIGGER", "0").lower() in ("1", "true"):
-            _surprise = getattr(self, "_last_surprise", 0.0)
-            if _surprise > 2.0:
+            _surprise = routing_surprise(self)
+            if _surprise > 0.9:
                 try:
                     await self.trigger_alignment_surprise_hypothesis(
                         [(hypothesis[:80], _surprise)]
@@ -3748,7 +3753,9 @@ class EngineReflect:
 
         visual_ctx = getattr(self, "_last_visual_context", "")
         last_validation = getattr(self, "_last_validation", "")
-        last_surprise = getattr(self, "_last_surprise", 0.0)
+        # v31 统一: 报告面同 episodic / 路由, 用秩归一信号 —— 与下方 prompt
+        # "Surprise score ... (0=predicted, 1=unexpected)" 的 [0,1] 刻度一致.
+        last_surprise = routing_surprise(self)
         last_hypothesis = getattr(self, "_last_hypothesis", "")
 
         kb_text = self._build_kb_text(query=objective)

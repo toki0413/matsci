@@ -29,6 +29,7 @@ from huginn.autoloop.hypothesis_events import HypothesisEventStore
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
 )
+from huginn.autoloop.signals import routing_surprise
 from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
@@ -2772,7 +2773,7 @@ class HypothesisLoop:
             return True
         return (
             # v31: 读秩归一信号, 避免原始 surprise 在 jaccard 回落时饱和 1.0 恒触发.
-            self._routing_surprise() > 0.5
+            routing_surprise(self) > 0.5
             or getattr(self, "_refine_count", 0) >= 2
         )
 
@@ -3042,7 +3043,7 @@ class HypothesisLoop:
         # JEPA: 上轮预测误差大时, 用 reviewer persona 审视 —
         # 预测错了说明 agent 的心智模型不准, 需要更批判的视角.
         # v31: 读秩归一信号, 避免 jaccard 回落饱和 1.0 恒切 reviewer.
-        if self._routing_surprise() > 0.6:
+        if routing_surprise(self) > 0.6:
             return "reviewer"
 
         # C4: typed memory 默认 on, 旧行 NULL 走 lazy migrate 反推

@@ -649,22 +649,34 @@ run65 **无 `rename_debt` trace** ⇒ 线上债务从未越限（与离线反推
 首个样本 → 0.5（中性），恒定 → 0.5，递增 → 1.0，递减 → 0。单调性与 `[0,1]` 契约不变，
 影响面仅 episodic 的 `surprise` 字段（`_relative_surprise` 只此一个调用点）。
 
-**修（v31，行为变更，已确认）**：原始饱和值才是强制 explore 的触发源。新增
-[engine.py `_routing_surprise()`](file:///workspace/agent/huginn/autoloop/engine.py#L1408-L1421)
-—— 统一返回**秩归一** `_last_surprise_rel`（未产出秩时回落原始值保旧行为），
-4 个硬阈值消费点改用它：
+**修（v31，行为变更，已确认）**：原始饱和值才是触发源。新增**单一自由函数**
+[signals.routing_surprise()](file:///workspace/agent/huginn/autoloop/signals.py#L116-L133)
+—— 统一返回**秩归一** `_last_surprise_rel`（秩未产出时回落原始值保旧行为），并把
+**全部 9 个行为消费点**收口到它（除赋值 / 持久化 / late-binding 外，无一处再直接读原始
+`_last_surprise`）：
 
-- [plan_check.py:371](file:///workspace/agent/huginn/autoloop/plan_check.py#L371)（软提示 `>0.5`）
-- [plan_check.py:435](file:///workspace/agent/huginn/autoloop/plan_check.py#L435)（硬改道 `>0.9`）
-- [hypothesis_loop.py:2775](file:///workspace/agent/huginn/autoloop/hypothesis_loop.py#L2775)（`should_imaginate` 回落 `>0.5`）
-- [hypothesis_loop.py:3045](file:///workspace/agent/huginn/autoloop/hypothesis_loop.py#L3045)（`reviewer` persona `>0.6`）
+- **路由**：[plan_check.py:372](file:///workspace/agent/huginn/autoloop/plan_check.py#L372)（软提示 `>0.5`）、
+  [plan_check.py:436](file:///workspace/agent/huginn/autoloop/plan_check.py#L436)（硬改道 `>0.9`）、
+  [hypothesis_loop.py:2776](file:///workspace/agent/huginn/autoloop/hypothesis_loop.py#L2776)（`should_imaginate` `>0.5`）、
+  [hypothesis_loop.py:3046](file:///workspace/agent/huginn/autoloop/hypothesis_loop.py#L3046)（`reviewer` persona `>0.6`）
+- **记忆**：[cognitive_loop.py:3784](file:///workspace/agent/huginn/autoloop/cognitive_loop.py#L3784)（episodic 快照）、
+  [engine_observe.py:693](file:///workspace/agent/huginn/autoloop/engine_observe.py#L693)（replay cue）、
+  [engine_observe.py:833](file:///workspace/agent/huginn/autoloop/engine_observe.py#L833)（PMK 冲突落盘）
+- **展示**：[engine_reflect.py:3758](file:///workspace/agent/huginn/autoloop/engine_reflect.py#L3758)（报告 prompt "Surprise score"）、
+  [slash_commands.py:975](file:///workspace/agent/huginn/cli/slash_commands.py#L975)（`/status` 表）
+- **触发（flag off）**：[engine_reflect.py:3011](file:///workspace/agent/huginn/autoloop/engine_reflect.py#L3011)（桥 A）——
+  旧阈值 `2.0` 在任何口径下都**不可达**（surprise ∈ [0,1]），该 bridge 实际恒不触发；
+  改按秩刻度取 `0.9`（与硬改道一致），flag 仍默认 off，默认行为不变。
+
+用 `getattr` 容错：协作对象经 `__getattr__` 转发到 engine，stub 缺字段拾默认值、不做硬依赖
+（`tests/test_engine_decomposed.py` 的 `_StubEngine` 即靠此通过）。
 
 语义：**"当前值相对历史分布异常"**取代**"绝对饱和"** —— 恒定信号 → ≈0.5 不触发，
-只有真正相对异常才逼近 1.0。`_last_surprise` 原始值仍供展示/记忆（engine_observe、
-report、engine_reflect 的 2.0 阈值旗标），未动。回归：`test_lucid_prereqs` /
-`test_engine_decomposed` / `test_engine_signals` / `test_cross_scale_invariance` /
-`test_hypothesis_loop` 等 **300 passed**（旧测试设 `_last_surprise=0.95` 仍如期强制
-explore —— 因新信号未就绪时回落原始值）。
+只有真正相对异常才逼近 1.0。回归：`test_lucid_prereqs` / `test_engine_decomposed` /
+`test_engine_signals` / `test_cross_scale_invariance` / `test_hypothesis_loop` /
+`test_loop_inspired` / `test_reflection` / `test_structure_tool` / `test_cognitive_engine`
+等 **431 passed, 3 skipped**（旧测试设 `_last_surprise=0.95` 仍如期强制 explore ——
+因秩未就绪时回落原始值）。
 
 **② `JEPA structure_desc 全 0`（"结构通道无信息"）——多数是误报，少数是接线未完成**
 
