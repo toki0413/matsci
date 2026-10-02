@@ -453,3 +453,68 @@ plan_check failed (tier=light, scene=md, max_refines=1): The plan is fundamental
 [exec-route] mode='workflow' desc[:80]='Execute a numerical experiment to evaluate the solution space rigidity of small ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2085 extracted_len=2070 prompt_len=4335
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=94 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 18 rounds (Δ<0.5), best=2.70 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=94 evidence=stagnation=18 best=2.70 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0526 μ=2.66 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=94 evidence=sigma2=0.0526 mu=2.66 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='We will design and execute a numerical experiment to test the hypothesis that th' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1941 extracted_len=1926 prompt_len=4991
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=1846 extracted_len=1831 prompt_len=7428
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=1878 extracted_len=1863 prompt_len=7333
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+[code-lab-author] raw_len=1878 extracted_len=1863 prompt_len=7365
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 50)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        true_coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ true_coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ true_coeffs.reshape(-1, 1)
+    else:
+        true_coeffs = rng.standard_normal(50)
+        y = poly_basis(X, 50) @ true_coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 50) @ true_coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 50) @ true_coeffs.reshape(-1, 1))
+    if scale == 0: scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_vals = [10, 50, 100, 500]
+    h_vals = [4, 8, 16, 32, 64, 128]
+    summary = {'rigid': {}, 'fat': {}}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        summary[kind] = {}
+        for w in w_vals:
+            summary[kind][w] = {}
+            for h in h_vals:
+                data = family(kind, w, seed + w + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                yv_pred = mlp_predict(model, Xv)
+                err = float(np.max(np.abs(yv_pred - yv)))
+                ok = zero_violation(err)
+                summary[kind][w][h] = {'error': err, 'zero_violation': bool(ok)}
+            nc_w = float('inf')
+            for h in h_vals:
+                if summary[kind][w][h]['zero_violation']:
+                    nc_w = float(h)
+                    break
+            summary[kind][w]['N_c'] = nc_w
+            objectives['score'] += nc_w
+    return {'success': True, 'summary': summary, 'objectives': objectives}

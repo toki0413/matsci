@@ -562,6 +562,38 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_1c69a078",
+      "objective": "[DIM: geometry] The solution space manifold for analytic constraints has non-trivial curvature that creates a bottleneck in width-w parameter space: predict: N_c(w) exhibits non-monotonic behavior with a local maximum at intermediate w (e.g., N_c(w) = a·w^b + c·w^(-d) with a,b,c,d > 0) | pro: explains the observed peak at w=100 in the experimental results (N_c=33 at w=100 vs N_c=4 at w=10 and w=500); con: requires complex geometric structure; falsifiable: if N_c(w) is monotonic, hypothesis is refuted | con: complex to verify experimentally; requires precise measurement of the curvature",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will design and execute a numerical experiment to test the hypothesis that the minimum network capacity N_c(w) required to achieve zero violation (max absolute error ≤ 1e-3 on held-out constraints) exhibits non-monotonic behavior with a local maximum at intermediate w. We will: (1) define a family of analytic constraint functions with varying curvature and width; (2) systematically sweep constraint sample count w and network hidden layer width; (3) train small feedforward networks on each (w, width) pair and measure validation error; (4) extract N_c(w) as the minimal width achieving zero violation for each w; (5) plot N_c(w) and test for non-monotonicity (peak at intermediate w). This directly tests the hypothesis using the exact definitions provided.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/ml_experiment.py",
+            "src/constraint_generator.py",
+            "src/network_trainer.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T09:01:03.984645+00:00",
+      "confirmed_at": "2026-10-02T09:01:03.986758+00:00",
+      "completed_at": "2026-10-02T09:01:27.601707+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
