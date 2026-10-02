@@ -1,0 +1,27 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "bd8862e4d2b5",
+    "reason": "The plan is fundamentally invalid due to a critical scope violation. The hypothesis is defined under [DIM: geometry], yet the proposed experiment tests 'ReLU networks on analytical constraints' (polynomial interpolation/PDE residuals), which is a machine learning / functional approximation problem, not a geometric one. This constitutes 'substituting or renaming the proposition to a physical system' (or in this case, an ML system), which is explicitly forbidden by the '唯一硬性口径' section. Furthermore, the plan lacks specific geometric constraints (e.g., manifold constraints, geometric PDEs, or geometric loss functions) required to test solution space rigidity in a geometric context.",
+    "missing_steps": [
+      "Reformulate the hypothesis to align with the [DIM: geometry] domain (e.g., test rigidity on geometric constraints like point-set registration, manifold embedding, or geometric PDEs rather than generic polynomial/PDE residuals).",
+      "Define explicit geometric analytical constraints (e.g., interpolation on a sphere, residual of Laplace-Beltrami operator, etc.) instead of generic analytical constraints.",
+      "Specify the geometric metric for 'zero violation' if different from standard L2 error (e.g., geodesic error, angular error, etc.)."
+    ],
+    "mode": "explore",
+    "description": "Design and run a numerical experiment to test the hypothesis that small feedforward networks exhibit solution space rigidity (bounded N_c) on analytical constraints. Construct analytical constraint se"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "bd8862e4d2b5",
+    "reason": "The plan fundamentally violates the '唯一硬性口径' (hard constraint) which explicitly forbids substituting or renaming the proposition to a physical/ML system. The hypothesis is defined under [DIM: geometry] (solution space rigidity in geometry), but the proposed experiment tests 'ReLU networks on analytical constraints' (polynomial interpolation/PDE residuals), which is a machine learning / functional approximation problem, not a geometric one. This matches the exact '同场景历史失败' pattern described in the context. The plan lacks explicit geometric constraints and uses ML methods to approximate them rather than testing geometric solution space rigidity directly.",
+    "missing_steps": [
+      "Reformulate the hypothesis to align with the [DIM: geometry] domain by testing rigidity on geometric constraints directly (e.g., manifold constraints, geometric PDEs, or geometric loss functions) rather than using ML networks to approximate analytical constraints",
+      "Define explicit geometric analytical constraints (e.g., interpolation on a sphere, residual of Laplace-Beltrami operator, conformal mapping) as the test objects themselves, not as ML approximation targets",
+      "Specify the geometric metric for 'zero violation' that is appropriate for geometric constraints (e.g., geodesic error, angular error) rather than standard L2 error of function approximation",
+      "Ensure the experiment tests solution space rigidity of geometric objects directly, not the capacity of neural networks to approximate geometric functions"
+    ],
+    "mode": "explore",
+    "description": "Reformulate the solution space rigidity hypothesis within [DIM: geometry] by testing geometric constraints on manifolds. Construct three geometric constraint sets: (1) point-set registration on S^2 (i"
+  }
+]
