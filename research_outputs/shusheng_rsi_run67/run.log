@@ -77,3 +77,7 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Invariance): "? Ye
 [code-lab-run] res_none=False success=True nobj=2 reason=''
 [validate] mode='code_lab' success=True nobj=2 cf=False lab=True
 control_trace name=collab_blind_reconstruct iteration=4 evidence=skip: statement too short len=7 action=skip
+metacog: 假设可能为换名归约 (trap=, target=Landscape Barrier): [DIM: measure] N_c(w) follows a logarithmic scaling N_c(w) ∝ log(w) for a stochastic constraint fami
+[exec-route] mode='coder' desc[:80]='Implement a numerical experiment to test the hypothesis that N_c(w) (minimum hid' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=3344 extracted_len=3330 prompt_len=4921
+[code-lab-run] res_none=False success=True nobj=1 reason=''

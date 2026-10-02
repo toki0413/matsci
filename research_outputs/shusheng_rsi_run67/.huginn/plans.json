@@ -29,6 +29,38 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_3c184da9",
+      "objective": "[DIM: measure] N_c(w) follows a logarithmic scaling N_c(w) ∝ log(w) for a stochastic constraint family with Gaussian noise, because the information-theoretic capacity needed to resolve the noise floor grows slowly with sample size. | predict: N_c(w) ≈ a·log(w) + b for constants a, b, with N_c(w) remaining finite as w → ∞ | pro: This hypothesis introduces a statistical dimension that is distinct from the deterministic predictions; it is testable by fitting the scaling law to experimental N_c(w) values. | con: Requires careful noise calibration; the logarithmic growth may be indistinguishable from constant for small w ranges, requiring large-scale experiments.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the hypothesis that N_c(w) (minimum hidden layer width for zero violation on held-out constraints) follows logarithmic scaling w.r.t. sample size w. Design a synthetic constraint family with Gaussian noise, sweep hidden widths N_c for increasing w, train small MLPs, measure max absolute error on held-out points, and fit N_c(w) ≈ a·log(w) + b. Validate that N_c remains finite as w grows (rigid regime). Use symbolic regression to compare log vs constant vs linear fits.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/nc_scaling_test.py",
+            "src/nn_utils.py",
+            "tests/test_nc_scaling.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T08:15:25.595475+00:00",
+      "confirmed_at": "2026-10-02T08:15:25.596656+00:00",
+      "completed_at": "2026-10-02T08:16:05.734513+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
