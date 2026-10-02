@@ -1109,6 +1109,70 @@
       "r_phys": 1.0,
       "iteration": 110,
       "id": "persona_use:dft_expert_iter110"
+    },
+    {
+      "label": "[DIM: structure] Algebraic rigidity for analytic constraints",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T09:06:50.097017",
+      "last_seen": "2026-10-02T09:06:50.097017",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the analytic constraint sin(πx), N_c(w) plateaus at a small finite value (e.g., N_c ≈ 4–8) for w beyond a threshold, indicating rigidity. For the piecewise analytic function, N_c(w) may increase w",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure] Algebraic rigidity for analytic constraints"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:06:50.097052",
+      "last_seen": "2026-10-02T09:06:50.097052",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:06:50.097062",
+      "last_seen": "2026-10-02T09:06:50.097062",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T09:06:50.097071",
+      "last_seen": "2026-10-02T09:06:50.097071",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic rigidity for analytic constraints",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_b1fb4c92"
+    },
+    {
+      "label": "dft_expert_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T09:06:50.097136",
+      "last_seen": "2026-10-02T09:06:50.097136",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "36e4fa9dc10c0f35",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:dft_expert_iter115"
     }
   ],
   "links": [
@@ -1597,6 +1661,33 @@
       "last_seen": "2026-10-02T09:05:01.811070",
       "mentions": 1,
       "target": "he_experiment_pipeline_d83a4660"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic rigidity for analytic constraints",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:06:50.097071",
+      "last_seen": "2026-10-02T09:06:50.097071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b1fb4c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:06:50.097071",
+      "last_seen": "2026-10-02T09:06:50.097071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b1fb4c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T09:06:50.097071",
+      "last_seen": "2026-10-02T09:06:50.097071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b1fb4c92"
     }
   ]
 }
