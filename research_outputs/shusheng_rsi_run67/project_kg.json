@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "[DIM: measure] N_c(w) follows a logarithmic scaling N_c(w) ∝ log(w) for a stocha",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:16:58.505962",
+      "last_seen": "2026-10-02T08:16:58.505962",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will plateau or grow sublinearly (logarithmic) as w increases, indicating solution space rigidity; fitted a > 0, b finite, R² > 0.9 for log model; all N_c values finite and ≤ 50 for w up to 100",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: measure] N_c(w) follows a logarithmic scaling N_c(w) ∝ log(w) for a stocha"
+    },
+    {
+      "label": "plan_coder_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:16:58.506000",
+      "last_seen": "2026-10-02T08:16:58.506000",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:16:58.506011",
+      "last_seen": "2026-10-02T08:16:58.506011",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T08:16:58.506022",
+      "last_seen": "2026-10-02T08:16:58.506022",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] N_c(w) follows a logarithmic scaling N_c(w) ∝ log(w) for a stocha",
+        "Method:plan_coder_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_c2d927aa"
+    },
+    {
+      "label": "dft_expert_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:16:58.506093",
+      "last_seen": "2026-10-02T08:16:58.506093",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "b7225bb2201b3f5d",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:dft_expert_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-10-02T08:14:14.503046",
       "mentions": 1,
       "target": "he_experiment_pipeline_e6394adf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] N_c(w) follows a logarithmic scaling N_c(w) ∝ log(w) for a stocha",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:16:58.506022",
+      "last_seen": "2026-10-02T08:16:58.506022",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c2d927aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:16:58.506022",
+      "last_seen": "2026-10-02T08:16:58.506022",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c2d927aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:16:58.506022",
+      "last_seen": "2026-10-02T08:16:58.506022",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c2d927aa"
     }
   ]
 }
