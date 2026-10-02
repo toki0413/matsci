@@ -152,8 +152,12 @@ def test_jev_expand_subset_picks_by_threshold(monkeypatch):
 
 def test_jevn_expand_subset_skips_analysis_when_core(monkeypatch):
     import huginn.runtime.jev.tool_router as tr
+    import huginn.runtime.task_tool_router as ttr
 
     monkeypatch.setattr(tr, "jev_enabled", lambda key: True)
+    # 显式把 analysis_tool 钉进常驻 CORE (真实 CORE 名单已不含它), 让本测确定性
+    # 验证"CORE 工具不进候选"这一机制, 而非依赖外部名单的当前内容.
+    monkeypatch.setattr(ttr, "CORE_TOOL_NAMES", ["analysis_tool"])
 
     class _Fake:
         available = True
