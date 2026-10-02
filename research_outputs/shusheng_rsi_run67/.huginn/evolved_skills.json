@@ -121,10 +121,10 @@
       "label",
       "constraint",
       "rigidity",
-      "plan",
       "small",
-      "constraints",
-      "error"
+      "plan",
+      "error",
+      "constraints"
     ],
     "workflow_steps": [
       {

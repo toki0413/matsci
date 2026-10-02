@@ -740,6 +740,70 @@
       "r_phys": 1.0,
       "iteration": 75,
       "id": "persona_use:dft_expert_iter75"
+    },
+    {
+      "label": "[Hypothesis Index].",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:54:58.265091",
+      "last_seen": "2026-10-02T08:54:58.265091",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be small (e.g., ≤ 16) and bounded across the scanned range of w, indicating solution space rigidity; validation error will drop sharply once N_c exceeds a threshold, with no inf/nan values",
+      "persona": "dft_expert",
+      "id": "experiment:[Hypothesis Index]."
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:54:58.265127",
+      "last_seen": "2026-10-02T08:54:58.265127",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:54:58.265137",
+      "last_seen": "2026-10-02T08:54:58.265137",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T08:54:58.265146",
+      "last_seen": "2026-10-02T08:54:58.265146",
+      "mentions": 1,
+      "members": [
+        "experiment:[Hypothesis Index].",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_bb9b8378"
+    },
+    {
+      "label": "dft_expert_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T08:54:58.265213",
+      "last_seen": "2026-10-02T08:54:58.265213",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "1248f12299936dfe",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:dft_expert_iter80"
     }
   ],
   "links": [
@@ -1066,6 +1130,33 @@
       "last_seen": "2026-10-02T08:53:07.273900",
       "mentions": 1,
       "target": "he_experiment_pipeline_bf0e03e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[Hypothesis Index].",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:54:58.265146",
+      "last_seen": "2026-10-02T08:54:58.265146",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bb9b8378"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:54:58.265146",
+      "last_seen": "2026-10-02T08:54:58.265146",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bb9b8378"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T08:54:58.265146",
+      "last_seen": "2026-10-02T08:54:58.265146",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bb9b8378"
     }
   ]
 }

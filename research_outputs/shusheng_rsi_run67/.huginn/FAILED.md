@@ -46,3 +46,9 @@ Statement: I select [DIM: structure] Algebraic threshold rigidity as the most te
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_bb57feab] 2026-10-02T08:54:49+00:00
+Statement: [Hypothesis Index].
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
