@@ -34,3 +34,9 @@ Statement: " should follow the list.
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_38406309] 2026-10-02T08:49:30+00:00
+Statement: [DIM: structure] For analytic constraints defined by a polynomial basis of degree d, the solution manifold has dimension d+1; N_c(w) plateaus at a constant value N_c* = d+1 for all w ≥ d+1, since the 
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

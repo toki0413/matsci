@@ -117,12 +117,12 @@
     "trigger_keywords": [
       "autoloop",
       "huginn",
-      "label",
       "value",
+      "label",
       "constraint",
-      "small",
-      "plan",
       "constraints",
+      "plan",
+      "small",
       "rigidity",
       "error"
     ],

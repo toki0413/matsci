@@ -120,5 +120,19 @@
     ],
     "mode": "coder",
     "description": "Create a Python script to numerically test the polynomial rigidity hypothesis. The script will: (1) define quadratic polynomial constraints (d=2) using monomial basis, (2) sample constraint points via"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "3c79ec272128",
+    "reason": "The plan is fundamentally invalid because it conflates a theoretical prediction (rigidity) with an empirical observation (sudden transition at w=7), creating a logical contradiction in the prediction section. The hypothesis claims the transition at w=7 is key evidence, but the prediction states rigidity causes a plateau at N_c=3 for all w≥3, which would mean no such transition should exist. Additionally, the plan lacks critical methodological details: it doesn't specify the constraint function forms, training loss landscape properties, or how to handle potential non-convex optimization issues that could affect N_c(w) measurements. The 'sudden transition at w=7' mentioned in the hypothesis appears to be an unexplained empirical observation that isn't theoretically grounded in the algebraic threshold rigidity framework.",
+    "missing_steps": [
+      "Clarify the theoretical basis for the w=7 transition and reconcile it with the rigidity prediction",
+      "Specify the exact polynomial constraint functions and their algebraic properties",
+      "Define the optimization landscape and potential convergence issues for the small networks",
+      "Include error analysis and uncertainty quantification for N_c(w) measurements",
+      "Add validation against known theoretical bounds for polynomial constraint satisfaction"
+    ],
+    "mode": "workflow",
+    "description": "Design a numerical experiment to test algebraic threshold rigidity in small feedforward networks. Generate synthetic polynomial constraint functions (degree d=2) with varying numbers of constraints w "
   }
 ]
