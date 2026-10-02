@@ -4237,6 +4237,22 @@ class EngineReflect:
             "interpolate, or idealize values. Reports with untraceable numbers are "
             "flagged by a citation audit.\n" if evidence_ledger else ""
         )
+        # 跨协议/判据纪律: 台账各 [ev#] 可能来自**不同实验协议**(族/扫描网格/判据不同),
+        # 早期报告把不同轮的数值并成"同一实验的一条可比序列", 并自行断言阈值通过/不通过,
+        # 产出"报 N_c=8 而留出误差 1.7e-3 > 1e-3"这类自相矛盾结论 (run66 实测). 这是
+        # 报告综合期的问题: 只加纪律, 不替书生计算、不改写其结论.
+        protocol_rule = (
+            "\nPROVENANCE RULE (hard): the ledger entries above may come from DIFFERENT "
+            "experimental protocols (different families / scan grids / criteria). Never "
+            "present numbers from different [ev#] entries as if they were one experiment "
+            "or one comparable series — attribute each number to its [ev#], and if "
+            "entries disagree, report the disagreement explicitly and say which entry "
+            "each value came from. Do NOT assert a threshold pass/fail verdict (e.g. "
+            "'below the tolerance') unless that verdict, with both the measured value "
+            "and the threshold, is already stated in the ledger; otherwise report the "
+            "raw value and the threshold separately and label the comparison as "
+            "unverified.\n" if evidence_ledger else ""
+        )
 
         return (
             "You are writing a structured scientific research report based on an "
@@ -4246,7 +4262,7 @@ class EngineReflect:
             f"Phases:\n{phases_blob}\n"
             f"Surprise score: {surprise:.2f} (0=predicted, 1=unexpected)"
             f"{hyp_section}{exec_section}{ledger_section}{visual_section}{val_section}{kb_section}"
-            f"{citation_rule}"
+            f"{citation_rule}{protocol_rule}"
             "\nWrite the report with these sections (Markdown):\n"
             "## Introduction\n"
             "State the scientific question and why it matters. Reference domain knowledge above.\n\n"

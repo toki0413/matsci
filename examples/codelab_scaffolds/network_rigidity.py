@@ -23,6 +23,13 @@ import numpy as np
 
 NAME = "network_rigidity"
 
+#: 命题的**唯一硬性口径**(不可更改): 零违规 = 留出点最大绝对误差 <= 此阈值.
+#: 命题允许"族/扫描/脚本由书生自定", 但把判据明确钉死为 1e-3 —— 早期版本把判据
+#: 也留给书生每轮重写, 结果同一命题不同轮用不同比较(甚至拿训练误差当留出误差),
+#: 报出 N_c=8 而留出误差实为 1.7e-3 > 1e-3 的自相矛盾数值 (run66 实测). 故把
+#: 不可更改的口径下沉为注入原语, 与自由部分(族设计/扫描网格)解耦.
+CRITERION_MAX_ERR = 1e-3
+
 #: 极简骨架: 只固定 family 契约与 run(cfg) 的输入/输出形状, **不含任何扫描/
 #: 判据/聚合实现** —— 那正是本轮实验需要书生自己设计的科学内容. 占位实现是
 #: 一份"必须整体替换"的退化数据(两族无区分度), 用于逼迫书生写出真实约束族.
@@ -56,7 +63,8 @@ def run(cfg):
     # 1. 选扫描参数 (约束点数 w、隐藏层宽度 h 的集合等);
     # 2. 对每个 (kind, w, h): 调 family 取数据, 用 mlp_fit(X, y, h, seeds=3)
     #    训练, 再用 mlp_predict(model, Xv) 评估留出误差;
-    # 3. 判定"零违规"(留出最大绝对误差 <= 1e-3), 得到每个 (kind, w) 的最小
+    # 3. 判定"零违规"**必须**用注入原语 zero_violation(留出最大绝对误差)(口径固定
+    #    1e-3, 不要自己写比较、不要拿训练误差冒充), 得到每个 (kind, w) 的最小
     #    零违规宽度 N_c (扫描内都达不到则记 None);
     # 4. 把数值结果组织成 summary, 并把可比较的数值放进 objectives。
     seed = int(cfg.get('seed', 0))
@@ -69,10 +77,13 @@ def run(cfg):
 #: 书生自己实现**. 只讲"契约与坑", 不绑定任何具体命题.
 HINTS = (
     "分工(极重要): 沙箱**只内置基础数值工具**: mlp_fit(训练网络)/mlp_predict(预测)/"
-    "poly_basis(多项式基)/_as_2d(形状对齐)。**没有现成的扫描/判据/汇总管线** —— "
+    "poly_basis(多项式基)/_as_2d(形状对齐), 外加**唯一硬性口径**的判据原语 "
+    "zero_violation(留出最大绝对误差 <= 1e-3 则 True)。**没有现成的扫描/汇总管线** —— "
     "你必须自己实现完整实验逻辑: 选扫描参数、训练网络、评估留出误差、判定零违规、"
     "求每个 (kind,w) 的最小零违规宽度 N_c, 并把数值结果放进 summary/objectives。\n"
-    "- 零违规 = 留出约束点上的最大绝对误差 <= 1e-3 (口径固定, 不可更改)。\n"
+    "- 零违规 = 留出约束点上的最大绝对误差 <= 1e-3 (口径固定, 不可更改)。判定**必须**"
+    "调用注入原语 zero_violation(held_out_max_abs_err), **不要自己写比较** —— 自己写"
+    "容易出现阈值写错/拿训练误差冒充留出误差, 使同一命题不同轮 N_c 互斥(不可采信)。\n"
     "- 刚性 = 扫描范围内存在较小的有限 N_c(且不随 w 增长); "
     "胖 = 扫描上限内任何宽度都达不到零违规(N_c 不可达)。判别是二值的。\n"
     "- 所有报告数值必须是有限数 (禁止 inf/nan/None)。\n"
@@ -95,7 +106,10 @@ HINTS = (
 )
 
 #: 沙箱注入的原语名. 书生若顶层重定义同名函数会覆盖注入的正确实现, 故会确定性剥除.
-PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "poly_basis")
+#: zero_violation 是**唯一硬性口径**的实现(断言性质), 一并注入并禁止重写 ——
+#: 保证 N_c 判据跨轮一致、不被书生改口径或误用训练误差.
+PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "poly_basis",
+                   "zero_violation")
 
 
 def _as_2d(a):
@@ -114,6 +128,28 @@ def poly_basis(X, n):
     x = X[:, 0]                                # (N,)
     powers = np.arange(int(n))                 # (n,)
     return x[:, None] ** powers[None, :]       # (N,1) ** (1,n) → (N,n)
+
+
+def zero_violation(max_abs_err, tol=CRITERION_MAX_ERR):
+    """零违规判据原语: 留出点最大绝对误差 <= tol 即零违规 (命题硬性口径).
+
+    **唯一硬性口径的单一实现** —— 命题只允许书生自定"族/扫描/脚本", 判据固定为
+    1e-3. 判 N_c 时必须用本原语, 不要自己写比较: 早期把判据留给书生每轮重写,
+    出现"拿训练误差当留出误差""阈值写成 1e-2/1e-1"等, 同一命题不同轮 N_c 互斥
+    (run66 实测: 报 N_c=8 而留出误差 1.7e-3 > 1e-3 的自相矛盾). 本原语把该口径
+    钉死, 使 N_c(w) 跨轮可比.
+
+    max_abs_err: 留出约束点上的**最大绝对误差**(标量); tol: 阈值(默认 1e-3).
+    返回 bool. 非有限值(inf/nan)一律不算零违规.
+    """
+    import math
+    try:
+        e = float(max_abs_err)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(e):
+        return False
+    return e <= float(tol)
 
 
 def mlp_fit(X, y, h, seeds=3, maxiter=3000, maxfun=30000, seed=0):
@@ -215,12 +251,14 @@ def mlp_predict(model, X):
 def primitives() -> dict:
     """返回注入沙箱的原语表 (键 = 书生代码可直接调用的名字).
 
-    v11 彻底解绑: 只注入**基础数值工具**(训练/预测/形状/幂基), 不再注入任何
-    扫描/判据/汇总管线 —— 那些是书生本轮要自己设计的科学内容。
+    v11 彻底解绑: 只注入**基础数值工具**(训练/预测/形状/幂基)与**唯一硬性口径**的
+    判据原语 zero_violation; 不注入任何扫描/汇总管线 —— 那些是书生本轮要自己设计的
+    科学内容. 判据不是"科学内容"而是命题钉死的口径, 故由脚手架提供, 保证跨轮一致.
     """
     return {
         "mlp_fit": mlp_fit,
         "mlp_predict": mlp_predict,
         "_as_2d": _as_2d,
         "poly_basis": poly_basis,
+        "zero_violation": zero_violation,
     }
