@@ -518,3 +518,13 @@ def run(cfg):
             summary[kind][w]['N_c'] = nc_w
             objectives['score'] += nc_w
     return {'success': True, 'summary': summary, 'objectives': objectives}
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=99 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 缺少显式不完整性自白 action=advisory_hint
+control_trace name=collab_blind_reconstruct iteration=99 evidence=refute: blind_holds=False vs orig_holds=True summary_len=81 action=refute
+darwin ratchet: stagnation 19 rounds (Δ<0.5), best=2.70 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=99 evidence=stagnation=19 best=2.70 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0500 μ=2.66 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=99 evidence=sigma2=0.0500 mu=2.66 action=advisory_hint
+[exec-route] mode='workflow' desc[:80]='Design a numerical experiment to test the linear scaling hypothesis for N_c(w). ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1834 extracted_len=1819 prompt_len=4853
+[code-lab-run] res_none=False success=True nobj=1 reason=''

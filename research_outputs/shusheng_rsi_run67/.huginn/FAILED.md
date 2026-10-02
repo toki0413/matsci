@@ -52,3 +52,9 @@ Statement: [Hypothesis Index].
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_6b1261b3] 2026-10-02T09:01:36+00:00
+Statement: [DIM: geometry] The solution space manifold for analytic constraints has non-trivial curvature that creates a bottleneck in width-w parameter space: predict: N_c(w) exhibits non-monotonic behavior wit
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

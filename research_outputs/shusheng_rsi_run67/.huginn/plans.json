@@ -594,6 +594,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_f40ff87b",
+      "objective": "[DIM: geometry] For analytic constraints defining a smooth one-dimensional solution curve in function space, the minimal network width $N_c(w)$ grows proportionally to the number of constraints $w$ (linear scaling) because the manifold's curvature requires increasingly narrow activation regions to resolve local variations; predict: $N_c(w) \\approx \\alpha w + \\beta$ where $\\alpha > 0$ is determined by the maximum curvature of the solution curve. | pro: This hypothesis is distinct from the previously failed \"constant $N_c$\" (structure) and \"logarithmic scaling\" (measure) hypotheses. It introduces a geometric perspective (curvature) that has not been thoroughly explored in the context of MLP capacity for constraint satisfaction. It offers a clear, checkable numerical prediction (linear scaling) that differs from the plateau or logarithmic trends of previous attempts. con: The assumption of a smooth one-dimensional manifold may be too restrictive for some constraint families, but it is a reasonable starting point for analytic constraints. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the linear scaling hypothesis for N_c(w). Generate a smooth one-dimensional solution curve (e.g., a parametric family of functions satisfying analytic constraints), vary the number of constraints w, and train small MLPs with increasing hidden width N to find the minimal N_c(w) achieving zero violation (max error ≤ 1e-3) on held-out constraint points. Record N_c(w) vs w and test linearity via regression.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "None"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-02T09:02:04.312515+00:00",
+      "confirmed_at": "2026-10-02T09:02:04.314826+00:00",
+      "completed_at": "2026-10-02T09:02:21.307048+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }
