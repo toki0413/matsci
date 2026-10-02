@@ -620,3 +620,66 @@ run65 **无 `rename_debt` trace** ⇒ 线上债务从未越限（与离线反推
 这正说明离线反推的口径偏大 —— 故 v12 差集给区间是必要的。另 run65 仍有
 `surprise 恒定 [1.0]`（路由退化）与 `JEPA structure_desc 全 0`（结构通道无信息）两条
 待查。
+
+### 8.9 两条待查的根因（v31，含一处纯观测修正）
+
+**① `surprise 恒定 [1.0]`（"路由信号死"）——根因是三层回落叠加，不是相对秩本身**
+
+用 run65 实测数据逐层坐实（不是推断）：
+
+1. `sentence_transformers` 未安装，且 [store.py](file:///workspace/agent/huginn/knowledge/store.py#L244-L269)
+   的 `_EmbeddingModel._st` 需**别处先调 RAG embed 才会被懒加载**；而
+   [engine_reflect.py](file:///workspace/agent/huginn/autoloop/engine_reflect.py#L2146-L2157)
+   的 `_try_embed_text` 只读 `_st`、**刻意不触发加载** ⇒ `_semantic_distance` 恒 `None`。
+2. JEPA predictor 权重（`jepa_predictor.json` / `jepa_span_predictor.json`）在 run 的
+   runtime home 下**不存在** ⇒ `_predictor_surprise` 恒 `None`。
+3. 于是 source 落到 `"jaccard"`，`surprise = robust["worst"] = max(4 路扰动 jaccard)`。
+   预测文本（计划里的定性预测）与实际输出（数值倾倒）token/bigram 集多半不相交 ⇒
+   bigram 那路 jaccard = 1.0 ⇒ **`worst` 饱和在 1.0**。
+
+实测证据：`engine_state` 里 `_surprise_history` 的取值**只有 0.0 与 1.0**（连续语义
+距离绝不会恰为 0/1）⇒ 确证走的是 jaccard；run65 `run.log` 30 条 `exec-route` 里 25 条
+`explore`，其中 7 条是 `[auto-routed: surprise=1.00]` 强制改道。
+
+相对秩（`_relative_surprise`）**不是**路由输入（路由读 `_last_surprise` 的**原始值**），
+但它自己也有一个数学缺陷：旧码把当前样本并入直方图后算 `le/len`，于是"当前值为历史
+最大（含并列）"一律 = 1.0 ⇒ 恒定信号恒 1.0。episodic shard 实测 49 轮里 **34 轮 = 1.0**。
+
+**修（v31，纯观测，只动相对秩）**：`_relative_surprise` 改**中位秩、排除自身**：
+首个样本 → 0.5（中性），恒定 → 0.5，递增 → 1.0，递减 → 0。单调性与 `[0,1]` 契约不变，
+影响面仅 episodic 的 `surprise` 字段（`_relative_surprise` 只此一个调用点）。
+
+**修（v31，行为变更，已确认）**：原始饱和值才是强制 explore 的触发源。新增
+[engine.py `_routing_surprise()`](file:///workspace/agent/huginn/autoloop/engine.py#L1408-L1421)
+—— 统一返回**秩归一** `_last_surprise_rel`（未产出秩时回落原始值保旧行为），
+4 个硬阈值消费点改用它：
+
+- [plan_check.py:371](file:///workspace/agent/huginn/autoloop/plan_check.py#L371)（软提示 `>0.5`）
+- [plan_check.py:435](file:///workspace/agent/huginn/autoloop/plan_check.py#L435)（硬改道 `>0.9`）
+- [hypothesis_loop.py:2775](file:///workspace/agent/huginn/autoloop/hypothesis_loop.py#L2775)（`should_imaginate` 回落 `>0.5`）
+- [hypothesis_loop.py:3045](file:///workspace/agent/huginn/autoloop/hypothesis_loop.py#L3045)（`reviewer` persona `>0.6`）
+
+语义：**"当前值相对历史分布异常"**取代**"绝对饱和"** —— 恒定信号 → ≈0.5 不触发，
+只有真正相对异常才逼近 1.0。`_last_surprise` 原始值仍供展示/记忆（engine_observe、
+report、engine_reflect 的 2.0 阈值旗标），未动。回归：`test_lucid_prereqs` /
+`test_engine_decomposed` / `test_engine_signals` / `test_cross_scale_invariance` /
+`test_hypothesis_loop` 等 **300 passed**（旧测试设 `_last_surprise=0.95` 仍如期强制
+explore —— 因新信号未就绪时回落原始值）。
+
+**② `JEPA structure_desc 全 0`（"结构通道无信息"）——多数是误报，少数是接线未完成**
+
+- run65 的目标是**纯机器学习/数学**（解空间刚性），全程 0 次 `cognitive_map` 调用，
+  `structure_cognitive_map_tool._MAPS` 为空 ⇒ 无活跃 `StructureCognitiveMap` ⇒ 全 0 是
+  **正确行为**（该通道本就只编码晶体/材料结构）。replay_audit 的"结构编码恒零"对它
+  是**误报**：审计器不知道目标类型。
+- 接线本身确实**未完成**：[cognitive_checks.py](file:///workspace/agent/huginn/autoloop/cognitive_checks.py#L66-L83)
+  的 `_snapshot_structure_desc` 只从 `cog` 里找 `structure_cognitive_map/cmap/structure`
+  三个键，而 `cog` **从不携带**这些键（映射实际存在
+  `structure_cognitive_map_tool._MAPS`，引擎已有 `_get_active_cognitive_map()` 可取其最近者）。
+  即使跑结构类目标也会恒 0。
+
+**修（v31，接线补全）**：`_snapshot_structure_desc(cog, cmap=None)` 增加显式入参；
+调用点 [cognitive_loop.py:3775](file:///workspace/agent/huginn/autoloop/cognitive_loop.py#L3775)
+传入 `self._get_active_cognitive_map()`。验证：给一个带 `lattice` 的假 map 后
+`[1.0, 0, 0, 0, 0, 0.978…]`（配位数 / 空间群 225 归一）—— 通道在结构类目标下可用；
+非结构目标仍全 0（正确）。

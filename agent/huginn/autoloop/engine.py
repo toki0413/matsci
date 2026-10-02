@@ -1405,6 +1405,21 @@ class AutoloopEngine:
     def _relative_surprise(self, surprise: float, source: str = "global") -> float:
         return self._engine_reflector._relative_surprise(surprise, source)
 
+    def _routing_surprise(self) -> float:
+        """路由/决策用的 surprise 信号(秩归一, [0,1])。
+
+        v31: 硬阈值路由一律读**相对秩** `_last_surprise_rel`, 不再读原始
+        `_last_surprise`。原始值在"语义 embedder + JEPA predictor 双缺失"时回落
+        jaccard 且 `worst` 饱和在 1.0(run65 实测), 恒 >0.9 会**每轮**强制 explore
+        ⇒ 路由退化。秩信号把"当前值相对历史分布的位置"映射到 [0,1]: 恒定信号 → ~0.5
+        (中性, 不触发), 只有真正相对异常才逼近 1.0。未产出秩(首轮 / 相对化失败)时
+        回落原始值以保持旧行为。
+        """
+        rel = getattr(self, "_last_surprise_rel", None)
+        if rel is not None:
+            return float(rel)
+        return float(getattr(self, "_last_surprise", 0.0))
+
     def _compute_surprise(self, prediction: str, actual: str) -> float:
         return self._engine_reflector._compute_surprise(prediction, actual)
 

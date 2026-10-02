@@ -63,16 +63,18 @@ def _derive_light_on_track(action: str, cog: dict) -> str:
     return "unsure"
 
 
-def _snapshot_structure_desc(cog: dict) -> list[float]:
-    """从 cog 提取结构描述符, 缺失填 16 维全 0.
+def _snapshot_structure_desc(cog: dict, cmap: Any = None) -> list[float]:
+    """从活跃 StructureCognitiveMap / cog 提取结构描述符, 缺失填 16 维全 0.
 
-    episodic 快照里带一份结构向量, 供后续按空间检索. 当前 cog 不存
-    StructureCognitiveMap, 所以现在基本回退全 0; 将来 cog 挂上 cmap 后
-    这段就是入口, 不用改调用方.
+    episodic 快照里带一份结构向量, 供后续按空间检索. cmap 来源优先级:
+    显式传入 (调用方给 engine._get_active_cognitive_map()) > cog 内嵌键.
+    结构类任务 (晶体/材料) 才有活跃 map; ML/数学类目标无 map ⇒ 全 0 是正确行为
+    (该通道本就无结构信息), 不是编码器坏 —— replay_audit 的"结构编码恒零"对其是误报.
     """
     try:
         from huginn.metacog.structure_descriptor import StructureDescriptor
-        cmap = cog.get("structure_cognitive_map") or cog.get("cmap") or cog.get("structure")
+        if cmap is None:
+            cmap = cog.get("structure_cognitive_map") or cog.get("cmap") or cog.get("structure")
         if cmap is None:
             return [0.0] * 16
         vec = StructureDescriptor().encode(cmap)

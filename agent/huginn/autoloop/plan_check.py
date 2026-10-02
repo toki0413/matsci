@@ -365,8 +365,10 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         rc = getattr(self, "_refine_count", 0)
         if rc >= 3:
             hints.append(f"NOTE: 已 refine {rc} 次. 如果再失败可能需要 pivot 换方向.")
-        # surprise 高 → 预测误差大, 倾向 explore 重新假设
-        surprise = getattr(self, "_last_surprise", 0.0)
+        # surprise 高 → 预测误差大, 倾向 explore 重新假设.
+        # v31: 读秩归一信号 _routing_surprise() —— 原始 surprise 在 jaccard 回落时
+        # 饱和于 1.0, 会把"恒定"误当"高", 每轮都提示 explore.
+        surprise = self._routing_surprise()
         if surprise > 0.5:
             hints.append(
                 f"NOTE: 预测误差大 (surprise={surprise:.2f}). "
@@ -428,7 +430,9 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             logger.debug("dual coverage override skipped", exc_info=True)
         # 连败/surprise 强制 explore (合并条件, 共享覆盖路径)
         cf = getattr(self, "_consecutive_failures", 0)
-        surprise = getattr(self, "_last_surprise", 0.0)
+        # v31: 硬阈值改读秩归一信号. 原始 surprise 在 jaccard 回落时饱和 1.0 ⇒ 恒
+        # >0.9 ⇒ 每轮强制 explore(路由退化). 秩下恒定信号 ≈0.5, 不再误触发.
+        surprise = self._routing_surprise()
         explore_reasons: list[str] = []
         if cf >= 5:
             explore_reasons.append(f"连续失败{cf}次")

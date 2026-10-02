@@ -3772,7 +3772,10 @@ Respond JSON only:
                         (cog.get("hypothesis_id") or "")[:64]
                         or (hash(cog.get("hypothesis") or "") & 0xFFFFFFFF) % 10**8
                     ),
-                    "structure_desc": _snapshot_structure_desc(cog),
+                    "structure_desc": _snapshot_structure_desc(
+                        cog,
+                        getattr(self, "_get_active_cognitive_map", lambda: None)(),
+                    ),
                     # 桥 E: surprise + rule_hit 进 episodic shard, replay 可按信号检索,
                     # 不只按时间线性回溯. 缺失安全填 0.0 / "".
                     # surprise 用 per-domain 相对秩(_last_surprise_rel) — 单调于原始值,

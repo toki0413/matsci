@@ -2441,10 +2441,19 @@ class EngineReflect:
             # 避免跨量纲(span~0.28 vs jaccard~[0,1])互相错位.
             key = f"{domain}:{source}"
             hist = buckets.setdefault(key, [])
-            hist.append(float(surprise))
-            # 经验 CDF 秩: 当前值在已见样本(含自身)里的分数位置
-            le = sum(1 for x in hist if x <= float(surprise))
-            return max(0.0, min(1.0, le / len(hist)))
+            cur = float(surprise)
+            # 中位秩(排除自身): 平局取中点. 旧码把当前值并入直方图后算 le/len,
+            # 于是"当前值为历史最大(含并列)"一律映射到 1.0 —— 恒定信号即恒 1.0,
+            # 相对秩退化(实测 run65 shard 49 轮里 34 轮 =1.0). 排除自身后:
+            # 首个样本 → 0.5(中性); 恒定信号 → 0.5; 真正递增 → 逼近 1.0; 递减 → 0.
+            # 单调性与 [0,1] 契约不变, 小样本更稳.
+            _n = len(hist)
+            _below = sum(1 for x in hist if x < cur)
+            _equal = sum(1 for x in hist if x == cur)
+            hist.append(cur)
+            if _n == 0:
+                return 0.5
+            return max(0.0, min(1.0, (_below + 0.5 * _equal) / _n))
         except Exception:  # noqa: BLE001 — 相对化失败不阻塞
             logger.debug("[jepa] relative surprise failed", exc_info=True)
             return max(0.0, min(1.0, float(surprise)))
