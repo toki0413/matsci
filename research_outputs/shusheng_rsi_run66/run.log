@@ -479,3 +479,13 @@ renamed-reduction 3× consecutive: trigger counterexample hunt
 [exec-route] mode='explore' desc[:80]='Design a grid search over hidden widths w_h ∈ {8,16,32,64,128,256} and constrain' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=1839 extracted_len=1824 prompt_len=4172
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+[FINALLY-REFLECT] tool_results_this_turn=0
+control_trace name=collab_blind_reconstruct iteration=64 evidence=refute: blind_holds=False vs orig_holds=True summary_len=26 action=refute
+darwin ratchet: stagnation 7 rounds (Δ<0.5), best=2.64 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=64 evidence=stagnation=7 best=2.64 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0769 μ=2.57 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=64 evidence=sigma2=0.0769 mu=2.57 action=advisory_hint
+[exec-route] mode='explore' desc[:80]='Design and execute a systematic numerical experiment to test the hypothesis that' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1912 extracted_len=1897 prompt_len=4598
+[code-lab-run] res_none=False success=True nobj=2 reason=''
