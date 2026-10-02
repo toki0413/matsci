@@ -343,6 +343,78 @@ def should_pause_for_low_score_streak(
     return (False, "")
 
 
+def aggregate_step_scores(
+    scores: list[float], *, mode: str = "mean_min",
+) -> float | None:
+    """把一段轨迹的 step 分数滚成**单一路径 value** (MCTS rollout value).
+
+    树搜索的 select/prune 需要每个节点一个标量价值; step_verifier 只产 per-step
+    分, 这里滚成路径价值:
+    - "mean": 各步均值 (整体质量)
+    - "min":  最差步 (木桶短板 — 一步烂则整条路径不可信)
+    - "mean_min": 0.5*mean + 0.5*min (默认; 兼顾整体与短板)
+    scores 为空 → None (调用方回退旧价值, 如 tokens_used).
+    """
+    if not scores:
+        return None
+    vals = [max(0.0, min(1.0, float(s))) for s in scores]
+    mean = sum(vals) / len(vals)
+    if mode == "mean":
+        v = mean
+    elif mode == "min":
+        v = min(vals)
+    else:  # mean_min
+        v = 0.5 * mean + 0.5 * min(vals)
+    return max(0.0, min(1.0, v))
+
+
+@dataclass
+class _PseudoStepCtx:
+    """把 branch hypothesis 伪造成 step_verifier 认得的"一步".
+
+    _score_step 只读 tool_name / args / result, 这里给定最小字段集即可复用
+    现有 PRM 评分 (prompt + 解析 + 缓存) 逻辑, 不必为 branch 另写一份.
+    """
+    tool_name: str
+    args: Any = None
+    result: Any = None
+    error: Any = None
+    metadata: dict = field(default_factory=dict)
+
+
+def make_branch_value_fn(
+    hook: "StepVerifierHook",
+    *,
+    mode: str = "mean_min",
+) -> Callable[[Any], Awaitable[float | None]]:
+    """构造 BranchIncubator 的 rollout value 函数 (step_verifier 作 MCTS value).
+
+    把 branch 的 hypothesis 当成一个"提出假设"的伪 step, 交 PRM 打分, 得分即该
+    分支的路径价值 —— 复用 aggregate_step_scores 的聚合口径, 供树搜索 select/prune.
+    无 PRM LLM / 空假设 / 评分失败 → None, 调用方回退 tokens_used (旧行为).
+
+    hook 通常 = StepVerifierHook(make_default_llm_chat_fn()); 无 LLM 时返回的 value
+    恒为 None, 树搜索退化为按 token 剪枝, 行为与此前 100% 一致.
+    """
+    async def _value(branch: Any) -> float | None:
+        if hook is None or getattr(hook, "_llm", None) is None:
+            return None
+        hyp = getattr(branch, "hypothesis", "") or ""
+        if not hyp.strip():
+            return None
+        ctx = _PseudoStepCtx(
+            tool_name="propose_hypothesis",
+            args={"family": getattr(branch, "family_id", "")},
+            result=hyp,
+        )
+        score = await hook._score_step(ctx)
+        if score is None:
+            return None
+        return aggregate_step_scores([score.score], mode=mode)
+
+    return _value
+
+
 # === 自检 ===
 
 if __name__ == "__main__":
@@ -428,6 +500,35 @@ if __name__ == "__main__":
     pause, reason = should_pause_for_low_score_streak(
         [0.9, 0.8, 0.2, 0.1, 0.3])
     assert pause and "3 步" in reason
+
+    # 5b. aggregate_step_scores — rollout value 滚动
+    assert aggregate_step_scores([]) is None, "空 scores 应返回 None (回退旧价值)"
+    assert aggregate_step_scores([0.8, 0.6], mode="mean") == 0.7
+    assert aggregate_step_scores([0.8, 0.2], mode="min") == 0.2
+    # mean_min: 0.5*0.5 + 0.5*0.2 = 0.35
+    assert abs(aggregate_step_scores([0.8, 0.2]) - 0.35) < 1e-9, \
+        aggregate_step_scores([0.8, 0.2])
+    # 越界钳位
+    assert aggregate_step_scores([2.0, -1.0], mode="mean") == 0.5
+
+    # 5c. make_branch_value_fn — branch hypothesis → rollout value (mock PRM)
+    async def _fake_llm(prompt: str) -> str:
+        return '{"score": 0.8, "action": "warn", "reasoning": "ok"}'
+
+    class _Branch:
+        def __init__(self, hyp: str, fam: str = "dft") -> None:
+            self.hypothesis = hyp
+            self.family_id = fam
+            self.value = None
+
+    _vf = make_branch_value_fn(StepVerifierHook(_fake_llm))
+    assert abs(asyncio.run(_vf(_Branch("try ENCUT=500"))) - 0.8) < 1e-9
+    # 空假设 → None (不浪费 PRM 调用)
+    assert asyncio.run(_vf(_Branch("   "))) is None
+    # 无 LLM hook → None (树搜索回退 tokens)
+    assert asyncio.run(
+        make_branch_value_fn(StepVerifierHook(None))(_Branch("h"))
+    ) is None
 
     # 6. hook 调用 — 轻工具跳过 (mock ctx)
     class _MockCtx:

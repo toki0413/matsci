@@ -2042,6 +2042,28 @@ class HypothesisLoop:
         if self._branch_incubator is None:
             self._branch_incubator = BranchIncubator()
 
+        # 树由 BranchIncubator 的分叉生成: depth>=2 → layer1 每成功 branch 再派
+        # width 个 sub-branch (PTD tree-shape); step_verifier (PRM) 给每个 branch
+        # 的 hypothesis 打分作为 rollout value, 剪枝/选优优先取高价值分支.
+        # 无 PRM LLM / 关闭时 value 恒 None → 回退 tokens_used, 行为不变.
+        value_fn = None
+        if os.environ.get("HUGINN_BRANCH_VALUE_PRM", "1") == "1":
+            try:
+                from huginn.runtime.step_verifier import (
+                    StepVerifierHook,
+                    make_branch_value_fn,
+                    make_default_llm_chat_fn,
+                )
+                value_fn = make_branch_value_fn(
+                    StepVerifierHook(make_default_llm_chat_fn())
+                )
+            except Exception:  # 防御: PRM 不可用 → 树搜索退回按 token 剪枝
+                logger.debug(
+                    "branch value_fn unavailable, fallback to token prune",
+                    exc_info=True,
+                )
+                value_fn = None
+
         try:
             results = await self._branch_incubator.run_round(
                 task=prompt,
@@ -2051,8 +2073,9 @@ class HypothesisLoop:
                 researcher_intuition=context.get("researcher_intuition", ""),
                 round_idx=self._iteration,
                 total_rounds=max(self._max_pivots * 3, 10),
-                depth=int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "1")),
+                depth=int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "2")),
                 width=2,
+                value_fn=value_fn,
             )
         except Exception:  # 防御: 孵化轮失败回退主模型
             logger.warning(
@@ -2078,7 +2101,13 @@ class HypothesisLoop:
                 action="skip",
             )
             return None
-        best = min(candidates, key=lambda r: r.tokens_used)
+        # 有 rollout value 的分支优先 (value 最高, tie-break 更省 tokens);
+        # 全无 value (无 PRM) → 旧行为: tokens_used 最小.
+        valued = [r for r in candidates if r.value is not None]
+        if valued:
+            best = max(valued, key=lambda r: (r.value, -r.tokens_used))
+        else:
+            best = min(candidates, key=lambda r: r.tokens_used)
         return best.hypothesis
 
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:

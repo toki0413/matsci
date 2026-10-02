@@ -402,8 +402,107 @@ class HypothesisManifold:
                 candidate = h_id
         return self._hyp[candidate] if candidate else self._hyp[best_id]
 
+    # ── Gramian 谱预条件 (局部线性化的经验代理) ─────────────────────
+    # 控制论里局部线性化 x' = Ax + Bu 的**可控性 Gramian**
+    # W_c = ∫₀^∞ e^{At} B Bᵀ e^{Aᵀt} dt 解 Lyapunov 方程 A W_c + W_c Aᵀ = -B Bᵀ,
+    # 其主特征向量 = 以最小控制能量可达的方向 (高可控轴); 顺带给出有效可控秩.
+    # 这里没有显式 (A, B), 用**假设位移** d_j = pred_j - pred_cur 作"局部可达方向"
+    # 的经验代理, 造经验 Gramian G = Σ_j d_j d_jᵀ. G 的谱按"假设间差异量"给方向
+    # 排序: 主特征向量 = 假设空间真正展开的轴 = 高信息轴. 提议权重乘上位移在主子
+    # 空间的投影强度 → 提议沿高可控/高信息方向走, 抑制各向同性随机游走.
+    # ponytail: stdlib only; d 很小 (通常 2-3 维), 幂迭代 + 收缩足够.
+    # 升级路径: d 大时换 numpy eigh; 有真参数化时用 ∂pred/∂θ 算真 Jacobian/Observability.
+
+    def _shared_displacement(
+        self, h_i_id: str, h_j_id: str,
+    ) -> list[float] | None:
+        """d_j = pred_j - pred_i (公共 key, 排序保确定性). 无公共 key → None."""
+        h_i = self._hyp.get(h_i_id)
+        h_j = self._hyp.get(h_j_id)
+        if h_i is None or h_j is None:
+            return None
+        keys = sorted(set(h_i.predictions) & set(h_j.predictions))
+        if not keys:
+            return None
+        return [h_j.predictions[k] - h_i.predictions[k] for k in keys]
+
+    @staticmethod
+    def _gramian_eigvecs(
+        vecs: list[list[float]], k: int = 1, iters: int = 64,
+    ) -> list[list[float]]:
+        """经验 Gramian G = Σ v vᵀ 的 top-k 单位特征向量 (幂迭代 + 收缩).
+
+        返回 [] 当 vecs 空 / 维度为 0 / 全零. ponytail: d 小, 幂迭代够;
+        升级路径: numpy.linalg.eigh (d 大时 O(d³) 才划算).
+        """
+        if not vecs or not vecs[0]:
+            return []
+        d = len(vecs[0])
+        G = [[0.0] * d for _ in range(d)]
+        for v in vecs:
+            for i in range(d):
+                vi = v[i]
+                if vi == 0.0:
+                    continue
+                for j in range(d):
+                    G[i][j] += vi * v[j]
+        out: list[list[float]] = []
+        Gi = [row[:] for row in G]
+        for _ in range(max(1, min(k, d))):
+            x = [1.0 / math.sqrt(d)] * d
+            for _ in range(iters):
+                y = [sum(Gi[i][j] * x[j] for j in range(d)) for i in range(d)]
+                n = math.sqrt(sum(t * t for t in y))
+                if n < 1e-12:
+                    break
+                x = [t / n for t in y]
+            n = math.sqrt(sum(t * t for t in x))
+            if n < 1e-12:
+                break
+            x = [t / n for t in x]
+            # λ = xᵀ Gi x; 全零 / 已收缩完 (λ≈0) → 无更多有效方向, 停.
+            lam = sum(
+                x[i] * sum(Gi[i][j] * x[j] for j in range(d)) for i in range(d)
+            )
+            if lam < 1e-12:
+                break
+            out.append(x)
+            # 收缩: Gi -= λ x xᵀ
+            for i in range(d):
+                for j in range(d):
+                    Gi[i][j] -= lam * x[i] * x[j]
+        return out
+
+    @staticmethod
+    def _proj_strength(vec: list[float], eigvecs: list[list[float]]) -> float:
+        """||Vᵀ vec|| — vec 在主子空间 (列 = eigvecs) 的投影强度."""
+        s = 0.0
+        for e in eigvecs:
+            dot = sum(a * b for a, b in zip(e, vec))
+            s += dot * dot
+        return math.sqrt(s)
+
+    def _gramian_precond(
+        self, current_h_id: str, *, k: int = 1,
+    ) -> list[list[float]] | None:
+        """当前点的 Gramian 主子空间 (top-k 单位特征向量). 数据不足 → None."""
+        vecs: list[list[float]] = []
+        for h_id in self._hyp:
+            if h_id == current_h_id:
+                continue
+            d = self._shared_displacement(current_h_id, h_id)
+            if d is not None:
+                vecs.append(d)
+        if len(vecs) < 2:
+            return None
+        return self._gramian_eigvecs(vecs, k=k) or None
+
     def _fisher_proposal(
-        self, current_h_id: str, rng: random.Random, temperature: float,
+        self,
+        current_h_id: str,
+        rng: random.Random,
+        temperature: float,
+        precond: list[list[float]] | None = None,
     ) -> str:
         h_ids = list(self._hyp)
         others = [h for h in h_ids if h != current_h_id]
@@ -412,6 +511,20 @@ class HypothesisManifold:
         dists = [self.fisher_distance(current_h_id, h) for h in others]
         max_d = max(dists) if dists else 0.0
         weights = [math.exp(-(d - max_d) / temperature) for d in dists]
+        # Gramian 预条件: 位移在主子空间投影越强, 权重越大 → 沿高可控/高信息轴提议.
+        # precond=None 时行为与旧码 100% 一致 (向后兼容).
+        if precond:
+            projs: list[float] = []
+            for h in others:
+                dv = self._shared_displacement(current_h_id, h)
+                projs.append(
+                    self._proj_strength(dv, precond) if dv is not None else 0.0
+                )
+            p_max = max(projs) if projs else 0.0
+            if p_max > 1e-12:
+                weights = [
+                    w * (0.1 + 0.9 * p / p_max) for w, p in zip(weights, projs)
+                ]
         total_w = sum(weights)
         if total_w <= 0.0:
             return rng.choice(others)
@@ -583,6 +696,8 @@ class HypothesisManifold:
         alignment_enabled: bool = False,
         alignment_temperature: float = 1.0,
         global_proposal_prob: float = 0.3,
+        gramian_enabled: bool = False,
+        gramian_k: int = 1,
     ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
@@ -614,6 +729,10 @@ class HypothesisManifold:
             - 只开 haptic: 走 _haptic_proposal
             - 都不开: 走 _fisher_proposal (原逻辑)
             - 任一引导返回 None (无 structure / 无 haptic / 对齐未 ready): 退化 fisher
+
+        gramian_enabled=True 时 (默认 False, 行为 100% 不变): 给 fisher 提议加
+        Gramian 谱预条件 — 用局部假设位移构造经验 Gramian, 沿高可控/高信息主轴
+        (top-k 特征向量) 提议. 见 _gramian_precond / _fisher_proposal.
 
         Returns: (next_h_id, next_log_p) — 调用方下步传 cached_log_p_current=next_log_p.
         """
@@ -672,7 +791,16 @@ class HypothesisManifold:
             elif haptic_enabled:
                 proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
         if proposal is None:
-            proposal = self._fisher_proposal(current_h_id, rng, temperature)
+            # Gramian 预条件 (flag off → None, fisher 提议行为不变).
+            precond = None
+            if gramian_enabled:
+                try:
+                    precond = self._gramian_precond(current_h_id, k=gramian_k)
+                except Exception:  # noqa: BLE001 — 预条件失败退化原 fisher, 不阻塞
+                    logger.debug("best-effort op failed", exc_info=True)
+                    precond = None
+            proposal = self._fisher_proposal(
+                current_h_id, rng, temperature, precond=precond)
 
         # P2-7: 全局 proposal 混合 — 以 global_proposal_prob 概率从整个 hypothesis
         # 空间均匀提议, 覆盖上述局部 proposal (fisher/se3/haptic/alignment).
@@ -1591,6 +1719,53 @@ def _selfcheck() -> None:
         print("  haptic: register + proposal + cross_modal + anomaly + adjust OK")
     except ImportError:
         print("  SE(3) proposal: pymatgen unavailable, skipped (degrades to fisher)")
+
+    # Gramian 谱预条件: 位移沿主轴张开时, 主特征向量应指向该轴.
+    m_g = HypothesisManifold()
+    m_g.add(Hypothesis("cur", "current", predictions={"a": 0.0, "b": 0.0}))
+    m_g.add(Hypothesis("ax1", "axial +", predictions={"a": 10.0, "b": 0.1}))
+    m_g.add(Hypothesis("ax2", "axial -", predictions={"a": -10.0, "b": -0.1}))
+    m_g.add(Hypothesis("mn", "minor", predictions={"a": 0.1, "b": 2.0}))
+
+    _vecs = [m_g._shared_displacement("cur", h) for h in ("ax1", "ax2", "mn")]
+    _eig = m_g._gramian_eigvecs([v for v in _vecs if v], k=1)
+    assert len(_eig) == 1, f"应返回 1 个主特征向量, got {_eig}"
+    _n = math.sqrt(sum(t * t for t in _eig[0]))
+    assert abs(_n - 1.0) < 1e-6, f"特征向量应为单位向量, got norm={_n}"
+    assert abs(_eig[0][0]) > 0.9, f"主轴应指向 a 方向, got {_eig[0]}"
+
+    _pc = m_g._gramian_precond("cur", k=1)
+    assert _pc is not None and abs(_pc[0][0]) > 0.9, f"precond 主向量应指向 a, got {_pc}"
+
+    # 数据不足 (仅 1 个其他点) → None (退化 fisher)
+    m_1 = HypothesisManifold()
+    m_1.add(Hypothesis("c", "c", predictions={"a": 0.0}))
+    m_1.add(Hypothesis("o", "o", predictions={"a": 1.0}))
+    assert m_1._gramian_precond("c") is None, "仅 1 个位移点应退化 None"
+    # 全零位移 → [] (无方向)
+    assert HypothesisManifold._gramian_eigvecs([[0.0, 0.0], [0.0, 0.0]]) == [], \
+        "全零 Gramian 应返回 []"
+
+    # flag off 行为不变: 同 seed 下 gramian_enabled=False 与不带该参一致
+    _obs_g = [Observation("a", 0.0, sigma=5.0), Observation("b", 0.0, sigma=5.0)]
+    _r1, _r2 = random.Random(7), random.Random(7)
+    _c1, _c2 = "cur", "cur"
+    _lp1 = _lp2 = None
+    for _ in range(50):
+        _c1, _lp1 = m_g.mcmc_step(
+            _obs_g, _c1, rng=_r1, cached_log_p_current=_lp1)
+        _c2, _lp2 = m_g.mcmc_step(
+            _obs_g, _c2, rng=_r2, cached_log_p_current=_lp2, gramian_enabled=False)
+    assert _c1 == _c2, f"flag off 应与旧路径一致, got {_c1} vs {_c2}"
+
+    # flag on: 正常返回合法 id (预条件生效但不破坏契约)
+    _r3 = random.Random(7)
+    _c3, _lp3 = "cur", None
+    for _ in range(200):
+        _c3, _lp3 = m_g.mcmc_step(
+            _obs_g, _c3, rng=_r3, cached_log_p_current=_lp3, gramian_enabled=True)
+        assert _c3 in m_g._hyp, f"gramian 提议应返回合法 h_id, got {_c3}"
+    print("  Gramian precond: eigvec + precond + off-invariance + on-path OK")
 
 
 if __name__ == "__main__":

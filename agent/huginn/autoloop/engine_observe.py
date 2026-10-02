@@ -1002,6 +1002,12 @@ LUCID review (mandatory after generating hypothesis):
                                 cached_log_p_current=getattr(
                                     self, "_mcmc_cached_log_p", None),
                                 global_proposal_prob=0.3,
+                                # Gramian 谱预条件: 沿假设空间高可控/高信息主轴提议,
+                                # 抑制各向同性随机游走. 数据不足自动退化, 默认开.
+                                gramian_enabled=(
+                                    os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1"),
+                                gramian_k=int(os.environ.get(
+                                    "HUGINN_MCMC_GRAMIAN_K", "1")),
                             )
                             self._mcmc_current = _next_h
                             self._mcmc_cached_log_p = _next_logp

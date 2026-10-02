@@ -17,8 +17,10 @@ ponytail: 单文件, 不引入新组件. Subagent 失败降级到 family.essence
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +49,10 @@ class BranchResult:
     # P4 (chaoxu 启发): 分配的 model family (如 "openai"/"anthropic"/"deepseek").
     # 空串 = 未指定 (向后兼容). 调用方可据此选不同 profile, 实现跨模型多样性.
     model_family: str = ""
+    # rollout value (MCTS 树的价值) — 由调用方经 value_fn 注入, 典型来源是
+    # step_verifier.aggregate_step_scores (轨迹 step 分 → 路径价值, 越高越好).
+    # None = 未评分 → prune 回退旧价值 (min tokens_used), 行为不变.
+    value: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +65,7 @@ class BranchResult:
             "round_idx": self.round_idx,
             "parent_agent_id": self.parent_agent_id,
             "model_family": self.model_family,
+            "value": self.value,
         }
 
 
@@ -103,6 +110,7 @@ class BranchIncubator:
         width: int = 2,
         wave_mode: str = "push",
         model_families: list[str] | None = None,
+        value_fn: Callable[[BranchResult], Any] | None = None,
     ) -> list[BranchResult]:
         """跑一轮隔离探索.
 
@@ -120,6 +128,11 @@ class BranchIncubator:
         - model_families: 传入可用 model family 列表时, 给每个 branch 分配一个
           model_family (尽量分散), 记录在 BranchResult.model_family 供调用方调度.
           None 时不分配 (向后兼容).
+        - value_fn: rollout value 注入器 (MCTS select/prune 用). 每个 BranchResult
+          过一遍它 (可同步或 async, 典型来自 step_verifier 的 PRM 打分),
+          结果写进 .value (越高越好). layer2 prune 优先取 max value; value 缺失
+          (None) 时回退旧价值 min(tokens_used). None 时所有 .value 保持 None →
+          行为 100% 不变.
         """
         bundle = ContextBundle(
             global_math_background=math_background,
@@ -163,6 +176,8 @@ class BranchIncubator:
         # 反完成审计: 过热族 mark_blocked, 下一轮强制 redirect
         # (layer1 后调, 跟 Part 1 一致; layer2 是 refinement, 不改 family 分布)
         self._check_convergence(round_idx, total_rounds, layer1)
+        # rollout value: 给 layer1 注入价值 (value_fn=None 时全 None, 行为不变).
+        await self._assign_values(layer1, value_fn)
 
         if depth < 2:
             return layer1  # Part 1 flat 行为
@@ -170,11 +185,11 @@ class BranchIncubator:
         # Layer 2: PTD tree-shape — 每 layer1 成功 branch 派 width 个 sub-branch
         layer2_by_parent = await self._run_tree_layer(
             layer1, bundle, task, agent_factory, round_idx, width,
-            wave_mode=wave_mode,
+            wave_mode=wave_mode, value_fn=value_fn,
         )
 
-        # Prune + Fallback: 每 parent 保留 top-1 (tokens_used 最小 + success),
-        # layer1 失败 / layer2 全失败 → 回退 layer1
+        # Prune + Fallback: 每 parent 保留 top-1 (value 最大 + success;
+        # value 缺失时回退 tokens_used 最小), layer1 失败 / layer2 全失败 → 回退 layer1
         final: list[BranchResult] = []
         for l1 in layer1:
             if not l1.success or not l1.hypothesis:
@@ -185,9 +200,42 @@ class BranchIncubator:
             if not successful_subs:
                 final.append(l1)  # layer2 全失败, fallback layer1
                 continue
-            best = min(successful_subs, key=lambda r: r.tokens_used)
-            final.append(best)
+            final.append(self._pick_winner(successful_subs))
         return final
+
+    @staticmethod
+    async def _assign_values(
+        results: list[BranchResult],
+        value_fn: Callable[[BranchResult], Any] | None,
+    ) -> None:
+        """用 value_fn 给每个 branch 注入 rollout value (原地改 .value).
+
+        value_fn 可为同步或 async (返回协程时自动 await, 如 step_verifier 的
+        PRM 打分). None → 全部保持 None (旧行为). 单个失败不影响其他 branch.
+        """
+        if value_fn is None:
+            return
+        for r in results:
+            try:
+                v = value_fn(r)
+                if inspect.isawaitable(v):
+                    v = await v
+                r.value = v
+            except Exception:
+                logger.debug("branch value_fn failed (non-fatal)", exc_info=True)
+                r.value = None
+
+    @staticmethod
+    def _pick_winner(subs: list[BranchResult]) -> BranchResult:
+        """从同一 parent 的 sub-branch 里选 winner.
+
+        有 value 的优先按 value 最大 (tie-break 更省 tokens); 全无 value →
+        回退旧价值 min(tokens_used). 保证 value_fn=None 时行为 100% 不变.
+        """
+        valued = [s for s in subs if s.value is not None]
+        if valued:
+            return max(valued, key=lambda r: (r.value, -r.tokens_used))
+        return min(subs, key=lambda r: r.tokens_used)
 
     async def _run_tree_layer(
         self,
@@ -198,6 +246,7 @@ class BranchIncubator:
         round_idx: int,
         width: int,
         wave_mode: str = "push",
+        value_fn: Callable[[BranchResult], Any] | None = None,
     ) -> dict[str, list[BranchResult]]:
         """对 layer_branches 里成功的 branch 派 width 个 sub-branch 做 refinement.
 
@@ -234,6 +283,9 @@ class BranchIncubator:
                 # 不应发生, _run_single_branch 内部已 catch. 跳过, 不入 layer2
                 continue
             layer2.setdefault(parent_id, []).append(raw)
+        # prune 前先注入 rollout value (value_fn=None 时全 None, 行为不变).
+        for _subs in layer2.values():
+            await self._assign_values(_subs, value_fn)
         return layer2
 
     def _assign_families(self, n: int) -> list[str]:
@@ -597,10 +649,14 @@ def _selfcheck() -> None:
     assert d["family_id"] == "x"
     assert d["round_idx"] == 5
     assert d["parent_agent_id"] == "parent_y"
+    assert d["value"] is None, "默认 value 应为 None"
     # 默认 parent_agent_id 为空
     r2 = BranchResult(family_id="a", agent_id="b", hypothesis="c")
     assert r2.parent_agent_id == ""
     assert r2.to_dict()["parent_agent_id"] == ""
+    assert BranchResult(
+        family_id="a", agent_id="b", hypothesis="c", value=0.7,
+    ).to_dict()["value"] == 0.7
 
     # 8. depth=2 正常路径: 3 layer1 + 2×3 layer2 = 9 dispatch 调用
     mock_tree = _MockSubagentDispatch()
@@ -793,6 +849,73 @@ def _selfcheck() -> None:
         assert "[Wave mode: VERIFY" in task_content
     assert [r.model_family for r in results_combo] == ["openai", "anthropic", "deepseek"]
     print("18. P4 wave_mode=verify + model_families 组合 OK")
+
+    # 19. _pick_winner: 有 value 按 value 最大 (忽略 tokens); 全无 value 回退 min tokens
+    _s_low = BranchResult(family_id="f", agent_id="a1", hypothesis="h",
+                          tokens_used=1, value=0.2)
+    _s_high = BranchResult(family_id="f", agent_id="a2", hypothesis="h",
+                           tokens_used=9, value=0.9)
+    assert BranchIncubator._pick_winner([_s_low, _s_high]) is _s_high, \
+        "有 value 时应按 value 最大选 (不看 tokens_used)"
+    _s_a = BranchResult(family_id="f", agent_id="a1", hypothesis="h", tokens_used=5)
+    _s_b = BranchResult(family_id="f", agent_id="a2", hypothesis="h", tokens_used=2)
+    assert BranchIncubator._pick_winner([_s_a, _s_b]) is _s_b, \
+        "无 value 时应回退 min(tokens_used)"
+    print("19. _pick_winner value-priority + token fallback OK")
+
+    # 20. run_round value_fn: 注入 rollout value, prune 按 value 选 (不同于 token 选)
+    class _ValMock(_MockSubagentDispatch):
+        """tokens_used 递增, 便于区分 value 驱动 vs token 驱动选主."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._n = 0
+
+        async def dispatch(self, spec_name, task, context=None, on_state=None):
+            r = await super().dispatch(spec_name, task, context, on_state)
+            self._n += 1
+            r.tokens_used = self._n
+            return r
+
+    _res_val = asyncio.run(BranchIncubator(dispatch=_ValMock()).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        value_fn=lambda r: float(r.tokens_used),  # 越多 token value 越高
+    ))
+    assert len(_res_val) == 3
+    assert all(r.value is not None for r in _res_val), "value_fn 应写入 value"
+
+    _res_null = asyncio.run(BranchIncubator(dispatch=_ValMock()).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+    ))
+    assert all(r.value is None for r in _res_null), "无 value_fn 应保持 value=None"
+
+    _toks_val = sorted(r.tokens_used for r in _res_val)
+    _toks_null = sorted(r.tokens_used for r in _res_null)
+    assert _toks_val != _toks_null, (
+        f"value 驱动与 token 驱动应选不同 winner: {_toks_val} vs {_toks_null}"
+    )
+    assert all(v > n for v, n in zip(_toks_val, _toks_null)), (
+        f"max-value winner 应比 min-token winner 用更多 token: {_toks_val} vs {_toks_null}"
+    )
+    print("20. run_round value_fn rollout-value pruning OK")
+
+    # 21. async value_fn: 协程自动 await (如 step_verifier 的 PRM 打分)
+    async def _async_val(r: BranchResult) -> float | None:
+        await asyncio.sleep(0)
+        return 1.0 if r.tokens_used % 2 == 0 else 0.0
+
+    _res_async = asyncio.run(BranchIncubator(dispatch=_ValMock()).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        value_fn=_async_val,
+    ))
+    assert all(r.value in (0.0, 1.0) for r in _res_async), (
+        f"async value_fn 应被 await 并写入 value: "
+        f"{[r.value for r in _res_async]}"
+    )
+    print("21. run_round async value_fn (PRM coroutine) OK")
 
     print("branch_incubator selfcheck OK")
 
