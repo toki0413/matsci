@@ -382,3 +382,86 @@ metacog: 假设可能为换名归约 (trap=, target=Statement: The target functi
 [exec-route] mode='explore' desc[:80]='Systematically scan ReLU feedforward networks to measure minimal hidden layer wi' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2104 extracted_len=2089 prompt_len=4321
 [code-lab-run] res_none=False success=True nobj=3 reason=''
+[validate] mode='code_lab' success=True nobj=3 cf=False lab=True
+control_trace name=collab_blind_reconstruct iteration=54 evidence=skip: node status=refuted action=skip
+darwin ratchet: stagnation 5 rounds (Δ<0.5), best=2.60 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=54 evidence=stagnation=5 best=2.60 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0908 μ=2.55 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=54 evidence=sigma2=0.0908 mu=2.55 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Statement: The solution space is rigid due to the low intrinsic dimensionality of the target function manifold; predict: N_c(w) remains constant (e.g., N_c = 3) for all w ∈ [10, 200], because the target function can be represented by a low-dimensional manifold that does not require increased capacity as w increases.): [DIM: geometry] The solution space is rigid due to the low intrinsic dimensionality of the target fu
+plan_check failed (tier=light, scene=other, max_refines=1): The plan is exploratory but lacks concrete implementation details required for reproducibility. It fails to specify network architecture (depth, activation functions, initialization), training protocol (optimizer, learning rate, epochs, loss function), and evaluation methodology for N_c(w). The prediction of constant N_c(w) between 8-32 is arbitrary without theoretical justification or empirical evidence. The plan repeats the same pitfalls identified in the historical failure section.
+[exec-route] mode='explore' desc[:80]='Design a reproducible numerical experiment to test the hypothesis on solution sp' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=4156 extracted_len=4141 prompt_len=4622
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: Cannot take a larger sample than population when replace is False'
+[code-lab-author] raw_len=4235 extracted_len=4220 prompt_len=7545
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: Cannot take a larger sample than population when replace is False'
+[code-lab-author] raw_len=4409 extracted_len=4394 prompt_len=7545
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: Cannot take a larger sample than population when replace is False'
+[code-lab-author] raw_len=4698 extracted_len=4683 prompt_len=7545
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: Cannot take a larger sample than population when replace is False'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: Cannot take a larger sample than population when replace is False
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        y = np.sin(np.pi * X)
+        yv = np.sin(np.pi * Xv)
+    elif kind == 'fat':
+        coeffs = rng.standard_normal(5)
+        Xp = np.linspace(0.0, 1.0, 100).reshape(-1, 1)
+        basis = poly_basis(Xp, 5)
+        true_func = basis @ coeffs
+        X = rng.choice(Xp.flatten(), w, replace=False).reshape(-1, 1)
+        Xv = rng.choice(Xp.flatten(), 200, replace=False).reshape(-1, 1)
+        Xv = np.sort(Xv)
+        X = np.sort(X)
+        basis_X = poly_basis(X, 5)
+        basis_Xv = poly_basis(Xv, 5)
+        y = basis_X @ coeffs + rng.normal(0, 1e-4, (w, 1))
+        yv = basis_Xv @ coeffs + rng.normal(0, 1e-4, (200, 1))
+    else:
+        y = np.zeros((w, 1))
+        yv = np.zeros((200, 1))
+    scale = np.std(np.sin(np.pi * np.linspace(0, 1, 100)))
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def poly_basis(X, n):
+    return X ** np.arange(n)
+
+def _as_2d(x):
+    return x.reshape(-1, 1)
+
+def mlp_fit(X, y, h, seeds=3):
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import TensorDataset, DataLoader
+
+    X_t = torch.tensor(X, dtype=torch.float32)
+    y_t = torch.tensor(y, dtype=torch.float32)
+
+    class MLP(nn.Module):
+        def __init__(self, input_dim, hidden_dim, output_dim):
+            super(MLP, self).__init__()
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.Tanh(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.Tanh(),
+                nn.Linear(hidden_dim, output_dim)
+            )
+        def forward(self, x):
+            return self.net(x)
+
+    best_model = None
+    best_loss = float('inf')
+
+    for seed in range(seeds):
+        torch.manual_seed(seed)
+        model = M
