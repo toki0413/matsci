@@ -23,5 +23,31 @@
     ],
     "mode": "explore",
     "description": "Reformulate the solution space rigidity hypothesis within [DIM: geometry] by testing geometric constraints on manifolds. Construct three geometric constraint sets: (1) point-set registration on S^2 (i"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "Plan is invalid because it fails to specify the analytical constraints (e.g., polynomial or PDE residuals) to be used, making the experiment impossible to execute as described. Without these constraints, the definition of 'rigidity' and 'N_c(w)' is ill-defined and the prediction cannot be tested. Additionally, the plan lacks specific details on the numerical methods (e.g., optimization algorithm, loss function, network architecture details) required to conduct the experiment.",
+    "missing_steps": [
+      "Specify the exact analytical constraints (e.g., polynomial interpolation targets, PDE residual equations) to be used in the experiment.",
+      "Define the specific neural network architecture (e.g., number of hidden layers, activation functions beyond ReLU, initialization scheme).",
+      "Specify the training procedure (e.g., optimizer, learning rate schedule, loss function, stopping criterion).",
+      "Define the method for computing N_c(w) (e.g., how to determine the minimum width that achieves zero violation)."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to measure the solution space rigidity of small ReLU feedforward networks. Define \"rigidity\" as the existence of a finite, bounded minimum network width N_c(w"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "Plan fails to specify the exact analytical constraints (polynomial degree/PDE form), neural network architecture (depth/initialization), and training procedure (optimizer/loss/stopping criterion). Without these, the experiment is impossible to execute and N_c(w) cannot be computed. It repeats the historical failure mode of ill-defined experimental parameters.",
+    "missing_steps": [
+      "Specify analytical constraints: define polynomial interpolation targets (e.g., degree d) or PDE residual equations (e.g., form of PDE, boundary conditions)",
+      "Define neural network architecture: specify number of hidden layers, weight initialization scheme, and activation function details",
+      "Define training procedure: specify optimizer (e.g., Adam), learning rate, loss function (L2/L1), stopping criterion, and training duration",
+      "Define N_c(w) computation method: specify how to determine minimum width from validation error curves and handle statistical significance across 5 repeats"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to measure the solution space rigidity of small ReLU feedforward networks. Define \"rigidity\" as the existence of a finite, bounded minimum network width N_c(w"
   }
 ]

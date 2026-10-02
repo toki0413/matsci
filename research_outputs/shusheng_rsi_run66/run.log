@@ -219,3 +219,7 @@ plan_check failed (tier=medium, scene=other, max_refines=1): The plan fundamenta
 [code-lab-run] res_none=False success=True nobj=1 reason=''
 [validate] mode='code_lab' success=True nobj=1 cf=False lab=True
 control_trace name=collab_blind_reconstruct iteration=24 evidence=skip: node status=refuted action=skip
+plan_check failed (tier=medium, scene=other, max_refines=1): Plan fails to specify the exact analytical constraints (polynomial degree/PDE form), neural network architecture (depth/initialization), and training procedure (optimizer/loss/stopping criterion). Without these, the experiment is impossible to execute and N_c(w) cannot be computed. It repeats the historical failure mode of ill-defined experimental parameters.
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to measure the solution space rigidity' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2654 extracted_len=2639 prompt_len=4183
+[code-lab-run] res_none=False success=True nobj=4 reason=''
