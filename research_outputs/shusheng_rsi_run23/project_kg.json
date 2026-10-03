@@ -1,0 +1,191 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: functional_form] The solution space for linear constraints is rigid (low-d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:43:04.707255",
+      "last_seen": "2026-09-27T17:43:04.707255",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear (rigid) family, N_c(w) will be constant (flat) across all w values (e.g., N_c(w)=2 or 3), as a linear function is uniquely determined by 2 points. Training error and validation error wi",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: functional_form] The solution space for linear constraints is rigid (low-d"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:43:04.707303",
+      "last_seen": "2026-09-27T17:43:04.707303",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:43:04.707317",
+      "last_seen": "2026-09-27T17:43:04.707317",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T17:43:04.707328",
+      "last_seen": "2026-09-27T17:43:04.707328",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: functional_form] The solution space for linear constraints is rigid (low-d",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_c730daca"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:43:04.707461",
+      "last_seen": "2026-09-27T17:43:04.707461",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c0f46330ad7ccb19",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:44:55.158771",
+      "last_seen": "2026-09-27T17:44:55.158771",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Anchor point: at width=50, rigid family achieves training error ≤1e-4 and validation error ≤1e-3 (zero-violation achievable). Rigid family N_c(w) table: N_c(5)=N_c(10)=N_c(15)=N_c(20)=2 (flat trend, c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:44:55.158813",
+      "last_seen": "2026-09-27T17:44:55.158813",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:44:55.158823",
+      "last_seen": "2026-09-27T17:44:55.158823",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T17:44:55.158833",
+      "last_seen": "2026-09-27T17:44:55.158833",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_6a907ded"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:44:55.158925",
+      "last_seen": "2026-09-27T17:44:55.158925",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1387467ab30801ee",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: functional_form] The solution space for linear constraints is rigid (low-d",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:43:04.707328",
+      "last_seen": "2026-09-27T17:43:04.707328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c730daca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:43:04.707328",
+      "last_seen": "2026-09-27T17:43:04.707328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c730daca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:43:04.707328",
+      "last_seen": "2026-09-27T17:43:04.707328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c730daca"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:44:55.158833",
+      "last_seen": "2026-09-27T17:44:55.158833",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6a907ded"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:44:55.158833",
+      "last_seen": "2026-09-27T17:44:55.158833",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6a907ded"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:44:55.158833",
+      "last_seen": "2026-09-27T17:44:55.158833",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6a907ded"
+    }
+  ]
+}

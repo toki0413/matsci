@@ -1,6 +1,6 @@
 ---
 name: instrument-ingest
-description: Use when 需要把仪器导出的测量文件(XRD .xy / 两列文本 / 简单 CSV)解析成结构化峰位/强度摘要 JSON 供入库/比对；触发场景包括提峰、XRD 数据标准化、信号峰位提取、判断是否可能含新相、把裸两列测量数据转成可检索的测量摘要。对应 chain-of-thought: 输入仪器导出文件 → 输出"峰位+强度+FWHM+新相提示"的 JSON。
+description: 'Use when 需要把仪器导出的测量文件(XRD .xy / 两列文本 / 简单 CSV)解析成结构化峰位/强度摘要 JSON 供入库/比对；触发场景包括提峰、XRD 数据标准化、信号峰位提取、判断是否可能含新相、把裸两列测量数据转成可检索的测量摘要。对应 chain-of-thought: 输入仪器导出文件 → 输出"峰位+强度+FWHM+新相提示"的 JSON。'
 ---
 
 # instrument-ingest

@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: NEW] The solution space rigidity is determined by the algebraic structure ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T16:10:44.953551",
+      "last_seen": "2026-09-27T16:10:44.953551",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For linear constraints (rigid), N_c(w) should be flat or decreasing as w increases (small capacity suffices for unique solution). For nonlinear constraints (fat), N_c(w) should increase as w increases",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: NEW] The solution space rigidity is determined by the algebraic structure"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T16:10:44.953611",
+      "last_seen": "2026-09-27T16:10:44.953611",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T16:10:44.953625",
+      "last_seen": "2026-09-27T16:10:44.953625",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T16:10:44.953636",
+      "last_seen": "2026-09-27T16:10:44.953636",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: NEW] The solution space rigidity is determined by the algebraic structure",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_8b8366"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T16:10:44.953764",
+      "last_seen": "2026-09-27T16:10:44.953764",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "908f951b3eb92f49",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: NEW] The solution space rigidity is determined by the algebraic structure",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T16:10:44.953636",
+      "last_seen": "2026-09-27T16:10:44.953636",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8b8366"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T16:10:44.953636",
+      "last_seen": "2026-09-27T16:10:44.953636",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8b8366"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T16:10:44.953636",
+      "last_seen": "2026-09-27T16:10:44.953636",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8b8366"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally flawed because it describes a high-level conceptual investigation ('implement the capacity_scan framework') without providing the necessary executable code or numerical methodology to test the hypothesis. The 'known failure modes' explicitly warn against this exact behavior: 'current plan does not contain directly runnable numerical script'. Without concrete mathematical definitions of $N_c(w)$, the transcendental constraint system, and the network architecture, the prediction remains an untestable assertion rather than a scientific claim.",
+    "missing_steps": [
+      "Define the mathematical formulation of the non-linear transcendental constraint system (e.g., specific equations involving sin(wx) = y)",
+      "Define the metric $N_c(w)$ (network capacity) clearly—whether it refers to width, depth, number of parameters, or topological complexity",
+      "Provide executable Python code that constructs the system, scans width $w$, measures capacity $N_c(w)$, and produces numerical results",
+      "Include a baseline linear case for comparison as described in the anchor"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis posits that non-linear transcendental constraint systems exhibit \"intermediate rigidity\" where $N_c(w)$ trends flat for small $w$ but increases for large $w$. This is a direct contrast "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is purely conceptual ('Implement the family function...') and contains no executable code, mathematical definition of N_c(w), or numerical methodology. It directly violates the 'known failure mode' requirement to provide a runnable Python script with formula and print result. The prediction is untestable without concrete implementation.",
+    "missing_steps": [
+      "Define the mathematical formulation of the transport equation (advection-diffusion PDE) and the transcendental constraint system",
+      "Define N_c(w) explicitly (e.g., network width, number of parameters, topological complexity)",
+      "Write executable Python code to construct the system, scan width w, measure N_c(w), and produce numerical results",
+      "Include a baseline linear case for comparison as required by the anchor",
+      "Run the code to generate numerical data before making predictions"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the transport hypothesis (advection-diffusion linear constraint family with w samples) and run the capacity scan to measure N_c(w) trend."
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan is invalid because it lacks a directly executable Python script as required by the failure mode guidelines. The plan only describes an exploratory workflow without implementing the necessary numerical validation (import + formula + print result). Without concrete computational evidence, it cannot verify the rigidity hypothesis or produce the required N_c(w) data to compare against the prediction.",
+    "missing_steps": [
+      "Generate an executable Python script that defines the constraint system and computes N_c(w) across varying w values",
+      "Implement the rigidity test by calculating solution space dimension (e.g., via null space rank) or capacity growth trend",
+      "Print quantitative results showing whether N_c(w) is flat (dimension 0) or increasing (higher dimension)",
+      "Include numerical validation before proceeding to execute→validate phase"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis claims N_c(w) should be flat (rigid solution space) given prior iteration 20, but the current system reports a surprise score of 1.0 (worst case), indicating the prediction failed. This"
+  }
+]

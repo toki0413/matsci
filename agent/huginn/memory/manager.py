@@ -921,11 +921,17 @@ class MemoryManager:
     def _get_memory_dir(self) -> Path:
         """获取主题记忆目录，按 config 优先级回退。
 
-        优先使用 ``config.memory_dir``；否则用 ``memory_md_path`` 同级的 ``memory``
-        子目录；都没有设置时回退到 ``~/.huginn/memory``。目录会按需创建。
+        优先使用 ``config.memory_dir`` (调用方显式传入，如 RCB runner)；
+        未显式设置时读 ``$HUGINN_MEMORY_DIR`` (部署脚本 export 的持久盘目录 ——
+        此前无任何代码读取，该变量空转，长程记忆实际落 runtime home 而非持久盘)；
+        再否则用 ``memory_md_path`` 同级的 ``memory`` 子目录；都没有设置时回退到
+        ``~/.huginn/memory``。目录会按需创建。
         """
+        env_dir = os.environ.get("HUGINN_MEMORY_DIR", "").strip()
         if self.config.memory_dir:
             path = Path(self.config.memory_dir)
+        elif env_dir:
+            path = Path(env_dir)
         elif self.config.memory_md_path:
             path = self.config.memory_md_path.parent / "memory"
         else:

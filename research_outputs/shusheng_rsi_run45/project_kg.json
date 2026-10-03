@@ -1,0 +1,4194 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: structure] The solution space of a linear function is a 2-dimensional affi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:30:00.891984",
+      "last_seen": "2026-09-29T03:30:00.891984",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear family, N_c should be small (e.g., h=2 or 4) and flat across w≥5, achieving validation error ≤1e-3. For the polynomial family, N_c should be unreachable (all h≤64 yield validation error",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure] The solution space of a linear function is a 2-dimensional affi"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:30:00.892036",
+      "last_seen": "2026-09-29T03:30:00.892036",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:30:00.892050",
+      "last_seen": "2026-09-29T03:30:00.892050",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:30:00.892061",
+      "last_seen": "2026-09-29T03:30:00.892061",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of a linear function is a 2-dimensional affi",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_1405bfd1"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:30:00.892178",
+      "last_seen": "2026-09-29T03:30:00.892178",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "b42a4cbefae1e02d",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "'\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:31:36.110447",
+      "last_seen": "2026-09-29T03:31:36.110447",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Linear family will achieve validation error ≤1e3 at h=2 (width=2) with train_err ≤1e4; polynomial family will show val_err >1e3 for all h≤64 with trend='unreachable'.\nPLAN_SLOTS: (none)",
+      "persona": "reviewer",
+      "id": "experiment:'\"."
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:31:36.110520",
+      "last_seen": "2026-09-29T03:31:36.110520",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:31:36.110530",
+      "last_seen": "2026-09-29T03:31:36.110530",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:31:36.110543",
+      "last_seen": "2026-09-29T03:31:36.110543",
+      "mentions": 1,
+      "members": [
+        "experiment:'\".",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_595acbaa"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:31:36.110825",
+      "last_seen": "2026-09-29T03:31:36.110825",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "95fa53e5205a612a",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "** [DIM: geometry] The solution space of the fat polynomial family possesses a n",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:33:34.715863",
+      "last_seen": "2026-09-29T03:33:34.715863",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show val_err ≤ 1e-3 at h=2 (anchor point) with flat/decreasing N_c(w) trend; fat family will show val_err > 1e-3 for all h≤64 with trend='unreachable'. Both will have normalized y/yv",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: geometry] The solution space of the fat polynomial family possesses a n"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:33:34.715900",
+      "last_seen": "2026-09-29T03:33:34.715900",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:33:34.715911",
+      "last_seen": "2026-09-29T03:33:34.715911",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:33:34.715920",
+      "last_seen": "2026-09-29T03:33:34.715920",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: geometry] The solution space of the fat polynomial family possesses a n",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_c268b972"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:33:34.716002",
+      "last_seen": "2026-09-29T03:33:34.716002",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f6e369da77e9aba2",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid family converges to zero at rate ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:35:05.826714",
+      "last_seen": "2026-09-29T03:35:05.826714",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The linear family will achieve validation error ≤1e-3 at h=2 with flat/decreasing N_c(w) as w increases, while the fat polynomial family will show val_err >1e-3 for all h≤64 (trend='unreachable'), con",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid family converges to zero at rate"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826747",
+      "last_seen": "2026-09-29T03:35:05.826747",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826756",
+      "last_seen": "2026-09-29T03:35:05.826756",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid family converges to zero at rate",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:35:05.826833",
+      "last_seen": "2026-09-29T03:35:05.826833",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5c4e16ac2341e01e",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: computation] The approximation complexity of the fat polynomial family sca",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T03:36:04.534205",
+      "last_seen": "2026-09-29T04:13:38.543247",
+      "mentions": 2,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (linear) will achieve validation error ≤1e-3 at h=2 with flat/decreasing trend as w increases; the fat family (20th-degree polynomial) will show val_err >1e-3 for all h≤64, trend='unr",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534246",
+      "last_seen": "2026-09-29T03:36:04.534246",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534267",
+      "last_seen": "2026-09-29T03:36:04.534267",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:36:04.534354",
+      "last_seen": "2026-09-29T03:36:04.534354",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bbebc1a9bef7e331",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: computation] The approximation capacity of the fat polynomial family scale",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:37:45.441172",
+      "last_seen": "2026-09-29T03:37:45.441172",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The fat polynomial manifold will exhibit non-trivial $H_1$ (cycles) for $w > 10$ that obstruct continuous paths to held-out solutions, while the rigid manifold remains simply connected ($H_1 = 0$). Th",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The approximation capacity of the fat polynomial family scale"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441212",
+      "last_seen": "2026-09-29T03:37:45.441212",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441224",
+      "last_seen": "2026-09-29T03:37:45.441224",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The approximation capacity of the fat polynomial family scale",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:37:45.441311",
+      "last_seen": "2026-09-29T03:37:45.441311",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d56cdd3f46fb33a5",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T03:39:12.155668",
+      "last_seen": "2026-09-29T04:23:31.973538",
+      "mentions": 3,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family: anchor point (w=5, h=2, seed=0) achieves val_err ≈ 1e-4 (≤1e-3) with train_err ≈ 1e-5 (≤1e-4), N_c(w) stays flat at h=2 across w=5,10,20,50. For the fat polynomial family:",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155724",
+      "last_seen": "2026-09-29T03:39:12.155724",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155734",
+      "last_seen": "2026-09-29T03:39:12.155734",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:12.155813",
+      "last_seen": "2026-09-29T03:39:12.155813",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f24717519bae4051",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: measure] The held-out error for the rigid linear family follows a chi-squa",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:56.914679",
+      "last_seen": "2026-09-29T03:39:56.914679",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid linear family, we expect to find an anchor point with h=2~8 where val_err ≤ 1e3 and train_err ≤ 1e4. For the fat polynomial family, we expect N_c = ∞ (unreachable) across all widths h ≤",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error for the rigid linear family follows a chi-squa"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914713",
+      "last_seen": "2026-09-29T03:39:56.914713",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914723",
+      "last_seen": "2026-09-29T03:39:56.914723",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error for the rigid linear family follows a chi-squa",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:56.914799",
+      "last_seen": "2026-09-29T03:39:56.914799",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7436c42bee145cb0",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:40:38.129373",
+      "last_seen": "2026-09-29T03:40:38.129373",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will achieve zero violation (val_err ≤ 1e-3) at small widths (h=2~8) for w≥5, while the fat polynomial family will remain unreachable (val_err > 1e-3) across all widths h≤64, c",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129407",
+      "last_seen": "2026-09-29T03:40:38.129407",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129417",
+      "last_seen": "2026-09-29T03:40:38.129417",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:40:38.129511",
+      "last_seen": "2026-09-29T03:40:38.129511",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b49c1e289fbc86ab",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: measure] The generalization error of the rigid family is dominated by the ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:41:23.087569",
+      "last_seen": "2026-09-29T03:41:23.087569",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation (val_err ≤ 1e-3) at small widths (h=2-8) for w≥5, with flat N_c(w) trend; fat family will remain unreachable (val_err > 1e-3 for all h≤64) with trend='unreacha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The generalization error of the rigid family is dominated by the"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087602",
+      "last_seen": "2026-09-29T03:41:23.087602",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087611",
+      "last_seen": "2026-09-29T03:41:23.087611",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The generalization error of the rigid family is dominated by the",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:41:23.087707",
+      "last_seen": "2026-09-29T03:41:23.087707",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5c919562e9cf1e5d",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "[DIM: dynamics]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T03:42:35.513085",
+      "last_seen": "2026-09-29T04:22:31.641495",
+      "mentions": 2,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics]"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513120",
+      "last_seen": "2026-09-29T03:42:35.513120",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513129",
+      "last_seen": "2026-09-29T03:42:35.513129",
+      "mentions": 1,
+      "surprise": 0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics]",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_75436824"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:42:35.513206",
+      "last_seen": "2026-09-29T03:42:35.513206",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1bbf7b81cd9bc0d1",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:43:42.672275",
+      "last_seen": "2026-09-29T03:43:42.672275",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Implement topological data analysis (TDA) workflow to compute first homology groups (H1) for rigid (linear) and fat (high-degree polynomial) weight manifolds. Parameterize families by weights, sample",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672311",
+      "last_seen": "2026-09-29T03:43:42.672311",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672320",
+      "last_seen": "2026-09-29T03:43:42.672320",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:43:42.672402",
+      "last_seen": "2026-09-29T03:43:42.672402",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0a827dc9683b3f7d",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:45:39.098990",
+      "last_seen": "2026-09-29T03:45:39.098990",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family with w≥5, N_c(w) will be finite (h=2~8) and flat/decreasing across w, with anchor point (w=5, h=2, seed=0) achieving val_err ≤1e-3 and train_err ≤1e-4. For the fat family, all h≤6",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099023",
+      "last_seen": "2026-09-29T03:45:39.099023",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099033",
+      "last_seen": "2026-09-29T03:45:39.099033",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:45:39.099109",
+      "last_seen": "2026-09-29T03:45:39.099109",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ed3ad22b460ec5b0",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: dynamics] The rigid linear family satisfies a first-order linear transport",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:46:43.949981",
+      "last_seen": "2026-09-29T03:46:43.949981",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid linear family, N_c(w) will be small (h=2~8) and flat/decreasing with w. For the fat polynomial family, N_c will be unreachable (trend='unreachable') as all widths h≤64 will have val_err",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The rigid linear family satisfies a first-order linear transport"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:46:43.950017",
+      "last_seen": "2026-09-29T03:46:43.950017",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:46:43.950026",
+      "last_seen": "2026-09-29T03:46:43.950026",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:46:43.950034",
+      "last_seen": "2026-09-29T03:46:43.950034",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The rigid linear family satisfies a first-order linear transport",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_763bd2dd"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:46:43.950105",
+      "last_seen": "2026-09-29T03:46:43.950105",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "df803985abd2fedf",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold; ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:47:44.173821",
+      "last_seen": "2026-09-29T03:47:44.173821",
+      "mentions": 1,
+      "iteration": 75,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid linear family, N_c(w) will be small (h=2~8) and flat/decreasing as w increases. For the fat polynomial family, N_c will be unreachable (∞) within h≤64 range, with validation error remain",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold;"
+    },
+    {
+      "label": "plan_explore_iter75",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:47:44.173855",
+      "last_seen": "2026-09-29T03:47:44.173855",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter75"
+    },
+    {
+      "label": "pass_iter75",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:47:44.173865",
+      "last_seen": "2026-09-29T03:47:44.173865",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter75"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:47:44.173874",
+      "last_seen": "2026-09-29T03:47:44.173874",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold;",
+        "Method:plan_explore_iter75",
+        "Fact:pass_iter75"
+      ],
+      "iteration": 75,
+      "id": "he_experiment_pipeline_62e55067"
+    },
+    {
+      "label": "reviewer_iter75",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:47:44.173940",
+      "last_seen": "2026-09-29T03:47:44.173940",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f6ce0aa1fb3ccc5b",
+      "r_phys": 1.0,
+      "iteration": 75,
+      "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:48:41.739799",
+      "last_seen": "2026-09-29T03:48:41.739799",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear family, N_c(w) will be small (h=2~4) and flat or decreasing as w increases, with anchor point (w=5, h=2, seed=0) achieving val_err ≤1e-3 and train_err ≤1e-4. For the polynomial family,",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739854",
+      "last_seen": "2026-09-29T03:48:41.739854",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739865",
+      "last_seen": "2026-09-29T03:48:41.739865",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:48:41.739998",
+      "last_seen": "2026-09-29T03:48:41.739998",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bf243d8a539384c0",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815757",
+      "last_seen": "2026-09-29T03:49:51.815757",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815775",
+      "last_seen": "2026-09-29T03:49:51.815775",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:49:51.815855",
+      "last_seen": "2026-09-29T03:49:51.815855",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "88db0ce391ec0659",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:50:51.734317",
+      "last_seen": "2026-09-29T03:50:51.734317",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family, will achieve val_err ≤1e-3 at small widths (h=2-8) with flat or decreasing N_c(w) trend; for the fat family, will show val_err >1e-3 across all widths h≤64 with trend='unr",
+      "persona": "reviewer",
+      "id": "experiment:[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734354",
+      "last_seen": "2026-09-29T03:50:51.734354",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734375",
+      "last_seen": "2026-09-29T03:50:51.734375",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "members": [
+        "experiment:[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:50:51.734450",
+      "last_seen": "2026-09-29T03:50:51.734450",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7c99fa75e97e779e",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: dynamics] The generalization gap in the fat polynomial family arises from ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:51:53.229263",
+      "last_seen": "2026-09-29T03:51:53.229263",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Define the weight manifold geometry for rigid (linear) and fat (polynomial) families; implement Vietoris-Rips filtration on weight trajectories to compute persistent homology (H1 groups); analyze the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The generalization gap in the fat polynomial family arises from"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:51:53.229297",
+      "last_seen": "2026-09-29T03:51:53.229297",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:51:53.229307",
+      "last_seen": "2026-09-29T03:51:53.229307",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:51:53.229316",
+      "last_seen": "2026-09-29T03:51:53.229316",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The generalization gap in the fat polynomial family arises from",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_87e44979"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:51:53.229386",
+      "last_seen": "2026-09-29T03:51:53.229386",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "820149b8b2df144f",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "** [DIM: computation]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:53:47.134625",
+      "last_seen": "2026-09-29T03:53:47.134625",
+      "mentions": 1,
+      "iteration": 100,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (linear), will find anchor point (e.g., w=5, h=2, seed=0) with train_err ≤1e-4 and val_err ≤1e-3; for the fat family (20th-degree polynomial), will observe val_err >1e-3 across al",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: computation]"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:53:47.134659",
+      "last_seen": "2026-09-29T03:53:47.134659",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:53:47.134668",
+      "last_seen": "2026-09-29T03:53:47.134668",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:53:47.134678",
+      "last_seen": "2026-09-29T03:53:47.134678",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: computation]",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_a33665ad"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:53:47.134746",
+      "last_seen": "2026-09-29T03:53:47.134746",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "570d16e2184ac997",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:54:47.610155",
+      "last_seen": "2026-09-29T03:54:47.610155",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The linear rigid family will achieve val_err ≤ 1e-3 at h=2 with w≥5 (anchor point), showing flat/decreasing N_c(w) trend. The polynomial fat family will have val_err > 1e-3 for all h≤64, showing unrea",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610190",
+      "last_seen": "2026-09-29T03:54:47.610190",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610203",
+      "last_seen": "2026-09-29T03:54:47.610203",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:54:47.610284",
+      "last_seen": "2026-09-29T03:54:47.610284",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9a375f06801e6f88",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "[DIM: structure] The linear rigid family forms an affine subspace of codimension",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:55:46.567203",
+      "last_seen": "2026-09-29T03:55:46.567203",
+      "mentions": 1,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family with w=5, seed=0, h=2, train_err will be ~1e-5 and val_err ~5e-4 (zero violation achieved). For the fat family (20th-order polynomial), all widths h≤64 will yield val_err >",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The linear rigid family forms an affine subspace of codimension"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567238",
+      "last_seen": "2026-09-29T03:55:46.567238",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567248",
+      "last_seen": "2026-09-29T03:55:46.567248",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The linear rigid family forms an affine subspace of codimension",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:55:46.567324",
+      "last_seen": "2026-09-29T03:55:46.567324",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5d32fd8254a30344",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "[DIM: dynamics] The linear rigid family defines a solution space that evolves as",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:56:47.699940",
+      "last_seen": "2026-09-29T03:56:47.699940",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Linear family achieves val_err ≤ 1e-3 at h=2 (e.g., w=5, seed=0) with train_err ≤ 1e-4; polynomial family shows val_err > 1e-3 for all h≤64 with trend='unreachable', confirming fat signature.\nPLAN_SLO",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The linear rigid family defines a solution space that evolves as"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.699980",
+      "last_seen": "2026-09-29T03:56:47.699980",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700003",
+      "last_seen": "2026-09-29T03:56:47.700003",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The linear rigid family defines a solution space that evolves as",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:56:47.700094",
+      "last_seen": "2026-09-29T03:56:47.700094",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0bf4599c3a6f1e89",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
+    },
+    {
+      "label": "[DIM: measure] The heldout error distribution for the rigid family exhibits heav",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:57:53.861470",
+      "last_seen": "2026-09-29T03:57:53.861470",
+      "mentions": 1,
+      "iteration": 120,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Median heldout errors will remain ≤1e3 across all w and seeds while max errors exceed 1e3 in some cases (particularly at low w), confirming heavy-tailed behavior and supporting the hypothesis that the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The heldout error distribution for the rigid family exhibits heav"
+    },
+    {
+      "label": "plan_explore_iter120",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:57:53.861512",
+      "last_seen": "2026-09-29T03:57:53.861512",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter120"
+    },
+    {
+      "label": "pass_iter120",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:57:53.861521",
+      "last_seen": "2026-09-29T03:57:53.861521",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter120"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:57:53.861530",
+      "last_seen": "2026-09-29T03:57:53.861530",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The heldout error distribution for the rigid family exhibits heav",
+        "Method:plan_explore_iter120",
+        "Fact:pass_iter120"
+      ],
+      "iteration": 120,
+      "id": "he_experiment_pipeline_fccf03e7"
+    },
+    {
+      "label": "reviewer_iter120",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:57:53.861609",
+      "last_seen": "2026-09-29T03:57:53.861609",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d8cf14f45b533d42",
+      "r_phys": 1.0,
+      "iteration": 120,
+      "id": "persona_use:reviewer_iter120"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold w",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:59:05.279983",
+      "last_seen": "2026-09-29T03:59:05.279983",
+      "mentions": 1,
+      "iteration": 125,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Implement topological and geometric analysis for both families: (1) parameterize the rigid family f(x)=ax+b as a 2D affine manifold in function space, verify invariance under weight translation algebr",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold w"
+    },
+    {
+      "label": "plan_explore_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:59:05.280033",
+      "last_seen": "2026-09-29T03:59:05.280033",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:59:05.280046",
+      "last_seen": "2026-09-29T03:59:05.280046",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:59:05.280056",
+      "last_seen": "2026-09-29T03:59:05.280056",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold w",
+        "Method:plan_explore_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_943daa5a"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:59:05.280135",
+      "last_seen": "2026-09-29T03:59:05.280135",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3380e862c3d5cb84",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "[DIM: geometry] The solution space of the rigid linear family forms a 2-dimensio",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:00:06.045055",
+      "last_seen": "2026-09-29T04:00:06.045055",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will achieve zero violation (val_err ≤ 1e-3) at small widths (h=2-8) for sufficient w, demonstrating finite N_c. The fat polynomial family will show val_err > 1e-3 across all w",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space of the rigid linear family forms a 2-dimensio"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:00:06.045090",
+      "last_seen": "2026-09-29T04:00:06.045090",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:00:06.045100",
+      "last_seen": "2026-09-29T04:00:06.045100",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:00:06.045110",
+      "last_seen": "2026-09-29T04:00:06.045110",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space of the rigid linear family forms a 2-dimensio",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_25cface4"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:00:06.045177",
+      "last_seen": "2026-09-29T04:00:06.045177",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "759e15d878870232",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
+    },
+    {
+      "label": "[DIM: measure] The heldout error for the rigid linear family follows a monotonic",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:03:04.625614",
+      "last_seen": "2026-09-29T04:03:04.625614",
+      "mentions": 1,
+      "iteration": 135,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will achieve val_err ≤ 1e-3 at small h (e.g., h=2 or h=4) for w≥5, with N_c(w) flat or decreasing. The fat polynomial family will show val_err > 1e-3 for all h≤64 with trend='u",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The heldout error for the rigid linear family follows a monotonic"
+    },
+    {
+      "label": "plan_explore_iter135",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625649",
+      "last_seen": "2026-09-29T04:03:04.625649",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter135"
+    },
+    {
+      "label": "pass_iter135",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625658",
+      "last_seen": "2026-09-29T04:03:04.625658",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter135"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The heldout error for the rigid linear family follows a monotonic",
+        "Method:plan_explore_iter135",
+        "Fact:pass_iter135"
+      ],
+      "iteration": 135,
+      "id": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "label": "reviewer_iter135",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:03:04.625741",
+      "last_seen": "2026-09-29T04:03:04.625741",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "43bf9df842bbed84",
+      "r_phys": 1.0,
+      "iteration": 135,
+      "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T04:04:42.841418",
+      "last_seen": "2026-09-29T04:11:42.683662",
+      "mentions": 2,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family (linear), N_c will be finite (likely h=2 or 4) with val_err ≤1e3 for w≥5; trend flat/decreasing. For fat family (20th-order polynomial), val_err >1e3 for all h≤64 across seeds, trend=",
+      "persona": "reviewer",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:04:42.841454",
+      "last_seen": "2026-09-29T04:04:42.841454",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:04:42.841464",
+      "last_seen": "2026-09-29T04:04:42.841464",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:04:42.841472",
+      "last_seen": "2026-09-29T04:04:42.841472",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_382124ab"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:04:42.841545",
+      "last_seen": "2026-09-29T04:04:42.841545",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "874b85690b84b1f7",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
+    },
+    {
+      "label": "[DIM: measure] The generalization gap for the rigid family is governed by the Ra",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:05:40.903087",
+      "last_seen": "2026-09-29T04:05:40.903087",
+      "mentions": 1,
+      "iteration": 145,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve val_err ≤ 1e-3 at h=2 (e.g., w=5, seed=0) with train_err ~ 1e-5; fat family will show val_err > 1e-3 for all h≤64 across seeds, with trend='unreachable'. Normalized y/yv will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The generalization gap for the rigid family is governed by the Ra"
+    },
+    {
+      "label": "plan_explore_iter145",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:05:40.903121",
+      "last_seen": "2026-09-29T04:05:40.903121",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter145"
+    },
+    {
+      "label": "pass_iter145",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:05:40.903130",
+      "last_seen": "2026-09-29T04:05:40.903130",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter145"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:05:40.903138",
+      "last_seen": "2026-09-29T04:05:40.903138",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The generalization gap for the rigid family is governed by the Ra",
+        "Method:plan_explore_iter145",
+        "Fact:pass_iter145"
+      ],
+      "iteration": 145,
+      "id": "he_experiment_pipeline_b116e64f"
+    },
+    {
+      "label": "reviewer_iter145",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:05:40.903205",
+      "last_seen": "2026-09-29T04:05:40.903205",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "dedd14831789c7be",
+      "r_phys": 1.0,
+      "iteration": 145,
+      "id": "persona_use:reviewer_iter145"
+    },
+    {
+      "label": "** [DIM: geometry]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:06:42.383393",
+      "last_seen": "2026-09-29T04:06:42.383393",
+      "mentions": 1,
+      "iteration": 150,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Implement capacity_scan workflow with corrected methodology: (1) Define rigid family as f(x)=ax+b with constraint a^2+b^2=1 (2 parameters) and fat family as 20th-order polynomial with normalized basis",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: geometry]"
+    },
+    {
+      "label": "plan_explore_iter150",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:06:42.383427",
+      "last_seen": "2026-09-29T04:06:42.383427",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter150"
+    },
+    {
+      "label": "pass_iter150",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:06:42.383437",
+      "last_seen": "2026-09-29T04:06:42.383437",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter150"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:06:42.383447",
+      "last_seen": "2026-09-29T04:06:42.383447",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: geometry]",
+        "Method:plan_explore_iter150",
+        "Fact:pass_iter150"
+      ],
+      "iteration": 150,
+      "id": "he_experiment_pipeline_bdffd45c"
+    },
+    {
+      "label": "reviewer_iter150",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:06:42.383516",
+      "last_seen": "2026-09-29T04:06:42.383516",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a8045700d2b85000",
+      "r_phys": 1.0,
+      "iteration": 150,
+      "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:09:00.219324",
+      "last_seen": "2026-09-29T04:09:00.219324",
+      "mentions": 1,
+      "iteration": 155,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family's held-out MSE will follow χ²(198) distribution with mean≈198 and variance≈396 (normalized), with KS test p-value>0.05 confirming consistency. The fat polynomial family will sh",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219364",
+      "last_seen": "2026-09-29T04:09:00.219364",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219374",
+      "last_seen": "2026-09-29T04:09:00.219374",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:09:00.219462",
+      "last_seen": "2026-09-29T04:09:00.219462",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6ad1dcbf1f774b13",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear family forms a **2-dimensional affine manifold",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:09:59.420512",
+      "last_seen": "2026-09-29T04:09:59.420512",
+      "mentions": 1,
+      "iteration": 160,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: at h=2, w≥5, seed=0, val_err ≤ 1e-3, train_err ≤ 1e-4, N_c(w) is flat/decreasing. Fat family: all h≤64 yield val_err > 1e-3, trend='unreachable', N_c=∞. y and yv shapes are (N,1), overla",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear family forms a **2-dimensional affine manifold"
+    },
+    {
+      "label": "plan_explore_iter160",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:59.420555",
+      "last_seen": "2026-09-29T04:09:59.420555",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter160"
+    },
+    {
+      "label": "pass_iter160",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:59.420565",
+      "last_seen": "2026-09-29T04:09:59.420565",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter160"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:09:59.420574",
+      "last_seen": "2026-09-29T04:09:59.420574",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear family forms a **2-dimensional affine manifold",
+        "Method:plan_explore_iter160",
+        "Fact:pass_iter160"
+      ],
+      "iteration": 160,
+      "id": "he_experiment_pipeline_8787d4c9"
+    },
+    {
+      "label": "reviewer_iter160",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:09:59.420655",
+      "last_seen": "2026-09-29T04:09:59.420655",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a67d193230c224a0",
+      "r_phys": 1.0,
+      "iteration": 160,
+      "id": "persona_use:reviewer_iter160"
+    },
+    {
+      "label": "plan_explore_iter165",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:11:42.683707",
+      "last_seen": "2026-09-29T04:11:42.683707",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter165"
+    },
+    {
+      "label": "pass_iter165",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:11:42.683726",
+      "last_seen": "2026-09-29T04:11:42.683726",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter165"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:11:42.683736",
+      "last_seen": "2026-09-29T04:11:42.683736",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter165",
+        "Fact:pass_iter165"
+      ],
+      "iteration": 165,
+      "id": "he_experiment_pipeline_eaefc8c7"
+    },
+    {
+      "label": "reviewer_iter165",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:11:42.683805",
+      "last_seen": "2026-09-29T04:11:42.683805",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5194a514349b5d64",
+      "r_phys": 1.0,
+      "iteration": 165,
+      "id": "persona_use:reviewer_iter165"
+    },
+    {
+      "label": "** [DIM: geometry] The solution space of the rigid linear family forms a 2-dimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:12:37.525473",
+      "last_seen": "2026-09-29T04:12:37.525473",
+      "mentions": 1,
+      "iteration": 170,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will achieve validation error ≤1e-3 at small widths (h=2-8) with flat or decreasing N_c(w) trend, while the fat polynomial family will show unreachable N_c (all h≤64 yield val_",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: geometry] The solution space of the rigid linear family forms a 2-dimen"
+    },
+    {
+      "label": "plan_explore_iter170",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:12:37.525509",
+      "last_seen": "2026-09-29T04:12:37.525509",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter170"
+    },
+    {
+      "label": "pass_iter170",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:12:37.525518",
+      "last_seen": "2026-09-29T04:12:37.525518",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter170"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:12:37.525526",
+      "last_seen": "2026-09-29T04:12:37.525526",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: geometry] The solution space of the rigid linear family forms a 2-dimen",
+        "Method:plan_explore_iter170",
+        "Fact:pass_iter170"
+      ],
+      "iteration": 170,
+      "id": "he_experiment_pipeline_6921d93b"
+    },
+    {
+      "label": "reviewer_iter170",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:12:37.525596",
+      "last_seen": "2026-09-29T04:12:37.525596",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6f46e7f7dd03db05",
+      "r_phys": 1.0,
+      "iteration": 170,
+      "id": "persona_use:reviewer_iter170"
+    },
+    {
+      "label": "plan_explore_iter175",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:13:38.543270",
+      "last_seen": "2026-09-29T04:13:38.543270",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter175"
+    },
+    {
+      "label": "pass_iter175",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:13:38.543288",
+      "last_seen": "2026-09-29T04:13:38.543288",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter175"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:13:38.543298",
+      "last_seen": "2026-09-29T04:13:38.543298",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca",
+        "Method:plan_explore_iter175",
+        "Fact:pass_iter175"
+      ],
+      "iteration": 175,
+      "id": "he_experiment_pipeline_7dd80bda"
+    },
+    {
+      "label": "reviewer_iter175",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:13:38.543373",
+      "last_seen": "2026-09-29T04:13:38.543373",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d4318303ecd8e3a4",
+      "r_phys": 1.0,
+      "iteration": 175,
+      "id": "persona_use:reviewer_iter175"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold i",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:14:40.621988",
+      "last_seen": "2026-09-29T04:14:40.621988",
+      "mentions": 1,
+      "iteration": 180,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear family, N_c(w) will be finite (h=2-8) and flat/decreasing as w increases; for the fat polynomial family, N_c will be unreachable (trend='unreachable') across all h≤64, confirming the \"f",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold i"
+    },
+    {
+      "label": "plan_explore_iter180",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:14:40.622036",
+      "last_seen": "2026-09-29T04:14:40.622036",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter180"
+    },
+    {
+      "label": "pass_iter180",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:14:40.622046",
+      "last_seen": "2026-09-29T04:14:40.622046",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter180"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:14:40.622056",
+      "last_seen": "2026-09-29T04:14:40.622056",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold i",
+        "Method:plan_explore_iter180",
+        "Fact:pass_iter180"
+      ],
+      "iteration": 180,
+      "id": "he_experiment_pipeline_1599f047"
+    },
+    {
+      "label": "reviewer_iter180",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:14:40.622135",
+      "last_seen": "2026-09-29T04:14:40.622135",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6c1b9059f26d2d7a",
+      "r_phys": 1.0,
+      "iteration": 180,
+      "id": "persona_use:reviewer_iter180"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of small networks on the rigid linear family f",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:15:47.620028",
+      "last_seen": "2026-09-29T04:15:47.620028",
+      "mentions": 1,
+      "iteration": 185,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will exhibit trivial H1 (homologically simple) with constant Gaussian curvature ~0, producing a U-shaped error curve due to boundary effects in a compact manifold. The fat poly",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of small networks on the rigid linear family f"
+    },
+    {
+      "label": "plan_explore_iter185",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620069",
+      "last_seen": "2026-09-29T04:15:47.620069",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter185"
+    },
+    {
+      "label": "pass_iter185",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620080",
+      "last_seen": "2026-09-29T04:15:47.620080",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter185"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of small networks on the rigid linear family f",
+        "Method:plan_explore_iter185",
+        "Fact:pass_iter185"
+      ],
+      "iteration": 185,
+      "id": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "label": "reviewer_iter185",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:15:47.620167",
+      "last_seen": "2026-09-29T04:15:47.620167",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f1302de60b91844b",
+      "r_phys": 1.0,
+      "iteration": 185,
+      "id": "persona_use:reviewer_iter185"
+    },
+    {
+      "label": "[DIM: structure] The solution space of the rigid linear family is a 2-dimensiona",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:16:47.419390",
+      "last_seen": "2026-09-29T04:16:47.419390",
+      "mentions": 1,
+      "iteration": 190,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve val_err ≤ 1e-3 at h=2 for w≥5 (anchor point), while the fat family will show val_err > 1e-3 across all h≤64 (trend='unreachable'). N_c(w) for the rigid family will be fla",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space of the rigid linear family is a 2-dimensiona"
+    },
+    {
+      "label": "plan_explore_iter190",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:16:47.419431",
+      "last_seen": "2026-09-29T04:16:47.419431",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter190"
+    },
+    {
+      "label": "pass_iter190",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:16:47.419441",
+      "last_seen": "2026-09-29T04:16:47.419441",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter190"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:16:47.419451",
+      "last_seen": "2026-09-29T04:16:47.419451",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the rigid linear family is a 2-dimensiona",
+        "Method:plan_explore_iter190",
+        "Fact:pass_iter190"
+      ],
+      "iteration": 190,
+      "id": "he_experiment_pipeline_e5ad6745"
+    },
+    {
+      "label": "reviewer_iter190",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:16:47.419528",
+      "last_seen": "2026-09-29T04:16:47.419528",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a69f686601542643",
+      "r_phys": 1.0,
+      "iteration": 190,
+      "id": "persona_use:reviewer_iter190"
+    },
+    {
+      "label": "[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:18:03.036720",
+      "last_seen": "2026-09-29T04:18:03.036720",
+      "mentions": 1,
+      "iteration": 195,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will exhibit non-trivial first Čech cohomology (H¹ ≠ 0) due to non-trivial gluing obstructions of locally linear sections, while the contractible fat family will have H¹ = 0.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹"
+    },
+    {
+      "label": "plan_explore_iter195",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036756",
+      "last_seen": "2026-09-29T04:18:03.036756",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter195"
+    },
+    {
+      "label": "pass_iter195",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036765",
+      "last_seen": "2026-09-29T04:18:03.036765",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter195"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹",
+        "Method:plan_explore_iter195",
+        "Fact:pass_iter195"
+      ],
+      "iteration": 195,
+      "id": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "label": "reviewer_iter195",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:18:03.036844",
+      "last_seen": "2026-09-29T04:18:03.036844",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b168c0d7d9dfa6ab",
+      "r_phys": 1.0,
+      "iteration": 195,
+      "id": "persona_use:reviewer_iter195"
+    },
+    {
+      "label": "[DIM: measure] The held-out error for the rigid family follows a **Pareto-type t",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:19:13.145158",
+      "last_seen": "2026-09-29T04:19:13.145158",
+      "mentions": 1,
+      "iteration": 200,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (linear function), at w=5, h=2, seed=0, train_err ≤ 1e-4 and held-out error ≤ 1e-3 will be achieved. For the fat family (20th-degree polynomial), all widths h ≤ 64 will yield held",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error for the rigid family follows a **Pareto-type t"
+    },
+    {
+      "label": "plan_explore_iter200",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:19:13.145193",
+      "last_seen": "2026-09-29T04:19:13.145193",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter200"
+    },
+    {
+      "label": "pass_iter200",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:19:13.145202",
+      "last_seen": "2026-09-29T04:19:13.145202",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter200"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:19:13.145211",
+      "last_seen": "2026-09-29T04:19:13.145211",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error for the rigid family follows a **Pareto-type t",
+        "Method:plan_explore_iter200",
+        "Fact:pass_iter200"
+      ],
+      "iteration": 200,
+      "id": "he_experiment_pipeline_d411099d"
+    },
+    {
+      "label": "reviewer_iter200",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:19:13.145278",
+      "last_seen": "2026-09-29T04:19:13.145278",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7d0aaa9ee89673cb",
+      "r_phys": 1.0,
+      "iteration": 200,
+      "id": "persona_use:reviewer_iter200"
+    },
+    {
+      "label": "[DIM: geometry] The solution space of the rigid linear family forms a **2-dimens",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:20:18.437950",
+      "last_seen": "2026-09-29T04:20:18.437950",
+      "mentions": 1,
+      "iteration": 205,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (linear), at h=2, w=5, seed=0, train_err ≤ 1e-4 and val_err ≤ 1e-3 (zero violation achieved). For the fat family (20th-degree polynomial), all widths h ≤ 64 yield val_err > 1e-3 w",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space of the rigid linear family forms a **2-dimens"
+    },
+    {
+      "label": "plan_explore_iter205",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:20:18.437984",
+      "last_seen": "2026-09-29T04:20:18.437984",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter205"
+    },
+    {
+      "label": "pass_iter205",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:20:18.437993",
+      "last_seen": "2026-09-29T04:20:18.437993",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter205"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:20:18.438002",
+      "last_seen": "2026-09-29T04:20:18.438002",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space of the rigid linear family forms a **2-dimens",
+        "Method:plan_explore_iter205",
+        "Fact:pass_iter205"
+      ],
+      "iteration": 205,
+      "id": "he_experiment_pipeline_c867f162"
+    },
+    {
+      "label": "reviewer_iter205",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:20:18.438073",
+      "last_seen": "2026-09-29T04:20:18.438073",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "591cffd4ae5ef832",
+      "r_phys": 1.0,
+      "iteration": 205,
+      "id": "persona_use:reviewer_iter205"
+    },
+    {
+      "label": "[DIM: dynamics] The zero-violation condition for the rigid family corresponds to",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:21:14.815487",
+      "last_seen": "2026-09-29T04:21:14.815487",
+      "mentions": 1,
+      "iteration": 210,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family (linear): at h=2, w=5, seed=0, train_err ~ 1e-5 and val_err ≤ 1e-3 (zero violation achieved). For fat family (20th polynomial): all h≤64 show val_err > 1e-3 with trend='unreachable'.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The zero-violation condition for the rigid family corresponds to"
+    },
+    {
+      "label": "plan_explore_iter210",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815521",
+      "last_seen": "2026-09-29T04:21:14.815521",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter210"
+    },
+    {
+      "label": "pass_iter210",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815530",
+      "last_seen": "2026-09-29T04:21:14.815530",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter210"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The zero-violation condition for the rigid family corresponds to",
+        "Method:plan_explore_iter210",
+        "Fact:pass_iter210"
+      ],
+      "iteration": 210,
+      "id": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "label": "reviewer_iter210",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:21:14.815608",
+      "last_seen": "2026-09-29T04:21:14.815608",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "05d150f8ff4bf51e",
+      "r_phys": 1.0,
+      "iteration": 210,
+      "id": "persona_use:reviewer_iter210"
+    },
+    {
+      "label": "plan_explore_iter215",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:22:31.641518",
+      "last_seen": "2026-09-29T04:22:31.641518",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter215"
+    },
+    {
+      "label": "pass_iter215",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:22:31.641536",
+      "last_seen": "2026-09-29T04:22:31.641536",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter215"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:22:31.641547",
+      "last_seen": "2026-09-29T04:22:31.641547",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics]",
+        "Method:plan_explore_iter215",
+        "Fact:pass_iter215"
+      ],
+      "iteration": 215,
+      "id": "he_experiment_pipeline_fa7d3461"
+    },
+    {
+      "label": "reviewer_iter215",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:22:31.641616",
+      "last_seen": "2026-09-29T04:22:31.641616",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0f3031363dc42fdf",
+      "r_phys": 1.0,
+      "iteration": 215,
+      "id": "persona_use:reviewer_iter215"
+    },
+    {
+      "label": "plan_explore_iter220",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:23:31.973563",
+      "last_seen": "2026-09-29T04:23:31.973563",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter220"
+    },
+    {
+      "label": "pass_iter220",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:23:31.973580",
+      "last_seen": "2026-09-29T04:23:31.973580",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter220"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:23:31.973595",
+      "last_seen": "2026-09-29T04:23:31.973595",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+        "Method:plan_explore_iter220",
+        "Fact:pass_iter220"
+      ],
+      "iteration": 220,
+      "id": "he_experiment_pipeline_e23fa97a"
+    },
+    {
+      "label": "reviewer_iter220",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:23:31.973665",
+      "last_seen": "2026-09-29T04:23:31.973665",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c563ec51c5e295be",
+      "r_phys": 1.0,
+      "iteration": 220,
+      "id": "persona_use:reviewer_iter220"
+    },
+    {
+      "label": "**[DIM: dynamics]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T04:25:20.535306",
+      "last_seen": "2026-09-29T04:27:19.187191",
+      "mentions": 2,
+      "iteration": 225,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$H^0(S^1, \\mathcal{F}) \\cong \\mathbb{R}$ (global constant functions), $H^1(S^1, \\mathcal{F}) \\cong \\mathbb{R}$ (non-trivial topological obstruction), confirming the sheaf has non-vanishing first cohom",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: dynamics]**"
+    },
+    {
+      "label": "plan_explore_iter225",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535344",
+      "last_seen": "2026-09-29T04:25:20.535344",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter225"
+    },
+    {
+      "label": "pass_iter225",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535354",
+      "last_seen": "2026-09-29T04:25:20.535354",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter225"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: dynamics]**",
+        "Method:plan_explore_iter225",
+        "Fact:pass_iter225"
+      ],
+      "iteration": 225,
+      "id": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "label": "reviewer_iter225",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:25:20.535429",
+      "last_seen": "2026-09-29T04:25:20.535429",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5fbf92ddcb5d5462",
+      "r_phys": 1.0,
+      "iteration": 225,
+      "id": "persona_use:reviewer_iter225"
+    },
+    {
+      "label": "[DIM: computation] The fat family (high-degree polynomial) exhibits approximatio",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:26:20.174882",
+      "last_seen": "2026-09-29T04:26:20.174882",
+      "mentions": 1,
+      "iteration": 230,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation (val_err ≤ 1e-3) at small widths (h=2~8) across multiple seeds and w values, with N_c(w) remaining finite and flat/decreasing. Fat family will show val_err > 1",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The fat family (high-degree polynomial) exhibits approximatio"
+    },
+    {
+      "label": "plan_explore_iter230",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:26:20.174925",
+      "last_seen": "2026-09-29T04:26:20.174925",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter230"
+    },
+    {
+      "label": "pass_iter230",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:26:20.174934",
+      "last_seen": "2026-09-29T04:26:20.174934",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter230"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:26:20.174943",
+      "last_seen": "2026-09-29T04:26:20.174943",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The fat family (high-degree polynomial) exhibits approximatio",
+        "Method:plan_explore_iter230",
+        "Fact:pass_iter230"
+      ],
+      "iteration": 230,
+      "id": "he_experiment_pipeline_b675fe7c"
+    },
+    {
+      "label": "reviewer_iter230",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:26:20.175018",
+      "last_seen": "2026-09-29T04:26:20.175018",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "eaa8f1e81db73bea",
+      "r_phys": 1.0,
+      "iteration": 230,
+      "id": "persona_use:reviewer_iter230"
+    },
+    {
+      "label": "plan_explore_iter235",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187214",
+      "last_seen": "2026-09-29T04:27:19.187214",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter235"
+    },
+    {
+      "label": "pass_iter235",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187233",
+      "last_seen": "2026-09-29T04:27:19.187233",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter235"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: dynamics]**",
+        "Method:plan_explore_iter235",
+        "Fact:pass_iter235"
+      ],
+      "iteration": 235,
+      "id": "he_experiment_pipeline_43b8ba2a"
+    },
+    {
+      "label": "reviewer_iter235",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:27:19.187312",
+      "last_seen": "2026-09-29T04:27:19.187312",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1f27f9f9e61b40ac",
+      "r_phys": 1.0,
+      "iteration": 235,
+      "id": "persona_use:reviewer_iter235"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of a linear function is a 2-dimensional affi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:30:00.892061",
+      "last_seen": "2026-09-29T03:30:00.892061",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1405bfd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:30:00.892061",
+      "last_seen": "2026-09-29T03:30:00.892061",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1405bfd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:30:00.892061",
+      "last_seen": "2026-09-29T03:30:00.892061",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1405bfd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'\".",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:31:36.110543",
+      "last_seen": "2026-09-29T03:31:36.110543",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_595acbaa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:31:36.110543",
+      "last_seen": "2026-09-29T03:31:36.110543",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_595acbaa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:31:36.110543",
+      "last_seen": "2026-09-29T03:31:36.110543",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_595acbaa"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: geometry] The solution space of the fat polynomial family possesses a n",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:33:34.715920",
+      "last_seen": "2026-09-29T03:33:34.715920",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c268b972"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:33:34.715920",
+      "last_seen": "2026-09-29T03:33:34.715920",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c268b972"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:33:34.715920",
+      "last_seen": "2026-09-29T03:33:34.715920",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c268b972"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid family converges to zero at rate",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:13:38.543298",
+      "last_seen": "2026-09-29T04:13:38.543298",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7dd80bda"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The approximation capacity of the fat polynomial family scale",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:23:31.973595",
+      "last_seen": "2026-09-29T04:23:31.973595",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23fa97a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error for the rigid linear family follows a chi-squa",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The generalization error of the rigid family is dominated by the",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_75436824"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:22:31.641547",
+      "last_seen": "2026-09-29T04:22:31.641547",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fa7d3461"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_75436824"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_75436824"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The rigid linear family satisfies a first-order linear transport",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:46:43.950034",
+      "last_seen": "2026-09-29T03:46:43.950034",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_763bd2dd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:46:43.950034",
+      "last_seen": "2026-09-29T03:46:43.950034",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_763bd2dd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:46:43.950034",
+      "last_seen": "2026-09-29T03:46:43.950034",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_763bd2dd"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold;",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:47:44.173874",
+      "last_seen": "2026-09-29T03:47:44.173874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_62e55067"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:47:44.173874",
+      "last_seen": "2026-09-29T03:47:44.173874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_62e55067"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:47:44.173874",
+      "last_seen": "2026-09-29T03:47:44.173874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_62e55067"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The generalization gap in the fat polynomial family arises from",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:51:53.229316",
+      "last_seen": "2026-09-29T03:51:53.229316",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87e44979"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:51:53.229316",
+      "last_seen": "2026-09-29T03:51:53.229316",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87e44979"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:51:53.229316",
+      "last_seen": "2026-09-29T03:51:53.229316",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87e44979"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: computation]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:53:47.134678",
+      "last_seen": "2026-09-29T03:53:47.134678",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a33665ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:53:47.134678",
+      "last_seen": "2026-09-29T03:53:47.134678",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a33665ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:53:47.134678",
+      "last_seen": "2026-09-29T03:53:47.134678",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a33665ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The linear rigid family forms an affine subspace of codimension",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The linear rigid family defines a solution space that evolves as",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The heldout error distribution for the rigid family exhibits heav",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:57:53.861530",
+      "last_seen": "2026-09-29T03:57:53.861530",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fccf03e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:57:53.861530",
+      "last_seen": "2026-09-29T03:57:53.861530",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fccf03e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:57:53.861530",
+      "last_seen": "2026-09-29T03:57:53.861530",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fccf03e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold w",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:59:05.280056",
+      "last_seen": "2026-09-29T03:59:05.280056",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_943daa5a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:59:05.280056",
+      "last_seen": "2026-09-29T03:59:05.280056",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_943daa5a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:59:05.280056",
+      "last_seen": "2026-09-29T03:59:05.280056",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_943daa5a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space of the rigid linear family forms a 2-dimensio",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:00:06.045110",
+      "last_seen": "2026-09-29T04:00:06.045110",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_25cface4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:00:06.045110",
+      "last_seen": "2026-09-29T04:00:06.045110",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_25cface4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:00:06.045110",
+      "last_seen": "2026-09-29T04:00:06.045110",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_25cface4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The heldout error for the rigid linear family follows a monotonic",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:04:42.841472",
+      "last_seen": "2026-09-29T04:04:42.841472",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_382124ab"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:11:42.683736",
+      "last_seen": "2026-09-29T04:11:42.683736",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_eaefc8c7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:04:42.841472",
+      "last_seen": "2026-09-29T04:04:42.841472",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_382124ab"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:04:42.841472",
+      "last_seen": "2026-09-29T04:04:42.841472",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_382124ab"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The generalization gap for the rigid family is governed by the Ra",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:05:40.903138",
+      "last_seen": "2026-09-29T04:05:40.903138",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b116e64f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:05:40.903138",
+      "last_seen": "2026-09-29T04:05:40.903138",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b116e64f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:05:40.903138",
+      "last_seen": "2026-09-29T04:05:40.903138",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b116e64f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: geometry]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:06:42.383447",
+      "last_seen": "2026-09-29T04:06:42.383447",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bdffd45c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:06:42.383447",
+      "last_seen": "2026-09-29T04:06:42.383447",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bdffd45c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:06:42.383447",
+      "last_seen": "2026-09-29T04:06:42.383447",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bdffd45c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear family forms a **2-dimensional affine manifold",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:59.420574",
+      "last_seen": "2026-09-29T04:09:59.420574",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8787d4c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:59.420574",
+      "last_seen": "2026-09-29T04:09:59.420574",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8787d4c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:59.420574",
+      "last_seen": "2026-09-29T04:09:59.420574",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8787d4c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:11:42.683736",
+      "last_seen": "2026-09-29T04:11:42.683736",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_eaefc8c7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:11:42.683736",
+      "last_seen": "2026-09-29T04:11:42.683736",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_eaefc8c7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: geometry] The solution space of the rigid linear family forms a 2-dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:12:37.525526",
+      "last_seen": "2026-09-29T04:12:37.525526",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6921d93b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter170",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:12:37.525526",
+      "last_seen": "2026-09-29T04:12:37.525526",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6921d93b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter170",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:12:37.525526",
+      "last_seen": "2026-09-29T04:12:37.525526",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6921d93b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter175",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:13:38.543298",
+      "last_seen": "2026-09-29T04:13:38.543298",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7dd80bda"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter175",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:13:38.543298",
+      "last_seen": "2026-09-29T04:13:38.543298",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7dd80bda"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold i",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:14:40.622056",
+      "last_seen": "2026-09-29T04:14:40.622056",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1599f047"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:14:40.622056",
+      "last_seen": "2026-09-29T04:14:40.622056",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1599f047"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:14:40.622056",
+      "last_seen": "2026-09-29T04:14:40.622056",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1599f047"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of small networks on the rigid linear family f",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the rigid linear family is a 2-dimensiona",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:16:47.419451",
+      "last_seen": "2026-09-29T04:16:47.419451",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e5ad6745"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter190",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:16:47.419451",
+      "last_seen": "2026-09-29T04:16:47.419451",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e5ad6745"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter190",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:16:47.419451",
+      "last_seen": "2026-09-29T04:16:47.419451",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e5ad6745"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error for the rigid family follows a **Pareto-type t",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:19:13.145211",
+      "last_seen": "2026-09-29T04:19:13.145211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d411099d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:19:13.145211",
+      "last_seen": "2026-09-29T04:19:13.145211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d411099d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:19:13.145211",
+      "last_seen": "2026-09-29T04:19:13.145211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d411099d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space of the rigid linear family forms a **2-dimens",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:20:18.438002",
+      "last_seen": "2026-09-29T04:20:18.438002",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c867f162"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter205",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:20:18.438002",
+      "last_seen": "2026-09-29T04:20:18.438002",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c867f162"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter205",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:20:18.438002",
+      "last_seen": "2026-09-29T04:20:18.438002",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c867f162"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The zero-violation condition for the rigid family corresponds to",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter210",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter210",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:22:31.641547",
+      "last_seen": "2026-09-29T04:22:31.641547",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fa7d3461"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:22:31.641547",
+      "last_seen": "2026-09-29T04:22:31.641547",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fa7d3461"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter220",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:23:31.973595",
+      "last_seen": "2026-09-29T04:23:31.973595",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23fa97a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter220",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:23:31.973595",
+      "last_seen": "2026-09-29T04:23:31.973595",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23fa97a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: dynamics]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: dynamics]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_43b8ba2a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The fat family (high-degree polynomial) exhibits approximatio",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:26:20.174943",
+      "last_seen": "2026-09-29T04:26:20.174943",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b675fe7c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter230",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:26:20.174943",
+      "last_seen": "2026-09-29T04:26:20.174943",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b675fe7c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter230",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:26:20.174943",
+      "last_seen": "2026-09-29T04:26:20.174943",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b675fe7c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter235",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_43b8ba2a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter235",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_43b8ba2a"
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "514faf5a71b4",
+    "reason": "The plan is invalid because the hypothesis/target is completely missing (the `# 目标 (hypothesis)` section in the prompt is empty/blank). Without a defined hypothesis or target function family, the experiment cannot be designed or validated. The description mentions a 'target function family' but does not specify what it is, making the prediction and experimental setup ungrounded. Additionally, the plan mentions using symbolic regression to identify the functional form of the solution space, but without knowing the target function, this step is impossible to execute.",
+    "missing_steps": [
+      "Define the specific target function family (e.g., polynomial, trigonometric, or other mathematical form) with varying constraint density w.",
+      "Specify the exact mathematical definition of 'constraint density' w (e.g., number of constraints per input dimension, ratio of constraints to parameters, etc.).",
+      "Define the metric for 'zero violation' more precisely (currently it's 'max absolute error ≤ 1e-3' but need to confirm this is the correct metric for the hypothesis).",
+      "Specify the range of w values to scan and the range of hidden widths N to test.",
+      "Define what constitutes 'rigid' vs 'fat' in quantitative terms (currently the definitions are given but need to be operationalized in the experiment).",
+      "Specify the training procedure (optimization algorithm, loss function, initialization, stopping criteria, etc.)."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a bootstrap experiment to test if small feedforward networks act as probes of solution space rigidity. Define a target function family with varying constraint density w, train small"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "514faf5a71b4",
+    "reason": "The plan is invalid because the hypothesis/target is completely missing (the `# 目标 (hypothesis)` section in the prompt is empty/blank). Without a defined hypothesis or target function family, the experiment cannot be designed or validated. The description mentions a 'target function family' but does not specify what it is, making the prediction and experimental setup ungrounded. Additionally, the plan mentions using symbolic regression to identify the functional form of the solution space, but without knowing the target function, this step is impossible to execute.",
+    "missing_steps": [
+      "Define the specific target function family (e.g., polynomial, trigonometric, or other mathematical form) with varying constraint density w.",
+      "Specify the exact mathematical definition of 'constraint density' w (e.g., number of constraints per input dimension, ratio of constraints to parameters, etc.).",
+      "Define the metric for 'zero violation' more precisely (currently it's 'max absolute error ≤ 1e-3' but need to confirm this is the correct metric for the hypothesis).",
+      "Specify the range of w values to scan and the range of hidden widths N to test.",
+      "Define what constitutes 'rigid' vs 'fat' in quantitative terms (currently the definitions are given but need to be operationalized in the experiment).",
+      "Specify the training procedure (optimization algorithm, loss function, initialization, stopping criteria, etc.)"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a bootstrap experiment to test if small feedforward networks act as probes of solution space rigidity. Define a target function family of 2D polynomial constraints $f(x,y) = \\sum_{i"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "8afac5a2bca8",
+    "reason": "The plan is invalid due to a fundamental mathematical inconsistency in the hypothesis formulation. The hypothesis states that for w > r, N_c(w) should plateau at r (the rank). However, the plan asks to find the minimum width N_c(w) such that error <= 1e-3. By the universal approximation theorem, a single-hidden-layer network with width N can exactly interpolate N points (zero error). Therefore, for w > r, the minimum width required to achieve zero error on w constraints would be N_c(w) = w, not r. This contradicts the predicted plateau behavior. The plan tests an impossible condition (N_c(w) = r for w > r) rather than a plausible one.",
+    "missing_steps": [
+      "Reformulate hypothesis: N_c(w) should likely scale as min(w, r) for w <= r, but for w > r, N_c(w) should likely be w (since you need at least w neurons to fit w points), OR the hypothesis should predict a different functional form.",
+      "Clarify the definition of 'rank of constraint matrix' in the dual space for polynomial identities - this needs precise mathematical definition.",
+      "Define what 'zero violation' means precisely in the context of polynomial identity constraints - is it exact satisfaction or tolerance-based?"
+    ],
+    "mode": "coder",
+    "description": "Create a Python script that implements the numerical experiment for the hypothesis: (1) generate polynomial identity constraints (e.g., Vandermonde-style polynomial evaluations) to define a constraine"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "8afac5a2bca8",
+    "reason": "The plan suffers from the same fundamental mathematical inconsistency as the previous failure mode. The hypothesis claims N_c(w) plateaus at r (constraint rank) when w >= r, but the plan tests 'zero violation' on w constraints. By universal approximation principles, to satisfy w independent constraints exactly, you need at least w parameters (width w), not r. The plan conflates 'solution space dimension' (which might plateau) with 'minimum width to achieve zero error' (which should scale with w). The prediction that solution space dimension plateaus is mathematically plausible, but it doesn't test the hypothesis about N_c(w) = min(r,w). The plan needs to clearly distinguish between these two concepts and test the correct one.",
+    "missing_steps": [
+      "Clarify whether testing 'solution space dimension saturation' or 'minimum width for zero error' - these are different quantities",
+      "Reformulate the hypothesis to be mathematically consistent: if testing solution space dimension, the prediction should be about dimension, not N_c(w); if testing N_c(w), the prediction should scale with w, not r, for w > r",
+      "Define precisely what 'rank of constraint matrix in dual space' means for polynomial identities in this context",
+      "Define 'zero violation' tolerance consistently (currently 1e-3 is specified but may not align with exact polynomial identity requirements)"
+    ],
+    "mode": "explore",
+    "description": "Reformulate the hypothesis to test the rigidity of the solution space rather than interpolation capacity. We will generate polynomial identity constraints with a known dual constraint matrix rank $r$,"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "554345bf8d09",
+    "reason": "The plan is fundamentally invalid because it misunderstands the hypothesis and the nature of the task. The hypothesis concerns the 'solution space of constraints' being locally rigid, which implies a geometry of the set of points satisfying the constraints. The proposed experiment trains a neural network to satisfy constraints, which is a function approximation problem, not a geometry analysis problem. The minimal network width $N_c(w)$ measures the capacity of the network to fit data, not the intrinsic dimension of the solution manifold. A network can easily fit a low-dimensional manifold with a small width, but this does not prove the manifold's solution space is rigid or that its effective dimension is bounded. The experiment tests network capacity, not manifold rigidity. Furthermore, the plan lacks any definition of what constitutes a 'constraint' on a manifold or how the 'solution space' is defined or sampled, making it impossible to verify the hypothesis.",
+    "missing_steps": [
+      "Define the mathematical structure of the constraint set on the manifold (e.g., as the zero set of a function or as a set of points satisfying specific equations).",
+      "Define 'solution space rigidity' in measurable geometric terms (e.g., using intrinsic dimension estimates like correlation dimension, or measuring the width of the solution set under perturbations).",
+      "Design an experiment that directly measures the geometric properties of the solution space (e.g., sampling points from the solution space and estimating its dimension), not the capacity of a network to fit them.",
+      "Clarify the relationship between the network width and the solution space geometry; the current plan conflates function approximation with geometric dimensionality."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ remains bounded as constraint sample count $w$ increases, due to the low intrinsic dimension $d$ of the solu"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "554345bf8d09",
+    "reason": "The plan misunderstands the hypothesis and the task requirements. The hypothesis concerns network capacity (N_c(w)) required to satisfy constraints on a manifold, but the proposed experiment focuses purely on manifold geometry analysis (PCA, Jacobian, correlation dimension) without any network training or evaluation of constraint satisfaction. It fails to measure N_c(w) or test for 'zero violation' at all, which is the core metric defined in the hard requirements. This is exactly the same failure mode as identified in the historical failures: conflating function approximation with geometric dimensionality.",
+    "missing_steps": [
+      "Define the constraint set explicitly (e.g., as zero set of f: R^w -> R^(w-d))",
+      "Implement small feedforward networks of varying widths N_c",
+      "Train networks on sampled constraint points from the manifold",
+      "Measure maximum absolute error on held-out constraint points (threshold: 1e-3)",
+      "Determine minimal N_c achieving zero violation for each w",
+      "Plot N_c(w) trend vs w to check if it saturates at d",
+      "Verify rigidity condition: finite N_c exists that does not grow with w"
+    ],
+    "mode": "explore",
+    "description": "Redesign the experiment to directly analyze the geometric structure of the solution space rather than network capacity. (1) Define the solution manifold $M$ as the zero set of a smooth function $f: \\m"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "7c48f6aecd29",
+    "reason": "The plan fundamentally misdefines the hypothesis. The hypothesis states N_c(w) is determined by the rank of the constraint matrix in the dual space, but the plan incorrectly defines w as the number of constraint samples and N_c(w) as the minimum hidden width needed to achieve zero violation. This is a critical conceptual error: w should represent the constraint parameter (not sample count), and N_c(w) should be a property of the constraint matrix rank, not a network training threshold. The plan confuses the independent variable (constraint parameter w) with the dependent variable (network capacity N_c). Additionally, the 'rigid' vs 'fat' classification is incorrectly framed as a binary reachability issue rather than a saturation vs linear growth behavior.",
+    "missing_steps": [
+      "Correctly define w as the constraint parameter (not sample count)",
+      "Define N_c(w) as the rank of the constraint matrix in dual space, not minimum hidden width for zero violation",
+      "Implement proper algebraic dependency testing for constraint sets",
+      "Establish clear mathematical definition of saturation point w_s",
+      "Define linear growth criteria for fat family with proper scaling"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and implement a numerical experiment to test the hypothesis about minimal network capacity N_c(w). Create a Python script that: (1) generates two types of constrain"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "9c5eccf867c5",
+    "reason": "The plan confuses the variable definitions. The hypothesis states $N_c(w)$ is the minimal network capacity (width) required to fit $w$ constraints. The plan incorrectly describes $N_c(w)$ as 'measuring the minimal width required' while simultaneously stating 'vary $w$ (constraint count)' as the independent variable for the scan. This creates a circular definition: if you vary constraint count $w$, $N_c$ becomes a function of $w$ only if the minimal width also changes with $w$, but the hypothesis claims $N_c$ is a threshold function of width $w$ for a fixed constraint set. Furthermore, the plan lacks a clear definition of 'manifold covering number' and how to compute it to identify the transition point.",
+    "missing_steps": [
+      "Clarify the definition of $N_c(w)$: Is it the minimal width needed to fit $w$ constraints, or is it the capacity threshold for a fixed set of constraints as width varies?",
+      "Define the manifold covering number explicitly and specify how to compute or estimate it in the experiment.",
+      "Specify whether the constraint set size is fixed (testing capacity vs width) or varying (testing capacity vs constraint count).",
+      "Include a step to generate the synthetic low-dimensional manifold with known intrinsic dimension $d$ and covering number."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and execute a controlled numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales with the intrinsic dimension $d$ of a constraint "
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "c767c9688b49",
+    "reason": "The plan explicitly violates the hypothesis requirement to 'State the mathematics explicitly ... before proposing numerical experiments'. The plan jumps straight to designing and executing numerical experiments without first defining the mathematical structure of the bootstrap solution space rigidity, the analytical constraints, or the theoretical framework. This violates the core instruction to state mathematics first, then propose experiments.",
+    "missing_steps": [
+      "Explicitly define the mathematical structure of bootstrap solution space rigidity",
+      "Formally define the set of w analytical constraints (polynomial interpolation conditions)",
+      "Define the mathematical relationship between network capacity N_c and constraint violation",
+      "State the theoretical framework connecting small feedforward networks to solution space rigidity",
+      "Before proposing numerical experiments, provide the mathematical formulation that the experiments will test"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution space rigidity. Define the mathematical structure: a set of w analytical const"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "c767c9688b49",
+    "reason": "The plan explicitly violates the hypothesis requirement to 'State the mathematics explicitly ... before proposing numerical experiments'. The plan jumps straight into designing and executing numerical experiments without first formally defining the mathematical structure of the bootstrap solution space rigidity, the analytical constraints, or the theoretical framework connecting network capacity to solution space rigidity. This directly matches the documented historical failure for this scenario.",
+    "missing_steps": [
+      "Explicitly define the mathematical structure of bootstrap solution space rigidity",
+      "Formally define the set of w analytical constraints (polynomial interpolation conditions)",
+      "Define the mathematical relationship between network capacity N_c and constraint violation",
+      "State the theoretical framework connecting small feedforward networks to solution space rigidity",
+      "Provide the mathematical formulation that the experiments will test before proposing numerical experiments"
+    ],
+    "mode": "explore",
+    "description": "Explicitly define the mathematical structure of bootstrap solution space rigidity: for a function class F, define the solution space S_w = {f ∈ F : |f(x_i) - y_i| ≤ ε, i=1..w} for w analytical constra"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "9cbcae3979e9",
+    "reason": "The plan is fundamentally flawed due to a critical definition error in the experimental setup. It defines 'w' as the 'constraint sample count' (number of data points), whereas the hypothesis explicitly states that 'w' represents the network hidden width. Consequently, the proposed experiment measures N_c(m) (capacity vs. sample size) rather than N_c(w) (capacity vs. width), rendering the results irrelevant to the hypothesis. Furthermore, the plan incorrectly conflates 'generalization error' on holdout data with 'constraint violation' on the specific training constraints, and fails to specify the constraint set geometry (e.g., high-dimensional manifold vs. linear constraints), which is essential for determining VC-dimension scaling.",
+    "missing_steps": [
+      "Correct the definition of 'w' to represent network hidden width, not sample count.",
+      "Explicitly define the constraint set geometry (e.g., specific analytical functions or manifolds) to enable VC-dimension analysis.",
+      "Replace holdout generalization error with direct constraint violation measurement (max absolute error on constraint points).",
+      "Establish a baseline or control experiment to verify the 'rigid' (constant N_c) vs. 'fat' (increasing N_c) behavior before testing the specific w/log(w) scaling."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales as $w / \\log(w)$ rather than remaining constant. Define the constraint set (analytical fu"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "9cbcae3979e9",
+    "reason": "The plan correctly identifies 'w' as network hidden width (fixing the previous critical error), but it lacks concrete experimental details required for reproducibility: no specific network architecture (activation functions, layers), no optimization protocol (loss function, training steps, convergence criteria), no specified constraint set geometry beyond 'unit circle' (needs explicit parameterization), and no defined scan range for widths. Without these, the prediction cannot be verified numerically. Additionally, the plan does not address how to measure 'constraint violation' precisely (e.g., via residual minimization or adversarial sampling), nor how to ensure the 'zero violation' threshold (1e-3) is consistently met during training.",
+    "missing_steps": [
+      "Define exact network architecture (e.g., 1-hidden-layer ReLU net with width w)",
+      "Specify loss function and training procedure (optimizer, epochs, batch size)",
+      "Define constraint set geometry precisely (e.g., sampled points on unit circle with noise tolerance)",
+      "Establish clear criterion for 'zero violation' (max absolute error ≤ 1e-3 on holdout constraint points)",
+      "Define width scan range (e.g., w ∈ [10, 500]) and step size",
+      "Include control experiment with linear constraints (e.g., y = x) to validate constant N_c baseline"
+    ],
+    "mode": "explore",
+    "description": "Design a corrected numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales as $w / \\log(w)$. Define 'w' strictly as the network hidden width (not sample count). Defin"
+  }
+]

@@ -1,0 +1,144 @@
+{
+  "config": {
+    "kind": "hi",
+    "widths": [
+      16,
+      32,
+      64
+    ],
+    "ns": [
+      2,
+      4,
+      8
+    ],
+    "seeds": 1,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 3,
+    "tag": "loop04_s2"
+  },
+  "anchor": "u''=-(8pi)^2 cos(8pi x), u*=cos(8pi x)+0.3x-0.2 (2 DOF, 高频表达瓶颈对照)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 16,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.863495868633719,
+      "v_ho_med_all": 4109019.5703110653,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 0.004792676946342502,
+      "v_ho_med_all": 0.006086891751605086,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 8,
+      "pass_frac": 0.0,
+      "v_tr_med": 9.844698182597174,
+      "v_ho_med_all": 151558.46573264737,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 0.1820950551540399,
+      "v_ho_med_all": 189016.81545835984,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 15499.915583908612,
+      "v_ho_med_all": 3911322.2250323948,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 8,
+      "pass_frac": 0.0,
+      "v_tr_med": 89043.87752841042,
+      "v_ho_med_all": 9323557.730545884,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 42082.492365526916,
+      "v_ho_med_all": 52699361.51210239,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 40009.3163621378,
+      "v_ho_med_all": 8662229.441822177,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 8,
+      "pass_frac": 0.0,
+      "v_tr_med": 0.0008167318006502465,
+      "v_ho_med_all": 56.806815037355655,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    }
+  ],
+  "N_c": {
+    "all": {
+      "16": null,
+      "32": null,
+      "64": null
+    },
+    "good": {
+      "16": null,
+      "32": null,
+      "64": null
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    }
+  },
+  "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+  "elapsed_s": 917.4189937114716
+}

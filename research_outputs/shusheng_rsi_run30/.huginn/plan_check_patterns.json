@@ -1,0 +1,39 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan is flawed due to a critical methodology gap: it does not specify how the 'constraint graph' or 'constraint manifold' is constructed from the 'linear' and 'polynomial' families. The hypothesis specifically tests topological connectivity (Betti number), but the plan only describes function implementation and error metrics. Without defining the graph topology (e.g., variables as nodes, constraints as edges, or constraint satisfaction as a manifold), measuring the Betti number is impossible. This matches the [high] methodology_gap for structural data leakage/insufficient definition.",
+    "missing_steps": [
+      "Define the mapping from constraint families to the constraint graph structure (nodes/edges definition).",
+      "Specify how the first Betti number $\beta_1$ is computed for the constraint manifold.",
+      "Ensure scaffold-aware split to avoid structural leakage between training and held-out sets as warned in known failure patterns.",
+      "Clarify the relationship between sample count $w$ and network width $h$ to avoid the confounder of coupled variables."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the linear constraint family (rigid case) and the polynomial constraint family (fat case) to test the hypothesis. Ensure data is normal"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan is invalid primarily because it lacks a concrete, executable code implementation as required by the 'advisory: execute' note. The DESCRIPTION describes a workflow ('implement a capacity-scan workflow') but does not contain the actual Python code to run the experiment. Without a runnable script, the 'explore' mode cannot produce numerical results to verify the prediction or the hypothesis. Additionally, the hypothesis regarding 'solution space rigidity' and 'constraint graph connectivity' in neural networks is abstract and lacks a clear mathematical definition or mapping to standard machine learning metrics, making verification difficult without a rigorous theoretical framework or established benchmark.",
+    "missing_steps": [
+      "Generate a concrete, executable Python script implementing the capacity_scan workflow with defined linear and polynomial constraint families.",
+      "Define the 'constraint graph' and its 'topological connectivity' in the context of neural network training to ensure the hypothesis is mathematically well-posed.",
+      "Implement scaffold-aware splits or other data-leakage prevention methods as per the 'methodology_gap: [data-leakage-structural]' warning.",
+      "Validate the rigidity anchor (≤1e3 heldout error) and unreachable trend with actual numerical results before attempting to draw conclusions about the hypothesis."
+    ],
+    "mode": "explore",
+    "description": "The hypothesis that solution-space rigidity maps to constraint-graph connectivity requires empirical testing via bootstrap probing of small neural networks. We will implement a capacity-scan workflow:"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to define the mathematical structure underlying the hypothesis. Specifically, it does not specify how to construct the constraint graph (nodes/edges) from constraint families or how to compute the topological invariant (Betti number). Testing topological invariance requires measuring connectivity changes (e.g., via persistent homology or graph Betti numbers), but the plan only describes error metrics (max absolute error) and network width, which are insufficient to validate a topological claim. Additionally, it repeats the historical failure of not defining the mapping from constraints to topology and lacks scaffold-aware splitting to prevent structural leakage.",
+    "missing_steps": [
+      "Define constraint graph structure: specify how variables map to nodes and constraints map to edges (or define the constraint manifold geometry).",
+      "Specify method to compute topological invariant (e.g., first Betti number β₁) for the constraint manifold under affine transformations.",
+      "Implement scaffold-aware split (by space group or structural prototype) to prevent data leakage between training and test sets.",
+      "Clarify relationship between sample count w and network width h to avoid confounding variables.",
+      "Define optimization hyperparameters (optimizer, learning rate, epochs, batch size) to ensure fair comparison across widths."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function that generates rigid constraint families (affine-invariant) and fat constraint families (non-invariant) for the capacity scan experiment. The"
+  }
+]

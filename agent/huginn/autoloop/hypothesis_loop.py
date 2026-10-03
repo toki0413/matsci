@@ -29,6 +29,12 @@ from huginn.autoloop.hypothesis_events import HypothesisEventStore
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
 )
+from huginn.autoloop.signals import (
+    hypothesis_strength,
+    routing_surprise,
+    strength_branch_depth,
+    strength_schedule_enabled,
+)
 from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
@@ -143,6 +149,40 @@ def _extract_dimension(statement: str) -> str:
     return _classify_dimension(statement)
 
 
+# ── 实质内容 / 重复守卫 ──────────────────────────────────────────────────────
+# LLM 偶发把 markdown 强调符 / 裸 [DIM: ...] 标签当成假设陈述输出. 这类空壳
+# (run37: 193 节点里 154 个 statement 是 "**" 或仅 DIM 标签) 只灌 frontier 不含
+# 可检验内容, 且会跨轮反复入图 → 图膨胀但无信息. 在 add_hypothesis 入口统一拦截,
+# 一处覆盖主路径 / backup / crossover / pivot 全部生产者.
+_DIM_TAG_RE = re.compile(r"\[DIM:[^\]]*\]", re.IGNORECASE)
+_NON_SUBSTANTIVE_RE = re.compile(
+    r"[*_`>#~\[\](){}|:;,.!?\"'“”‘’、，。；：！？·\s\-—–]+"
+)
+_WORD_CHAR_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]")
+
+
+def _is_substantive_statement(statement: str, min_chars: int = 1) -> bool:
+    """去掉 markdown / [DIM: ...] 标签 / 标点后, 是否仍有实质字符.
+
+    目标空壳是 **0 实质字符** 的形态 ("**" / 仅 [DIM: x] 标签 / 纯标点) —— 它们
+    去掉标签和标点后长度归零. 故门限取 1 即可全覆盖, 不再误伤 "H1"/"假设 A" 这类
+    短陈述 (旧值 4 属过度收紧: run37 的空壳全是 0 字符, 不需要 4; 却把短标签
+    测试与真实短命题如 "E=mc2" 一并拒掉 → add_hypothesis 返回 None).
+    """
+    if not statement:
+        return False
+    _t = _DIM_TAG_RE.sub(" ", statement)
+    _t = _NON_SUBSTANTIVE_RE.sub("", _t)
+    return len(_WORD_CHAR_RE.findall(_t)) >= min_chars
+
+
+def _statement_key(statement: str) -> str:
+    """归一化语句指纹 (去标签/标点/空白 + 小写), 用于精确重复判定."""
+    _t = _DIM_TAG_RE.sub(" ", statement or "")
+    _t = _NON_SUBSTANTIVE_RE.sub("", _t)
+    return _t.lower()
+
+
 # ── graph ────────────────────────────────────────────────────────────────────
 
 
@@ -170,6 +210,9 @@ class HypothesisGraph:
         # dual_covered 命中时自动注册. 满足 downward closure: 任意 1-子集 (节点本身) 也在图里.
         # ponytail: 用 frozenset 模拟, 不引入新依赖. 升级: SimplicialComplex (gudhi/TopoNetX) 当 >2-ary 关系变常见.
         self._simplicials: set[frozenset[str]] = set()
+        # 被守卫拒绝的入图尝试计数 (非实质陈述 / 精确重复). 供上层判断"新颖性枯竭":
+        # 连续多轮只产出重复/空壳 → 应触发 pivot/反例搜索, 而非原地重述.
+        self._rejected_adds: int = 0
         # ponytail: in-memory event log 为主, 段升级 P1#3: 有 workspace 时同写
         # SQLite+FTS5 (hypothesis_events.py), 支持跨进程 resume/replay/搜索.
         # P0: workspace 路径用于写 FAILED.md / PROVED.md durable state 文件.
@@ -225,6 +268,19 @@ class HypothesisGraph:
         """新增假设节点, 返回 node id. parent_id 非空时自动加 derive 边."""
         if not statement.strip():
             raise HypothesisGraphError("假设陈述不能为空")
+        # 实质内容守卫: "**" / 仅 [DIM: ...] 标签 / 纯符号 → 返回 None (同交叉授粉
+        # 拒绝语义), 调用方按 falsy 处理. 阻止空壳节点灌满 frontier.
+        if not _is_substantive_statement(statement):
+            self._rejected_adds += 1
+            logger.info("add_hypothesis 拒绝非实质陈述: %r", statement[:60])
+            return None
+        # 精确重复守卫: 归一化后完全相同的陈述不再入图 (跨轮反复重述同一命题
+        # 只会膨胀图). 修正/pivot/crossover 产出的陈述不同, 不受影响.
+        _key = _statement_key(statement)
+        if any(_statement_key(_n.statement) == _key for _n in self._nodes.values()):
+            self._rejected_adds += 1
+            logger.info("add_hypothesis 拒绝重复陈述: %r", statement[:60])
+            return None
         # 先查 parent 再加节点, 避免失败时留下孤儿节点
         if parent_id is not None:
             self._check_node(parent_id)
@@ -1960,6 +2016,11 @@ class HypothesisLoop:
         全失败时返回 None 让 caller fallback 到原 2 路. 异常吞掉 + log, 不 raise.
         """
         if self._agent_factory is None:
+            self._emit_control_trace(
+                "collab_branch_incubator",
+                "skip: no agent_factory (HUGINN_ENABLE_AGENT_COLLAB 未开)",
+                action="skip",
+            )
             return None
         try:
             from huginn.metacog.branch_incubator import BranchIncubator
@@ -1967,6 +2028,9 @@ class HypothesisLoop:
             logger.warning(
                 "BranchIncubator import failed, fallback to main+hot_model",
                 exc_info=True,
+            )
+            self._emit_control_trace(
+                "collab_branch_incubator", "skip: import failed", action="skip"
             )
             return None
 
@@ -1983,6 +2047,36 @@ class HypothesisLoop:
         if self._branch_incubator is None:
             self._branch_incubator = BranchIncubator()
 
+        # 树由 BranchIncubator 的分叉生成: depth>=2 → layer1 每成功 branch 再派
+        # width 个 sub-branch (PTD tree-shape); step_verifier (PRM) 给每个 branch
+        # 的 hypothesis 打分作为 rollout value, 剪枝/选优优先取高价值分支.
+        # 无 PRM LLM / 关闭时 value 恒 None → 回退 tokens_used, 行为不变.
+        value_fn = None
+        if os.environ.get("HUGINN_BRANCH_VALUE_PRM", "1") == "1":
+            try:
+                from huginn.runtime.step_verifier import (
+                    StepVerifierHook,
+                    make_branch_value_fn,
+                    make_default_llm_chat_fn,
+                )
+                value_fn = make_branch_value_fn(
+                    StepVerifierHook(make_default_llm_chat_fn())
+                )
+            except Exception:  # 防御: PRM 不可用 → 树搜索退回按 token 剪枝
+                logger.debug(
+                    "branch value_fn unavailable, fallback to token prune",
+                    exc_info=True,
+                )
+                value_fn = None
+
+        # Ataraxos 式强度调度: 假设弱→深搜/广探索, 强→浅搜/局部精修. env 的
+        # HUGINN_BRANCH_INCUBATOR_DEPTH 作基准 (base), 调度在其周围 [1,3] 摆动;
+        # HUGINN_STRENGTH_SCHEDULE=0 → 行为不变 (用 base).
+        _base_depth = int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "2"))
+        _depth = (
+            strength_branch_depth(hypothesis_strength(self), base=_base_depth)
+            if strength_schedule_enabled() else _base_depth
+        )
         try:
             results = await self._branch_incubator.run_round(
                 task=prompt,
@@ -1992,13 +2086,17 @@ class HypothesisLoop:
                 researcher_intuition=context.get("researcher_intuition", ""),
                 round_idx=self._iteration,
                 total_rounds=max(self._max_pivots * 3, 10),
-                depth=int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "1")),
+                depth=_depth,
                 width=2,
+                value_fn=value_fn,
             )
         except Exception:  # 防御: 孵化轮失败回退主模型
             logger.warning(
                 "branch incubator run_round failed, fallback to main+hot_model",
                 exc_info=True,
+            )
+            self._emit_control_trace(
+                "collab_branch_incubator", "skip: run_round raised", action="skip"
             )
             return None
 
@@ -2007,8 +2105,32 @@ class HypothesisLoop:
             r for r in results if r.success and r.hypothesis
         ]
         if not candidates:
+            # 观测: 孵化**跑了**但 N 路子 agent 全没产出可用假设 → 静默回退.
+            # 之前野外只看到"returned None, fallback"却不知是没跑还是空手.
+            self._emit_control_trace(
+                "collab_branch_incubator",
+                f"empty: branches={len(results)} "
+                f"ok={sum(1 for r in results if r.success)}",
+                action="skip",
+            )
             return None
-        best = min(candidates, key=lambda r: r.tokens_used)
+        # 有 rollout value 的分支优先 (value 最高, tie-break 更省 tokens);
+        # 全无 value (无 PRM) → 旧行为: tokens_used 最小.
+        valued = [r for r in candidates if r.value is not None]
+        if valued:
+            best = max(valued, key=lambda r: (r.value, -r.tokens_used))
+        else:
+            best = min(candidates, key=lambda r: r.tokens_used)
+        # 观测: 成功路径此前**不留痕**, 野外只能靠"没看到 skip/empty"反推已跑 —
+        # 无法区分"孵化真跑了且产出"vs"压根没进孵化门". 这里补一条 use trace,
+        # 带上 branches/ok/valued/winner_value/tokens, 供触发率与树是否真剪枝统计.
+        self._emit_control_trace(
+            "collab_branch_incubator",
+            f"use: branches={len(results)} ok={len(candidates)} "
+            f"valued={len(valued)} winner_value={best.value} "
+            f"winner_tokens={best.tokens_used} depth={_depth}",
+            action="use",
+        )
         return best.hypothesis
 
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:
@@ -2026,6 +2148,8 @@ class HypothesisLoop:
         if (
             os.environ.get(_incubator_env, "0") == "1"
             and self._agent_factory is not None
+            # D1: 预算耗尽不启动 N 路隔离采样 (多路多轮最贵) — 回落 2 路.
+            and not self._budget_exhausted()
         ):
             try:
                 inc_hyp = await self._hypothesize_via_branch_incubator(context)
@@ -2157,17 +2281,29 @@ class HypothesisLoop:
         """
         try:
             import re
-            # 匹配 [DIM: xxx] statement | pro: ... | con: ...
+            # 匹配 [DIM: xxx] statement | predict: ... | pro: ... | con: ...
+            # v13: 按 `|` 切字段后分别解析, 不再用一条正则把 predict 正文一起
+            # 剥掉 (旧正则让 backup/选中假设的 testable_prediction 恒空, 见 run78).
             _pattern = re.compile(
-                r"\[DIM:\s*([^\]]+)\]\s*(.+?)(?:\s*\|\s*pro:.*?(?:\s*\|\s*con:.*?)?$|$)",
+                r"\[DIM:\s*([^\]]+)\]\s*([^\n]*)",
                 re.MULTILINE,
             )
             _seen_dims: set[str] = set()
+            _selected_pred = ""
             for _m in _pattern.finditer(raw):
                 _dim = _m.group(1).strip().lower()
-                _stmt = _m.group(2).strip().split("\n")[0].strip()
-                # 跳过 SELECTED 的那个 (它已进图)
-                if not _stmt or _stmt == selected:
+                _fields = [p.strip() for p in _m.group(2).split("|")]
+                _stmt = _fields[0].strip() if _fields else ""
+                if not _stmt:
+                    continue
+                _predict = ""
+                for _p in _fields[1:]:
+                    if _p.lower().startswith("predict:"):
+                        _predict = _p.split(":", 1)[1].strip()
+                        break
+                # 跳过 SELECTED 的那个 (它已进图), 但记下它的预测给主路径用.
+                if _stmt == selected.strip():
+                    _selected_pred = _predict or _selected_pred
                     continue
                 # v12: 同 dim 不再跳过, 标 dim_conflict 让 decider 避开
                 _dim_conflict = _dim in _seen_dims
@@ -2176,6 +2312,7 @@ class HypothesisLoop:
                 _new_id = self.hypothesis_graph.add_hypothesis(
                     statement=_stmt,
                     rationale=f"backup candidate (dim={_dim})",
+                    testable_prediction=_predict,
                 )
                 if _new_id:
                     self.hypothesis_graph._nodes[_new_id].evidence = {
@@ -2183,6 +2320,8 @@ class HypothesisLoop:
                         "candidate_role": "backup",
                         "dim_conflict": _dim_conflict,
                     }
+            # A: 选中候选的预测落盘给主路径 (每轮重置, 避免上轮残留).
+            self._last_selected_prediction = _selected_pred
         except Exception:  # 防御: 备选记录失败忽略
             logger.debug("v11 _record_backup_candidates failed (non-fatal)", exc_info=True)
     def _metacog_classify_family(self, hypothesis: str) -> str:
@@ -2210,12 +2349,24 @@ class HypothesisLoop:
             return
         try:
             auditor = self._get_metacog_auditor()
-            original_problem = str(context.get("summary", "")) or str(
-                self._objective or ""
-            )
-            verdict = auditor.audit(
-                candidate_finding=hypothesis,
-                original_problem=original_problem,
+            # v12: 假设层冗余只对**假设图**判, 不再对 objective 判.
+            # 旧写法 audit(candidate=hyp, original_problem=objective) 把"针对该问题的
+            # 任何假设"都拿去和问题本身比 → 机制不同 (代数秩/流形维数/Rademacher 复杂度)
+            # 也判换名 → 债务虚高 → 过早终止, 反而掐死了真正想要的"LLM 自主有效探索".
+            # 冗余的正确基线是"已入图的旧假设": 只有"新假设 ≈ 某条旧假设"才是真换名重提.
+            try:
+                _cand_key = _statement_key(hypothesis)
+                _existing_stmts = [
+                    n.statement
+                    for n in self.hypothesis_graph.all_nodes()
+                    if n.statement and _statement_key(n.statement) != _cand_key
+                ]
+            except Exception:  # 防御: 无图时退化为空基线 (空基线不误判换名)
+                logger.debug("graph statements unavailable for audit", exc_info=True)
+                _existing_stmts = []
+            verdict = auditor.audit_hypothesis_against_graph(
+                candidate_hypothesis=hypothesis,
+                graph_statements=_existing_stmts,
                 reduction_chain="",  # _hypothesize 阶段还没有归约链
             )
             self._metacog_last_audit = verdict
@@ -2235,6 +2386,82 @@ class HypothesisLoop:
                     verdict.reduction_target,
                     hypothesis[:100],
                 )
+                # 连续换名归约计数: advisory 不阻断当前假设, 但连续多轮都是同一
+                # 命题的换名改写 = 方法层停滞, 必须换方向. 两级升级:
+                #   streak == 3 → 软提示 (反例搜索: _force_imaginate + hint)
+                #   streak >= 5 → 软提示已 fire 仍换名 → 硬动作: block 主导方法族
+                #                + 强制重定向 + 复位想象闩锁 (不再只塞 hint).
+                # 此前该 verdict 只写进 _metacog_last_audit 而无人消费, 长程跑必然退化.
+                _rename_streak = getattr(self, "_rename_streak", 0) + 1
+                self._rename_streak = _rename_streak
+                # v11 进展不变量 (假设层入口): 单调"换名债务" — 每次判为换名归约 +1,
+                # **只在真进展(非换名)时归零**; 下面的 3/5 streak 阶梯是 soft 升级
+                # (提示/重定向) 且会自复位, 债务与其解耦, 由 cognitive_loop 唯一消费
+                # 为终止出口. 于是 run47/49 那种"换名→提示→重定向→归零"闭环无法再
+                # 无限打转 —— 无进展轮必然被债务累积逼到终止.
+                self._rename_debt = getattr(self, "_rename_debt", 0) + 1
+                if _rename_streak == 3:
+                    # warning 级: 根 logger 过滤 INFO, 用 info 会被静默吞掉,
+                    # 这些"循环改变方向"的事件必须可审计 (见 [exec-route] 同款做法).
+                    logger.warning(
+                        "renamed-reduction %d× consecutive: trigger counterexample hunt",
+                        _rename_streak,
+                    )
+                    self._trigger_counterexample_hunt()
+                elif _rename_streak >= 5:
+                    logger.warning(
+                        "renamed-reduction %d× consecutive: escalate — block dominant "
+                        "family + force redirect",
+                        _rename_streak,
+                    )
+                    self._rename_streak = 0
+                    # 复位软闩锁: _force_imaginate 此前只被置 True 从不复位, 触发了
+                    # 也是永久常开; 复位后它才是"针对性一次 nudge".
+                    self._force_imaginate = False
+                    # 硬动作 1: 把主导方法族标 blocked, 由阻塞-重启协议拒绝再入族.
+                    try:
+                        _dom = self._metacog_dominant_family()
+                        if _dom:
+                            self._get_metacog_block_registry().block(
+                                method_family=_dom,
+                                block_reason=(
+                                    f"连续换名归约 {_rename_streak} 次: 主导方法族"
+                                    f"已饱和, 强制换族"
+                                ),
+                            )
+                    except Exception:  # 防御: block 失败不阻断审计
+                        logger.debug("block dominant family skipped", exc_info=True)
+                    # 硬动作 2: 把已算好却只被打印的 suggest_redirect 结果写进下轮提示.
+                    try:
+                        _redirect = self._get_metacog_method_registry().suggest_redirect()
+                        if _redirect is not None:
+                            _rd_hint = (
+                                f"[强制重定向] 连续换名归约 {_rename_streak} 次, "
+                                f"转向方法族 {_redirect.target_family}: {_redirect.reason}"
+                            )
+                        else:
+                            _rd_hint = (
+                                f"[强制重定向] 连续换名归约 {_rename_streak} 次: "
+                                f"放弃当前方法族, 换一个族重新出发"
+                            )
+                        # 换族 ≠ 换名: 必须带**可区分的数值预测** + 能把它区分出来的
+                        # 扫描实验, 否则新假设只是旧假设的改述 (换透镜不换实验).
+                        _rd_hint += (
+                            "\n新假设必须给出与旧机制可区分的数值预测 (如同一被测量随"
+                            "参数 w 的定/线性/对数趋势), 并设计一次能把这些预测区分开的"
+                            "扫描实验; 仅换数学维度/术语而预测相同 = 换名, 不算进展."
+                        )
+                        self._speculator_hint = (
+                            (getattr(self, "_speculator_hint", "") or "")
+                            + "\n" + _rd_hint
+                        )
+                    except Exception:  # 防御: 重定向提示失败不阻断审计
+                        logger.debug("force redirect hint skipped", exc_info=True)
+            else:
+                self._rename_streak = 0
+                # v11 进展不变量: 真进展 (非换名) ⇒ 债务归零. 债务只在**这一处**归零,
+                # 而 3/5 阶梯的 _rename_streak=0 不复位债务 —— 两者解耦, 闭环断链.
+                self._rename_debt = 0
 
             # 收敛度监控: 某族过热时记日志
             redirect = registry.suggest_redirect()
@@ -2612,7 +2839,8 @@ class HypothesisLoop:
         if getattr(self, "_force_imaginate", False):
             return True
         return (
-            getattr(self, "_last_surprise", 0.0) > 0.5
+            # v31: 读秩归一信号, 避免原始 surprise 在 jaccard 回落时饱和 1.0 恒触发.
+            routing_surprise(self) > 0.5
             or getattr(self, "_refine_count", 0) >= 2
         )
 
@@ -2665,8 +2893,10 @@ class HypothesisLoop:
             source_problem = context.get("goal") or context.get("observation") or ""
             if not source_problem or len(source_problem) < 10:
                 return ""
-            source_domain = context.get("domain") or "materials science"
-            target_domain = context.get("target_domain") or "battery cathodes"
+            # 域锚定 = 数学: 跨域类比的源域默认是数学, 目标域默认另一个学科,
+            # 不预设材料 —— 任意命题都先归约到数学骨架再谈具体体系.
+            source_domain = context.get("domain") or "mathematics"
+            target_domain = context.get("target_domain") or "another scientific domain"
 
             # P13: flag on 时查 CrossDomain 历史, 决定是否跳过 / 引用
             hint_prefix = ""
@@ -2879,7 +3109,8 @@ class HypothesisLoop:
         C4 后 typed memory 默认 on, 旧行 NULL 走 lazy migrate 自动反推."""
         # JEPA: 上轮预测误差大时, 用 reviewer persona 审视 —
         # 预测错了说明 agent 的心智模型不准, 需要更批判的视角.
-        if getattr(self, "_last_surprise", 0.0) > 0.6:
+        # v31: 读秩归一信号, 避免 jaccard 回落饱和 1.0 恒切 reviewer.
+        if routing_surprise(self) > 0.6:
             return "reviewer"
 
         # C4: typed memory 默认 on, 旧行 NULL 走 lazy migrate 反推

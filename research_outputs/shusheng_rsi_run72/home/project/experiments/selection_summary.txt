@@ -1,0 +1,12 @@
+SELECTED: Hypothesis 1 [COMPUTATION] — Approximation-theoretic redundancy (RIGID)
+
+Rationale:
+1. Most testable: The prediction (N_c constant in w) is a clear, binary, falsifiable statement. A single experiment measuring N_c across w values can confirm or refute it.
+2. Most novel: Applying the concept of "solution space rigidity" to symbolic regression with small feedforward networks is a novel connection. While approximation theory is well-studied, the specific link between algebraic dependency of constraints and network capacity requirements for zero violation has not been empirically investigated.
+3. Best aligned with symbolic regression context: In symbolic regression, the target is typically a simple analytic function (e.g., sin(πx), x^2, etc.), which naturally produces algebraically dependent constraints. This makes the rigid prediction theoretically well-founded.
+
+The experiment will test this by:
+- Using a simple analytic target function (sin(πx)) with constraints sampled from it
+- Scanning w = [5, 10, 20, 30, 50, 75, 100]
+- For each w, finding the minimum width N such that a ReLU network achieves held-out error ≤ 1e^{-3}
+- If N_c remains constant (e.g., N_c ≈ 6-8) across all w, rigidity is confirmed

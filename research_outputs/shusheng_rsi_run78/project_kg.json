@@ -1,0 +1,282 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "** [DIM: computation] Algorithmic Rigidity Hypothesis... (See detailed plan belo",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-03T12:04:38.484536",
+      "last_seen": "2026-10-03T12:04:38.484536",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will yield a table of N_c(w) values. If the hypothesis of rigidity holds, N_c(w) will be small (e.g., < 50) and flat across w. If fatness holds, N_c will exceed the scan limit (e.g., >",
+      "persona": "dft_expert",
+      "id": "experiment:** [DIM: computation] Algorithmic Rigidity Hypothesis... (See detailed plan belo"
+    },
+    {
+      "label": "plan_coder_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:04:38.484598",
+      "last_seen": "2026-10-03T12:04:38.484598",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:04:38.484621",
+      "last_seen": "2026-10-03T12:04:38.484621",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-03T12:04:38.484636",
+      "last_seen": "2026-10-03T12:04:38.484636",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: computation] Algorithmic Rigidity Hypothesis... (See detailed plan belo",
+        "Method:plan_coder_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_9c928cd0"
+    },
+    {
+      "label": "dft_expert_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-03T12:04:38.484744",
+      "last_seen": "2026-10-03T12:04:38.484744",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "950d3590ce1f04a1",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:dft_expert_iter10"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-03T12:09:30.028436",
+      "last_seen": "2026-10-03T12:09:30.028436",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 0.0,
+      "predicted": "For a well-chosen analytic constraint family (e.g., polynomial interpolation on a compact domain), $N_c(w)$ will remain small and bounded (e.g., $N_c \\in [4, 16]$) as $w$ increases, indicating solutio",
+      "persona": "dft_expert",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:09:30.028476",
+      "last_seen": "2026-10-03T12:09:30.028476",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:09:30.028486",
+      "last_seen": "2026-10-03T12:09:30.028486",
+      "mentions": 1,
+      "surprise": 0.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-03T12:09:30.028499",
+      "last_seen": "2026-10-03T12:09:30.028499",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_2e5947a7"
+    },
+    {
+      "label": "dft_expert_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-03T12:09:30.028571",
+      "last_seen": "2026-10-03T12:09:30.028571",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "5f5a7b63ba1dcdc3",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:dft_expert_iter20"
+    },
+    {
+      "label": "** Hypothesis 1 (Universal Approximation Saturation) is the most testable and no",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-03T12:13:33.708246",
+      "last_seen": "2026-10-03T12:13:33.708246",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will show a plateau (constant N_c) for w up to a threshold, indicating rigid solution space, or monotonic growth indicating fat space. Expected N_c values will be small (e.g., 4–12) if rigid; i",
+      "persona": "reviewer",
+      "id": "experiment:** Hypothesis 1 (Universal Approximation Saturation) is the most testable and no"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:13:33.708290",
+      "last_seen": "2026-10-03T12:13:33.708290",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:13:33.708299",
+      "last_seen": "2026-10-03T12:13:33.708299",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-03T12:13:33.708307",
+      "last_seen": "2026-10-03T12:13:33.708307",
+      "mentions": 1,
+      "members": [
+        "experiment:** Hypothesis 1 (Universal Approximation Saturation) is the most testable and no",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_ae1c3e9b"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-03T12:13:33.708378",
+      "last_seen": "2026-10-03T12:13:33.708378",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a3e4b48e00d02c17",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: computation] Algorithmic Rigidity Hypothesis... (See detailed plan belo",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:04:38.484636",
+      "last_seen": "2026-10-03T12:04:38.484636",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9c928cd0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:04:38.484636",
+      "last_seen": "2026-10-03T12:04:38.484636",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9c928cd0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:04:38.484636",
+      "last_seen": "2026-10-03T12:04:38.484636",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9c928cd0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:09:30.028499",
+      "last_seen": "2026-10-03T12:09:30.028499",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2e5947a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:09:30.028499",
+      "last_seen": "2026-10-03T12:09:30.028499",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2e5947a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:09:30.028499",
+      "last_seen": "2026-10-03T12:09:30.028499",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2e5947a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** Hypothesis 1 (Universal Approximation Saturation) is the most testable and no",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:13:33.708307",
+      "last_seen": "2026-10-03T12:13:33.708307",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae1c3e9b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:13:33.708307",
+      "last_seen": "2026-10-03T12:13:33.708307",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae1c3e9b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-03T12:13:33.708307",
+      "last_seen": "2026-10-03T12:13:33.708307",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae1c3e9b"
+    }
+  ]
+}

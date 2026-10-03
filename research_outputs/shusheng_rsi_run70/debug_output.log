@@ -1,0 +1,59 @@
+Debug test: w=10, N=64, seed=0
+  seed=0, w=10, N=64, epoch=0, train_loss=0.029173, holdout_max_err=0.104002
+  seed=0, w=10, N=64, epoch=1000, train_loss=0.000013, holdout_max_err=0.005666
+  seed=0, w=10, N=64, epoch=2000, train_loss=0.000009, holdout_max_err=0.003481
+  seed=0, w=10, N=64, epoch=3000, train_loss=0.000008, holdout_max_err=0.003085
+  seed=0, w=10, N=64, epoch=4000, train_loss=0.000007, holdout_max_err=0.002857
+Result: max_error=0.004452, train_max_err=0.005451, zero_violation=False
+
+============================================================
+FULL EXPERIMENT
+============================================================
+
+w = 10:
+  seed=0, w=10, N=4, epoch=0, train_loss=0.200693, holdout_max_err=0.382816
+  seed=0, w=10, N=4, epoch=1000, train_loss=0.002195, holdout_max_err=0.055812
+  seed=0, w=10, N=4, epoch=2000, train_loss=0.001669, holdout_max_err=0.044980
+  seed=0, w=10, N=4, epoch=3000, train_loss=0.001532, holdout_max_err=0.042709
+  seed=0, w=10, N=4, epoch=4000, train_loss=0.001149, holdout_max_err=0.036172
+  N=4: best_zero=False, train_err=0.039249, holdout_err=0.023417, N_c so far=None
+  seed=0, w=10, N=8, epoch=0, train_loss=0.048110, holdout_max_err=0.204314
+  seed=0, w=10, N=8, epoch=1000, train_loss=0.003003, holdout_max_err=0.023294
+  seed=0, w=10, N=8, epoch=2000, train_loss=0.000143, holdout_max_err=0.022444
+  seed=0, w=10, N=8, epoch=3000, train_loss=0.000043, holdout_max_err=0.015253
+  seed=0, w=10, N=8, epoch=4000, train_loss=0.000006, holdout_max_err=0.008498
+  N=8: best_zero=False, train_err=0.003510, holdout_err=0.007197, N_c so far=None
+  seed=0, w=10, N=16, epoch=0, train_loss=0.332718, holdout_max_err=0.665690
+  seed=0, w=10, N=16, epoch=1000, train_loss=0.005226, holdout_max_err=0.101619
+  seed=0, w=10, N=16, epoch=2000, train_loss=0.004614, holdout_max_err=0.095618
+  seed=0, w=10, N=16, epoch=3000, train_loss=0.003190, holdout_max_err=0.079883
+  seed=0, w=10, N=16, epoch=4000, train_loss=0.000313, holdout_max_err=0.033591
+  N=16: best_zero=False, train_err=0.011953, holdout_err=0.014266, N_c so far=None
+  seed=0, w=10, N=32, epoch=0, train_loss=0.062041, holdout_max_err=0.140038
+  seed=0, w=10, N=32, epoch=1000, train_loss=0.000724, holdout_max_err=0.014405
+  seed=0, w=10, N=32, epoch=2000, train_loss=0.000039, holdout_max_err=0.004422
+  seed=0, w=10, N=32, epoch=3000, train_loss=0.000019, holdout_max_err=0.004980
+  seed=0, w=10, N=32, epoch=4000, train_loss=0.000015, holdout_max_err=0.005356
+  N=32: best_zero=False, train_err=0.004438, holdout_err=0.004816, N_c so far=None
+  seed=0, w=10, N=64, epoch=0, train_loss=0.026726, holdout_max_err=0.193968
+  seed=0, w=10, N=64, epoch=1000, train_loss=0.000042, holdout_max_err=0.002588
+  seed=0, w=10, N=64, epoch=2000, train_loss=0.000001, holdout_max_err=0.005183
+  seed=0, w=10, N=64, epoch=3000, train_loss=0.000001, holdout_max_err=0.005222
+  seed=0, w=10, N=64, epoch=4000, train_loss=0.000001, holdout_max_err=0.005229
+  N=64: best_zero=False, train_err=0.002170, holdout_err=0.005109, N_c so far=None
+  seed=0, w=10, N=128, epoch=0, train_loss=0.066950, holdout_max_err=0.136176
+  seed=0, w=10, N=128, epoch=1000, train_loss=0.000005, holdout_max_err=0.002565
+  seed=0, w=10, N=128, epoch=2000, train_loss=0.000004, holdout_max_err=0.003390
+  seed=0, w=10, N=128, epoch=3000, train_loss=0.000004, holdout_max_err=0.003314
+  seed=0, w=10, N=128, epoch=4000, train_loss=0.000005, holdout_max_err=0.002275
+  N=128: best_zero=False, train_err=0.003625, holdout_err=0.003173, N_c so far=None
+  N_c(10) = None
+
+============================================================
+SUMMARY
+============================================================
+w=10: N_c=None
+
+All N_c are None - no width achieved zero violation in the scanned range.
+This suggests the solution space may be 'fat' in this range, OR
+the target function is too difficult for the network architecture.

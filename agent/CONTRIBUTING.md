@@ -45,6 +45,9 @@ All CI checks must pass before merging.
    - 若改动 env / flags / tools / routes / errors 等契约面，用
      `python -m huginn.cli.config_audit --<domain> --out docs/<domain>-contract.md`
      重新生成对应契约文档；
+   - 若改动奖励面 / 授权面（`claim_reward.py` / `scope_authority.py` 的公开面、惩罚轴、
+     口径开关），用 `python -m huginn.cli.contract_audit --out docs/mece-audit.md`
+     重新生成 MECE 审计文档；
    - 新增/废弃文档，记得在 `docs/INDEX.md` 登记或标注状态。
 4. Ensure the full test suite passes.
 5. Open a PR with a clear description and link any related issues.

@@ -318,23 +318,6 @@ def anti_hacking_reward(
     return r
 
 
-def reconcile_r_phys(
-    base: float,
-    *,
-    world_reward: float | None = None,
-    world_weight: float = 0.5,
-    authorized_ratio: float = 1.0,
-) -> float:
-    """与现有 `world_state.reconcile_r_phys` 同构的折叠点.
-
-    把"世界预测命中奖励 (world_reward)"按权并入 base; 无 world_reward 时原样返回
-    不退分 (与既有 workspace/ValidateTool 行为一致), 保证零回归兼容。
-    """
-    if world_reward is None:
-        return base
-    return (1.0 - world_weight) * base + world_weight * world_reward
-
-
 __all__ = [
     "numeric_accuracy_reward",
     "grounding_source_reward",
@@ -343,5 +326,4 @@ __all__ = [
     "efficiency_discount",
     "idle_turn_penalty",
     "anti_hacking_reward",
-    "reconcile_r_phys",
 ]

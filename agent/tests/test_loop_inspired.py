@@ -363,6 +363,71 @@ class TestSubagentDispatch:
         assert "coder" in SubagentDispatch.BUILTIN_SPECS
         assert "analyst" in SubagentDispatch.BUILTIN_SPECS
 
+    def test_extract_output_takes_last_non_empty_message(self):
+        """末条消息常为空 (tool 预算耗尽) → 必须回退到最近一条非空 content.
+
+        回归守卫: 旧实现只取最后一条 → 整个子 agent 产出被判为 "" (run62 实测
+        blind_reconstructor 6 次派发里 3 次 summary_len=0, 协作零产出).
+        """
+        from huginn.agents.subagent import SubagentDispatch
+
+        class _Msg:
+            def __init__(self, content):
+                self.content = content
+
+        state = {"messages": [_Msg("first finding"), _Msg(""), _Msg("   ")]}
+        assert SubagentDispatch._extract_output(state) == "first finding"
+        # 全空 / 无消息 → ""
+        assert SubagentDispatch._extract_output({"messages": [_Msg(""), _Msg(" ")]}) == ""
+        assert SubagentDispatch._extract_output({"messages": []}) == ""
+        assert SubagentDispatch._extract_output(None) == ""
+
+    def test_dispatch_skips_control_events_when_picking_final_state(self):
+        """末条 yield 常是控制事件 (无 "messages") → 不能顶掉真状态.
+
+        chat() 除 langgraph state 外还 yield {"_token":..} / {"_auto_continue":..}
+        等控制事件; 旧实现直接取最后一条 → state 无 "messages" → 产出被判空
+        (run62/64 实测 blind_recon dispatch success=True 却 summary_len=0).
+        """
+        import asyncio
+
+        from huginn.agents.subagent import SubagentDispatch, SubagentSpec
+
+        class _Msg:
+            def __init__(self, content):
+                self.content = content
+
+        class _FakeAgent:
+            hook_manager = None
+
+            def __init__(self):
+                self.langchain_tools = []
+
+            async def chat(self, task, thread_id):
+                yield {"type": "mode_banner"}
+                yield {"messages": [_Msg(""), _Msg("derived: holds=true")]}
+                yield {"_auto_continue": True}  # 控制事件: 无 messages
+
+        class _FakeFactory:
+            def get_profile(self, name):
+                return {"id": name}
+
+            def create(self, **kwargs):
+                return _FakeAgent()
+
+        dispatch = SubagentDispatch()
+        dispatch.register_spec(
+            SubagentSpec(
+                name="t", description="t", system_prompt="t",
+                allowed_tools=[], summarize_result=True,
+            )
+        )
+        res = asyncio.run(
+            dispatch.dispatch("t", "do it", context={"agent_factory": _FakeFactory()})
+        )
+        assert res.success
+        assert res.summary == "derived: holds=true"
+
     def test_register_custom_spec(self):
         from huginn.agents.subagent import SubagentDispatch, SubagentSpec
 

@@ -1,0 +1,464 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: composition] The rigid family corresponds to a linear PDE $f''(x)=0$ (affi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:07:19.195618",
+      "last_seen": "2026-09-28T13:07:19.195618",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, the minimal width N_c(w) to achieve zero violation (heldout_err ≤ 1e-3) will be finite and small (e.g., N_c ≤ 8) across all tested w values (5, 10, 20, 50, 100), with a flat or d",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: composition] The rigid family corresponds to a linear PDE $f''(x)=0$ (affi"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:07:19.195662",
+      "last_seen": "2026-09-28T13:07:19.195662",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:07:19.195676",
+      "last_seen": "2026-09-28T13:07:19.195676",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:07:19.195687",
+      "last_seen": "2026-09-28T13:07:19.195687",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: composition] The rigid family corresponds to a linear PDE $f''(x)=0$ (affi",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_a27c5d6b"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:07:19.195813",
+      "last_seen": "2026-09-28T13:07:19.195813",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4d9460cc6705d13b",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to functions satisfying a first-or",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:08:16.818339",
+      "last_seen": "2026-09-28T13:08:16.818339",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will be identified as a linear PDE (e.g., f''(x)=0 or f'(x)=c) with low-dimensional solution space, achieving zero violation at h ≤ 8 for sufficient w. The fat family will be a high-f",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a first-or"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818382",
+      "last_seen": "2026-09-28T13:08:16.818382",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818392",
+      "last_seen": "2026-09-28T13:08:16.818392",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a first-or",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:08:16.818486",
+      "last_seen": "2026-09-28T13:08:16.818486",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e24c012ad914df39",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure/geometric] The generalization failure of the \"fat\" family is not",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:09:18.914459",
+      "last_seen": "2026-09-28T13:09:18.914459",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (heldout_err ≤ 1e-3) at small widths (h ≤ 8) with flat N_c(w) trend; the fat family will show heldout_err > 1e-3 even at h=64 with trend='unreachable'. Anc",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure/geometric] The generalization failure of the \"fat\" family is not"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914501",
+      "last_seen": "2026-09-28T13:09:18.914501",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914512",
+      "last_seen": "2026-09-28T13:09:18.914512",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure/geometric] The generalization failure of the \"fat\" family is not",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:09:18.914604",
+      "last_seen": "2026-09-28T13:09:18.914604",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2e80fa1ca8731491",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to solutions of a second-order lin",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:10:19.424172",
+      "last_seen": "2026-09-28T13:10:19.424172",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: anchor at h_min=4, train_err≈1e-5, heldout_err≈5e-4; N_c(w) table shows h_min=4 for all w≥5 (flat trend). Fat family: at h=64, heldout_err≈2e-3 to 5e-3 across seeds, trend='unreachable'.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to solutions of a second-order lin"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424210",
+      "last_seen": "2026-09-28T13:10:19.424210",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424219",
+      "last_seen": "2026-09-28T13:10:19.424219",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to solutions of a second-order lin",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:10:19.424305",
+      "last_seen": "2026-09-28T13:10:19.424305",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e533d4b87c267aee",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to functions satisfying a second-o",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:11:28.238641",
+      "last_seen": "2026-09-28T13:11:28.238641",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite and small (≤8) across w={5,10,20,50,100}, with heldout_err ≤1e-3 at minimal width. For the fat family, all widths up to h=64 will yield heldout_err >1e-3, c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a second-o"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238688",
+      "last_seen": "2026-09-28T13:11:28.238688",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238700",
+      "last_seen": "2026-09-28T13:11:28.238700",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a second-o",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_45866596"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:11:28.238794",
+      "last_seen": "2026-09-28T13:11:28.238794",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "848e16638c574c65",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: composition] The rigid family corresponds to a linear PDE $f''(x)=0$ (affi",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:07:19.195687",
+      "last_seen": "2026-09-28T13:07:19.195687",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a27c5d6b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:07:19.195687",
+      "last_seen": "2026-09-28T13:07:19.195687",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a27c5d6b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:07:19.195687",
+      "last_seen": "2026-09-28T13:07:19.195687",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a27c5d6b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a first-or",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure/geometric] The generalization failure of the \"fat\" family is not",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to solutions of a second-order lin",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a second-o",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45866596"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45866596"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45866596"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - _plan (假设 → 步骤, 含 PlanStore 落盘 + cost 确认门)
-- _execute (按 mode 分派到 coder/workflow/explore/skill/visual_inspect)
+- _execute (按 mode 分派到 coder/workflow/explore/code_lab/skill/visual_inspect)
 - _execute_coder / _execute_workflow / _execute_explore / _execute_skill
 - _execute_dynamic_workflow (A5 并行 subtask) + _execute_dynamic_workflow_bandit (H2)
 - _record_provenance, _try_evolved_fix
@@ -33,7 +33,15 @@ import time
 import uuid
 from typing import Any
 
+# 提示面升级阈值 (与 engine_reflect 同一旋钮): 由本对象在组装作者提示时**消费**,
+# 故常量必须同源. engine_reflect 不反向 import 本模块, 无循环风险.
+from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+
 logger = logging.getLogger(__name__)
+
+# 报告 citation 台账容量: 每条一次真实 execute, 只留紧凑"数值面".
+_EXEC_LEDGER_MAX = 24
+_EXEC_LEDGER_ENTRY_CHARS = 600
 
 
 class EngineAct:
@@ -188,11 +196,23 @@ class EngineAct:
 
         return plan
 
+    #: 计算/预测指令词 (英文 + 中文). autoloop 的真实 objective 多为中文
+    #: ("写并运行…统计均方违规, 求 N_c(w)…拟合 beta"), 只认英文动词会让内建
+    #: 执行路径永不触发 → execute 落到 explore 空转, report 再拿现编数字当证据.
+    _NUMERIC_VERBS = (
+        "compute", "calculate", "predict", "evaluate",
+        "计算", "求解", "算出", "核算", "拟合", "统计", "测量", "预测", "评估",
+    )
+    #: 公式/数值迹象 (中文侧). 中文目标常无 ASCII 运算符, 但这些词已足以
+    #: 说明是定量任务 (与英文侧 `[/^*+=()]` 等价).
+    _FORMULA_HINTS = ("拟合", "均方", "误差", "斜率", "阈值", "方差", "相关系数")
+
     def _is_deterministic_numeric(self, description: str) -> bool:
         """启发式: 该项是否为"确定性数值计算"目标(供内建 probe 执行兜底).
 
         平衡点落地: execute 只对这类明确可算的目标主动生成 probe, 不打扰开放探索任务。
         保守: 需同时含 数字 + 计算/预测指令词 + 公式迹象, 缺一不触发。
+        中英双语: 中文动词/中文数学词同样算命中, 否则中文 objective 永远走不到内建执行。
         """
         import re as _re
 
@@ -201,9 +221,10 @@ class EngineAct:
         d = description.strip()
         if not _re.search(r"\d", d):
             return False
-        if not any(v in d.lower() for v in ("compute", "calculate", "predict", "evaluate")):
+        low = d.lower()
+        if not any(v in low for v in self._NUMERIC_VERBS):
             return False
-        return bool(_re.search("[/^*+=()]", d))
+        return bool(_re.search("[/^*+=()]", d)) or any(h in d for h in self._FORMULA_HINTS)
 
     async def _request_numeric_probe(self, description: str) -> str:
         """平衡点·内建执行: 让 LLM 只产出能算出数值的纯 python, harness 负责运行取数.
@@ -237,10 +258,228 @@ class EngineAct:
             return ""
         return code
 
+    # 计算实验意图词 (命题无关): 目标是"要真跑一段数值实验/仿真/训练/扫描"的,
+    # 就让书生在 Code Lab 亲手写并真跑, 而不是只产出一段抄来的闭式或空转.
+    _CODE_EXPERIMENT_HINTS = (
+        "实验", "仿真", "模拟", "训练", "扫描", "网格", "留出", "泛化",
+        "探针", "基准", "收敛", "灵敏度",
+        "experiment", "simulat", "train", "scan", "sweep", "generaliz",
+        "held-out", "holdout", "probe", "benchmark", "convergence",
+    )
+
+    def _is_code_experiment(self, text: str) -> bool:
+        """启发式: 该项是否为"需书生亲手写代码真跑的计算实验"目标 (命题无关).
+
+        与 ``_is_deterministic_numeric``(平凡闭式) 互补: 这里指开放的计算实验 ——
+        多步数值流程(训练/扫描/网格/统计), 该进 Code Lab 沙箱真跑, 而不是抄一段
+        闭式公式糊过去. 只认"实验意图"词, 不绑定任何具体命题; 中英双语.
+        """
+        if not isinstance(text, str) or not text.strip():
+            return False
+        low = text.lower()
+        return any(h in low for h in self._CODE_EXPERIMENT_HINTS)
+
+    async def _request_code_lab_experiment(
+        self, goal: str, guards: dict[str, Any] | None = None,
+        repair_hint: str = "", prev_code: str = "", focus: str = "",
+    ) -> str:
+        """平衡点·内建执行: 让书生亲手写一段 Code Lab ``run(cfg)`` 实验代码.
+
+        命题无关: 提示词来自 ``code_lab.build_author_prompt`` 的单一契约. 这里只取
+        代码, 不评科学可信度(那是 validate/裁决层的事). 失败返回空串 → 回落原分派.
+        ``repair_hint`` 非空时把沙箱真实报错回灌, 并附上 ``prev_code``(上一版失败
+        代码), 让书生在此基础上做**最小改动**修 bug, 而不是凭空重写再犯同一个错.
+        ``focus`` 是本轮可变的聚焦文本(见 ``_build_codelab_focus``), 防止作者提示
+        因只喂恒定 goal 而逐字节冻结.
+        """
+        from huginn.research.code_lab import (
+            build_author_prompt,
+            extract_code,
+            load_scaffold,
+        )
+
+        guard_block = "\n".join(
+            f"- {g}" for g in ((guards or {}).get("prompt_guards") or [])[:8]
+        )
+        # 任务脚手架由环境变量声明(命题资产, 非平台内核): 不给就是命题无关的默认骨架.
+        import os as _osc
+        scaffold = load_scaffold(_osc.environ.get("HUGINN_CODELAB_SCAFFOLD", ""))
+        prompt = build_author_prompt(
+            goal, scaffold=scaffold, guard_block=guard_block,
+            repair_hint=repair_hint, prev_code=prev_code, focus=focus,
+        )
+        try:
+            raw = await self._llm_chat(prompt, model=self.verification_model)
+        except Exception as e:  # — LLM 不可用/超时 → 拿不到实验代码, 回落, 不阻塞
+            import os as _ose
+            if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                logger.warning("[code-lab-author] LLM 调用失败: %r", e)
+            return ""
+        code = extract_code(raw or "")
+        import os as _ose
+        if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            logger.warning(
+                "[code-lab-author] raw_len=%d extracted_len=%d prompt_len=%d",
+                len(raw or ""), len(code), len(prompt),
+            )
+        return code
+
+    def _run_code_lab(
+        self, code: str, guards: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any] | None, str]:
+        """在 Code Lab 安全沙箱真跑书生的实验代码; 无证据返回 (None, 原因).
+        返回原因让上层能把真实报错回灌书生重写 (自修复), 不伪造."""
+        import os as _os
+
+        from huginn.research.code_lab import load_scaffold, sandbox_run
+
+        timeout = float(_os.environ.get("HUGINN_CODELAB_TIMEOUT_S", "600"))
+        extra = tuple((guards or {}).get("imports_whitelist_extra") or ())
+        aliases = (guards or {}).get("cfg_aliases") or None
+        scaffold = load_scaffold(_os.environ.get("HUGINN_CODELAB_SCAFFOLD", ""))
+        res, reason = sandbox_run(
+            code, {"seed": 0}, timeout=timeout,
+            imports_whitelist_extra=extra, cfg_aliases=aliases,
+            scaffold=scaffold,
+        )
+        import os as _osd
+        if _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            _ok = None if res is None else res.get("success")
+            _nobj = 0 if res is None else len(res.get("objectives", {}) or {})
+            logger.warning("[code-lab-run] res_none=%s success=%s nobj=%d reason=%r",
+                           res is None, _ok, _nobj, (reason or "")[:200])
+        if res is None:
+            logger.info("code_lab 执行未产出证据(不伪造, 回落原分派): %s", reason)
+            return None, reason or "执行未产出证据"
+        return res, ""
+
+    def _build_codelab_focus(self, description: str) -> str:
+        """v11 反冻结: 给作者 prompt 注入**本轮可变**的聚焦文本.
+
+        作者提示若只喂恒定 ``_objective``(研究总目标), 每轮逐字节相同 → 同一问题
+        被反复问, 执行输出恒同(run47 实测 prompt_len 恒 5379, nobj 恒 36), 执行层
+        零新信息. 这里把随迭代演进的当前假设(``_last_hypothesis``)与本轮实验步骤
+        (plan ``description``)并进来, prompt 遂不再冻结. 无可用文本时返空串, 行为
+        退回旧路径(向后兼容).
+        """
+        parts: list[str] = []
+        # v12 提示面升级 (B1): engine_reflect 检测到"本轮执行指纹与上一轮完全一致"
+        # (无效重跑) 并累计 _repeat_exec_streak. 该软提示原本只进假设生成提示, 到不了
+        # **真正写实验**的作者提示 → 指纹照旧、循环撞收敛提前离场 (run50 实测 streak
+        # 1-4 指纹恒同). 这里**按 streak 现算**强制变异令并注入作者提示, 附上一轮真实
+        # 结果(_prev_exec_fp_src), 逼书生改实验族/参数而非原样重跑. 无独立标志状态机.
+        if int(getattr(self, "_repeat_exec_streak", 0) or 0) >= _REPEAT_HARD_STREAK:
+            _prev = str(getattr(self, "_prev_exec_fp_src", "") or "")
+            parts.append(
+                "【强制变异·硬约束】上一轮真实执行结果与更早一轮指纹完全一致"
+                "(=无效重跑, 未推进研究). 本轮实验**必须**至少改动一项结构: "
+                "更换 family/约束族、改扫描范围或步长、改网络架构/宽度集合、"
+                "改优化器或 seeds. 禁止原样重跑上一配置."
+                + (("上一轮真实结果(你必须产出与它不同的数值):" + _prev[:500])
+                   if _prev else "")
+            )
+        _hyp = str(getattr(self, "_last_hypothesis", "") or "").strip()
+        if _hyp:
+            parts.append(f"当前待检验假设: {_hyp[:600]}")
+        _step = (description or "").strip()
+        if _step and _step not in _hyp:
+            parts.append(f"本轮实验步骤: {_step[:600]}")
+        return "\n".join(parts)
+
+    async def _execute_code_lab(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """mode=code_lab: 书生亲写一段计算实验 → Code Lab 沙箱真跑 → 证据.
+
+        与闭式 probe 分层: 闭式只认平凡数值片段; 这里认"实验意图"并允许更长时/
+        更多依赖(仍受沙箱白名单约束). 失败返回 success=False, 由 validate 层裁决.
+        沙箱真报错时把报错回灌书生重写 (命题无关·通用修 bug), 最多 N 轮自修复.
+        """
+        # 优先用研究目标(全文本, 命题无关的真问题), plan 步骤只作兜底 —— plan 描述
+        # 常带 "FILES:/SKILL:" 之类执行噪声, 不适合喂给"实验作者"提示.
+        goal = str(getattr(self, "_objective", "") or "") or description
+        # v11 反冻结: goal 恒定时作者提示逐字节冻结, 用本轮可变 focus 解冻.
+        focus = self._build_codelab_focus(description)
+        code = await self._request_code_lab_experiment(goal, focus=focus)
+        if not code:
+            import os as _ose
+            if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                logger.warning("[code-lab] 未产出可解析实验代码 → 回落; goal[:80]=%r",
+                               goal[:80])
+            return {"mode": "code_lab", "status": "failed", "success": False,
+                    "error": "书生未产出可解析的实验代码"}
+        import os as _os
+        max_repairs = int(_os.environ.get("HUGINN_CODELAB_REPAIR_ATTEMPTS", "3"))
+        last_err = ""
+
+        # D1: 统一 deadline 原语 — 每次尝试前查一次, 已耗尽就不再起新尝试
+        # (最多再多跑一个已在飞的尝试). 修复循环每次 ``_run_code_lab`` 最长可烧满
+        # ``HUGINN_CODELAB_TIMEOUT_S`` (默认 900s), 最多 ``max_repairs+1`` 次 → 单轮
+        # 可越过挂钟上限近一小时 (run56 实测). 纯时间边界, 不做科学判断; fail-open.
+        # 旧私有 ``_wall_clock_expired`` 已删除: 时间口径下沉到 ``_budget_exhausted``
+        # (且按本 run goal id 判定, 旧实现用全局 get_active() 会跨 run 串台).
+        for attempt in range(max_repairs + 1):
+            if self._budget_exhausted():
+                last_err = "挂钟预算耗尽, 中止 code_lab 修复循环"
+                logger.warning(
+                    "code_lab 修复循环: 挂钟预算已耗尽, 停止第 %d 次尝试", attempt + 1
+                )
+                break
+            res, reason = self._run_code_lab(code)
+            if res is not None:
+                return {
+                    "mode": "code_lab",
+                    "status": "completed",
+                    "success": bool(res.get("success", True)),
+                    "result": res.get("summary", {}),
+                    "objectives": res.get("objectives", {}),
+                    "script": code,
+                    "reproducible": True,
+                }
+            last_err = reason
+            # 观测: 超时是"算力预算"问题而非代码 bug, 单独记 trace, 便于统计
+            # "被超时饿死的迭代占比" (run59/60 实测三组均被 900s 超时饿死).
+            if ("超时" in (reason or "")) or ("timeout" in (reason or "").lower()):
+                self._emit_control_trace(
+                    "code_lab_timeout",
+                    f"attempt={attempt + 1}/{max_repairs + 1} {str(reason)[:120]}",
+                    action="advisory_hint",
+                )
+            if attempt < max_repairs:
+                repaired = await self._request_code_lab_experiment(
+                    goal, repair_hint=last_err, prev_code=code, focus=focus
+                )
+                if not repaired:
+                    break
+                code = repaired
+        logger.warning(
+            "code_lab 沙箱执行经 %d 轮修复仍未产出证据(不伪造): %s",
+            max_repairs + 1, last_err,
+        )
+        # 诊断: 把最后一版(仍失败的)书生代码落日志, 便于对症改 harness/提示, 不伪造证据.
+        # 用 warning 级: 默认 root logger 无 handler, info 级看不到失败代码.
+        logger.warning("code_lab 最后一版书生代码:\n%s", code[:2000])
+        return {"mode": "code_lab", "status": "failed", "success": False,
+                "error": f"Code Lab 执行未通过沙箱校验: {last_err}", "script": code}
+
     async def _execute(self, plan: dict[str, Any], context: dict[str, Any]) -> Any:
         """Execute the plan using the appropriate sub-engine."""
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
+        import os as _osd
+        if _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            try:
+                _obj = str(getattr(self, "_objective", "") or "")
+                logger.warning(
+                    "[exec-route] mode=%r desc[:80]=%r obj_len=%d "
+                    "is_exp_desc=%s is_exp_obj=%s is_det_desc=%s",
+                    mode, (description or "")[:80], len(_obj),
+                    self._is_code_experiment(description),
+                    self._is_code_experiment(_obj),
+                    self._is_deterministic_numeric(description),
+                )
+            except Exception:  # — 原因: 路由诊断日志失败不影响执行, 忽略
+                pass
 
         # 方案1·攻 execute (2026-09-11 A线根因后半段 + 平衡点落地):
         # ① plan 已带"可运行数值脚本片段" → 直接真实执行成证据;
@@ -270,7 +509,31 @@ class EngineAct:
                         "execute closed-form fast-path: plan 内含可运行数值片段, 已真实执行 → evidence"
                     )
                     return result
-            # 独立判定(不再 elif 受 _snip 分支干扰): plan 片段若没跑出数, 仍尝试 objective 探针.
+            # 方案2·接 Code Lab (2026-09-27 割裂感根因): 目标是"计算实验类"时, 让书生
+            # **亲手写**一段 run(cfg) 实验代码, 在 Code Lab 安全沙箱真跑 → 结构化
+            # objectives 作证据. 与闭式 probe 分层: 闭式只认平凡数值片段, 这里认开放
+            # 实验意图(训练/扫描/探针...), 允更长时/更多依赖. 命题无关: 只按目标的实验
+            # 意图词触发, 不绑定任何具体命题. 失败即回落原分派, 不回归.
+            # 顺序: 实验意图优先于平凡 probe —— 否则描述里的 "predict"/"(1)" 会让
+            # _is_deterministic_numeric 先命中, 把真实验目标塞进"抄一段闭式"的窄路,
+            # probe 跑不出数就再落到 coder 空转 (2026-09-27 run7 实测: 0 tool_calls).
+            # 二者级联(if 而非 elif): Code Lab 失败仍可退到 probe, 不互相遮蔽.
+            if self._is_code_experiment(description) or self._is_code_experiment(
+                str(getattr(self, "_objective", "") or "")
+            ):
+                _lab = await self._execute_code_lab(description, context)
+                if _lab.get("success"):
+                    self._record_provenance("code_lab", plan, _lab)
+                    self._last_execution_result = {
+                        "_tool_name": "code_lab",
+                        "_tool_input": plan,
+                        "result": _lab,
+                    }
+                    logger.info(
+                        "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
+                    )
+                    return _lab
+            # 独立判定: plan 片段若没跑出数, 仍尝试 objective 探针(平凡确定性数值).
             if self._is_deterministic_numeric(description) or self._is_deterministic_numeric(
                 str(getattr(self, "_objective", "") or "")
             ):
@@ -356,6 +619,32 @@ class EngineAct:
         elif mode == "explore":
             # Use ExplorationOrchestrator to search design space
             result = await self._execute_explore(description, context)
+            # 空转兜底: 未注册设计空间时 explore 只回一个 0-branch 空 pod
+            # (0.0s, n_explored=0, 无 result) — 无证据却有"成功"外形, report 遂把
+            # LLM 现编的数字当 Results 写出去. 目标是"确定性数值计算"(中英动词都认)
+            # 时回落 coder 真写码真执行 (Write+Bash), 不空转.
+            if (
+                isinstance(result, dict)
+                and (
+                    result.get("success") is False
+                    or (
+                        not result.get("result")
+                        and int(result.get("n_explored", 0) or 0) == 0
+                    )
+                )
+                and (
+                    self._is_deterministic_numeric(description)
+                    or self._is_deterministic_numeric(
+                        str(getattr(self, "_objective", "") or "")
+                    )
+                )
+            ):
+                logger.info("explore 空转 (无证据) → 回落 coder 真实执行")
+                result = await self._execute_coder(description, context)
+                mode = "coder"
+        elif mode == "code_lab":
+            # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
+            result = await self._execute_code_lab(description, context)
         elif mode == "skill":
             # Run a pre-built composite skill pipeline
             result = await self._execute_skill(plan, context)
@@ -400,6 +689,9 @@ class EngineAct:
         _execute) 就跳过, 不强求调用方先 setup. provenance 是 best-effort,
         快照挂了不能把 execute 带挂.
         """
+        # 报告 citation 台账: 每次真实 execute 都留一条, 与 provenance 是否
+        # 启用无关 (单测路径无 _provenance_record 也要能攒证据).
+        self._append_execution_ledger(tool_name, output)
         record = getattr(self, "_provenance_record", None)
         if record is None:
             return
@@ -411,6 +703,41 @@ class EngineAct:
             logger.warning(
                 "error in _record_provenance: capture snapshot failed", exc_info=True
             )
+
+    def _append_execution_ledger(self, tool_name: str, output: Any) -> None:
+        """把一次真实执行的紧凑快照追加进报告 citation 台账 (best-effort).
+
+        报告面此前只拿 `_last_execution_result` (**末轮**), 中间轮的真实数值全丢
+        ——run56 末轮 execute 全是超时/零证据, 报告仍写出干净的 N_c(w) 表 (编造).
+        台账把本轮**每次** execute 的数值面留下来, 供报告生成阶段做"数值必须溯源
+        到真实 execution_result"的 citation 门 (控制面审计 C 族诚实门).
+
+        只留数值来源字段 (objectives/summary/result...), 丢掉脚本体与标准输出;
+        容量与单条长度都封顶, 台账本身不成为新的状态负担. 纯 best-effort.
+        """
+        try:
+            ledger = getattr(self, "_execution_ledger", None)
+            if ledger is None:  # 引擎未初始化该字段 (老替身) → 跳过
+                return
+            import json
+
+            payload = output if isinstance(output, dict) else {"value": str(output)}
+            # 丢掉脚本体/标准输出等长文本, 保留 objectives/summary 等数值来源.
+            slim = {
+                k: v
+                for k, v in payload.items()
+                if k not in ("script", "code", "stdout", "stderr")
+            }
+            text = json.dumps(slim, ensure_ascii=False, default=str)
+            if len(text) > _EXEC_LEDGER_ENTRY_CHARS:
+                text = text[:_EXEC_LEDGER_ENTRY_CHARS]
+            ledger.append(
+                {"idx": len(ledger) + 1, "tool": tool_name, "result": text}
+            )
+            if len(ledger) > _EXEC_LEDGER_MAX:
+                del ledger[: len(ledger) - _EXEC_LEDGER_MAX]
+        except Exception:  # 防御: 台账 best-effort, 挂了不能带挂 execute
+            logger.debug("append execution ledger failed", exc_info=True)
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]
@@ -452,6 +779,16 @@ class EngineAct:
         WorkflowOrchestrator.run() 同步等完. 失败的 subtask 不炸整体,
         返回聚合结果让 validate/learn 阶段看.
         """
+        # D1: 预算耗尽不再起新的并行工作流 — 它会一次拉起多个并发子任务,
+        # 单轮就能烧穿剩余预算. 起动作前查一次, 已耗尽直接空手收口.
+        if self._budget_exhausted():
+            logger.warning("dynamic_workflow skipped: wall-clock budget exhausted")
+            return {
+                "mode": "dynamic_workflow",
+                "success": False,
+                "budget_exhausted": True,
+                "error": "挂钟预算耗尽, 跳过动态工作流",
+            }
         # H2: bandit loop — plan 带 n_variants 且 toggle on 时走 variant 演化
         from huginn.autoloop.engine import _harness_workflow_evolution_enabled
         if plan.get("n_variants") and _harness_workflow_evolution_enabled():
@@ -888,6 +1225,25 @@ Please modify the code to address this task."""
                         self._grill_active = False
                 except ImportError:
                     logger.debug("pre_plan_grill import failed, GRILL prompt 跳过")
+            # 插件 prompt 段 (如 asd_ste100 的受控语言规则): autoloop 直接拼 persona
+            # system prompt, **绕过** agent.build_prompt, 故注册进 prompt_segments 的
+            # 插件段在这条路径上永不生效 (没通电). 这里显式消费只取插件段 (排除框架
+            # 骨架段, 避免与 persona/phase 重复注入). 组装失败不影响主 LLM 调用.
+            try:
+                from huginn.plugins.prompt_segments import (
+                    assemble_plugin_prompt_segments,
+                )
+
+                _plugin_seg = assemble_plugin_prompt_segments(
+                    mode="default",
+                    phase=self._current_phase or "",
+                    metacog_state="",
+                    system_prompt=sys_prompt,
+                )
+                if _plugin_seg:
+                    sys_prompt = f"{sys_prompt}\n\n{_plugin_seg}" if sys_prompt else _plugin_seg
+            except Exception:  # 防御: 段组装失败退回 persona-only, 不阻塞主路径
+                logger.debug("plugin prompt segments failed", exc_info=True)
             if sys_prompt:
                 sys_msg = SystemMessage(content=sys_prompt)
                 # 静态 system prompt 跨调用不变, 给 Anthropic 打 cache 标记.

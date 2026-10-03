@@ -933,6 +933,82 @@ def is_local_provider(provider: str, base_url: str | None = None) -> bool:
     return False
 
 
+def _message_text(m: Any) -> str:
+    """从消息 content 提取纯文本 (str 或 content-block 列表)."""
+    c = getattr(m, "content", "")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: list[str] = []
+        for block in c:
+            if isinstance(block, dict):
+                parts.append(str(block.get("text", "") or ""))
+            else:
+                parts.append(str(block))
+        return "\n".join(p for p in parts if p)
+    return "" if c is None else str(c)
+
+
+def _merge_system_messages(messages: list[Any]) -> list[Any]:
+    """把全部 SystemMessage 收敛成一条置于队首的 SystemMessage.
+
+    某些 OpenAI 兼容端点 (书生 intern-s2-preview 等) 只接受「最多一条、且必须
+    在首条」的 system 消息: 多条 system、或 system 落在 human 之后, 服务端都会
+    直接回 "in prompt processing error", 整轮对话失效. huginn 会在会话中间注入
+    多条 system (风格指令 / 工具预算 / context hints), 图框架又把顶层
+    system_prompt 单独前置 → 最终 prompt 天然是 [S, H, S, ...], 命中该限制.
+
+    语义等价 (system 正文仍是系统级指令), 只把顺序归一: 正文按出现顺序合并到
+    队首, 其余消息保持相对顺序. 未命中 (无需改动) 时原样返回同一列表对象.
+    """
+    from langchain_core.messages import SystemMessage
+
+    if not messages:
+        return messages
+    systems = [m for m in messages if isinstance(m, SystemMessage)]
+    if not systems or (len(systems) == 1 and isinstance(messages[0], SystemMessage)):
+        return messages
+    merged = "\n\n".join(t for t in (_message_text(m) for m in systems) if t)
+    rest = [m for m in messages if not isinstance(m, SystemMessage)]
+    return [SystemMessage(content=merged)] + rest
+
+
+def _normalizing_chat_openai_cls() -> type:
+    """返回会把 system 消息归一的 ChatOpenAI 子类.
+
+    每次现建 (类构造是微秒级, 远低于一次模型调用), 且 import 在函数内 — 这样
+    测试 monkeypatch ``langchain_openai.ChatOpenAI`` 时能取到被替换的基类;
+    若做全局缓存, 首个建出的子类会把当时 (可能被 patch 的) 基类钉死.
+
+    ponytail: 在模型边界做归一而非改图 — _get_request_payload 是所有
+    invoke/ainvoke/stream/astream/bind_tools 的唯一出口, 一处覆盖 deepagents /
+    react fallback / 子智能体全部路径, 且不碰图拓扑.
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as err:
+        raise ImportError("pip install langchain-openai") from err
+
+    class _NormalizingChatOpenAI(ChatOpenAI):
+        def _get_request_payload(
+            self,
+            input_: Any,
+            *,
+            stop: list[str] | None = None,
+            **kwargs: Any,
+        ) -> dict:
+            try:
+                msgs = list(self._convert_input(input_).to_messages())
+                normed = _merge_system_messages(msgs)
+                if normed is not msgs:
+                    input_ = normed
+            except Exception:  # 防御: 归一失败不能阻断正常请求
+                logger.debug("system message normalization skipped", exc_info=True)
+            return super()._get_request_payload(input_, stop=stop, **kwargs)
+
+    return _NormalizingChatOpenAI
+
+
 def _create_openai_compatible(
     provider: str,
     model: str,
@@ -943,11 +1019,6 @@ def _create_openai_compatible(
     max_tokens: int | None,
 ) -> Any:
     """Create a ChatOpenAI instance for an OpenAI-compatible provider."""
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError as err:
-        raise ImportError("pip install langchain-openai") from err
-
     cfg = _DOMESTIC_OPENAI_COMPATIBLE.get(provider, {})
     env_var = cfg.get("env") or "OPENAI_API_KEY"
     default_base_url = cfg.get("base_url")
@@ -971,8 +1042,20 @@ def _create_openai_compatible(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    if provider == "internlm":
+        # 书生 ChatAPI 的 thinking_mode 把思维链直接写进 content 字段(无独立
+        # reasoning_content). 通用 agent/autoloop 路径按 content 解析答复, 思考流会
+        # 先吃满 max_tokens 再耗尽预算 → 正文为空("agent produced no answer").
+        # 与 research/program.py 的门禁路径保持一致: 默认关思考流, 只有显式
+        # thinking 参数才开. (ChatAPI 默认开 thinking_mode, 故必须显式关.)
+        _want_think = bool(thinking) and thinking != "off"
+        _eb = dict(kwargs.get("extra_body") or {})
+        _eb.setdefault("thinking_mode", _want_think)
+        kwargs["extra_body"] = _eb
     kwargs["request_timeout"] = _llm_request_timeout()
-    return ChatOpenAI(**_with_usage_cb(kwargs))
+    # 归一 ChatOpenAI: 请求前把多条/错位的 system 消息收敛为队首单条, 规避
+    # internlm 等端点 "in prompt processing error". 见 _merge_system_messages.
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs))
 
 
 def _get_usage_cb() -> Any:
@@ -1069,10 +1152,6 @@ def create_langchain_model(
         return ChatAnthropic(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider in ("openai", "vllm", "local"):
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as err:
-            raise ImportError("pip install langchain-openai") from err
         key = api_key or os.environ.get("OPENAI_API_KEY")
         if not key and not _is_local_url(base_url):
             raise ValueError(
@@ -1103,7 +1182,7 @@ def create_langchain_model(
             )
             kwargs["extra_body"] = extra_body
         kwargs["request_timeout"] = _llm_request_timeout()
-        return ChatOpenAI(**_with_usage_cb(kwargs, _usage_cb))
+        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider == "ollama":
         try:
@@ -1135,10 +1214,6 @@ def create_langchain_model(
         return ChatOllama(**_with_usage_cb(_ollama_kwargs, _usage_cb))
 
     if provider == "deepseek":
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as err:
-            raise ImportError("pip install langchain-openai") from err
         key = pick_api_key("deepseek", api_key)
         if not key:
             raise ValueError("DEEPSEEK_API_KEY not set")
@@ -1152,7 +1227,7 @@ def create_langchain_model(
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
         kwargs["request_timeout"] = _llm_request_timeout()
-        return ChatOpenAI(**_with_usage_cb(kwargs, _usage_cb))
+        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider == "google-genai":
         try:
@@ -1169,10 +1244,6 @@ def create_langchain_model(
         return ChatGoogleGenerativeAI(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider == "openrouter":
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as err:
-            raise ImportError("pip install langchain-openai") from err
         key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not key:
             raise ValueError("OPENROUTER_API_KEY not set")
@@ -1186,7 +1257,7 @@ def create_langchain_model(
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
         kwargs["request_timeout"] = _llm_request_timeout()
-        return ChatOpenAI(**_with_usage_cb(kwargs, _usage_cb))
+        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider in _DOMESTIC_OPENAI_COMPATIBLE:
         return _create_openai_compatible(
@@ -1202,10 +1273,6 @@ def create_langchain_model(
     if provider in _LOCAL_PRESETS:
         preset = _LOCAL_PRESETS[provider]
         resolved_base_url = base_url or preset["base_url"]
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as err:
-            raise ImportError("pip install langchain-openai") from err
         _lmstudio_kwargs = {
             "model": model,
             "api_key": api_key or "not-needed",
@@ -1213,7 +1280,7 @@ def create_langchain_model(
             "temperature": temperature,
             "request_timeout": _llm_request_timeout(),
         }
-        return ChatOpenAI(**_with_usage_cb(_lmstudio_kwargs, _usage_cb))
+        return _normalizing_chat_openai_cls()(**_with_usage_cb(_lmstudio_kwargs, _usage_cb))
 
     if provider == "nvidia":
         try:

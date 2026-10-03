@@ -1,0 +1,109 @@
+{
+  "goals": [
+    {
+      "id": "goal_2b2a29f8",
+      "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：神经网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n具体地，在给定一族抽象约束下，令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。请测量 N_c(w) 随 w 的变化趋势：\n- 若 N_c(w) 随 w 增大而不增（小容量即可零违规）→ 支持解空间刚性（唯一性/低维）。\n- 若 N_c(w) 随 w 增大而增大（样本越多越装不下）→ 支持解空间胖（高维/连续族）。\n\n研究对象只能是小型前馈神经网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系；也不要用别的领域类比来回答。\n所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规的数值、以及 N_c(w) 的数值与趋势。实验脚本必须能真实跑通；若跑不通，如实报告失败与报错，绝不编造数字。",
+      "sub_goals": [],
+      "iteration": 8,
+      "status": "active",
+      "created_at": "2026-09-27T13:15:53.892052+00:00",
+      "updated_at": "2026-09-27T13:19:29.058066+00:00",
+      "session_id": "",
+      "metadata": {},
+      "unknowns": [
+        {
+          "id": "unk_559a8d73",
+          "text": "The definition of \"abstract constraints\" is too vague — without specifying whether they are linear, nonlinear, smooth, or algebraic, the analysis of N_c(w) may lack mathematical grounding and reproducibility.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:15:56.224249+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_2ec546bc",
+          "text": "Training neural networks to achieve “zero violation” on unseen constraints may suffer from optimization landscape issues (e.g., local minima, saddle points), making N_c(w) a noisy or biased estimator of true solvability.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:15:56.225434+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_0d1c5e3d",
+          "text": "There is no guarantee that the set of constraints used in bootstrapping is representative or sufficient to characterize the global solution space; sampling bias could mislead conclusions about rigidity vs. fatness.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:15:56.226311+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_941aec4f",
+          "text": "The mapping between network width N_c and effective hypothesis space dimension is not well-theorized — increasing width does not necessarily increase expressive capacity monotonically due to redundancy or symmetries.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:15:56.227083+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_6e00c111",
+          "text": "In high-w regimes, overfitting to constraint structure may occur even with small N_c, mimicking rigidity when the solution space is actually high-dimensional but constrained by training artifacts.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:15:56.227832+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_8fdf706b",
+          "text": "假设“零违规”在数学上等价于满足解析约束，但神经网络可能通过近似拟合而非精确满足约束来表现“伪零违规”，导致对刚性的高估。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:19:12.236454+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_5162880b",
+          "text": "最小网络容量 N_c(w) 的搜索依赖优化算法的全局收敛性，实际中易陷入局部极小，可能低估真实所需容量。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:19:12.237701+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_b4cc9688",
+          "text": "约束样本 w 的分布若缺乏代表性（如集中在低曲率区域），可能误导解空间维度的推断，无法反映全局结构。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:19:12.238445+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_f90f9c77",
+          "text": "当 w 超过网络表达能力上限时，N_c(w) 可能发散或出现相变，但当前设定未考虑容量饱和或过拟合的临界行为。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:19:12.239179+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_d18160b2",
+          "text": "忽略归纳偏置（如初始化、正则化、架构约束）对解空间的压缩效应，可能将方法学导致的刚性误判为泛化解空间特性。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T13:19:12.239864+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        }
+      ],
+      "unknowns_discovered": 10,
+      "unknowns_resolved": 0,
+      "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：神经网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n具体地，在给定一族抽象约束下，令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。请测量 N_c(w) 随 w 的变化趋势：\n- 若 N_c(w) 随 w 增大而不增（小容量即可零违规）→ 支持解空间刚性（唯一性/低维）。\n- 若 N_c(w) 随 w 增大而增大（样本越多越装不下）→ 支持解空间胖（高维/连续族）。\n\n研究对象只能是小型前馈神经网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系；也不要用别的领域类比来回答。\n所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规的数值、以及 N_c(w) 的数值与趋势。实验脚本必须能真实跑通；若跑不通，如实报告失败与报错，绝不编造数字。",
+      "success_criteria": [
+        "tests_passed"
+      ],
+      "max_iterations": 8,
+      "completed_at": null,
+      "completion_condition": null,
+      "wall_clock_budget_seconds": 0.0,
+      "started_at": "",
+      "origin": "user"
+    }
+  ]
+}

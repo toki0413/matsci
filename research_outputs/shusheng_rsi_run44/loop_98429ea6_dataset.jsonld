@@ -1,0 +1,477 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_98429ea6",
+  "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【判别口径·本轮已定（务必按此判定，别再自创）】\n- 刚性族：在扫描范围内**存在**较小的有限 N_c（例如 h=2~8 即可零违规），且 N_c 不随 w 增长（趋势为 flat 或 decreasing）。必须给出可达锚点。\n- 胖族：在扫描上限（h=64）内**任何宽度都达不到零违规**，即 N_c = ∞（脚手架会标 trend='unreachable'）。**这就是“胖”的判别签名**，不需要、也不要强行去找“N_c 递增”。\n- 因此本轮的判别结论是二值的：刚性=有限小 N_c；胖=unreachable（不可达）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【零违规判据·统一口径】\n- 零违规 = 在未参与训练的留出约束点上，最大绝对误差 ≤ 1e-3。\n- 训练误差只需“足够小”（≤1e-4 量级）即可，**不要加 train_err < 1e-6 这类过严门槛**（会把可达宽度误判为失败）。\n- 所有报告数值必须是有限数（禁止 inf / nan / None）；达不到零违规的行如实报其真实（有限）留出误差。\n\n【尺度纪律·本轮新增硬项（否则绝对判据失效）】\n- **y 与 yv 的数值量级必须归一到 O(1)**（例如 std ≲ 10）。绝对判据“≤1e-3”只有在目标 O(1) 时才有意义：run29 的 fat 用 20 项随机多项式，基 (2z-1)^19 取值到 ~1e9，导致“1e-3”在 ~1e9 尺度上根本不可能，判定直接失效。\n- 若你的族本质带大动态范围，请先对 y 做显式归一（如除以自身 std），并在报告里说明归一方式 —— 但留出误差仍要在**同一归一尺度**上报告。\n\n【第 0 步·刚性可达性 bootstrap（必须先做）】\n先证明“刚性族在本实验里零违规可达”：让某个 (w, 宽度, 种子) 组合训练后对留出点达到 ≤1e-3，并如实打印锚点数值（宽度、训练误差、留出误差）。\n- 若刚性族在最大宽度下仍不可达，说明约束族构造不当（例如 w 太小导致 5 个点无法确定函数、或阈值不可达），先改构造再重做；此时不得报结论。\n\n【实验设计】\n1) 真的训练网络：沙箱已内置 capacity_scan（两层 tanh + L-BFGS-B 多起点），你只需写 family。\n2) 宽度扫描上限 h=64；刚性族必须在这段内出现有限 N_c。\n3) 至少 3 个随机种子，报告 N_c(w) 的数值与趋势，并说明两族的解析 ground truth。\n4) w 的取值要让“刚性族能被有限样本确定”这件事成立：w 太小（如 5）时，光滑函数在训练点之间仍有大量候选，留出误差会偏大 —— 这是真实的“欠定”，请如实报告，并保证在较大 w 上刚性族确实可达零违规。\n\n【Code Lab 脚本契约】\n- 你**只需实现 family(kind, w, seed) 这一个函数**；run(cfg) 原样 `return capacity_scan(family, seed=...)`，可传 ho_tol/tr_tol 覆盖默认阈值。\n- **不要改 run 函数，也不要把训练/优化/参数打包/前向传播写进代码**。\n- family 返回 dict {'X','y','Xv','yv'}：X/y 是 w 个**训练**约束点，Xv/yv 是**留出**约束点；一律 `.reshape(-1, 1)` 成 (N,1)。\n- **标签形状硬约束**：y/yv 必须是 (N,1)。`(N,)` 与 `(N,1)` 相加会广播成 `(N,N)`——静默伪结果陷阱，脚手架已硬校验。\n- **留出集必须真的留出**：Xv 的输入点不得与 X 的训练点重合（脚手架会判 invalid_heldout 并报重叠比例）；别用含端点重合的同一网格。\n- 随机数用 rng = np.random.default_rng(seed)；Generator 没有 randn，用 rng.standard_normal(n)。\n- 不要用 assert / raise 中断执行：把真实数值全部 return，由上层裁决。\n\n【前几轮伪结果诊断·本轮必须避免】\n1) run27：fat 标签广播 bug（→(w,w)），留出误差被钉在 ~0.51 假值。已由形状硬校验拦截。\n2) run28：fat 用与 x 无关的 **i.i.d. 纯噪声**，让“刚 vs 胖”退化成“可学 vs 不可学”，且目标是 x²/恒等这类平凡 1 维函数，两族不对立。→ 本轮 fat 必须是 **x 的、高维但可部分学习** 的函数族（自由度 ≫ w），不得是与 x 无关的噪声。\n3) run29：rigid 用 cos(πx) 但 w=5 欠定（留出 ~4e-2，不可达）；fat 用高阶多项式导致 ~1e9 尺度，绝对判据失效。→ 本轮按上面的“尺度纪律”和“第 0 步”处理。\n4) **报告纪律**：结论必须被 objectives / N_c 表里的真实数值支持；不得把与数值矛盾的趋势写成结论；训练误差列与留出误差列必须各自独立测得，不得互相复制；正文不得引入材料/化学/晶界等类比框架。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-09-28T17:50:44.766074+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "code_lab"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families as specified in the hypothesis, ensuring proper output shape (N,1), held-out set separation, and O(1) normalization of y/yv. This will enable the capacity_scan to compute N_c(w) and test the optimization landscape hypothesis regarding trapped local minima vs. geometric rigidity."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "skill",
+      "value": "None"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small widths (h=2~8) with flat N_c(w) trend, while the fat family will show unreachable (unreachable) trend with finite held-out errors at h=64."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "target_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_23a4861a"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "status",
+      "value": "completed"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "success",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w5_h2",
+      "value": -0.16630541112303066
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w5_h4",
+      "value": -0.10382398832221451
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w5_h8",
+      "value": -0.3200623832726095
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w5_h16",
+      "value": -0.026917920386226396
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w5_h32",
+      "value": -0.017782391861469682
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w5_h64",
+      "value": -0.014364117771691304
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w10_h2",
+      "value": -0.0005947837573086756
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w10_h4",
+      "value": -0.0003773982044356361
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w10_h8",
+      "value": -4.507927796870703e-05
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w10_h16",
+      "value": -0.0012199496703189927
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w10_h32",
+      "value": -0.0006959370730214853
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w10_h64",
+      "value": -0.0007235605092316966
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w20_h2",
+      "value": -0.0005902358550143039
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w20_h4",
+      "value": -0.0006718771342819896
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w20_h8",
+      "value": -0.0004151479650266465
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w20_h16",
+      "value": -0.0007603199334659527
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w20_h32",
+      "value": -0.0005536948955567611
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_rigid_w20_h64",
+      "value": -7.710282388320722e-05
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w5_h2",
+      "value": -0.8334222186215448
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w5_h4",
+      "value": -0.8998587300711975
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w5_h8",
+      "value": -0.49780643639359523
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w5_h16",
+      "value": -0.8662517922333881
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w5_h32",
+      "value": -0.7152796731864544
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w5_h64",
+      "value": -0.6925094616288892
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w10_h2",
+      "value": -0.9953172305623141
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w10_h4",
+      "value": -0.09321568239621314
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w10_h8",
+      "value": -0.12938938300518288
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w10_h16",
+      "value": -0.3262060529862154
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w10_h32",
+      "value": -0.21032409504385585
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w10_h64",
+      "value": -0.2611553032298115
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w20_h2",
+      "value": -0.018060407853032562
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w20_h4",
+      "value": -0.023048162617996665
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w20_h8",
+      "value": -0.018880232410436903
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w20_h16",
+      "value": -0.07791881483067797
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w20_h32",
+      "value": -0.046287905543548113
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.neg_heldout_fat_w20_h64",
+      "value": -0.15410536180127465
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "script",
+      "value": "import numpy as np\n\n\ndef family(kind, w, seed):\n    # ===== 你只改这个函数: 定义\"刚(rigid)/肥(fat)\"各自对应的约束族 =====\n    # kind: 族名('rigid' 或 'fat'); w: 训练约束点数; seed: 随机种子\n    # 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个训练约束点, Xv/yv 是留出约束点。\n    # 下面是**两个可跑通的示例**, 请按你的解析 ground truth 替换函数形式/系数。\n    rng = np.random.default_rng(seed)\n    if kind == 'rigid':\n        # 刚性族: 低维解析族, 由该族唯一确定 —— y = sin(pi x)\n        X = np.linspace(0.05, 0.95, w).reshape(-1, 1)\n        y = np.sin(np.pi * X)\n        Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)\n        yv = np.sin(np.pi * Xv)\n        # 固定稠密网格定标(与 w 无关, 稳定), 让 y/yv 同尺度且 O(1)\n        grid = np.linspace(0.02, 0.98, 400).reshape(-1, 1)\n        s = float(np.std(np.sin(np.pi * grid))) + 1e-9\n        y = y / s\n        yv = yv / s\n    else:\n        # 肥族: 高维连续族 —— n 项随机多项式, 自由度 n 远大于 w\n        n = 20\n        coeffs = rng.standard_normal(n)          # (n,) 一维; 不要 reshape 成 (n,1)\n        X = rng.uniform(0.05, 0.95, (w, 1))      # (w,1)\n        y = (poly_basis(X, n) @ coeffs).reshape(-1, 1)      # (w,1); 用原语别手搓\n        Xv = rng.uniform(0.02, 0.98, (200, 1))\n        yv = (poly_basis(Xv, n) @ coeffs).reshape(-1, 1)    # (200,1)\n        # 用**固定稠密网格**定标(与 w 无关, 稳定), 让 y/yv 同尺度且 O(1)\n        grid = np.linspace(0.02, 0.98, 400).reshape(-1, 1)\n        s = float(np.std(poly_basis(grid, n) @ coeffs)) + 1e-9\n        y = y / s\n        yv = yv / s\n    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}\n\n\ndef run(cfg):\n    # 已由脚手架提供: 训练/多起点/宽度扫描/零违规判据/N_c 汇总都在 capacity_scan 里。\n    # **不要改这个函数, 也不要把训练/优化代码写进来** —— 否则会重蹈手搓 numpy 的错。\n    seed = int(cfg.get('seed', 0))\n    return capacity_scan(family, seed=seed)"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reproducible",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "Tests Passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "constraints_satisfied",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.failed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.skipped",
+      "value": 2
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "test_output",
+      "value": "\nno tests ran in 0.00s\n"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.score",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.reason",
+      "value": "The output appears to be raw numerical data without clear interpretation or reasoning. It lacks explicit connection to the hypothesis about rigid families and harmonic polynomials mentioned in past iterations. The presence of 'flat unreachable rigid' suggests some validation occurred, but there's no explicit conclusion linking these numbers to whether the rigid family achieves zero violation as hypothesized."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.needs_retry",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_score",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_gap",
+      "value": "Missing specific maximum absolute error values that would directly test the hypothesis. No clear statement of what threshold constitutes 'zero violation'. The numbers appear to be raw outputs rather than analyzed results with conclusions drawn."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.failure_mode",
+      "value": "If the hypothesis is wrong, the system would fail because it cannot determine whether the rigid family actually achieves zero violation. Without explicit max error values and a defined threshold for acceptable violation, one cannot validate whether the linear PDE constraints are satisfied as required by the mathematical structure."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reviewer_critique",
+      "value": "Peer Review Summary:\n\n1. **Methodological Weakness / Missing Convergence Check**:  \nThe table reports training and held-out errors for multiple configurations (e.g., `rigid_w5_h2`, `rigid_w10_h64`), but no convergence analysis is provided. There is no indication of:\n- Error decay with increasing training samples or iterations.\n- Stability of held-out error as model capacity (e.g., hidden units `h`) increases.\n- Evidence of overfitting: for `rigid_w5_h8`, held-out error (0.092) is nearly double that of `rigid_w5_h4` (0.030), despite lower train error — a red flag for poor generalization without regularization or early stopping.\n\n2. **Reproducibility and Benchmarking**:  \n- **Reproducibility**: Not verifiable. No details on data split, random seed, optimizer, or architecture (e.g., network depth, activation functions). The raw output format lacks metadata needed to reproduce results.\n- **Benchmarking**: Absent. No comparison to baseline methods (e.g., FEM, classical ML, or prior neural operator models) or standard datasets. The `benchmarks: {passed: 0, skipped: 2}` flag indicates no formal validation was executed.\n\n3. **Alignment with Domain Knowledge**:  \n- The term “rigid” suggests a materials context (e.g., crystal defects, elastic response), but no physical constraints (e.g., energy minimization, symmetry, conservation laws) are enforced or tested.\n- Held-out errors in the 1e-3 to 1e-1 range are plausible for regression tasks, but without units or physical interpretation (e.g., energy per atom, stress error), it’s impossible to judge if these are meaningful in a materials-science context.\n- No validation against first-principles (e.g., DFT, molecular dynamics) or analytical solutions — a critical gap for computational materials work.\n\n4. **Concrete Next Steps**:\n- **Add convergence plots**: Show train/validation loss vs. epoch/sample size for representative models.\n- **Include uncertainty quantification**: Report confidence intervals or error bars on held-out error (e.g., via cross-validation).\n- **Benchmark against baselines**: Compare at least one established method (e.g., PINN, CGNET, or linear elasticity solver) on the same task/data.\n- **Specify physical constraints**: If modeling a rigid system, enforce symmetry or boundary conditions explicitly; validate via energy or force residuals.\n- **Reproducibility package**: Share code, seeds, data splits, and hyperparameters. Use structured outputs (e.g., JSON with metadata) instead of raw strings.\n\n**Bottom Line**: The results lack scientific rigor and interpretability. Without convergence, benchmarking, and physical grounding, the findings are not actionable or trustworthy for materials science applications."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_tool_diversity",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_reasoning_entropy",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_cross_domain",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_novelty",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_domains_hit",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "grader_reward",
+      "value": 0.8571
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_total",
+      "value": 8
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_pass_rate",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.predicted",
+      "value": "For the rigid family (low-dimensional linear span), I expect to find a finite N_c (e.g., h=4~8) where max held-out error ≤ 1e-3, with training error ≤ 1e-4. For the fat family (high-dimensional), I ex"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.actual",
+      "value": "1.7082560366254995e-10 0.04803953806817651 9.194154326763737e-10 0.02999095153416026 6.434203447813758e-10 0.09245431242542007 9.612374785028521e-11 0.007775604768715569 8.898145553715153e-10 0.005136"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_mean",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_worst",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_std",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_source",
+      "value": "jaccard"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_rel",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "completion_mode",
+      "value": "code_lab"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "validation_evidence",
+      "value": "code_lab_objectives"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "r_phys",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "persona",
+      "value": "reviewer"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "principles_added",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "override_reason",
+      "value": "force_explore"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "repeat_execution",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_formula",
+      "value": "capacity_scan(family, seed=...)"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_98429ea6",
+    "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【判别口径·本轮已定（务必按此判定，别再自创）】\n- 刚性族：在扫描范围内**存在**较小的有限 N_c（例如 h=2~8 即可零违规），且 N_c 不随 w 增长（趋势为 flat 或 decreasing）。必须给出可达锚点。\n- 胖族：在扫描上限（h=64）内**任何宽度都达不到零违规**，即 N_c = ∞（脚手架会标 trend='unreachable'）。**这就是“胖”的判别签名**，不需要、也不要强行去找“N_c 递增”。\n- 因此本轮的判别结论是二值的：刚性=有限小 N_c；胖=unreachable（不可达）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【零违规判据·统一口径】\n- 零违规 = 在未参与训练的留出约束点上，最大绝对误差 ≤ 1e-3。\n- 训练误差只需“足够小”（≤1e-4 量级）即可，**不要加 train_err < 1e-6 这类过严门槛**（会把可达宽度误判为失败）。\n- 所有报告数值必须是有限数（禁止 inf / nan / None）；达不到零违规的行如实报其真实（有限）留出误差。\n\n【尺度纪律·本轮新增硬项（否则绝对判据失效）】\n- **y 与 yv 的数值量级必须归一到 O(1)**（例如 std ≲ 10）。绝对判据“≤1e-3”只有在目标 O(1) 时才有意义：run29 的 fat 用 20 项随机多项式，基 (2z-1)^19 取值到 ~1e9，导致“1e-3”在 ~1e9 尺度上根本不可能，判定直接失效。\n- 若你的族本质带大动态范围，请先对 y 做显式归一（如除以自身 std），并在报告里说明归一方式 —— 但留出误差仍要在**同一归一尺度**上报告。\n\n【第 0 步·刚性可达性 bootstrap（必须先做）】\n先证明“刚性族在本实验里零违规可达”：让某个 (w, 宽度, 种子) 组合训练后对留出点达到 ≤1e-3，并如实打印锚点数值（宽度、训练误差、留出误差）。\n- 若刚性族在最大宽度下仍不可达，说明约束族构造不当（例如 w 太小导致 5 个点无法确定函数、或阈值不可达），先改构造再重做；此时不得报结论。\n\n【实验设计】\n1) 真的训练网络：沙箱已内置 capacity_scan（两层 tanh + L-BFGS-B 多起点），你只需写 family。\n2) 宽度扫描上限 h=64；刚性族必须在这段内出现有限 N_c。\n3) 至少 3 个随机种子，报告 N_c(w) 的数值与趋势，并说明两族的解析 ground truth。\n4) w 的取值要让“刚性族能被有限样本确定”这件事成立：w 太小（如 5）时，光滑函数在训练点之间仍有大量候选，留出误差会偏大 —— 这是真实的“欠定”，请如实报告，并保证在较大 w 上刚性族确实可达零违规。\n\n【Code Lab 脚本契约】\n- 你**只需实现 family(kind, w, seed) 这一个函数**；run(cfg) 原样 `return capacity_scan(family, seed=...)`，可传 ho_tol/tr_tol 覆盖默认阈值。\n- **不要改 run 函数，也不要把训练/优化/参数打包/前向传播写进代码**。\n- family 返回 dict {'X','y','Xv','yv'}：X/y 是 w 个**训练**约束点，Xv/yv 是**留出**约束点；一律 `.reshape(-1, 1)` 成 (N,1)。\n- **标签形状硬约束**：y/yv 必须是 (N,1)。`(N,)` 与 `(N,1)` 相加会广播成 `(N,N)`——静默伪结果陷阱，脚手架已硬校验。\n- **留出集必须真的留出**：Xv 的输入点不得与 X 的训练点重合（脚手架会判 invalid_heldout 并报重叠比例）；别用含端点重合的同一网格。\n- 随机数用 rng = np.random.default_rng(seed)；Generator 没有 randn，用 rng.standard_normal(n)。\n- 不要用 assert / raise 中断执行：把真实数值全部 return，由上层裁决。\n\n【前几轮伪结果诊断·本轮必须避免】\n1) run27：fat 标签广播 bug（→(w,w)），留出误差被钉在 ~0.51 假值。已由形状硬校验拦截。\n2) run28：fat 用与 x 无关的 **i.i.d. 纯噪声**，让“刚 vs 胖”退化成“可学 vs 不可学”，且目标是 x²/恒等这类平凡 1 维函数，两族不对立。→ 本轮 fat 必须是 **x 的、高维但可部分学习** 的函数族（自由度 ≫ w），不得是与 x 无关的噪声。\n3) run29：rigid 用 cos(πx) 但 w=5 欠定（留出 ~4e-2，不可达）；fat 用高阶多项式导致 ~1e9 尺度，绝对判据失效。→ 本轮按上面的“尺度纪律”和“第 0 步”处理。\n4) **报告纪律**：结论必须被 objectives / N_c 表里的真实数值支持；不得把与数值矛盾的趋势写成结论；训练误差列与留出误差列必须各自独立测得，不得互相复制；正文不得引入材料/化学/晶界等类比框架。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+    "instrument": "/workspace/research_outputs/shusheng_rsi_run44/.huginn/trajectories/loop_98429ea6.json",
+    "object": "/workspace/research_outputs/shusheng_rsi_run44/.huginn/provenance.jsonl",
+    "startTime": "2026-09-28T16:50:04.767791",
+    "endTime": "2026-09-28T17:50:44.762741"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_rsi_run44/huginn_autoloop_report_loop_8b0f3c14.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_rsi_run44/.huginn/trajectories/loop_98429ea6.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

@@ -8,6 +8,8 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from typing import Any
 
 import click
@@ -17,6 +19,53 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from huginn.autoloop import AutoloopEngine, save_autoloop_snapshot
 from huginn.cli.context import CliContext
+
+logger = logging.getLogger(__name__)
+
+
+def _load_star_plugins() -> None:
+    """把 Star 插件挂进本进程 —— 与 serve 启动时加载的是同一套.
+
+    autoloop CLI 此前**从不**加载 Star 插件, 于是插件面 (prompt 段 / plugin tools,
+    如 asd_ste100 的 ste_lint、comms_lint) 在长程 run 里全部缺席. 这里复用服务端
+    ``lifespan._load_star_plugins`` 的同一实现, 让 autoloop 与 serve 看到同一套插件
+    (单一来源, 不在这里另写一份发现/加载逻辑).
+
+    插件各自用 feature flag 门控自身行为, 加载本身不改默认语义. 设
+    ``HUGINN_AUTOLOOP_NO_PLUGINS=1`` 可关闭 (回到插件缺席的旧行为).
+    """
+    if os.environ.get("HUGINN_AUTOLOOP_NO_PLUGINS", "0") == "1":
+        return
+    try:
+        from huginn.lifespan import _load_star_plugins as _load
+
+        asyncio.run(_load())
+    except Exception:  # 防御: 插件加载失败不阻塞 autoloop 启动
+        logger.warning("Star plugin loading failed; autoloop runs without plugins", exc_info=True)
+
+
+def _maybe_agent_factory() -> Any:
+    """多智能体协作通电开关 — 默认 None (纯单 agent, 零额外成本).
+
+    盲重建 / failure_inverter / BranchIncubator 三条协作路径都靠
+    ``engine._agent_factory``; 但 CLI 此前**从没注入**它, 于是它们在长程 run 里
+    全部静默空转 (engine.py 注释声称"由 RCBench runner / CLI 注入"—— 实际未接).
+    置 ``HUGINN_ENABLE_AGENT_COLLAB=1`` 才构造, 默认关 → 默认行为/成本不变.
+    """
+    if os.environ.get("HUGINN_ENABLE_AGENT_COLLAB", "0") != "1":
+        return None
+    try:
+        from huginn.server_core import get_agent_factory
+
+        return get_agent_factory()
+    except Exception:  # 防御: 工厂构造失败退回单 agent
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "agent collab factory build failed; fall back to single-agent",
+            exc_info=True,
+        )
+        return None
 
 
 @click.command()
@@ -59,6 +108,16 @@ from huginn.cli.context import CliContext
     multiple=True,
     help="Success criterion (keyword that must appear in validation output). Repeatable: -s foo -s bar",
 )
+@click.option(
+    "--wall-clock-budget",
+    "wall_clock_budget",
+    default=0,
+    type=int,
+    help="Long-horizon mode: wall-clock budget in SECONDS. >0 creates a persistent "
+    "goal and enables persistent-goal mode, so heuristic early-stops (darwin "
+    "stagnation / belief / surprise convergence) defer until the budget is spent "
+    "or the -i iteration cap is reached.",
+)
 @click.pass_obj
 def autoloop(
     obj: CliContext,
@@ -69,6 +128,7 @@ def autoloop(
     no_progressive_budget: bool,
     goal_id: str | None,
     success_criteria: tuple[str, ...],
+    wall_clock_budget: int,
 ) -> None:
     """Run the autonomous closed-loop engine.
 
@@ -82,6 +142,9 @@ def autoloop(
         huginn autoloop --goal goal_abc12345
     """
     console = obj.console
+
+    # 挂载 Star 插件 (prompt 段 / plugin tools), 与 serve 同一套.
+    _load_star_plugins()
 
     if not objective and not watch:
         console.print(
@@ -123,7 +186,10 @@ def autoloop(
             f"[yellow]Checkpoint resume failed, starting fresh:[/yellow] {_e}"
         )
     if engine is None:
-        engine = AutoloopEngine(workspace=obj.workspace)
+        engine = AutoloopEngine(
+            workspace=obj.workspace,
+            agent_factory=_maybe_agent_factory(),
+        )
 
     # Goal resolution: --goal resumes a persisted goal; --success-criteria
     # creates a new one. Neither → no goal, run() behaves as before.
@@ -139,16 +205,35 @@ def autoloop(
         if not objective:
             objective = goal.objective
         console.print(f"[blue]Resuming goal:[/blue] {goal.id} ({goal.objective})")
-    elif success_criteria and objective:
+    elif objective and (success_criteria or wall_clock_budget > 0):
         goal = scheduler.create_goal(
             objective=objective,
             success_criteria=list(success_criteria),
             max_iterations=iterations,
         )
-        console.print(
-            f"[blue]Created goal:[/blue] {goal.id}\n"
-            f"  criteria: {list(success_criteria)}"
-        )
+        if wall_clock_budget > 0:
+            # 长程探索: 目标挂上挂钟预算并置 active, 同时打开持久目标模式.
+            # 这样 darwin/belief/surprise 这类启发式早停在预算未耗尽时不再终止
+            # 整个 run, 循环自主推进到目标达成或预算/迭代上限耗尽.
+            from huginn.utils.common import now_iso
+
+            scheduler.update_goal(
+                goal.id,
+                wall_clock_budget_seconds=float(wall_clock_budget),
+                started_at=now_iso(),
+                status="active",
+            )
+            os.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "1"
+            console.print(
+                f"[blue]Long-horizon goal:[/blue] {goal.id}\n"
+                f"  wall-clock budget: {wall_clock_budget}s, "
+                f"iteration cap: {iterations}"
+            )
+        else:
+            console.print(
+                f"[blue]Created goal:[/blue] {goal.id}\n"
+                f"  criteria: {list(success_criteria)}"
+            )
     engine._goal_scheduler = scheduler
 
     if watch:

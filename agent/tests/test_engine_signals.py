@@ -6,7 +6,15 @@
 
 from __future__ import annotations
 
-from huginn.autoloop.signals import EngineSignals
+from huginn.autoloop.signals import (
+    EngineSignals,
+    hypothesis_strength,
+    strength_branch_depth,
+    strength_global_proposal_prob,
+    strength_schedule_enabled,
+    strength_stagnation_limit,
+    strength_temperature,
+)
 
 
 def test_signals_snapshot_roundtrip():
@@ -115,3 +123,60 @@ def test_engine_state_signals_persist(tmp_path):
             os.environ.pop(es._PERSISTENCE_FLAG, None)
         else:
             os.environ[es._PERSISTENCE_FLAG] = prev
+
+
+# ── Ataraxos 式强度调度 (explore 超参自适应) ─────────────────────────
+
+
+class _StubEngine:
+    """最小 stub: 只提供调度读的纯环字段."""
+
+    def __init__(self, **kw):
+        self._last_surprise_rel = kw.get("rel")
+        self._last_surprise = kw.get("raw", 0.0)
+        self._validate_window = kw.get("window", [])
+        self._darwin_best_score = kw.get("best", 0.0)
+        self._darwin_stagnation = kw.get("stag", 0)
+
+
+def test_strength_schedules_anchor_at_old_defaults():
+    """s=0.5 处各调度必须回到旧硬编码默认 → 开/关平滑."""
+    assert abs(strength_global_proposal_prob(0.5) - 0.3) < 1e-9
+    assert abs(strength_temperature(0.5) - 1.0) < 1e-9
+    assert strength_branch_depth(0.5) == 2
+    assert strength_stagnation_limit(0.5) == 5
+
+
+def test_strength_monotonic_weak_explores_strong_converges():
+    # 弱 (s=0): 多全局跳 / 高温 / 深搜 / 早 pivot
+    assert strength_global_proposal_prob(0.0) > strength_global_proposal_prob(1.0)
+    assert strength_temperature(0.0) > strength_temperature(1.0)
+    assert strength_branch_depth(0.0) > strength_branch_depth(1.0)
+    assert strength_stagnation_limit(0.0) < strength_stagnation_limit(1.0)
+    # 范围不越界
+    assert strength_branch_depth(1.0) >= 1
+    assert strength_stagnation_limit(1.0) <= 9
+
+
+def test_hypothesis_strength_reads_signals_and_is_neutral_on_empty():
+    weak = _StubEngine(rel=0.9, window=[False, False, True], best=1.0, stag=2)
+    strong = _StubEngine(rel=0.1, window=[True] * 5, best=9.0, stag=0)
+    assert hypothesis_strength(weak) < hypothesis_strength(strong)
+    # 无 history (rel 缺 + raw 0) → 中性偏探索, 不误判为强
+    empty = _StubEngine()
+    assert 0.35 < hypothesis_strength(empty) < 0.6
+
+
+def test_hypothesis_strength_tolerates_missing_fields():
+    class _Bare:
+        pass
+
+    s = hypothesis_strength(_Bare())
+    assert 0.0 <= s <= 1.0
+
+
+def test_strength_schedule_flag_default_on_and_can_disable(monkeypatch):
+    monkeypatch.delenv("HUGINN_STRENGTH_SCHEDULE", raising=False)
+    assert strength_schedule_enabled() is True
+    monkeypatch.setenv("HUGINN_STRENGTH_SCHEDULE", "0")
+    assert strength_schedule_enabled() is False

@@ -21,23 +21,25 @@ export function useTeam() {
     setTeamResult(null);
     try {
       // Try v2 API (ModelTeam) first
-      let data = await api.post<{ success?: boolean; tasks?: any[]; plan?: any[]; error?: string }>(
+      const v2 = await api.post<{ success?: boolean; steps?: any[]; error?: string }>(
         "/team/v2/plan",
         { objective: teamObjective }
       ).catch(() => null);
 
-      // Fallback to legacy API
-      if (!data || !data.success) {
-        data = await api.post<{ success?: boolean; tasks?: any[]; error?: string }>(
-          "/team/plan",
-          { objective: teamObjective }
-        );
+      if (v2 && v2.success) {
+        setTeamPlan(v2.steps || []);
+        return;
       }
 
-      if (data.success) {
-        setTeamPlan(data.tasks || data.plan || []);
+      // Fallback to legacy API
+      const legacy = await api.post<{ success?: boolean; tasks?: any[]; error?: string }>(
+        "/team/plan",
+        { objective: teamObjective }
+      );
+      if (legacy.success) {
+        setTeamPlan(legacy.tasks || []);
       } else {
-        setTeamError(data.error || "Planning failed.");
+        setTeamError(legacy.error || v2?.error || "Planning failed.");
         setTeamPlan(null);
       }
     } catch (e: any) {

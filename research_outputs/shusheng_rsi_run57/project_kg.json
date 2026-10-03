@@ -1,0 +1,1587 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: measure] Concentration of measure hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:30:16.542420",
+      "last_seen": "2026-10-01T07:30:16.542420",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at a small finite value (e.g., N_c ≈ 8–16) for w up to a threshold, indicating solution space rigidity; if N_c(w) grows linearly or exceeds 128, the space is fat.\nPLAN_SLOTS: w_va",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] Concentration of measure hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:30:16.542458",
+      "last_seen": "2026-10-01T07:30:16.542458",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:30:16.542466",
+      "last_seen": "2026-10-01T07:30:16.542466",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:30:16.542477",
+      "last_seen": "2026-10-01T07:30:16.542477",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] Concentration of measure hypothesis**",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_bb94c11"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:30:16.542548",
+      "last_seen": "2026-10-01T07:30:16.542548",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f1f8b55493e545cd",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure] **Algebraic dependency hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:40:54.323497",
+      "last_seen": "2026-10-01T07:40:54.323497",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (≤ 32) across w ∈ {10, 20, 30, 50, 100}, indicating algebraic rigidity; training error will converge to ~1e-5 while held-out error stays ≤ 1e-3 for N_h ≥ N_c(w).\nPLAN_SLOTS:",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] **Algebraic dependency hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323543",
+      "last_seen": "2026-10-01T07:40:54.323543",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323552",
+      "last_seen": "2026-10-01T07:40:54.323552",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] **Algebraic dependency hypothesis**",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:40:54.323634",
+      "last_seen": "2026-10-01T07:40:54.323634",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "708c6546e319fc64",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "** **[DIM: geometry]** **Geometric rigidity of the solution manifold**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:42:17.414522",
+      "last_seen": "2026-10-01T07:42:17.414522",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be finite and stable (≤ 32) across w ∈ {10, 20, 30, 50, 100}, indicating geometric rigidity of the solution manifold for small networks under analytic constraints. Held-out error will drop",
+      "persona": "reviewer",
+      "id": "experiment:** **[DIM: geometry]** **Geometric rigidity of the solution manifold**"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:42:17.414558",
+      "last_seen": "2026-10-01T07:42:17.414558",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:42:17.414567",
+      "last_seen": "2026-10-01T07:42:17.414567",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:42:17.414574",
+      "last_seen": "2026-10-01T07:42:17.414574",
+      "mentions": 1,
+      "members": [
+        "experiment:** **[DIM: geometry]** **Geometric rigidity of the solution manifold**",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_21468f75"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:42:17.414640",
+      "last_seen": "2026-10-01T07:42:17.414640",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f65af5d844604cf0",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:43:45.078578",
+      "last_seen": "2026-10-01T07:43:45.078578",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will increase with w (e.g., N_c(10)=8, N_c(100)=64), indicating fat behavior (no rigidity), contradicting the previous rigidity hypothesis. Validation error will exceed 1e-3 for small N_h at la",
+      "persona": "reviewer",
+      "id": "experiment:** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078617",
+      "last_seen": "2026-10-01T07:43:45.078617",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078626",
+      "last_seen": "2026-10-01T07:43:45.078626",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "members": [
+        "experiment:** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:43:45.078700",
+      "last_seen": "2026-10-01T07:43:45.078700",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4f5f5ce6630ea618",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-10-01T07:51:26.874009",
+      "last_seen": "2026-10-01T08:23:44.728094",
+      "mentions": 5,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will produce numerical results showing N_c(w) values for different w. If N_c(w) remains bounded as w increases, the hypothesis of solution-space rigidity is supported; otherwise, it is refu",
+      "persona": "reviewer",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_workflow_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:51:26.874042",
+      "last_seen": "2026-10-01T07:51:26.874042",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:51:26.874054",
+      "last_seen": "2026-10-01T07:51:26.874054",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:51:26.874063",
+      "last_seen": "2026-10-01T07:51:26.874063",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_workflow_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_f03de0ca"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:51:26.874124",
+      "last_seen": "2026-10-01T07:51:26.874124",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cbdd2dfb959f968e",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "plan_coder_iter75",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:55:42.149671",
+      "last_seen": "2026-10-01T07:55:42.149671",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter75"
+    },
+    {
+      "label": "pass_iter75",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:55:42.149696",
+      "last_seen": "2026-10-01T07:55:42.149696",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter75"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:55:42.149709",
+      "last_seen": "2026-10-01T07:55:42.149709",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_coder_iter75",
+        "Fact:pass_iter75"
+      ],
+      "iteration": 75,
+      "id": "he_experiment_pipeline_3955d833"
+    },
+    {
+      "label": "reviewer_iter75",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:55:42.149794",
+      "last_seen": "2026-10-01T07:55:42.149794",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bdbfa25f01e3b410",
+      "r_phys": 1.0,
+      "iteration": 75,
+      "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: geometry] The solution space is rigid because the neural network manifold ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:57:05.395932",
+      "last_seen": "2026-10-01T07:57:05.395932",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The null-space dimension of the solution manifold remains constant (rigid) as w increases up to the network's degrees of freedom, then drops abruptly to zero (fat) when w exceeds the manifold dimensio",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space is rigid because the neural network manifold"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395976",
+      "last_seen": "2026-10-01T07:57:05.395976",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395984",
+      "last_seen": "2026-10-01T07:57:05.395984",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space is rigid because the neural network manifold",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:57:05.396058",
+      "last_seen": "2026-10-01T07:57:05.396058",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1be5f75de41877f4",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:59:31.756806",
+      "last_seen": "2026-10-01T07:59:31.756806",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:59:31.756822",
+      "last_seen": "2026-10-01T07:59:31.756822",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:59:31.756833",
+      "last_seen": "2026-10-01T07:59:31.756833",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_5e45c894"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:59:31.756897",
+      "last_seen": "2026-10-01T07:59:31.756897",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5fb978a18e0cf4cd",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "'.\"",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:01:12.091295",
+      "last_seen": "2026-10-01T08:01:12.091295",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will be a finite integer for each $w$ (e.g., $N_c(10)=16, N_c(20)=16, N_c(50) \\le 32$), demonstrating solution space rigidity within the scanned capacity range. Training and validation errors",
+      "persona": "reviewer",
+      "id": "experiment:'.\""
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091334",
+      "last_seen": "2026-10-01T08:01:12.091334",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091344",
+      "last_seen": "2026-10-01T08:01:12.091344",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "members": [
+        "experiment:'.\"",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:01:12.091417",
+      "last_seen": "2026-10-01T08:01:12.091417",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cfe1fc07af7e796f",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:02:27.184152",
+      "last_seen": "2026-10-01T08:02:27.184152",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (≤ 2×N_c(10)) across w ∈ {10,...,100}, indicating rigidity; validation error will show sub-linear scaling with width; training error will converge to near-zero while validat",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184186",
+      "last_seen": "2026-10-01T08:02:27.184186",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184193",
+      "last_seen": "2026-10-01T08:02:27.184193",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:02:27.184262",
+      "last_seen": "2026-10-01T08:02:27.184262",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "edc06be37b1a8165",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:08:36.152479",
+      "last_seen": "2026-10-01T08:08:36.152479",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:08:36.152501",
+      "last_seen": "2026-10-01T08:08:36.152501",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:08:36.152512",
+      "last_seen": "2026-10-01T08:08:36.152512",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_be2eac3d"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:08:36.152606",
+      "last_seen": "2026-10-01T08:08:36.152606",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b147ebb41993398",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "**[DIM: structure] Algebraic Dependency Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:11:17.815975",
+      "last_seen": "2026-10-01T08:11:17.815975",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (≤ 32) across w ∈ {10, 20, 30, 50, 100}, indicating the solution space is rigid (not fat). Specifically, N_c(10) ≈ 8, N_c(100) ≈ 16, showing sublinear growth consistent with",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: structure] Algebraic Dependency Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:11:17.816008",
+      "last_seen": "2026-10-01T08:11:17.816008",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:11:17.816016",
+      "last_seen": "2026-10-01T08:11:17.816016",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:11:17.816023",
+      "last_seen": "2026-10-01T08:11:17.816023",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: structure] Algebraic Dependency Hypothesis**",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_8dbefb8c"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:11:17.816081",
+      "last_seen": "2026-10-01T08:11:17.816081",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d437d490de8eae9a",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
+    },
+    {
+      "label": "[DIM: Computation] The Linear Capacity Scaling Hypothesis. Prediction: $N_c(w)$ ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:14:50.376516",
+      "last_seen": "2026-10-01T08:14:50.376516",
+      "mentions": 1,
+      "iteration": 125,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at a small finite value (e.g., N_c ≈ 8–16) for w up to 100, indicating rigidity; if N_c grows linearly with w or exceeds 128, fatness is indicated.\nPLAN_SLOTS: w_values=[10, 20, 3",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Computation] The Linear Capacity Scaling Hypothesis. Prediction: $N_c(w)$"
+    },
+    {
+      "label": "plan_coder_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:14:50.376591",
+      "last_seen": "2026-10-01T08:14:50.376591",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:14:50.376601",
+      "last_seen": "2026-10-01T08:14:50.376601",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:14:50.376610",
+      "last_seen": "2026-10-01T08:14:50.376610",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Computation] The Linear Capacity Scaling Hypothesis. Prediction: $N_c(w)$",
+        "Method:plan_coder_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_18636f08"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:14:50.376675",
+      "last_seen": "2026-10-01T08:14:50.376675",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c33d311ae5ce1a15",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "** [DIM: measure] **Concentration of Measure Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:17:05.466490",
+      "last_seen": "2026-10-01T08:17:05.466490",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at a small finite value (e.g., N_c ≈ 8–16) for w up to a threshold, indicating rigidity. If N_c(w) grows unbounded or exceeds 128 for any w, the hypothesis fails (fatness). Traini",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: measure] **Concentration of Measure Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:17:05.466529",
+      "last_seen": "2026-10-01T08:17:05.466529",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:17:05.466538",
+      "last_seen": "2026-10-01T08:17:05.466538",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:17:05.466546",
+      "last_seen": "2026-10-01T08:17:05.466546",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: measure] **Concentration of Measure Hypothesis**",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_8837b7ff"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:17:05.466619",
+      "last_seen": "2026-10-01T08:17:05.466619",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9a4db0e08dac3827",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
+    },
+    {
+      "label": "`.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:19:02.924566",
+      "last_seen": "2026-10-01T08:19:02.924566",
+      "mentions": 1,
+      "iteration": 135,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at a small finite value (e.g., N_c ≈ 8–16) for w up to 100, indicating solution space rigidity. Validation error will drop sharply at N_c(w) and remain ≤ 1e-3 for larger widths. T",
+      "persona": "reviewer",
+      "id": "experiment:`."
+    },
+    {
+      "label": "plan_explore_iter135",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:19:02.924602",
+      "last_seen": "2026-10-01T08:19:02.924602",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter135"
+    },
+    {
+      "label": "pass_iter135",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:19:02.924610",
+      "last_seen": "2026-10-01T08:19:02.924610",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter135"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:19:02.924618",
+      "last_seen": "2026-10-01T08:19:02.924618",
+      "mentions": 1,
+      "members": [
+        "experiment:`.",
+        "Method:plan_explore_iter135",
+        "Fact:pass_iter135"
+      ],
+      "iteration": 135,
+      "id": "he_experiment_pipeline_d20ea1ce"
+    },
+    {
+      "label": "reviewer_iter135",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:19:02.924680",
+      "last_seen": "2026-10-01T08:19:02.924680",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4b2097a977c85c58",
+      "r_phys": 1.0,
+      "iteration": 135,
+      "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: structure] The constraint satisfaction problem for small feedforward netwo",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:21:38.445463",
+      "last_seen": "2026-10-01T08:21:38.445463",
+      "mentions": 1,
+      "iteration": 145,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) = 8 for w ≤ 50, N_c(w) = 16 for 50 < w ≤ 100, N_c(w) = 32 for w > 100 (step function with jumps at critical w)",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The constraint satisfaction problem for small feedforward netwo"
+    },
+    {
+      "label": "plan_explore_iter145",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:21:38.445496",
+      "last_seen": "2026-10-01T08:21:38.445496",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter145"
+    },
+    {
+      "label": "pass_iter145",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:21:38.445505",
+      "last_seen": "2026-10-01T08:21:38.445505",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter145"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:21:38.445514",
+      "last_seen": "2026-10-01T08:21:38.445514",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The constraint satisfaction problem for small feedforward netwo",
+        "Method:plan_explore_iter145",
+        "Fact:pass_iter145"
+      ],
+      "iteration": 145,
+      "id": "he_experiment_pipeline_34ff29"
+    },
+    {
+      "label": "reviewer_iter145",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:21:38.445574",
+      "last_seen": "2026-10-01T08:21:38.445574",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4be88e64570628a0",
+      "r_phys": 1.0,
+      "iteration": 145,
+      "id": "persona_use:reviewer_iter145"
+    },
+    {
+      "label": "plan_explore_iter150",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:23:44.728118",
+      "last_seen": "2026-10-01T08:23:44.728118",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter150"
+    },
+    {
+      "label": "pass_iter150",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:23:44.728136",
+      "last_seen": "2026-10-01T08:23:44.728136",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter150"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:23:44.728145",
+      "last_seen": "2026-10-01T08:23:44.728145",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter150",
+        "Fact:pass_iter150"
+      ],
+      "iteration": 150,
+      "id": "he_experiment_pipeline_5ba31e6f"
+    },
+    {
+      "label": "reviewer_iter150",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:23:44.728209",
+      "last_seen": "2026-10-01T08:23:44.728209",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "97237c6527390102",
+      "r_phys": 1.0,
+      "iteration": 150,
+      "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:25:13.751079",
+      "last_seen": "2026-10-01T08:25:13.751079",
+      "mentions": 1,
+      "iteration": 155,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For positively curved manifolds (κ>0), N_c(w) will remain bounded (rigid solution space); for flat/hyperbolic (κ≤0), N_c(w) will scale with √w or linearly (fat solution space), demonstrating curvature",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] Curvature-Induced Rigidity Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751116",
+      "last_seen": "2026-10-01T08:25:13.751116",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751124",
+      "last_seen": "2026-10-01T08:25:13.751124",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_986a16be"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:25:13.751192",
+      "last_seen": "2026-10-01T08:25:13.751192",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0f43e020dc6a3687",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] Concentration of measure hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:30:16.542477",
+      "last_seen": "2026-10-01T07:30:16.542477",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bb94c11"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:30:16.542477",
+      "last_seen": "2026-10-01T07:30:16.542477",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bb94c11"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:30:16.542477",
+      "last_seen": "2026-10-01T07:30:16.542477",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bb94c11"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] **Algebraic dependency hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:40:54.323562",
+      "last_seen": "2026-10-01T07:40:54.323562",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d885874d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** **[DIM: geometry]** **Geometric rigidity of the solution manifold**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:42:17.414574",
+      "last_seen": "2026-10-01T07:42:17.414574",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_21468f75"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:42:17.414574",
+      "last_seen": "2026-10-01T07:42:17.414574",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_21468f75"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:42:17.414574",
+      "last_seen": "2026-10-01T07:42:17.414574",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_21468f75"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** I will select **Hypothesis 1 ([COMPUTATION] Linear Scaling)** as the primary",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:43:45.078635",
+      "last_seen": "2026-10-01T07:43:45.078635",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ae3db18"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:51:26.874063",
+      "last_seen": "2026-10-01T07:51:26.874063",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f03de0ca"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:55:42.149709",
+      "last_seen": "2026-10-01T07:55:42.149709",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3955d833"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:59:31.756833",
+      "last_seen": "2026-10-01T07:59:31.756833",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e45c894"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:08:36.152512",
+      "last_seen": "2026-10-01T08:08:36.152512",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_be2eac3d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:23:44.728145",
+      "last_seen": "2026-10-01T08:23:44.728145",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba31e6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:51:26.874063",
+      "last_seen": "2026-10-01T07:51:26.874063",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f03de0ca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:51:26.874063",
+      "last_seen": "2026-10-01T07:51:26.874063",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f03de0ca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:55:42.149709",
+      "last_seen": "2026-10-01T07:55:42.149709",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3955d833"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:55:42.149709",
+      "last_seen": "2026-10-01T07:55:42.149709",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3955d833"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space is rigid because the neural network manifold",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:59:31.756833",
+      "last_seen": "2026-10-01T07:59:31.756833",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e45c894"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:59:31.756833",
+      "last_seen": "2026-10-01T07:59:31.756833",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e45c894"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'.\"",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:01:12.091353",
+      "last_seen": "2026-10-01T08:01:12.091353",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:08:36.152512",
+      "last_seen": "2026-10-01T08:08:36.152512",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_be2eac3d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:08:36.152512",
+      "last_seen": "2026-10-01T08:08:36.152512",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_be2eac3d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: structure] Algebraic Dependency Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:11:17.816023",
+      "last_seen": "2026-10-01T08:11:17.816023",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8dbefb8c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:11:17.816023",
+      "last_seen": "2026-10-01T08:11:17.816023",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8dbefb8c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:11:17.816023",
+      "last_seen": "2026-10-01T08:11:17.816023",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8dbefb8c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Computation] The Linear Capacity Scaling Hypothesis. Prediction: $N_c(w)$",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:14:50.376610",
+      "last_seen": "2026-10-01T08:14:50.376610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_18636f08"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:14:50.376610",
+      "last_seen": "2026-10-01T08:14:50.376610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_18636f08"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:14:50.376610",
+      "last_seen": "2026-10-01T08:14:50.376610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_18636f08"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: measure] **Concentration of Measure Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:17:05.466546",
+      "last_seen": "2026-10-01T08:17:05.466546",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8837b7ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:17:05.466546",
+      "last_seen": "2026-10-01T08:17:05.466546",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8837b7ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:17:05.466546",
+      "last_seen": "2026-10-01T08:17:05.466546",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8837b7ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:`.",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:19:02.924618",
+      "last_seen": "2026-10-01T08:19:02.924618",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d20ea1ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:19:02.924618",
+      "last_seen": "2026-10-01T08:19:02.924618",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d20ea1ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:19:02.924618",
+      "last_seen": "2026-10-01T08:19:02.924618",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d20ea1ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The constraint satisfaction problem for small feedforward netwo",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:21:38.445514",
+      "last_seen": "2026-10-01T08:21:38.445514",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_34ff29"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:21:38.445514",
+      "last_seen": "2026-10-01T08:21:38.445514",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_34ff29"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:21:38.445514",
+      "last_seen": "2026-10-01T08:21:38.445514",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_34ff29"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:23:44.728145",
+      "last_seen": "2026-10-01T08:23:44.728145",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba31e6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:23:44.728145",
+      "last_seen": "2026-10-01T08:23:44.728145",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba31e6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] Curvature-Induced Rigidity Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_986a16be"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_986a16be"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:25:13.751132",
+      "last_seen": "2026-10-01T08:25:13.751132",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_986a16be"
+    }
+  ]
+}

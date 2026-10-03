@@ -1,0 +1,182 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The hypothesis is defined as an empty string ('.'), so there is no target to validate. The plan describes an experiment but lacks a specific claim to test.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis (e.g., 'N_c(w) remains bounded as w increases for constraint family X')"
+    ],
+    "mode": "explore",
+    "description": "I will design and execute a numerical experiment to test the hypothesis that small feedforward networks probe \"rigid\" solution spaces. Specifically: (1) Define a family of analytical constraints (e.g."
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The hypothesis is an empty string ('.'), making it impossible to validate any prediction. The plan describes an experimental methodology but lacks a specific, non-empty claim to test (e.g., 'N_c(w) remains bounded as w increases for constraint family X'). This matches the 'known failure mode' explicitly listed in the history. Additionally, the plan's prediction about rigidity is untestable without a defined hypothesis.",
+    "missing_steps": [
+      "Define a concrete, non-empty hypothesis statement (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X')",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w"
+    ],
+    "mode": "explore",
+    "description": "I will design a numerical experiment to test the hypothesis that small feedforward networks exhibit rigid solution spaces by probing constraint satisfaction as width increases. Specifically, I will de"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "926ba0f67d73",
+    "reason": "The plan is invalid because it fundamentally misinterprets the hypothesis by conflating two distinct variables: 'w' represents network width in the hypothesis (the x-axis of the predicted scaling law), but the plan defines 'w' as the number of constraint points (constraint density). The hypothesis predicts N_c(w) as a function of network width, yet the plan's proposed N_c(w) definition (minimum width for zero violation) is circular and cannot be measured because the plan does not vary width in its scan. Furthermore, the plan fails to implement the 'constraint density' variable (which should be the independent variable for the hypothesis) and instead treats it as a fixed parameter. This is a critical scope error that prevents testing the √w scaling law.",
+    "missing_steps": [
+      "Clarify that N_c should be a function of constraint density (let's denote it ρ), not network width w, or alternatively define N_c(ρ) as the minimum network width required to achieve zero violation given constraint density ρ.",
+      "Design the experiment to vary constraint density (ρ) while measuring the minimum network width (N_c) needed to satisfy all constraints.",
+      "Implement a systematic sweep of constraint density ρ, and for each ρ, perform a width search to find N_c(ρ).",
+      "Plot N_c(ρ) vs ρ to test the predicted √ρ scaling for small ρ and subsequent plateau."
+    ],
+    "mode": "coder",
+    "description": "Create a Python script that performs a systematic scan of network width w to determine N_c(w) for a function space with increasing constraint density w. The script will: (1) define a target function w"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is fundamentally invalid because the hypothesis is defined as an empty string ('.'), making it impossible to validate any prediction. The known failure mode explicitly states that an empty hypothesis makes the task untestable. The plan describes a methodology but lacks a concrete, non-empty claim to test (e.g., 'N_c(w) remains bounded as w increases for constraint family X'). Without a defined hypothesis, the prediction about rigidity cannot be verified, and the experiment has no target to validate.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis statement (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X')",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to probe the \"rigidity\" of the solution space for small MLPs by sweeping hidden layer width N_c and constraint count w. For each (w, N_c) pair, generate a function f from"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The hypothesis is defined as an empty string ('.'), making it impossible to validate any prediction. The plan describes an experimental methodology but lacks a concrete, non-empty claim to test (e.g., 'N_c(w) remains bounded as w increases for constraint family X'). Without a defined hypothesis, the prediction about rigidity cannot be verified, and the experiment has no target to validate. This matches the known failure history exactly.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis statement (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X')",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w"
+    ],
+    "mode": "explore",
+    "description": "Define a concrete hypothesis about solution space rigidity for small MLPs. The hypothesis states that for a family of analytic constraints parameterized by width w (specifically, linear constraints on"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The hypothesis is an empty string ('.'), which makes it impossible to validate any prediction. The plan describes a methodology for testing solution space rigidity but lacks a concrete, non-empty claim to test (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X'). This matches the known failure history exactly. Without a defined hypothesis, the prediction about rigidity cannot be verified, and the experiment has no target to validate.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis statement (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as width increases for analytical constraint family X')",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w"
+    ],
+    "mode": "coder",
+    "description": "This task requires designing and running a numerical experiment to test the hypothesis about \"solution space rigidity\" in small feedforward networks. I need to create a Python script that: (1) defines"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is invalid because the hypothesis is an empty string ('.'), which makes it impossible to validate any prediction. As noted in the historical failure cases, a concrete non-empty hypothesis is required (e.g., 'N_c(w) plateaus as width increases for analytical constraint family X'). Without a defined hypothesis, the experiment lacks a target claim to verify, and the prediction about rigidity cannot be validated.",
+    "missing_steps": [
+      "Define a clear, non-empty hypothesis statement specifying what is being tested (e.g., 'Small feedforward networks exhibit rigid solution spaces where N_c(w) plateaus as w increases for su(2) constraint manifold with width w' )",
+      "Specify the exact family of analytical constraints parameterized by width w",
+      "Define the constraint count parameter and its relationship to width w",
+      "Establish the relationship between w (constraint sample count) and N_c (minimum network width) in the hypothesis"
+    ],
+    "mode": "coder",
+    "description": "Create a standalone Python script to conduct a numerical experiment testing the rigidity hypothesis. The script will define a low-dimensional analytic constraint manifold (e.g., a d=3 dimensional su(2"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "3b5d297d51e7",
+    "reason": "The plan's hypothesis statement 'should follow the list.' is nonsensical and does not define a testable proposition. While the DESCRIPTION outlines a valid numerical experiment design (testing solution space rigidity via network width N and constraint count w), the core hypothesis to be tested is missing/invalid. Without a clear hypothesis, the experiment cannot be validated against it.",
+    "missing_steps": [
+      "Replace the placeholder hypothesis 'should follow the list.' with a concrete, testable mathematical statement about solution space rigidity (e.g., 'N_c(w) remains bounded independent of w for w in [W_min, W_max]')."
+    ],
+    "mode": "explore",
+    "description": "I will design a numerical experiment to test if small feedforward networks can probe solution space rigidity. I will define a set of analytical constraints (functions), vary the number of constraints "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7513aeab0840",
+    "reason": "The plan correctly identifies the mathematical structure (polynomial approximation by MLPs) and the MODE (coder) is appropriate. However, there is a critical conceptual error in the PREDICTION: the hypothesis states N_c* = d+1 = 3 for quadratic (d=2), but the prediction says N_c(w) = 4 for w ≥ 4. This contradicts the stated hypothesis (d+1=3). Additionally, the plan doesn't specify how constraint points are sampled or how the MLP architecture is defined (number of layers, activation function), which could affect results. The 'zero violation' criterion is well-defined, but without specifying the exact polynomial constraints and network architecture, the experiment may not cleanly test the rigidity hypothesis.",
+    "missing_steps": [
+      "Specify exact polynomial basis functions (e.g., monomials, Legendre polynomials) for degree d=2",
+      "Define MLP architecture (number of hidden layers, activation function, initialization)",
+      "Clarify sampling method for constraint points (random, grid, etc.)",
+      "Resolve discrepancy between hypothesis (N_c*=3) and prediction (N_c=4)",
+      "Define how N_c(w) is computed from the width scan"
+    ],
+    "mode": "coder",
+    "description": "Create a Python script to numerically test the polynomial rigidity hypothesis. The script will: (1) generate polynomial constraint functions of degree d (e.g., quadratic d=2), (2) sample w constraint "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7513aeab0840",
+    "reason": "The plan contains a critical conceptual error: the hypothesis states N_c* = d+1 = 3 for quadratic (d=2), but the prediction says N_c(w) = 4 for w ≥ 4, which directly contradicts the stated hypothesis. Additionally, the plan lacks essential details: specific polynomial basis functions, MLP architecture specifications (number of layers, activation function, initialization), sampling method for constraint points, and how N_c(w) is computed from the width scan. These omissions would lead to an ambiguous or untestable experiment, repeating the failures identified in the '同场景历史失败' section.",
+    "missing_steps": [
+      "Resolve discrepancy between hypothesis (N_c*=3) and prediction (N_c=4)",
+      "Specify exact polynomial basis functions (e.g., monomials, Legendre polynomials) for degree d=2",
+      "Define MLP architecture (number of hidden layers, activation function, initialization)",
+      "Clarify sampling method for constraint points (random, grid, etc.)",
+      "Define how N_c(w) is computed from the width scan"
+    ],
+    "mode": "coder",
+    "description": "Create a Python script to numerically test the polynomial rigidity hypothesis. The script will: (1) define quadratic polynomial constraints (d=2) using monomial basis, (2) sample constraint points via"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "3c79ec272128",
+    "reason": "The plan is fundamentally invalid because it conflates a theoretical prediction (rigidity) with an empirical observation (sudden transition at w=7), creating a logical contradiction in the prediction section. The hypothesis claims the transition at w=7 is key evidence, but the prediction states rigidity causes a plateau at N_c=3 for all w≥3, which would mean no such transition should exist. Additionally, the plan lacks critical methodological details: it doesn't specify the constraint function forms, training loss landscape properties, or how to handle potential non-convex optimization issues that could affect N_c(w) measurements. The 'sudden transition at w=7' mentioned in the hypothesis appears to be an unexplained empirical observation that isn't theoretically grounded in the algebraic threshold rigidity framework.",
+    "missing_steps": [
+      "Clarify the theoretical basis for the w=7 transition and reconcile it with the rigidity prediction",
+      "Specify the exact polynomial constraint functions and their algebraic properties",
+      "Define the optimization landscape and potential convergence issues for the small networks",
+      "Include error analysis and uncertainty quantification for N_c(w) measurements",
+      "Add validation against known theoretical bounds for polynomial constraint satisfaction"
+    ],
+    "mode": "workflow",
+    "description": "Design a numerical experiment to test algebraic threshold rigidity in small feedforward networks. Generate synthetic polynomial constraint functions (degree d=2) with varying numbers of constraints w "
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan uses 'workflow' mode which is appropriate for executing a numerical experiment, and the description covers the hypothesis key requirements regarding small feedforward networks. However, the prediction contains a critical logical contradiction: it claims 'N_c(w) will increase with w' (indicating a 'fat' space) while also stating 'Specifically, N_c is expected to scale roughly linearly or logarithmically with w rather than remaining constant below a small threshold.' This is internally inconsistent because if N_c increases with w, it's already not constant. More critically, the hypothesis being tested is about 'solution space rigidity' but the prediction assumes the opposite outcome (fat space) as a given rather than treating it as what needs to be determined. The plan should be testing whether rigidity exists, not assuming fatness. Additionally, there are no specific details on target function choice, network architecture parameters, training methodology, or validation protocol which are essential for a rigorous numerical experiment.",
+    "missing_steps": [
+      "Define specific target function(s) for the numerical experiment",
+      "Specify network architecture details (activation functions, initialization, depth)",
+      "Define training procedure (optimizer, learning rate, epochs, loss function)",
+      "Specify validation set generation method",
+      "Clarify the decision criteria for rigidity vs fatness in the prediction statement",
+      "Address the contradictory prediction statement that simultaneously claims N_c increases AND should remain constant"
+    ],
+    "mode": "workflow",
+    "description": "Execute a numerical experiment to evaluate the solution space rigidity of small feedforward networks. We define a target function (e.g., a smooth analytic function) and generate $w$ training constrain"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is fundamentally flawed due to a critical logical contradiction in the PREDICTION section. It simultaneously claims that N_c(w) will increase with w (indicating a 'fat' space) while also stating it should remain constant (indicating 'rigidity'). This internal inconsistency makes the hypothesis untestable. Furthermore, the plan lacks essential methodological details: specific target function, network architecture parameters (depth, activation, initialization), training procedure (optimizer, learning rate, epochs), validation set generation, and clear decision criteria for rigidity vs. fatness. These omissions prevent the experiment from being reproducible or meaningful.",
+    "missing_steps": [
+      "Define specific target function(s) for the numerical experiment",
+      "Specify network architecture details (activation functions, initialization, depth)",
+      "Define training procedure (optimizer, learning rate, epochs, loss function)",
+      "Specify validation set generation method",
+      "Clarify decision criteria for rigidity vs. fatness in the prediction statement",
+      "Address the contradictory prediction statement that simultaneously claims N_c increases AND should remain constant"
+    ],
+    "mode": "workflow",
+    "description": "Execute a numerical experiment to evaluate the solution space rigidity of small feedforward networks. We define a target function (e.g., a smooth analytic function) and generate $w$ training constrain"
+  },
+  {
+    "scene_tag": "auto_experiment",
+    "hyp_key": "f9efa55d357a",
+    "reason": "The plan fundamentally misinterprets the hypothesis by reversing the definition of the variable w. The hypothesis describes 'w' as network width (hidden layer size), but the plan explicitly defines 'w = constraint sample count'. This is a critical variable swap that invalidates the entire experimental design. The hypothesis claims N_c(w) (minimum width to satisfy constraints) grows super-linearly as network width w increases — but the plan is measuring N_c as a function of constraint sample size, which tests a completely different relationship (data scaling vs. capacity scaling). This is not just a minor error; it's a category error that makes the experiment unanswerable for the stated hypothesis.",
+    "missing_steps": [
+      "Correct the definition of w: w must be network width (hidden layer size), not constraint sample count",
+      "Define N_c(w) correctly: for each fixed width w, find the minimum number of bootstrap samples needed to achieve zero violation on held-out constraints",
+      "Alternatively, if N_c is defined as minimum width needed, then w should be constraint count, and we'd measure how width requirements grow with data size",
+      "Clarify the exact mapping between the hypothesis variables and experimental parameters before proceeding",
+      "Design the scan to vary the correct independent variable (width w) and measure the dependent variable (N_c = minimum width achieving zero violation)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the bootstrap constraint set's effect on loss landscape ruggedness. Specifically, implement a small feedforward network with varying hidden widths (w), train on b"
+  }
+]

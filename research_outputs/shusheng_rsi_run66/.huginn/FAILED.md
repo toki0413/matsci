@@ -1,0 +1,48 @@
+
+## [h_181d077e] 2026-10-02T05:37:28+00:00
+Statement: [DIM: structure] The solution space is rigid because the constraints induce a low-rank feature map; predict: N_c(w) stays constant at 16 for all w ∈ [10, 200] | pro: Directly tests the linear algebra 
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_8760e4e3] 2026-10-02T05:46:41+00:00
+Statement: Hypothesis 1 (dynamics)
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_9222669a] 2026-10-02T05:53:47+00:00
+Statement: [DIM: geometry] The solution space is rigid due to the low intrinsic dimensionality of the target function manifold; predict: N_c(w) remains constant (e.g., N_c = 3) for all w ∈ [10, 200], because the
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_a8b04d7f] 2026-10-02T05:55:18+00:00
+Statement: Hypothesis A (Dynamics - Optimization Landscape)
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_b2125ca3] 2026-10-02T05:56:46+00:00
+Statement: [DIM: optimization] The solution space is rigid because the constraint landscape exhibits sharp convexity in the weight space; predict: N_c(w) remains constant at 8 for all w ∈ [10, 200] (no growth) a
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_2c1eb05c] 2026-10-02T06:01:49+00:00
+Statement: [DIM: structure] The solution space is rigid due to the algebraic invariance of the ReLU basis under linear interpolation; predict: N_c(w) stays constant at 16 for all w ∈ [10, 200] | pro: Directly te
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_ca9cdde9] 2026-10-02T06:17:27+00:00
+Statement: " followed by the chosen one.
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_4e9ad1ba] 2026-10-02T06:18:48+00:00
+Statement: [DIM: measure] The solution space is rigid due to the concentration of measure in high-dimensional weight spaces; predict: N_c(w) remains constant at 8 for w ≤ 32, then jumps to 32 at w=64 and stays c
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.

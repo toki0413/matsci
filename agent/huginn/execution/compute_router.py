@@ -19,7 +19,6 @@ _DFT_MD_TOOLS = frozenset(
         "lammps",
         "lammps_tool",
         "qe",
-        "quantum_espresso",
         "qe_tool",
         "cp2k",
         "cp2k_tool",

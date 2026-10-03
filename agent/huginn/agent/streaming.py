@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import re
@@ -65,6 +66,13 @@ _DEFAULT_ROOT_MARKERS = (
 # 60s 默认值覆盖大多数 LLM 首 token 延迟 + 中间停顿. 调高无意义, 调低误杀.
 _STREAM_IDLE_TIMEOUT = float(os.environ.get("HUGINN_STREAM_IDLE_TIMEOUT", "60"))
 
+# D1: 剩余挂钟预算 (秒), 由 autoloop 每步设置. 降级收集时用它给空闲阈值封顶,
+# 不启动/不维持一个注定越过 goal 剩余预算的动作. 未设置 = None → 完全保持现行为;
+# 用 contextvar 传递, **避免 streaming 反向依赖 autoloop** (依赖方向单向).
+remaining_budget_s: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "huginn_remaining_budget_s", default=None
+)
+
 # ainvoke 超时随 thinking 强度放宽 — 我们鼓励深度思考 (thinking=high) 却给
 # 固定 300s, 长推理一超就 kill, 自相矛盾. 按档位给足预算, 避免"三思而后行
 # 却被限时"的错配. ponytail: 离散档位映射, env 可覆盖. ceiling: 连续缩放需
@@ -89,6 +97,51 @@ def _thinking_stream_idle() -> float:
     if t in ("medium", "med", "normal"):
         return 120.0
     return _STREAM_IDLE_TIMEOUT
+
+
+def _fallback_stream_idle(
+    total_timeout: float, budget_left: float | None = None,
+) -> float:
+    """降级收集的空闲超时 — 必须比刚失败的那次更宽, 否则只是重演同一失败.
+
+    进入降级 = 主流已证实会空闲超过 ``_thinking_stream_idle()``. 长耗时工具
+    (code_lab 可跑 ~150s, 期间无任何 chunk) 正是这种"合法长空闲"; 用同一阈值
+    再跑一遍注定同样超时, 白烧整个 ``total_timeout`` (run72 实测两次各 300s).
+    故降级期把空闲阈值放宽到总预算量级: 只在真正卡死时提前终止, 其余交给外层
+    ``wait_for(total_timeout)`` 兜底. ``HUGINN_FALLBACK_STREAM_IDLE`` 可覆盖.
+
+    D1: ``budget_left`` 给定时, 再对本阈值**封顶**, 不让降级消耗超过 goal 剩余
+    挂钟预算 (下限 1s, 避免 0/负值造成病态立即超时). 未给定 (None) 完全等价旧行为.
+    """
+    override = os.environ.get("HUGINN_FALLBACK_STREAM_IDLE")
+    if override:
+        try:
+            widened = float(override)
+            if budget_left is not None:
+                widened = min(widened, max(1.0, budget_left))
+            return widened
+        except ValueError:
+            logger.debug("bad HUGINN_FALLBACK_STREAM_IDLE=%r", override)
+    widened = max(_thinking_stream_idle(), total_timeout)
+    if budget_left is not None:
+        widened = min(widened, max(1.0, budget_left))
+    return widened
+
+
+def _fallback_collect_inputs(states_yielded: int, inputs: Any) -> Any:
+    """降级收集该喂什么输入 — 有进度就续跑, 别重放整个 turn.
+
+    主流已 yield 过状态 = 有 checkpoint 进度. 此时回 ``None``, langgraph 会从最后
+    checkpoint 原生恢复 (见 ``runtime/checkpoint.py``), 不重做已完成步骤 — 这正是
+    run72 的根因: 旧代码一律重放 ``inputs``, 把 40+ 步重做一遍 → 累计必然超
+    ``_ainvoke_timeout``, 两次各烧 300s 且产出为空. 零进度时无 checkpoint 可续,
+    只能回 ``inputs`` 重放. ``HUGINN_STREAM_FALLBACK_RESUME=0`` 强制重放 (回滚开关).
+    """
+    if states_yielded > 0 and os.environ.get(
+        "HUGINN_STREAM_FALLBACK_RESUME", "1"
+    ) == "1":
+        return None
+    return inputs
 
 
 async def _astream_with_watchdog(
@@ -1865,6 +1918,10 @@ class StreamingMixin:
             await _ubus.publish_llm_request(thread_id, len(messages))
             await _ubus.publish_before_message_sent(thread_id, len(messages))
 
+            # 主流空闲阈值 (随 thinking 档位放宽). 提到循环外, 使降级告警能如实
+            # 报告"实际用的阈值", 而不是模块默认常量 _STREAM_IDLE_TIMEOUT.
+            _primary_idle = _thinking_stream_idle()
+
             try:
                 attempt = 0
                 while attempt < max_retries:
@@ -1926,7 +1983,7 @@ class StreamingMixin:
                                     inputs, config,
                                     stream_mode=["values", "messages"],
                                 ),
-                                idle_timeout=_thinking_stream_idle(),
+                                idle_timeout=_primary_idle,
                             ):
                                 if mode == "messages":
                                     chunk, _meta = data
@@ -1993,23 +2050,42 @@ class StreamingMixin:
                         logger.warning(
                             "stream idle timeout after %ds (states_yielded=%d), "
                             "falling back to progress-aware stream collect",
-                            _STREAM_IDLE_TIMEOUT, states_yielded,
+                            _primary_idle, states_yielded,
                         )
                         turn_span.metadata["stream_watchdog_timeout"] = True
                         _ainvoke_timeout = float(os.environ.get(
                             "HUGINN_AINVOKE_TIMEOUT",
                             str(_thinking_scale_timeout()),
                         ))
-                        _collect_idle = _thinking_stream_idle()
+                        # 降级必须放宽空闲阈值: 主流刚以 _primary_idle 空闲失败,
+                        # 再用同一阈值重跑只会重演同一失败, 白烧 _ainvoke_timeout
+                        # (run72 实测两次各 300s). 长耗时工具期间无 chunk 属合法长空闲.
+                        # D1: 读取 autoloop 每步设置的剩余挂钟预算, 给降级空闲阈值封顶,
+                        # 不让"降级"吞掉超过 goal 剩余预算的时间 (未设置则保持旧行为).
+                        _collect_idle = _fallback_stream_idle(
+                            _ainvoke_timeout, budget_left=remaining_budget_s.get()
+                        )
+                        # run72 根因: 降级从 inputs 重放整个 turn, 把主流已提交的
+                        # 40+ 步重做一遍 → 累计必然超 _ainvoke_timeout, 两次各烧
+                        # 300s 且产出为空. 已有进度时改用 None 续跑 (langgraph 原生
+                        # astream(None, config) 从最后 checkpoint 恢复, 见
+                        # runtime/checkpoint.py), 不重做已完成步骤. 无进度 (0 步)
+                        # 时仍用 inputs, 否则无 checkpoint 可续.
+                        _collect_inputs: Any = _fallback_collect_inputs(
+                            states_yielded, inputs)
+                        if _collect_inputs is None:
+                            turn_span.metadata["stream_fallback_resumed"] = True
                         final_state = None
                         try:
                             async def _collect(
-                                g=graph, idle_timeout=_collect_idle
+                                g=graph,
+                                idle_timeout=_collect_idle,
+                                collect_inputs=_collect_inputs,
                             ):
                                 _st = None
                                 async for mode, data in _astream_with_watchdog(
                                     g.astream(
-                                        inputs, config,
+                                        collect_inputs, config,
                                         stream_mode=["values", "messages"],
                                     ),
                                     idle_timeout=idle_timeout,

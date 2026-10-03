@@ -29,20 +29,22 @@ def _patch_import(monkeypatch, targets: set[str]) -> None:
 # ── filter_tools_for_code_act ────────────────────────────────────────────
 
 def test_filter_by_name_list():
-    names = ["hpc_client", "math_tool", "bash_tool", "rag_tool", "code_tool"]
+    # 期望从 _BLOCKED_TOOLS 派生, 表项增删后测试不会变成陈旧断言.
+    blocked = sorted(cas._BLOCKED_TOOLS)
+    names = ["rag_tool", "math_tool", *blocked]
     out = cas.filter_tools_for_code_act(names)
-    assert out == ["math_tool", "rag_tool"]
+    assert out == ["rag_tool", "math_tool"]
 
 
 def test_filter_by_tuple_list():
-    items = [("hpc_client", object()), ("math_tool", object()), ("code_tool", object())]
+    blocked = sorted(cas._BLOCKED_TOOLS)
+    items = [("math_tool", object())] + [(b, object()) for b in blocked]
     out = cas.filter_tools_for_code_act(items)
-    assert len(out) == 1
-    assert out[0][0] == "math_tool"
+    assert [t[0] for t in out] == ["math_tool"]
 
 
 def test_filter_all_blocked():
-    assert cas.filter_tools_for_code_act(["bash_tool", "shell_tool", "container_exec"]) == []
+    assert cas.filter_tools_for_code_act(sorted(cas._BLOCKED_TOOLS)) == []
 
 
 def test_filter_empty():
@@ -76,9 +78,10 @@ def test_safe_import_blocks_outside_whitelist():
         cas.safe_import("os")
 
 
-def test_safe_import_submodule_uses_root():
-    # numpy.fft → root numpy 在白名单 → 放行 (不实际 import)
-    assert cas.safe_import("numpy.fft") is not None or True
+def test_safe_import_submodule_uses_root(monkeypatch):
+    # numpy.fft → root numpy 在白名单 → 放行; patch 掉真实 import, 避免依赖 numpy 已装.
+    _patch_import(monkeypatch, {"numpy.fft"})
+    assert cas.safe_import("numpy.fft") == "sentinel"
 
 
 def test_safe_import_atomworld_flag_off(monkeypatch):
@@ -133,15 +136,12 @@ def test_exec_with_mem_cap_within_threshold():
 
 
 def test_exec_with_mem_cap_over_threshold_raises():
+    pytest.importorskip("numpy")
     ns = {"__builtins__": cas.make_safe_builtins()}
     code = "import numpy as np; arr = np.zeros(100 * 1024 * 1024, dtype=np.uint8)"
-    try:
+    with pytest.raises(MemoryError) as ei:
         cas.exec_with_mem_cap(code, ns, mem_cap_bytes=10 * 1024 * 1024)
-        # numpy 未装时不抛, 视为通过
-    except MemoryError as e:
-        assert "HUGINN_CODEACT_MEM_CAP" in str(e)
-    except ImportError:
-        pass
+    assert "HUGINN_CODEACT_MEM_CAP" in str(ei.value)
 
 
 def test_exec_with_mem_cap_restores_tracing(monkeypatch):

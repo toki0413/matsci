@@ -1,0 +1,995 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:04:18.811608",
+      "last_seen": "2026-10-01T13:04:18.811608",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will likely show that for a simple target function (e.g., a low-degree polynomial), N_c(w) remains small and constant (rigid) for w up to a certain point, but may grow or fail (fat) if the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] **Interpolation Threshold Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811649",
+      "last_seen": "2026-10-01T13:04:18.811649",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811660",
+      "last_seen": "2026-10-01T13:04:18.811660",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+        "Method:plan_coder_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:04:18.811751",
+      "last_seen": "2026-10-01T13:04:18.811751",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b8e24fba05c03913",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: geometry] The target function's solution manifold possesses non-zero Gauss",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:06:23.551584",
+      "last_seen": "2026-10-01T13:06:23.551584",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w) \\approx w + O(1)$ for curved targets (slope $\\approx 1$), while flat targets (linear/polynomial) will show sub-linear or constant scaling. The curvature verification step will confirm non-zero",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The target function's solution manifold possesses non-zero Gauss"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551626",
+      "last_seen": "2026-10-01T13:06:23.551626",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551636",
+      "last_seen": "2026-10-01T13:06:23.551636",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The target function's solution manifold possesses non-zero Gauss",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:06:23.551724",
+      "last_seen": "2026-10-01T13:06:23.551724",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fd97903956e1e1b7",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: computation] The Universal Approximation Barrier Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:07:24.668326",
+      "last_seen": "2026-10-01T13:07:24.668326",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For geometrically simple targets (e.g., linear or low-curvature analytic functions), N_c(w) will remain small (≤10) and nearly constant as w increases from 10 to 100, indicating rigidity. For high-cur",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The Universal Approximation Barrier Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668371",
+      "last_seen": "2026-10-01T13:07:24.668371",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668381",
+      "last_seen": "2026-10-01T13:07:24.668381",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The Universal Approximation Barrier Hypothesis**",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:07:24.668472",
+      "last_seen": "2026-10-01T13:07:24.668472",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cf6b3d41ffdaf472",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The algebraic independence of constraints dictates solution-spa",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:08:27.766268",
+      "last_seen": "2026-10-01T13:08:27.766268",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For w ≤ 8, N_c(w) = 4 (all widths ≥ 4 achieve zero violation); for w > 8, N_c(w) = 12 (widths < 12 fail, width 12 succeeds). The plot of N_c(w) vs w will show a sharp step at w=8. Error bars across se",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The algebraic independence of constraints dictates solution-spa"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766306",
+      "last_seen": "2026-10-01T13:08:27.766306",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766318",
+      "last_seen": "2026-10-01T13:08:27.766318",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The algebraic independence of constraints dictates solution-spa",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:08:27.766405",
+      "last_seen": "2026-10-01T13:08:27.766405",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "70f3f05aa6234034",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-10-01T13:12:17.405548",
+      "last_seen": "2026-10-01T13:23:19.103405",
+      "mentions": 2,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(c) will remain bounded as c increases, indicating rigidity in the function class, with N_c(c) ≈ O(c) or sublinear growth, consistent with theoretical bounds on neural network capacity for constrai",
+      "persona": "reviewer",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405589",
+      "last_seen": "2026-10-01T13:12:17.405589",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405600",
+      "last_seen": "2026-10-01T13:12:17.405600",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:12:17.405685",
+      "last_seen": "2026-10-01T13:12:17.405685",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b1094288ac2f698",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: geometry] The solution manifold of constraints in network function space u",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:16.273253",
+      "last_seen": "2026-10-01T13:18:16.273253",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be large (>>999) for w=1,2 (fat manifold), and drop to a small constant (~4) for w≥3 (rigid affine subspace), exhibiting a sharp step-like transition at w=3.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution manifold of constraints in network function space u"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273292",
+      "last_seen": "2026-10-01T13:18:16.273292",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273302",
+      "last_seen": "2026-10-01T13:18:16.273302",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution manifold of constraints in network function space u",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:16.273383",
+      "last_seen": "2026-10-01T13:18:16.273383",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "137fb480613d5c41",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:23:19.103436",
+      "last_seen": "2026-10-01T13:23:19.103436",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:23:19.103457",
+      "last_seen": "2026-10-01T13:23:19.103457",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:23:19.103469",
+      "last_seen": "2026-10-01T13:23:19.103469",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_3123c4fe"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:23:19.103544",
+      "last_seen": "2026-10-01T13:23:19.103544",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a26d335b350534f8",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:26:26.718890",
+      "last_seen": "2026-10-01T13:26:26.718890",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For small w (e.g., w ≤ 10), N_c(w) will be small and approximately constant (indicating rigidity); for larger w, N_c(w) will increase significantly or become infeasible within the tested width range (",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718928",
+      "last_seen": "2026-10-01T13:26:26.718928",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718937",
+      "last_seen": "2026-10-01T13:26:26.718937",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:26:26.719015",
+      "last_seen": "2026-10-01T13:26:26.719015",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c729e2ea99981a73",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "[DIM: structure] The algebraic redundancy of the constraint set induces a low-di",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:44:04.193549",
+      "last_seen": "2026-10-01T13:44:04.193549",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain constant (≤ 10) for the rigid family across all w ∈ [5, 50] due to the low-dimensional solution manifold, while N_c(w) will grow linearly with w or saturate at maximum tested width",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The algebraic redundancy of the constraint set induces a low-di"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:44:04.193597",
+      "last_seen": "2026-10-01T13:44:04.193597",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:44:04.193608",
+      "last_seen": "2026-10-01T13:44:04.193608",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:44:04.193619",
+      "last_seen": "2026-10-01T13:44:04.193619",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The algebraic redundancy of the constraint set induces a low-di",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_7a12cb8"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:44:04.193712",
+      "last_seen": "2026-10-01T13:44:04.193712",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8653a6719ffd4396",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] Algebraic Redundancy Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:48:13.401722",
+      "last_seen": "2026-10-01T13:48:13.401722",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will show a plateau (rigid regime) for w up to some threshold w*, then jump (fat regime). Expected: N_c(w) ≈ constant for w ≤ w*, then N_c(w) increases or becomes unattainable beyond w*. The tr",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] Algebraic Redundancy Hypothesis"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:48:13.401759",
+      "last_seen": "2026-10-01T13:48:13.401759",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:48:13.401769",
+      "last_seen": "2026-10-01T13:48:13.401769",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:48:13.401779",
+      "last_seen": "2026-10-01T13:48:13.401779",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic Redundancy Hypothesis",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_a3fe0e4a"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:48:13.401852",
+      "last_seen": "2026-10-01T13:48:13.401852",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b07dd7faad573035",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "** [DIM: measure] **The Interpolation Probability Threshold Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:55:01.521795",
+      "last_seen": "2026-10-01T13:55:01.521795",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will compute N_c(w) for w = [5, 10, 20, 50, 100] with hidden widths N = [4, 8, 16, 32, 64, 128, 256]. I expect N_c to be small (e.g., ≤ 16) and roughly constant or slowly growing, indicatin",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: measure] **The Interpolation Probability Threshold Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:55:01.521838",
+      "last_seen": "2026-10-01T13:55:01.521838",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:55:01.521848",
+      "last_seen": "2026-10-01T13:55:01.521848",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:55:01.521858",
+      "last_seen": "2026-10-01T13:55:01.521858",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: measure] **The Interpolation Probability Threshold Hypothesis**",
+        "Method:plan_coder_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_c95f4ef6"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:55:01.521942",
+      "last_seen": "2026-10-01T13:55:01.521942",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1aeaedb4a8bdb6ba",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] **Interpolation Threshold Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:04:18.811672",
+      "last_seen": "2026-10-01T13:04:18.811672",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_24323f20"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The target function's solution manifold possesses non-zero Gauss",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:06:23.551646",
+      "last_seen": "2026-10-01T13:06:23.551646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b93e12e8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The Universal Approximation Barrier Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:07:24.668392",
+      "last_seen": "2026-10-01T13:07:24.668392",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b81518"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The algebraic independence of constraints dictates solution-spa",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:08:27.766328",
+      "last_seen": "2026-10-01T13:08:27.766328",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:23:19.103469",
+      "last_seen": "2026-10-01T13:23:19.103469",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3123c4fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution manifold of constraints in network function space u",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:16.273312",
+      "last_seen": "2026-10-01T13:18:16.273312",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cace2291"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:23:19.103469",
+      "last_seen": "2026-10-01T13:23:19.103469",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3123c4fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:23:19.103469",
+      "last_seen": "2026-10-01T13:23:19.103469",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3123c4fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] Algebraic Redundancy Hypothesis. This hypothesis is the most",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:26:26.718946",
+      "last_seen": "2026-10-01T13:26:26.718946",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6149065d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The algebraic redundancy of the constraint set induces a low-di",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:44:04.193619",
+      "last_seen": "2026-10-01T13:44:04.193619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a12cb8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:44:04.193619",
+      "last_seen": "2026-10-01T13:44:04.193619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a12cb8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:44:04.193619",
+      "last_seen": "2026-10-01T13:44:04.193619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a12cb8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic Redundancy Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:48:13.401779",
+      "last_seen": "2026-10-01T13:48:13.401779",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a3fe0e4a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:48:13.401779",
+      "last_seen": "2026-10-01T13:48:13.401779",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a3fe0e4a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:48:13.401779",
+      "last_seen": "2026-10-01T13:48:13.401779",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a3fe0e4a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: measure] **The Interpolation Probability Threshold Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:55:01.521858",
+      "last_seen": "2026-10-01T13:55:01.521858",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c95f4ef6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:55:01.521858",
+      "last_seen": "2026-10-01T13:55:01.521858",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c95f4ef6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:55:01.521858",
+      "last_seen": "2026-10-01T13:55:01.521858",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c95f4ef6"
+    }
+  ]
+}

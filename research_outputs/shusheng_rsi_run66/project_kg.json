@@ -1,0 +1,1374 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "'.\"",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:33:00.580998",
+      "last_seen": "2026-10-02T05:33:00.580998",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) values will be finite and remain ≤ 64 across all w (10 to 200), demonstrating solution space rigidity. Training errors will converge below 1e-4, and held-out errors will stay within the 1e-3 th",
+      "persona": "dft_expert",
+      "id": "experiment:'.\""
+    },
+    {
+      "label": "plan_coder_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:33:00.581041",
+      "last_seen": "2026-10-02T05:33:00.581041",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:33:00.581052",
+      "last_seen": "2026-10-02T05:33:00.581052",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:33:00.581064",
+      "last_seen": "2026-10-02T05:33:00.581064",
+      "mentions": 1,
+      "members": [
+        "experiment:'.\"",
+        "Method:plan_coder_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_a157eea9"
+    },
+    {
+      "label": "dft_expert_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:33:00.581136",
+      "last_seen": "2026-10-02T05:33:00.581136",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "258c621ff15227dc",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:dft_expert_iter10"
+    },
+    {
+      "label": "[DIM: dynamics] The solution space is rigid because the constraints arise from a",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:34:09.451492",
+      "last_seen": "2026-10-02T05:34:09.451492",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain ≤64 across all w (10 to 200) with low variance, demonstrating solution space rigidity; if N_c(w) exceeds 64 or grows with w, the solution space is fat. The trend will be flat or sub",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The solution space is rigid because the constraints arise from a"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:34:09.451539",
+      "last_seen": "2026-10-02T05:34:09.451539",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:34:09.451550",
+      "last_seen": "2026-10-02T05:34:09.451550",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:34:09.451561",
+      "last_seen": "2026-10-02T05:34:09.451561",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The solution space is rigid because the constraints arise from a",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_5a53f5ad"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:34:09.451639",
+      "last_seen": "2026-10-02T05:34:09.451639",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6711aac86ea8cb47",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: geometry]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:39:30.510645",
+      "last_seen": "2026-10-02T05:39:30.510645",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain ≤ 32 for point-set registration on S^2 (high rigidity due to compact manifold), but may exceed 64 for Laplace-Beltrami constraints (lower rigidity due to differential operator compl",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry]"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:39:30.510684",
+      "last_seen": "2026-10-02T05:39:30.510684",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:39:30.510694",
+      "last_seen": "2026-10-02T05:39:30.510694",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:39:30.510704",
+      "last_seen": "2026-10-02T05:39:30.510704",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry]",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_a265620a"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:39:30.510780",
+      "last_seen": "2026-10-02T05:39:30.510780",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fe5d2aef1cc03c6a",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:41:35.509913",
+      "last_seen": "2026-10-02T05:41:35.509913",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (≤64) for w up to 200, indicating solution space rigidity for polynomial interpolation constraints with ReLU FFNs.",
+      "persona": "reviewer",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:41:35.509951",
+      "last_seen": "2026-10-02T05:41:35.509951",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:41:35.509963",
+      "last_seen": "2026-10-02T05:41:35.509963",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:41:35.509974",
+      "last_seen": "2026-10-02T05:41:35.509974",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_216d91cc"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:41:35.510045",
+      "last_seen": "2026-10-02T05:41:35.510045",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "57b9ad482f7ccf21",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: dynamics] Differential Equation Residual Rigidity**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:45:04.153909",
+      "last_seen": "2026-10-02T05:45:04.153909",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) values will be finite and remain ≤ 64 across all w (10 to 200), demonstrating solution space rigidity. The residual error on held-out points will be ≤ 1e-3 for widths at or below 64, with minim",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] Differential Equation Residual Rigidity**"
+    },
+    {
+      "label": "plan_coder_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:45:04.153947",
+      "last_seen": "2026-10-02T05:45:04.153947",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:45:04.153960",
+      "last_seen": "2026-10-02T05:45:04.153960",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:45:04.153970",
+      "last_seen": "2026-10-02T05:45:04.153970",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] Differential Equation Residual Rigidity**",
+        "Method:plan_coder_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_30427f84"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:45:04.154039",
+      "last_seen": "2026-10-02T05:45:04.154039",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6ffb11eb7d52237f",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:49:12.623365",
+      "last_seen": "2026-10-02T05:49:12.623365",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the solution space is rigid due to low-rank constraints, $N_c$ will grow slowly with $w$, consistent with a logarithmic scaling ($N_c \\sim \\log w$). If the scaling is linear or constant, the hypoth",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c"
+    },
+    {
+      "label": "plan_coder_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623401",
+      "last_seen": "2026-10-02T05:49:12.623401",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623411",
+      "last_seen": "2026-10-02T05:49:12.623411",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c",
+        "Method:plan_coder_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:49:12.623494",
+      "last_seen": "2026-10-02T05:49:12.623494",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c595172178a9e7de",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "[DIM: geometry] The solution space is rigid due to the low intrinsic dimensional",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:50:29.094263",
+      "last_seen": "2026-10-02T05:50:29.094263",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will remain constant at a small integer (e.g., 5) for all $w \\ge 20$, confirming low intrinsic dimensionality of the solution space manifold.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space is rigid due to the low intrinsic dimensional"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:50:29.094299",
+      "last_seen": "2026-10-02T05:50:29.094299",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:50:29.094309",
+      "last_seen": "2026-10-02T05:50:29.094309",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:50:29.094318",
+      "last_seen": "2026-10-02T05:50:29.094318",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space is rigid due to the low intrinsic dimensional",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_9f7b82f2"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:50:29.094388",
+      "last_seen": "2026-10-02T05:50:29.094388",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5b9b6af04079289f",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "Hypothesis A (Dynamics - Optimization Landscape)",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:55:26.096249",
+      "last_seen": "2026-10-02T05:55:26.096249",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain ≤ 64 across w ∈ [10,200] with low variance, indicating solution space rigidity; if N_c(w) exceeds 64 or reaches 256 for any w, the solution space is fat.\nPLAN_SLOTS: w_h_scan=[8,16,",
+      "persona": "reviewer",
+      "id": "experiment:Hypothesis A (Dynamics - Optimization Landscape)"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:55:26.096285",
+      "last_seen": "2026-10-02T05:55:26.096285",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:55:26.096294",
+      "last_seen": "2026-10-02T05:55:26.096294",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:55:26.096305",
+      "last_seen": "2026-10-02T05:55:26.096305",
+      "mentions": 1,
+      "members": [
+        "experiment:Hypothesis A (Dynamics - Optimization Landscape)",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_b6ba2ae2"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:55:26.096376",
+      "last_seen": "2026-10-02T05:55:26.096376",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1beb23bcffe71970",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: optimization] The solution space is rigid because the constraint landscape",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:56:53.615870",
+      "last_seen": "2026-10-02T05:56:53.615870",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be ≤ 64 for all w ∈ [10, 200] with low variance (std < 5), indicating rigidity; if N_c(w) exceeds 64 or grows significantly with w, the hypothesis is falsified. The trend should be flat or",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The solution space is rigid because the constraint landscape"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:56:53.615908",
+      "last_seen": "2026-10-02T05:56:53.615908",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:56:53.615918",
+      "last_seen": "2026-10-02T05:56:53.615918",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T05:56:53.615932",
+      "last_seen": "2026-10-02T05:56:53.615932",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The solution space is rigid because the constraint landscape",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_54ee46cc"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T05:56:53.616005",
+      "last_seen": "2026-10-02T05:56:53.616005",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a842c98c93d2488d",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
+    },
+    {
+      "label": "'\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:04:31.418427",
+      "last_seen": "2026-10-02T06:04:31.418427",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will likely exceed 64 for larger w (e.g., w > 50), suggesting the solution space is \"fat\" rather than rigid, or that the required capacity grows with w. Alternatively, if rigidity holds, N_c(w)",
+      "persona": "reviewer",
+      "id": "experiment:'\"."
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:04:31.418462",
+      "last_seen": "2026-10-02T06:04:31.418462",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:04:31.418471",
+      "last_seen": "2026-10-02T06:04:31.418471",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:04:31.418480",
+      "last_seen": "2026-10-02T06:04:31.418480",
+      "mentions": 1,
+      "members": [
+        "experiment:'\".",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_b5cdda43"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:04:31.418553",
+      "last_seen": "2026-10-02T06:04:31.418553",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a18d0d892f1133cb",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: structure] The ReLU basis exhibits algebraic invariance under linear const",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:05:42.667350",
+      "last_seen": "2026-10-02T06:05:42.667350",
+      "mentions": 1,
+      "iteration": 85,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at 16 for w ≥ 160, with N_c(w) = ⌈w/10⌉ for w < 160, and the effective rank of the ReLU basis will remain invariant under linear constraint transformations, confirming the algebra",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The ReLU basis exhibits algebraic invariance under linear const"
+    },
+    {
+      "label": "plan_workflow_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:05:42.667386",
+      "last_seen": "2026-10-02T06:05:42.667386",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:05:42.667396",
+      "last_seen": "2026-10-02T06:05:42.667396",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:05:42.667405",
+      "last_seen": "2026-10-02T06:05:42.667405",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The ReLU basis exhibits algebraic invariance under linear const",
+        "Method:plan_workflow_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_574030c"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:05:42.667477",
+      "last_seen": "2026-10-02T06:05:42.667477",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5a441b40781bafdd",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "[DIM: structure] Topological Constraint Saturation Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:09:35.364703",
+      "last_seen": "2026-10-02T06:09:35.364703",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect N_c(w) to remain finite and bounded (≤ 64) across all w, demonstrating solution space rigidity. The maximum absolute error on held-out points will be ≤ 1e-3 for widths at or above N_c(w), wi",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] Topological Constraint Saturation Hypothesis"
+    },
+    {
+      "label": "plan_workflow_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:09:35.364743",
+      "last_seen": "2026-10-02T06:09:35.364743",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:09:35.364753",
+      "last_seen": "2026-10-02T06:09:35.364753",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:09:35.364763",
+      "last_seen": "2026-10-02T06:09:35.364763",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Topological Constraint Saturation Hypothesis",
+        "Method:plan_workflow_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_846aa01f"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:09:35.364838",
+      "last_seen": "2026-10-02T06:09:35.364838",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0e4694603eaf40f8",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:14:32.123075",
+      "last_seen": "2026-10-02T06:14:32.123075",
+      "mentions": 1,
+      "iteration": 100,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the hypothesis is correct, N_c(w) will exhibit linear or sub-linear growth with w and remain ≤ 64 across the scan range; if the solution space is fat, N_c(w) will exceed 256 for w > 50 or show no c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123132",
+      "last_seen": "2026-10-02T06:14:32.123132",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123144",
+      "last_seen": "2026-10-02T06:14:32.123144",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:14:32.123226",
+      "last_seen": "2026-10-02T06:14:32.123226",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f394fd66eebdca36",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "\" followed by the chosen one.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:17:41.984077",
+      "last_seen": "2026-10-02T06:17:41.984077",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(N_samples) will remain bounded as N_samples increases, supporting the \"rigid\" hypothesis. The minimal width required to achieve zero violation will saturate at a small value (e.g., w_h ≤ 32) even",
+      "persona": "reviewer",
+      "id": "experiment:\" followed by the chosen one."
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:17:41.984116",
+      "last_seen": "2026-10-02T06:17:41.984116",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:17:41.984127",
+      "last_seen": "2026-10-02T06:17:41.984127",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:17:41.984137",
+      "last_seen": "2026-10-02T06:17:41.984137",
+      "mentions": 1,
+      "members": [
+        "experiment:\" followed by the chosen one.",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_c64aef84"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:17:41.984215",
+      "last_seen": "2026-10-02T06:17:41.984215",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "23b9713201d74aea",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "[DIM: measure] The solution space is rigid due to the concentration of measure i",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:18:55.247517",
+      "last_seen": "2026-10-02T06:18:55.247517",
+      "mentions": 1,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain constant at 8 for w ≤ 32, then jump to 32 at w=64 and stay constant (step function), matching the concentration-of-measure prediction.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The solution space is rigid due to the concentration of measure i"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:18:55.247554",
+      "last_seen": "2026-10-02T06:18:55.247554",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:18:55.247564",
+      "last_seen": "2026-10-02T06:18:55.247564",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-02T06:18:55.247572",
+      "last_seen": "2026-10-02T06:18:55.247572",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The solution space is rigid due to the concentration of measure i",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_7f38f4e9"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-02T06:18:55.247634",
+      "last_seen": "2026-10-02T06:18:55.247634",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "48b616c0df3f4268",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:'.\"",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:33:00.581064",
+      "last_seen": "2026-10-02T05:33:00.581064",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a157eea9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:33:00.581064",
+      "last_seen": "2026-10-02T05:33:00.581064",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a157eea9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:33:00.581064",
+      "last_seen": "2026-10-02T05:33:00.581064",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a157eea9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The solution space is rigid because the constraints arise from a",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:34:09.451561",
+      "last_seen": "2026-10-02T05:34:09.451561",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5a53f5ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:34:09.451561",
+      "last_seen": "2026-10-02T05:34:09.451561",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5a53f5ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:34:09.451561",
+      "last_seen": "2026-10-02T05:34:09.451561",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5a53f5ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry]",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:39:30.510704",
+      "last_seen": "2026-10-02T05:39:30.510704",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a265620a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:39:30.510704",
+      "last_seen": "2026-10-02T05:39:30.510704",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a265620a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:39:30.510704",
+      "last_seen": "2026-10-02T05:39:30.510704",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a265620a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:41:35.509974",
+      "last_seen": "2026-10-02T05:41:35.509974",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_216d91cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:41:35.509974",
+      "last_seen": "2026-10-02T05:41:35.509974",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_216d91cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:41:35.509974",
+      "last_seen": "2026-10-02T05:41:35.509974",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_216d91cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] Differential Equation Residual Rigidity**",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:45:04.153970",
+      "last_seen": "2026-10-02T05:45:04.153970",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_30427f84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:45:04.153970",
+      "last_seen": "2026-10-02T05:45:04.153970",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_30427f84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:45:04.153970",
+      "last_seen": "2026-10-02T05:45:04.153970",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_30427f84"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: computation] Hypothesis 1. This is the most testable and novel in the c",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:49:12.623422",
+      "last_seen": "2026-10-02T05:49:12.623422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_26613ea8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space is rigid due to the low intrinsic dimensional",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:50:29.094318",
+      "last_seen": "2026-10-02T05:50:29.094318",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9f7b82f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:50:29.094318",
+      "last_seen": "2026-10-02T05:50:29.094318",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9f7b82f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:50:29.094318",
+      "last_seen": "2026-10-02T05:50:29.094318",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9f7b82f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:Hypothesis A (Dynamics - Optimization Landscape)",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:55:26.096305",
+      "last_seen": "2026-10-02T05:55:26.096305",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b6ba2ae2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:55:26.096305",
+      "last_seen": "2026-10-02T05:55:26.096305",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b6ba2ae2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:55:26.096305",
+      "last_seen": "2026-10-02T05:55:26.096305",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b6ba2ae2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The solution space is rigid because the constraint landscape",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:56:53.615932",
+      "last_seen": "2026-10-02T05:56:53.615932",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_54ee46cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:56:53.615932",
+      "last_seen": "2026-10-02T05:56:53.615932",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_54ee46cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T05:56:53.615932",
+      "last_seen": "2026-10-02T05:56:53.615932",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_54ee46cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:04:31.418480",
+      "last_seen": "2026-10-02T06:04:31.418480",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b5cdda43"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:04:31.418480",
+      "last_seen": "2026-10-02T06:04:31.418480",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b5cdda43"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:04:31.418480",
+      "last_seen": "2026-10-02T06:04:31.418480",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b5cdda43"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The ReLU basis exhibits algebraic invariance under linear const",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:05:42.667405",
+      "last_seen": "2026-10-02T06:05:42.667405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_574030c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:05:42.667405",
+      "last_seen": "2026-10-02T06:05:42.667405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_574030c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:05:42.667405",
+      "last_seen": "2026-10-02T06:05:42.667405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_574030c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Topological Constraint Saturation Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:09:35.364763",
+      "last_seen": "2026-10-02T06:09:35.364763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_846aa01f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:09:35.364763",
+      "last_seen": "2026-10-02T06:09:35.364763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_846aa01f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:09:35.364763",
+      "last_seen": "2026-10-02T06:09:35.364763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_846aa01f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] Interpolation Complexity Hypothesis. This hypothesis is selected",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:14:32.123154",
+      "last_seen": "2026-10-02T06:14:32.123154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e542888"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\" followed by the chosen one.",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:17:41.984137",
+      "last_seen": "2026-10-02T06:17:41.984137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c64aef84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:17:41.984137",
+      "last_seen": "2026-10-02T06:17:41.984137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c64aef84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:17:41.984137",
+      "last_seen": "2026-10-02T06:17:41.984137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c64aef84"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The solution space is rigid due to the concentration of measure i",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:18:55.247572",
+      "last_seen": "2026-10-02T06:18:55.247572",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f38f4e9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:18:55.247572",
+      "last_seen": "2026-10-02T06:18:55.247572",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f38f4e9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-10-02T06:18:55.247572",
+      "last_seen": "2026-10-02T06:18:55.247572",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f38f4e9"
+    }
+  ]
+}

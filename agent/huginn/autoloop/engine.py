@@ -556,6 +556,14 @@ class AutoloopEngine:
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
         self._last_hypothesis_confidence: float = 0.0
         self._last_hypothesis_evidence_strength: float = 0.0
+        # A: 本轮回合选中假设的可证伪预测 (从 [DIM: ...] | predict: 解析),
+        # 供主路径 add_hypothesis 写入 testable_prediction.
+        self._last_selected_prediction: str = ""
+        # B: 当前假设 node id (plan/validate/learn 关联用; 盲重建关闭时靠它回写状态).
+        self._current_hyp_id_for_plan: str | None = None
+        # D: 最近一次真实执行的任务性能 (r_phys, 缺省回落 tests_passed 1/0),
+        # 并入 darwin 评分让 best 反映真实质量; None = 无信号, 不参与.
+        self._last_task_perf: float | None = None
         # H4: GRILL 模式状态. should_pause_for_decision 触发 GRILL 后设为 active,
         # _llm_chat 构造 system prompt 时注入 GRILL_SYSTEM_PROMPT_CN. 用户确认
         # shared understanding 后 (LLM 输出含标记) 退出.
@@ -564,6 +572,11 @@ class AutoloopEngine:
         self._grill_turns: int = 0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
+        # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
+        # _last_execution_result (仅最后一轮) 时, 书生会把中间轮的真实数值丢掉、
+        # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
+        # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
+        self._execution_ledger: list[dict[str, Any]] = []
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -971,6 +984,12 @@ class AutoloopEngine:
 
     def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
         return self._engine_controller._check_budget(iteration, plan)
+
+    def _budget_remaining_s(self) -> float | None:
+        return self._engine_controller._budget_remaining_s()
+
+    def _budget_exhausted(self) -> bool:
+        return self._engine_controller._budget_exhausted()
 
     async def _drain_side_questions(self) -> int:
         return await self._engine_controller._drain_side_questions()
@@ -1474,10 +1493,11 @@ class AutoloopEngine:
         report_data: dict[str, Any], kb_text: str = "", exec_summary: str = "",
         visual_ctx: str = "", validation_summary: str = "",
         hypothesis: str = "", surprise: float = 0.0,
+        evidence_ledger: str = "",
     ) -> str:
         return EngineReflect._build_science_report_prompt(
             report_data, kb_text, exec_summary, visual_ctx, validation_summary,
-            hypothesis, surprise)
+            hypothesis, surprise, evidence_ledger)
 
     # ── 去 mixin 阶段9: HypothesisLoop 薄委托 ─────────────────────
     # hypothesis 生成/管理方法族已下沉为 HypothesisLoop 协作对象 (self._hypothesis_loop).
@@ -1590,6 +1610,13 @@ class AutoloopEngine:
 
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         self._cognitive_runner._emit_campaign(event_type, data)
+
+    def _emit_control_trace(
+        self, name: str, evidence: str, action: str = "advisory_hint"
+    ) -> None:
+        # 控制面观测统一入口: HypothesisLoop / EngineAct 等协作对象经 __getattr__
+        # 转发到这里 (EngineReflect 有自己的同名实现走 _OWN_ATTRS).
+        self._engine_reflector._emit_control_trace(name, evidence, action)
 
     def _prepare_run(
         self, objective: str, progressive_budget: bool, goal: Any | None,

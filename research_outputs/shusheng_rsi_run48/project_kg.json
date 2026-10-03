@@ -1,0 +1,646 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: structure] The rigid family is defined by a linear subspace of functions w",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:23:58.805366",
+      "last_seen": "2026-09-29T08:23:58.805366",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Based on the hypothesis, I expect N_c(w) to remain approximately constant (O(1)) as w increases, indicating the rigid family has bounded capacity complexity. If the hypothesis is wrong, I might observ",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family is defined by a linear subspace of functions w"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:23:58.805410",
+      "last_seen": "2026-09-29T08:23:58.805410",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:23:58.805423",
+      "last_seen": "2026-09-29T08:23:58.805423",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:23:58.805433",
+      "last_seen": "2026-09-29T08:23:58.805433",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family is defined by a linear subspace of functions w",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_e8ff3d8"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:23:58.805540",
+      "last_seen": "2026-09-29T08:23:58.805540",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1e064631112e6a33",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: measure] The held-out error distribution for the rigid family converges to",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:24:55.768141",
+      "last_seen": "2026-09-29T08:24:55.768141",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family, N_c(w) remains approximately constant (O(1)) across w, with held-out error variance decaying as O(w^-1). For fat family, N_c(w) grows with w or becomes infeasible (inf/nan), with hel",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error distribution for the rigid family converges to"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:24:55.768179",
+      "last_seen": "2026-09-29T08:24:55.768179",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:24:55.768188",
+      "last_seen": "2026-09-29T08:24:55.768188",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:24:55.768198",
+      "last_seen": "2026-09-29T08:24:55.768198",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error distribution for the rigid family converges to",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_5ce5a0c0"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:24:55.768273",
+      "last_seen": "2026-09-29T08:24:55.768273",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8b45b9506852bc95",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:26:49.787010",
+      "last_seen": "2026-09-29T08:26:49.787010",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The minimal width $N_c(w)$ will scale approximately as $\\Omega(w / \\log w)$ as predicted by VC dimension theory, with the scaling constant depending on input dimension $d$ and constraint complexity. F",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787048",
+      "last_seen": "2026-09-29T08:26:49.787048",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787059",
+      "last_seen": "2026-09-29T08:26:49.787059",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:26:49.787137",
+      "last_seen": "2026-09-29T08:26:49.787137",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5335eb98f1f46bf4",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: measure] The zero-violation probability for the rigid family converges to ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:27:57.502221",
+      "last_seen": "2026-09-29T08:27:57.502221",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will remain bounded (O(1)) as w increases, while for the fat family, N_c(w) will grow linearly or superlinearly with w, reflecting the difference in effective degrees of f",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The zero-violation probability for the rigid family converges to"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502257",
+      "last_seen": "2026-09-29T08:27:57.502257",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502266",
+      "last_seen": "2026-09-29T08:27:57.502266",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The zero-violation probability for the rigid family converges to",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:27:57.502348",
+      "last_seen": "2026-09-29T08:27:57.502348",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d3e9635ed6a01a92",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: computation]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:30:41.041780",
+      "last_seen": "2026-09-29T08:30:41.041780",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be small (≤8) and approximately constant across w ∈ [5,50], indicating a rigid solution space; validation error will drop sharply once N crosses N_c(w) and remain ≤1e-3 for larger widths.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation]**"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:30:41.041823",
+      "last_seen": "2026-09-29T08:30:41.041823",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:30:41.041836",
+      "last_seen": "2026-09-29T08:30:41.041836",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:30:41.041845",
+      "last_seen": "2026-09-29T08:30:41.041845",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation]**",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_5d5b3e98"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:30:41.041933",
+      "last_seen": "2026-09-29T08:30:41.041933",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e848b5b9441e726a",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:31:42.490834",
+      "last_seen": "2026-09-29T08:31:42.490834",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If rigidity holds, N_c(w) will be small (≤ 16) and approximately flat across w ∈ [5, 50]; Hessian rank at solution will be low (≤ subspace dimension) and not grow with w. If not, N_c(w) will increase",
+      "persona": "reviewer",
+      "id": "experiment:[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490870",
+      "last_seen": "2026-09-29T08:31:42.490870",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490881",
+      "last_seen": "2026-09-29T08:31:42.490881",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "members": [
+        "experiment:[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:31:42.490958",
+      "last_seen": "2026-09-29T08:31:42.490958",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9e095d5eefd18a83",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:32:24.255329",
+      "last_seen": "2026-09-29T08:32:24.255329",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will be monotonic non-decreasing in $w$ and approximately follow $N_c(w) \\approx \\lceil \\log_2(w) \\rceil$ for the rigid family, with finite $N_c$ within the tested range.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255366",
+      "last_seen": "2026-09-29T08:32:24.255366",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255376",
+      "last_seen": "2026-09-29T08:32:24.255376",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_182def39"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:32:24.255455",
+      "last_seen": "2026-09-29T08:32:24.255455",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5fb5ddf32adb815f",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family is defined by a linear subspace of functions w",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:23:58.805433",
+      "last_seen": "2026-09-29T08:23:58.805433",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e8ff3d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:23:58.805433",
+      "last_seen": "2026-09-29T08:23:58.805433",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e8ff3d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:23:58.805433",
+      "last_seen": "2026-09-29T08:23:58.805433",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e8ff3d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error distribution for the rigid family converges to",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:24:55.768198",
+      "last_seen": "2026-09-29T08:24:55.768198",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ce5a0c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:24:55.768198",
+      "last_seen": "2026-09-29T08:24:55.768198",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ce5a0c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:24:55.768198",
+      "last_seen": "2026-09-29T08:24:55.768198",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ce5a0c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The zero-violation probability for the rigid family converges to",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:30:41.041845",
+      "last_seen": "2026-09-29T08:30:41.041845",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5d5b3e98"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:30:41.041845",
+      "last_seen": "2026-09-29T08:30:41.041845",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5d5b3e98"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:30:41.041845",
+      "last_seen": "2026-09-29T08:30:41.041845",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5d5b3e98"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_182def39"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_182def39"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_182def39"
+    }
+  ]
+}
