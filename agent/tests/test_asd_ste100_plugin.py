@@ -154,7 +154,7 @@ class TestLifecycle:
     def test_metadata_fields(self):
         star = AsdSte100Star()
         assert star.name == SEGMENT_NAME == "asd_ste100"
-        assert star.version == "1.0.0"
+        assert star.version == "1.1.0"
 
     def test_is_star_subclass(self):
         from huginn.api.star import Star

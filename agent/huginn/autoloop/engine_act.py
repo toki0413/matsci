@@ -492,7 +492,7 @@ class EngineAct:
                     self._is_code_experiment(_obj),
                     self._is_deterministic_numeric(description),
                 )
-            except Exception:
+            except Exception:  # — 原因: 路由诊断日志失败不影响执行, 忽略
                 pass
 
         # 方案1·攻 execute (2026-09-11 A线根因后半段 + 平衡点落地):

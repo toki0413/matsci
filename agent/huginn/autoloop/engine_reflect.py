@@ -71,7 +71,7 @@ def _normalize_script_for_fp(script: str) -> str:
         import ast as _ast
 
         return _ast.dump(_ast.parse(script))
-    except Exception:
+    except Exception:  # — 原因: 残缺代码无法 parse, 退化为去空行原文 (比内容哈希稳)
         return "\n".join(l.strip() for l in script.splitlines() if l.strip())
 
 
@@ -3072,7 +3072,7 @@ class EngineReflect:
                         _sp = _P(_src)
                         if _sp.is_file():
                             shutil.copy2(_sp, _dest / _sp.name)
-                except Exception:
+                except Exception:  # — 原因: 镜像演化产物是 best-effort, 失败只记日志
                     logger.debug("mirror evolution artifacts failed", exc_info=True)
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)

@@ -50,7 +50,7 @@ def _iso_epoch(s: str) -> float | None:
     try:
         return datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(
             tzinfo=timezone.utc).timestamp()
-    except Exception:
+    except Exception:  # — 原因: 时间戳格式不可解析, 视为无时间 (该节点不参与排序)
         return None
 
 
@@ -63,7 +63,7 @@ def load_episodic(run_dir: str) -> list[dict]:
         for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
             try:
                 d = json.loads(line)
-            except Exception:
+            except Exception:  # — 原因: 坏 jsonl 行跳过, 不让单行污染整份轨迹
                 continue
             e = d.get("entry") or {}
             if not e:
@@ -97,7 +97,7 @@ def load_graph_nodes(run_dir: str) -> list[tuple[float | None, str]]:
     for f in Path(run_dir).glob(".huginn/hypothesis_graph_*.json"):
         try:
             d = json.loads(f.read_text(encoding="utf-8", errors="ignore"))
-        except Exception:
+        except Exception:  # — 原因: 图文件损坏/半写跳过, 缺图不影响其余轨迹重放
             continue
         for n in (d.get("nodes") if isinstance(d, dict) else d) or []:
             ca = str(n.get("created_at") or "")

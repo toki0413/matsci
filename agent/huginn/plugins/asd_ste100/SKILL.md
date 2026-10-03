@@ -1,7 +1,7 @@
 ---
 name: asd-ste100
 description: "Use when English text must be parsed without a human to resolve ambiguity — tool descriptions, error messages, inter-agent instructions, system prompts, status reports — and misreading has a real cost, or when text reads as dense, hedged, or easy to misparse. Triggers: disambiguate, STE100 rewrite, apply Simplified Technical English, plain-language rewrite, controlled-language rewrite, rewrite so an agent cannot misread this. Not for creative or marketing copy."
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Simplified Technical English (ASD-STE100)
@@ -19,7 +19,7 @@ adjective instead of a command, so can a language model.
 
 ## How Huginn Uses This
 
-The plugin `asd_ste100` mounts two live surfaces:
+The plugin `asd_ste100` mounts three live surfaces:
 
 - **Prompt segment** — `ste_prompt_segment` registers into
   `huginn.plugins.prompt_segments`, the registry `build_prompt` assembles from.
@@ -28,9 +28,33 @@ The plugin `asd_ste100` mounts two live surfaces:
   its own draft text before sending it. Rules: sentence length, semicolons,
   phrasal verbs, nominalization, marketing adjectives, synonym rotation, and
   dangling list conjunctions.
+- **`comms_lint` tool + an advisory audit on the event bus** — the same
+  discipline applied to structured communication (see below).
 
 Mode comes from `HUGINN_STE_MODE` (`agents` | `strict` | `flavored` | `off`,
 default `agents`). The feature flag `asd_ste100` is the master switch.
+
+## Structured Communication
+
+STE's three rules — one word one meaning, one message one purpose, explicit
+with no back-channel — are not only about prose. They apply to every message
+that crosses a module, workflow, or agent boundary. `huginn/comms/contract.py`
+turns them into deterministic checks over the shapes Huginn already uses:
+
+- **Event envelope** (`AgentEvent`) — `type`, `timestamp`, and `source` must be
+  present; `type` must be a lowercase dotted namespace.
+- **Event vocabulary** — a `type` that is not registered (`KNOWN_EVENT_TYPES`)
+  is reported, so two names for one event cannot drift apart silently.
+- **Payload contract** — events with a declared field set (for example
+  `decision.point`, `agent.step.retrying`, `campaign.control_trace`) must carry
+  their required fields.
+- **Field-name aliases** — `tool` for `tool_name`, `sid` for `session_id`,
+  `src` for `source` are reported as drift.
+- **Result self-consistency** (`SubagentResult`) — success with an error, or a
+  success whose summary is empty, is reported.
+
+The audit is **advisory**: it counts violations and warns once per rule. It
+never blocks or drops an event. The feature flag `comms_contract` is its switch.
 
 ## When to Use This Skill
 

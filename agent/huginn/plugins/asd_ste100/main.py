@@ -13,6 +13,10 @@ Two live surfaces (both wired into the real pipeline, not just declared):
 2. A ``ste_lint`` tool — registered into ``ToolRegistry``, so the agent can
    check its own draft text against the deterministic structural rules before
    it sends the text to another agent or tool.
+3. A ``comms_lint`` tool + an advisory audit on the event bus — the same
+   discipline (one word one meaning, explicit envelope, stated contract)
+   applied to *structured* communication: module events, workflow handoffs,
+   and agent-to-agent messages.  See ``huginn/comms/contract.py``.
 
 Modes (env ``HUGINN_STE_MODE``, default ``agents``):
   agents   — rules scoped to tool descriptions, error messages, status reports,
@@ -29,6 +33,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 SEGMENT_NAME = "asd_ste100"
 TOOL_NAME = "ste_lint"
+COMMS_TOOL_NAME = "comms_lint"
 # Between writing (60) and thinking (100): the agent's voice rules come first,
 # then the discipline for the strings it emits to other agents.
 SEGMENT_PRIORITY = 65
@@ -68,12 +74,22 @@ _STRUCTURAL = """\
 - Keep every hedge (may, could, sometimes). Confidence is content. Never upgrade a hedge to a fact.
 - Keep necessary technical terms. Define a term once when it is not common English."""
 
+_COMMS = """\
+- Keep one field name for one meaning everywhere: tool_name, not tool. session_id, not sid. source, not src.
+- Put the parts a receiver needs in every message: type, timestamp, source.
+- Name each event with a lowercase dotted namespace (tool.result, team.member.start). Do not invent a new name when a registered one fits.
+- A success result carries no error. A failed result states the error. Never report both at once."""
+
 _BLOCK_AGENTS = f"""\
 ## Agent-facing text (ASD-STE100)
 
 The strings you send to other agents and tools must survive a parser that cannot ask a follow-up question. Apply these rules to tool descriptions, error messages, status reports, and inter-agent instructions. Do not apply them to scientific prose or creative writing.
 
-{_STRUCTURAL}"""
+{_STRUCTURAL}
+
+Structured messages (events, workflow handoffs, agent-to-agent calls) follow the same discipline:
+
+{_COMMS}"""
 
 _BLOCK_STRICT = f"""\
 ## Output language (ASD-STE100 Strict)
@@ -87,7 +103,10 @@ Write all instructions, error messages, tool descriptions, and status reports in
 - Keep the subject, verb, and article explicit. Do not drop words to shorten the sentence.
 - Limit a paragraph to one topic and six sentences.
 - Use a numbered or bulleted list for three or more steps or conditions.
-- Pick one word for one action and reuse it everywhere. Do not rotate check/verify/confirm."""
+- Pick one word for one action and reuse it everywhere. Do not rotate check/verify/confirm.
+- Apply the same one-word-one-meaning rule to structured messages:
+
+{_COMMS}"""
 
 _BLOCK_FLAVORED = f"""\
 ## Output language (ASD-STE100 flavored)
@@ -211,6 +230,62 @@ class SteLintTool(HuginnTool):
         return ToolResult(data=result, success=True)
 
 
+class CommsLintInput(BaseModel):
+    """Input for the structured-communication contract linter."""
+
+    payload: dict[str, Any] = Field(
+        description=(
+            "The structured message to check. An AgentEvent ({type,timestamp,"
+            "source,data}), a SubagentResult ({summary,success,error}), an "
+            "AgentMessage ({role,content}), or a workflow event "
+            "({workflow_name,stage_name})."
+        ),
+    )
+    surface: str | None = Field(
+        default=None,
+        description="event | workflow | message | result. Omit to infer from the fields.",
+    )
+
+
+class CommsLintTool(HuginnTool):
+    """Check a structured message against the communication contract.
+
+    Deterministic, no model.  Applies the ASD-STE100 discipline to *structured*
+    communication: envelope completeness, event-name vocabulary, declared
+    payload fields, field-name aliases, and result self-consistency.  Reports
+    hard and advisory violations.  See ``huginn/comms/contract.py``.
+    """
+
+    name = COMMS_TOOL_NAME
+    description = (
+        "Check a structured message against the communication contract. The "
+        "check is deterministic and uses no model. Use it on events, workflow "
+        "handoffs, and agent-to-agent messages before you publish or send them. "
+        "It checks the envelope (type/timestamp/source), the event-name "
+        "vocabulary, declared payload fields, field-name aliases such as tool "
+        "for tool_name, and result self-consistency. It reports hard and "
+        "advisory violations."
+    )
+    category = "meta"
+    read_only = True
+    destructive = False
+    input_schema = CommsLintInput
+
+    async def _execute(self, args: CommsLintInput, context: ToolContext) -> ToolResult:
+        from huginn.comms.contract import lint
+
+        report = lint(args.payload, surface=(args.surface or None))
+        data = report.to_dict()
+        lines = [f"{report.surface}: {report.hard_count} hard, "
+                 f"{report.advisory_count} advisory"]
+        for v in report.violations[:20]:
+            lines.append(f"  [{v.severity}] {v.rule} ({v.field}): {v.message}")
+        if not report.violations:
+            lines.append("  contract satisfied")
+        data["summary"] = "\n".join(lines)
+        return ToolResult(data=data, success=True)
+
+
 # ── Plugin ───────────────────────────────────────────────────────────
 
 class AsdSte100Star(Star):
@@ -218,18 +293,21 @@ class AsdSte100Star(Star):
 
     name = SEGMENT_NAME
     author = "Huginn Integration (port of danyuchn/asd-ste100-skill, MIT)"
-    version = "1.0.0"
-    description = "ASD-STE100 controlled-language discipline for agent-facing text"
+    version = "1.1.0"
+    description = "ASD-STE100 controlled-language discipline for agent-facing text and structured communication"
     priority = 60
 
     def __init__(self, context: PluginContext | None = None) -> None:
         super().__init__(context)
         self._tool: SteLintTool | None = None
+        self._comms_tool: CommsLintTool | None = None
 
     async def on_load(self) -> None:
         register_prompt_segment(SEGMENT_NAME, ste_prompt_segment, priority=SEGMENT_PRIORITY)
         self._tool = SteLintTool()
         ToolRegistry.register(self._tool)
+        self._comms_tool = CommsLintTool()
+        ToolRegistry.register(self._comms_tool)
         self.logger.info(
             "asd_ste100 mounted (mode=%s, enabled=%s)", current_mode(), _enabled()
         )
@@ -237,7 +315,9 @@ class AsdSte100Star(Star):
     async def on_unload(self) -> None:
         unregister_prompt_segment(SEGMENT_NAME)
         ToolRegistry.unregister(TOOL_NAME)
+        ToolRegistry.unregister(COMMS_TOOL_NAME)
         self._tool = None
+        self._comms_tool = None
         self.logger.info("asd_ste100 unmounted")
 
 
@@ -245,8 +325,11 @@ __all__ = [
     "AsdSte100Star",
     "SteLintTool",
     "SteLintInput",
+    "CommsLintTool",
+    "CommsLintInput",
     "SEGMENT_NAME",
     "TOOL_NAME",
+    "COMMS_TOOL_NAME",
     "current_mode",
     "set_mode",
     "ste_prompt_segment",

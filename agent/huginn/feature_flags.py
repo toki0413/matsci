@@ -117,6 +117,11 @@ class FeatureFlags:
         # 指令), 不约束科研正文. 关掉即不注入; 确定性 ste_lint 工具仍可用.
         # 档位另由 HUGINN_STE_MODE (agents|strict|flavored|off) 控制.
         "asd_ste100": True,  # ASD-STE100 受控语言纪律 (默认开)
+        # 通信契约审计 (huginn/comms/contract.py): 把 ASD-STE100 的"一词一义/
+        # 信封完备/载荷契约"纪律扩到**结构化通信** (事件总线/工作流/agent 间)。
+        # 默认开且**只报告不拦截** (advisory, fail-open): EventBus.publish 每次
+        # 检查并按 rule 累积计数 + 首次 hard 告警, 绝不因契约违规丢事件.
+        "comms_contract": True,  # 通信契约审计 (默认开, 只报告)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
@@ -214,6 +219,7 @@ class FeatureFlags:
         "privacy_block_on_secrets": "检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)",
         "hypothesis_llm_semantic": "假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级)",
         "asd_ste100": "ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档)",
+        "comms_contract": "通信契约审计: 事件总线/工作流/agent 间消息的确定性契约检查 (默认开, 只报告不拦截)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
