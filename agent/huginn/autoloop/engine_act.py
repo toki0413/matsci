@@ -1229,6 +1229,25 @@ Please modify the code to address this task."""
                         self._grill_active = False
                 except ImportError:
                     logger.debug("pre_plan_grill import failed, GRILL prompt 跳过")
+            # 插件 prompt 段 (如 asd_ste100 的受控语言规则): autoloop 直接拼 persona
+            # system prompt, **绕过** agent.build_prompt, 故注册进 prompt_segments 的
+            # 插件段在这条路径上永不生效 (没通电). 这里显式消费只取插件段 (排除框架
+            # 骨架段, 避免与 persona/phase 重复注入). 组装失败不影响主 LLM 调用.
+            try:
+                from huginn.plugins.prompt_segments import (
+                    assemble_plugin_prompt_segments,
+                )
+
+                _plugin_seg = assemble_plugin_prompt_segments(
+                    mode="default",
+                    phase=self._current_phase or "",
+                    metacog_state="",
+                    system_prompt=sys_prompt,
+                )
+                if _plugin_seg:
+                    sys_prompt = f"{sys_prompt}\n\n{_plugin_seg}" if sys_prompt else _plugin_seg
+            except Exception:  # 防御: 段组装失败退回 persona-only, 不阻塞主路径
+                logger.debug("plugin prompt segments failed", exc_info=True)
             if sys_prompt:
                 sys_msg = SystemMessage(content=sys_prompt)
                 # 静态 system prompt 跨调用不变, 给 Anthropic 打 cache 标记.

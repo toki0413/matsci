@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -18,6 +19,29 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from huginn.autoloop import AutoloopEngine, save_autoloop_snapshot
 from huginn.cli.context import CliContext
+
+logger = logging.getLogger(__name__)
+
+
+def _load_star_plugins() -> None:
+    """把 Star 插件挂进本进程 —— 与 serve 启动时加载的是同一套.
+
+    autoloop CLI 此前**从不**加载 Star 插件, 于是插件面 (prompt 段 / plugin tools,
+    如 asd_ste100 的 ste_lint、comms_lint) 在长程 run 里全部缺席. 这里复用服务端
+    ``lifespan._load_star_plugins`` 的同一实现, 让 autoloop 与 serve 看到同一套插件
+    (单一来源, 不在这里另写一份发现/加载逻辑).
+
+    插件各自用 feature flag 门控自身行为, 加载本身不改默认语义. 设
+    ``HUGINN_AUTOLOOP_NO_PLUGINS=1`` 可关闭 (回到插件缺席的旧行为).
+    """
+    if os.environ.get("HUGINN_AUTOLOOP_NO_PLUGINS", "0") == "1":
+        return
+    try:
+        from huginn.lifespan import _load_star_plugins as _load
+
+        asyncio.run(_load())
+    except Exception:  # 防御: 插件加载失败不阻塞 autoloop 启动
+        logger.warning("Star plugin loading failed; autoloop runs without plugins", exc_info=True)
 
 
 def _maybe_agent_factory() -> Any:
@@ -118,6 +142,9 @@ def autoloop(
         huginn autoloop --goal goal_abc12345
     """
     console = obj.console
+
+    # 挂载 Star 插件 (prompt 段 / plugin tools), 与 serve 同一套.
+    _load_star_plugins()
 
     if not objective and not watch:
         console.print(
