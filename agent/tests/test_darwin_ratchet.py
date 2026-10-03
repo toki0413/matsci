@@ -209,3 +209,30 @@ class TestDarwinRatchet:
         assert cyclic_score > tree_score, (
             f"有环图应比树图得分高: cyclic={cyclic_score}, tree={tree_score}"
         )
+
+    def test_task_perf_joins_score_as_fifth_dim(self):
+        """D: 有 _last_task_perf 信号时并入第 5 维, 让 best 反映真实质量.
+
+        4 维均分: (1+1+1+0)/4*10=7.5; 并入 task_perf=0 → (…+0)/5*10=6.0.
+        """
+        engine = _make_engine()
+        graph = engine.hypothesis_graph
+        graph._nodes = {"a": _make_node("a", "H1", "supported", "p1")}
+        engine._last_task_perf = 0.0
+        engine._iteration = 1
+
+        engine._darwin_ratchet_check()
+
+        assert 5.5 < engine._darwin_best_score < 6.5
+
+    def test_no_task_perf_keeps_four_dim(self):
+        """D: 无 task_perf 信号 → 退化为原 4 维 (行为不变)."""
+        engine = _make_engine()
+        graph = engine.hypothesis_graph
+        graph._nodes = {"a": _make_node("a", "H1", "supported", "p1")}
+        assert getattr(engine, "_last_task_perf", None) is None
+        engine._iteration = 1
+
+        engine._darwin_ratchet_check()
+
+        assert 7.0 < engine._darwin_best_score < 8.0  # =7.5

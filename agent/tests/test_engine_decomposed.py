@@ -649,6 +649,119 @@ def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
     assert eng.hypothesis_graph.refuted[0] == "h1"
 
 
+def test_writeback_hypothesis_status_supports_on_tests_passed() -> None:
+    """B: 盲重建未跑时, tests_passed=True → support 当前假设 + 记任务性能."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph
+
+    captured: list[tuple[str, dict]] = []
+
+    class _StubEngine:
+        _iteration = 3
+        hypothesis_graph = HypothesisGraph()
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            captured.append((event_type, data))
+
+    eng = EngineReflect(_StubEngine())
+    hid = eng.hypothesis_graph.add_hypothesis("掺杂增加则带隙减小")
+    eng._current_hyp_id_for_plan = hid
+
+    eng._writeback_hypothesis_status({"tests_passed": True}, r_phys=None)
+
+    assert eng.hypothesis_graph.get(hid).status == "supported"
+    # D: r_phys 缺省 → 回落 tests_passed 1.0, 写到引擎字段 (供 darwin 第 5 维)
+    assert eng._last_task_perf == 1.0
+    trace = next(
+        d for _, d in captured if d.get("name") == "hypothesis_status_writeback"
+    )
+    assert trace["action"] == "support"
+
+
+def test_writeback_hypothesis_status_refutes_and_records_r_phys() -> None:
+    """B+D: tests_passed=False → refute; r_phys 优先作为任务性能."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph
+
+    class _StubEngine:
+        _iteration = 3
+        hypothesis_graph = HypothesisGraph()
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            pass
+
+    eng = EngineReflect(_StubEngine())
+    hid = eng.hypothesis_graph.add_hypothesis("原假设")
+    eng._current_hyp_id_for_plan = hid
+
+    eng._writeback_hypothesis_status({"tests_passed": False}, r_phys=0.2)
+
+    assert eng.hypothesis_graph.get(hid).status == "refuted"
+    assert eng._last_task_perf == 0.2
+
+
+def test_writeback_hypothesis_status_skips_already_decided_node() -> None:
+    """B: 盲重建已表态 (status!=untested) 时不重复写, 但仍记性能 (幂等)."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph
+
+    class _StubEngine:
+        _iteration = 3
+        hypothesis_graph = HypothesisGraph()
+
+        def _emit_campaign(self, event_type: str, data: dict) -> None:
+            pass
+
+    eng = EngineReflect(_StubEngine())
+    hid = eng.hypothesis_graph.add_hypothesis("已支持的假设")
+    eng.hypothesis_graph.support(hid, {"modality": "blind_reconstruction"})
+    eng._current_hyp_id_for_plan = hid
+
+    # tests_passed=False 也不该把已支持的节点翻成 refuted (不撞状态机)
+    eng._writeback_hypothesis_status({"tests_passed": False}, r_phys=None)
+
+    assert eng.hypothesis_graph.get(hid).status == "supported"
+    assert eng._last_task_perf == 0.0
+
+
+def test_record_backup_candidates_extracts_predict_fields() -> None:
+    """A: [DIM:...] 候选的 predict 字段必须落盘 (旧正则让 testable_prediction 恒空).
+
+    选中候选的 predict → 引擎 _last_selected_prediction (主路径写 testable_prediction);
+    backup 候选的 predict → 进图节点的 testable_prediction. 且 predict 正文不得
+    并进 statement (run78 实测 support/testable 比例恒 0).
+    """
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph, HypothesisLoop
+
+    class _StubEngine:
+        _iteration = 1
+
+        def __init__(self) -> None:
+            self.hypothesis_graph = HypothesisGraph()
+
+        def _emit_control_trace(self, *args, **kwargs) -> None:
+            pass
+
+    eng = _StubEngine()
+    loop = HypothesisLoop(eng)
+
+    raw = (
+        "[DIM: mechanism] 掺杂增加则带隙减小 | predict: dE/dx < 0 | pro: 有效质量\n"
+        "[DIM: kinetics] 反应速率随温度指数增加 | predict: k = A exp(-Ea/RT)\n"
+    )
+    loop._record_backup_candidates(raw, "掺杂增加则带隙减小")
+
+    # 选中候选的预测落盘给主路径
+    assert eng._last_selected_prediction == "dE/dx < 0"
+    stmts = {n.statement: n for n in eng.hypothesis_graph.all_nodes()}
+    # 选中候选不重复进图 (主路径已加)
+    assert "掺杂增加则带隙减小" not in stmts
+    # backup 候选进图 + 其 predict 写入 testable_prediction, 正文不并进 statement
+    backup = stmts["反应速率随温度指数增加"]
+    assert backup.testable_prediction == "k = A exp(-Ea/RT)"
+    assert "predict" not in backup.statement
+
+
 def test_branch_incubator_empty_candidates_emits_trace() -> None:
     """孵化跑了但 N 路全空手 → 留 trace, 区分"没跑"与"跑了没结果"."""
     from huginn.autoloop.hypothesis_loop import HypothesisLoop
@@ -845,24 +958,20 @@ async def test_codelab_repair_loop_stops_on_wall_clock_expiry(monkeypatch) -> No
 
     run56 实测: 3600s 预算下跑到 ~65min 仍卡在修复循环 (每次尝试可烧满
     HUGINN_CODELAB_TIMEOUT_S, 最多 max_repairs+1 次), 单轮越限近 1h. 迭代内不查
-    预算 → "挂钟耗尽即停" 失效. 修复: 每次尝试前查一次.
+    预算 → "挂钟耗尽即停" 失效. D1: 时间口径下沉为统一 deadline 原语
+    `_budget_exhausted` (旧 `_wall_clock_expired` 已删除), 每次尝试前查一次.
     """
-    import huginn.autoloop.goal_store as _goal_store
     from huginn.autoloop.engine_act import EngineAct
 
-    monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
     monkeypatch.setenv("HUGINN_CODELAB_REPAIR_ATTEMPTS", "3")
 
     attempts: list[int] = []
 
-    class _FakeGS:
-        def get_active(self):  # noqa: ANN201
-            return type("_G", (), {"id": "g1"})()
-
-        def wall_clock_expired(self, gid: str) -> bool:
+    class _StubEngine:
+        # D1: 统一 deadline 原语 — 已耗尽, 不应再起新沙箱尝试
+        def _budget_exhausted(self) -> bool:
             return True
 
-    monkeypatch.setattr(_goal_store, "get_goal_store", lambda: _FakeGS())
     monkeypatch.setattr(EngineAct, "_build_codelab_focus", lambda self, d: "")
 
     async def _fake_author(self, goal, **kw):  # noqa: ANN001
@@ -876,7 +985,7 @@ async def test_codelab_repair_loop_stops_on_wall_clock_expiry(monkeypatch) -> No
 
     monkeypatch.setattr(EngineAct, "_run_code_lab", _fake_run)
 
-    act = EngineAct(object())
+    act = EngineAct(_StubEngine())
     out = await act._execute_code_lab("扫描 w", {})
 
     assert attempts == [], "挂钟已耗尽, 修复循环不应再起新的沙箱尝试"
@@ -884,13 +993,18 @@ async def test_codelab_repair_loop_stops_on_wall_clock_expiry(monkeypatch) -> No
 
 
 async def test_codelab_repair_loop_runs_when_no_long_horizon(monkeypatch) -> None:
-    """短程模式不查挂钟: 修复循环照旧跑满 max_repairs+1 次 (防误伤)."""
+    """预算未耗尽 (短程): 修复循环照旧跑满 max_repairs+1 次 (防误伤)."""
     from huginn.autoloop.engine_act import EngineAct
 
-    monkeypatch.delenv("HUGINN_PERSISTENT_GOAL_MODE", raising=False)
     monkeypatch.setenv("HUGINN_CODELAB_REPAIR_ATTEMPTS", "2")
 
     attempts: list[int] = []
+
+    class _StubEngine:
+        # D1: 统一 deadline 原语 — 未耗尽, 修复循环照旧
+        def _budget_exhausted(self) -> bool:
+            return False
+
     monkeypatch.setattr(EngineAct, "_build_codelab_focus", lambda self, d: "")
 
     async def _fake_author(self, goal, **kw):  # noqa: ANN001
@@ -904,7 +1018,7 @@ async def test_codelab_repair_loop_runs_when_no_long_horizon(monkeypatch) -> Non
 
     monkeypatch.setattr(EngineAct, "_run_code_lab", _fake_run)
 
-    act = EngineAct(object())
+    act = EngineAct(_StubEngine())
     out = await act._execute_code_lab("扫描 w", {})
 
     assert len(attempts) == 3, f"短程模式应跑满 max_repairs+1=3 次, 实际 {len(attempts)}"

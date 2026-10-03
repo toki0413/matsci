@@ -556,6 +556,14 @@ class AutoloopEngine:
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
         self._last_hypothesis_confidence: float = 0.0
         self._last_hypothesis_evidence_strength: float = 0.0
+        # A: 本轮回合选中假设的可证伪预测 (从 [DIM: ...] | predict: 解析),
+        # 供主路径 add_hypothesis 写入 testable_prediction.
+        self._last_selected_prediction: str = ""
+        # B: 当前假设 node id (plan/validate/learn 关联用; 盲重建关闭时靠它回写状态).
+        self._current_hyp_id_for_plan: str | None = None
+        # D: 最近一次真实执行的任务性能 (r_phys, 缺省回落 tests_passed 1/0),
+        # 并入 darwin 评分让 best 反映真实质量; None = 无信号, 不参与.
+        self._last_task_perf: float | None = None
         # H4: GRILL 模式状态. should_pause_for_decision 触发 GRILL 后设为 active,
         # _llm_chat 构造 system prompt 时注入 GRILL_SYSTEM_PROMPT_CN. 用户确认
         # shared understanding 后 (LLM 输出含标记) 退出.

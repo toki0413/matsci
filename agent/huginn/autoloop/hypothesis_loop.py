@@ -2282,18 +2282,28 @@ class HypothesisLoop:
         try:
             import re
             # 匹配 [DIM: xxx] statement | predict: ... | pro: ... | con: ...
-            # v12: 候选格式新增 predict: 字段 (可区分数值预测). 取到行尾前,
-            # 剥掉任意 `| <field>:` 后缀, 免得把 predict/pro/con 正文并进陈述.
+            # v13: 按 `|` 切字段后分别解析, 不再用一条正则把 predict 正文一起
+            # 剥掉 (旧正则让 backup/选中假设的 testable_prediction 恒空, 见 run78).
             _pattern = re.compile(
-                r"\[DIM:\s*([^\]]+)\]\s*(.+?)(?:\s*\|\s*(?:predict|pro|con):.*)?$",
+                r"\[DIM:\s*([^\]]+)\]\s*([^\n]*)",
                 re.MULTILINE,
             )
             _seen_dims: set[str] = set()
+            _selected_pred = ""
             for _m in _pattern.finditer(raw):
                 _dim = _m.group(1).strip().lower()
-                _stmt = _m.group(2).strip().split("\n")[0].strip()
-                # 跳过 SELECTED 的那个 (它已进图)
-                if not _stmt or _stmt == selected:
+                _fields = [p.strip() for p in _m.group(2).split("|")]
+                _stmt = _fields[0].strip() if _fields else ""
+                if not _stmt:
+                    continue
+                _predict = ""
+                for _p in _fields[1:]:
+                    if _p.lower().startswith("predict:"):
+                        _predict = _p.split(":", 1)[1].strip()
+                        break
+                # 跳过 SELECTED 的那个 (它已进图), 但记下它的预测给主路径用.
+                if _stmt == selected.strip():
+                    _selected_pred = _predict or _selected_pred
                     continue
                 # v12: 同 dim 不再跳过, 标 dim_conflict 让 decider 避开
                 _dim_conflict = _dim in _seen_dims
@@ -2302,6 +2312,7 @@ class HypothesisLoop:
                 _new_id = self.hypothesis_graph.add_hypothesis(
                     statement=_stmt,
                     rationale=f"backup candidate (dim={_dim})",
+                    testable_prediction=_predict,
                 )
                 if _new_id:
                     self.hypothesis_graph._nodes[_new_id].evidence = {
@@ -2309,6 +2320,8 @@ class HypothesisLoop:
                         "candidate_role": "backup",
                         "dim_conflict": _dim_conflict,
                     }
+            # A: 选中候选的预测落盘给主路径 (每轮重置, 避免上轮残留).
+            self._last_selected_prediction = _selected_pred
         except Exception:  # 防御: 备选记录失败忽略
             logger.debug("v11 _record_backup_candidates failed (non-fatal)", exc_info=True)
     def _metacog_classify_family(self, hypothesis: str) -> str:

@@ -321,6 +321,7 @@ class EngineReflect:
         "_build_reviewer_prompt",
         "_learn",
         "_apply_strict_scope",
+        "_writeback_hypothesis_status",
         "_generate_next_loop_directive",
         "_report",
         "_feynman_learn",
@@ -2886,6 +2887,63 @@ class EngineReflect:
             logger.debug("strict-scope fold failed", exc_info=True)
             return r_phys
 
+    def _writeback_hypothesis_status(
+        self, validation: dict[str, Any], r_phys: float | None
+    ) -> None:
+        """B+D: 盲重建未表态时, 用 tests_passed 回写当前假设状态 + 记任务性能.
+
+        盲重建 (`_blind_reconstruct_verify`) 默认关闭 (只认 HUGINN_BLIND_
+        RECONSTRUCTION=1), 此前假设图全 untested → darwin 的 supported_ratio
+        恒 0. 这里用本轮执行判据无 LLM 地兜底: tests_passed → support, 否则
+        refute. 同时把真实任务性能落到 `_last_task_perf`, 供 darwin 评分并入
+        第 5 维 (见 CognitiveRunner._darwin_ratchet_check).
+        纯本地状态写, 不抛异常.
+        """
+        _tests_passed = bool(
+            validation.get("tests_passed", False)
+            if isinstance(validation, dict)
+            else False
+        )
+        try:
+            _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
+            _node = (
+                self.hypothesis_graph._nodes.get(_hyp_id) if _hyp_id else None
+            )
+            if (
+                _node is not None
+                and getattr(_node, "status", "untested") == "untested"
+            ):
+                _ev = {
+                    "modality": "execution",
+                    "data_source": "tests_passed",
+                    "r_phys": r_phys,
+                    "tests_passed": _tests_passed,
+                }
+                if _tests_passed:
+                    self.hypothesis_graph.support(_hyp_id, _ev)
+                else:
+                    self.hypothesis_graph.refute(_hyp_id, _ev)
+                self._emit_control_trace(
+                    "hypothesis_status_writeback",
+                    f"{'support' if _tests_passed else 'refute'} "
+                    f"hyp={_hyp_id} tests_passed={_tests_passed}",
+                    action="support" if _tests_passed else "refute",
+                )
+        except Exception:  # 防御: 状态回写失败不影响 learn
+            logger.debug(
+                "hypothesis status writeback failed (non-fatal)", exc_info=True
+            )
+        # D: 记录真实任务性能 (r_phys 优先, 缺省回落 tests_passed 1/0).
+        try:
+            _tp = (
+                float(r_phys)
+                if r_phys is not None
+                else (1.0 if _tests_passed else 0.0)
+            )
+            self._last_task_perf = max(0.0, min(1.0, _tp))
+        except Exception:  # 防御: 性能记录失败置空不影响 learn
+            self._last_task_perf = None
+
     async def _learn(
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
     ) -> dict[str, Any]:
@@ -2906,6 +2964,9 @@ class EngineReflect:
         # evolution 回流 / meta 层真实 r_phys 门控**之前**, 只改本方法用的局部
         # r_phys, 不动 validation 里的原始值 (memory 留原始轨迹便于审计)。
         r_phys = self._apply_strict_scope(r_phys)
+
+        # B+D: 回写当前假设状态 + 记录真实任务性能 (盲重建未表态时的兜底).
+        self._writeback_hypothesis_status(validation, r_phys=r_phys)
 
         # Log to memory
         self.memory.add_message(

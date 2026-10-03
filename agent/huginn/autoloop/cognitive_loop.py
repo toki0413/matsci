@@ -1016,7 +1016,8 @@ class CognitiveRunner:
         - testable_ratio * 10: 可证伪性 (有 testable_prediction 的节点占比)
         - graph_diversity * 10: 假设多样性 (unique statements 占比)
         - topology_richness * 10: 假设网络结构丰富度 (β₁/n, 独立环数占比)
-        四项平均 → 0-10 分
+        - task_perf * 10: 真实任务性能 (r_phys / tests_passed; 无信号时不参与)
+        命中维度平均 → 0-10 分
 
         β₁ 解释: 假设图的独立环数. β₁=0 → 树状 (无交叉支持);
         β₁>0 → 有交叉支持/反驳链 (假设间相互关联). 标准化到 [0,1] 避免大图偏向.
@@ -1091,11 +1092,14 @@ class CognitiveRunner:
             logger.debug("topology_richness calc failed (non-fatal)", exc_info=True)
 
         # 0-10 分制, 对齐 darwin-skill 原版
-        score = (
-            (supported_ratio + testable_ratio + graph_diversity + topology_richness)
-            / 4.0
-            * 10.0
-        )
+        # D: 有真实任务性能信号 (r_phys / tests_passed) 时并入第 5 维, 让 best
+        # 反映真实质量而非纯图结构比例; 无信号退化为原 4 维 (行为不变).
+        _dims = [supported_ratio, testable_ratio, graph_diversity, topology_richness]
+        _tp = getattr(self, "_last_task_perf", None)
+        if _tp is not None:
+            with contextlib.suppress(Exception):
+                _dims.append(max(0.0, min(1.0, float(_tp))))
+        score = (sum(_dims) / len(_dims)) * 10.0
 
         delta = score - self._darwin_last_score
         if delta < 0.5:
@@ -1576,6 +1580,8 @@ class CognitiveRunner:
         self._current_prediction = ""  # reset JEPA prediction buffer
         self._last_surprise = 0.0
         self._last_raw_hypothesis = ""  # 完整 LLM 输出, 含 LUCID review
+        self._last_selected_prediction = ""  # A: 选中候选的 predict 字段
+        self._last_task_perf = None  # D: 真实任务性能信号 (无则 None)
         # G2: 加载历史 trajectory action 序列, 给 _check_stuck 当 VF2 匹配历史.
         # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
         try:
@@ -3030,9 +3036,20 @@ Respond JSON only:
                     cog["hypothesis"] = phase.result
                     if phase.result:
                         try:
+                            # C: 主路径派生边 — 新假设挂到上一轮假设 (若在), 让衍化链
+                            # 与 β₁ 有边可算 (链上子节点被 support 后成环, 拓扑不再恒 0).
+                            _prev_hyp_id = getattr(
+                                self, "_current_hyp_id_for_plan", None
+                            )
                             cog["current_hyp_id"] = self.hypothesis_graph.add_hypothesis(
                                 statement=phase.result,
                                 rationale=ctx.get("summary", ""),
+                                # A: 选中候选的 predict 字段写入 testable_prediction
+                                testable_prediction=getattr(
+                                    self, "_last_selected_prediction", ""
+                                )
+                                or "",
+                                parent_id=_prev_hyp_id,
                             )
                             # add_hypothesis 对**空壳/精确重复**陈述返回 None (守卫拒绝).
                             # 不能把 None 写回 _current_hyp_id_for_plan —— 那会清掉上一轮
