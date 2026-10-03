@@ -2148,6 +2148,8 @@ class HypothesisLoop:
         if (
             os.environ.get(_incubator_env, "0") == "1"
             and self._agent_factory is not None
+            # D1: 预算耗尽不启动 N 路隔离采样 (多路多轮最贵) — 回落 2 路.
+            and not self._budget_exhausted()
         ):
             try:
                 inc_hyp = await self._hypothesize_via_branch_incubator(context)

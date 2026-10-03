@@ -944,6 +944,33 @@ class CognitiveRunner:
             logger.debug("long-horizon keep-going check failed", exc_info=True)
             return False
 
+    def _long_horizon_stall_action(self) -> str | None:
+        """D3: 长程停滞 → 动作选择器 (非终止器).
+
+        把"无进展且还有预算"从静默空转转成**有向动作**. 触发条件三者全满足:
+        - ``HUGINN_STALL_AS_ACTION=1`` (默认关, 先观测触发率再默认开);
+        - ``_long_horizon_keep_going()`` 为真 (长程模式且目标挂钟未耗尽);
+        - darwin stagnation 达强度调度阈值 (与 ``_darwin_ratchet_check`` 同一口径).
+
+        返回 ``"pivot"`` (VALID_ACTIONS 里唯一的转向动作); 否则 ``None``. 由
+        ``decide_fn`` 消费为 ``ActionDecision(action="pivot", force=True)``. 触发后
+        调用方清零 ``_darwin_stagnation``, 给转向后的新路线重新累积.
+        """
+        if os.environ.get("HUGINN_STALL_AS_ACTION", "0") != "1":
+            return None
+        if not self._long_horizon_keep_going():
+            return None
+        if getattr(self, "_iteration", 0) <= 2:
+            return None
+        _base_stag = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        _stag_limit = (
+            strength_stagnation_limit(hypothesis_strength(self), base=_base_stag)
+            if strength_schedule_enabled() else _base_stag
+        )
+        if getattr(self, "_darwin_stagnation", 0) < _stag_limit:
+            return None
+        return "pivot"
+
     def _long_horizon_iteration_cap(self, goal: Goal | None, max_iterations: int) -> int:
         """长程探索: 依据 goal 的挂钟预算抬高步数上限.
 
@@ -2639,6 +2666,15 @@ Respond JSON only:
                     "last_action": state.last_action,
                     "external_stop": True,
                 }
+            # D1: 每步刷新剩余挂钟预算 contextvar — 供 streaming 降级路径给空闲
+            # 阈值封顶, 不让"降级"吞掉超过 goal 剩余预算的时间. contextvar 随 task
+            # 传播, 本步 execute 内的 LLM/子智能体可见. None = 无限制, 保持旧行为.
+            try:
+                from huginn.agent.streaming import remaining_budget_s as _rb_s
+
+                _rb_s.set(self._budget_remaining_s())
+            except Exception:  # 防御: 预算刷新失败不影响主循环
+                logger.debug("remaining_budget_s refresh failed", exc_info=True)
             # P1.4: 每轮开头发 campaign.iteration — 对齐 run() L1305.
             # 前端 IterationTimeline 依赖这个事件渲染轮次进度.
             self._emit_campaign(
@@ -2680,9 +2716,16 @@ Respond JSON only:
                             _active_goal.id, _active_goal.wall_clock_budget_seconds,
                         )
                         try:
-                            _gs.complete(_active_goal.id)
+                            # D4: 耗尽 ≠ 达成 — 预算到点记 'expired', 不冒充 completed.
+                            # HUGINN_BUDGET_EXPIRE_SEMANTICS=0 回退旧语义 (complete).
+                            if os.environ.get(
+                                "HUGINN_BUDGET_EXPIRE_SEMANTICS", "1"
+                            ) == "1":
+                                _gs.expire(_active_goal.id, reason="wall_clock")
+                            else:
+                                _gs.complete(_active_goal.id)
                         except Exception:  # 防御: 收口失败忽略
-                            logger.debug("complete on wall-clock failed", exc_info=True)
+                            logger.debug("expire on wall-clock failed", exc_info=True)
                         self._emit_campaign(
                             "campaign.budget_exhausted",
                             {
@@ -2841,6 +2884,30 @@ Respond JSON only:
                 if not cog.get("current_hyp_id") and not cog.get("hypothesis"):
                     return ActionDecision(action="stop", rationale="no hyp to pivot from")
                 return ActionDecision(action="pivot", rationale=f"redirect: {state.redirect_reason}")
+            # D3: 长程停滞 → 强制转向 (非终止). 无进展且预算未尽时不再静默空转,
+            # 直接注入 pivot 并清零 stagnation, 把"接着绕"换成"换方法族再评估".
+            # 默认关 (HUGINN_STALL_AS_ACTION=0), 先观测触发率再默认开.
+            _stall_action = self._long_horizon_stall_action()
+            if _stall_action:
+                _stag = getattr(self, "_darwin_stagnation", 0)
+                self._darwin_stagnation = 0
+                _why = f"长程停滞 {_stag} 轮无增益, 强制转向 {_stall_action}"
+                logger.warning(
+                    "D3 stall→action: forcing %s at iter %d (stagnation=%d, budget left)",
+                    _stall_action, state.iteration, _stag,
+                )
+                self._control_trace(
+                    "stall_as_action",
+                    f"stagnation={_stag} action={_stall_action}",
+                    action="force_redirect",
+                    iteration=state.iteration,
+                )
+                return ActionDecision(
+                    action=_stall_action,
+                    force=True,
+                    rationale=_why,
+                    expected_outcome="换方法族或实验设计后重新评估, 打破当前停滞",
+                )
             hint = self._next_phase_hint
             if hint == "execute" and self._refined_hypothesis:
                 cog["hypothesis"] = self._refined_hypothesis

@@ -977,6 +977,12 @@ class AutoloopEngine:
     def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
         return self._engine_controller._check_budget(iteration, plan)
 
+    def _budget_remaining_s(self) -> float | None:
+        return self._engine_controller._budget_remaining_s()
+
+    def _budget_exhausted(self) -> bool:
+        return self._engine_controller._budget_exhausted()
+
     async def _drain_side_questions(self) -> int:
         return await self._engine_controller._drain_side_questions()
 

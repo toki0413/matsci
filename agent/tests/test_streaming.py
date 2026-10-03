@@ -232,6 +232,27 @@ class TestFallbackStreamIdle:
         monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "not-a-number")
         assert _fallback_stream_idle(300.0) == 300.0
 
+    # D1: budget_left 给定时封顶, 不让降级吞掉超过 goal 剩余预算的时间.
+
+    def test_budget_left_caps_widened_threshold(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(300.0, budget_left=120.0) == 120.0
+
+    def test_budget_left_floors_at_one_second(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(300.0, budget_left=-5.0) == 1.0
+
+    def test_budget_left_none_keeps_old_behaviour(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(300.0, budget_left=None) == 300.0
+
+    def test_budget_left_caps_env_override(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "200")
+        assert _fallback_stream_idle(300.0, budget_left=50.0) == 50.0
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # _fallback_collect_inputs — 有进度续跑(None), 别重放整个 turn (run72 根因)

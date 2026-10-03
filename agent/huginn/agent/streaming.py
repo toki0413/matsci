@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import re
@@ -65,6 +66,13 @@ _DEFAULT_ROOT_MARKERS = (
 # 60s 默认值覆盖大多数 LLM 首 token 延迟 + 中间停顿. 调高无意义, 调低误杀.
 _STREAM_IDLE_TIMEOUT = float(os.environ.get("HUGINN_STREAM_IDLE_TIMEOUT", "60"))
 
+# D1: 剩余挂钟预算 (秒), 由 autoloop 每步设置. 降级收集时用它给空闲阈值封顶,
+# 不启动/不维持一个注定越过 goal 剩余预算的动作. 未设置 = None → 完全保持现行为;
+# 用 contextvar 传递, **避免 streaming 反向依赖 autoloop** (依赖方向单向).
+remaining_budget_s: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "huginn_remaining_budget_s", default=None
+)
+
 # ainvoke 超时随 thinking 强度放宽 — 我们鼓励深度思考 (thinking=high) 却给
 # 固定 300s, 长推理一超就 kill, 自相矛盾. 按档位给足预算, 避免"三思而后行
 # 却被限时"的错配. ponytail: 离散档位映射, env 可覆盖. ceiling: 连续缩放需
@@ -91,7 +99,9 @@ def _thinking_stream_idle() -> float:
     return _STREAM_IDLE_TIMEOUT
 
 
-def _fallback_stream_idle(total_timeout: float) -> float:
+def _fallback_stream_idle(
+    total_timeout: float, budget_left: float | None = None,
+) -> float:
     """降级收集的空闲超时 — 必须比刚失败的那次更宽, 否则只是重演同一失败.
 
     进入降级 = 主流已证实会空闲超过 ``_thinking_stream_idle()``. 长耗时工具
@@ -99,14 +109,23 @@ def _fallback_stream_idle(total_timeout: float) -> float:
     再跑一遍注定同样超时, 白烧整个 ``total_timeout`` (run72 实测两次各 300s).
     故降级期把空闲阈值放宽到总预算量级: 只在真正卡死时提前终止, 其余交给外层
     ``wait_for(total_timeout)`` 兜底. ``HUGINN_FALLBACK_STREAM_IDLE`` 可覆盖.
+
+    D1: ``budget_left`` 给定时, 再对本阈值**封顶**, 不让降级消耗超过 goal 剩余
+    挂钟预算 (下限 1s, 避免 0/负值造成病态立即超时). 未给定 (None) 完全等价旧行为.
     """
     override = os.environ.get("HUGINN_FALLBACK_STREAM_IDLE")
     if override:
         try:
-            return float(override)
+            widened = float(override)
+            if budget_left is not None:
+                widened = min(widened, max(1.0, budget_left))
+            return widened
         except ValueError:
             logger.debug("bad HUGINN_FALLBACK_STREAM_IDLE=%r", override)
-    return max(_thinking_stream_idle(), total_timeout)
+    widened = max(_thinking_stream_idle(), total_timeout)
+    if budget_left is not None:
+        widened = min(widened, max(1.0, budget_left))
+    return widened
 
 
 def _fallback_collect_inputs(states_yielded: int, inputs: Any) -> Any:
@@ -2041,7 +2060,11 @@ class StreamingMixin:
                         # 降级必须放宽空闲阈值: 主流刚以 _primary_idle 空闲失败,
                         # 再用同一阈值重跑只会重演同一失败, 白烧 _ainvoke_timeout
                         # (run72 实测两次各 300s). 长耗时工具期间无 chunk 属合法长空闲.
-                        _collect_idle = _fallback_stream_idle(_ainvoke_timeout)
+                        # D1: 读取 autoloop 每步设置的剩余挂钟预算, 给降级空闲阈值封顶,
+                        # 不让"降级"吞掉超过 goal 剩余预算的时间 (未设置则保持旧行为).
+                        _collect_idle = _fallback_stream_idle(
+                            _ainvoke_timeout, budget_left=remaining_budget_s.get()
+                        )
                         # run72 根因: 降级从 inputs 重放整个 turn, 把主流已提交的
                         # 40+ 步重做一遍 → 累计必然超 _ainvoke_timeout, 两次各烧
                         # 300s 且产出为空. 已有进度时改用 None 续跑 (langgraph 原生

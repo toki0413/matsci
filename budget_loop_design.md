@@ -1,7 +1,9 @@
 # 长程研究闭环与预算控制：矛盾分析与设计说明
 
-> 状态：设计稿（未改代码）。范围：`agent/huginn/autoloop/` 与 `agent/huginn/agent/streaming.py`。
+> 状态：**P1–P3 已实现**（D1+D4 / D2 / D3），各带回滚开关，单测已覆盖。范围：`agent/huginn/autoloop/` 与 `agent/huginn/agent/streaming.py`。
 > 目标：把「闭环要不要继续探索（科学判据）」与「还能不能继续（资源判据）」解耦到正确的层。
+>
+> 落地清单：D1 `_budget_remaining_s`/`_budget_exhausted`（`engine_control.py`）+ streaming 降级阈值封顶（`streaming.py`）；D2 `for_remaining`/`stricter_tier`/`_resolve_budget_tier`（`budget.py`/`engine_control.py`）；D3 `_long_horizon_stall_action` + `decide_fn` 强制 pivot（`cognitive_loop.py`，默认关）；D4 `GoalStore.expire`（`goal_store.py`）。
 
 ---
 

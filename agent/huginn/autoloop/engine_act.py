@@ -412,28 +412,14 @@ class EngineAct:
         max_repairs = int(_os.environ.get("HUGINN_CODELAB_REPAIR_ATTEMPTS", "3"))
         last_err = ""
 
-        def _wall_clock_expired() -> bool:
-            """长程模式下挂钟预算是否耗尽 (控制面原则里两个**合法硬出口**之一).
-
-            修复循环每次 ``_run_code_lab`` 最长可烧满 ``HUGINN_CODELAB_TIMEOUT_S``
-            (默认 900s), 最多 ``max_repairs+1`` 次 → 单轮可越过挂钟上限近一小时
-            (run56 实测: 3600s 预算跑到 ~65min 仍卡在修复循环). 挂钟耗尽本该是硬终止,
-            却因**迭代内不查预算**而失效. 这里在每次尝试前查一次, 已耗尽就不再起新尝试
-            (最多再多跑一个已在飞的尝试). 纯时间边界, 不做科学判断; fail-open.
-            """
-            if _os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
-                return False
-            try:
-                from huginn.autoloop.goal_store import get_goal_store
-
-                _gs = get_goal_store()
-                _ag = _gs.get_active()
-                return bool(_ag is not None and _gs.wall_clock_expired(_ag.id))
-            except Exception:  # 防御: 预算查询失败忽略
-                return False
-
+        # D1: 统一 deadline 原语 — 每次尝试前查一次, 已耗尽就不再起新尝试
+        # (最多再多跑一个已在飞的尝试). 修复循环每次 ``_run_code_lab`` 最长可烧满
+        # ``HUGINN_CODELAB_TIMEOUT_S`` (默认 900s), 最多 ``max_repairs+1`` 次 → 单轮
+        # 可越过挂钟上限近一小时 (run56 实测). 纯时间边界, 不做科学判断; fail-open.
+        # 旧私有 ``_wall_clock_expired`` 已删除: 时间口径下沉到 ``_budget_exhausted``
+        # (且按本 run goal id 判定, 旧实现用全局 get_active() 会跨 run 串台).
         for attempt in range(max_repairs + 1):
-            if _wall_clock_expired():
+            if self._budget_exhausted():
                 last_err = "挂钟预算耗尽, 中止 code_lab 修复循环"
                 logger.warning(
                     "code_lab 修复循环: 挂钟预算已耗尽, 停止第 %d 次尝试", attempt + 1
@@ -793,6 +779,16 @@ class EngineAct:
         WorkflowOrchestrator.run() 同步等完. 失败的 subtask 不炸整体,
         返回聚合结果让 validate/learn 阶段看.
         """
+        # D1: 预算耗尽不再起新的并行工作流 — 它会一次拉起多个并发子任务,
+        # 单轮就能烧穿剩余预算. 起动作前查一次, 已耗尽直接空手收口.
+        if self._budget_exhausted():
+            logger.warning("dynamic_workflow skipped: wall-clock budget exhausted")
+            return {
+                "mode": "dynamic_workflow",
+                "success": False,
+                "budget_exhausted": True,
+                "error": "挂钟预算耗尽, 跳过动态工作流",
+            }
         # H2: bandit loop — plan 带 n_variants 且 toggle on 时走 variant 演化
         from huginn.autoloop.engine import _harness_workflow_evolution_enabled
         if plan.get("n_variants") and _harness_workflow_evolution_enabled():

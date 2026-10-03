@@ -4,7 +4,7 @@ Goals survive across sessions. A goal carries:
 - text: what the user wants to achieve
 - sub_goals: dynamically appended constraints (/subgoal)
 - iteration: how many autoloop rounds have run
-- status: active | paused | completed
+- status: active | paused | completed | expired | rejected
 
 Persistence reuses PlanStore's file lock + atomic write pattern.
 """
@@ -43,7 +43,7 @@ class Goal:
     text: str
     sub_goals: list[str] = field(default_factory=list)
     iteration: int = 0
-    status: str = "active"  # active|paused|completed|pending|failed|pending_confirmation|rejected
+    status: str = "active"  # active|paused|completed|expired|pending|failed|pending_confirmation|rejected
     created_at: str = ""
     updated_at: str = ""
     session_id: str = ""
@@ -310,6 +310,22 @@ class GoalStore:
     def complete(self, goal_id: str) -> Goal:
         return self.update_goal(goal_id, status="completed")
 
+    def expire(self, goal_id: str, reason: str = "wall_clock") -> Goal:
+        """D4: 预算耗尽收口 — status='expired', 不冒充 completed.
+
+        complete() 与 expire() 的语义区别是硬性的: **耗尽 ≠ 达成**. 下游据此
+        区分"目标达成"与"预算到点", 不把空手收口记成成功 (reason 落 metadata).
+        """
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                raise KeyError(f"goal not found: {goal_id}")
+            goal.status = "expired"
+            goal.metadata["expired_reason"] = reason
+            goal.updated_at = now_iso()
+            self._save()
+            return goal
+
     def confirm_self_goal(self, goal_id: str) -> Goal:
         """P1 Task 7: confirm self-synthesized goal, enter scheduling."""
         with self._lock:
@@ -342,28 +358,37 @@ class GoalStore:
             return [g for g in self._goals.values()
                     if g.status == "pending_confirmation"]
 
-    def wall_clock_expired(self, goal_id: str) -> bool:
-        """P5: 检查 goal 挂钟预算是否耗尽.
+    def wall_clock_remaining(self, goal_id: str) -> float | None:
+        """P5/D1: 挂钟剩余秒数; 无限制返回 None.
 
-        wall_clock_budget_seconds <= 0 或 started_at 为空时返 False (无限制).
-        否则算 (now - started_at) 是否超 budget.
+        无限制 = goal 不存在 / wall_clock_budget_seconds <= 0 / started_at 为空.
+        与 ``wall_clock_expired`` 共享同一时间口径 (单一来源):
+        ``expired`` 等价于 ``remaining is not None and remaining <= 0``.
         """
         with self._lock:
             goal = self._goals.get(goal_id)
             if goal is None:
-                return False
+                return None
             if goal.wall_clock_budget_seconds <= 0 or not goal.started_at:
-                return False
+                return None
             from datetime import datetime
             try:
                 start = datetime.fromisoformat(goal.started_at)
                 if start.tzinfo is None:
                     start = start.replace(tzinfo=UTC)
                 elapsed = (datetime.now(UTC) - start).total_seconds()
-                return elapsed >= goal.wall_clock_budget_seconds
-            except Exception:  # 防御: 尽力写操作失败降级返回
-                logger.debug("best-effort op failed", exc_info=True)
-                return False
+                return goal.wall_clock_budget_seconds - elapsed
+            except Exception:  # 防御: 时间解析失败视为无限制, 不误判耗尽
+                logger.debug("wall_clock_remaining parse failed", exc_info=True)
+                return None
+
+    def wall_clock_expired(self, goal_id: str) -> bool:
+        """P5: 检查 goal 挂钟预算是否耗尽. 无限制时恒 False.
+
+        委托 ``wall_clock_remaining`` —— 时间口径只有一处实现, 不在这里重算.
+        """
+        remaining = self.wall_clock_remaining(goal_id)
+        return remaining is not None and remaining <= 0
 
     def clear(self, goal_id: str) -> None:
         with self._lock:
