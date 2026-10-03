@@ -112,6 +112,11 @@ class FeatureFlags:
         # 默认关 (与 harness 实验栅栏同款): 显式开启 + 有 model provider 才生效,
         # 无 model / 异常 / 输出非法标签时优雅降级回关键词匹配, 行为向后兼容.
         "hypothesis_llm_semantic": False,  # LLM 语义判定 (huginn/autoloop/hypothesis_semantic.py)
+        # ASD-STE100 受控语言规范 (huginn/plugins/asd_ste100). 默认开: 向系统
+        # 提示注入"面向 agent 的文本"纪律 (工具描述/错误信息/状态报告/agent 间
+        # 指令), 不约束科研正文. 关掉即不注入; 确定性 ste_lint 工具仍可用.
+        # 档位另由 HUGINN_STE_MODE (agents|strict|flavored|off) 控制.
+        "asd_ste100": True,  # ASD-STE100 受控语言纪律 (默认开)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
@@ -208,6 +213,7 @@ class FeatureFlags:
         "curiosity_hint": "好奇心提示 (HUGINN_CURIOSITY_HINT)",
         "privacy_block_on_secrets": "检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)",
         "hypothesis_llm_semantic": "假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级)",
+        "asd_ste100": "ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",

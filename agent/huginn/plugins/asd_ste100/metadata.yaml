@@ -1,0 +1,11 @@
+name: asd_ste100
+version: "1.0.0"
+author: Huginn Integration
+description: >
+  ASD-STE100 Simplified Technical English discipline for agent-facing text.
+  Injects controlled-language rules into the system prompt and provides a
+  deterministic ste_lint tool for tool descriptions, error messages, and
+  inter-agent messages. Port of danyuchn/asd-ste100-skill (MIT).
+huginn_version_range: ">=0.1.0"
+homepage: https://github.com/danyuchn/asd-ste100-skill
+repo: https://github.com/danyuchn/asd-ste100-skill
