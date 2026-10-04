@@ -62,7 +62,8 @@ class ExplorationOrchestrator:
         initial_branches: list[dict[str, Any]],
         objectives_config: dict[str, str] | None = None,
         constraints: list[str] | None = None,
-        max_iterations: int = 20,
+        max_iterations: int = 40,
+        min_iterations: int = 8,
         budget: dict[str, float] | None = None,
     ) -> ExplorationResult:
         """Run a complete exploration.
@@ -72,7 +73,9 @@ class ExplorationOrchestrator:
             initial_branches: List of dicts with keys: name, hypothesis, decisions (optional).
             objectives_config: Mapping of objective name → "minimize" or "maximize".
             constraints: List of constraint strings.
-            max_iterations: Maximum exploration iterations.
+            max_iterations: Maximum exploration iterations (hard cap on compute).
+            min_iterations: 防早停下限 —— 收敛(terminate / 全部分支 resolved 无新 action)
+                在跑满此轮数之前一律不生效，避免策略在第一二次迭代就过早收敛而研究太浅。
             budget: Optional budget dict (e.g., {"max_cpu_hours": 100}).
         """
         space = ExplorationSpace(
@@ -123,12 +126,28 @@ class ExplorationOrchestrator:
             # 2. Evaluate strategy
             actions = self.strategy.evaluate(space)
 
-            # 3. Apply actions
+            # 3. Apply actions (早停门: 未跑满 min_iterations 前, terminate 不生效)
             terminate = False
             for action in actions:
                 if action.action_type == "terminate":
-                    terminate = True
-                    convergence_reason = action.reason
+                    if iteration >= min_iterations:
+                        terminate = True
+                        # 优先"全部分支 resolved 且无新 action"的早停语义: 单分支/清空
+                        # 收敛时, Pareto 策略的 terminate("Pareto front converged") 会盖掉
+                        # 更精确的 resolved 原因 —— 这里按信息量最大者定 reason.
+                        _unresolved_now = [
+                            b for b in space.branches.values()
+                            if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
+                        ]
+                        _has_new_actions = any(
+                            a.action_type in {"expand", "refine"} for a in actions
+                        )
+                        if not _unresolved_now and not _has_new_actions:
+                            convergence_reason = (
+                                "All branches resolved with no new actions"
+                            )
+                        else:
+                            convergence_reason = action.reason
                     break
                 elif action.action_type == "prune" and action.target_branch:
                     await self.lifecycle.prune_branch(
@@ -141,6 +160,7 @@ class ExplorationOrchestrator:
                             name=nb.get("name", "unnamed"),
                             hypothesis=nb.get("hypothesis", "No hypothesis"),
                             parent=action.target_branch,
+                            metadata=self._branch_meta(nb),
                         )
                 elif action.action_type == "refine" and action.new_branches:
                     for nb in action.new_branches:
@@ -149,18 +169,19 @@ class ExplorationOrchestrator:
                             name=nb.get("name", "refinement"),
                             hypothesis=nb.get("hypothesis", "Refinement"),
                             parent=action.target_branch,
+                            metadata=self._branch_meta(nb),
                         )
 
             if terminate:
                 break
 
-            # 4. Check if all branches are resolved
+            # 4. Check if all branches are resolved (防早停: 未跑满 min_iterations 前不收敛)
             unresolved = [
                 b
                 for b in space.branches.values()
                 if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
             ]
-            if not unresolved and not any(
+            if iteration >= min_iterations and not unresolved and not any(
                 a.action_type in {"expand", "refine"} for a in actions
             ):
                 convergence_reason = "All branches resolved with no new actions"
@@ -201,6 +222,17 @@ class ExplorationOrchestrator:
             convergence_reason=convergence_reason,
             knowledge_graph_json=space.export_knowledge_graph("json"),
         )
+
+    @staticmethod
+    def _branch_meta(nb: dict[str, Any]) -> dict[str, Any] | None:
+        """把策略 new_branches 里 name/hypothesis 之外的字段透传为演化 metadata.
+
+        关键通道: MutationStrategy 生成的 `params` / `mutation_of` / `parent_hypothesis`
+        若不透传, 动态子代到 executor 手里时就丢了世系与参数, 无法被真实执行 ——
+        「评估→变异→再执行」的迭代闭环就在这里断链。
+        """
+        meta = {k: v for k, v in nb.items() if k not in ("name", "hypothesis")}
+        return meta or None
 
     async def run(
         self,

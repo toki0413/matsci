@@ -1,4 +1,4 @@
-"""EngineControlMixin — AutoloopEngine 的循环控制 + checkpoint 方法族.
+"""EngineControl — AutoloopEngine 的循环控制 + checkpoint 方法族 协作对象.
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - 循环控制: _check_gate / _check_budget / _drain_side_questions / stop
@@ -8,11 +8,18 @@
 - 事件总线: _get_event_bus / _dispatch_stage_event
 - 偏差日志: _log_deviation
 
-通过 self 访问 engine 状态. 方法体原样搬迁, 不改逻辑.
+去 mixin 阶段5: 原 EngineControlMixin(862 行/20 方法) 改为普通类 EngineControl。
+引擎经组合持有 self._engine_controller = EngineControl(self), 保留同名薄委托方法
+→ 既有 self.method() 调用点 (cognitive_loop / engine_act / plan_check / engine_reflect)
+零改动。不再靠多继承把认知中枢堆成 god-class。
 
-设计原则 (ponytail):
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义属性
+  读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
 - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
-- Mixin 不持有自己的状态, 全部走 self
+- 协作对象不额外持有业务状态 (除 engine 引用)
 """
 
 from __future__ import annotations
@@ -21,21 +28,43 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 # 控制阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.api.event import EventType, WorkflowStageEvent
-from huginn.autoloop.budget import BudgetExhausted
+from huginn.autoloop.budget import BudgetExhausted, IterationBudget
 from huginn.autoloop.phase_gate import PhaseGate, get_shared_phase_gate_state
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
 
-class EngineControlMixin:
-    """循环控制 + checkpoint 方法族. 通过 self 访问 engine 状态."""
+class EngineControl:
+    """循环控制 + checkpoint 方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
 
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",
@@ -73,7 +102,7 @@ class EngineControlMixin:
                     "engine_state saved (reason=%s, iter=%d, run_id=%s)",
                     reason, self._iteration, run_id,
                 )
-        except Exception:
+        except Exception:  # 防御: 引擎状态保存失败非致命
             logger.warning(
                 "_maybe_save_engine_state failed (non-fatal)", exc_info=True,
             )
@@ -106,7 +135,7 @@ class EngineControlMixin:
             # 超硬上限: 先保存进度 (可 resume), 再抛 — agent loop 优雅停止而非继续烧钱.
             self._maybe_save_engine_state(force=True, reason="budget_exhausted")
             raise
-        except Exception:
+        except Exception:  # 防御: 令牌预算跟踪失败忽略
             logger.debug("token budget tracking failed (non-fatal)", exc_info=True)
 
     async def _maybe_run_budget_approval(self) -> None:
@@ -144,7 +173,7 @@ class EngineControlMixin:
                 raise BudgetExhausted("budget renewal denied by user/limit")
         except BudgetExhausted:
             raise
-        except Exception:
+        except Exception:  # 防御: 预算审批检查失败忽略
             logger.debug("budget approval check failed (non-fatal)", exc_info=True)
 
     def _build_budget_human_decide(self):
@@ -170,7 +199,7 @@ class EngineControlMixin:
                     return False
                 low = str(answer).strip().lower()
                 return "approve" in low or low.startswith("y") or "批准" in str(answer)
-            except Exception:
+            except Exception:  # 防御: 人工决策失败降级返回
                 logger.debug("budget human decide failed (non-fatal)", exc_info=True)
                 return False
         return _human_decide
@@ -184,7 +213,7 @@ class EngineControlMixin:
             from huginn.plugins.event_bus import EventBus
 
             self._event_bus = EventBus()
-        except Exception:
+        except Exception:  # 防御: 尽力获取组件失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._event_bus
@@ -222,7 +251,7 @@ class EngineControlMixin:
                     event_type.name,
                     stage_name,
                 )
-        except Exception:
+        except Exception:  # 防御: 阶段事件分发失败不阻断
             logger.warning(
                 "error in _dispatch_stage_event: bus.dispatch failed", exc_info=True
             )
@@ -330,6 +359,24 @@ class EngineControlMixin:
             state.pending_human_review = None
         return True
 
+    def _plan_missing_executable(self, plan: dict[str, Any]) -> bool:
+        """判定 plan 是否带"可直接运行的数值脚本"信号 (纯 advisory, 不阻断).
+
+        闭环教训 2026-09-11: 模型对 trivial 目标屡犯"换名归约/空断言" — plan
+        不含可执行片段就进 execute 空转, 却还能过 advisory 门。这里只做信号判定,
+        供 execute 分支写强 hint (不改变 gate 语义, checkpoint 仍是唯一硬卡).
+        判据: 已带 plan_formula 槽, 或 description 含 python 计算标记 → 可执行;
+        否则判定缺可执行片段。
+        """
+        if not isinstance(plan, dict):
+            return True
+        if plan.get("plan_formula"):
+            return False
+        desc = plan.get("description") or plan.get("plan") or ""
+        if not isinstance(desc, str) or not desc.strip():
+            return True
+        markers = ("import ", "print(", " = ", "np.", "math.")
+        return not any(m in desc for m in markers)
 
     async def _wait_if_checkpoint_pending(
         self, from_phase: str, to_phase: str, timeout: float = 600.0
@@ -420,7 +467,7 @@ class EngineControlMixin:
                 },
             )
             await bus.dispatch(ev)
-        except Exception:
+        except Exception:  # 防御: 检查点事件发布失败忽略
             logger.debug("checkpoint event publish failed", exc_info=True)
 
 
@@ -436,7 +483,7 @@ class EngineControlMixin:
         """
         if self._budget is None or self._budget_degraded:
             return True
-        tier = self._budget.for_iteration(iteration)
+        tier = self._resolve_budget_tier(iteration)
         mode = plan.get("mode")
         if tier.allows(mode):
             # 这轮通过了就清掉该档位的拒绝计数, 下次重新数
@@ -474,6 +521,77 @@ class EngineControlMixin:
         )
         return False
 
+    # ── D1: 统一 deadline 原语 ──────────────────────────────────────
+    # 资源判据下沉为**单一接口**: 所有可能长阻塞的动作 (DFT/MD、code_lab 修复循环、
+    # streaming 降级、BranchIncubator 多路多轮、dynamic_workflow 并行子任务) 在
+    # **启动前**查一次 `_budget_exhausted()`, 不启动一个必然超时的动作. 时间口径
+    # 只有一处实现 (GoalStore.wall_clock_remaining), 这里不重算.
+    # 回滚: HUGINN_BUDGET_DEADLINE_UNIFIED=0 恢复"各写各的"旧行为.
+    def _budget_remaining_s(self) -> float | None:
+        """挂钟剩余秒数; 无挂钟限制 (非长程 / 无 goal) 返回 None.
+
+        语义对齐 `_long_horizon_keep_going` 的"本 run goal 优先"防串台逻辑:
+        先取 `self._run_goal_id` 对应的 goal, 取不到才退回全局 active, 避免跨 run
+        残留旧 goal 的挂钟压过当日 goal.
+        """
+        if os.environ.get("HUGINN_BUDGET_DEADLINE_UNIFIED", "1") != "1":
+            return None  # 回滚开关: 旧行为各写各的
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+
+            _gs = get_goal_store()
+            _run_gid = getattr(self, "_run_goal_id", None)
+            _goal = _gs.get_goal(_run_gid) if _run_gid else None
+            if _goal is None:
+                _goal = _gs.get_active()
+            return _gs.wall_clock_remaining(_goal.id) if _goal else None
+        except Exception:  # 防御: 预算查询失败 fail-open, 不误判耗尽
+            logger.debug("budget_remaining_s failed", exc_info=True)
+            return None
+
+    def _budget_exhausted(self) -> bool:
+        """单一判据: 长程模式且挂钟耗尽 → True; 否则 False.
+
+        纯时间边界, 不做科学判断; fail-open (拿不到预算视为未耗尽).
+        非长程模式恒 False —— 保持非长程路径行为零变化.
+        """
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return False
+        remaining = self._budget_remaining_s()
+        return remaining is not None and remaining <= 0
+
+    # ── D2: 档位预算改按剩余预算 ────────────────────────────────────
+    def _resolve_budget_tier(self, iteration: int) -> IterationBudget:
+        """按**剩余挂钟预算比例**取档, 与迭代序号档取严 (iteration 仍作上界兜底).
+
+        无挂钟预算 (非长程 / 无 goal) → 完全回退 ``for_iteration``, 非长程路径
+        零变化. 回滚: ``HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING=0``.
+        """
+        by_iter = self._budget.for_iteration(iteration)
+        # 只在长程模式启用 —— 非长程路径零变化; 且避免全局残留 goal 误触发.
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return by_iter
+        if os.environ.get("HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING", "1") != "1":
+            return by_iter
+        try:
+            from huginn.autoloop.budget import stricter_tier
+            from huginn.autoloop.goal_store import get_goal_store
+
+            _gs = get_goal_store()
+            _run_gid = getattr(self, "_run_goal_id", None)
+            _goal = _gs.get_goal(_run_gid) if _run_gid else None
+            if _goal is None:
+                _goal = _gs.get_active()
+            if _goal is None or _goal.wall_clock_budget_seconds <= 0:
+                return by_iter
+            _rem = self._budget_remaining_s()
+            if _rem is None:
+                return by_iter
+            _frac = _rem / _goal.wall_clock_budget_seconds
+            return stricter_tier(by_iter, self._budget.for_remaining(_frac))
+        except Exception:  # 防御: 比例取档失败回退按迭代序号
+            logger.debug("resolve budget tier by remaining failed", exc_info=True)
+            return by_iter
 
     async def _drain_side_questions(self) -> int:
         """轮空时把 pending 侧边问题答掉. 返回答了几个.
@@ -519,7 +637,7 @@ class EngineControlMixin:
                     channel.respond(sq.id, answer)
                     answered += 1
                     logger.info("side answered %s: %s", sq.id, answer[:80])
-            except Exception:
+            except Exception:  # 防御: 单项回答失败不影响主循环
                 # 单条失败不影响其他, 也不影响主 loop
                 logger.warning("side failed to answer %s", sq.id, exc_info=True)
         return answered
@@ -533,7 +651,7 @@ class EngineControlMixin:
             from huginn.interaction.clarification import get_clarification_manager
 
             self._clarification_mgr = get_clarification_manager()
-        except Exception:
+        except Exception:  # 防御: 尽力获取组件失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._clarification_mgr
@@ -547,7 +665,7 @@ class EngineControlMixin:
             from huginn.autoloop.plan_store import PlanStore
 
             self._plan_store = PlanStore()
-        except Exception:
+        except Exception:  # 防御: 尽力获取组件失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._plan_store
@@ -648,7 +766,7 @@ class EngineControlMixin:
                 for _dim, _nodes in list(_clusters.items())[:3]:
                     if _dim != "unknown" and _nodes:
                         _directions.append(f"{_dim}: {_nodes[0].statement[:80]}")
-            except Exception:
+            except Exception:  # 防御: 方向聚类失败跳过
                 logger.debug("cluster directions skipped", exc_info=True)
             # 不足 3 个时补 speculator predictions (首轮自然走这条)
             while len(_directions) < 3:
@@ -658,7 +776,7 @@ class EngineControlMixin:
                         _directions.append(f"speculator: {str(_preds[len(_directions)])[:80]}")
                     else:
                         break
-                except Exception:
+                except Exception:  # 防御: 尽力补方向失败停止补充
                     logger.debug("best-effort op failed", exc_info=True)
                     break
 
@@ -703,7 +821,7 @@ class EngineControlMixin:
             if checkpoint == "hypothesize_align" and answer:
                 self._speculator_hint += f"\n[FDE 对齐] 用户方向: {answer[:200]}\n"
             return answer
-        except Exception:
+        except Exception:  # 防御: 澄清失败返回空
             logger.warning("clarify %s failed", checkpoint, exc_info=True)
             return None
 
@@ -735,7 +853,7 @@ class EngineControlMixin:
         try:
             for nd in self.hypothesis_graph.supported()[:3]:
                 evidence.append(str(nd.statement)[:150])
-        except Exception:
+        except Exception:  # 防御: 支撑证据收集失败跳过
             logger.debug("supported evidence collect skipped", exc_info=True)
 
         artifacts: list[str] = []
@@ -770,7 +888,7 @@ class EngineControlMixin:
             trace_path.parent.mkdir(parents=True, exist_ok=True)
             with trace_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception:  # 防御: 元轨迹写入失败忽略
             logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
 
 

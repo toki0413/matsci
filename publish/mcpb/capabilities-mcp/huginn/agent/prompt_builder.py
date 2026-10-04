@@ -27,8 +27,9 @@ def persona_segment(system_prompt: str | None = None) -> str:
         return f"## PERSONA\n{system_prompt}"
     return (
         "## PERSONA\n"
-        "You are a materials-science research companion. Help the user design, "
-        "run, and interpret simulations and experiments with rigor."
+        "You are a mathematics-first research companion. The base unit of every "
+        "discipline is mathematics — help the user reduce their problem to its "
+        "mathematical skeleton, then design, run, and interpret experiments with rigor."
     )
 
 
@@ -151,8 +152,7 @@ def metacog_segment(metacog_state: str) -> str:
         if principles:
             parts.append("### STABLE_PRINCIPLES")
             parts.extend(f"- {p}" for p in principles)
-    except Exception:
-        # 文件缺失/损坏/import 失败都不应让 build_prompt 抛异常
+    except Exception:  # 稳定性: 文件缺失/损坏/import 失败都不让 build_prompt 抛
         logger.debug("stable_principles load skipped in prompt_builder", exc_info=True)
     return "\n".join(parts)
 
@@ -299,7 +299,7 @@ def _thinking_plugin(mode, phase, metacog_state, system_prompt):
 
         if not FeatureFlags.shared().is_enabled("external_thinking"):
             return ""
-    except Exception:
+    except Exception:  # 防御: external_thinking 判定异常则视为关闭
         return ""
     return (
         "## External Thinking\n"

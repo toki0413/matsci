@@ -873,7 +873,7 @@ LUCID review (mandatory after generating hypothesis):
                         f"- {v.get('dimension', '?')}/{v.get('hyp_type', '?')}: "
                         f"rate={v.get('rate', 0):.2f} (n={v.get('success', 0) + v.get('failure', 0)})"
                         for v in _sm.values()
-                        if isinstance(v.get("rate"), (int, float))
+                        if isinstance(v.get("rate"), int | float)
                         and v["rate"] < 0.4
                         and v.get("success", 0) + v.get("failure", 0) >= 3
                     ]
@@ -1903,6 +1903,10 @@ LUCID review (mandatory after generating hypothesis):
                     _mcmc_step_kwargs = {
                         "rng": _mcmc_engine._mcmc_rng,
                         "cached_log_p_current": _mcmc_cached_log_p,
+                        # Gramian 谱预条件 (沿高可控/高信息主轴提议); 数据不足自动退化.
+                        "gramian_enabled": (
+                            os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1"),
+                        "gramian_k": int(os.environ.get("HUGINN_MCMC_GRAMIAN_K", "1")),
                     }
                     if _mcmc_haptic_enabled:
                         _mcmc_step_kwargs["haptic_enabled"] = True

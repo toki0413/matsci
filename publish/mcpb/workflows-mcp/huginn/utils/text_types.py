@@ -94,10 +94,7 @@ class TextHandler:
     ) -> list[TextHandler]:
         """正则提取所有匹配, 返回 TextHandler 列表."""
         flags = 0 if case_sensitive else re.IGNORECASE
-        if isinstance(pattern, str):
-            compiled = re.compile(pattern, flags)
-        else:
-            compiled = pattern
+        compiled = re.compile(pattern, flags) if isinstance(pattern, str) else pattern
         matches = compiled.findall(self._text)
         # findall 在有 group 时返回 tuple, 展平
         result: list[TextHandler] = []

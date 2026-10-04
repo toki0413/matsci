@@ -38,10 +38,9 @@ class FeatureFlags:
         "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
         "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
         # v23 Round 9: 两个 router 之前是 raw env var (HUGINN_CONTEXT_ROUTER /
-        # HUGINN_TASK_TOOL_ROUTER), 极端模式 setdefault "1". 现纳入 FeatureFlags
-        # 统一接管, 默认关 (普通模式不开), 极端模式通过 FeatureFlags.enable() 开.
-        # 注意: 模块代码仍读 env var, FeatureFlags 这里只是登记, 不直接控制.
-        # 升级路径: 模块代码改为读 FeatureFlags 后, 删除 env var setdefault.
+        # HUGINN_TASK_TOOL_ROUTER). 现模块只读 FeatureFlags (context_builder /
+        # agent.core / streaming), 旧变量名经 _ENV_ALIASES 仍生效: 极端模式的
+        # setdefault 旧变量名在 FeatureFlags 构造时读入 alias, 模块读 flag. 默认关.
         "context_router": False,       # P3 信息路径多样性稀疏化 (context_builder)
         # 设备端/小模型懒加载: 默认常驻. 按 task 路由最小工具子集, 无命中给
         # core 基础子集而非全量 132 工具 (省 token/attention). 可
@@ -51,15 +50,34 @@ class FeatureFlags:
         # 显式开启后在 orchestrator 热路径按 (tool×target×actor×heavy) 判权 + 配额,
         # 关则不改变现有执行行为.
         "compute_policy": False,       # 计算路由目标维度策略 + 预算
+        # Anti-Hacking ①: 把 strict-scope 折进 _learn 用的 r_phys —— 本轮改动
+        # 命中沙箱硬底线/path_rules 的 DENY 规则 (改 score.py 等评分产物) 时整轨
+        # 奖励清零. 防 r_phys 被"刷分"污染, 进而污染 evolution 回流与 meta 层
+        # 真实 r_phys 门控. 默认关; 授权面为空/无改动文件时 no-op (零回归).
+        "anti_hacking_reward": False,  # strict-scope 越界清零 (默认关, 见 validation/scope_authority.py)
+        # Anti-Hacking ②: 意图口径 (S2). 与本轮 plan 声明的目标集
+        # (PlanStep.target_files, LLM 的 FILES: 行) 比对 —— 改动落在声明集之外
+        # 即整轨清零. 抓"plan 说改 A 实际偷偷改了 B"的偏离, 与 ① (合规口径, 抓
+        # 绝对禁区) 正交、独立开关. 默认关; plan 未声明目标时 no-op (零回归).
+        "intent_scope_reward": False,  # 意图口径越界清零 (默认关, 见 validation/scope_authority.py)
+        # P1 沙箱硬化: 内核级网络隔离 (Landlock ABI >= 4, Linux 6.7+). 开后软沙箱
+        # 注入的 preexec 会把子进程 TCP bind/connect 全拒 (只收紧网络, 不锁文件系统).
+        # 默认关; 内核不支持时优雅降级 (只做 FS 隔离). 也可用
+        # HUGINN_SANDBOX_ISOLATE_NETWORK=1 显式开 (优先级更高).
+        "sandbox_net_isolation": False,  # Landlock 网络隔离 (默认关, 见 security/sandbox.py)
         # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
         # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
+        # 读端开关。真正启用 harness 门控需写端 HUGINN_HARNESS_GATES=1 + 读端
+        # HUGINN_FEATURE_HARNESS_<NAME>=true 一起在进程启动前设好 (FeatureFlags 单例
+        # 只在构造时读一次 env, 运行时设不生效)。advisory 语义: 门控只评分不拦截。
         "harness_ood_holdout": False,         # H6: OOD 留出验证 (防背题补丁)
         "harness_significance_gate": False,   # H5: 结果显著性门 (统计检验)
         "harness_adoption_gate": False,       # 严格 gate 模式: RED 不自动采纳 (默认 advisory, 只评分不拦)
         "harness_joint_optimizer": False,     # 联合优化 (phase/block/params 协同)
         "harness_phase_evolve": False,        # 阶段规范演化
         "harness_prompt_patch": False,        # 提示补丁 (跨域提示增强)
+        "harness_meta_improver": False,       # M-R1: 递归 (meta-)improver — 改进器自身可演化+gate 验收
         # ---- v24 契约收敛 Round 1: 登记散落的裸 bool env (HUGINN_* = 0/1) ----
         # 这些变量之前在各模块 os.environ.get 裸读, 无统一 schema. 现纳入
         # FeatureFlags 统一登记: 默认值与裸读默认一致, 既可通过
@@ -93,11 +111,30 @@ class FeatureFlags:
         # 默认关 (与 harness 实验栅栏同款): 显式开启 + 有 model provider 才生效,
         # 无 model / 异常 / 输出非法标签时优雅降级回关键词匹配, 行为向后兼容.
         "hypothesis_llm_semantic": False,  # LLM 语义判定 (huginn/autoloop/hypothesis_semantic.py)
+        # ASD-STE100 受控语言规范 (huginn/plugins/asd_ste100). 默认开: 向系统
+        # 提示注入"面向 agent 的文本"纪律 (工具描述/错误信息/状态报告/agent 间
+        # 指令), 不约束科研正文. 关掉即不注入; 确定性 ste_lint 工具仍可用.
+        # 档位另由 HUGINN_STE_MODE (agents|strict|flavored|off) 控制.
+        "asd_ste100": True,  # ASD-STE100 受控语言纪律 (默认开)
+        # 通信契约审计 (huginn/comms/contract.py): 把 ASD-STE100 的"一词一义/
+        # 信封完备/载荷契约"纪律扩到**结构化通信** (事件总线/工作流/agent 间)。
+        # 默认开且**只报告不拦截** (advisory, fail-open): EventBus.publish 每次
+        # 检查并按 rule 累积计数 + 首次 hard 告警, 绝不因契约违规丢事件.
+        "comms_contract": True,  # 通信契约审计 (默认开, 只报告)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
         "privacy_local_only": False,   # 完全本地, 不发云端
+        # Pi 极简内核模式: 默认关. 开启后模型自写工具 (make_tool) 与模式切换
+        # (pi_mode_tool) 可用; 主动调 pi_mode_tool on 才真正隐藏工具可见面.
+        "pi_mode": False,              # Pi minimal-core mode (huginn/modes/pi.py)
+        # ---- JEV (System One 外部决策) 接入, 实验栅栏, 默认全关 ----
+        # 除这里登记外, 首层硬闸是隐私外发 (huginn/runtime/jev/_enabled.py:
+        # privacy_local_only / privacy_redact 时整条链路短路). 消费点读 _flag_enabled.
+        "jev_enabled": False,          # JEV 总闸 (外部判断能力总开关)
+        "jev_tool_router": False,      # 未知域工具子集用 JEV 并行 Noul 宽松补充 (advisory)
+        "jev_guardrail": False,        # 工具调用放行初筛 (deny/ask/allow, advisory)
     }
 
     # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
@@ -146,6 +183,9 @@ class FeatureFlags:
         "context_router": "P3 信息路径多样性稀疏化 (context_builder, 默认关)",
         "task_tool_router": "task keyword → tool category 动态路由 (默认开, 无命中给 core 子集)",
         "compute_policy": "M2 计算路由目标维度策略 + 预算 (默认关)",
+        "anti_hacking_reward": "Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关)",
+        "intent_scope_reward": "Anti-Hacking ② 意图口径越界清零: 改动偏离 plan 声明的目标集即清零 (默认关)",
+        "sandbox_net_isolation": "P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认关; 不支持则降级)",
         "harness_workflow_evolution": "H2 variant bandit 演化回路 (实验性, 默认关)",
         "harness_ood_holdout": "H6 OOD 留出验证, 防背题补丁 (实验性, 默认关)",
         "harness_significance_gate": "H5 结果显著性门, 统计检验 (实验性, 默认关)",
@@ -177,9 +217,14 @@ class FeatureFlags:
         "curiosity_hint": "好奇心提示 (HUGINN_CURIOSITY_HINT)",
         "privacy_block_on_secrets": "检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)",
         "hypothesis_llm_semantic": "假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级)",
+        "asd_ste100": "ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档)",
+        "comms_contract": "通信契约审计: 事件总线/工作流/agent 间消息的确定性契约检查 (默认开, 只报告不拦截)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
+        "jev_enabled": "JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束)",
+        "jev_tool_router": "未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory)",
+        "jev_guardrail": "工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory)",
     }
 
     _singleton_lock = threading.Lock()

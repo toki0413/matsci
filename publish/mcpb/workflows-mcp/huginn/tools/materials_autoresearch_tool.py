@@ -442,7 +442,7 @@ class MaterialsAutoResearchTool(HuginnTool):
         # 1. 先看 parsed dict
         if isinstance(parsed, dict):
             val = parsed.get(parsed_key)
-            if isinstance(val, (int, float)) and val == val:  # 排除 NaN
+            if isinstance(val, int | float) and val == val:  # 排除 NaN
                 return float(val), f"从 parsed.{parsed_key} 取值"
 
         # 2. 读 OUTCAR 兜底

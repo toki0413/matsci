@@ -53,6 +53,14 @@ _MEDIUM = IterationBudget(
 )
 _LIGHT = IterationBudget(allowed_modes=("coder",), max_calls=20, label="light")
 
+#: 档位严格度 (越大越严). 供 for_iteration/for_remaining 两路结果合并取严时比较.
+_TIER_SEVERITY = {"open": 0, "medium": 1, "light": 2}
+
+
+def stricter_tier(a: IterationBudget, b: IterationBudget) -> IterationBudget:
+    """取两档中更严的一个 (按 label 严格度). 未知 label 视为最松."""
+    return a if _TIER_SEVERITY.get(a.label, 0) >= _TIER_SEVERITY.get(b.label, 0) else b
+
 
 @dataclass(frozen=True)
 class ProgressiveBudget:
@@ -70,6 +78,22 @@ class ProgressiveBudget:
             if n <= upper_bound:
                 return budget
         return _OPEN
+
+    def for_remaining(self, fraction: float) -> IterationBudget:
+        """按剩余预算比例取档: fraction∈[0,1], 越大越宽裕档位越松 (D2).
+
+        档位: ``>0.6 open`` / ``0.3–0.6 medium`` / ``<0.3 light``. fraction 先
+        clamp 到 [0,1]. 与 ``for_iteration`` 的区别: 后者按**迭代序号**分档 (与
+        剩余预算脱钩, 快速省钱的 run 被过早限档 / 慢而烧钱的 run 第 1 轮仍无限
+        档); 这里按**实际剩余预算**分档. 调用方仍应把 ``for_iteration`` 作上界
+        兜底 (二者取严), 见 ``engine_control._resolve_budget_tier``.
+        """
+        f = 0.0 if fraction < 0.0 else 1.0 if fraction > 1.0 else float(fraction)
+        if f > 0.6:
+            return _OPEN
+        if f >= 0.3:
+            return _MEDIUM
+        return _LIGHT
 
     @classmethod
     def default(cls) -> ProgressiveBudget:
@@ -175,4 +199,11 @@ class TokenBudget:
         self.soft_limit_tokens = int(self.hard_limit_tokens * 0.8)
 
 
-__all__ = ["IterationBudget", "ProgressiveBudget", "PlanMode", "TokenBudget", "BudgetExhausted"]
+__all__ = [
+    "IterationBudget",
+    "ProgressiveBudget",
+    "PlanMode",
+    "TokenBudget",
+    "BudgetExhausted",
+    "stricter_tier",
+]

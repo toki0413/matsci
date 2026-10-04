@@ -1,5 +1,8 @@
 """Cognitive engine — S0-S6 state machine + dual-mode attention from the Double Helix.
 
+strong-claim: attention_mode 是 prompt 层引导(非真 attention 机制); S0-S7 状态机是
+工程隐喻, 非神经科学/认知科学主张. 详见本文 L16-17 的诚实边界.
+
 The state machine drives the loop engineering cycle:
     S0(Blank) → S1(Discover) → S2(Validate) → S3(Switch) → S4(Construct) → S5(Unify) → S6(Feedback) → S1...
 

@@ -94,6 +94,12 @@ _ENGINE_FIELDS: tuple[str, ...] = (
     "_plan_check_patterns",
     "_last_persona",
     "_last_surprise",
+    # v31: 秩归一 surprise (routing_surprise 的读源). 不持久化则 resume 后回落到
+    # 原始 _last_surprise (jaccard 回落时饱和 1.0) → 路由退化重现.
+    "_last_surprise_rel",
+    # v31: 秩归一用的历史直方图 ({bucket: [surprise,...]}). 不落盘则 resume 后
+    # 秩历史清零, 首样本回落 0.5 → 信号连续性被打断, 需重新积累才能分辨异常.
+    "_surprise_buckets",
     "_evals_history",
     "_budget_rejects",
     "_budget_degraded",
@@ -127,6 +133,12 @@ class EngineState:
     _plan_check_patterns: list[dict[str, Any]] = field(default_factory=list)
     _last_persona: str | None = None
     _last_surprise: float = 0.0
+    # v31: 秩归一 surprise [0,1] (routing_surprise 读源). 跟 _last_surprise 一起落盘,
+    # resume 后路由 / 记忆 / 展示统一信号不断档.
+    _last_surprise_rel: float = 0.0
+    # v31: 秩归一的历史直方图 ({bucket: [surprise,...]}), 与 _last_surprise_rel 配套,
+    # resume 后秩分布不断档 (否则首样本回落 0.5).
+    _surprise_buckets: dict[str, list[float]] = field(default_factory=dict)
     _evals_history: list[Any] = field(default_factory=list)
     _budget_rejects: dict[str, int] = field(default_factory=dict)
     _budget_degraded: bool = False
@@ -153,6 +165,9 @@ class EngineState:
     saved_at: float = 0.0
     # P2-6: 统一 trace_id, save 时从 TraceContext 读, 串联 audit/checkpoint/metrics.
     trace_id: str = ""
+    # EngineSignals 收敛: 纯环信号经 signals.signals (EngineSignals.to_snapshot()) 落盘,
+    # 而非逐个属性 poke。旧 snapshot 缺该键 → 默认 {} , load 容忍、不破老格式.
+    signals: dict[str, Any] = field(default_factory=dict)
 
 
 def _engine_state_dir(workspace: str | Path) -> Path:
@@ -181,6 +196,12 @@ def _snapshot_engine(engine: Any, run_id: str) -> EngineState:
     }
     for f in _ENGINE_FIELDS:
         kwargs[f] = getattr(engine, f, getattr(defaults, f))
+    # 环信号: 从 engine.signals 取快照(单一天然源), 老/假引擎无 .signals → {}.
+    _sig = getattr(engine, "signals", None)
+    if _sig is not None and hasattr(_sig, "to_snapshot"):
+        kwargs["signals"] = _sig.to_snapshot()
+    else:
+        kwargs["signals"] = {}
     return EngineState(**kwargs)
 
 
@@ -280,6 +301,7 @@ def load_engine_state(
         kwargs["run_id"] = data.get("run_id", run_id)
         kwargs["saved_at"] = data.get("saved_at", 0.0)
         kwargs["trace_id"] = data.get("trace_id", "")
+        kwargs["signals"] = data.get("signals", {})
         return EngineState(**kwargs)
     except Exception:
         import logging
@@ -315,6 +337,19 @@ def apply_state_to_engine(state: EngineState, engine: Any) -> None:
             "apply_state_to_engine setattr _mcmc_chains failed (non-fatal)",
             exc_info=True,
         )
+    # EngineSignals: 环信号整包写回 engine.signals（置后执行, 保证 signals 是最终事实源).
+    # 引擎无 .signals (老对象/假 stub) 或 state 无 signals → 跳过, 只走属性桥/_ENGINE_FIELDS.
+    if getattr(state, "signals", None) and hasattr(engine, "signals"):
+        try:
+            from huginn.autoloop.signals import EngineSignals
+
+            engine.signals = EngineSignals.from_snapshot(state.signals)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "apply_state_to_engine signals restore failed (non-fatal)",
+                exc_info=True,
+            )
 
 
 def engine_state_digest(state: EngineState) -> str:

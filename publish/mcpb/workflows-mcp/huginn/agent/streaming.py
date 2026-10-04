@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import re
@@ -32,6 +33,7 @@ from huginn.llm_retry import (
     _is_transient_network,
     _jitter,
 )
+from huginn.models.registry import compact_threshold_for
 from huginn.pet import PetMood, get_pet_bus
 from huginn.phases import BudgetSpec, ResearchPhase
 from huginn.privacy import redact_secrets, scan_for_secrets
@@ -64,6 +66,13 @@ _DEFAULT_ROOT_MARKERS = (
 # 60s 默认值覆盖大多数 LLM 首 token 延迟 + 中间停顿. 调高无意义, 调低误杀.
 _STREAM_IDLE_TIMEOUT = float(os.environ.get("HUGINN_STREAM_IDLE_TIMEOUT", "60"))
 
+# D1: 剩余挂钟预算 (秒), 由 autoloop 每步设置. 降级收集时用它给空闲阈值封顶,
+# 不启动/不维持一个注定越过 goal 剩余预算的动作. 未设置 = None → 完全保持现行为;
+# 用 contextvar 传递, **避免 streaming 反向依赖 autoloop** (依赖方向单向).
+remaining_budget_s: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "huginn_remaining_budget_s", default=None
+)
+
 # ainvoke 超时随 thinking 强度放宽 — 我们鼓励深度思考 (thinking=high) 却给
 # 固定 300s, 长推理一超就 kill, 自相矛盾. 按档位给足预算, 避免"三思而后行
 # 却被限时"的错配. ponytail: 离散档位映射, env 可覆盖. ceiling: 连续缩放需
@@ -88,6 +97,51 @@ def _thinking_stream_idle() -> float:
     if t in ("medium", "med", "normal"):
         return 120.0
     return _STREAM_IDLE_TIMEOUT
+
+
+def _fallback_stream_idle(
+    total_timeout: float, budget_left: float | None = None,
+) -> float:
+    """降级收集的空闲超时 — 必须比刚失败的那次更宽, 否则只是重演同一失败.
+
+    进入降级 = 主流已证实会空闲超过 ``_thinking_stream_idle()``. 长耗时工具
+    (code_lab 可跑 ~150s, 期间无任何 chunk) 正是这种"合法长空闲"; 用同一阈值
+    再跑一遍注定同样超时, 白烧整个 ``total_timeout`` (run72 实测两次各 300s).
+    故降级期把空闲阈值放宽到总预算量级: 只在真正卡死时提前终止, 其余交给外层
+    ``wait_for(total_timeout)`` 兜底. ``HUGINN_FALLBACK_STREAM_IDLE`` 可覆盖.
+
+    D1: ``budget_left`` 给定时, 再对本阈值**封顶**, 不让降级消耗超过 goal 剩余
+    挂钟预算 (下限 1s, 避免 0/负值造成病态立即超时). 未给定 (None) 完全等价旧行为.
+    """
+    override = os.environ.get("HUGINN_FALLBACK_STREAM_IDLE")
+    if override:
+        try:
+            widened = float(override)
+            if budget_left is not None:
+                widened = min(widened, max(1.0, budget_left))
+            return widened
+        except ValueError:
+            logger.debug("bad HUGINN_FALLBACK_STREAM_IDLE=%r", override)
+    widened = max(_thinking_stream_idle(), total_timeout)
+    if budget_left is not None:
+        widened = min(widened, max(1.0, budget_left))
+    return widened
+
+
+def _fallback_collect_inputs(states_yielded: int, inputs: Any) -> Any:
+    """降级收集该喂什么输入 — 有进度就续跑, 别重放整个 turn.
+
+    主流已 yield 过状态 = 有 checkpoint 进度. 此时回 ``None``, langgraph 会从最后
+    checkpoint 原生恢复 (见 ``runtime/checkpoint.py``), 不重做已完成步骤 — 这正是
+    run72 的根因: 旧代码一律重放 ``inputs``, 把 40+ 步重做一遍 → 累计必然超
+    ``_ainvoke_timeout``, 两次各烧 300s 且产出为空. 零进度时无 checkpoint 可续,
+    只能回 ``inputs`` 重放. ``HUGINN_STREAM_FALLBACK_RESUME=0`` 强制重放 (回滚开关).
+    """
+    if states_yielded > 0 and os.environ.get(
+        "HUGINN_STREAM_FALLBACK_RESUME", "1"
+    ) == "1":
+        return None
+    return inputs
 
 
 async def _astream_with_watchdog(
@@ -149,6 +203,32 @@ def _strip_dangling_tool_calls(messages: list) -> int:
                 content=m.content, tool_calls=[], id=getattr(m, "id", None)
             )
     return n_stripped
+
+
+def _extract_plan_steps_for_compact(final_state: dict[str, Any] | None) -> list[Any]:
+    """从 final_state 里 duck-typed 抽取计划步骤, 供 OnlineCompact 门控(advisory).
+
+    纯 best-effort: 状态里可能有 ``steps`` / ``plan_steps`` / ``plan``(其下
+    ``steps`` 或 ``tasks``) 任一形态; 什么都不在就不对该轮做候选门控(返回空)。
+    不抛出: 找不到就静默返回空表。
+    """
+    if not final_state:
+        return []
+    candidates: list[Any] | None = None
+    for key in ("steps", "plan_steps", "tasks"):
+        val = final_state.get(key)
+        if isinstance(val, list):
+            candidates = val
+            break
+    if candidates is None:
+        plan = final_state.get("plan")
+        if isinstance(plan, dict):
+            for key in ("steps", "tasks"):
+                val = plan.get(key)
+                if isinstance(val, list):
+                    candidates = val
+                    break
+    return candidates or []
 
 
 def _c1_self_check() -> int:
@@ -266,7 +346,7 @@ def _read_completion_records(path: Path) -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     logger.debug("skip bad completion line in %s", path)
         return out
-    except Exception:
+    except Exception:  # 防御: 读取补全记录失败则返回空
         logger.debug("read completion records failed", exc_info=True)
         return []
 
@@ -325,7 +405,7 @@ def _dump_completion_records(
         with open(comp_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         return comp_path
-    except Exception:
+    except Exception:  # 防御: 补全记录落盘失败则放弃
         logger.debug("completion dump failed", exc_info=True)
         return None
 
@@ -418,12 +498,12 @@ class StreamingMixin:
                         continue
                     try:
                         self._conversation_tree.merge_branch_into_active(leaf)
-                    except Exception:
+                    except Exception:  # 防御: 分支合并失败则跳过该分支
                         logger.debug(
                             "ConversationTree merge skipped for branch %s",
                             leaf, exc_info=True,
                         )
-        except Exception:
+        except Exception:  # 防御: 对话树切换操作失败则忽略
             logger.debug("ConversationTree fork/merge skipped", exc_info=True)
         logger.info("Research phase -> %s", target_phase.value)
         return True
@@ -587,7 +667,7 @@ class StreamingMixin:
                             "tool_input": _tool_input,
                         }
                     )
-                except Exception:
+                except Exception:  # 防御: 工具结果追踪失败则忽略
                     logger.debug("session_state tool tracking failed", exc_info=True)
                 if self._break_after_tool:
                     self._break_flag = True
@@ -627,7 +707,7 @@ class StreamingMixin:
         """
         try:
             mgr = get_interrupt_manager()
-        except Exception:
+        except Exception:  # 防御: 中断管理器失效则跳过检查
             logger.debug("best-effort op failed", exc_info=True)
             return None
         await mgr.wait_if_paused(thread_id)
@@ -642,7 +722,7 @@ class StreamingMixin:
                 self._conversation_tree.add_message(
                     "user", f"[modified] {evt.message}"
                 )
-            except Exception:
+            except Exception:  # 防御: 用户输入保存失败仅告警
                 logger.warning("Failed to save user input to memory", exc_info=True)
             return {"modified": True, "message": evt.message}
         return None
@@ -672,6 +752,18 @@ class StreamingMixin:
         if self._model_context_window <= 0:
             return None
 
+        # G34b/成本自适应: 按模型长上下文成本模式决定主动压缩阈值, 而非一刀切 60%.
+        # linear(KDA)/hybrid(SALA) 线性注意力骨架便宜, 过早压缩 = 用信息换本不必省的
+        # 算力 → 推迟; quadratic(旧全注意力) 维持既往 60%. 见 models.registry.compact_threshold_for.
+        model_name = (
+            getattr(self.model, "model_name", None)
+            or getattr(self.model, "model", "")
+            or ""
+        )
+        threshold = compact_threshold_for(str(model_name))
+        # 告警阈值 = 压缩阈值 - 10 (仅 log, 不动作), 禁止 < 0.
+        warn_pct = max(0, threshold - 10)
+
         # P0: 无条件 checkpointer 消息数上限兜底 — 不依赖 token usage / 上下文
         # 百分比. 长程任务消息条数可能无界增长 (即便每条 token 很小, 总量也常压
         # 在 token 预算内 → 纯 G34 不触发). 这里按条数硬上限收敛, 保证即使
@@ -691,21 +783,56 @@ class StreamingMixin:
 
         before = calculate_context_usage(usage, self._model_context_window)
 
-        # 50% warning — log only, no action
-        if before["used"] >= 50 and before["used"] < 60:
+        # 告警 (log only, no action) — used 落 [warn_pct, threshold)
+        if before["used"] >= warn_pct and before["used"] < threshold:
             logger.info(
-                "Context usage %d%%, approaching compaction threshold",
+                "Context usage %d%%, approaching compaction threshold %d%%",
                 before["used"],
+                threshold,
             )
             return None
 
-        if before["used"] <= 60:
+        if before["used"] <= threshold:
             return None
 
         logger.info(
-            "Context usage %d%%, triggering auto-compact",
+            "Context usage %d%%, triggering auto-compact (threshold %d%%)",
             before["used"],
+            threshold,
         )
+
+        # SoL-Pi OnlineCompact 接线(④, 非侵入 fail-closed): 压缩前先做"候选驱动 +
+        # 经济/证据密封门控"。若能从状态里读到计划步骤, 只把已验证+已密封步骤当可压
+        # 候选, 未验证步骤标记 preserve_evidence 保留; 门控决策记入 turn_span 供审计。
+        # 纯 advisory: 异常/无步骤列表都不改变既有修剪行为。
+        try:
+            plan_steps = _extract_plan_steps_for_compact(final_state)
+            if plan_steps:
+                from huginn.autoloop.online_compact import gate_compaction
+
+                g = gate_compaction(
+                    plan_steps,
+                    window_pct=float(before["used"]),
+                    cache_write_read_ratio=float(
+                        getattr(
+                            getattr(self, "_session_state", None),
+                            "cache_write_read_ratio",
+                            12.5,
+                        )
+                        or 12.5
+                    ),
+                )
+                turn_span.metadata["compact_candidates"] = g["compact_candidates"]
+                turn_span.metadata["compact_preserve_evidence"] = g["preserve_evidence"]
+                if g["should_compact"]:
+                    logger.info(
+                        "online_compact: fold %d verified+sealed steps, preserve %d under-evidence",
+                        len(g["compact_candidates"]),
+                        len(g["preserve_evidence"]),
+                    )
+        except Exception as _exc:  # noqa: BLE001 — 门控是 advisory, 失败不拖垮压缩主路径
+            # 门控是 advisory, 任何失败都不该拖垮压缩主路径
+            logger.debug("online_compact gating skipped (advisory)", exc_info=True)
 
         pre_ctx = HookContext(
             tool_name="context_compact",
@@ -717,7 +844,7 @@ class StreamingMixin:
         )
         try:
             await self.hook_manager.trigger(PRE_COMPACT, pre_ctx)
-        except Exception:
+        except Exception:  # 防御: 压缩前置钩子失败仅告警
             logger.warning("PRE_COMPACT hook raised", exc_info=True)
 
         try:
@@ -728,7 +855,7 @@ class StreamingMixin:
                     if self._conversation_summary
                     else summary
                 )
-        except Exception:
+        except Exception:  # 防御: 会话摘要提升失败仅告警
             logger.warning("promote_session_summary failed", exc_info=True)
 
         # G34: 真修剪 checkpointer 持久化状态. compact_messages 只修 inputs 临时
@@ -755,7 +882,7 @@ class StreamingMixin:
                         "checkpointer trimmed %d old messages (G34)", removed
                     )
                     turn_span.metadata["checkpointer_trimmed"] = removed
-            except Exception:
+            except Exception:  # 防御: checkpoint修剪失败仅告警
                 logger.warning(
                     "checkpointer trim failed (G34)", exc_info=True
                 )
@@ -771,7 +898,7 @@ class StreamingMixin:
                 self._model_context_window,
             )
             after_pct = after["used"]
-        except Exception:
+        except Exception:  # 防御: 压缩后token统计失败置零
             logger.debug("best-effort op failed", exc_info=True)
             after_pct = 0
 
@@ -799,9 +926,9 @@ class StreamingMixin:
                     )
                     try:
                         self.memory.promote_session_summary(tier="long")
-                    except Exception:
+                    except Exception:  # 防御: 长时记忆提升失败仅告警
                         logger.warning("memory promote_session_summary failed", exc_info=True)
-        except Exception:
+        except Exception:  # 防御: 自适应压缩失败则跳过
             logger.warning("adaptive compaction skipped", exc_info=True)
 
         logger.info(
@@ -875,7 +1002,7 @@ class StreamingMixin:
                 )
                 turn_span.metadata["checkpointer_p0_trimmed"] = removed
             return removed
-        except Exception:
+        except Exception:  # 防御: 消息数封顶修剪失败仅告警
             logger.warning(
                 "checkpointer count-cap trim failed (P0)", exc_info=True
             )
@@ -1015,7 +1142,7 @@ class StreamingMixin:
                 from huginn.provenance.pipeline import SimulationPipeline
                 pipeline = SimulationPipeline()
                 pipeline_block = pipeline.to_context_block()
-            except Exception:
+            except Exception:  # 防御: 管线上下文块跳过则省略
                 logger.debug("pipeline context block skipped", exc_info=True)
 
             prov_block = ""
@@ -1027,7 +1154,7 @@ class StreamingMixin:
                 # P1-1: 压缩后注入 DAG mermaid, 防止 agent 丢文件产出关系全局视图
                 from huginn.provenance import to_mermaid_for_context
                 dag_block = to_mermaid_for_context(reg)
-            except Exception:
+            except Exception:  # 防御: 溯源上下文块跳过则省略
                 logger.debug("provenance context block skipped", exc_info=True)
 
             # Long-horizon task state — gives the agent a view of what it
@@ -1039,7 +1166,7 @@ class StreamingMixin:
                 _tid = getattr(self, "thread_id", "") or ""
                 if _tid:
                     task_block = get_tracker().context_block(_tid)
-            except Exception:
+            except Exception:  # 防御: 任务状态上下文跳过则省略
                 logger.debug("task state context block skipped", exc_info=True)
 
             if not pipeline_block and not task_block and not ended_at_tool and not dag_block:
@@ -1069,7 +1196,7 @@ class StreamingMixin:
                 "Synthetic Continue injected (tool_boundary=%s, has_pipeline=%s)",
                 ended_at_tool, bool(pipeline_block),
             )
-        except Exception:
+        except Exception:  # 防御: 合成续接注入失败则忽略
             logger.debug("synthetic continue injection skipped", exc_info=True)
 
     async def _maybe_inject_proactive_suggestion(self) -> None:
@@ -1109,7 +1236,7 @@ class StreamingMixin:
                 "Proactive suggestion injected: %d ready steps",
                 len(ready),
             )
-        except Exception:
+        except Exception:  # 防御: 主动建议注入失败则忽略
             logger.debug("proactive suggestion skipped", exc_info=True)
 
     # ── The main chat loop ────────────────────────────────────────
@@ -1191,7 +1318,7 @@ class StreamingMixin:
                 role="user", content=message,
                 metadata={"thread_id": thread_id, "trace_id": thread_id},
             )
-        except Exception:
+        except Exception:  # 防御: 对话树写用户消息失败则跳过
             logger.debug("ConversationTree add_message (user) skipped", exc_info=True)
 
         # ── Mode banner: 告诉前端当前 agent 工作模式 (端到端通信) ──
@@ -1213,7 +1340,7 @@ class StreamingMixin:
         # without judgment". 这里是声明式触发, 不做语义判断.
         try:
             self.memory.capture_intuition(message)
-        except Exception:
+        except Exception:  # 防御: 直觉捕捉失败则跳过
             logger.debug("intuition capture skipped", exc_info=True)
 
         from huginn.interaction.clarification import should_ask_clarification
@@ -1273,7 +1400,7 @@ class StreamingMixin:
 
                     _ve = _ve or get_visual_encoder()
                     _ii = _ii or get_image_index()
-                except Exception:
+                except Exception:  # 防御: 视觉组件获取失败则不启用
                     logger.debug("visual_encoder/image_index 注入失败", exc_info=True)
             _vr = VisionRouter(
                 visual_encoder=_ve,
@@ -1297,7 +1424,7 @@ class StreamingMixin:
                     _decoded = await asyncio.to_thread(
                         decode_image, image_path, message or None
                     )
-                except Exception:
+                except Exception:  # 防御: 本地视觉解码不可用则回落
                     logger.debug("local vision decoder unavailable", exc_info=True)
                 _team = getattr(self, "_team_ref", None)
                 if _decoded:
@@ -1346,7 +1473,7 @@ class StreamingMixin:
                                 f"[用户问题]\n{message or '请根据上述视觉描述进行分析.'}"
                             )
                             _vision_route = VisionRoute.TEXT_ONLY
-                    except Exception:
+                    except Exception:  # 防御: 跨agent视觉委托失败仅告警
                         logger.warning(
                             "Cross-agent vision delegation failed",
                             exc_info=True,
@@ -1378,7 +1505,7 @@ class StreamingMixin:
             from huginn.privacy.scanner import SecretScanner
             scanner = SecretScanner()
             message = scanner.redact_pii(message)
-        except Exception:
+        except Exception:  # 防御: PII扫描不可用则跳过脱敏
             logger.debug("PII scanner unavailable, skipping redaction", exc_info=True)
 
         self.memory.add_message("user", message)
@@ -1398,7 +1525,7 @@ class StreamingMixin:
         try:
             from huginn.routes.metrics import track_agent_turn
             track_agent_turn(thread_id)
-        except Exception:
+        except Exception:  # 防御: 指标计数不可用则忽略
             logger.debug("Prometheus turn counter unavailable", exc_info=True)
 
         # TPS / TTFT 实时监控: t0=turn 起点, t_first_token=首个 chunk 时间.
@@ -1437,7 +1564,7 @@ class StreamingMixin:
                 prompt_ctx = await self.hook_manager.trigger(
                     USER_PROMPT_SUBMIT, prompt_ctx
                 )
-            except Exception:
+            except Exception:  # 防御: 提交钩子失败则继续主流程
                 logger.warning(
                     "USER_PROMPT_SUBMIT hook raised", exc_info=True
                 )
@@ -1494,7 +1621,7 @@ class StreamingMixin:
                         directive = self.style_learner.get_style_directive()
                         if directive:
                             messages.insert(-1, SystemMessage(content=directive, id="ctx_style"))
-                except Exception:
+                except Exception:  # 防御: 风格指令注入失败则跳过
                     logger.warning(
                         "style directive injection failed", exc_info=True
                     )
@@ -1565,7 +1692,7 @@ class StreamingMixin:
                         messages = _pg.redact_messages_for_cloud(messages)
             except RuntimeError:
                 raise
-            except Exception:
+            except Exception:  # 防御: 隐私守卫失败则原样发送
                 logger.warning(
                     "PrivacyGuard hook failed", exc_info=True
                 )
@@ -1580,7 +1707,7 @@ class StreamingMixin:
 
                 messages = inject_discipline_reminder(messages)
                 inputs = {"messages": messages}
-            except Exception:
+            except Exception:  # 防御: 纪律注入失败则跳过
                 logger.debug("event-driven discipline inject skipped", exc_info=True)
 
             # Compact initial messages if a context budget is configured.
@@ -1594,7 +1721,7 @@ class StreamingMixin:
             _trace_avail = False
             try:
                 _trace_avail = self._ctx_builder.meta_trace_available()
-            except Exception:
+            except Exception:  # 防御: 元轨迹检查失败按无trace处理
                 logger.debug("meta_trace_available check failed", exc_info=True)
             _trace_kln_divisor = 2 if _trace_avail else 1
             # M3: 按模型档位整体放宽/收紧 compaction 力度 (light 档保留更多原始).
@@ -1602,7 +1729,7 @@ class StreamingMixin:
                 from huginn.plugins.model_tier import compaction_knobs
 
                 _ck = compaction_knobs()
-            except Exception:
+            except Exception:  # 防御: 压缩档位读取失败回退默认
                 _ck = None
             _keep_mult = _ck.keep_multiplier if _ck else 1.0
             _root_mult = _ck.root_multiplier if _ck else 1.0
@@ -1644,7 +1771,7 @@ class StreamingMixin:
                             self._adaptive_keep_last_n = last.adaptive_keep_last_n
                         if last is not None and last.adaptive_budget_ratio is not None:
                             self._adaptive_budget_ratio = last.adaptive_budget_ratio
-                    except Exception:
+                    except Exception:  # 防御: 熵自适应读取失败回退默认
                         logger.debug("belief_entropy adaptive read failed", exc_info=True)
                     adaptive_kln = getattr(self, "_adaptive_keep_last_n", 4)
                     # Meta-Trace: trace 存在时 keep_last_n 减半, trace 携带历史
@@ -1717,7 +1844,7 @@ class StreamingMixin:
             try:
                 from langgraph.checkpoint.sqlite import SqliteSaver
                 use_sync_stream = isinstance(self.checkpointer, SqliteSaver)
-            except Exception:
+            except Exception:  # 防御: 流模式判定失败则用异步流
                 logger.debug("best-effort op failed", exc_info=True)
                 use_sync_stream = False
 
@@ -1753,7 +1880,7 @@ class StreamingMixin:
                     m for m in _msgs if getattr(m, "id", None) != "ctx_tool_budget"
                 ]
                 inputs["messages"] = _msgs + [_budget_msg]
-            except Exception:
+            except Exception:  # 防御: 预算消息注入失败则跳过
                 logger.debug("budget injection skipped", exc_info=True)
             # AV5: 默认 skip — ToolLoopDetector + ThoughtLoopDetector 在长任务 (benchmark 或
             # 真实研究) 都会误判: agent 反复跑 code_tool 是正常, 写报告反复用术语
@@ -1763,10 +1890,7 @@ class StreamingMixin:
             # FeatureFlags 读 HUGINN_FEATURE_LOOP_DETECTOR, benchmark runner 极端模式开 / 普通模式关.
             from huginn.feature_flags import FeatureFlags
             _skip_loop = not FeatureFlags.shared().is_enabled("loop_detector")
-            if not _skip_loop:
-                turn_loop_detector = LoopDetector()
-            else:
-                turn_loop_detector = None
+            turn_loop_detector = LoopDetector() if not _skip_loop else None
             self._tool_adapter.set_loop_detector(turn_loop_detector)
 
             # F2: σ₈ 半修补全 — ThoughtLoopDetector 也要受同一个 env 控制.
@@ -1787,12 +1911,16 @@ class StreamingMixin:
                     snapshot = graph.get_state(config)
                     existing_msgs = snapshot.values.get("messages", [])
                     self._state_msg_offsets[thread_id] = len(existing_msgs)
-                except Exception:
+                except Exception:  # 防御: 状态偏移读取失败则从零开始
                     logger.debug("checkpointer state fetch skipped", exc_info=True)
 
             # 统一事件总线: ON_LLM_REQUEST + ON_BEFORE_MESSAGE_SENT
             await _ubus.publish_llm_request(thread_id, len(messages))
             await _ubus.publish_before_message_sent(thread_id, len(messages))
+
+            # 主流空闲阈值 (随 thinking 档位放宽). 提到循环外, 使降级告警能如实
+            # 报告"实际用的阈值", 而不是模块默认常量 _STREAM_IDLE_TIMEOUT.
+            _primary_idle = _thinking_stream_idle()
 
             try:
                 attempt = 0
@@ -1855,7 +1983,7 @@ class StreamingMixin:
                                     inputs, config,
                                     stream_mode=["values", "messages"],
                                 ),
-                                idle_timeout=_thinking_stream_idle(),
+                                idle_timeout=_primary_idle,
                             ):
                                 if mode == "messages":
                                     chunk, _meta = data
@@ -1922,23 +2050,42 @@ class StreamingMixin:
                         logger.warning(
                             "stream idle timeout after %ds (states_yielded=%d), "
                             "falling back to progress-aware stream collect",
-                            _STREAM_IDLE_TIMEOUT, states_yielded,
+                            _primary_idle, states_yielded,
                         )
                         turn_span.metadata["stream_watchdog_timeout"] = True
                         _ainvoke_timeout = float(os.environ.get(
                             "HUGINN_AINVOKE_TIMEOUT",
                             str(_thinking_scale_timeout()),
                         ))
-                        _collect_idle = _thinking_stream_idle()
+                        # 降级必须放宽空闲阈值: 主流刚以 _primary_idle 空闲失败,
+                        # 再用同一阈值重跑只会重演同一失败, 白烧 _ainvoke_timeout
+                        # (run72 实测两次各 300s). 长耗时工具期间无 chunk 属合法长空闲.
+                        # D1: 读取 autoloop 每步设置的剩余挂钟预算, 给降级空闲阈值封顶,
+                        # 不让"降级"吞掉超过 goal 剩余预算的时间 (未设置则保持旧行为).
+                        _collect_idle = _fallback_stream_idle(
+                            _ainvoke_timeout, budget_left=remaining_budget_s.get()
+                        )
+                        # run72 根因: 降级从 inputs 重放整个 turn, 把主流已提交的
+                        # 40+ 步重做一遍 → 累计必然超 _ainvoke_timeout, 两次各烧
+                        # 300s 且产出为空. 已有进度时改用 None 续跑 (langgraph 原生
+                        # astream(None, config) 从最后 checkpoint 恢复, 见
+                        # runtime/checkpoint.py), 不重做已完成步骤. 无进度 (0 步)
+                        # 时仍用 inputs, 否则无 checkpoint 可续.
+                        _collect_inputs: Any = _fallback_collect_inputs(
+                            states_yielded, inputs)
+                        if _collect_inputs is None:
+                            turn_span.metadata["stream_fallback_resumed"] = True
                         final_state = None
                         try:
                             async def _collect(
-                                g=graph, idle_timeout=_collect_idle
+                                g=graph,
+                                idle_timeout=_collect_idle,
+                                collect_inputs=_collect_inputs,
                             ):
                                 _st = None
                                 async for mode, data in _astream_with_watchdog(
                                     g.astream(
-                                        inputs, config,
+                                        collect_inputs, config,
                                         stream_mode=["values", "messages"],
                                     ),
                                     idle_timeout=idle_timeout,
@@ -2031,7 +2178,7 @@ class StreamingMixin:
                                 wait_ms=int(wait * 1000),
                                 states_yielded=states_yielded,
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug(
                                 "step retry event publish failed", exc_info=True
                             )
@@ -2079,12 +2226,12 @@ class StreamingMixin:
                                 role="assistant", content=ai_content,
                                 metadata={"thread_id": thread_id, "phase": self.phase},
                             )
-                        except Exception:
+                        except Exception:  # 防御: 对话树写AI消息失败则跳过
                             logger.debug("ConversationTree add_message (ai) skipped", exc_info=True)
                         if self.style_learner is not None:
                             try:
                                 self.style_learner.observe(message, ai_content)
-                            except Exception:
+                            except Exception:  # 防御: 风格学习观察失败仅告警
                                 logger.warning(
                                     "style_learner.observe failed",
                                     exc_info=True,
@@ -2109,7 +2256,7 @@ class StreamingMixin:
                 try:
                     if self._session_state.tool_results_this_turn:
                         self._run_post_turn_reflection()
-                except Exception:
+                except Exception:  # 防御: 收尾反思失败则忽略
                     logger.debug("finally reflection failed", exc_info=True)
                 # TPS 收尾: chunk_chars/4 ≈ tokens (latin). 写 turn_span + Prometheus.
                 if _tps_t_first is not None and _tps_chunk_chars > 0:
@@ -2125,7 +2272,7 @@ class StreamingMixin:
                                 ttft_ms=turn_span.metadata.get("llm_ttft_ms", 0),
                                 tps=tps,
                             )
-                        except Exception:
+                        except Exception:  # 防御: 速度指标上报失败则忽略
                             logger.debug("TPS prometheus publish failed", exc_info=True)
                 self._tool_adapter.set_budget(None)
                 self._tool_adapter.set_router(None)
@@ -2147,7 +2294,7 @@ class StreamingMixin:
                             "turn_count": self._turn_count,
                         },
                     )
-                except Exception:
+                except Exception:  # 防御: 轨迹落盘失败则忽略
                     logger.debug("trajectory save failed", exc_info=True)
                 # wire-level completion dump: prompt/response/tool_call/tool_result
                 # 落盘 jsonl 给 red_team + 未来 RL 训练消费. 提取为 _dump_completion_records
@@ -2163,7 +2310,7 @@ class StreamingMixin:
                 if self.is_research_mode():
                     try:
                         self.memory.promote_session_summary(tier="long")
-                    except Exception:
+                    except Exception:  # 防御: 研究模式记忆提升失败则忽略
                         logger.debug(
                             "research-mode memory promote failed",
                             exc_info=True,
@@ -2186,7 +2333,7 @@ class StreamingMixin:
                         importance=0.6,
                         tier="mid",
                     )
-                except Exception:
+                except Exception:  # 防御: 会话快照保存失败则忽略
                     logger.debug("session snapshot save failed", exc_info=True)
                 await _ubus.publish_pet_mood(PetMood.IDLE, "Ready", {"thread_id": thread_id})
                 self._turn_count += 1
@@ -2269,7 +2416,7 @@ class StreamingMixin:
                 )
             if text and str(text).strip():
                 return [AIMessage(content=str(text).strip())]
-        except Exception:
+        except Exception:  # 防御: 收尾合成失败则返回空
             logger.debug("closing-answer synthesis skipped", exc_info=True)
         return []
 

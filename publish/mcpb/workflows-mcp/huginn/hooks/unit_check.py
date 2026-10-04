@@ -241,7 +241,7 @@ async def dimensional_consistency_hook(ctx: HookContext) -> None:
 
     warnings: list[str] = []
     for name, val in props.items():
-        if not isinstance(val, (int, float)):
+        if not isinstance(val, int | float):
             continue
         # Skip very small values that are probably flags/indices
         if isinstance(val, int) and abs(val) < 1000:

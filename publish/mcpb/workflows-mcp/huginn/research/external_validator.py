@@ -1,0 +1,231 @@
+"""外置契约验证器 (External Contract Validator).
+
+背景(泛化诊断): 之前 `reuse_score` 的判据(`_objectives_extract`)刻意复刻了 harness 自身
+的宽容路径 `_coerce_author_result` / `_check_run_schema` —— 判定器和被测产出**共享同一套
+假设**(同一个宽松提取术 / 同一张别名表), 于是"检查器无法和它检查的东西分歧", 错误要到
+真实边界才暴露。这里抽出**独立、零宽容**的严格判据, 不 import / 不复用 harness 内部,
+只认理想契约 `{summary: dict, objectives:{k: 纯数值}}`。
+
+用途:
+  - 泛化主线的 **strict contract** 打分(跨域机制是否真对齐统一契约)。
+  - held-out(扣出域)泛化的权威判据 —— 与宽容路径可分歧, 而非给它背书。
+
+诚实边界(与宽容路径的关系):
+  - 运行期 `code_lab.sandbox_run` 仍走宽容路径(为不浪费真实计算), 但**泛化度量**用本
+    模块的严格判据判定 —— 域输出必须自带统一容器, harness 代偿几许, 严格判据如实记。
+  - 纯标准库、幂等、零 LLM、零 np 依赖; 判据绝不引用 `_coerce_author_result` /
+    `_check_run_schema` / `_alias_cfg` 任一实现, 从结构上保证能和产出"分歧"。
+"""
+from __future__ import annotations
+
+from typing import Any
+
+
+def _is_numeric_leaf(v: Any) -> bool:
+    """纯数值叶: int/float, 排除 bool。用 (int, float) 而非 numbers.Real 以保持零依赖.*"""
+    return isinstance(v, int | float) and not isinstance(v, bool)
+
+
+def strict_objectives(res: Any) -> tuple[bool, str]:
+    """零宽容契约判定: 通过返回 (True, ''), 否则 (False, 原因)。
+
+    通过所需(每条硬性, 无兜底分支):
+      1. res 为非空 dict;
+      2. 有 `objectives` 且为非空 dict;
+      3. objectives 中 ≥1 个纯数值叶(int/float、非 bool);
+      4. 有 `summary` 且为 dict。
+    裸数值 dict / 整数键逐族 dict / 缺容器 / 叶为字符串或列表 → 一律不过。
+    这条判据不读 harness 的任何实现 —— 与 `_coerce_author_result` 能并互相分歧。
+    """
+    if not isinstance(res, dict):
+        return False, "非 dict"
+    obj = res.get("objectives")
+    summary = res.get("summary")
+    if not isinstance(obj, dict) or not obj:
+        return False, "缺非空 objectives(dict)"
+    if not isinstance(summary, dict):
+        return False, "缺 summary(dict)"
+    if not any(_is_numeric_leaf(v) for v in obj.values()):
+        return False, "objectives 无纯数值叶"
+    return True, ""
+
+
+def validate_scientific_contract(objectives: dict, quantities: dict) -> tuple[bool, list[str]]:
+    """域级科学契约校验(HEP 机器可读科学契约: 约定/有效域).
+
+    消费域声明(compile_domain_guards 的 scientific_contract.quantities)里的
+    量纲(unit) + 有效域(domain)。判定**独立于 harness**, 只查域声明的元数据:
+
+      - 'objectives' 里**已声明**的量: 校验落在 [domain.min, domain.max](若声明);
+      - 'objectives' 里**未声明**的量: 记为 coverage gap(有效域未知, 如实露), 不判成败
+        —— 诚实暴露"契约没覆盖到它", 而不是擅自通过.
+
+    返回 (ok, gaps): ok=False 当存在有效域违反; coverage gap 只在 gaps 里区分标注.
+    """
+    if not isinstance(quantities, dict):
+        return True, []
+    gaps: list[str] = []
+    any_violation = False
+    for key, val in (objectives or {}).items():
+        meta = quantities.get(key)
+        if meta is None:
+            gaps.append(f"{key}:未声明(量纲/有效域未知)")
+            continue
+        dom = meta.get("domain")
+        if not isinstance(dom, dict):
+            continue
+        lo = dom.get("min")
+        hi = dom.get("max")
+        if lo is not None and val < lo:
+            gaps.append(f"{key}={val}<{lo}(违反有效域下界)")
+            any_violation = True
+        elif hi is not None and val > hi:
+            gaps.append(f"{key}={val}>{hi}(违反有效域上界)")
+            any_violation = True
+    return (not any_violation, gaps)
+
+
+# 域科学契约 unit 标签 → dimensional registry 的 SI 符号 (量纲代数联结点).
+# 标签是为了科学 worker 可读; SI 符号交给 `physical_schema` / dimensional_validator 求维度.
+_DEFAULT_UNIT_MAP = {
+    "1": "1", "count": "1", "number": "1", "dimensionless": "1",
+    "time": "s", "length": "m", "mass": "kg", "temperature": "K",
+    "current": "A", "amount": "mol", "frequency": "1/s",
+    "velocity": "m/s", "speed": "m/s", "acceleration": "m/s^2",
+    "area": "m^2", "volume": "m^3", "energy": "J", "force": "N",
+    "pressure": "Pa", "power": "W",
+}
+
+
+def _to_symbol(unit: str, unit_map: dict | None = None) -> str:
+    """unit 标签 → SI 符号(经默认或调用方 unit_map); 未命中则原样当复合符号. 纯函数."""
+    m = dict(unit_map or _DEFAULT_UNIT_MAP)
+    return m.get(str(unit).strip(), str(unit).strip())
+
+
+def resolve_unit_dimension(unit: str, unit_map: dict | None = None) -> str | None:
+    """把科学契约的 unit 标签解析成 dimensional 维度签名(经 UnitRegistry).
+
+    - 标签经 ``unit_map``(默认 _DEFAULT_UNIT_MAP)映射到 SI 符号, 再经
+      ``dimensional_validator.registry`` 求维度签名(如 's'→'T1', 'm/s'→'L1·T-1');
+    - 无法解析/量纲引擎不可用 → 返回 None(调用方判为量纲未知, 不硬编).
+    这让 ``unit`` 从"字符串标注"变成"可注册的量纲向量", 不是裸字符串.
+    """
+    try:
+        from huginn.execution.dimensional_validator import registry
+        return registry.get(_to_symbol(unit, unit_map)).dimension_signature
+    except Exception:  # noqa: BLE001 — 量纲引擎不可用/不可解析 → 如实判未知
+        return None
+
+
+def validate_declared_units(quantities: dict, unit_map: dict | None = None) -> dict:
+    """对域科学契约声明的每个量, 校验其 ``unit`` 可注册为合法量纲.
+
+    返回 {quantity: {'unit', 'dimension_signature', 'valid'}} —— 让单位校验独立于
+    有效域范围检查(后者查数值落区, 这里查单位逐个是否是合法量纲). 非学习.
+    """
+    out: dict = {}
+    for name, meta in (quantities or {}).items():
+        unit = (meta or {}).get("unit") or ""
+        sig = resolve_unit_dimension(unit, unit_map)
+        out[name] = {"unit": unit, "dimension_signature": sig, "valid": sig is not None}
+    return out
+
+
+def validate_derived_dimensions(quantities: dict, unit_map: dict | None = None) -> dict:
+    """跨量关系的量纲恒等式(契约层, 无需数值): 校验派生量声明的单位量纲自洽.
+
+    契约若给量声明 ``derived_from``(分子量名列表) / ``derived_denom``(分母量名列表),
+    则校验:
+        unit(量) == unit(分子₁)·… / unit(分母₁)·…
+    例如 ``velocity: {unit:'velocity', derived_from:['distance','time_elapsed']}``:
+        dim(velocity)=L1·T-1, dim(distance)/dim(time_elapsed)=L1/T1=L1·T-1 → 自洽.
+    这捕捉**契约自身**的单位笔误(如把 velocity 声成 unit='time'), 独立于数值;
+
+    Returns: {quantity: {'derived_from','derived_denom','declared','expected','ok'}}
+    非学习; 基础量(无 derived_from/denom)不查.
+    """
+    from huginn.execution.dimensional_validator import Unit, registry
+
+    def _sig(qn: str) -> Any:
+        meta = (quantities or {}).get(qn) or {}
+        return registry.get(_to_symbol(meta.get("unit", ""), unit_map))
+
+    results: dict = {}
+    for name, meta in (quantities or {}).items():
+        m = meta or {}
+        num = list(m.get("derived_from") or [])
+        den = list(m.get("derived_denom") or [])
+        if not num and not den:
+            continue  # 基础量, 无派生关系可查
+        try:
+            lhs = registry.get(_to_symbol(m.get("unit", ""), unit_map))
+        except Exception as e:  # noqa: BLE001
+            results[name] = {"declared_unit": m.get("unit"), "ok": False,
+                             "error": f"declared unit 不可解析: {str(e)[:50]}"}
+            continue
+        rhs: Any = Unit.dimensionless()
+        for qn in num:
+            rhs = rhs * _sig(qn)
+        for qn in den:
+            rhs = rhs / _sig(qn)
+        results[name] = {
+            "derived_from": num, "derived_denom": den,
+            "declared": lhs.dimension_signature,
+            "expected": rhs.dimension_signature,
+            "ok": lhs == rhs,
+        }
+    return results
+
+
+def check_expression_dimensions(expr_str: str, symbol_units: dict, expected_unit: str) -> dict:
+    """对一条**数学表达式串**做量纲自检（契约层，符号回归/Bourbaki 可复用）。
+
+    - ``expr_str``: 如 ``"a * t**2"`` 或 ``"rho * V"`` —— 由 sympy 解析成表达式树;
+    - ``symbol_units``: ``{符号名: 单位标签或 SI 符号}``, 经 UnitRegistry 解析;
+    - ``expected_unit``: 该表达式应具有的量纲(标签或 SI 符号), 如 ``"energy"`` / ``"J"``.
+
+    返回 ``{"expr","inferred","expected","ok","error"}`` —— ok=False 且 error 非空表示
+    解析/量纲引擎不可用(如实报, 不硬判); ok=False 且无 error 表示真量的量纲不匹配
+    (如把 velocity 写成了 unit='time')。非学习; 纯规则; 是"学到的回归式/推导出的定律
+    先过量纲自洽再归档"的机械判据。
+    """
+    try:
+        import sympy as sp
+
+        from huginn.execution.dimensional_validator import (
+            DimensionalValidator,
+            registry,
+        )
+    except Exception as e:  # noqa: BLE001 — 引擎不可用 → 如实判不可用
+        return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
+                "error": f"dimensional engine unavailable: {str(e)[:60]}"}
+    try:
+        # 把 symbol_units 的每个键强制注册为同名 Symbol —— 避免 sympify 误判大写的
+        # 内置常量(如 E→欧拉数、I→虚数单位), 否则带单位变量的量纲会退化成 dimensionless.
+        locals_ = {name: sp.Symbol(name) for name in (symbol_units or {})}
+        expr = sp.sympify(expr_str, locals=locals_)
+    except Exception as e:  # noqa: BLE001
+        return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
+                "error": f"expr not parsable: {str(e)[:60]}"}
+    try:
+        v = DimensionalValidator()
+        inferred = v.infer_dimensions(expr, symbol_units)
+        # 目标量纲同样经契约 unit_map 解析(支持 'velocity'→'m/s' 等标签), 保持自洽.
+        expected = registry.get(_to_symbol(expected_unit))
+        ok = inferred == expected
+        return {
+            "expr": expr_str,
+            "inferred": inferred.dimension_signature,
+            "expected": expected.dimension_signature,
+            "ok": ok,
+            "error": "" if ok else "declared 量纲与推导结果不一致",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
+                "error": f"dimension inference failed: {str(e)[:60]}"}
+
+
+__all__ = ["strict_objectives", "validate_scientific_contract",
+           "resolve_unit_dimension", "validate_declared_units",
+           "validate_derived_dimensions", "check_expression_dimensions"]

@@ -25,7 +25,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from huginn.metacog import recall_audit_context
+from huginn.metacog.audit_context import recall_audit_context
 
 logger = logging.getLogger(__name__)
 

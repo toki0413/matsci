@@ -314,7 +314,7 @@ class AuditLogger:
         """
         if ts is None:
             return None
-        if isinstance(ts, (int, float)):
+        if isinstance(ts, int | float):
             return float(ts)
         try:
             # 时间戳格式 "2026-06-12T16:22:13Z", Z = UTC

@@ -365,7 +365,7 @@ class AutoLeanPipeline:
 
         invariants = symbolic_result.get("invariants", {})
         for key, val in invariants.items():
-            if isinstance(val, (int, float)):
+            if isinstance(val, int | float):
                 expressions[f"tensorInv{key}"] = str(val)
 
         principal = symbolic_result.get("principal_values", [])
@@ -373,11 +373,11 @@ class AutoLeanPipeline:
             expressions[f"principalVal{i}"] = str(val)
 
         vm = symbolic_result.get("von_mises")
-        if isinstance(vm, (int, float)):
+        if isinstance(vm, int | float):
             expressions["vonMises"] = str(vm)
 
         hydro = symbolic_result.get("hydrostatic_pressure")
-        if isinstance(hydro, (int, float)):
+        if isinstance(hydro, int | float):
             expressions["hydrostaticPressure"] = str(hydro)
 
         dev = symbolic_result.get("deviatoric_voigt", [])
@@ -754,14 +754,14 @@ def derivVal (x : Float) : Float := {lean_deriv}
         expressions: dict[str, str] = {}
 
         fe = symbolic_result.get("fermi_energy")
-        if isinstance(fe, (int, float)):
+        if isinstance(fe, int | float):
             expressions["dftFermiEnergy"] = str(fe)
         kf = symbolic_result.get("fermi_wavevector")
-        if isinstance(kf, (int, float)):
+        if isinstance(kf, int | float):
             expressions["dftFermiWavevector"] = str(kf)
 
         dos = symbolic_result.get("dos")
-        if isinstance(dos, (int, float)):
+        if isinstance(dos, int | float):
             expressions["dftDOS"] = str(dos)
 
         levels = symbolic_result.get("levels", [])
@@ -769,7 +769,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
             if isinstance(lvl, dict):
                 n = lvl.get("n")
                 e = lvl.get("energy")
-                if isinstance(e, (int, float)) and n is not None:
+                if isinstance(e, int | float) and n is not None:
                     expressions[f"dftLevel{n}Energy"] = str(e)
 
         band = symbolic_result.get("band", [])
@@ -777,18 +777,18 @@ def derivVal (x : Float) : Float := {lean_deriv}
             if isinstance(pt, dict):
                 k = pt.get("k")
                 e = pt.get("energy")
-                if isinstance(k, (int, float)) and isinstance(e, (int, float)):
+                if isinstance(k, int | float) and isinstance(e, int | float):
                     expressions[f"dftBandK{i}"] = str(k)
                     expressions[f"dftBandE{i}"] = str(e)
 
         xc = symbolic_result.get("xc_energy_density")
-        if isinstance(xc, (int, float)):
+        if isinstance(xc, int | float):
             expressions["dftXCEnergyDensity"] = str(xc)
         ex = symbolic_result.get("exchange_energy_density")
-        if isinstance(ex, (int, float)):
+        if isinstance(ex, int | float):
             expressions["dftExchangeEnergyDensity"] = str(ex)
         ec = symbolic_result.get("correlation_energy_density")
-        if isinstance(ec, (int, float)):
+        if isinstance(ec, int | float):
             expressions["dftCorrelationEnergyDensity"] = str(ec)
 
         if not expressions:
@@ -840,7 +840,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
             "critical_pressure",
         ]:
             val = symbolic_result.get(key)
-            if isinstance(val, (int, float)):
+            if isinstance(val, int | float):
                 expressions[f"thermo{key.title().replace('_', '')}"] = str(val)
 
         if not expressions:
@@ -883,7 +883,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
             "prior_variance",
         ]:
             val = symbolic_result.get(key)
-            if isinstance(val, (int, float)):
+            if isinstance(val, int | float):
                 expressions[f"prob{key.title().replace('_', '')}"] = str(val)
 
         if not expressions:

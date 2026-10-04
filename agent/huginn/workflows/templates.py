@@ -6,7 +6,6 @@ can execute with minimal user input.
 
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 from huginn.workflows.engine import ComputationalStage, RetryPolicy, ValidationRule
@@ -919,10 +918,3 @@ def get_template(name: str):
 def register_template(name: str, template_fn):
     """Register a workflow template."""
     WORKFLOW_TEMPLATES[name] = template_fn
-
-
-# Import and register quantum chemistry templates from Sobko knowledge base
-# This registers: wavefunction_analysis, reactivity_prediction, weak_interaction,
-# excited_state, charge_analysis
-with contextlib.suppress(ImportError):
-    from huginn.workflows import templates_qc  # noqa: F401

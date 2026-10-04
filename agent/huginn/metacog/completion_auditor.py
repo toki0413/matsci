@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from huginn.metacog import recall_audit_context
+from huginn.metacog.audit_context import recall_audit_context
 from huginn.metacog.depth_search import (
     PrematureConvergenceDetector,
 )

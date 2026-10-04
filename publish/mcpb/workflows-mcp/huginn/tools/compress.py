@@ -54,7 +54,7 @@ class ToolOutputCompressor:
         """Recursively compress ``data`` in-place style (returns a new tree)."""
         if isinstance(data, str):
             return self._compress_text(data)
-        if isinstance(data, (int, float, bool)) or data is None:
+        if isinstance(data, int | float | bool) or data is None:
             return data
         if isinstance(data, list):
             return self._compress_list(data)
@@ -91,7 +91,7 @@ class ToolOutputCompressor:
 
     def _compress_list(self, items: list[Any]) -> list[Any] | dict[str, Any]:
         # Numeric arrays: summarize + head/tail.
-        if items and all(isinstance(x, (int, float)) for x in items):
+        if items and all(isinstance(x, int | float) for x in items):
             return self._summarize_numeric(items)
 
         compressed = [self.compress(v) for v in items]

@@ -18,6 +18,54 @@ from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
 
 
+def _pre_lean_dimensional_check(
+    symbolic_result: dict | None, unit_symbols: dict | None, expected_units: dict | None
+) -> list[dict]:
+    """对 auto_verify unified 的方程串做量纲前置自检(契约层, 可选启用, 非学习).
+
+    - ``symbolic_result["equations"]`` 中每个**字符串值**的方程(或 ``{"lhs","rhs"}``
+      等式对象的两侧)先过 ``check_expression_dimensions``(sympy + UnitRegistry 推断);
+    - 仅当调用方提供了 ``unit_symbols``({符号: 单位标签/SI}) 与 ``expected_units`` 才启用,
+      否则返回空列表 → 完全不阻断 Lean 编译, 行为与现状一致;
+    - 量纲引擎/表达式不可解析 → 如实记 error(量纲未知), 不硬判失败(诚实边界).
+
+    Returns: 每个被检查的方程一条 {name/expr, inferred, expected, ok, error}.
+    """
+    from huginn.research.external_validator import check_expression_dimensions
+
+    if not unit_symbols or not expected_units:
+        return []
+    equations = (symbolic_result or {}).get("equations") or {}
+    if not isinstance(equations, dict) or not equations:
+        return []
+
+    checks: list[dict] = []
+    for name, value in equations.items():
+        # 等式对象 {lhs, rhs} → 两侧分别查; 普通字符串 → 整式查
+        exprs = []
+        if isinstance(value, dict):
+            if value.get("lhs") is not None:
+                exprs.append((f"{name}.lhs", str(value["lhs"])))
+            if value.get("rhs") is not None:
+                exprs.append((f"{name}.rhs", str(value["rhs"])))
+        elif isinstance(value, str):
+            exprs.append((name, value))
+        for label, expr in exprs:
+            expected = expected_units.get(name) or expected_units.get(label)
+            if not expected:
+                checks.append({
+                    "name": label, "expr": expr, "ok": False,
+                    "error": "no expected_units declared for this equation",
+                })
+                continue
+            checks.append({
+                "name": label,
+                "expr": expr,
+                **check_expression_dimensions(expr, unit_symbols, expected),
+            })
+    return checks
+
+
 class LeanToolInput(BaseModel):
     action: str = Field(
         ...,
@@ -45,6 +93,14 @@ class LeanToolInput(BaseModel):
     symbolic_result: dict | None = Field(
         default=None,
         description="JSON dict from SymbolicMathTool result.data (for auto_verify)",
+    )
+    unit_symbols: dict | None = Field(
+        default=None,
+        description="Optional {symbol: unit-tag-or-SI} map for pre-Lean dimensional self-check (auto_verify unified)",
+    )
+    expected_units: dict | None = Field(
+        default=None,
+        description="Optional {equation_name_or_variable: expected unit} map for pre-Lean dimensional self-check",
     )
     original_expression: str | None = Field(
         default=None, description="Original expression for derivative verification"
@@ -414,6 +470,12 @@ class LeanTool(HuginnTool):
                     success=False,
                     error="symbolic_result required for auto_verify unified",
                 )
+            # 量纲前置自检(可选): 仅当提供 unit_symbols/expected_units 时启用, 否则不阻断.
+            dimension_checks = _pre_lean_dimensional_check(
+                args.symbolic_result, args.unit_symbols, args.expected_units
+            )
+            if dimension_checks:
+                args.symbolic_result["dimension_checks"] = dimension_checks
             result = pipe.verify_unified(args.symbolic_result, symbols=sym)
         elif sub == "discretization":
             if not args.symbolic_result:

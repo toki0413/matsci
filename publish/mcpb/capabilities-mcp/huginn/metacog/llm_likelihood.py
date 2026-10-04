@@ -97,7 +97,7 @@ def _parse_log_lik_json(text: str) -> tuple[float | None, str]:
     except json.JSONDecodeError as e:
         return None, f"json parse error: {e}"
     val = obj.get("log_lik")
-    if isinstance(val, bool) or not isinstance(val, (int, float)):
+    if isinstance(val, bool) or not isinstance(val, int | float):
         return None, f"log_lik not numeric: {type(val).__name__}"
     val = float(val)
     if val < _LOG_LIK_MIN or val > _LOG_LIK_MAX:

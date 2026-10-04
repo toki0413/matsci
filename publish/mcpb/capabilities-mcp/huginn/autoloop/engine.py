@@ -1,5 +1,8 @@
 """Autoloop Engine — the main autonomous loop for Huginn.
 
+strong-claim: 文中 JEPA surprise 是文本空间预测(非真嵌入 JEPA), Darwin ratchet 是
+启发式质量分(非真进化算法). 均以同名概念作工程隐喻, 非算法主张.
+
 Ties together exploration, coder, workflow, benchmark, and report
 into a single closed-loop ecosystem:
 
@@ -20,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from huginn.autoloop.budget import TokenBudget
+from huginn.autoloop.signals import SIGNAL_NAMES, EngineSignals
+from huginn.autoloop.types import LoopPhase
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,7 @@ def _feature_flag(name: str, default: bool) -> bool:
         cfg = get_config()
         ff = getattr(cfg, "feature_flags", None) or {}
         return bool(ff.get(name, default))
-    except Exception:
+    except Exception:  # 防御: 尽力获取失败返回默认
         logger.debug("best-effort op failed", exc_info=True)
         return default
 
@@ -110,24 +115,24 @@ def _autoloop_streaming_enabled() -> bool:
     return _feature_flag("autoloop_streaming", True)
 
 
-from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
-from huginn.autoloop.engine_act import EngineActMixin  # noqa: E402
-from huginn.autoloop.engine_control import EngineControlMixin  # noqa: E402
-from huginn.autoloop.engine_observe import EngineObserveMixin  # noqa: E402
+from huginn.autoloop.cognitive_loop import CognitiveRunner  # noqa: E402
+from huginn.autoloop.engine_act import EngineAct  # noqa: E402
+from huginn.autoloop.engine_control import EngineControl  # noqa: E402
+from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
 
 # P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
 # AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
 # 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
-from huginn.autoloop.engine_perceive import EnginePerceiveMixin  # noqa: E402
-from huginn.autoloop.engine_reflect import EngineReflectMixin  # noqa: E402
+from huginn.autoloop.engine_perceive import EnginePerceive  # noqa: E402
+from huginn.autoloop.engine_reflect import EngineReflect  # noqa: E402
 from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
-from huginn.autoloop.hypothesis_loop import HypothesisMixin  # noqa: E402
-from huginn.autoloop.math_validation import MathValidationMixin  # noqa: E402
+from huginn.autoloop.hypothesis_loop import HypothesisLoop  # noqa: E402
+from huginn.autoloop.math_validation import MathValidator  # noqa: E402
 from huginn.autoloop.phase_gate import (  # noqa: E402
     PhaseGateHook,
 )
-from huginn.autoloop.plan_check import PlanCheckMixin  # noqa: E402
-from huginn.autoloop.visual_inspect import VisualInspectMixin  # noqa: E402
+from huginn.autoloop.plan_check import PlanCheck  # noqa: E402
+from huginn.autoloop.visual_inspect import VisualInspect  # noqa: E402
 from huginn.bench.runner import BenchmarkRunner  # noqa: F401, E402  # monkeypatch
 from huginn.coder.loop import CoderRunner  # noqa: E402
 from huginn.config import get_settings  # noqa: E402
@@ -263,26 +268,33 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 
 
-class AutoloopEngine(
-    EnginePerceiveMixin,
-    EngineObserveMixin,
-    EngineActMixin,
-    EngineReflectMixin,
-    EngineControlMixin,
-    PlanCheckMixin,
-    MathValidationMixin,
-    VisualInspectMixin,
-    CognitiveLoopMixin,
-    HypothesisMixin,
-):
+class AutoloopEngine:
     """Main autonomous loop engine.
 
     Orchestrates perception, hypothesis generation, planning, execution,
     validation, learning, and reporting into a single cohesive loop.
 
-    Method 分组 (P3 slim-down): perceive/observe/act/reflect/control 方法族
-    已拆到 engine_*.py mixin 模块, 本文件保留 __init__ + 对齐数据 + 懒加载访问器.
+    Method 分组 (P3 slim-down): perceive/observe/act/reflect/control/cognitive
+    方法族已拆到 engine_*.py / cognitive_loop.py 协作对象模块, 本文件保留 __init__
+    + 对齐数据 + 懒加载访问器 + 各协作对象的同名薄委托.
     """
+
+    # 去 mixin 阶段7: EngineObserve 类常量桥 — 观察对象常量下沉后留引用,
+    # 保持 AutoloopEngine._X 类级访问 + plan_check 经转发读取均可用.
+    _PROMPT_BUDGET = EngineObserve._PROMPT_BUDGET
+    _PROMPT_BUDGET_BY_PHASE = EngineObserve._PROMPT_BUDGET_BY_PHASE
+    _MATH_DEPTH_PROMPT_BLOCK = EngineObserve._MATH_DEPTH_PROMPT_BLOCK
+    _IMAGINATION_PROMPT_BLOCK = EngineObserve._IMAGINATION_PROMPT_BLOCK
+    # 去 mixin 阶段8: EngineReflect 类常量桥 — 反思 prompt 下沉后留引用,
+    # 保持 AutoloopEngine._X 类级访问与 reflect 对象经转发读取均可用.
+    _FEYNMAN_PROMPT = EngineReflect._FEYNMAN_PROMPT
+    _BLIND_SPOT_PROMPT = EngineReflect._BLIND_SPOT_PROMPT
+    _NEXT_STEP_ADVISOR_PROMPT = EngineReflect._NEXT_STEP_ADVISOR_PROMPT
+    # 去 mixin 阶段10: CognitiveRunner 静态方法桥 — 两个 @staticmethod 不读 self,
+    # 保持 AutoloopEngine._extract_timeseries / _snapshot_provenance_version 类级访问
+    # (test_temporal_p2p3 / provenance 路径以 unbound 形式调用).
+    _extract_timeseries = CognitiveRunner._extract_timeseries
+    _snapshot_provenance_version = CognitiveRunner._snapshot_provenance_version
 
     def __init__(
         self,
@@ -295,6 +307,9 @@ class AutoloopEngine(
     ):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
+        # EngineSignals: 持有纯环信号字段的单一事实源; 名下属性桥 self._<field>
+        # 读/写都落到这里。必须先于任意 _init_* 分片, 因为分片里的自赋会经桥.
+        self.signals = EngineSignals()
         # BranchIncubator 用的 agent_factory, None 时 incubator 路径跳过.
         # 由 RCBench runner / CLI 在需要 N=3 隔离采样时注入.
         self._agent_factory = agent_factory
@@ -307,7 +322,7 @@ class AutoloopEngine(
             from huginn.autoloop.hypothesis_semantic import set_model_provider
 
             set_model_provider(lambda: self.model)
-        except Exception:
+        except Exception:  # 防御: 语义提供方注入失败跳过
             logger.debug("hypothesis_semantic model provider inject skipped", exc_info=True)
         # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的
         # task 路由真正生效 (之前 getattr(self,"model_router",None) 恒 None,
@@ -321,7 +336,7 @@ class AutoloopEngine(
             _r = _cfg.build_agent_kwargs().get("model_router")
             if _r is not None:
                 self.model_router = _r
-        except Exception:
+        except Exception:  # 防御: 模型路由构建失败跳过
             logger.debug("model_router build skipped (non-fatal)", exc_info=True)
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
         # 显式注入的 verification_model 优先; 未注入时默认走 select_model
@@ -333,6 +348,38 @@ class AutoloopEngine(
         # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
+        # 去 mixin 阶段1: MathValidationMixin → MathValidator 协作对象.
+        # engine_reflect.py:133/153 通过薄委托方法 _run_math_validation /
+        # _collect_math_evidence 走这里, 调用点零改动.
+        self._math_validator = MathValidator(self)
+        # 去 mixin 阶段4: EngineAct 协作对象. plan/execute/llm_chat 方法族经薄委托走这里,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_actor = EngineAct(self)
+        # 去 mixin 阶段5: EngineControl 协作对象. 循环控制/checkpoint 方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_controller = EngineControl(self)
+        # 去 mixin 阶段6: PlanCheck 协作对象. plan_check 方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._plan_checker = PlanCheck(self)
+        # 去 mixin 阶段7: EngineObserve 协作对象. prompt 拼装 + 元认知方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_observer = EngineObserve(self)
+        # 去 mixin 阶段8: EngineReflect 协作对象. validate/learn/report 方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_reflector = EngineReflect(self)
+        # 去 mixin 阶段9: HypothesisLoop 协作对象. hypothesis 生成/管理方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._hypothesis_loop = HypothesisLoop(self)
+        # 去 mixin 阶段10: CognitiveRunner 协作对象. cognitive 主循环方法族
+        # (run_cognitive/_finalize_run/_darwin_ratchet_check 等)经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._cognitive_runner = CognitiveRunner(self)
+        # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
+        # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
+        self._engine_perceiver = EnginePerceive(self)
+        # 去 mixin 阶段3: VisualInspect 协作对象. visual_inspect 方法经薄委托走这里,
+        # 只读引擎字段(_last_visual_context/_visual_base64/_last_visual_base64), 写经转发回引擎.
+        self._visual_inspector = VisualInspect(self)
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -349,7 +396,7 @@ class AutoloopEngine(
         # 失败非致命 (知识库空/损坏时图照常工作).
         try:
             self.hypothesis_graph.mount_knowledge()
-        except Exception:
+        except Exception:  # 防御: 知识挂载失败不阻断
             logger.debug("mount_knowledge failed (non-fatal)", exc_info=True)
         self.report_tool = ReportTool()
 
@@ -509,6 +556,20 @@ class AutoloopEngine(
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
         self._last_hypothesis_confidence: float = 0.0
         self._last_hypothesis_evidence_strength: float = 0.0
+        # A: 本轮回合选中假设的可证伪预测 (从 [DIM: ...] | predict: 解析),
+        # 供主路径 add_hypothesis 写入 testable_prediction.
+        self._last_selected_prediction: str = ""
+        # B: 当前假设 node id (plan/validate/learn 关联用; 盲重建关闭时靠它回写状态).
+        self._current_hyp_id_for_plan: str | None = None
+        # D: 最近一次真实执行的任务性能 (r_phys, 缺省回落 tests_passed 1/0),
+        # 并入 darwin 评分让 best 反映真实质量; None = 无信号, 不参与.
+        self._last_task_perf: float | None = None
+        # 受控独立观察者: 上一轮 blind_reconstruct 与执行判据的**分歧**.
+        # 这是差分传感器读数 (不是 reward): None=未观测, True=分歧, False=一致.
+        # 分歧 → 信念受质疑 → 下一轮降 strength (转探索, 见 signals.hypothesis_strength).
+        self._last_reconstruct_disagree: bool | None = None
+        # 观察者自报置信度 (0-1), 与分歧一起缩放强度扰动.
+        self._last_blind_confidence: float = 0.0
         # H4: GRILL 模式状态. should_pause_for_decision 触发 GRILL 后设为 active,
         # _llm_chat 构造 system prompt 时注入 GRILL_SYSTEM_PROMPT_CN. 用户确认
         # shared understanding 后 (LLM 输出含标记) 退出.
@@ -517,6 +578,11 @@ class AutoloopEngine(
         self._grill_turns: int = 0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
+        # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
+        # _last_execution_result (仅最后一轮) 时, 书生会把中间轮的真实数值丢掉、
+        # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
+        # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
+        self._execution_ledger: list[dict[str, Any]] = []
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -587,7 +653,7 @@ class AutoloopEngine(
             try:
                 from huginn.runtime.engine_state import latest_run_id
                 _resume_id = latest_run_id(self.workspace)
-            except Exception:
+            except Exception:  # 防御: 恢复上下文读取失败置空
                 logger.debug("best-effort op failed", exc_info=True)
                 _resume_id = None
         if _resume_id:
@@ -613,7 +679,7 @@ class AutoloopEngine(
                                     "restored autoloop phase from event projection: %s",
                                     projected["phase"],
                                 )
-                        except Exception:
+                        except Exception:  # 防御: 事件投影恢复失败忽略
                             logger.debug(
                                 "autoloop event projection restore failed (non-fatal)",
                                 exc_info=True,
@@ -625,7 +691,7 @@ class AutoloopEngine(
                             )
                             if loaded_graph is not None:
                                 self.hypothesis_graph = loaded_graph
-                        except Exception:
+                        except Exception:  # 防御: 假设图恢复失败忽略
                             logger.debug(
                                 "resume: hypothesis_graph.load failed (non-fatal)",
                                 exc_info=True,
@@ -640,7 +706,7 @@ class AutoloopEngine(
                             "resume requested but no snapshot for run_id=%s, "
                             "starting fresh", _resume_id,
                         )
-            except Exception:
+            except Exception:  # 防御: 恢复状态失败新建会话
                 logger.warning(
                     "resume_from_state=%s failed, starting fresh",
                     _resume_id, exc_info=True,
@@ -673,6 +739,973 @@ class AutoloopEngine(
         # 默认 10M tokens / $50, 长任务/极限模式用 HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 覆盖.
         self._token_budget: TokenBudget = TokenBudget()
 
+    # ── 去 mixin 阶段1: MathValidator 薄委托 ────────────────────
+    # 原 MathValidationMixin 的 3 个方法下沉为 MathValidator 协作对象 (self._math_validator).
+    # 下面 3 个同名薄委托方法保留, 让既有 self.method() 调用点 (engine_reflect.py:133/153)
+    # 与外部引用零改动. 委托路径引擎状态经 duck-typed engine 由 validator 读取.
+
+    async def _run_math_validation(self, execution_result: Any) -> dict[str, Any]:
+        return await self._math_validator.run(execution_result)
+
+    async def _collect_math_evidence(
+        self, execution_result: Any, math_validation: dict
+    ) -> dict[str, Any]:
+        return await self._math_validator.collect_math_evidence(
+            execution_result, math_validation
+        )
+
+    def _verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
+        return self._math_validator.verify_via_gp(
+            hyp_id, validation
+        )
+
+    # ── 去 mixin 阶段2: EnginePerceive 薄委托 ────────────────────
+    # 被 plan_check / engine_observe / cognitive_loop / engine_reflect 大量调用的
+    # perceive 上下文构建方法族下沉为 EnginePerceive 协作对象 (self._engine_perceiver).
+    # 下面薄委托保留同名签名, 调用点零改动.
+
+    def _maybe_expire_inbox(self) -> None:
+        self._engine_perceiver._maybe_expire_inbox()
+
+    def _get_perception(self) -> Any:
+        return self._engine_perceiver._get_perception()
+
+    def _get_persona_manager(self) -> Any:
+        return self._engine_perceiver._get_persona_manager()
+
+    def _get_kb(self) -> Any:
+        return self._engine_perceiver._get_kb()
+
+    def _extract_search_query(self, context: dict[str, Any]) -> str:
+        return self._engine_perceiver._extract_search_query(context)
+
+    def _build_kb_text(self, query: str) -> str:
+        return self._engine_perceiver._build_kb_text(query)
+
+    def _build_kg_text(self, query: str) -> str:
+        return self._engine_perceiver._build_kg_text(query)
+
+    def _build_memory_text(self, query: str, since: str | None = None) -> str:
+        return self._engine_perceiver._build_memory_text(query, since)
+
+    def _build_pm_text(self) -> str:
+        return self._engine_perceiver._build_pm_text()
+
+    def _build_metacog_block(self, *, include_prospective: bool = True) -> str:
+        return self._engine_perceiver._build_metacog_block(
+            include_prospective=include_prospective
+        )
+
+    def _perceive(self) -> dict[str, Any] | None:
+        return self._engine_perceiver._perceive()
+
+    def _perceive_legacy(self) -> dict[str, Any] | None:
+        return self._engine_perceiver._perceive_legacy()
+
+    def _detect_kg_gaps(self, kg: Any, nodes: list[dict]) -> list[str]:
+        return self._engine_perceiver._detect_kg_gaps(kg, nodes)
+
+    def _ensure_target_chains(self) -> list:
+        return self._engine_perceiver._ensure_target_chains()
+
+    # ── 去 mixin 阶段3: VisualInspect 薄委托 ────────────────────
+    # engine_act.py:337 / phase_spec 调 visual_inspect 方法族, 已下沉为 VisualInspect
+    # 协作对象 (self._visual_inspector). 薄委托保留同名签名, 调用点零改动.
+
+    async def _execute_visual_inspect(
+        self,
+        description: str,
+        context: dict[str, Any],
+        consistency_check: bool = False,
+    ) -> dict[str, Any]:
+        return await self._visual_inspector._execute_visual_inspect(
+            description, context, consistency_check=consistency_check
+        )
+
+    def _measure_nearest_primitive(
+        self, x: int, y: int, visual_ctx: str
+    ) -> dict[str, Any]:
+        return self._visual_inspector._measure_nearest_primitive(x, y, visual_ctx)
+
+    async def _annotate_visual_features(
+        self, description: str, visual_base64: str, visual_ctx: str
+    ) -> dict[str, Any]:
+        return await self._visual_inspector._annotate_visual_features(
+            description, visual_base64, visual_ctx
+        )
+
+    def _extract_text_visual_features(self, visual_ctx: str) -> dict[str, Any]:
+        return self._visual_inspector._extract_text_visual_features(visual_ctx)
+
+    def _compare_visual_data(
+        self, description: str, visual_ctx: str
+    ) -> dict[str, Any]:
+        return self._visual_inspector._compare_visual_data(description, visual_ctx)
+
+    async def _call_image_analysis_tool(
+        self,
+        image_bytes: bytes,
+        action: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._visual_inspector._call_image_analysis_tool(
+            image_bytes, action, parameters
+        )
+
+    def _pick_image_action(self, description: str) -> str:
+        return self._visual_inspector._pick_image_action(description)
+
+    # ── 去 mixin 阶段4: EngineAct 薄委托 ────────────────────────
+    # plan/execute/llm_chat 方法族已下沉为 EngineAct 协作对象 (self._engine_actor).
+    # 被 multiple mixin 共用 (_llm_chat 被 reflect/hypothesis/plan_check 调,
+    # _execute 被 cognitive_loop 调, _execute_skill 被 skill_tool 调).
+    # 薄委托保留同名签名, 调用点零改动.
+
+    async def _plan(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        return await self._engine_actor._plan(hypothesis, context)
+
+    def _is_deterministic_numeric(self, description: str) -> bool:
+        return self._engine_actor._is_deterministic_numeric(description)
+
+    async def _request_numeric_probe(self, description: str) -> str:
+        return await self._engine_actor._request_numeric_probe(description)
+
+    async def _execute(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute(plan, context)
+
+    def _record_provenance(
+        self, tool_name: str, input_params: dict[str, Any], output: Any
+    ) -> None:
+        self._engine_actor._record_provenance(tool_name, input_params, output)
+
+    async def _try_evolved_fix(
+        self, mode: str, description: str, result: Any
+    ) -> Any:
+        return await self._engine_actor._try_evolved_fix(mode, description, result)
+
+    async def _execute_dynamic_workflow(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_dynamic_workflow(plan, context)
+
+    async def _execute_dynamic_workflow_bandit(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_dynamic_workflow_bandit(plan, context)
+
+    async def _execute_coder(self, description: str, context: dict[str, Any]) -> Any:
+        return await self._engine_actor._execute_coder(description, context)
+
+    def _classify_workflow_domain(self, description: str) -> str:
+        return self._engine_actor._classify_workflow_domain(description)
+
+    async def _execute_workflow(
+        self, description: str, context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_workflow(description, context)
+
+    async def _execute_explore(
+        self, description: str, context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_explore(description, context)
+
+    async def _execute_skill(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_skill(plan, context)
+
+    async def _llm_chat(
+        self,
+        prompt: str,
+        persona_name: str | None = None,
+        model: Any = None,
+        task: str | None = None,
+    ) -> str:
+        return await self._engine_actor._llm_chat(
+            prompt, persona_name=persona_name, model=model, task=task
+        )
+
+    # ── 去 mixin 阶段5: EngineControl 薄委托 ─────────────────────
+    # 循环控制/checkpoint/状态持久化/澄清交互/事件总线方法族已下沉为 EngineControl
+    # 协作对象 (self._engine_controller). 被 cognitive_loop / engine_act / plan_check /
+    # engine_reflect 大量调用, 薄委托保留同名签名, 调用点零改动.
+
+    def _maybe_save_engine_state(
+        self, *, force: bool = False, reason: str = "",
+    ) -> None:
+        self._engine_controller._maybe_save_engine_state(force=force, reason=reason)
+
+    async def _track_llm_usage(self, usage_meta) -> None:
+        await self._engine_controller._track_llm_usage(usage_meta)
+
+    async def _maybe_run_budget_approval(self) -> None:
+        await self._engine_controller._maybe_run_budget_approval()
+
+    def _build_budget_human_decide(self):
+        return self._engine_controller._build_budget_human_decide()
+
+    def _get_event_bus(self):
+        return self._engine_controller._get_event_bus()
+
+    async def _dispatch_stage_event(
+        self,
+        event_type: Any,
+        stage_name: str,
+        duration_sec: float = 0.0,
+        error: str | None = None,
+    ) -> None:
+        await self._engine_controller._dispatch_stage_event(
+            event_type, stage_name, duration_sec=duration_sec, error=error
+        )
+
+    def _check_gate(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> bool:
+        return self._engine_controller._check_gate(from_phase, to_phase, evidence)
+
+    def _plan_missing_executable(self, plan: dict[str, Any]) -> bool:
+        return self._engine_controller._plan_missing_executable(plan)
+
+    async def _wait_if_checkpoint_pending(
+        self, from_phase: str, to_phase: str, timeout: float = 600.0
+    ) -> None:
+        await self._engine_controller._wait_if_checkpoint_pending(
+            from_phase, to_phase, timeout=timeout
+        )
+
+    async def _publish_checkpoint_event(
+        self,
+        event_type: str,
+        from_phase: str,
+        to_phase: str,
+        is_hard: bool = False,
+    ) -> None:
+        await self._engine_controller._publish_checkpoint_event(
+            event_type, from_phase, to_phase, is_hard=is_hard
+        )
+
+    def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
+        return self._engine_controller._check_budget(iteration, plan)
+
+    def _budget_remaining_s(self) -> float | None:
+        return self._engine_controller._budget_remaining_s()
+
+    def _budget_exhausted(self) -> bool:
+        return self._engine_controller._budget_exhausted()
+
+    async def _drain_side_questions(self) -> int:
+        return await self._engine_controller._drain_side_questions()
+
+    def _get_clarification_manager(self):
+        return self._engine_controller._get_clarification_manager()
+
+    def _get_plan_store(self):
+        return self._engine_controller._get_plan_store()
+
+    def _get_refine_model(self):
+        return self._engine_controller._get_refine_model()
+
+    async def _maybe_clarify(
+        self,
+        checkpoint: str,
+        phase_result: Any,
+        thread_id: str = "autoloop",
+    ) -> str | None:
+        return await self._engine_controller._maybe_clarify(
+            checkpoint, phase_result, thread_id=thread_id
+        )
+
+    def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
+        self._engine_controller._distill_meta_trace(darwin_score, supported_ratio)
+
+    def stop(self) -> None:
+        self._engine_controller.stop()
+
+    def _log_deviation(
+        self, plan: dict[str, Any], result: Any, context: dict[str, Any],
+    ) -> None:
+        self._engine_controller._log_deviation(plan, result, context)
+
+    # ── 去 mixin 阶段6: PlanCheck 薄委托 ────────────────────────
+    # plan_check 方法族已下沉为 PlanCheck 协作对象 (self._plan_checker).
+    # 被 engine_act._plan / cognitive_loop / engine_observe 大量调用,
+    # 薄委托保留同名签名, 调用点零改动.
+
+    def _build_plan_prompt(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> str:
+        return self._plan_checker._build_plan_prompt(hypothesis, context)
+
+    def _plan_context_hint(self) -> str:
+        return self._plan_checker._plan_context_hint()
+
+    def _override_plan_mode(
+        self, plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._plan_checker._override_plan_mode(plan)
+
+    def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
+        self._plan_checker._log_plan_override(reason_code, reason_text)
+
+    def _parse_plan(self, response: str) -> dict[str, Any]:
+        return self._plan_checker._parse_plan(response)
+
+    async def _plan_check_and_refine(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._plan_checker._plan_check_and_refine(
+            plan, hypothesis, context
+        )
+
+    async def _maybe_trigger_plan_check_clarify(
+        self,
+        scene: str,
+        reason: str,
+        plan: dict[str, Any],
+    ) -> None:
+        await self._plan_checker._maybe_trigger_plan_check_clarify(
+            scene, reason, plan
+        )
+
+    def _plan_check_tier(
+        self, plan: dict[str, Any] | None = None
+    ) -> str:
+        return self._plan_checker._plan_check_tier(plan)
+
+    def _plan_check_complexity_thresholds(
+        self, scene: str = ""
+    ) -> tuple[float, float]:
+        return self._plan_checker._plan_check_complexity_thresholds(scene)
+
+    def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
+        return self._plan_checker._plan_check_scene_tag(plan)
+
+    def _discover_scene_tags(self) -> None:
+        self._plan_checker._discover_scene_tags()
+
+    def _plan_check_complexity(self, plan: dict[str, Any]) -> float:
+        return self._plan_checker._plan_check_complexity(plan)
+
+    def _plan_check_max_refines(
+        self, tier: str, scene: str = ""
+    ) -> int:
+        return self._plan_checker._plan_check_max_refines(tier, scene)
+
+    async def _plan_check(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._plan_checker._plan_check(plan, hypothesis, context)
+
+    def _dimensional_pre_check(
+        self, plan: dict[str, Any], hypothesis: str
+    ) -> list[str]:
+        return self._plan_checker._dimensional_pre_check(plan, hypothesis)
+
+    def _build_plan_check_prompt(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> str:
+        return self._plan_checker._build_plan_check_prompt(
+            plan, hypothesis, context
+        )
+
+    def _record_plan_check_failure(
+        self,
+        plan: dict[str, Any],
+        check: dict[str, Any],
+        scene: str,
+    ) -> None:
+        self._plan_checker._record_plan_check_failure(plan, check, scene)
+
+    def _load_plan_check_patterns(self) -> None:
+        self._plan_checker._load_plan_check_patterns()
+
+    def _save_plan_check_patterns(self) -> None:
+        self._plan_checker._save_plan_check_patterns()
+
+    def _parse_plan_check(self, response: str) -> dict[str, Any]:
+        return self._plan_checker._parse_plan_check(response)
+
+    def _build_subgoal_block(self) -> str:
+        return self._plan_checker._build_subgoal_block()
+
+    async def _refine_plan(
+        self,
+        plan: dict[str, Any],
+        check: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._plan_checker._refine_plan(
+            plan, check, hypothesis, context
+        )
+
+    # ── 去 mixin 阶段7: EngineObserve 薄委托 ──────────────────────
+    # prompt 拼装 + 元认知方法族已下沉为 EngineObserve 协作对象 (self._engine_observer).
+    # 被 cognitive_loop / engine_reflect / hypothesis_loop / engine_act / plan_check
+    # 大量调用, 薄委托保留同名签名, 调用点零改动.
+
+    @staticmethod
+    def _compress_block(name: str, text: str, level: int) -> str:
+        return EngineObserve._compress_block(name, text, level)
+
+    def _scan_block_conflicts(self, blocks: list[tuple[str, str]]) -> str:
+        return self._engine_observer._scan_block_conflicts(blocks)
+
+    def _get_prompt_budget(self, phase: str | None) -> int:
+        return self._engine_observer._get_prompt_budget(phase)
+
+    @staticmethod
+    def _files_jaccard(a: list[str], b: list[str]) -> float:
+        return EngineObserve._files_jaccard(a, b)
+
+    def _is_related_chain(self, current_files: list[str], threshold: float = 0.3) -> bool:
+        return self._engine_observer._is_related_chain(current_files, threshold)
+
+    def _apply_block_patches(
+        self, blocks: list[tuple[str, str]], phase: str,
+    ) -> list[tuple[str, str]]:
+        return self._engine_observer._apply_block_patches(blocks, phase)
+
+    def _trim_to_budget(
+        self, blocks: list[tuple[str, str]], *, phase: str | None = None,
+    ) -> str:
+        return self._engine_observer._trim_to_budget(blocks, phase=phase)
+
+    def _persona_system_prompt(self, persona_name: str | None) -> str:
+        return self._engine_observer._persona_system_prompt(persona_name)
+
+    def _build_curiosity_block(self) -> str:
+        return self._engine_observer._build_curiosity_block()
+
+    def _build_world_model_block(self, hypothesis: str) -> str:
+        return self._engine_observer._build_world_model_block(hypothesis)
+
+    def _build_world_catalog_block(self, domains: set[str] | None = None) -> str:
+        return self._engine_observer._build_world_catalog_block(domains)
+
+    @staticmethod
+    def _matching_domains(hypothesis: str) -> set[str] | None:
+        return EngineObserve._matching_domains(hypothesis)
+
+    def _build_metacog_imagery_block(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_metacog_imagery_block(context)
+
+    @staticmethod
+    def _imagery_value(v: Any) -> Any:
+        return EngineObserve._imagery_value(v)
+
+    def _pick_imagery_spec(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._pick_imagery_spec(context)
+
+    def _build_skill_context_block(self) -> str:
+        return self._engine_observer._build_skill_context_block()
+
+    def _episodic_replay(self):
+        return self._engine_observer._episodic_replay()
+
+    def _build_episodic_replay_block(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_episodic_replay_block(context)
+
+    def _build_pmk_block(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_pmk_block(context)
+
+    def _format_pmk_fallback(self, pmk_state: dict, inconsistent: bool) -> str:
+        return self._engine_observer._format_pmk_fallback(pmk_state, inconsistent)
+
+    def _write_pmk_conflict_to_episodic(self, pmk_state: dict, reason: str):
+        return self._engine_observer._write_pmk_conflict_to_episodic(pmk_state, reason)
+
+    def _ensure_hypo_manifold(self, context: dict[str, Any]) -> Any:
+        return self._engine_observer._ensure_hypo_manifold(context)
+
+    def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_hypothesis_prompt(context)
+
+    def _get_metacog_auditor(self):
+        return self._engine_observer._get_metacog_auditor()
+
+    def _get_metacog_block_registry(self):
+        return self._engine_observer._get_metacog_block_registry()
+
+    def _get_metacog_method_registry(self):
+        return self._engine_observer._get_metacog_method_registry()
+
+    def _get_metacog_convergence_detector(self):
+        return self._engine_observer._get_metacog_convergence_detector()
+
+    def _get_metacog_completion_auditor(self):
+        return self._engine_observer._get_metacog_completion_auditor()
+
+    async def trigger_isomorphic_anomaly_hypothesis(
+        self, anomaly_pairs: list[tuple[str, str]],
+    ) -> list[str]:
+        obs = getattr(self, "_engine_observer", None)
+        if obs is not None:
+            return await obs.trigger_isomorphic_anomaly_hypothesis(anomaly_pairs)
+        # 兼容 duck-typed 类方法调用: 传 stub engine (无 _engine_observer).
+        return await EngineObserve.trigger_isomorphic_anomaly_hypothesis(
+            self, anomaly_pairs)
+
+    async def trigger_alignment_surprise_hypothesis(
+        self, surprise_findings: list[tuple[str, float]],
+    ) -> list[str]:
+        obs = getattr(self, "_engine_observer", None)
+        if obs is not None:
+            return await obs.trigger_alignment_surprise_hypothesis(surprise_findings)
+        # 兼容 duck-typed 类方法调用: 传 stub engine (无 _engine_observer).
+        return await EngineObserve.trigger_alignment_surprise_hypothesis(
+            self, surprise_findings)
+
+    def _metacog_check_effort_floor(self) -> tuple[bool, str]:
+        return self._engine_observer._metacog_check_effort_floor()
+
+    def _metacog_check_completion(self) -> tuple[bool, str]:
+        return self._engine_observer._metacog_check_completion()
+
+    def _metacog_check_topology_collapse(self) -> None:
+        self._engine_observer._metacog_check_topology_collapse()
+
+    def _metacog_component_representatives(self) -> list[str]:
+        return self._engine_observer._metacog_component_representatives()
+
+    def _metacog_dominant_family(self) -> str:
+        return self._engine_observer._metacog_dominant_family()
+
+    @staticmethod
+    def _extract_lucid_prereqs(raw: str) -> dict[str, str]:
+        return EngineObserve._extract_lucid_prereqs(raw)
+
+    # ── 去 mixin 阶段8: EngineReflect 薄委托 ──────────────────────
+    # validate/learn/report 方法族已下沉为 EngineReflect 协作对象 (self._engine_reflector).
+    # 被 cognitive_loop / engine_act / hypothesis_loop 大量调用, 薄委托保留同名签名, 调用点零改动.
+
+    async def _validate(self, execution_result: Any) -> dict[str, Any]:
+        return await self._engine_reflector._validate(execution_result)
+
+    async def _blind_reconstruct_verify(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        await self._engine_reflector._blind_reconstruct_verify(execution_result, results)
+
+    async def _judge_derivation_consistency(
+        self, blind_derivation: str, orig_reasoning: str,
+    ) -> bool | None:
+        return await self._engine_reflector._judge_derivation_consistency(
+            blind_derivation, orig_reasoning)
+
+    async def _invert_failure_trace(
+        self, input_params: str, failed_result: str, failure_mode: str = "",
+    ) -> str:
+        return await self._engine_reflector._invert_failure_trace(
+            input_params, failed_result, failure_mode)
+
+    async def _abstract_skill_if_ready(self) -> None:
+        await self._engine_reflector._abstract_skill_if_ready()
+
+    async def _synthesize_self_goal_if_ready(self) -> None:
+        await self._engine_reflector._synthesize_self_goal_if_ready()
+
+    def _compute_verification_budget(
+        self, hypothesis_id: str, informativeness: float,
+    ) -> None:
+        self._engine_reflector._compute_verification_budget(
+            hypothesis_id, informativeness)
+
+    def _extract_run_snippet(self, execution_result: Any) -> str:
+        return self._engine_reflector._extract_run_snippet(execution_result)
+
+    def _run_snippet_to_output(self, snippet: str) -> str:
+        return self._engine_reflector._run_snippet_to_output(snippet)
+
+    def _is_closed_form_solved(self, execution_result: Any) -> bool:
+        return self._engine_reflector._is_closed_form_solved(execution_result)
+
+    async def _run_pytest(self) -> dict[str, Any]:
+        return await self._engine_reflector._run_pytest()
+
+    async def _run_benchmark(self) -> dict[str, Any]:
+        return await self._engine_reflector._run_benchmark()
+
+    async def _safe_emergent_complexity(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        await self._engine_reflector._safe_emergent_complexity(execution_result, results)
+
+    async def _safe_literature_comparison(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        await self._engine_reflector._safe_literature_comparison(execution_result, results)
+
+    async def _literature_comparison(self, execution_result: Any) -> dict[str, Any]:
+        return await self._engine_reflector._literature_comparison(execution_result)
+
+    @staticmethod
+    def _summarize_for_kb(execution_result: Any, results: dict[str, Any]) -> str:
+        return EngineReflect._summarize_for_kb(execution_result, results)
+
+    def _detect_thinking_collapse(
+        self, execution_result: Any,
+    ) -> dict[str, Any] | None:
+        return self._engine_reflector._detect_thinking_collapse(execution_result)
+
+    @staticmethod
+    def _find_tool_call_loops(execution_result: dict) -> list[dict[str, Any]]:
+        return EngineReflect._find_tool_call_loops(execution_result)
+
+    def _load_trajectory_action_history(self, limit: int = 20) -> list[list[str]]:
+        return self._engine_reflector._load_trajectory_action_history(limit)
+
+    def _check_stuck(self, action_history: list[str]) -> dict[str, Any] | None:
+        return self._engine_reflector._check_stuck(action_history)
+
+    @staticmethod
+    def _extract_text(execution_result: Any) -> str:
+        return EngineReflect._extract_text(execution_result)
+
+    @staticmethod
+    def _append_container_text(value: Any, parts: list[str]) -> None:
+        EngineReflect._append_container_text(value, parts)
+
+    @staticmethod
+    def _cosine_distance(a: Any, b: Any) -> float:
+        return EngineReflect._cosine_distance(a, b)
+
+    def _try_embed_text(self, text: str) -> Any:
+        return self._engine_reflector._try_embed_text(text)
+
+    def _semantic_distance(self, prediction: str, actual: str) -> float | None:
+        return self._engine_reflector._semantic_distance(prediction, actual)
+
+    def _record_jepa_pair(
+        self, prediction: str, actual: str, surprise: float,
+        plan_id: str | None = None, objective: str | None = None,
+    ) -> None:
+        self._engine_reflector._record_jepa_pair(
+            prediction, actual, surprise, plan_id=plan_id, objective=objective)
+
+    def _load_jepa_predictor(self) -> dict | None:
+        return self._engine_reflector._load_jepa_predictor()
+
+    def _predictor_surprise(
+        self, prediction: str, actual: str,
+    ) -> tuple[float, str] | None:
+        return self._engine_reflector._predictor_surprise(prediction, actual)
+
+    def _load_span_predictor(self) -> dict | None:
+        return self._engine_reflector._load_span_predictor()
+
+    def _span_surprise_from_vecs(self, pred_vecs, act_vecs, w) -> float | None:
+        return self._engine_reflector._span_surprise_from_vecs(pred_vecs, act_vecs, w)
+
+    def _span_predictor_surprise(self, prediction: str, actual: str) -> float | None:
+        return self._engine_reflector._span_predictor_surprise(prediction, actual)
+
+    def _span_embed_text(self, text: str) -> list:
+        return self._engine_reflector._span_embed_text(text)
+
+    def _jepa_embedder(self):
+        return self._engine_reflector._jepa_embedder()
+
+    def _jepa_embed_text(self, text: str):
+        return self._engine_reflector._jepa_embed_text(text)
+
+    def _relative_surprise(self, surprise: float, source: str = "global") -> float:
+        return self._engine_reflector._relative_surprise(surprise, source)
+
+    def _compute_surprise(self, prediction: str, actual: str) -> float:
+        return self._engine_reflector._compute_surprise(prediction, actual)
+
+    def _compute_surprise_robust(
+        self, prediction: str, actual: str,
+    ) -> dict[str, float]:
+        return self._engine_reflector._compute_surprise_robust(prediction, actual)
+
+    async def _generative_verify(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return await self._engine_reflector._generative_verify(execution_result, results)
+
+    @staticmethod
+    def _parse_verify_score(resp: str) -> tuple[float, str, float, str, str]:
+        return EngineReflect._parse_verify_score(resp)
+
+    def _query_kb_reference(
+        self, equations: str, lagrangian: str,
+    ) -> list[dict]:
+        return self._engine_reflector._query_kb_reference(equations, lagrangian)
+
+    @staticmethod
+    def _build_reviewer_prompt(
+        execution_result: Any, results: dict[str, Any], kb_text: str = "",
+    ) -> str:
+        return EngineReflect._build_reviewer_prompt(execution_result, results, kb_text)
+
+    async def _learn(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._engine_reflector._learn(hypothesis, plan, validation)
+
+    async def _generate_next_loop_directive(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        await self._engine_reflector._generate_next_loop_directive(
+            hypothesis, plan, validation, r_phys)
+
+    async def _report(
+        self, objective: str, phases: list[LoopPhase], total_time: float,
+    ) -> str | None:
+        return await self._engine_reflector._report(objective, phases, total_time)
+
+    async def _feynman_learn(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any],
+        r_phys: Any, context: dict[str, Any] | None = None,
+    ) -> None:
+        await self._engine_reflector._feynman_learn(
+            hypothesis, plan, validation, r_phys, context)
+
+    async def _blind_spot_pass(
+        self, context: dict[str, Any], objective: str,
+    ) -> list[dict[str, str]]:
+        return await self._engine_reflector._blind_spot_pass(context, objective)
+
+    def _has_post_task_signal(
+        self, state: Any, prev_outcome: str = "",
+    ) -> tuple[bool, str]:
+        return self._engine_reflector._has_post_task_signal(state, prev_outcome)
+
+    async def _advisor_post_task_recommend(
+        self, run_id: str, objective: str, cog: dict, state: Any,
+        prev_outcome: str = "",
+    ) -> None:
+        await self._engine_reflector._advisor_post_task_recommend(
+            run_id, objective, cog, state, prev_outcome)
+
+    @staticmethod
+    def _build_science_report_prompt(
+        report_data: dict[str, Any], kb_text: str = "", exec_summary: str = "",
+        visual_ctx: str = "", validation_summary: str = "",
+        hypothesis: str = "", surprise: float = 0.0,
+        evidence_ledger: str = "",
+    ) -> str:
+        return EngineReflect._build_science_report_prompt(
+            report_data, kb_text, exec_summary, visual_ctx, validation_summary,
+            hypothesis, surprise, evidence_ledger)
+
+    # ── 去 mixin 阶段9: HypothesisLoop 薄委托 ─────────────────────
+    # hypothesis 生成/管理方法族已下沉为 HypothesisLoop 协作对象 (self._hypothesis_loop).
+    # 被 cognitive_loop / engine_observe / hypothesis_manifold 大量调用, 薄委托保留同名签名.
+
+    async def _hypothesize_via_branch_incubator(
+        self, context: dict[str, Any],
+    ) -> str | None:
+        return await self._hypothesis_loop._hypothesize_via_branch_incubator(context)
+
+    async def _hypothesize(self, context: dict[str, Any]) -> str | None:
+        return await self._hypothesis_loop._hypothesize(context)
+
+    def _record_backup_candidates(self, raw: str, selected: str) -> None:
+        self._hypothesis_loop._record_backup_candidates(raw, selected)
+
+    def _metacog_classify_family(self, hypothesis: str) -> str:
+        return self._hypothesis_loop._metacog_classify_family(hypothesis)
+
+    def _metacog_audit_hypothesis(
+        self, hypothesis: str, context: dict[str, Any],
+    ) -> None:
+        self._hypothesis_loop._metacog_audit_hypothesis(hypothesis, context)
+
+    def _metacog_topology_audit(
+        self, hypothesis: str, context: dict[str, Any],
+    ) -> None:
+        self._hypothesis_loop._metacog_topology_audit(hypothesis, context)
+
+    def _sync_simplicials_to_kg(self) -> None:
+        self._hypothesis_loop._sync_simplicials_to_kg()
+
+    def _choose_recovery_phase(
+        self, failure_type: str, validation: dict[str, Any],
+    ) -> str:
+        return self._hypothesis_loop._choose_recovery_phase(failure_type, validation)
+
+    # 原 _classify_failure 是 engine 上 `(self, redteam_cats)` 方法, 但唯一调用点
+    # cognitive_loop.run_cognitive 以「类级 unbound」调用 `AutoloopEngine.
+    # _classify_failure(validation, redteam)`, 把 validation dict 传进 self. 故
+    # 委托必须是 @staticmethod 直通 HypothesisLoop._classify_failure(validation, cats),
+    # 而不是实例方法 (实例方法会把 validation dict 当 self, 从而丢失 _hypothesis_loop).
+    @staticmethod
+    def _classify_failure(
+        validation: dict[str, Any], redteam_cats: list[str] | None = None,
+    ) -> str:
+        return HypothesisLoop._classify_failure(validation, redteam_cats)
+
+    def _redteam_findings(self) -> list[str]:
+        return self._hypothesis_loop._redteam_findings()
+
+    def _attach_lucid_prereqs(self, hyp_id: str) -> None:
+        self._hypothesis_loop._attach_lucid_prereqs(hyp_id)
+
+    def _should_imaginate(self) -> bool:
+        return self._hypothesis_loop._should_imaginate()
+
+    def _recent_failed_hypotheses(self, limit: int = 3) -> list[str]:
+        return self._hypothesis_loop._recent_failed_hypotheses(limit)
+
+    def _conjecture_hint(self, context: dict[str, Any]) -> str:
+        return self._hypothesis_loop._conjecture_hint(context)
+
+    async def _symreg_hint(self, context: dict[str, Any]) -> str:
+        return await self._hypothesis_loop._symreg_hint(context)
+
+    def _query_kb_known_forms(self, data: dict[str, Any]) -> str:
+        return self._hypothesis_loop._query_kb_known_forms(data)
+
+    def _pick_hypothesis_persona(self, context: dict[str, Any]) -> str:
+        return self._hypothesis_loop._pick_hypothesis_persona(context)
+
+    async def _evaluate_informativeness(self, hypothesis_id: str) -> dict[str, Any]:
+        return await self._hypothesis_loop._evaluate_informativeness(hypothesis_id)
+
+    # ── 去 mixin 阶段10: CognitiveRunner 薄委托 ───────────────────────
+    # cognitive 主循环方法族已下沉为 CognitiveRunner 协作对象 (self._cognitive_runner).
+    # 被 engine_control (挂起决策) / engine_reflect / plan_check 等内部调用 + 对外
+    # run_cognitive 入口大量引用, 薄委托保留同名签名, 调用点零改动.
+    # 两个 @staticmethod (_extract_timeseries/_snapshot_provenance_version) 走类常量桥,
+    # 不在此重复实例委托.
+
+    async def _await_human_decision_via_inbox(
+        self, reason: str, options: list[dict[str, Any]], step_id: int,
+    ) -> str | None:
+        return await self._cognitive_runner._await_human_decision_via_inbox(
+            reason, options, step_id,
+        )
+
+    def _run_phase(self, name: str, fn, *args):
+        return self._cognitive_runner._run_phase(name, fn, *args)
+
+    async def _run_phase_async(self, name: str, fn, *args):
+        return await self._cognitive_runner._run_phase_async(name, fn, *args)
+
+    def _render_report(self, data: dict[str, Any]) -> str:
+        return self._cognitive_runner._render_report(data)
+
+    def _git_commit_after_execute(self, plan: dict[str, Any], iteration: int) -> None:
+        self._cognitive_runner._git_commit_after_execute(plan, iteration)
+
+    def _darwin_ratchet_check(self) -> None:
+        self._cognitive_runner._darwin_ratchet_check()
+
+    def _classify_stall(self) -> str:
+        return self._cognitive_runner._classify_stall()
+
+    def _trigger_counterexample_hunt(self) -> None:
+        self._cognitive_runner._trigger_counterexample_hunt()
+
+    def _emit_campaign(self, event_type: str, data: dict) -> None:
+        self._cognitive_runner._emit_campaign(event_type, data)
+
+    def _emit_control_trace(
+        self, name: str, evidence: str, action: str = "advisory_hint"
+    ) -> None:
+        # 控制面观测统一入口: HypothesisLoop / EngineAct 等协作对象经 __getattr__
+        # 转发到这里 (EngineReflect 有自己的同名实现走 _OWN_ATTRS).
+        self._engine_reflector._emit_control_trace(name, evidence, action)
+
+    def _prepare_run(
+        self, objective: str, progressive_budget: bool, goal: Any | None,
+    ) -> tuple[str, Any, Any]:
+        return self._cognitive_runner._prepare_run(
+            objective, progressive_budget, goal,
+        )
+
+    def _persist_failure_pattern(self, run_id: str) -> None:
+        self._cognitive_runner._persist_failure_pattern(run_id)
+
+    def _load_failure_pattern(self) -> str:
+        return self._cognitive_runner._load_failure_pattern()
+
+    def _persist_run_context(
+        self, run_id: str, objective: str, cog: dict, state: Any,
+    ) -> None:
+        self._cognitive_runner._persist_run_context(run_id, objective, cog, state)
+
+    def _load_prev_run_context(self) -> str:
+        return self._cognitive_runner._load_prev_run_context()
+
+    def _format_timeseries_context(self) -> str:
+        return self._cognitive_runner._format_timeseries_context()
+
+    async def _decide_next_action_llm(
+        self, state: Any, cog: dict, obs: dict,
+    ):
+        return await self._cognitive_runner._decide_next_action_llm(state, cog, obs)
+
+    def _build_decider_prompt(
+        self, state: Any, cog: dict, obs: dict,
+    ) -> str:
+        return self._cognitive_runner._build_decider_prompt(state, cog, obs)
+
+    def _is_action_legal(self, action: str, cog: dict) -> bool:
+        return self._cognitive_runner._is_action_legal(action, cog)
+
+    async def _finalize_run(
+        self,
+        objective: str,
+        phases: list[Any],
+        run_id: str,
+        provenance_record: Any,
+        run_collector: Any,
+        tracker: Any,
+        progress_task_id: str,
+        completed_steps: int,
+    ) -> Any:
+        return await self._cognitive_runner._finalize_run(
+            objective,
+            phases,
+            run_id,
+            provenance_record,
+            run_collector,
+            tracker,
+            progress_task_id,
+            completed_steps,
+        )
+
+    def _rollback_on_execute_failure(
+        self, state: Any, decision: Any, exc: BaseException,
+    ) -> None:
+        self._cognitive_runner._rollback_on_execute_failure(state, decision, exc)
+
+    async def run_cognitive(
+        self,
+        objective: str,
+        max_iterations: int = 50,
+        progressive_budget: bool = True,
+        goal: Any | None = None,
+        max_refines: int = 8,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        return await self._cognitive_runner.run_cognitive(
+            objective,
+            max_iterations,
+            progressive_budget,
+            goal,
+            max_refines,
+            timeout_seconds,
+        )
+
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router
     # 按 task 分流 (verification→独立模型 / summarize→便宜模型);
@@ -698,7 +1731,7 @@ class AutoloopEngine(
                         _m = router.select_band(classify_band(task))
                     if _m is not None:
                         return _m
-            except Exception:
+            except Exception:  # 防御: 路由选带失败回退任务路由
                 logger.debug(
                     f"model_router band select({task!r},{band!r}) failed — "
                     "falling back to task routing",
@@ -708,7 +1741,7 @@ class AutoloopEngine(
                 _m = router.select(task)
                 if _m is not None:
                     return _m
-            except Exception:
+            except Exception:  # 防御: 路由选择失败用回退模型
                 logger.debug(
                     f"model_router.select({task!r}) failed — using fallback",
                     exc_info=True,
@@ -739,7 +1772,7 @@ class AutoloopEngine(
                 path=path,
                 load=True,
             )
-        except Exception:
+        except Exception:  # 防御: 事件日志打开失败置失败态
             logger.debug("autoloop event log open failed (non-fatal)", exc_info=True)
             self._event_log_failed = True
         return self._event_log
@@ -760,7 +1793,7 @@ class AutoloopEngine(
                     "iteration": int(iteration),
                 },
             )
-        except Exception:
+        except Exception:  # 防御: 阶段事件追加失败忽略
             logger.debug(
                 "autoloop phase event append failed (non-fatal)", exc_info=True,
             )
@@ -785,7 +1818,7 @@ class AutoloopEngine(
                 state = engine.build(log, "autoloop")
                 if state.get("phase") or state.get("status"):
                     return state
-            except Exception:
+            except Exception:  # 防御: 运行时状态读取失败忽略
                 logger.debug(
                     "autoloop runtime state read failed (non-fatal)", exc_info=True,
                 )
@@ -812,7 +1845,7 @@ class AutoloopEngine(
                 from huginn.interaction.progress import get_progress_tracker
 
                 tracker = get_progress_tracker()
-            except Exception:
+            except Exception:  # 防御: 进度器构造失败置空
                 tracker = None
         task_id = getattr(self, "_progress_task_id", None)
         if tracker is None or not task_id:
@@ -829,7 +1862,7 @@ class AutoloopEngine(
                     "source": "event_projection",
                 },
             )
-        except Exception:
+        except Exception:  # 防御: 进度发布失败忽略
             logger.debug(
                 "autoloop progress publish failed (non-fatal)", exc_info=True,
             )
@@ -855,7 +1888,7 @@ class AutoloopEngine(
         if path.exists():
             try:
                 self._alignment_dataset = AlignmentDataset.load(path)
-            except Exception:
+            except Exception:  # 防御: 对齐集加载失败新建
                 logger.warning(
                     "alignment_dataset load failed, starting fresh (non-fatal)",
                     exc_info=True,
@@ -880,7 +1913,7 @@ class AutoloopEngine(
             path = self._alignment_dataset_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             ds.save(path)
-        except Exception:
+        except Exception:  # 防御: 对齐集保存失败忽略
             logger.warning(
                 "alignment_dataset save failed (non-fatal)", exc_info=True,
             )
@@ -899,7 +1932,7 @@ class AutoloopEngine(
             if not _cm._MAPS:
                 return None
             return list(_cm._MAPS.values())[-1]
-        except Exception:
+        except Exception:  # 防御: 尽力获取失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -948,7 +1981,7 @@ class AutoloopEngine(
                 C = np.array(elastic_raw, dtype=float)
                 if C.shape == (6, 6):
                     elastic = ElasticTensor(C=C)
-            except Exception:
+            except Exception:  # 防御: 弹性张量解析失败跳过
                 logger.debug(
                     "elastic_tensor parse failed, skipping elastic field",
                     exc_info=True,
@@ -959,7 +1992,7 @@ class AutoloopEngine(
             try:
                 import numpy as np
                 phonon_arr = np.asarray(phonon, dtype=float)
-            except Exception:
+            except Exception:  # 防御: 声子数组解析失败跳过
                 logger.debug("phonon array parse skipped", exc_info=True)
 
         return HapticPropertyLayer(
@@ -1006,7 +2039,7 @@ class AutoloopEngine(
                 "alignment pair collected: tool=%s iter=%d total=%d",
                 tool_name, getattr(self, "_iteration", 0), ds.count(),
             )
-        except Exception:
+        except Exception:  # 防御: 对齐样本收集失败忽略
             logger.warning(
                 "alignment pair collection failed (non-fatal)", exc_info=True,
             )
@@ -1021,3 +2054,22 @@ class AutoloopEngine(
 
             self._evolution = EvolutionEngine(logger=ExecutionLogger())
         return self._evolution
+
+
+# ── EngineSignals 属性桥 ─────────────────────────────────────────────
+# 把 SIGNAL_NAMES 里的每个纯环信号字段挂成类级 property, get/set 都落到
+# self.signals.<field>。这样既有 ~112 处 self._<field> 读点在迁移完成前仍返回
+# 原值(读从 signals 取, 写写进 signals), 行为零变化。字段名来自 signals.SIGNAL_NAMES
+# 单一事实源, 与持久化(runtime/engine_state)共用，避免字段名重复声明。
+def _signal_bridge(name: str):
+    def _get(self, _n: str = name):
+        return getattr(self.signals, _n)
+
+    def _set(self, value, _n: str = name):
+        setattr(self.signals, _n, value)
+
+    return property(_get, _set)
+
+
+for _signal_name in SIGNAL_NAMES:
+    setattr(AutoloopEngine, _signal_name, _signal_bridge(_signal_name))

@@ -33,6 +33,7 @@ import os
 import re
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -56,6 +57,12 @@ from huginn.autoloop.cognitive_persist import load_run_context, persist_run_cont
 from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+from huginn.autoloop.signals import (
+    hypothesis_strength,
+    routing_surprise,
+    strength_schedule_enabled,
+    strength_stagnation_limit,
+)
 from huginn.autoloop.types import AutoloopResult, LoopPhase
 from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME
@@ -68,6 +75,24 @@ logger = logging.getLogger(__name__)
 _MAX_ACTION_HIST = int(os.environ.get("HUGINN_ACTION_HIST_MAX", "1000"))
 # 迭代历史栈上限: 50 轮足够回溯一个完整 autoresearch run 的试错路径
 _MAX_ITER_HIST = int(os.environ.get("HUGINN_ITER_HIST_MAX", "50"))
+# v11 进展不变量阈值: 假设层单调"换名债务" (只在真进展时归零) 越过此值 ⇒ 结题停止.
+# 换名 soft 阶梯在 streak 3/5 触发 (hunt / 重定向) 并**自复位**, 是闭环的根源;
+# 债务与之解耦, 只由真进展归零, 唯一消费者是下面的终止出口. 取 8 > 5 保证 soft
+# 动作至少各 fire 一次后才终止, 不给"提示→重定向→归零"无限打转留口子.
+_RENAME_DEBT_LIMIT = int(os.environ.get("HUGINN_RENAME_DEBT_LIMIT", "8"))
+# v11 提交闸: 研究循环跑在仓库根 (self.workspace=/workspace) 时 `git add -A` 会把
+# **工具本身** agent/huginn/** 一起暂存. 历史上循环边跑边改 harness 且无闸提交
+# (如 [iter 3] 给 add_hypothesis 加守卫 +44 行), 直接把测试干红却被 commit 固化
+# → 每跑一轮埋新雷. 闸门: 暂存区一旦触及 harness, 必须先跑下面这个快速测试子集,
+# 不过就把 harness 改动从本次提交剔除 (保留在工作区待修), 研究产物照常提交.
+_HARNESS_PREFIX = "agent/huginn/"
+_HARNESS_GATE_TESTS = (
+    "agent/tests/test_hypothesis_loop.py",
+    "agent/tests/test_hypothesis_semantic.py",
+    "agent/tests/test_cognitive_engine.py",
+    "agent/tests/unit/test_hypothesis_graph.py",
+    "agent/tests/test_cognitive_discipline.py",
+)
 
 
 @dataclass
@@ -180,7 +205,7 @@ class CognitiveLoop:
         # ON_WORKFLOW_BEGIN: 之前只发 stage 级事件, workflow 整体首尾缺失.
         try:
             await self._dispatch_stage_event(EventType.ON_WORKFLOW_BEGIN, "workflow_start")
-        except Exception:
+        except Exception:  # 防御: 工作流开始派发失败忽略
             logger.debug("ON_WORKFLOW_BEGIN dispatch failed (non-fatal)", exc_info=True)
 
         while state.iteration < state.max_iterations and not state.should_stop:
@@ -300,13 +325,20 @@ class CognitiveLoop:
                     logger.debug("output_writer.write_step failed: %s", e)
 
             if decision.action == "stop":
+                # WARNING 级 (非 INFO): CLI autoloop 路径 root logger 未配置, 只有
+                # WARNING+ 经 lastResort 落盘; INFO 级终止原因会被静默吞掉, 长程
+                # run 提前收口时无从审计 (run50 即此).
+                logger.warning(
+                    "CognitiveLoop: stop action at iter %d (rationale=%s)",
+                    state.iteration, (decision.rationale or "")[:160],
+                )
                 state.should_stop = True
                 break
 
         # ON_WORKFLOW_DONE: 与 ON_WORKFLOW_BEGIN 对称, workflow 结束时发一次.
         try:
             await self._dispatch_stage_event(EventType.ON_WORKFLOW_DONE, "workflow_done")
-        except Exception:
+        except Exception:  # 防御: 工作流完成派发失败忽略
             logger.debug("ON_WORKFLOW_DONE dispatch failed (non-fatal)", exc_info=True)
 
         return state
@@ -346,17 +378,18 @@ class CognitiveLoop:
 
 # === output_writer 接口 (可选钩子, 生产路径传 None) ===
 
-class OutputWriter:
+class OutputWriter(ABC):
     """output_writer 接口 — 可选的 per-step 产物钩子.
 
     这是一个可选的扩展点 (extension point): 生产路径不传 (output_writer=None,
     provenance 走 _record_provenance). 需要自定义产物落盘时实现此接口并传给
     CognitiveLoop. self-check 用 MockWriter 验证 loop 语义.
 
-    NotImplementedError 是有意的 — 强制子类实现, 不提供默认空实现
+    @abstractmethod + ``...`` 强制子类实现, 不提供默认空实现
     (空实现会静默吞掉调用方期望的落盘行为).
     """
 
+    @abstractmethod
     def write_step(
         self,
         iteration: int,
@@ -364,7 +397,7 @@ class OutputWriter:
         result: Any,
         reflection: ReflectionResult,
     ) -> None:
-        raise NotImplementedError
+        ...
 
 
 # === AV4 路径 B: 共享元认知护航原语 ===
@@ -422,7 +455,7 @@ def _inject_failed_direction_lessons(
             lessons.append(line)
             if len(lessons) >= limit:
                 break
-    except Exception:
+    except Exception:  # 防御: 启动教训注入失败沿用当前提示
         logger.debug("startup lessons injection skipped", exc_info=True)
         return current_hint
 
@@ -435,10 +468,74 @@ def _inject_failed_direction_lessons(
     )
 
 
-class CognitiveLoopMixin:
-    """cognitive loop 主循环方法族, 从 engine.py 下沉 (P3 slim-down). 通过 self 访问 engine 状态."""
+class CognitiveRunner:
+    """cognitive loop 主循环方法族协作对象, 从 engine.py 下沉 (P3 slim-down).
 
-    pass  # methods migrated from engine.py via P3 slim-down
+    去 mixin 阶段10: 原 CognitiveLoopMixin 改为普通类 CognitiveRunner. 命名刻意避开
+    本模块同名的编排抽象 ``class CognitiveLoop`` (rcb_runner/autoloop 的 4 钩子控制器)。
+    引擎经组合持有 self._cognitive_runner = CognitiveRunner(self), 保留同名薄委托方法
+    → 既有 self.method() 调用点 (engine_control/plan_check/engine_act/engine_reflect) 与
+    run_cognitive 入口零改动。
+
+    设计关键 (ponytail):
+    - 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义
+      属性读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+    - own-method 覆写槽 _OWN_ATTRS: 对自身方法名赋值落本对象实例 dict(测试 mock),
+      其余名字(引擎状态字段)转发回引擎。
+    - 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+      (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
+    - 两个 @staticmethod (_extract_timeseries/_snapshot_provenance_version) 不读 self,
+      引擎留类常量桥保持 AutoloopEngine._X 类级访问.
+    - 协作对象不额外持有业务状态 (除 engine 引用)
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: CognitiveRunner 定义的协作方法名集合 (不含两个 @staticmethod, 它们不读 self).
+    #: 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_await_human_decision_via_inbox",
+        "_run_phase",
+        "_run_phase_async",
+        "_render_report",
+        "_git_commit_after_execute",
+        "_darwin_ratchet_check",
+        "_classify_stall",
+        "_trigger_counterexample_hunt",
+        "_emit_campaign",
+        "_prepare_run",
+        "_persist_failure_pattern",
+        "_load_failure_pattern",
+        "_persist_run_context",
+        "_load_prev_run_context",
+        "_format_timeseries_context",
+        "_decide_next_action_llm",
+        "_build_decider_prompt",
+        "_is_action_legal",
+        "_finalize_run",
+        "_rollback_on_execute_failure",
+        "run_cognitive",
+    })
 
     async def _await_human_decision_via_inbox(
         self, reason: str, options: list[dict], step_id: int
@@ -553,7 +650,7 @@ class CognitiveLoopMixin:
                         tags=["pmk", "human_decision", _subject_tag],
                         source=f"autoloop pause {run_id} step {step_id}",
                     )
-        except Exception:
+        except Exception:  # 防御: PMK 决策写回失败忽略
             logger.debug("best-effort PMK decision writeback failed", exc_info=True)
 
         return resolution
@@ -592,7 +689,7 @@ class CognitiveLoopMixin:
             try:
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
-            except Exception:
+            except Exception:  # 防御: 跨度元数据更新失败忽略
                 logger.warning(
                     "error in _run_phase: span metadata update failed", exc_info=True
                 )
@@ -632,12 +729,12 @@ class CognitiveLoopMixin:
         # 读模型经 AutoloopStateProjection 派生 — 可重放/可恢复.
         try:
             self._record_autoloop_phase(name, "running", getattr(self, "_iteration", 0))
-        except Exception:
+        except Exception:  # 防御: 阶段事件记录失败忽略
             logger.debug("autoloop phase event record failed (non-fatal)", exc_info=True)
         # H3: 把投影读模型推到 UI 进度通道 (current_label + phase_seq).
         try:
             self._publish_progress()
-        except Exception:
+        except Exception:  # 防御: 进度发布失败忽略
             logger.debug("autoloop progress publish failed (non-fatal)", exc_info=True)
         # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
         if not hasattr(self, "_current_run_phases"):
@@ -661,9 +758,9 @@ class CognitiveLoopMixin:
             try:
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
-            except Exception:
-                logger.warning(
-                    "error in _run_phase_async: span metadata update failed",
+            except Exception:  # 防御: 跨度元数据更新失败忽略
+                    logger.warning(
+                        "error in _run_phase_async: span metadata update failed",
                     exc_info=True,
                 )
         phase.end_time = time.time()
@@ -685,14 +782,14 @@ class CognitiveLoopMixin:
             self._record_autoloop_phase(
                 name, phase.status, getattr(self, "_iteration", 0)
             )
-        except Exception:
+        except Exception:  # 防御: 阶段状态事件记录失败忽略
             logger.debug(
                 "autoloop phase status event record failed (non-fatal)", exc_info=True,
             )
         # H3: 完成状态也推到 UI 进度通道.
         try:
             self._publish_progress()
-        except Exception:
+        except Exception:  # 防御: 完成进度发布失败忽略
             logger.debug(
                 "autoloop progress publish (complete) failed (non-fatal)", exc_info=True,
             )
@@ -720,23 +817,196 @@ class CognitiveLoopMixin:
         lines.append("---")
         lines.append("Generated by Huginn Autoloop Engine")
         return "\n".join(lines)
+    def _git_repo_root(self, _sp) -> Path:
+        """定位 git 仓库根 —— 研究循环的 cwd 常是输出子目录, 不能在它下面解析路径.
+
+        v11: 循环跑在 ``research_outputs/<run>/`` (self.workspace), 而 harness 测试
+        路径(``agent/tests/...``)与 git 仓库都在**仓库根**. 若用 workspace 当 cwd 跑
+        pytest, 相对路径全部找不到 → "no tests ran" → 闸门误判为红 (run50 实测).
+        用 ``git rev-parse --show-toplevel`` 取真实根; 失败(非 git 仓库)退回 workspace.
+        """
+        try:
+            _top = _sp.run(["git", "rev-parse", "--show-toplevel"],
+                           cwd=self.workspace, capture_output=True, text=True,
+                           timeout=10).stdout.strip()
+            if _top:
+                return Path(_top)
+        except Exception:  # 防御: git 不可用 → 退回当前工作区
+            logger.debug("commit-gate: 无法定位仓库根", exc_info=True)
+        return Path(self.workspace)
+
     def _git_commit_after_execute(self, plan: dict, iteration: int) -> None:
-        """execute 后 git commit — 让下轮 perceive 看到 diff (从 run() 抽出)."""
+        """execute 后 git commit — 让下轮 perceive 看到 diff (从 run() 抽出).
+
+        v11 提交闸 (见 _HARNESS_PREFIX): 暂存区触及 harness 时先跑快速测试子集,
+        不过则把 harness 改动从本次提交剔除 (工作区保留), 研究产物照常提交.
+        """
         try:
             import subprocess as _sp
             import time as _time
-            _sp.run(["git", "add", "-A"], cwd=self.workspace,
+            _root = self._git_repo_root(_sp)
+            _sp.run(["git", "add", "-A"], cwd=_root,
                     capture_output=True, timeout=10)
+            self._gate_harness_before_commit(_sp, _root)
             _msg = f"[iter {iteration}] {plan.get('mode','?')}: {plan.get('description','')[:80]}"
             for _attempt in range(3):
-                _r = _sp.run(["git", "commit", "-m", _msg], cwd=self.workspace,
+                _r = _sp.run(["git", "commit", "-m", _msg], cwd=_root,
                              capture_output=True, timeout=10)
                 if _r.returncode == 0:
                     break
                 if _attempt < 2:
                     _time.sleep(1 * (_attempt + 1))
-        except Exception:
+        except Exception:  # 防御: git 不可用时报空差异
             logger.debug("best-effort op failed", exc_info=True)  # no git repo or git unavailable — not our problem
+
+    def _gate_harness_before_commit(self, _sp, root: Path) -> None:
+        """v11 提交闸: harness 改动必须过测试才允许进提交, 否则剔除.
+
+        只在实际触及 harness 时才跑测试 (平时零开销). 基础设施异常 (pytest 缺失)
+        fail-open (放行 + 告警), 避免把研究循环卡死; 测试真红则 fail-closed (剔除).
+        ``root`` 是 git 仓库根 (见 _git_repo_root) —— 暂存/剔除都在根上操作.
+        """
+        try:
+            _staged = _sp.run(
+                ["git", "diff", "--cached", "--name-only"],
+                cwd=root, capture_output=True, text=True, timeout=10,
+            ).stdout
+        except Exception:  # 防御: 取暂存列表失败 → 不拦 (退回旧行为)
+            logger.debug("commit-gate: 无法读取暂存列表", exc_info=True)
+            return
+        _harness = [p for p in (_staged or "").splitlines()
+                    if p.strip().startswith(_HARNESS_PREFIX)]
+        if not _harness:
+            return  # 没碰 harness → 研究产物照常提交
+        _ok, _detail = self._harness_tests_green(_sp, root)
+        if _ok:
+            return
+        # 剔除 harness 改动 (工作区保留, 下轮可继续修), 记录告警
+        try:
+            _sp.run(["git", "restore", "--staged", _HARNESS_PREFIX],
+                    cwd=root, capture_output=True, timeout=10)
+        except Exception:  # 防御: restore 不支持则用 reset
+            _sp.run(["git", "reset", "-q", "--", _HARNESS_PREFIX],
+                    cwd=root, capture_output=True, timeout=10)
+        logger.warning(
+            "v11 commit-gate: harness 改动未过测试, 已从本次提交剔除 (%d 文件, "
+            "改动保留在工作区): %s", len(_harness), _detail,
+        )
+
+    def _harness_tests_green(self, _sp, root: Path) -> tuple[bool, str]:
+        """跑 harness 快速测试子集. 返回 (是否通过, 摘要).
+
+        在**仓库根** ``root`` 下跑 (测试路径是仓库根相对路径, 见 _git_repo_root).
+        基础设施异常 (pytest 不可用/超时) → (True, 说明) fail-open, 不卡死循环;
+        测试收集或断言失败 → (False, 尾部输出) fail-closed.
+        """
+        import sys as _sys
+        _env = dict(os.environ)
+        _env["PYTHONPATH"] = str(root / "agent") + os.pathsep + _env.get("PYTHONPATH", "")
+        try:
+            _r = _sp.run(
+                [_sys.executable, "-m", "pytest", *_HARNESS_GATE_TESTS, "-q",
+                 "-p", "no:cacheprovider", "-o", "addopts=", "--tb=line"],
+                cwd=root, capture_output=True, text=True, timeout=300, env=_env,
+            )
+        except Exception as _e:  # 防御: pytest 缺失/超时 → fail-open
+            return True, f"(infra fail-open: {type(_e).__name__})"
+        if _r.returncode == 0:
+            return True, ""
+        _tail = "\n".join((_r.stdout or "").strip().splitlines()[-6:])
+        return False, _tail or f"(pytest rc={_r.returncode})"
+
+    def _long_horizon_keep_going(self) -> bool:
+        """长程探索模式: 有 active goal 且挂钟预算未耗尽时, 非目标类早停让位.
+
+        科研多为长程探索, 假设质量分/信念方差这类"启发式收敛"不应在目标未达成
+        时终止整个 run. 需要 HUGINN_PERSISTENT_GOAL_MODE=1, 且存在 active goal
+        且 goal.wall_clock_budget_seconds>0 且 started_at 已设且未超时. 任一不满足
+        → False, 完全保持原早停语义 (向后兼容).
+        """
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return False
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+
+            _gs = get_goal_store()
+            # 优先本 run 自己的 goal (run_cognitive 入口记的 self._run_goal_id).
+            # 全局 get_active() 按插入序返回**第一个** active: 跨 run 残留的旧 goal
+            # 会被误选, 其挂钟早已耗尽 → 守卫恒 False. 取不到本 run goal 时才退回.
+            _run_gid = getattr(self, "_run_goal_id", None)
+            _ag = _gs.get_goal(_run_gid) if _run_gid else None
+            if _ag is None:
+                _ag = _gs.get_active()
+            if _ag is None:
+                return False
+            return not _gs.wall_clock_expired(_ag.id)
+        except Exception:  # 防御: 检查失败退回原早停语义
+            logger.debug("long-horizon keep-going check failed", exc_info=True)
+            return False
+
+    def _long_horizon_stall_action(self) -> str | None:
+        """D3: 长程停滞 → 动作选择器 (非终止器).
+
+        把"无进展且还有预算"从静默空转转成**有向动作**. 触发条件三者全满足:
+        - ``HUGINN_STALL_AS_ACTION=1`` (默认关, 先观测触发率再默认开);
+        - ``_long_horizon_keep_going()`` 为真 (长程模式且目标挂钟未耗尽);
+        - darwin stagnation 达强度调度阈值 (与 ``_darwin_ratchet_check`` 同一口径).
+
+        返回 ``"pivot"`` (VALID_ACTIONS 里唯一的转向动作); 否则 ``None``. 由
+        ``decide_fn`` 消费为 ``ActionDecision(action="pivot", force=True)``. 触发后
+        调用方清零 ``_darwin_stagnation``, 给转向后的新路线重新累积.
+        """
+        if os.environ.get("HUGINN_STALL_AS_ACTION", "0") != "1":
+            return None
+        if not self._long_horizon_keep_going():
+            return None
+        if getattr(self, "_iteration", 0) <= 2:
+            return None
+        _base_stag = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        _stag_limit = (
+            strength_stagnation_limit(hypothesis_strength(self), base=_base_stag)
+            if strength_schedule_enabled() else _base_stag
+        )
+        if getattr(self, "_darwin_stagnation", 0) < _stag_limit:
+            return None
+        return "pivot"
+
+    def _long_horizon_iteration_cap(self, goal: Goal | None, max_iterations: int) -> int:
+        """长程探索: 依据 goal 的挂钟预算抬高步数上限.
+
+        背景: CognitiveLoop.run 里 ``state.iteration`` 是**步**(每步一个 action),
+        一个完整 hypothesize→plan→execute→validate→learn 循环约 5 步, 所以
+        ``-i 30`` 只够 ~6 轮就撞顶进 report. 科研多为长程探索, 需要循环能自主推进
+        到目标达成或挂钟耗尽, 因此当 HUGINN_PERSISTENT_GOAL_MODE=1 且 goal 挂了
+        wall_clock_budget 时, 把步数上限抬到"预算 / 10s 每步"(仅作安全上界), 并同步
+        抬高 goal.max_iterations — 否则 observe 的 is_budget_exhausted 会先于挂钟撞顶.
+
+        真正的终止交给 (a) 目标达成 F2/F17, (b) observe 每步查 wall_clock_expired.
+        """
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return max_iterations
+        try:
+            from huginn.autoloop.goal_store import GoalStore
+
+            # 现读文件, 避免单例拿到"建 goal 之前"的陈旧快照.
+            _gs = GoalStore()
+            _g = (_gs.get_goal(goal.id) if goal is not None else None) or _gs.get_active()
+            if _g is None or _g.wall_clock_budget_seconds <= 0 or not _g.started_at:
+                return max_iterations
+            _cap = max(max_iterations, int(_g.wall_clock_budget_seconds / 10.0))
+            if _g.max_iterations < _cap:
+                try:
+                    _gs.update_goal(_g.id, max_iterations=_cap)
+                except Exception:  # 防御: 抬高 goal 上限失败忽略
+                    logger.debug("raise goal max_iterations failed", exc_info=True)
+            logger.info(
+                "long-horizon iteration cap: %d → %d (wall_clock=%.0fs)",
+                max_iterations, _cap, _g.wall_clock_budget_seconds,
+            )
+            return _cap
+        except Exception:  # 防御: 反推失败退回原上限 (保持向后兼容)
+            logger.debug("long-horizon iteration cap failed", exc_info=True)
+            return max_iterations
 
     def _darwin_ratchet_check(self) -> None:
         """Darwin ratchet: 算假设质量分, 只保留改进, 连续低增益 → early stop.
@@ -746,7 +1016,12 @@ class CognitiveLoopMixin:
         - testable_ratio * 10: 可证伪性 (有 testable_prediction 的节点占比)
         - graph_diversity * 10: 假设多样性 (unique statements 占比)
         - topology_richness * 10: 假设网络结构丰富度 (β₁/n, 独立环数占比)
-        四项平均 → 0-10 分
+        - task_perf * 10: 真实任务性能 (r_phys / tests_passed; 无信号时不参与)
+        - novelty * task_perf: 进展门控的创新分 (仅在 novelty 伴随真实进展时计入)
+        命中维度平均 → 0-10 分
+
+        创新纪律: novelty 不独立加分 —— "新而无用"不进棘轮, 只作探索整形信号.
+        棘轮奖励的是"解决了问题的新", 与"解决问题做主目标"一致.
 
         β₁ 解释: 假设图的独立环数. β₁=0 → 树状 (无交叉支持);
         β₁>0 → 有交叉支持/反驳链 (假设间相互关联). 标准化到 [0,1] 避免大图偏向.
@@ -768,6 +1043,30 @@ class CognitiveLoopMixin:
 
         supported = graph.supported()
         n = len(all_nodes)
+
+        # 新颖性枯竭检测: 连续多轮"只有被守卫拒绝的入图尝试、图零增长" = 假设生成
+        # 在原地重述 (run37 症状: Darwin 卡死 / 假设重复 15 次 / 空壳节点). 这属于
+        # 方法层面的停滞 → 触发反例搜索换方向, 而不是继续重述同一抽象命题.
+        _prev_n = getattr(self, "_novelty_prev_nodes", n)
+        _prev_rej = getattr(self, "_novelty_prev_rejected", graph._rejected_adds)
+        _d_nodes = n - _prev_n
+        _d_rej = graph._rejected_adds - _prev_rej
+        self._novelty_prev_nodes = n
+        self._novelty_prev_rejected = graph._rejected_adds
+        if _d_nodes <= 0 and _d_rej > 0:
+            self._novelty_starved = getattr(self, "_novelty_starved", 0) + 1
+        elif _d_nodes > 0:
+            self._novelty_starved = 0
+        if getattr(self, "_novelty_starved", 0) >= 3:
+            # warning 级: 根 logger 过滤 INFO, info 会被静默吞掉 (同 [exec-route] 做法).
+            logger.warning(
+                "novelty starved %d× (only rejected/duplicate hypotheses): "
+                "trigger counterexample hunt",
+                self._novelty_starved,
+            )
+            self._novelty_starved = 0
+            self._trigger_counterexample_hunt()
+
         supported_ratio = len(supported) / n
 
         testable = sum(
@@ -793,15 +1092,34 @@ class CognitiveLoopMixin:
             sig = hodge_signature(node_ids, edge_pairs)
             # β₁/n 标准化到 [0,1]: 树状图 β₁=0 → 0 分; 完全交叉 → 趋近 1
             topology_richness = min(sig.beta1_approx / max(n, 1), 1.0)
-        except Exception:
+        except Exception:  # 防御: 拓扑丰富度计算失败忽略
             logger.debug("topology_richness calc failed (non-fatal)", exc_info=True)
 
         # 0-10 分制, 对齐 darwin-skill 原版
-        score = (
-            (supported_ratio + testable_ratio + graph_diversity + topology_richness)
-            / 4.0
-            * 10.0
-        )
+        # D: 有真实任务性能信号 (r_phys / tests_passed) 时并入第 5 维, 让 best
+        # 反映真实质量而非纯图结构比例; 无信号退化为原 4 维 (行为不变).
+        _dims = [supported_ratio, testable_ratio, graph_diversity, topology_richness]
+        # E (创新点 → 服务解决问题): novelty 不再等权平均加分. 只有与真实问题进展
+        # (_last_task_perf: r_phys / tests_passed, 归一化 0-1) 同时出现时, 才按进展
+        # 幅度计入 —— "新而无用" (novelty>0 但无进展) 不进棘轮分数, 只作探索整形
+        # 信号 (提议方向). 棘轮奖励的是"解决了问题的新", 而非"新"本身.
+        # 无进展信号 (tp 缺失) → novelty 不参与, 退化为原 4 维 (行为不变).
+        _nov_vals = [
+            float(getattr(nd, "novelty", 0.0) or 0.0)
+            for nd in all_nodes
+            if float(getattr(nd, "novelty", 0.0) or 0.0) > 0.0
+        ]
+        _tp = getattr(self, "_last_task_perf", None)
+        _tp_val: float | None = None
+        if _tp is not None:
+            with contextlib.suppress(Exception):
+                _tp_val = max(0.0, min(1.0, float(_tp)))
+        if _tp_val is not None:
+            if _nov_vals:
+                # 进展门控的 novelty: 无进展 (tp=0) 时贡献 0.
+                _dims.append((sum(_nov_vals) / len(_nov_vals)) * _tp_val)
+            _dims.append(_tp_val)  # 真实任务性能本身仍独立一维
+        score = (sum(_dims) / len(_dims)) * 10.0
 
         delta = score - self._darwin_last_score
         if delta < 0.5:
@@ -829,9 +1147,9 @@ class CognitiveLoopMixin:
                 try:
                     from huginn.routes.metrics import track_belief_update
                     track_belief_update("gaussian")
-                except Exception:
+                except Exception:  # 防御: 信念指标跟踪失败跳过
                     logger.debug("belief metric track skipped", exc_info=True)
-            except Exception:
+            except Exception:  # 防御: 度量计算失败回退原逻辑
                 logger.debug("best-effort op failed", exc_info=True)  # 循环 import 或其他故障 → 回退原逻辑
 
         # v6 G54: 把 darwin 分数 / supported_ratio 暴露给 _plan / _validate
@@ -855,7 +1173,7 @@ class CognitiveLoopMixin:
             try:
                 sp = getattr(self, "stable_principles", None)
                 n_principles = len(sp) if sp else 0
-            except Exception:
+            except Exception:  # 防御: 原则计数失败跳过
                 logger.debug("stable_principles count skipped", exc_info=True)
             sys_prompt_len = 0
             with contextlib.suppress(Exception):
@@ -864,17 +1182,24 @@ class CognitiveLoopMixin:
 
             health = eng.health_check()
             self._emit_campaign("heat_engine.health", health)
-        except Exception:
+        except Exception:  # 防御: 冷温度更新失败忽略
             logger.debug("heat_engine.update_T_cold failed (non-fatal)", exc_info=True)
 
         # v7 长任务: stagnation 阈值 2→5. Oxelra 206 步允许长期低增益,
         # 2 轮就 early stop 太激进, 真正突破常在 10+ 轮停滞之后.
-        _stag_limit = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        # Ataraxos 式强度调度: 假设弱→更早 pivot (激进换向), 强→容忍更久
+        # (稳健微调). env 的 LIMIT 作基准, 调度在其周围 ±4 摆动;
+        # HUGINN_STRENGTH_SCHEDULE=0 → 行为不变 (用 base).
+        _base_stag = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        _stag_limit = (
+            strength_stagnation_limit(hypothesis_strength(self), base=_base_stag)
+            if strength_schedule_enabled() else _base_stag
+        )
         if self._darwin_stagnation >= _stag_limit and self._iteration > 2:
             # P2: stagnation 触发前先分类 (chaoxu 启发).
             # method_failure → pivot 换方法继续, 不 stop
             # evidence_against → counterexample hunt, 不 stop
-            # unclassifiable / 已试过 → 真 stop
+            # unclassifiable / 已试过 → 提示 + trace (原为 hard stop, 控制面审计 A3 降级)
             _stall_action = self._classify_stall()
             if _stall_action == "pivot":
                 logger.info(
@@ -890,60 +1215,62 @@ class CognitiveLoopMixin:
                 self._darwin_stagnation = 0
                 self._trigger_counterexample_hunt()
             else:
-                # P5 (chaoxu 启发): persistent goal mode — stagnation 分类为 stop
-                # 时, 如果开了 HUGINN_PERSISTENT_GOAL_MODE 且有 active goal 且
-                # 挂钟预算未耗尽, 不 early stop, 重置 stagnation 继续.
-                # 无 active goal 或挂钟耗尽才真 stop.
-                _persistent = (
-                    os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1"
+                # 控制面审计 A3: 原为 early stop (self._should_stop = True), 现降为
+                #   提示 + trace. 理由 —— "有没有进展/该不该收结"是**科学判断**, 一律
+                #   下沉给书生; 长程模式本就有挂钟出口, 短程有步数上限兜底, 这个硬出口
+                #   只贡献误杀风险 (硬终止只保留挂钟耗尽与目标达成).
+                logger.warning(
+                    "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f "
+                    "→ advisory only (hint, no stop)",
+                    self._darwin_stagnation,
+                    self._darwin_best_score,
                 )
-                _wall_expired = False
-                _has_active_goal = False
-                if _persistent:
-                    try:
-                        from huginn.autoloop.goal_store import get_goal_store
-                        _gs = get_goal_store()
-                        _ag = _gs.get_active()
-                        if _ag is not None:
-                            _has_active_goal = True
-                            _wall_expired = _gs.wall_clock_expired(_ag.id)
-                    except Exception:
-                        logger.debug("P5 wall_clock check failed", exc_info=True)
-                if _persistent and _has_active_goal and not _wall_expired:
-                    logger.info(
-                        "darwin ratchet: stagnation %d → stop, but persistent goal "
-                        "mode on + wall_clock not expired, reset & continue",
-                        self._darwin_stagnation,
-                    )
-                    self._darwin_stagnation = 0
-                else:
-                    logger.info(
-                        "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
-                        self._darwin_stagnation,
-                        self._darwin_best_score,
-                    )
-                    self._should_stop = True
+                self._speculator_hint = (
+                    (getattr(self, "_speculator_hint", "") or "")
+                    + f"\n[停滞·提示] 假设质量分连续 {self._darwin_stagnation} 轮无增益 "
+                    f"(best={self._darwin_best_score:.2f}): 换方法族或改变实验设计, "
+                    "不要继续微调同一条路线."
+                )
+                self._control_trace(
+                    "darwin_stagnation",
+                    f"stagnation={self._darwin_stagnation} "
+                    f"best={self._darwin_best_score:.2f}",
+                )
 
-        # P2-6 belief: σ² 收敛也作为 stop 信号. σ² < 0.1 = belief 不确定性低,
-        # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
-        # stagnation 测"score 不增", σ² 测" belief 不再变". 两者任一触发即 stop.
+        # P2-6 belief: σ² 收敛作为**提示**信号 (控制面审计 A4 已降级, 原为 early stop).
+        # σ² < 0.1 = belief 不确定性低, 后续观测不会显著改变 μ, 边际信息收益递减.
+        # 跟 stagnation 互补: stagnation 测"score 不增", σ² 测"belief 不再变".
+        # 同 A3: 信念收敛是**启发式**判断(σ² 小可能只是噪声小), 不是证据, 不该硬终止;
+        # 只提示书生考虑收结或换方向, 真终止交给挂钟/目标达成.
         if (
             FeatureFlags.shared().is_enabled("belief_darwin")
             and self._darwin_belief_sigma2 < 0.1
             and self._iteration > 2
         ):
-            logger.info(
-                "darwin ratchet: belief converged σ²=%.4f μ=%.2f, early stop",
+            logger.warning(
+                "darwin ratchet: belief converged σ²=%.4f μ=%.2f "
+                "→ advisory only (hint, no stop)",
                 self._darwin_belief_sigma2, self._darwin_belief_mu,
             )
-            self._should_stop = True
+            self._speculator_hint = (
+                (getattr(self, "_speculator_hint", "") or "")
+                + f"\n[信念收敛·提示] 假设后验不确定性已很低 "
+                f"(σ²={self._darwin_belief_sigma2:.4f}, μ={self._darwin_belief_mu:.2f}): "
+                "继续观测的边际信息收益递减. 要么给出最终数值结论, 要么换一个能打破"
+                "当前信念的方向重新出发."
+            )
+            self._control_trace(
+                "belief_convergence",
+                f"sigma2={self._darwin_belief_sigma2:.4f} "
+                f"mu={self._darwin_belief_mu:.2f}",
+            )
 
         # v7 Meta-Trace: 每轮蒸馏成结构化科研要点, 对标 Oxelra Meta-Trace.
         # 目标: 长任务不靠完整 transcript, 用结构化要点保持 context 密度.
         # ponytail: 从已有 self.* 字段抽, 不调 LLM (省 token). ceiling 是 LLM 蒸馏.
         try:
             self._distill_meta_trace(score, supported_ratio)
-        except Exception:
+        except Exception:  # 防御: 元轨迹蒸馏失败忽略
             logger.debug("meta_trace distill failed (non-fatal)", exc_info=True)
 
     def _classify_stall(self) -> str:
@@ -1026,7 +1353,7 @@ class CognitiveLoopMixin:
                                 )
                                 return
                             _ce_node.evidence["ce_rounds_used"] = _ce_used + 1
-            except Exception:
+            except Exception:  # 防御: 单假设预算检查失败忽略
                 logger.debug("per-hyp ce budget check failed", exc_info=True)
         # 强制开 imagination (override _should_imaginate 的判断)
         self._force_imaginate = True
@@ -1038,19 +1365,24 @@ class CognitiveLoopMixin:
                 _node = self.hypothesis_graph._nodes.get(_cur_hyp)
                 if _node:
                     _stmt = _node.statement[:200]
-            except Exception:
+            except Exception:  # 防御: 假设陈述查找失败跳过
                 logger.debug("hypothesis statement lookup skipped", exc_info=True)
         _hint = (
             f"Stagnation classified as evidence_against. "
-            f"Current hypothesis may be wrong. Hunt for a counterexample.\n"
+            f"Current hypothesis may be wrong.\n"
             f"Hypothesis: {_stmt}\n"
-            f"Construct a specific scenario / parameter set where this hypothesis "
-            f"would fail. If found, refute and pivot to a corrected hypothesis."
+            f"Design a DISCRIMINATING experiment, not just a counterexample: pick the "
+            f"measured quantity (e.g. N_c as a function of w) and a scan over its "
+            f"parameter, then state which competing hypothesis's prediction that scan "
+            f"separates. If a rival predicts the quantity stays flat while the current "
+            f"one predicts it grows linearly, one scan over the shared parameter must "
+            f"tell them apart. Refute the prediction that loses and pivot to the "
+            f"hypothesis whose prediction survives."
         )
-        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入
-        self._speculator_hint = (
-            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
-        )
+        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入.
+        # 注意: 该 directive 在本方法末尾才 append, 因为 prompt 侧只保留尾部
+        # [-500:], 若先 append 会被后续的 failure traces / verifier weakness
+        # 顶出窗口 → 反例搜索指令到不了 LLM.
         # Task 4: 拉历史 failure trace exemplar 给 LLM 参考.
         # 复用 recall_failed_directions; 只挑 reason 含 [FAILURE TRACE]/[BREAK POINT]
         # 标记的 (Task 3 反推产物), 旧数据 (简短 error 串) 跳过 — 没推理链, 当 exemplar
@@ -1078,7 +1410,7 @@ class CognitiveLoopMixin:
                 self._speculator_hint = (
                     (getattr(self, "_speculator_hint", "") or "") + "\n" + _block
                 )
-        except Exception:
+        except Exception:  # 防御: 失败方向召回失败跳过
             logger.debug("recall failed directions for exemplar failed", exc_info=True)
         # P1 Task 8: inject [VERIFIER WEAKNESS] from past blind mismatches
         try:
@@ -1093,7 +1425,7 @@ class CognitiveLoopMixin:
                             f"- hyp: {str(_md.get('hypothesis', '?'))[:100]} "
                             f"(blind={_md.get('blind_holds')}, orig={_md.get('orig_holds')})"
                         )
-                    except Exception:
+                    except Exception:  # 防御: 单词匹配失败跳过该条
                         _wl.append(f"- {_mc[:100]}")
                 if _wl:
                     _wb = (
@@ -1104,9 +1436,87 @@ class CognitiveLoopMixin:
                     self._speculator_hint = (
                         (getattr(self, "_speculator_hint", "") or "") + _wb
                     )
-        except Exception:
+        except Exception:  # 防御: 验证器弱点提示失败忽略
             logger.debug("verifier weakness hint failed", exc_info=True)
+        # 关键 directive 最后 append: prompt 侧只保留尾部 [-500:], 落在最尾部
+        # 才能保证反例搜索指令一定进入下一轮 hypothesize 的 prompt.
+        self._speculator_hint = (
+            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
+        )
         logger.info("P2 counterexample hunt triggered, hint injected")
+    def _control_trace(
+        self,
+        name: str,
+        evidence: str,
+        *,
+        action: str = "advisory_hint",
+        advisory: str = "",
+        iteration: int | None = None,
+    ) -> None:
+        """控制面观测: 记录一次硬/半硬机制的触发 (控制面预算的触发率口径).
+
+        控制面审计要求每个硬控都能统计触发率, 才能执行"长期 0 触发或长期误杀 →
+        删或降". 统一 schema ``name / iteration / evidence / action``, 经
+        campaign.control_trace 发到 EventBus + SSE. 纯观测, 不改任何决策; fail-open.
+
+        另发一条**带固定 tag 的 WARNING 日志**: CLI autoloop 路径不装 audit 订阅器,
+        campaign.* 事件不进任何持久文件; 而 run.log 一定捕获 WARNING. 故离线触发率
+        统计以 ``run.log`` 里 ``control_trace name=...`` 的行为准 (见
+        control_surface_audit.md「观测口径」).
+        """
+        _iter = getattr(self, "_iteration", 0) if iteration is None else iteration
+        logger.warning(
+            "control_trace name=%s iteration=%s evidence=%s action=%s",
+            name, _iter, evidence, action,
+        )
+        # 遥测面: 同一事件也作为 OTel span event 落进 TelemetryCollector → 配了
+        # HUGINN_OTEL_ENDPOINT 时可在 Langfuse 里按 name 检索 (与 run.log 的 WARNING
+        # 互为补充: 日志离线可 grep, 遥测在线可查). 纯观测, fail-open.
+        try:
+            from huginn.telemetry import get_telemetry_collector
+
+            get_telemetry_collector().add_event(
+                "control_trace", name=name, iteration=_iter,
+                evidence=evidence, action=action,
+            )
+        except Exception:  # 防御: 遥测未接线/失败不打断控制流
+            logger.debug("control_trace telemetry emit failed (fail-open)", exc_info=True)
+        self._emit_campaign(
+            "campaign.control_trace",
+            {
+                "name": name,
+                "iteration": _iter,
+                "evidence": evidence,
+                "action": action,
+                "advisory": advisory,
+            },
+        )
+
+    def _emit_convergence_advisory(
+        self, kind: str, detail: str, hint: str, iteration: int
+    ) -> None:
+        """三种“收敛/停滞”提示 (surprise / exec / rename) 的统一出口.
+
+        三者是同一模式: 判据成立 → metacog 复核 → 写 `_speculator_hint` → 发 trace.
+        控制面审计 §11: 各自登记一个机制名会让野外计数被同类机制摊薄 (23 个名里
+        真正点亮的只有 11 个), 合并为单一机制 `convergence_advisory`, 由 `kind`
+        区分来源. 行为不变 (仍是 advisory-only, 不终止 run), 名义机制数 -2.
+        """
+        _blk, _why = False, ""
+        try:
+            _blk, _why = self._metacog_check_completion()
+        except Exception:  # 防御: 完成复核失败不阻断提示
+            logger.debug("metacog completion check failed (non-fatal)", exc_info=True)
+        self._speculator_hint = (
+            (getattr(self, "_speculator_hint", "") or "") + "\n" + hint
+        ).strip()
+        self._control_trace(
+            "convergence_advisory",
+            f"kind={kind} {detail}",
+            iteration=iteration,
+            advisory=_why if _blk else "",
+        )
+
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.
 
@@ -1118,7 +1528,7 @@ class CognitiveLoopMixin:
             from huginn.events.unified_bus import publish_event
 
             publish_event(event_type, data, source="autoloop")
-        except Exception:
+        except Exception:  # 防御: 活动事件总线派发失败忽略
             logger.debug("campaign EventBus emit failed", exc_info=True)
         # SSE 推送到 /tasks/stream 的 'campaign' event, 前端结构化消费
         try:
@@ -1127,7 +1537,7 @@ class CognitiveLoopMixin:
             get_progress_tracker().emit_campaign_event(
                 getattr(self, "_progress_task_id", ""), event_type, data
             )
-        except Exception:
+        except Exception:  # 防御: 活动 SSE 推送失败忽略
             logger.debug("campaign SSE emit failed", exc_info=True)
 
     def _prepare_run(
@@ -1161,6 +1571,13 @@ class CognitiveLoopMixin:
 
         self._iteration = 0
         self._should_stop = False
+        # 报告 citation 门: 执行台账随 run 重置 (跨 run 证据混入报告 = 溯源失真).
+        self._execution_ledger = []
+        # 单一完成出口: 上次判定所在一轮 (防同轮重复判/重复 LLM 调用).
+        self._last_completion_iter = -1
+        # v11 进展不变量: 换名债务随 run 重置 (跨 run 无进展记忆无意义).
+        self._rename_debt = 0
+        self._rename_streak = 0
         self._consecutive_failures = 0
         # F-borrow: 分类计数器随 run 重置 (跨 run 失败模式记忆没意义, 误导自适应).
         self._consecutive_failures_by_type = {}
@@ -1171,13 +1588,13 @@ class CognitiveLoopMixin:
         self._last_run_failure_pattern: str = ""
         try:
             self._last_run_failure_pattern = self._load_failure_pattern()
-        except Exception:
+        except Exception:  # 防御: 失败模式加载失败忽略
             logger.debug("load failure pattern failed", exc_info=True)
         # P2: 加载上 run 探索摘要 — 跟 failure_pattern 互补, 存探索路径而非失败数据.
         self._prev_run_context: str = ""
         try:
             self._prev_run_context = self._load_prev_run_context()
-        except Exception:
+        except Exception:  # 防御: 上轮上下文加载失败忽略
             logger.debug("load prev run_context failed (non-fatal)", exc_info=True)
         # P3: 物理时序数据收集 — 任何工具可通过 result["_physical_timeseries"]
         # 返回标准化时序 (name/unit/data/meaning/source), engine 收集后注入
@@ -1208,11 +1625,15 @@ class CognitiveLoopMixin:
         self._current_prediction = ""  # reset JEPA prediction buffer
         self._last_surprise = 0.0
         self._last_raw_hypothesis = ""  # 完整 LLM 输出, 含 LUCID review
+        self._last_selected_prediction = ""  # A: 选中候选的 predict 字段
+        self._last_task_perf = None  # D: 真实任务性能信号 (无则 None)
+        self._last_reconstruct_disagree = None  # 观察者差分读数 (每轮 _validate 刷新)
+        self._last_blind_confidence = 0.0
         # G2: 加载历史 trajectory action 序列, 给 _check_stuck 当 VF2 匹配历史.
         # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
         try:
             self._traj_history = self._load_trajectory_action_history(limit=20)
-        except Exception:
+        except Exception:  # 防御: 轨迹历史加载失败置空
             self._traj_history = []
             logger.debug("G2 traj history load failed (non-fatal)", exc_info=True)
         try:
@@ -1222,7 +1643,7 @@ class CognitiveLoopMixin:
             self._speculator_hint = spec_result.get("hint", "")
             if spec_result.get("predictions"):
                 logger.info("autoloop speculator: %s", self._speculator_hint)
-        except Exception:
+        except Exception:  # 防御: 投机器失败跳过
             logger.warning("autoloop speculator skipped", exc_info=True)
 
         # 方向2: 启动期回灌历史失败教训 — 每次 run 自带前次败因, 而不是等到卡壳
@@ -1267,7 +1688,7 @@ class CognitiveLoopMixin:
                 importance=0.6,
                 tier="mid",
             )
-        except Exception:
+        except Exception:  # 防御: 失败模式落库失败忽略
             logger.debug("failure_pattern store failed", exc_info=True)
 
     def _load_failure_pattern(self) -> str:
@@ -1282,7 +1703,7 @@ class CognitiveLoopMixin:
                 category="failure_pattern",
                 top_k=1,
             )
-        except Exception:
+        except Exception:  # 防御: 尽力读取失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
         if not results:
@@ -1410,7 +1831,7 @@ class CognitiveLoopMixin:
             if _n == 0:
                 continue
 
-            if _is_spatial and isinstance(_data[0], (list, tuple)) and len(_data[0]) >= 3:
+            if _is_spatial and isinstance(_data[0], list | tuple) and len(_data[0]) >= 3:
                 # 三元组 (t, r, v) — 时空联合表征
                 _t_first = _data[0][0]
                 _t_last = _data[-1][0]
@@ -1442,8 +1863,8 @@ class CognitiveLoopMixin:
                 continue
 
             # 二元组 (t, v) — 标量时序
-            _first = _data[0][1] if isinstance(_data[0], (list, tuple)) and len(_data[0]) >= 2 else None
-            _last = _data[-1][1] if isinstance(_data[-1], (list, tuple)) and len(_data[-1]) >= 2 else None
+            _first = _data[0][1] if isinstance(_data[0], list | tuple) and len(_data[0]) >= 2 else None
+            _last = _data[-1][1] if isinstance(_data[-1], list | tuple) and len(_data[-1]) >= 2 else None
             _trend = ""
             if _first is not None and _last is not None:
                 _diff = _last - _first
@@ -1483,7 +1904,7 @@ class CognitiveLoopMixin:
             return None
         try:
             data = json.loads(raw[start:end + 1])
-        except Exception:
+        except Exception:  # 防御: 尽力构造失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         action = str(data.get("action", "")).strip().lower()
@@ -1668,7 +2089,7 @@ Respond JSON only:
         # ponytail: 复用 longterm.store, JSON 序列化. 升级路径: 独立 failure_pattern 表.
         try:
             self._persist_failure_pattern(run_id)
-        except Exception:
+        except Exception:  # 防御: 失败模式持久化失败忽略
             logger.debug("persist failure pattern failed", exc_info=True)
         total_time = time.time() - getattr(self, "_run_start_time", time.time())
         report_phase = await self._run_phase_async(
@@ -1692,7 +2113,7 @@ Respond JSON only:
         # session summary → long-term memory
         try:
             self.memory.promote_session_summary(tier="long")
-        except Exception:
+        except Exception:  # 防御: 会话摘要提升失败忽略
             logger.debug("session summary promotion failed", exc_info=True)
 
         # trajectory
@@ -1726,7 +2147,7 @@ Respond JSON only:
                     "'%s' — autoloop may be空转 (audit 06 F1)",
                     objective[:100],
                 )
-        except Exception:
+        except Exception:  # 防御: 轨迹路径读取失败置空
             logger.debug("best-effort op failed", exc_info=True)
             trajectory_path = None
 
@@ -1737,6 +2158,24 @@ Respond JSON only:
             from huginn.evaluation.goal_judge import GoalJudge
 
             final_output = str(report_phase.result or "")
+            # report_phase.result 是报告文件**路径**(_report 返回 str(report_path),
+            # 同 report_path 字段用法). GoalJudge 要的是报告**正文**, 否则判官只看到
+            # 一串路径 → 误判"无数值证据". 是文件就读入正文, 否则按原样当文本.
+            if final_output:
+                try:
+                    from pathlib import Path as _Path
+
+                    _rp = _Path(final_output)
+                    if _rp.is_file():
+                        final_output = _rp.read_text(encoding="utf-8")
+                        # 报告文件开头是 autoloop 头部(内嵌完整 objective + 阶段表,
+                        # ~3.5k 字), 会挤掉判官的窗口; objective 已在 prompt 里另给,
+                        # 这里只取正文(从 "## Research Report" 起).
+                        _cut = final_output.find("## Research Report")
+                        if _cut > 0:
+                            final_output = final_output[_cut:]
+                except OSError:
+                    logger.debug("read report for judge failed", exc_info=True)
             judge = GoalJudge(llm=self.verification_model or self.model)
             goal_judgment = judge.judge(
                 objective=objective,
@@ -1744,7 +2183,7 @@ Respond JSON only:
                 final_output=final_output,
             )
             goal_achieved = goal_judgment.get("achieved")
-        except Exception:
+        except Exception:  # 防御: 目标评审失败跳过
             logger.warning("autoloop goal judge skipped", exc_info=True)
 
         # provenance
@@ -1753,7 +2192,7 @@ Respond JSON only:
             provenance_record.timestamps["end"] = datetime.now().isoformat()
             self._provenance_logger.log(provenance_record)
             provenance_path = str(self._provenance_logger.path)
-        except Exception:
+        except Exception:  # 防御: 来源路径读取失败置空
             logger.debug("best-effort op failed", exc_info=True)
             provenance_path = None
 
@@ -1787,7 +2226,7 @@ Respond JSON only:
             jsonld_path = self.workspace / f"{run_id}_dataset.jsonld"
             write_fair_jsonld(fair_metadata, jsonld_path)
             logger.info("FAIR JSON-LD written to %s", jsonld_path)
-        except Exception:
+        except Exception:  # 防御: FAIR 元数据生成失败忽略
             logger.debug("FAIR metadata generation failed", exc_info=True)
 
         # P2: trajectory success pattern 抽取 — 复用 KB + auto_ingest 路径
@@ -1821,7 +2260,7 @@ Respond JSON only:
                         "trajectory pattern stored: doc_id=%s (run %s)",
                         pattern_doc_id, run_id,
                     )
-            except Exception:
+            except Exception:  # 防御: 轨迹模式提取失败跳过
                 logger.debug(
                     "trajectory pattern extraction failed (non-fatal)",
                     exc_info=True,
@@ -1836,7 +2275,7 @@ Respond JSON only:
         for _p in phases:
             if isinstance(_p.result, dict):
                 _tc = _p.result.get("tool_calls", 0)
-                if isinstance(_tc, (int, float)):
+                if isinstance(_tc, int | float):
                     _tool_calls += int(_tc)
 
         return AutoloopResult(
@@ -1866,7 +2305,7 @@ Respond JSON only:
         try:
             from huginn.provenance.registry import ProvenanceRegistry
             return ProvenanceRegistry.shared().current_version()
-        except Exception:
+        except Exception:  # 防御: 阶段计算失败返回占位
             return -1
 
     def _rollback_on_execute_failure(
@@ -1897,8 +2336,257 @@ Respond JSON only:
                     "loop rollback: execute failed (%s), reverted %d file(s) to v%d",
                     type(exc).__name__, len(affected), pre_version,
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("provenance rollback failed (non-fatal)", exc_info=True)
+
+    async def _evaluate_completion(
+        self,
+        goal: Any,
+        cog: dict[str, Any],
+        state: LoopState,
+        max_iterations: int,
+    ) -> dict[str, Any]:
+        """单一完成判定出口 (控制面审计: 合并 F2/F17/Unified/CompletionGate).
+
+        此前循环里判"是否完成"有三套并行实现 —— 默认 F2+F17 散装、可选
+        Unified+Arbiter、可选 CompletionGate —— 各自独立重算、各自写
+        ``should_stop``, 且默认路径用的是**规则版** GoalJudge (关键词覆盖),
+        于是这条仅存的硬出口不可信. 这里收敛为**一次判定**: 产出一个 completion
+        signal 交给当前启用的决策变体, 但 stop 只有一个来源.
+
+        判定顺序: (1) GoalJudge (有模型走 LLM, 否则规则降级) 出 achieved/gaps;
+        (2) 可选变体 (统一决策 / 完成门) 消费同一 judge 结果, 只决定 stop 之外的
+        switch_tool/requery; (3) **统一验收门** ``_accept_completion`` 对任何
+        "完成"信号做证据门 + SKEPTIC 对抗审查.
+
+        返回 ``{"ran", "stop", "reason", "hint"}``; 纯判定, 不写 state.should_stop
+        (由调用方写一次, 便于审计与触发率观测).
+        """
+        out: dict[str, Any] = {"ran": False, "stop": False, "reason": "", "hint": ""}
+        if goal is None or getattr(state, "should_stop", False):
+            return out
+
+        _every = 3
+        _due = (
+            state.iteration % _every == 2
+            or state.iteration >= max_iterations - 1
+        )
+        if not _due or int(getattr(self, "_last_completion_iter", -1)) == state.iteration:
+            return out
+        self._last_completion_iter = state.iteration
+        out["ran"] = True
+
+        from huginn.autoloop.engine_reflect import _ledger_evidence_text
+
+        _final_text = str(
+            (cog.get("validation") or {}).get("summary")
+            or (cog.get("validation") or {}).get("result_data")
+            or (cog.get("execution_result") or {}).get("summary", "")
+        )
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        _claim_text = (_ledger_evidence_text(_ledger) + "\n" + _final_text).strip()
+
+        # (1) GoalJudge: 循环内口径对齐出口路径 (run() L2072) —— 用真模型判,
+        #     判据是证据台账 + 本轮产出, 而不是中间摘要上的关键词覆盖.
+        _judge_llm = getattr(self, "verification_model", None) or getattr(self, "model", None)
+        try:
+            from huginn.evaluation.goal_judge import GoalJudge
+
+            _gj = GoalJudge(llm=_judge_llm).judge(goal.objective, None, _claim_text)
+        except Exception:  # 防御: 判定失败按未达成处理
+            logger.debug("completion GoalJudge failed (non-fatal)", exc_info=True)
+            _gj = {"achieved": False, "score": 0.0, "evidence": [], "gaps": []}
+        _achieved = bool(_gj.get("achieved"))
+        self._control_trace(
+            "goal_judge",
+            f"achieved={_achieved} score={_gj.get('score')} "
+            f"llm={'1' if _judge_llm is not None else '0'}",
+            iteration=state.iteration,
+            action="stop_candidate" if _achieved else "advisory_hint",
+        )
+
+        _stop = _achieved
+        _reason = f"goal judge achieved (score={_gj.get('score')})"
+
+        # (2) 可选变体: 消费**同一** judge 结果, 不重复判 goal.
+        if os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1":
+            try:
+                from huginn.evaluation.unified_evaluator import UnifiedEvaluator
+                from huginn.metacog.decision_arbiter import DecisionArbiter
+
+                _unified = UnifiedEvaluator().evaluate({
+                    "goal_judge": {
+                        "achieved": _achieved,
+                        "score": _gj.get("score", 0.0),
+                        "evidence": _gj.get("evidence", []),
+                        "gaps": _gj.get("gaps", []),
+                    },
+                })
+                _bandit = None
+                try:
+                    from huginn.agent.bandit_controller import EffortBandit
+
+                    _bandit = EffortBandit.get_instance()
+                except Exception:  # 防御: 老虎机不可用跳过仲裁
+                    logger.debug("bandit unavailable for arbiter", exc_info=True)
+                _arbiter = DecisionArbiter()
+                _dctx = _arbiter.build_context(
+                    csm_state=getattr(self, "_current_phase", "") or "",
+                    bandit=_bandit,
+                    iteration=state.iteration,
+                    max_iterations=max_iterations,
+                    turns_count=getattr(self, "_turn_count", 0),
+                    tool_calls_count=getattr(self, "_tool_calls_count", 0),
+                )
+                _dctx.gate_status = "pass" if _unified.achieved else "gaps_hint"
+                _dctx.gate_should_stop = _unified.achieved
+                _dctx.gate_reason = (
+                    "; ".join(_unified.gaps[:3])
+                    if _unified.gaps
+                    else f"score={_unified.score:.2f}"
+                )
+                _decision = _arbiter.evaluate(_dctx)
+                _stop = _decision.action == "stop"
+                _reason = f"unified: {_decision.reason}"
+                if _decision.action in ("switch_tool", "requery"):
+                    out["hint"] = f"[unified] {_decision.action}: {_decision.reason}"
+            except Exception:  # 防御: 统一决策失败回退单一出口
+                logger.debug("unified decision failed, fallback to single exit", exc_info=True)
+        elif os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1":
+            try:
+                from huginn.metacog.completion_gate import CompletionGate, GateContext
+
+                _families = 0
+                with contextlib.suppress(Exception):
+                    _families = len([
+                        f for f in self._get_metacog_method_registry().all()
+                        if f.member_agent_ids
+                    ])
+                _gate = CompletionGate(
+                    auditor_factory=self._get_metacog_completion_auditor,
+                    goal_judge_llm=_judge_llm,
+                    judge_every_n=_every,
+                )
+                _gctx = GateContext(
+                    iteration=state.iteration,
+                    max_iterations=max_iterations,
+                    families_explored=_families,
+                    live_components=(
+                        self.hypothesis_graph.component_count()
+                        if hasattr(self, "hypothesis_graph") else 0
+                    ),
+                    last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
+                    objective=goal.objective,
+                )
+                _gd = _gate.review(goal, cog.get("validation"), _gctx)
+                _stop = bool(_gd.should_stop)
+                _reason = f"completion gate: {getattr(_gd, 'reason', '')}"
+                if getattr(_gd, "status", "") == "block":
+                    out["hint"] = f"[completion gate] {getattr(_gd, 'reason', '')}"
+            except Exception:  # 防御: 完成门失败回退单一出口
+                logger.debug("completion gate failed, fallback to single exit", exc_info=True)
+
+        if not _stop:
+            if _gj.get("gaps"):
+                _gap_hint = "; ".join(str(g) for g in _gj["gaps"][:3])
+                out["hint"] = (out["hint"] + "\n" + _gap_hint).strip() if out["hint"] else _gap_hint
+            return out
+
+        # (3) 统一验收门: "完成" ≠ "验收".
+        _ok, _why = await self._accept_completion(goal, _claim_text, state)
+        if not _ok:
+            out["stop"] = False
+            out["hint"] = _why
+            return out
+
+        out["stop"] = True
+        out["reason"] = _reason
+        return out
+
+    async def _accept_completion(
+        self, goal: Any, claim_text: str, state: LoopState
+    ) -> tuple[bool, str]:
+        """完成信号的验收门 — 把"完成"与"验收"分开.
+
+        竞品共性 (Kosmos / Co-Scientist / AlphaEvolve): producer 之外有独立
+        verifier. 这里两道:
+
+        (1) **证据门**: 完成声明必须有本轮真实执行证据 (台账里有有限数值). 无证据
+            的"达成"不可终止 —— 只判"这条证据算不算数", 不替书生下科学判断.
+        (2) **SKEPTIC**: 独立 LLM 对抗审查, 拿证据尝试证伪声明; 不通过则把反例
+            作为 hint 回灌, 不终止. 无模型时 fail-open (退化为只看证据门).
+        """
+        from huginn.autoloop.engine_reflect import (
+            _ledger_evidence_text,
+            _ledger_has_finite_evidence,
+        )
+
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        if not _ledger_has_finite_evidence(_ledger):
+            self._control_trace(
+                "goal_acceptance",
+                f"blocked: no finite execution evidence (ledger={len(_ledger)})",
+                iteration=state.iteration,
+                action="block",
+            )
+            return False, (
+                "[验收门] 完成声明缺少本轮真实执行证据 (台账中无有限数值): "
+                "请先跑出可溯源的数值结果, 或显式说明证据缺口, 不要停在无证据的结论上."
+            )
+
+        # (1b) 元认知完成度审计 (推导链/复现证据/证据强度启发式, 无 LLM).
+        #      原 F2/F17 用它作硬阻断, 这里保留为验收门的一层.
+        _blk, _why = self._metacog_check_completion()
+        if _blk:
+            self._control_trace(
+                "goal_metacog_audit",
+                f"blocked: {_why}",
+                iteration=state.iteration,
+                action="block",
+            )
+            return False, f"[验收门·完成度审计] {_why}"
+
+        _model = getattr(self, "verification_model", None) or getattr(self, "model", None)
+        if _model is not None and hasattr(_model, "ainvoke"):
+            try:
+                from huginn.metacog.critique import adversarial_critique
+
+                _crit = await adversarial_critique(
+                    model=_model,
+                    report=(
+                        f"## 完成声明 (待证伪)\n{claim_text[:4000]}\n\n"
+                        f"## 本轮真实执行证据台账\n{_ledger_evidence_text(_ledger)[:6000]}"
+                    ),
+                    checklist=(
+                        f"目标: {getattr(goal, 'objective', '')}\n"
+                        "核对: 声明中的每个数值/结论是否能在**证据台账**中查到出处; "
+                        "凡是优于合理基线、或台账中查无出处的数值, 一律作为 red flag."
+                    ),
+                )
+                _verdict = str(_crit.get("overall_verdict", "fix_needed"))
+                _flags = _crit.get("implausible_metrics") or []
+                if _verdict != "pass":
+                    _why = "; ".join(
+                        f"{m.get('metric', '?')}({m.get('red_flag', '')})"
+                        for m in _flags[:3] if isinstance(m, dict)
+                    ) or f"skeptic verdict={_verdict}"
+                    self._control_trace(
+                        "goal_skeptic",
+                        f"verdict={_verdict} flags={len(_flags)}",
+                        iteration=state.iteration,
+                        action="block",
+                    )
+                    return False, (
+                        f"[验收门·SKEPTIC] 独立对抗审查未通过 ({_verdict}): {_why}. "
+                        "请修正声明或补齐证据后重报."
+                    )
+                self._control_trace(
+                    "goal_skeptic", "verdict=pass",
+                    iteration=state.iteration, action="allow_stop",
+                )
+            except Exception:  # 防御: 对抗审查失败 fail-open (证据门已过)
+                logger.debug("goal skeptic failed (fail-open)", exc_info=True)
+        return True, ""
 
     async def run_cognitive(
         self,
@@ -1938,7 +2626,7 @@ Respond JSON only:
                         "auto-spawned WakeScheduler (%d pending wakes)",
                         len(store.pending()),
                     )
-            except Exception:
+            except Exception:  # 防御: 自动唤醒调度生成失败忽略
                 logger.debug("auto wake scheduler spawn failed", exc_info=True)
 
         from huginn.autoloop.cognitive_loop import (
@@ -1950,6 +2638,16 @@ Respond JSON only:
 
         self._max_refines = max_refines
         self._refine_count = 0
+        # 长程探索: 记住本 run 自己的 goal id. 早停守卫 _long_horizon_keep_going
+        # 必须按本 run 的 goal 判挂钟, 不能用全局 get_active() —— 它按插入序返回
+        # **第一个** active, 跨 run 残留的旧 goal(其挂钟早已耗尽)会压过当日 goal,
+        # 使守卫恒返 False ⇒ 启发式早停全部失效、长程保护形同虚设
+        # (run50: 昨日 goal_78ca4085 压过当日 goal_763b186a).
+        self._run_goal_id = goal.id if goal is not None else None
+        # 长程探索: 有挂钟预算时, 步数上限不再由 -i 决定(否则约 5 轮即撞顶),
+        # 改为按预算反推的宽松上界; 真正的终止由目标达成 (F2/F17) 或 observe 每步
+        # 查 wall_clock_expired 控制. -i 退化为"至少多少步"的下限.
+        max_iterations = self._long_horizon_iteration_cap(goal, max_iterations)
         self._max_iterations = max_iterations
         # AV2: 每次新 run 重置元认知护航状态 (避免跨 run 串味)
         self._evals_history = []
@@ -2021,6 +2719,15 @@ Respond JSON only:
                     "last_action": state.last_action,
                     "external_stop": True,
                 }
+            # D1: 每步刷新剩余挂钟预算 contextvar — 供 streaming 降级路径给空闲
+            # 阈值封顶, 不让"降级"吞掉超过 goal 剩余预算的时间. contextvar 随 task
+            # 传播, 本步 execute 内的 LLM/子智能体可见. None = 无限制, 保持旧行为.
+            try:
+                from huginn.agent.streaming import remaining_budget_s as _rb_s
+
+                _rb_s.set(self._budget_remaining_s())
+            except Exception:  # 防御: 预算刷新失败不影响主循环
+                logger.debug("remaining_budget_s refresh failed", exc_info=True)
             # P1.4: 每轮开头发 campaign.iteration — 对齐 run() L1305.
             # 前端 IterationTimeline 依赖这个事件渲染轮次进度.
             self._emit_campaign(
@@ -2040,10 +2747,63 @@ Respond JSON only:
                 from huginn.autoloop.goal_store import get_goal_store
 
                 _gs = get_goal_store()
-                _active_goal = _gs.get_active()
+                # 只认本 run 自己的 goal (按 id 取回 store 内同一对象, 保证 increment
+                # 与 is_budget_exhausted 同源). 全局 get_active() 按插入序返回**第一个**
+                # active: 跨 run 残留的旧 goal 一旦 iteration 超上限, 就会在首轮 observe
+                # 被误判"预算耗尽" → should_stop, 整轮 0 工具调用空转. 取不到本 run 的
+                # goal (无 -s 的纯 objective run) 才退回全局 active.
+                _active_goal = (
+                    _gs.get_goal(goal.id) if goal is not None else None
+                ) or _gs.get_active()
                 if _active_goal:
                     _gs.increment_iteration(_active_goal.id)
-                    if GoalScheduler.is_budget_exhausted(_active_goal):
+                    # 长程探索: 挂钟预算是硬终止器 — 耗尽即停 (启发式早停已在
+                    # _long_horizon_keep_going 让位给挂钟). 步数上限已被
+                    # _long_horizon_iteration_cap 抬高, 所以这里才是真正的收口.
+                    if (
+                        os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1"
+                        and _gs.wall_clock_expired(_active_goal.id)
+                    ):
+                        logger.info(
+                            "v10 long-horizon wall-clock expired: %s (%.0fs), stop",
+                            _active_goal.id, _active_goal.wall_clock_budget_seconds,
+                        )
+                        try:
+                            # D4: 耗尽 ≠ 达成 — 预算到点记 'expired', 不冒充 completed.
+                            # HUGINN_BUDGET_EXPIRE_SEMANTICS=0 回退旧语义 (complete).
+                            if os.environ.get(
+                                "HUGINN_BUDGET_EXPIRE_SEMANTICS", "1"
+                            ) == "1":
+                                _gs.expire(_active_goal.id, reason="wall_clock")
+                            else:
+                                _gs.complete(_active_goal.id)
+                        except Exception:  # 防御: 收口失败忽略
+                            logger.debug("expire on wall-clock failed", exc_info=True)
+                        self._emit_campaign(
+                            "campaign.budget_exhausted",
+                            {
+                                "iteration": state.iteration,
+                                "goal_id": _active_goal.id,
+                                "budget": _active_goal.wall_clock_budget_seconds,
+                                "used": state.iteration,
+                                "reason": "wall_clock",
+                            },
+                        )
+                        state.should_stop = True
+                        return {
+                            "context_summary": "",
+                            "redirect_reason": state.redirect_reason,
+                            "iteration": state.iteration,
+                            "last_action": state.last_action,
+                            "budget_exhausted": True,
+                        }
+                    if (
+                        GoalScheduler.is_budget_exhausted(_active_goal)
+                        # 长程探索: 步数预算让位给挂钟 — 上限已在
+                        # _long_horizon_iteration_cap 抬高(且单例可能持有抬升前的
+                        # 陈旧 max_iterations, 这里索性不参与判定).
+                        and os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1"
+                    ):
                         logger.info(
                             "v10 goal budget exhausted: iter=%d max=%d, failing %s",
                             _active_goal.iteration, _active_goal.max_iterations, _active_goal.id,
@@ -2053,7 +2813,7 @@ Respond JSON only:
                                 _active_goal.id,
                                 reason=f"budget exhausted: {_active_goal.iteration}/{_active_goal.max_iterations}",
                             )
-                        except Exception:
+                        except Exception:  # 防御: 目标失败处理失败忽略
                             logger.debug("fail_goal failed (non-fatal)", exc_info=True)
                         self._emit_campaign(
                             "campaign.budget_exhausted",
@@ -2072,7 +2832,7 @@ Respond JSON only:
                             "last_action": state.last_action,
                             "budget_exhausted": True,
                         }
-            except Exception:
+            except Exception:  # 防御: 目标增量预算失败忽略
                 logger.debug("v10 goal increment/budget failed (non-fatal)", exc_info=True)
 
             # v10-F6: build_continuation_prompt — 对齐 run() L1321-1331.
@@ -2086,7 +2846,7 @@ Respond JSON only:
                             (self._speculator_hint + "\n" + _cont).strip()
                             if self._speculator_hint else _cont
                         )
-                except Exception:
+                except Exception:  # 防御: 续接提示构建失败忽略
                     logger.debug("v10 F6 build_continuation_prompt failed (non-fatal)", exc_info=True)
 
             # _perceive 是 sync (跑 git subprocess + rglob), 丢线程池不阻塞
@@ -2145,7 +2905,7 @@ Respond JSON only:
                     _n_drained = await self._drain_side_questions()
                     if _n_drained:
                         logger.info("v10 F8 drained %d side questions", _n_drained)
-                except Exception:
+                except Exception:  # 防御: 边问清空失败忽略
                     logger.debug("v10 F8 drain_side_questions failed (non-fatal)", exc_info=True)
 
             # v10-F5: blind_spot_pass — 对齐 run() L1391-1402.
@@ -2157,7 +2917,7 @@ Respond JSON only:
                     if _bs:
                         cog["context"]["blind_spots"] = _bs
                         logger.info("v10 blind spot pass: %d unknowns", len(_bs))
-                except Exception:
+                except Exception:  # 防御: 盲点传递失败忽略
                     logger.debug("v10 blind_spot_pass failed (non-fatal)", exc_info=True)
 
             return {
@@ -2177,6 +2937,30 @@ Respond JSON only:
                 if not cog.get("current_hyp_id") and not cog.get("hypothesis"):
                     return ActionDecision(action="stop", rationale="no hyp to pivot from")
                 return ActionDecision(action="pivot", rationale=f"redirect: {state.redirect_reason}")
+            # D3: 长程停滞 → 强制转向 (非终止). 无进展且预算未尽时不再静默空转,
+            # 直接注入 pivot 并清零 stagnation, 把"接着绕"换成"换方法族再评估".
+            # 默认关 (HUGINN_STALL_AS_ACTION=0), 先观测触发率再默认开.
+            _stall_action = self._long_horizon_stall_action()
+            if _stall_action:
+                _stag = getattr(self, "_darwin_stagnation", 0)
+                self._darwin_stagnation = 0
+                _why = f"长程停滞 {_stag} 轮无增益, 强制转向 {_stall_action}"
+                logger.warning(
+                    "D3 stall→action: forcing %s at iter %d (stagnation=%d, budget left)",
+                    _stall_action, state.iteration, _stag,
+                )
+                self._control_trace(
+                    "stall_as_action",
+                    f"stagnation={_stag} action={_stall_action}",
+                    action="force_redirect",
+                    iteration=state.iteration,
+                )
+                return ActionDecision(
+                    action=_stall_action,
+                    force=True,
+                    rationale=_why,
+                    expected_outcome="换方法族或实验设计后重新评估, 打破当前停滞",
+                )
             hint = self._next_phase_hint
             if hint == "execute" and self._refined_hypothesis:
                 cog["hypothesis"] = self._refined_hypothesis
@@ -2200,7 +2984,33 @@ Respond JSON only:
                 try:
                     llm_decision = await self._decide_next_action_llm(state, cog, obs)
                     if llm_decision is not None:
-                        return llm_decision
+                        # v12 长程: LLM 自主选 stop 与启发式早停同源, 挂钟预算未耗尽时
+                        # 一并让位 —— 否则 decider 一句 stop 就在 iterate 9/360、266s/3600s
+                        # 处静默收口, 绕过 _long_horizon_keep_going 的全部守卫 (run50 即此).
+                        # 控制面审计 A5: 该拦截原为**静默**丢弃 stop 决策 (书生无从知道自己
+                        #   的判断被否), 现降为显式提示 + trace, 仍走规则版顺序推进; 真终止
+                        #   交给目标达成或挂钟耗尽. 非长程模式无挂钟出口, 保持原语义.
+                        if llm_decision.action == "stop" and self._long_horizon_keep_going():
+                            _stop_why = (llm_decision.rationale or "")[:120]
+                            logger.warning(
+                                "decider chose stop at iter %d but long-horizon goal "
+                                "(wall_clock not expired) → continue (rationale=%s)",
+                                state.iteration, _stop_why,
+                            )
+                            self._speculator_hint = (
+                                (getattr(self, "_speculator_hint", "") or "")
+                                + "\n[收结被保留·提示] 你上一轮想收结, 但研究目标尚未达成且"
+                                "挂钟预算未尽: 若要收结, 请在最终答复里给出可溯源的数值"
+                                "结论; 否则换一个方向继续推进."
+                            )
+                            self._control_trace(
+                                "decider_stop",
+                                f"rationale={_stop_why}",
+                                action="advisory_continue",
+                                iteration=state.iteration,
+                            )
+                        else:
+                            return llm_decision
                 except Exception as e:
                     logger.debug("LLM decider failed: %s, fallback to rule", e)
             # 规则版兜底: 默认 7-phase 顺序
@@ -2263,7 +3073,7 @@ Respond JSON only:
                         await self._maybe_clarify(
                             "hypothesize_align", ctx, thread_id="autoloop",
                         )
-                    except Exception:
+                    except Exception:  # 防御: 假设对齐失败忽略
                         logger.debug("v11 FDE hypothesize_align failed (non-fatal)", exc_info=True)
                     phase = await self._run_phase_async(
                         "hypothesize", self._hypothesize, ctx
@@ -2273,28 +3083,48 @@ Respond JSON only:
                     cog["hypothesis"] = phase.result
                     if phase.result:
                         try:
+                            # C: 主路径派生边 — 新假设挂到上一轮假设 (若在), 让衍化链
+                            # 与 β₁ 有边可算 (链上子节点被 support 后成环, 拓扑不再恒 0).
+                            _prev_hyp_id = getattr(
+                                self, "_current_hyp_id_for_plan", None
+                            )
                             cog["current_hyp_id"] = self.hypothesis_graph.add_hypothesis(
                                 statement=phase.result,
                                 rationale=ctx.get("summary", ""),
+                                # A: 选中候选的 predict 字段写入 testable_prediction
+                                testable_prediction=getattr(
+                                    self, "_last_selected_prediction", ""
+                                )
+                                or "",
+                                parent_id=_prev_hyp_id,
                             )
-                            self._current_hyp_id_for_plan = cog["current_hyp_id"]
-                        except Exception:
+                            # add_hypothesis 对**空壳/精确重复**陈述返回 None (守卫拒绝).
+                            # 不能把 None 写回 _current_hyp_id_for_plan —— 那会清掉上一轮
+                            # 的有效假设 id, 让下游 (盲重建/plan_check) 误判"无当前假设"
+                            # 而跳过 (run62 实测 6 次盲重建里 3 次因此空转).
+                            if cog["current_hyp_id"]:
+                                self._current_hyp_id_for_plan = cog["current_hyp_id"]
+                        except Exception:  # 防御: 假设图新增失败忽略
                             logger.debug("hypothesis_graph add failed", exc_info=True)
                     # P0 Task 3: per-hyp 验证预算 — 创建时评估 informativeness + 分配 budget
-                    # toggle off 时跳过 (向后兼容, 不消耗 LLM 调用)
-                    if (
-                        os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1"
-                        and cog.get("current_hyp_id")
-                    ):
+                    # E: 也允许在**只要 novelty** 时评估 (HUGINN_NOVELTY_EVAL=1) —— 让
+                    # novelty 独立于 per-hyp 预算可用, 供 darwin 第 6 维. 两者都关则跳过
+                    # (向后兼容, 不消耗 LLM 调用).
+                    _want_budget = os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1"
+                    _want_novelty = os.environ.get("HUGINN_NOVELTY_EVAL", "0") == "1"
+                    if cog.get("current_hyp_id") and (_want_budget or _want_novelty):
                         try:
                             _info = await self._evaluate_informativeness(
                                 cog["current_hyp_id"]
                             )
-                            self._compute_verification_budget(
-                                cog["current_hyp_id"],
-                                _info["expected_informativeness"],
-                            )
-                        except Exception:
+                            # novelty 已由 _evaluate_informativeness 落到节点 (E);
+                            # 仅 per-hyp 预算模式才消费 informativeness 分配预算.
+                            if _want_budget:
+                                self._compute_verification_budget(
+                                    cog["current_hyp_id"],
+                                    _info["expected_informativeness"],
+                                )
+                        except Exception:  # 防御: 单假设预算评估失败忽略
                             logger.debug("per-hyp budget eval failed", exc_info=True)
                     # P1.4: campaign SSE 对齐 run() L1435
                     self._emit_campaign(
@@ -2318,14 +3148,72 @@ Respond JSON only:
                 if action == "execute":
                     if not cog["plan"]:
                         return None
-                    self._current_prediction = cog["plan"].get("expected_prediction", "")
+                    # JEPA 阶段2-0: prediction buffer，expected_prediction 缺失时
+                    # 兜底 description（真实模型常把数值预测写进描述）, 确保采集触发。
+                    self._current_prediction = (
+                        cog["plan"].get("expected_prediction")
+                        or cog["plan"].get("description", "")
+                        or ""
+                    ).strip()
+                    # JEPA 方案① 结构化计划槽: 方法级目标的输入/公式以 PLAN_SLOTS 块
+                    # 追加到 prediction(现 span predictor 按行切 span 可消费), 暂存供
+                    # _record_jepa_pair 落库 + 泄漏检测。
+                    try:
+                        from huginn.jepa_slots import append_slots
+                        _inputs = cog["plan"].get("prediction_inputs") or []
+                        _formula = cog["plan"].get("plan_formula", "")
+                        if _inputs:
+                            self._current_prediction = append_slots(
+                                self._current_prediction, _inputs, _formula
+                            )
+                            self._jepa_plan_inputs = {
+                                "inputs": _inputs, "formula": _formula,
+                            }
+                    except Exception:  # noqa: BLE001 — 槽是增量, 失败不阻塞
+                        logger.debug("[jepa-slots] cog_loop slot append failed", exc_info=True)
                     # v10: 下沉 run() L1493+L1497 budget + gate 检查到 execute_fn.
                     # spec 漏列, 但没有这俩 check, budget tier / phase gate 在
                     # run_cognitive 路径完全失效. ponytail: check 失败不抛,
                     # 写 hint 让下轮 decide 看到, 当前 return None 跳过 execute.
                     _plan = cog["plan"]
-                    if not self._check_budget(state.iteration, _plan):
-                        # budget 拒: hint 已被 _check_budget 写, 这里不重复
+                    if self._plan_missing_executable(_plan):
+                        # 2026-09-11 闭环训: 模型对 trivial 目标屡犯"换名归约/空断言"——
+                        # plan 不含可执行数值片段就直接进 execute 空转 (tool_results 全 0),
+                        # 却还能过 advisory 门。按设计原则不硬阻断 (checkpoint 才该硬卡),
+                        # 只做强 hint (纯 advisory, 下轮 decide/hypothesis 读到, 督促补脚本)。
+                        self._speculator_hint += (
+                            "\n[advisory: execute] 当前 plan 未含可直接运行的数值脚本。"
+                            "请先产生一段可执行的 python 片段(import + 公式 + print 结果),"
+                            "在 plan 里落地并真实运行, 带回数值后再进 execute→validate。"
+                            "不要用 DIM/换名式重述代替计算。\n"
+                        )
+                    # 长程探索: 真实预算是挂钟, 而迭代档位(为短程设计)在 step 31-50
+                    # 只放 coder, 会把 explore 类计算实验整段禁掉 —— execute 连续被
+                    # 跳过 → 循环拿旧结果反复 validate → 执行指纹窗口填满同一指纹
+                    # (run52 实测: 904s/3600s 就据此 conclude+stop, 判别实验一次没跑).
+                    # 控制面审计 A6 (run56 数据: 长程下该门 7/7 直接 bypass = 零信息):
+                    # 长程模式下"阶段门"整类都不该存在, 故这里**整段收掉** —— 长程不再
+                    # 走预算门, 也不留 bypass trace (连观测都不必), 特判点 2→1.
+                    # 短程(非长程)行为不变: 保留原档位门.
+                    if (
+                        not self._long_horizon_keep_going()
+                        and not self._check_budget(state.iteration, _plan)
+                    ):
+                        # budget 拒: hint 已被 _check_budget 写, 这里不重复.
+                        # warning 级: 默认 root logger 无 handler, info 会被静默吞掉 —
+                        # 而"execute 被跳过"必须可审计 (否则只会看到 validate 反复
+                        # 复用旧结果→假收敛, 定位不到真因, 见 run52).
+                        logger.warning(
+                            "execute skipped: budget rejected plan mode=%r at iter %d "
+                            "(tier restricts modes) → validate 将复用上一轮结果",
+                            _plan.get("mode"), state.iteration,
+                        )
+                        self._control_trace(
+                            "execute_budget_gate",
+                            f"rejected mode={_plan.get('mode')!r}",
+                            action="block_execute",
+                            iteration=state.iteration,
+                        )
                         return None
                     if not self._check_gate(
                         "plan", "execute",
@@ -2341,6 +3229,11 @@ Respond JSON only:
                             + "\n"
                         )
                         await self._wait_if_checkpoint_pending("plan", "execute")
+                        logger.warning(
+                            "execute skipped: plan→execute gate blocked at iter %d "
+                            "(mode=%r) → validate 将复用上一轮结果",
+                            state.iteration, _plan.get("mode"),
+                        )
                         return None
                     # Infra: execute 前快照 provenance 版本时钟, 供 on_execute_failure
                     # 回调回滚到执行前状态. 工具异常改坏文件时, rollback_to(version)
@@ -2365,7 +3258,7 @@ Respond JSON only:
                             # 上限防膨胀: 保留最近 20 条时序
                             if len(self._physical_timeseries) > 20:
                                 del self._physical_timeseries[: -20]
-                    except Exception:
+                    except Exception:  # 防御: 时序收集失败忽略
                         logger.debug("timeseries collect failed (non-fatal)", exc_info=True)
                     # v10: 下沉 run() L1567-1577 plan 完成标记.
                     _plan_id = cog["plan"].get("plan_id") if isinstance(cog["plan"], dict) else None
@@ -2374,7 +3267,7 @@ Respond JSON only:
                             _store = self._get_plan_store()
                             if _store is not None:
                                 _store.complete_plan(_plan_id)
-                        except Exception:
+                        except Exception:  # 防御: 计划完成失败忽略
                             logger.warning("v10 complete_plan failed (non-fatal)", exc_info=True)
                     # git commit after execute (同 run(): 让下轮 perceive 看到 diff)
                     await asyncio.to_thread(self._git_commit_after_execute,
@@ -2423,6 +3316,26 @@ Respond JSON only:
                         "pde_classification", "sobol_top_features",
                         "constraint_check", "literature_claims",
                     ) if k in _val}
+                    # 方案2: Code Lab 亲写实验已在沙箱真跑通并产出 objectives 时,
+                    # tests_passed 的依据是"已执行的数值实验", 不是 workspace 里的 pytest
+                    # (空跑 exit 5 会产出一段自相矛盾的 reviewer_critique 声称"未运行测试").
+                    # 把执行事实接进 gate evidence, 并去掉与之矛盾的评审批次,
+                    # 避免 red-team 以"未运行测试"为由误否 validate→learn, 从而阻断 RSI.
+                    if _exec.get("mode") == "code_lab" and _exec.get("success"):
+                        _gate_evidence["mode"] = "code_lab"
+                        _gate_evidence["validation_basis"] = str(
+                            _val.get("validation_evidence") or "code_lab_objectives"
+                        )
+                        if _exec.get("objectives"):
+                            _gate_evidence["objectives"] = _exec["objectives"]
+                        # 带上真实执行物: 书生亲写的实验脚本 + 沙箱返回的 summary,
+                        # 让 reviewer 能看到"断言/逻辑/产出"而非只有 tests_passed 裸布尔,
+                        # 避免因"看不到测试内容"再误否 (截断控 prompt 体积).
+                        if _exec.get("script"):
+                            _gate_evidence["executed_script"] = str(_exec["script"])[:3000]
+                        if _exec.get("result"):
+                            _gate_evidence["sandbox_result"] = _exec["result"]
+                        _gate_evidence.pop("reviewer_critique", None)
                     if isinstance(_exec.get("physics_audit"), dict):
                         _gate_evidence["physics_audit"] = _exec["physics_audit"]
                     if not self._check_gate("validate", "learn", _gate_evidence):
@@ -2476,7 +3389,7 @@ Respond JSON only:
                             )
                             # P15: pivot 是关键事件, 立刻 save (force=True)
                             self._maybe_save_engine_state(force=True, reason="pivot")
-                        except Exception:
+                        except Exception:  # 防御: 认知转向失败忽略
                             logger.warning("cognitive pivot failed", exc_info=True)
                     # 清中间状态, 下轮重新 observe
                     for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
@@ -2571,7 +3484,7 @@ Respond JSON only:
                         _redteam = self._redteam_findings()
                         from huginn.autoloop.engine import AutoloopEngine
                         ftype = AutoloopEngine._classify_failure(validation, _redteam)
-                    except Exception:
+                    except Exception:  # 防御: 尽力操作失败按普通错误
                         logger.debug("best-effort op failed", exc_info=True)
                         ftype = "hypothesis_error"
                     by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
@@ -2584,6 +3497,14 @@ Respond JSON only:
                         logger.warning(
                             "cognitive stop: %d consecutive %s failures",
                             by_type[ftype], ftype,
+                        )
+                        # 控制面观测 A8: 失败预算(按类)是**硬终止**, 触发率未知.
+                        #   加 trace 以便"长期 0 触发或长期误杀 → 删或降"的第二轮删减.
+                        self._control_trace(
+                            "failure_budget",
+                            f"type={ftype} count={by_type[ftype]} limit={_type_max}",
+                            action="stop",
+                            iteration=state.iteration,
                         )
                         return ReflectionResult(
                             should_stop=True,
@@ -2610,6 +3531,15 @@ Respond JSON only:
                                     "cognitive stop: consecutive=%d 且窗口失败率 %.2f >= %.2f",
                                     self._consecutive_failures, _fail_rate, _wthresh,
                                 )
+                                # 控制面观测 A8: 同上, 硬终止加 trace (触发率统计).
+                                self._control_trace(
+                                    "failure_budget",
+                                    f"consecutive={self._consecutive_failures} "
+                                    f"limit={self._max_consecutive_failures} "
+                                    f"window_fail_rate={_fail_rate:.2f}",
+                                    action="stop",
+                                    iteration=state.iteration,
+                                )
                                 return ReflectionResult(
                                     should_stop=True,
                                     advice=f"{self._consecutive_failures} consecutive failures (window fail rate {_fail_rate:.2f})",
@@ -2618,6 +3548,14 @@ Respond JSON only:
                             logger.warning(
                                 "cognitive stop: %d consecutive failures (total cap)",
                                 self._consecutive_failures,
+                            )
+                            # 控制面观测 A8: 同上, 硬终止加 trace (触发率统计).
+                            self._control_trace(
+                                "failure_budget",
+                                f"consecutive={self._consecutive_failures} "
+                                f"limit={self._max_consecutive_failures}",
+                                action="stop",
+                                iteration=state.iteration,
                             )
                             return ReflectionResult(
                                 should_stop=True,
@@ -2643,7 +3581,7 @@ Respond JSON only:
                         )
                         advice = (advice + " | G2 match: " + stuck["advice"]).strip(" |")
                         logger.info("G2 trajectory match: %s", stuck["advice"])
-            except Exception:
+            except Exception:  # 防御: 停滞检测失败忽略
                 logger.debug("G2 _check_stuck failed (non-fatal)", exc_info=True)
 
             # timeout / pivot 预算 (硬停)
@@ -2714,7 +3652,7 @@ Respond JSON only:
                                 self._speculator_hint = (
                                     self._speculator_hint + f"\n{_hint_text}"
                                 ).strip()
-                        except Exception:
+                        except Exception:  # 防御: 三舱失败回退命名空间
                             logger.debug(
                                 "ThreeCabin failed, fallback to SimpleNamespace",
                                 exc_info=True,
@@ -2756,9 +3694,9 @@ Respond JSON only:
                             prompt_len=len(getattr(self, "_last_hypothesis", "") or ""),
                             idea_count=self.hypothesis_graph.component_count() if hasattr(self, "hypothesis_graph") else 1,
                         )
-                    except Exception:
+                    except Exception:  # 防御: 热机更新失败忽略
                         logger.debug("AV4 heat_engine update in autoloop failed", exc_info=True)
-                except Exception:
+                except Exception:  # 防御: 指标漂移更新失败忽略
                     logger.debug("AV2 metrics/drift update failed", exc_info=True)
 
                 # PMK 一致性 + should_pause_for_decision — autoloop 无人在环,
@@ -2816,252 +3754,39 @@ Respond JSON only:
                             self._speculator_hint = (
                                 self._speculator_hint + f"\n[PAUSE] {_reason}\n"
                             ).strip()
-                except Exception:
+                except Exception:  # 防御: 应暂停判断失败忽略
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
-                # v23 Unified Decision: HUGINN_USE_UNIFIED_DECISION=1 时走
-                # UnifiedEvaluator + DecisionArbiter 单一决策出口. 收集 GoalJudge /
-                # Step 评估信号 → UnifiedEvaluator 聚合 → DecisionArbiter 仲裁 →
-                # 唯一 Decision (stop/continue/switch_tool/requery). 默认 off,
-                # 走原 _use_gate + F2/F17/F4/F3 散装逻辑 (向后兼容).
-                # 落地承诺: DecisionArbiter / UnifiedEvaluator 不再是孤立模块.
-                _use_unified_decision = (
-                    os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1"
-                    and goal is not None
-                    and not state.should_stop
-                )
-                if _use_unified_decision:
-                    try:
-                        from huginn.evaluation.unified_evaluator import (
-                            UnifiedEvaluator,
+                # v24 单一完成出口 (控制面审计: 合并 F2/F17/Unified/CompletionGate).
+                # 判定 + 验收都在 _evaluate_completion 内完成, 这里只写**一次**
+                # should_stop. 可选统一决策 / 完成门退化为方法内的两个变体, 消费
+                # 同一 judge 结果, 不再各自重判、各自写 stop.
+                # goal 达标 → 过证据门 + SKEPTIC 后才允许收结 (完成 ≠ 验收).
+                try:
+                    _completion = await self._evaluate_completion(
+                        goal, cog, state, max_iterations
+                    )
+                    if _completion.get("hint") and not state.should_stop:
+                        self._speculator_hint = (
+                            (self._speculator_hint + "\n" + _completion["hint"]).strip()
+                            if self._speculator_hint
+                            else _completion["hint"]
                         )
-                        from huginn.metacog.decision_arbiter import (
-                            DecisionArbiter,
+                    if _completion.get("stop") and not state.should_stop:
+                        logger.info(
+                            "completion accepted: %s", _completion.get("reason", "")
                         )
-
-                        _final_text = str(
-                            (cog["validation"] or {}).get("summary")
-                            or (cog["validation"] or {}).get("result_data")
-                            or (cog.get("execution_result") or {}).get("summary", "")
-                        )
-                        _eval_ctx: dict = {
-                            "goal_judge": {
-                                "objective": goal.objective,
-                                "trajectory": None,
-                                "final_output": _final_text,
-                            },
-                        }
-                        # validation 里若带 on_track 信号, 也喂给 Step 分支.
-                        _val = cog.get("validation") or {}
-                        if isinstance(_val, dict) and "on_track" in _val:
-                            _eval_ctx["step"] = _val
-
-                        _unified = UnifiedEvaluator().evaluate(_eval_ctx)
-
-                        _bandit = None
-                        try:
-                            from huginn.agent.bandit_controller import (
-                                EffortBandit,
-                            )
-
-                            _bandit = EffortBandit.get_instance()
-                        except Exception:
-                            logger.debug("bandit unavailable for arbiter", exc_info=True)
-
-                        _arbiter = DecisionArbiter()
-                        _dctx = _arbiter.build_context(
-                            csm_state=getattr(self, "_current_phase", "") or "",
-                            bandit=_bandit,
-                            gate_decision=None,
-                            iteration=state.iteration,
-                            max_iterations=max_iterations,
-                            turns_count=getattr(self, "_turn_count", 0),
-                            tool_calls_count=getattr(self, "_tool_calls_count", 0),
-                        )
-                        # UnifiedEvaluator 替代 CompletionGate 信号: achieved→pass,
-                        # 否则 gaps_hint. gate_should_stop 仅在 achieved 时 True.
-                        _dctx.gate_status = (
-                            "pass" if _unified.achieved else "gaps_hint"
-                        )
-                        _dctx.gate_should_stop = _unified.achieved
-                        _dctx.gate_reason = (
-                            "; ".join(_unified.gaps[:3])
-                            if _unified.gaps
-                            else f"score={_unified.score:.2f}"
-                        )
-
-                        _decision = _arbiter.evaluate(_dctx)
-
-                        if _decision.action == "stop":
-                            state.should_stop = True
-                            if _unified.achieved:
-                                goal.status = "completed"
-                                if self._goal_scheduler is not None:
-                                    try:
-                                        self._goal_scheduler.complete_goal(goal.id)
-                                    except Exception:
-                                        logger.debug(
-                                            "complete_goal failed (non-fatal)",
-                                            exc_info=True,
-                                        )
-                            logger.info(
-                                "unified decision: stop (%s, score=%.2f)",
-                                _decision.reason,
-                                _unified.score,
-                            )
-                        elif _decision.action == "switch_tool":
-                            self._speculator_hint = (
-                                self._speculator_hint
-                                + f"\n[unified] switch_tool: {_decision.reason}"
-                            ).strip()
-                        elif _decision.action == "requery":
-                            self._speculator_hint = (
-                                self._speculator_hint
-                                + f"\n[unified] requery: {_decision.reason}"
-                            ).strip()
-                        elif _unified.gaps:
-                            _gap_hint = "; ".join(_unified.gaps[:3])
-                            self._speculator_hint = (
-                                self._speculator_hint + "\n" + _gap_hint
-                                if self._speculator_hint
-                                else _gap_hint
-                            )
-                            logger.info("unified eval gaps: %s", _gap_hint)
-                    except Exception:
-                        logger.debug(
-                            "Unified decision failed, fallback to F2/F17/F4",
-                            exc_info=True,
-                        )
-                        _use_unified_decision = False
-
-                # v10-F2/F17 收敛: HUGINN_USE_COMPLETION_GATE=1 时用 CompletionGate
-                # 三审 (Criteria + Metacog + GoalJudge) 替代下面散装 F2+F17 顺序拼装.
-                # 默认 off 走原逻辑 (向后兼容). 对照组 BranchIncubator 已正常接入.
-                _use_gate = (
-                    os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1"
-                    and goal is not None
-                    and not state.should_stop
-                    and not _use_unified_decision  # 统一决策已运行, 跳过 CompletionGate 避免双重判定
-                )
-                if _use_gate:
-                    try:
-                        from huginn.metacog.completion_gate import (
-                            CompletionGate,
-                            GateContext,
-                        )
-                        _gate = CompletionGate(
-                            auditor_factory=self._get_metacog_completion_auditor,
-                            goal_judge_llm=None,
-                            judge_every_n=3,
-                        )
-                        _families = 0
-                        with contextlib.suppress(Exception):
-                            _families = len([
-                                f for f in self._get_metacog_method_registry().all()
-                                if f.member_agent_ids
-                            ])
-                        _gctx = GateContext(
-                            iteration=state.iteration,
-                            max_iterations=max_iterations,
-                            families_explored=_families,
-                            live_components=(
-                                self.hypothesis_graph.component_count()
-                                if hasattr(self, "hypothesis_graph") else 0
-                            ),
-                            last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
-                            objective=goal.objective,
-                        )
-                        _decision = _gate.review(goal, cog.get("validation"), _gctx)
-                        if _decision.should_stop:
-                            state.should_stop = True
-                        if _decision.should_complete_goal and goal is not None:
-                            goal.status = "completed"
-                            if self._goal_scheduler is not None:
-                                try:
-                                    self._goal_scheduler.complete_goal(goal.id)
-                                except Exception:
-                                    logger.debug("complete_goal failed (non-fatal)", exc_info=True)
-                        if _decision.status == "block" and _decision.reason:
-                            logger.info("completion gate blocked: %s", _decision.reason)
-                            self._speculator_hint = (
-                                (self._speculator_hint + f"\n[completion gate] {_decision.reason}").strip()
-                            )
-                        elif _decision.status == "gaps_hint" and _decision.reason:
-                            self._speculator_hint = (
-                                (self._speculator_hint + f"\n{_decision.reason}").strip()
-                            )
-                            logger.info("completion gate gaps: %s", _decision.reason)
-                    except Exception:
-                        logger.debug("CompletionGate failed, fallback to F2+F17", exc_info=True)
-                        _use_gate = False
-
-                if not _use_gate and not _use_unified_decision:
-                    # v10-F2: completion audit — 对齐 run() L1878-1897.
-                    # goal 达标 + metacog 不阻断 → goal.status=completed + should_stop.
-                    # ponytail: check_completion 在 goal 无 criteria 时返回 False, 不影响.
-                    if goal is not None and not state.should_stop:
-                        try:
-                            _val_for_goal = cog["validation"] or {}
-                            if GoalScheduler.check_completion(goal, _val_for_goal):
-                                _blk, _why = self._metacog_check_completion()
-                                if _blk:
-                                    logger.info("v10 completion audit blocked: %s", _why)
-                                    self._speculator_hint = (
-                                        (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                    )
-                                else:
-                                    logger.info("v10 goal completed: %s", goal.objective)
-                                    goal.status = "completed"
-                                    if self._goal_scheduler is not None:
-                                        try:
-                                            self._goal_scheduler.complete_goal(goal.id)
-                                        except Exception:
-                                            logger.debug("complete_goal failed (non-fatal)", exc_info=True)
-                                    state.should_stop = True
-                        except Exception:
-                            logger.debug("v10 F2 completion audit failed (non-fatal)", exc_info=True)
-
-                    # v10-F17: GoalJudge — 对齐 run() L1899-1945.
-                    # 每 3 轮或最后一轮调 GoalJudge.judge 判 goal_achieved.
-                    # achieved + metacog 不阻断 → should_stop; gaps → 注入 hint.
-                    # ponytail: GoalJudge(llm=None) 走规则版, LLM judge 留 exit 阶段.
-                    if (
-                        goal is not None
-                        and not state.should_stop
-                        and (
-                            state.iteration % 3 == 2
-                            or state.iteration >= max_iterations - 1
-                        )
-                    ):
+                        state.should_stop = True
+                        goal.status = "completed"
+                        if self._goal_scheduler is not None:
                             try:
-                                from huginn.evaluation.goal_judge import GoalJudge
-
-                                _judge = GoalJudge(llm=None)
-                                _final_text = str(
-                                    (cog["validation"] or {}).get("summary")
-                                    or (cog["validation"] or {}).get("result_data")
-                                    or (cog.get("execution_result") or {}).get("summary", "")
+                                self._goal_scheduler.complete_goal(goal.id)
+                            except Exception:  # 防御: 目标完成处理失败忽略
+                                logger.debug(
+                                    "complete_goal failed (non-fatal)", exc_info=True
                                 )
-                                _gj = _judge.judge(goal.objective, None, _final_text)
-                                if _gj.get("achieved"):
-                                    _blk, _why = self._metacog_check_completion()
-                                    if _blk:
-                                        logger.info("v10 GoalJudge audit blocked: %s", _why)
-                                        self._speculator_hint = (
-                                            (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                        )
-                                    else:
-                                        logger.info("v10 GoalJudge achieved (score=%s)", _gj.get("score"))
-                                        state.should_stop = True
-                                elif _gj.get("gaps"):
-                                    _gap_hint = "; ".join(_gj["gaps"][:3])
-                                    self._speculator_hint = (
-                                        (self._speculator_hint + "\n" + _gap_hint).strip()
-                                        if self._speculator_hint else _gap_hint
-                                    )
-                                    logger.info("v10 GoalJudge gaps: %s", _gap_hint)
-                            except Exception:
-                                logger.debug("v10 F17 GoalJudge failed (non-fatal)", exc_info=True)
+                except Exception:  # 防御: 完成判定失败忽略 (不阻断循环)
+                    logger.debug("evaluate_completion failed (non-fatal)", exc_info=True)
 
                 # v10-F4: surprise 早停 — 对齐 run() L1967-1999.
                 # 连续 3 轮低 surprise + audit 不阻断 → should_stop.
@@ -3073,23 +3798,77 @@ Respond JSON only:
                         _avg_noise = sum(s for _, s in _recent) / len(_recent)
                         _thr = max(0.08, 0.20 - 0.4 * _avg_noise)
                         if all(w < _thr for w in _worsts):
-                            _blk, _why = self._metacog_check_completion()
-                            if _blk:
-                                logger.info("v10 surprise audit blocked: %s", _why)
-                                self._speculator_hint = (
-                                    (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                )
-                            else:
-                                logger.info(
-                                    "v10 surprise converged < %.2f (noise=%.2f), stop",
-                                    _thr, _avg_noise,
-                                )
-                                state.should_stop = True
-                    except Exception:
+                            logger.warning(
+                                "v10 surprise converged < %.2f (noise=%.2f) "
+                                "→ advisory only (hint, no stop)",
+                                _thr, _avg_noise,
+                            )
+                            self._emit_convergence_advisory(
+                                "surprise",
+                                f"threshold={_thr:.2f} noise={_avg_noise:.2f}",
+                                f"[surprise 收敛·提示] 最近 3 轮 surprise < {_thr:.2f} "
+                                f"(noise={_avg_noise:.2f}): 观测不再带来意外信息. "
+                                "要么给出最终数值结论, 要么换一个能产生高 surprise 的方向.",
+                                state.iteration,
+                            )
+                    except Exception:  # 防御: 意外早停失败忽略
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
 
+                # v10-F5: 执行收敛 — 检测器→执行器的后半. **已降级为提示 + trace**
+                # (控制面审计 A1), 不再自动终止 run.
+                # engine_reflect 每轮为执行结果(objectives+summary)算指纹, 维护最近
+                # 6 个的窗口; 窗口填满且去重后 <=2 种 → 循环可能在有限几种等价实验间
+                # 打转 (run47 的空转正是这种).
+                # 为何降级: 该出口在 run50/52 两次**误杀整轮实验** (903s/905s of 3600s),
+                #   根因不是"书生没进展", 而是 A6 预算门跳过 execute → 循环复用旧结果
+                #   → 假收敛. 且"有没有进展/该不该收结"属**科学判断**, 应下沉给书生,
+                #   框架只提示. 硬终止只保留挂钟耗尽与目标达成两个出口 (见
+                #   docs/architecture.md「控制面预算」). 步数上限仍是兜底.
+                if not state.should_stop and getattr(self, "_exec_converged", False):
+                    _fp_hist = getattr(self, "_exec_fp_history", None)
+                    _uniq = len(set(_fp_hist)) if _fp_hist else 0
+                    logger.warning(
+                        "v10 exec convergence (unique fingerprints=%d over window, "
+                        "no new info) → advisory only (hint, no stop)",
+                        _uniq,
+                    )
+                    self._emit_convergence_advisory(
+                        "exec",
+                        f"unique_fingerprints={_uniq}",
+                        f"[执行收敛·提示] 最近 6 轮执行指纹只出现 {_uniq} 种结果: "
+                        "你在有限几种等价实验间打转, 已无新信息. 请改变实验族/参数, "
+                        "或直接据此给出最终数值结论.",
+                        state.iteration,
+                    )
+
+                # v11: 进展不变量 (假设层). **已降级为提示 + trace**
+                # (控制面审计 A2), 不再自动终止 run.
+                # _rename_debt 单调, 只在真进展时归零 —— 连续换名归约 = 方法层停滞.
+                # 为何降级: 该出口在 run51 (607s of 3600s) 误杀整轮; 且换名判定本身
+                #   是 LLM 语义审计的**下界估计**, 用它硬性结题违背"证据门才该硬"
+                #   的边界. 停滞是科学判断, 交给书生; 框架只提示 (软阶梯 streak 3/5
+                #   已在 hypothesis_loop 里做重定向, 这里补一条显式提示).
+                if not state.should_stop:
+                    _debt = int(getattr(self, "_rename_debt", 0) or 0)
+                    if _debt >= _RENAME_DEBT_LIMIT:
+                        logger.warning(
+                            "v11 rename debt=%d (monotone, reset-proof) over limit=%d "
+                            "→ advisory only (hint, no stop)",
+                            _debt, _RENAME_DEBT_LIMIT,
+                        )
+                        self._emit_convergence_advisory(
+                            "rename",
+                            f"debt={_debt} limit={_RENAME_DEBT_LIMIT}",
+                            f"[换名债务·提示] 已连续 {_debt} 轮被判为换名归约"
+                            "(无实质进展): 必须换方法族, 并给出**可与旧机制区分的"
+                            "数值预测** (如同一被测量随参数的趋势), 仅换术语不算进展.",
+                            state.iteration,
+                        )
+
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.
-                # 内部判 stagnation >= 5 设 self._should_stop; 这里同步到 state.
+                # 注意: A3/A4 降级后, _darwin_ratchet_check 自身**不再**置
+                #   self._should_stop (只提示 + trace). 这里仍做一次同步, 因为
+                #   self._should_stop 还承载**外部 stop()** 的语义 (见 observe 开头).
                 # ponytail: _darwin_ratchet_check 也更新 heat_engine T_cold + health,
                 #   不只是 stop 判定. run() 用 self._should_stop, run_cognitive 用 state.should_stop.
                 if not state.should_stop:
@@ -3097,7 +3876,7 @@ Respond JSON only:
                         self._darwin_ratchet_check()
                         if getattr(self, "_should_stop", False):
                             state.should_stop = True
-                    except Exception:
+                    except Exception:  # 防御: 达尔文棘轮失败忽略
                         logger.debug("v10 F3 darwin_ratchet failed (non-fatal)", exc_info=True)
 
             # P0: 迭代历史栈 — push 当前轮快照, 让 N 轮后的 decider/validate
@@ -3123,10 +3902,15 @@ Respond JSON only:
                         (cog.get("hypothesis_id") or "")[:64]
                         or (hash(cog.get("hypothesis") or "") & 0xFFFFFFFF) % 10**8
                     ),
-                    "structure_desc": _snapshot_structure_desc(cog),
+                    "structure_desc": _snapshot_structure_desc(
+                        cog,
+                        getattr(self, "_get_active_cognitive_map", lambda: None)(),
+                    ),
                     # 桥 E: surprise + rule_hit 进 episodic shard, replay 可按信号检索,
                     # 不只按时间线性回溯. 缺失安全填 0.0 / "".
-                    "surprise": float(getattr(self, "_last_surprise", 0.0)),
+                    # surprise 用秩归一信号 routing_surprise() — 与路由 / observe 同源,
+                    # 单调于原始值、免绝对阈值; 秩未就绪时回落原始 _last_surprise.
+                    "surprise": routing_surprise(self),
                     "rule_hit": getattr(self, "_last_rule_hit_id", "") or "",
                 }
                 state.iteration_history.append(_snapshot)
@@ -3147,9 +3931,9 @@ Respond JSON only:
                             task_id=str(self._run_id),
                         )
                     self._episodic_writer.append(state.iteration, _snapshot)
-                except Exception:
+                except Exception:  # 防御: 情景分片写失败忽略
                     logger.debug("episodic shard write failed (non-fatal)", exc_info=True)
-            except Exception:
+            except Exception:  # 防御: 迭代历史推送失败忽略
                 logger.debug("iteration_history push failed (non-fatal)", exc_info=True)
 
             # P15: 周期 save — flag off 时 no-op, iteration % save_every == 0 才真写.
@@ -3190,7 +3974,7 @@ Respond JSON only:
                 _prev_outcome_for_advisor = (
                     "completed" if _val.get("tests_passed") else "inconclusive"
                 )
-        except Exception:
+        except Exception:  # 防御: 运行上下文持久化失败忽略
             logger.debug("persist run_context failed (non-fatal)", exc_info=True)
 
         # 轻量 next-step 推荐: 任务完成后, 科研伴侣姿态给 2-3 个方向 + 自由出口.
@@ -3201,7 +3985,7 @@ Respond JSON only:
                 run_id, objective, cog, state,
                 prev_outcome=_prev_outcome_for_advisor,
             )
-        except Exception:
+        except Exception:  # 防御: 任务后建议失败忽略
             logger.debug("advisor_post_task_recommend failed (non-fatal)", exc_info=True)
 
         # finalize — 复用 run() 的收尾 (含 _report)
@@ -3464,7 +4248,7 @@ def learn_from_rcb(
                     source="rcb_learn_from_rcb",
                 )
                 result["memory_written"] = True
-            except Exception:
+            except Exception:  # 防御: 新接口缺失回退老接口
                 # 老接口 fallback
                 mem_mgr.remember(
                     content=mem_content,

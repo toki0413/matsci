@@ -191,10 +191,7 @@ def build_sheaf_from_findings(
     for k, sf in enumerate(support_findings):
         sid = f"support_{k}"
         open_sets.append(sid)
-        if isinstance(sf, dict):
-            claims = dict(sf)
-        else:
-            claims = _extract_claims(sf)
+        claims = dict(sf) if isinstance(sf, dict) else _extract_claims(sf)
         stalks.append(Stalk(source_id=sid, claims=claims))
 
     # Restriction maps: pairwise 共享 keys (sorted 保证 basis 顺序稳定)
@@ -229,8 +226,8 @@ def _values_agree(
     "altermagnet" ↔ "spin-split antiferromagnet") 是已知天花板.
     """
     # 数值 vs 数值
-    if isinstance(a, (int, float)) and not isinstance(a, bool) \
-            and isinstance(b, (int, float)) and not isinstance(b, bool):
+    if isinstance(a, int | float) and not isinstance(a, bool) \
+            and isinstance(b, int | float) and not isinstance(b, bool):
         if a == 0 and b == 0:
             return True
         if abs(a - b) <= rel_tol * max(abs(a), abs(b)):

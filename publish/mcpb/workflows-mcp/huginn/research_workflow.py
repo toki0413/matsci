@@ -3,6 +3,17 @@
 Wraps DeliAutoResearch.run_full_pipeline() behind an async generator that
 yields progress/hypothesis/experiment/result/draft events for the WebSocket
 layer. Also keeps the agent's PhaseManager in sync with the current Deli stage.
+
+═ 归属声明 (ARCHITECTURE OWNERSHIP) ═
+这是**在线 WS 研究模式** (Deli-backed, 为桌面/WebSocket 提供流式进度事件)。
+真正意义上的**产品/离线深研入口是 `huginn.research.program.run_research_program`**
+(假说→实验→Pareto 演化→门禁→兜底, 域无关、确定性可复现)。
+两者职责不同、入口不同、相互独立:
+  - 本模块: 活的 HTTP/WS 研究模式, 服务在线会话。
+  - `huginn.research.*`: 产品级深研闭环, 新研究能力一律落这里。
+新增研究能力请放 `huginn/research/`(program/planning/science_team/law_model),
+不要再在根级新增平行的 research_* 顶层模块。提交新深研实现前, 先确认能否
+在 `huginn/research/` 内复用, 避免再起一个"并行管线"。
 """
 
 from __future__ import annotations

@@ -121,9 +121,9 @@ def _paddle_ocr_pil(image: Any) -> str:
         lines: list[str] = []
         for page in result or []:
             for line in page or []:
-                if not isinstance(line, (list, tuple)) or len(line) < 2:
+                if not isinstance(line, list | tuple) or len(line) < 2:
                     continue
-                text = line[1][0] if isinstance(line[1], (list, tuple)) else None
+                text = line[1][0] if isinstance(line[1], list | tuple) else None
                 if text and str(text).strip():
                     lines.append(str(text).strip())
         return "\n".join(lines)

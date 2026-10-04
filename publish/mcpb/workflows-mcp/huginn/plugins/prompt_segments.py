@@ -41,6 +41,14 @@ _PRIORITY = {
     "safety": 200,
 }
 
+# 框架骨架段名 (由 agent.build_prompt 注册). 它们不属于插件贡献: 非 build_prompt
+# 的主路径 (autoloop 的 _llm_chat 直接拼 persona system prompt) 只消费**插件段**,
+# 需据此排除骨架段, 否则会把 persona/phase 等重复注入.
+_FRAMEWORK_SEGMENTS = frozenset({
+    "persona", "mode", "phase", "metacog", "tools",
+    "multimodal", "writing", "thinking", "safety",
+})
+
 # 模块级注册表: 名字 -> 段插件.
 _registry: StrategyRegistry[PromptSegmentFn] = StrategyRegistry[PromptSegmentFn]()
 
@@ -67,21 +75,24 @@ def unregister_prompt_segment(name: str) -> int:
     return _registry.unregister(name)
 
 
-def assemble_prompt_segments(
+def _assemble(
     mode: str,
     phase: str,
     metacog_state: str,
-    system_prompt: str | None = None,
+    system_prompt: str | None,
+    exclude_names: frozenset[str],
 ) -> str:
-    """按 priority 升序依次执行全部段插件, 拼接非空结果为 system_prompt.
+    """段组装的单一实现: 去重 + 按 priority 升序渲染 + 拼接非空结果.
 
-    同名段插件去重: priority 高者生效, 同 priority 后注册者生效 (覆盖内置段).
-    单个段异常被隔离 (跳过该段), 保证 build_prompt 永不因插件抛异常.
+    exclude_names 里的段名被跳过 (供"只取插件段"的调用方排除框架骨架段).
+    去重: name -> (priority, 升序 idx, fn). 升序列表内同 priority 保持注册顺序,
+    故 idx 越大 = 越晚注册. 保留 priority 更高者, 同 priority 保留更晚注册者.
+    单个段异常被隔离 (跳过该段), 组装永不因插件抛异常.
     """
-    # 去重: name -> (priority, 升序 idx, fn). 升序列表内同 priority 保持注册顺序,
-    # 故 idx 越大 = 越晚注册. 保留 priority 更高者, 同 priority 保留更晚注册者.
     best: dict[str, tuple[int, int, PromptSegmentFn]] = {}
     for idx, (name, priority, fn) in enumerate(_registry.ordered()):
+        if name in exclude_names:
+            continue
         prev = best.get(name)
         if prev is None or priority > prev[0] or (priority == prev[0] and idx > prev[1]):
             best[name] = (priority, idx, fn)
@@ -96,6 +107,34 @@ def assemble_prompt_segments(
         if text:
             parts.append(text)
     return "\n\n".join(parts)
+
+
+def assemble_prompt_segments(
+    mode: str,
+    phase: str,
+    metacog_state: str,
+    system_prompt: str | None = None,
+) -> str:
+    """按 priority 升序依次执行全部段插件, 拼接非空结果为 system_prompt.
+
+    同名段插件去重: priority 高者生效, 同 priority 后注册者生效 (覆盖内置段).
+    单个段异常被隔离 (跳过该段), 保证 build_prompt 永不因插件抛异常.
+    """
+    return _assemble(mode, phase, metacog_state, system_prompt, frozenset())
+
+
+def assemble_plugin_prompt_segments(
+    mode: str,
+    phase: str,
+    metacog_state: str,
+    system_prompt: str | None = None,
+) -> str:
+    """只组装**插件贡献**的 prompt 段 (排除框架骨架段 _FRAMEWORK_SEGMENTS).
+
+    供绕过 build_prompt 的主路径 (autoloop 的 _llm_chat 直接拼 persona system
+    prompt) 消费插件段 —— 否则注册进注册表的插件段在这些路径上永不生效.
+    """
+    return _assemble(mode, phase, metacog_state, system_prompt, _FRAMEWORK_SEGMENTS)
 
 
 def render_prompt_segment(
@@ -136,6 +175,7 @@ def registered_prompt_segments() -> list[str]:
 
 __all__ = [
     "PromptSegmentFn",
+    "assemble_plugin_prompt_segments",
     "assemble_prompt_segments",
     "clear_registry",
     "register_prompt_segment",

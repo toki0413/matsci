@@ -102,5 +102,30 @@ class Star:
             )
         return metas
 
+    def collect_capabilities(self) -> list:
+        """扫描实例上带 ``_huginn_capabilities`` 标记的方法, 转能力元数据.
+
+        P1 能力维度 (P: loop/session/storage/systemprompt): 与 collect_handlers
+        平行; loader 把结果注册进 CapabilityRegistry, 卸载时按 plugin 撤销.
+        """
+        from huginn.capabilities.capability import capabilities_to_metadata
+
+        metas = []
+        for attr_name in dir(self):
+            if attr_name.startswith("__"):
+                continue
+            if attr_name in {"llm", "storage", "context", "logger", "dispatch"}:
+                continue
+            try:
+                method = getattr(self, attr_name)
+            except Exception:
+                continue
+            if not hasattr(method, "__func__"):
+                continue
+            if not getattr(method, "_huginn_capabilities", None):
+                continue
+            metas.extend(capabilities_to_metadata(method, plugin_name=self.name))
+        return metas
+
 
 __all__ = ["Star"]

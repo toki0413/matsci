@@ -41,6 +41,7 @@ _CORE_MODULES = [
     ("huginn.tools.github_tool", "GithubTool"),
     ("huginn.tools.bourbaki_tool", "BourbakiTool"),
     ("huginn.tools.diff_tool", "DiffTool"),
+    ("huginn.tools.observation_pack", "RecallObservationTool"),
     ("huginn.tools.validate_tool", "ValidateTool"),
     ("huginn.tools.diagnose_tool", "DiagnoseTool"),
     ("huginn.tools.system_diagnostic_tool", "SystemDiagnosticTool"),
@@ -84,6 +85,8 @@ _CORE_MODULES = [
     ("huginn.academic.deli_research", "DeliAutoResearchTool"),
     ("huginn.tools.tool_search_tool", "ToolSearchTool"),
     ("huginn.capabilities.capability_tool", "CapabilityTool"),
+    ("huginn.tools.make_tool", "MakeTool"),
+    ("huginn.tools.pi_mode_tool", "PiModeTool"),
     ("huginn.tools.prompt_optimize_tool", "PromptOptimizeTool"),
 ]
 
@@ -108,6 +111,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.specialty_analysis.tool", "SpecialtyAnalysisTool"),
     ("huginn.tools.fem_tool", "FEMTool"),
     ("huginn.tools.sim.transolver_tool", "TransolverTool"),
+    ("huginn.tools.sim.pybullet_tool", "PyBulletTool"),
     ("huginn.tools.sim.mechanical_tool", "MechanicalTool"),
     ("huginn.tools.sim.convergence_test_tool", "ConvergenceTestTool"),
     ("huginn.tools.sim.resolve_executable_tool", "ResolveExecutableTool"),

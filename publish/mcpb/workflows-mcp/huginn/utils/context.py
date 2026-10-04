@@ -274,10 +274,7 @@ def _message_value_score(msg: Any) -> int:
     -1 = low-value content, prioritize for summarization
     """
     # Accept plain strings for convenience (testing, ad-hoc calls)
-    if isinstance(msg, str):
-        content = msg.lower()
-    else:
-        content = _msg_content(msg).lower()
+    content = msg.lower() if isinstance(msg, str) else _msg_content(msg).lower()
     if not content:
         return 0
     score = 0

@@ -214,13 +214,13 @@ def _safe_serialize(obj: Any, max_len: int = 2000) -> Any:
     就截断, 避免单个事件把 SSE 队列撑爆.
     """
     try:
-        if isinstance(obj, (str, int, float, bool)) or obj is None:
+        if isinstance(obj, str | int | float | bool) or obj is None:
             if isinstance(obj, str) and len(obj) > max_len:
                 return obj[:max_len] + f"...<+{len(obj) - max_len} chars>"
             return obj
         if isinstance(obj, dict):
             return {str(k): _safe_serialize(v, max_len) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple, set)):
+        if isinstance(obj, list | tuple | set):
             return [_safe_serialize(v, max_len) for v in list(obj)[:50]]
         # 兜底: 走 str, 失败就给个占位
         text = str(obj)
