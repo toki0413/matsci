@@ -147,6 +147,37 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7a484fd9",
+      "objective": "[DIM: structure]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Test the bootstrap constraints hypothesis by performing a capacity scan on a small feedforward network to determine if the solution space is rigid (low-dimensional) or fat (high-dimensional). Define a simple analytic constraint (e.g., polynomial interpolation or functional equation) with known low-dimensional solution space. Sweep hidden layer width $N$ for increasing numbers of bootstrap constraints $w$, measure the minimal width $N_c(w)$ achieving zero violation (max abs error $\\le 10^{-3}$) on held-out constraints. If $N_c(w)$ remains small and constant as $w$ increases, the space is rigid; if $N_c(w)$ grows or becomes unreachable, it is fat. Use a simple symbolic function (e.g., $f(x) = \\sin(\\pi x)$ or low-degree polynomial) to generate constraints.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/nc_scan.py",
+            "experiments/bootstrap_rigidity_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-04T01:58:16.980535+00:00",
+      "confirmed_at": "2026-10-04T01:58:16.982031+00:00",
+      "completed_at": "2026-10-04T01:58:45.112732+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
