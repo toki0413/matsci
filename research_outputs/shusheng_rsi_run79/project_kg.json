@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "'. If two candidates would make the SAME numerical prediction, the second is a r",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:48:18.503613",
+      "last_seen": "2026-10-04T01:48:18.503613",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will produce a table of N_c(w) values. If the solution space is rigid, N_c will be small (e.g., < 20) and roughly constant as w increases. If the space is \"fat\", N_c will grow with w or",
+      "persona": "dft_expert",
+      "id": "experiment:'. If two candidates would make the SAME numerical prediction, the second is a r"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503656",
+      "last_seen": "2026-10-04T01:48:18.503656",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503670",
+      "last_seen": "2026-10-04T01:48:18.503670",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "members": [
+        "experiment:'. If two candidates would make the SAME numerical prediction, the second is a r",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:48:18.503785",
+      "last_seen": "2026-10-04T01:48:18.503785",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "132220d8c546493c",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:'. If two candidates would make the SAME numerical prediction, the second is a r",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1be3877"
+    }
+  ]
+}

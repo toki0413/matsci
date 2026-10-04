@@ -1,0 +1,6 @@
+
+## [h_d8bb2a0d] 2026-10-04T01:48:11+00:00
+Statement: '. If two candidates would make the SAME numerical prediction, the second is a rename and MUST be replaced... Ground it in the domain knowledge context above when relevant. State the mathematics expli
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
