@@ -194,3 +194,61 @@ control_trace name=darwin_stagnation iteration=49 evidence=stagnation=8 best=5.8
 darwin ratchet: belief converged σ²=0.0999 μ=5.64 → advisory only (hint, no stop)
 control_trace name=belief_convergence iteration=49 evidence=sigma2=0.0999 mu=5.64 action=advisory_hint
 metacog: 假设可能为换名归约 (trap=, target=The information flow in the rigid family saturates early (information bottleneck reached), so adding more constraints does not increase the required internal representation size; in the fat family, the gradient flow remains exploratory and requires increasing capacity to maintain signal-to-noise ratio): [DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient flow on the weight 
+control_trace name=collab_blind_reconstruct iteration=54 evidence=skip: node status=supported action=skip
+darwin ratchet: stagnation 9 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=54 evidence=stagnation=9 best=5.88 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0908 μ=5.65 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=54 evidence=sigma2=0.0908 mu=5.65 action=advisory_hint
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10) @ coeffs)
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [5, 10, 15, 20]
+    h_list = [4, 8, 16, 32]
+    summary = {'rigid_Nc': [], 'fat_Nc': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_vals = []
+        for w in w_list:
+            Nc_found = None
+            for h in h_list:
+                data = family(kind, w, seed + w * 100 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if zero_violation(err):
+                    if Nc_found is None or h < Nc_found:
+                        Nc_found = h
+                    break
+            Nc_vals.append(Nc_found if Nc_found is not None else 999)
+        if kind == 'rigid':
+            summary['rigid_Nc'] = Nc_vals
+            if all(n < 50 for n in Nc_vals):
+                objectives['score'] += 1.0
+        else:
+            summary['fat_Nc'] = Nc_vals
+            if all(n >= 32 for n in Nc_vals):
+                objectives['score'] += 1.0
+    return {'success': True, 'summary': summary, 'objectives': objectives}

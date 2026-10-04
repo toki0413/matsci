@@ -561,6 +561,70 @@
       "r_phys": 1.0,
       "iteration": 50,
       "id": "persona_use:dft_expert_iter50"
+    },
+    {
+      "label": "[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:07:05.342787",
+      "last_seen": "2026-10-04T02:07:05.342787",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be a small finite number (e.g., ≤ 16) for small w and may increase slightly with w but will not diverge, indicating rigidity. If N_c exceeds practical limits or grows with w, the hypothesi",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient"
+    },
+    {
+      "label": "plan_workflow_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342823",
+      "last_seen": "2026-10-04T02:07:05.342823",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342833",
+      "last_seen": "2026-10-04T02:07:05.342833",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient",
+        "Method:plan_workflow_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "label": "dft_expert_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:07:05.342904",
+      "last_seen": "2026-10-04T02:07:05.342904",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "22c1f329778db636",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:dft_expert_iter55"
     }
   ],
   "links": [
@@ -806,6 +870,33 @@
       "last_seen": "2026-10-04T02:06:18.745759",
       "mentions": 1,
       "target": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a804f26"
     }
   ]
 }

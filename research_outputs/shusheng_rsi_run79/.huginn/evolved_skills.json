@@ -137,12 +137,12 @@
       "huginn",
       "value",
       "label",
-      "constraint",
       "constraints",
       "error",
+      "constraint",
+      "rigidity",
       "small",
-      "prediction",
-      "rigid"
+      "plan"
     ],
     "workflow_steps": [
       {

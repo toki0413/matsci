@@ -335,6 +335,36 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_29722f95",
+      "objective": "[Hypothesis Name]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test whether the bootstrap solution space is \"rigid\" (low-dimensional) or \"fat\" (high-dimensional) by scanning network capacity against constraint count. Train small feedforward networks on increasing numbers of constraints (w), measure the minimum width N_c(w) achieving zero violation (max absolute error ≤ 1e-3) on held-out constraints. Report N_c(w) values and trend to determine if N_c remains bounded (rigid) or grows unbounded (fat) as w increases.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/bootstrap_rigidity_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-04T02:08:49.499743+00:00",
+      "confirmed_at": "2026-10-04T02:08:49.501082+00:00",
+      "completed_at": "2026-10-04T02:09:13.521301+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
