@@ -1,12 +1,12 @@
 {
-  "valence": 0.0,
+  "valence": 0.01999999999999999,
   "arousal": 0.1,
   "trust": 0.5,
-  "affection": 0.20998914213313108,
-  "fatigue": 0.0,
+  "affection": 0.2099696140757319,
+  "fatigue": 0.02,
   "loneliness": 0.0,
-  "interest": 0.519963833315268,
-  "timestamp": "2026-10-04T01:51:39.184685+00:00",
+  "interest": 0.5698988292711514,
+  "timestamp": "2026-10-04T01:55:34.005811+00:00",
   "events": [
     {
       "timestamp": "2026-10-04T01:47:18.312449+00:00",
@@ -27,6 +27,18 @@
         "affection": 0.005
       },
       "note": "neutral"
+    },
+    {
+      "timestamp": "2026-10-04T01:55:34.005787+00:00",
+      "source": "user",
+      "type": "task_success",
+      "deltas": {
+        "valence": 0.01999999999999999,
+        "trust": 0.0,
+        "fatigue": 0.02,
+        "interest": 0.05
+      },
+      "note": "negative user message; task succeeded"
     }
   ]
 }

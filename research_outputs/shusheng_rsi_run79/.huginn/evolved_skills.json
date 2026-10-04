@@ -2,18 +2,18 @@
   {
     "skill_id": "skill_reward_autoloop_huginn_1791078881278",
     "name": "Autoloop High-Reward Workflow (huginn)",
-    "description": "Auto-extracted from R_phys>=0.7 executions, avg reward 1.00",
+    "description": "Auto-refreshed from R_phys>=0.7 executions, avg reward 1.00",
     "trigger_keywords": [
       "autoloop",
       "huginn",
-      "label",
       "value",
-      "error",
-      "rigidity",
+      "label",
+      "constraints",
       "algebraic",
-      "constraint",
-      "experiment",
-      "prediction"
+      "error",
+      "polynomial",
+      "prediction",
+      "constant"
     ],
     "workflow_steps": [
       {
@@ -26,6 +26,14 @@
       },
       {
         "tool": "workflow",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "coder",
         "input_keys": [
           "hypothesis",
           "plan"

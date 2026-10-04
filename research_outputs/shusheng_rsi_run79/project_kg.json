@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:dft_expert_iter15"
+    },
+    {
+      "label": "[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:55:53.624345",
+      "last_seen": "2026-10-04T01:55:53.624345",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will converge to a small constant value (approximately d+1, e.g., 4 for cubic constraints) and remain stable across increasing w, confirming the algebraic variety hypothesis with low surprise.",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va"
+    },
+    {
+      "label": "plan_coder_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624384",
+      "last_seen": "2026-10-04T01:55:53.624384",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624395",
+      "last_seen": "2026-10-04T01:55:53.624395",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va",
+        "Method:plan_coder_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "label": "dft_expert_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:55:53.624476",
+      "last_seen": "2026-10-04T01:55:53.624476",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "84994ae5a7cf5469",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:dft_expert_iter20"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-10-04T01:54:41.281956",
       "mentions": 1,
       "target": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4e71fc7"
     }
   ]
 }
