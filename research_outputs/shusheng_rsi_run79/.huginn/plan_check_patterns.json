@@ -24,5 +24,21 @@
     ],
     "mode": "workflow",
     "description": "Design a comparative sensitivity analysis to evaluate H1 (explicit algebraic structure), H2 (standard ML baseline), and H3 (dynamic traps) under noise and constraint violation scenarios. (1) Simulate "
+  },
+  {
+    "scene_tag": "auto_constraints",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is critically flawed because it lacks concrete methodology for the core experiment. The description mentions 'vary constraint count w' and 'sweep hidden width N' but provides no definition of the 'analytically constrained function family' (no specific polynomial form, no explicit equality constraints listed), no training protocol (loss function, optimizer, epochs), and no validation procedure. Without these, the experiment cannot be executed or reproduced, making the prediction untestable. The hypothesis requires proving 'rigid solution space' via N_c(w), but without defining the constraints and fitting procedure, N_c(w) cannot be computed.",
+    "missing_steps": [
+      "Define the specific family of analytically constrained functions (e.g., polynomial degree, explicit equality constraints)",
+      "Specify the constraint generation method (how w constraints are sampled/defined)",
+      "Define the MLP architecture (activation functions, initialization, depth beyond 'small MLPs')",
+      "Specify training protocol (loss function formulation, optimizer, stopping criteria)",
+      "Define the validation set procedure (how held-out constraints are selected)",
+      "Specify the N_c(w) search algorithm (binary search? linear sweep?)",
+      "Include baseline comparison implementation details (unconstrained fitting setup)"
+    ],
+    "mode": "explore",
+    "description": "Design a controlled numerical experiment to probe solution space rigidity using small MLPs. Define an analytically constrained function family (e.g., low-degree polynomial with explicit equality const"
   }
 ]

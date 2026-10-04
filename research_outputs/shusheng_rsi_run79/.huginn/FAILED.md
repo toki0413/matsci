@@ -22,3 +22,9 @@ Statement: [Hypothesis Name]
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_a08074ef] 2026-10-04T02:12:22+00:00
+Statement: ". We have generated three, and we are to select one. We can select dynamics.
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
