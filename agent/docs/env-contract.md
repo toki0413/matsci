@@ -50,7 +50,7 @@
 | `HUGINN_CODELAB_TIMEOUT_S` | 600 | autoloop/engine_act.py:336 | — | external |
 | `HUGINN_CODER_DONE_MARKER` | [DONE] | config.py:1310 | — | external |
 | `HUGINN_CODER_MAX_ITER` | 50 | config.py:1309 | — | external |
-| `HUGINN_COEVOLUTION` | 0 | cli/rcb_runner.py:1246 | — | external |
+| `HUGINN_COEVOLUTION` | 0 | cli/rcb_runner.py:1247 | — | external |
 | `HUGINN_COGNITIVE_LLM_DECIDER` | 1 | autoloop/engine.py:482 | cli/rcb_runner.py:99 | code-set |
 | `HUGINN_COMPACT_KIND` | remote | agent/reflection.py:60 | — | external |
 | `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:865, agent/streaming.py:988 | — | external |
@@ -63,7 +63,6 @@
 | `HUGINN_CONTAINER_RUNTIME` | none | config.py:735, security/execution.py:27 | — | external |
 | `HUGINN_CONTEXT_BUDGET_TOKENS` | 0 | agent_config.py:216, config.py:819 | — | external |
 | `HUGINN_CONTEXT_MAX_MESSAGES` | 60 | agent/core.py:375 | — | external |
-| `HUGINN_CONTEXT_ROUTER` | '' | — | cli/rcb_runner.py:363 | code-set |
 | `HUGINN_CORE_API_KEY` | '' | tools/literature/search_sources.py:737 | — | external |
 | `HUGINN_CORE_SUPPORT_PROTOCOL` | 1 | tools/bash_tool.py:258, tools/code_tool.py:126 | — | external |
 | `HUGINN_CORS_ORIGINS` | '' | lifespan.py:882 | — | external |
@@ -101,7 +100,7 @@
 | `HUGINN_EZPROXY_PREFIX` | '' | tools/literature/crawl_web.py:197 | — | external |
 | `HUGINN_FAILURE_INVERSION` | 0 | autoloop/engine_reflect.py:3565 | — | external |
 | `HUGINN_FALLBACK_STREAM_IDLE` | '' | agent/streaming.py:116 | — | external |
-| `HUGINN_FEATURE_LOOP_DETECTOR` | '' | — | cli/rcb_runner.py:340, cli/rcb_runner.py:105 | code-set |
+| `HUGINN_FEATURE_LOOP_DETECTOR` | '' | — | cli/rcb_runner.py:105 | code-set |
 | `HUGINN_FILE_READ_MAX_OUTPUT_TOKENS` | str(DEFAULT_MAX_OUTPUT_TOKENS | tools/file_read_tool.py:109 | — | external |
 | `HUGINN_FILE_READ_MAX_SIZE_BYTES` | str(DEFAULT_MAX_SIZE_BYTES | tools/file_read_tool.py:104 | — | external |
 | `HUGINN_FP_DB` | _DEFAULT_DB | rag/adaptive_parser.py:35 | — | external |
@@ -157,26 +156,26 @@
 | `HUGINN_MAX_TOOL_CALLS` | 15 | agent_config.py:130 | — | external |
 | `HUGINN_MAX_TOOL_CALLS_PER_TOOL` | 5 | agent_config.py:132 | — | external |
 | `HUGINN_MAX_TOOL_OUTPUT_TOKENS` | 25000 | agent_config.py:128, config.py:816, config.py:1293, +1 处 | — | external |
-| `HUGINN_MCMC_ALIGNMENT` | 0 | cli/rcb_runner.py:1354, cli/rcb_step2.py:415 | — | external |
-| `HUGINN_MCMC_ALIGNMENT_TEMPERATURE` | 1.0 | cli/rcb_runner.py:1359, cli/rcb_step2.py:417 | — | external |
+| `HUGINN_MCMC_ALIGNMENT` | 0 | cli/rcb_runner.py:1355, cli/rcb_step2.py:415 | — | external |
+| `HUGINN_MCMC_ALIGNMENT_TEMPERATURE` | 1.0 | cli/rcb_runner.py:1360, cli/rcb_step2.py:417 | — | external |
 | `HUGINN_MCMC_ANCHOR` | 1 | autoloop/engine_observe.py:1030 | — | external |
 | `HUGINN_MCMC_ANCHOR_LAMBDA` | 0.1 | autoloop/engine_observe.py:1028 | — | external |
-| `HUGINN_MCMC_CHAINS` | 4 | cli/rcb_runner.py:1324 | — | external |
-| `HUGINN_MCMC_CHECKPOINT_INTERVAL` | 10000 | cli/rcb_runner.py:1329, cli/rcb_step2.py:407 | — | external |
+| `HUGINN_MCMC_CHAINS` | 4 | cli/rcb_runner.py:1325 | — | external |
+| `HUGINN_MCMC_CHECKPOINT_INTERVAL` | 10000 | cli/rcb_runner.py:1330, cli/rcb_step2.py:407 | — | external |
 | `HUGINN_MCMC_CKPT_DIR` | '' | metacog/hypothesis_manifold.py:1482 | — | external |
 | `HUGINN_MCMC_GLOBAL_PROPOSAL` | 0.3 | cli/rcb_mcmc.py:278 | — | external |
 | `HUGINN_MCMC_GRAMIAN` | 1 | autoloop/engine_observe.py:1022, cli/rcb_mcmc.py:292, cli/rcb_step2.py:1908 | — | external |
 | `HUGINN_MCMC_GRAMIAN_K` | 1 | autoloop/engine_observe.py:1023, cli/rcb_mcmc.py:293, cli/rcb_step2.py:1909 | — | external |
-| `HUGINN_MCMC_HAPTIC` | 1 | cli/rcb_runner.py:1344, cli/rcb_step2.py:411 | — | external |
-| `HUGINN_MCMC_HAPTIC_TEMPERATURE` | 1.0 | cli/rcb_runner.py:1349, cli/rcb_step2.py:414 | — | external |
+| `HUGINN_MCMC_HAPTIC` | 1 | cli/rcb_runner.py:1345, cli/rcb_step2.py:411 | — | external |
+| `HUGINN_MCMC_HAPTIC_TEMPERATURE` | 1.0 | cli/rcb_runner.py:1350, cli/rcb_step2.py:414 | — | external |
 | `HUGINN_MCMC_INTERVAL` | 5 | autoloop/engine_observe.py:993, cli/rcb_step2.py:406 | — | external |
-| `HUGINN_MCMC_MODE` | '' | cli/rcb_runner.py:1314 | — | external |
+| `HUGINN_MCMC_MODE` | '' | cli/rcb_runner.py:1315 | — | external |
 | `HUGINN_MCMC_NO_ANNEAL` | 0 | cli/rcb_mcmc.py:276 | — | external |
 | `HUGINN_MCMC_PARALLEL` | 1 | metacog/hypothesis_manifold.py:940 | — | external |
-| `HUGINN_MCMC_SE3` | 0 | cli/rcb_runner.py:1334 | — | external |
-| `HUGINN_MCMC_SE3_ANGLE_SIGMA` | 30.0 | cli/rcb_runner.py:1339 | — | external |
+| `HUGINN_MCMC_SE3` | 0 | cli/rcb_runner.py:1335 | — | external |
+| `HUGINN_MCMC_SE3_ANGLE_SIGMA` | 30.0 | cli/rcb_runner.py:1340 | — | external |
 | `HUGINN_MCMC_SEED` | 42 | autoloop/engine.py:733, cli/rcb_mcmc.py:230, cli/rcb_step2.py:395, +1 处 | — | external |
-| `HUGINN_MCMC_STEPS` | 7000000 | cli/rcb_runner.py:1319 | — | external |
+| `HUGINN_MCMC_STEPS` | 7000000 | cli/rcb_runner.py:1320 | — | external |
 | `HUGINN_MCMC_T_HIGH` | 10 | cli/rcb_mcmc.py:277 | — | external |
 | `HUGINN_MCP_ALLOWED_COMMANDS` | '' | config.py:764, mcp_client.py:76 | — | external |
 | `HUGINN_MEMORY_CLUSTER` | 0 | memory/longterm.py:1582 | — | external |
@@ -233,15 +232,15 @@
 | `HUGINN_RATE_LIMIT_TOTAL_COST_USD` | 10.0 | security/rate_limiter.py:486 | — | external |
 | `HUGINN_RATE_LIMIT_WARNING_THRESHOLD` | 0.8 | security/rate_limiter.py:489 | — | external |
 | `HUGINN_RCB_BLOCKED_TOOLS` | # 默认空集 — extreme 模式信任 agent, 全开放.
-                " | cli/rcb_runner.py:658 | — | external |
-| `HUGINN_RCB_CROSS_TASK` | 1 | cli/rcb_runner.py:527, cli/rcb_step2.py:434, cli/rcb_step2.py:1767 | — | external |
-| `HUGINN_RCB_CROSS_TASK_DIR` | str(get_runtime_home( | cli/rcb_runner.py:529, cli/rcb_step2.py:436 | — | external |
+                " | cli/rcb_runner.py:659 | — | external |
+| `HUGINN_RCB_CROSS_TASK` | 1 | cli/rcb_runner.py:528, cli/rcb_step2.py:434, cli/rcb_step2.py:1767 | — | external |
+| `HUGINN_RCB_CROSS_TASK_DIR` | str(get_runtime_home( | cli/rcb_runner.py:530, cli/rcb_step2.py:436 | — | external |
 | `HUGINN_RCB_DEADLINE` | '' | cli/rcb_step3.py:252 | — | external |
 | `HUGINN_RCB_EXEC_ITERS` | 20 | cli/rcb_step2.py:243 | — | external |
 | `HUGINN_RCB_FORK_ENABLED` | 1 | cli/rcb_step2.py:286 | — | external |
 | `HUGINN_RCB_FORK_K_MAX` | 3 | cli/rcb_step2.py:285 | — | external |
 | `HUGINN_RCB_MAX_COMPLETE_REJECTIONS` | 3 | cli/rcb_step2.py:504 | — | external |
-| `HUGINN_RCB_TIMEOUT` | 7200 | cli/rcb_runner.py:376 | cli/rcb_runner.py:351 | code-set |
+| `HUGINN_RCB_TIMEOUT` | 7200 | cli/rcb_runner.py:377 | cli/rcb_runner.py:351 | code-set |
 | `HUGINN_RECALL_NOISE_FLOOR` | 0.35 | memory/manager.py:219 | — | external |
 | `HUGINN_REMOTE_WORK_DIR` | ~/huginn_jobs | config.py:743 | — | external |
 | `HUGINN_RENAME_DEBT_LIMIT` | 8 | autoloop/cognitive_loop.py:82, autoloop/replay_audit.py:46 | — | external |
@@ -264,7 +263,7 @@
 | `HUGINN_SKILL_ABSTRACTION` | 0 | autoloop/engine_reflect.py:1288 | — | external |
 | `HUGINN_SKILL_CONTEXT` | 0 | autoloop/engine_observe.py:646 | — | external |
 | `HUGINN_SKIP_CSM` | '' | agent/reflection.py:229 | — | external |
-| `HUGINN_SKIP_SMOKE` | 0 | cli/rcb_runner.py:1366 | — | external |
+| `HUGINN_SKIP_SMOKE` | 0 | cli/rcb_runner.py:1367 | — | external |
 | `HUGINN_SOBKO_HIERARCHICAL_INDEX` | '' | rag/router_retriever.py:123 | — | external |
 | `HUGINN_SOBKO_TROUBLESHOOTING` | '' | tools/diagnose_tool.py:74 | — | external |
 | `HUGINN_SPECULATIVE_DRAFT_TOKENS` | 5 | models/registry.py:1181 | — | external |
@@ -282,7 +281,6 @@
 | `HUGINN_STRENGTH_SCHEDULE` | 1 | autoloop/signals.py:219 | — | external |
 | `HUGINN_SURPRISE_HIST_CAP` | 200 | autoloop/engine_reflect.py:55 | — | external |
 | `HUGINN_SWARM_DISTRIBUTED` | '' | agents/swarm.py:577 | cli/rcb_runner.py:354, agents/swarm.py:677, agents/swarm.py:668 | code-set |
-| `HUGINN_TASK_TOOL_ROUTER` | '' | — | cli/rcb_runner.py:364 | code-set |
 | `HUGINN_TEAM_MODE` | '' | config.py:718 | — | external |
 | `HUGINN_TELEMETRY_ENABLED` | true | config.py:826 | — | external |
 | `HUGINN_TELEMETRY_PATH` | '' | autoloop/phase_gate.py:156 | — | external |
@@ -302,7 +300,7 @@
 | `HUGINN_USE_CROSS_DOMAIN` | 0 | autoloop/hypothesis_loop.py:2910 | — | external |
 | `HUGINN_USE_DOCKER` | '' | security/sandbox.py:772 | — | external |
 | `HUGINN_USE_EVOLUTION_MANAGER` | 1 | autoloop/engine_reflect.py:3579, autoloop/engine_reflect.py:3692, memory/manager.py:1408 | — | external |
-| `HUGINN_USE_KNOWLEDGE_GRAPH` | 0 | cli/rcb_runner.py:554 | cli/rcb_runner.py:334 | code-set |
+| `HUGINN_USE_KNOWLEDGE_GRAPH` | 0 | cli/rcb_runner.py:555 | cli/rcb_runner.py:334 | code-set |
 | `HUGINN_USE_MENTAL_IMAGERY` | 0 | cli/rcb_step2.py:737 | cli/rcb_runner.py:333 | code-set |
 | `HUGINN_USE_MISI` | 0 | bench/misi_bench.py:77, bench/misi_bench.py:208 | bench/misi_bench.py:211, bench/misi_bench.py:219, bench/misi_bench.py:262 | code-set |
 | `HUGINN_USE_RUST_SANDBOX` | '' | tools/bash_tool.py:281 | cli/rcb_runner.py:96 | code-set |
@@ -324,4 +322,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 317 个环境变量。
+共 315 个环境变量。

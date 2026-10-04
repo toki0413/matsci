@@ -334,10 +334,10 @@ async def run(
         os.environ.setdefault("HUGINN_USE_KNOWLEDGE_GRAPH", "1")
         # ponytail: 让 _check_stuck VF2 cycle 和 StructureCognitiveMap 15 个 transform 真触发
         os.environ.setdefault("HUGINN_THINKING", "high")
-        # extreme 长任务开 LoopDetector — 200+ 步轨迹需要死循环保护.
-        # 唯一真实开关 HUGINN_FEATURE_LOOP_DETECTOR (FeatureFlags); 普通模式顶部已设
-        # false, 这里覆盖为 true. 旧 HUGINN_SKIP_LOOP_DETECTOR 无人读, 已删除.
-        os.environ.setdefault("HUGINN_FEATURE_LOOP_DETECTOR", "true")
+        # LoopDetector 在 RCB 全程保持关闭: 模块顶部已强制写入
+        # HUGINN_FEATURE_LOOP_DETECTOR="false" (agent 反复跑 code_tool 属正常行为,
+        # 误判为 loop σ₈). 此处原写 setdefault("...", "true") 是 no-op (键已存在,
+        # 从未通电), 已删除 —— 不引入会误杀长程 run 的控制流.
         # v7 长任务: extreme 模式同时放宽 autoloop stop 阈值, 允许 200+ 步轨迹.
         # 对标 Oxelra 206 步. 默认值已放宽 (20/20/10/5), extreme 再翻倍.
         os.environ.setdefault("HUGINN_MAX_CONSECUTIVE_FAILURES", "50")
@@ -357,11 +357,12 @@ async def run(
         #   零 LLM 成本纯规则, 接入 context_builder.build() 主流程.
         # TASK_TOOL_ROUTER: task keyword → tool category 动态路由 (11 cat +
         #   中英双语), 接入 agent/core.py + streaming.py 两处.
-        # 两者都已在主流程 if flag == "1" 处接入, 但全仓无 setdefault, 永远走 fallback.
-        # extreme 模式本就是"全部能力打开", 在此开启兑现设计承诺.
-        # 升级路径: 稳定后下沉到 FeatureFlags 统一接管, 不再用 env var.
-        os.environ.setdefault("HUGINN_CONTEXT_ROUTER", "1")
-        os.environ.setdefault("HUGINN_TASK_TOOL_ROUTER", "1")
+        # 配置收敛: 旧实现写 legacy env (HUGINN_CONTEXT_ROUTER/TASK_TOOL_ROUTER),
+        # 依赖单例构造时读一次 env, 时序脆弱且多一层别名中间人. 改用 FeatureFlags
+        # 的 runtime 覆盖 (最高优先级, 与构造时序无关): extreme = 强制开这两个 router.
+        from huginn.feature_flags import FeatureFlags as _FeatureFlags
+        _FeatureFlags.shared().enable("context_router")
+        _FeatureFlags.shared().enable("task_tool_router")
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
         print("[EXTREME MODE] thinking=high, max_tool_calls=1200, context_budget=model-window, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
 
