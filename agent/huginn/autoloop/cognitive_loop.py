@@ -1017,7 +1017,11 @@ class CognitiveRunner:
         - graph_diversity * 10: 假设多样性 (unique statements 占比)
         - topology_richness * 10: 假设网络结构丰富度 (β₁/n, 独立环数占比)
         - task_perf * 10: 真实任务性能 (r_phys / tests_passed; 无信号时不参与)
+        - novelty * task_perf: 进展门控的创新分 (仅在 novelty 伴随真实进展时计入)
         命中维度平均 → 0-10 分
+
+        创新纪律: novelty 不独立加分 —— "新而无用"不进棘轮, 只作探索整形信号.
+        棘轮奖励的是"解决了问题的新", 与"解决问题做主目标"一致.
 
         β₁ 解释: 假设图的独立环数. β₁=0 → 树状 (无交叉支持);
         β₁>0 → 有交叉支持/反驳链 (假设间相互关联). 标准化到 [0,1] 避免大图偏向.
@@ -1095,10 +1099,26 @@ class CognitiveRunner:
         # D: 有真实任务性能信号 (r_phys / tests_passed) 时并入第 5 维, 让 best
         # 反映真实质量而非纯图结构比例; 无信号退化为原 4 维 (行为不变).
         _dims = [supported_ratio, testable_ratio, graph_diversity, topology_richness]
+        # E (创新点 → 服务解决问题): novelty 不再等权平均加分. 只有与真实问题进展
+        # (_last_task_perf: r_phys / tests_passed, 归一化 0-1) 同时出现时, 才按进展
+        # 幅度计入 —— "新而无用" (novelty>0 但无进展) 不进棘轮分数, 只作探索整形
+        # 信号 (提议方向). 棘轮奖励的是"解决了问题的新", 而非"新"本身.
+        # 无进展信号 (tp 缺失) → novelty 不参与, 退化为原 4 维 (行为不变).
+        _nov_vals = [
+            float(getattr(nd, "novelty", 0.0) or 0.0)
+            for nd in all_nodes
+            if float(getattr(nd, "novelty", 0.0) or 0.0) > 0.0
+        ]
         _tp = getattr(self, "_last_task_perf", None)
+        _tp_val: float | None = None
         if _tp is not None:
             with contextlib.suppress(Exception):
-                _dims.append(max(0.0, min(1.0, float(_tp))))
+                _tp_val = max(0.0, min(1.0, float(_tp)))
+        if _tp_val is not None:
+            if _nov_vals:
+                # 进展门控的 novelty: 无进展 (tp=0) 时贡献 0.
+                _dims.append((sum(_nov_vals) / len(_nov_vals)) * _tp_val)
+            _dims.append(_tp_val)  # 真实任务性能本身仍独立一维
         score = (sum(_dims) / len(_dims)) * 10.0
 
         delta = score - self._darwin_last_score
@@ -3062,19 +3082,23 @@ Respond JSON only:
                         except Exception:  # 防御: 假设图新增失败忽略
                             logger.debug("hypothesis_graph add failed", exc_info=True)
                     # P0 Task 3: per-hyp 验证预算 — 创建时评估 informativeness + 分配 budget
-                    # toggle off 时跳过 (向后兼容, 不消耗 LLM 调用)
-                    if (
-                        os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1"
-                        and cog.get("current_hyp_id")
-                    ):
+                    # E: 也允许在**只要 novelty** 时评估 (HUGINN_NOVELTY_EVAL=1) —— 让
+                    # novelty 独立于 per-hyp 预算可用, 供 darwin 第 6 维. 两者都关则跳过
+                    # (向后兼容, 不消耗 LLM 调用).
+                    _want_budget = os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1"
+                    _want_novelty = os.environ.get("HUGINN_NOVELTY_EVAL", "0") == "1"
+                    if cog.get("current_hyp_id") and (_want_budget or _want_novelty):
                         try:
                             _info = await self._evaluate_informativeness(
                                 cog["current_hyp_id"]
                             )
-                            self._compute_verification_budget(
-                                cog["current_hyp_id"],
-                                _info["expected_informativeness"],
-                            )
+                            # novelty 已由 _evaluate_informativeness 落到节点 (E);
+                            # 仅 per-hyp 预算模式才消费 informativeness 分配预算.
+                            if _want_budget:
+                                self._compute_verification_budget(
+                                    cog["current_hyp_id"],
+                                    _info["expected_informativeness"],
+                                )
                         except Exception:  # 防御: 单假设预算评估失败忽略
                             logger.debug("per-hyp budget eval failed", exc_info=True)
                     # P1.4: campaign SSE 对齐 run() L1435

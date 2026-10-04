@@ -1793,3 +1793,81 @@ def test_cognitive_runner_state_forwards_via_getattr() -> None:
     # 协作方法真可调 (空图 → 提前 return, 不抛)
     eng._cognitive_runner._darwin_ratchet_check()
     assert eng._cognitive_runner._should_stop is False
+
+
+def test_hypothesis_node_novelty_roundtrip() -> None:
+    """E: novelty 字段随节点落盘 (to_dict/from_dict), 缺省 0.0 向后兼容."""
+    from huginn.autoloop.hypothesis_loop import HypothesisNode
+
+    n = HypothesisNode(id="h1", statement="s", novelty=0.73)
+    assert HypothesisNode.from_dict(n.to_dict()).novelty == 0.73
+    # 旧图无 novelty 字段 → 缺省 0.0 (不抛)
+    old = {"id": "h2", "statement": "s2"}
+    assert HypothesisNode.from_dict(old).novelty == 0.0
+
+
+def test_darwin_novelty_gated_by_progress(monkeypatch) -> None:
+    """E (创新点 → 服务解决问题): novelty 只有伴随真实进展才计入 darwin 分数.
+
+    - 只有 novelty、无任务进展 → 不加分 (新而无用不进棘轮).
+    - novelty + 进展 → 比只有进展更高 (创新服务解决问题时被奖励).
+    """
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.hypothesis_loop import HypothesisNode
+    from huginn.autoloop.signals import EngineSignals
+
+    class _FakeGraph:
+        _rejected_adds = 0
+
+        def __init__(self, nodes):  # noqa: ANN001
+            self._n = nodes
+
+        def all_nodes(self):  # noqa: ANN201
+            return self._n
+
+        def supported(self):  # noqa: ANN201
+            return [x for x in self._n if x.status == "supported"]
+
+        def edges(self):  # noqa: ANN201
+            return []
+
+    monkeypatch.setenv("HUGINN_STRENGTH_SCHEDULE", "0")  # 绕开强度调度读字段
+
+    def _mk_eng(graph, task_perf=None):  # noqa: ANN001, ANN202
+        eng = AutoloopEngine.__new__(AutoloopEngine)
+        eng.signals = EngineSignals()
+        eng._iteration = 1
+        eng._darwin_last_score = 0.0
+        eng._darwin_stagnation = 0
+        eng._darwin_best_score = 0.0
+        eng._darwin_belief_mu = 5.0
+        eng._darwin_belief_sigma2 = 101.0
+        eng.hypothesis_graph = graph
+        if task_perf is not None:
+            eng._last_task_perf = task_perf
+        eng._cognitive_runner = CognitiveRunner(eng)
+        return eng
+
+    def _nodes(novelty):  # noqa: ANN001, ANN202
+        return [
+            HypothesisNode(id="a", statement="s1", status="untested", novelty=novelty),
+            HypothesisNode(id="b", statement="s2", status="untested", novelty=novelty),
+        ]
+
+    # 只有 novelty、无进展 → 与无 novelty 同分 (novelty 单独不加分)
+    base_eng = _mk_eng(_FakeGraph(_nodes(0.0)))
+    base_eng._cognitive_runner._darwin_ratchet_check()
+    nov_only_eng = _mk_eng(_FakeGraph(_nodes(0.8)))
+    nov_only_eng._cognitive_runner._darwin_ratchet_check()
+    assert nov_only_eng._darwin_last_score == base_eng._darwin_last_score
+
+    # novelty + 进展 → 比只有进展更高 (创新服务解决问题时被奖励)
+    prog_only_eng = _mk_eng(_FakeGraph(_nodes(0.0)), task_perf=0.6)
+    prog_only_eng._cognitive_runner._darwin_ratchet_check()
+    nov_prog_eng = _mk_eng(_FakeGraph(_nodes(0.8)), task_perf=0.6)
+    nov_prog_eng._cognitive_runner._darwin_ratchet_check()
+    assert nov_prog_eng._darwin_last_score > prog_only_eng._darwin_last_score, (
+        nov_prog_eng._darwin_last_score,
+        prog_only_eng._darwin_last_score,
+    )

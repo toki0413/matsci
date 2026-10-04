@@ -79,6 +79,11 @@ class HypothesisNode:
     # v11: pivot 兄弟组 id — 同一失败假设 pivot 出的多个候选共享一个 group.
     # ponytail: 字段驱动, 非 LLM 判定. None = 无兄弟.
     sibling_group_id: str | None = None
+    # E (创新点): LLM 评估的 novelty (0-1, 与已有 supported/refuted 低重叠=高新颖).
+    # 0.0 = 未评估 (无信号). 只由 _evaluate_informativeness 写入, 供 darwin 第 6 维
+    # 使用 —— 让棘轮奖励"新", 而非只奖励"结构规整"(graph_diversity 用字符串唯一性,
+    # 重述可以骗过). 未评估时 darwin 不并入该维 (行为不变).
+    novelty: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +98,7 @@ class HypothesisNode:
             "refinement_basis": list(self.refinement_basis),
             "dimension": self.dimension,
             "sibling_group_id": self.sibling_group_id,
+            "novelty": self.novelty,
         }
 
     @classmethod
@@ -109,6 +115,7 @@ class HypothesisNode:
             refinement_basis=d.get("refinement_basis", []),
             dimension=d.get("dimension", ""),
             sibling_group_id=d.get("sibling_group_id"),
+            novelty=d.get("novelty", 0.0),
         )
 
 
@@ -3233,6 +3240,9 @@ class HypothesisLoop:
             _parsed = json.loads(_m.group(0))
             _nov = max(0.0, min(1.0, float(_parsed.get("novelty", 0.5))))
             _ver = max(0.0, min(1.0, float(_parsed.get("verifiability", 0.5))))
+            # E: 把 novelty 落到节点上 (随图落盘 + 供 darwin 第 6 维). 失败不影响返回.
+            with contextlib.suppress(Exception):
+                _node.novelty = _nov
             return {
                 "novelty": _nov,
                 "verifiability": _ver,
