@@ -153,3 +153,6 @@ control_trace name=collab_blind_reconstruct iteration=29 evidence=skip: node sta
 control_trace name=goal_judge iteration=29 evidence=achieved=False score=0.1 llm=1 action=advisory_hint
 darwin ratchet: stagnation 5 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
 control_trace name=darwin_stagnation iteration=34 evidence=stagnation=5 best=5.88 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=The bootstrap constraints define a low-dimensional algebraic variety in function space; for rigid families, the solution space has dimension $d \ll w$, allowing fixed-width networks to interpolate; for fat families, $d \sim w$, requiring $N_c \propto w$.): ** [DIM: geometry] The solution space of the rigid family corresponds to a manifold with non-vanishi
+phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
+phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
