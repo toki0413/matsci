@@ -152,6 +152,64 @@ def _citation_gap(report_text: str, evidence_text: str) -> tuple[int, int]:
     return len(rep - ev), len(rep)
 
 
+# ── 判别性 / 决定性纪律 (控制面审计 C 族续: 只标注, 不改写结论, 不终止) ──
+# run79 症状: rigid 与 fat 两组结果完全相同 (探针根本不判别) 仍被当结论; 硬口径只给
+# "partial support" 不给二元判定. 两条在报告面落为: 生成期硬纪律 + 事后诚实标注 +
+# 每轮 control_trace (供触发率统计). 与 citation 门同一风格 (纯观测 + 条件标注).
+_DISC_MIN_VALUES = 3  # Results 里 |值|>=_CITATION_MIN_MAGNITUDE 的数值达此数才审
+
+_CONTRAST_CJK = ("相比", "相较于", "对照", "分离", "差异", "不可判别", "无判别", "两组")
+_CONTRAST_EN = ("vs", "versus", "separat", "distinct", "differen", "control", "indiscriminat")
+
+_HEDGE_CJK = ("部分支持", "初步", "暂定", "暗示", "疑似", "倾向于", "尚不能")
+_HEDGE_EN = (
+    "partial support", "preliminary", "tentative", "suggest", "may be",
+    "could be", "appears to",
+)
+
+_BINARY_CJK = ("满足", "未满足", "判定", "未判定", "不可判别", "无判别", "违反", "可达", "不可达")
+_BINARY_EN = ("satisfied", "violated", "indiscriminat", "not met")
+
+
+def _has_lang_marker(text: str, cjk: tuple[str, ...], en: tuple[str, ...]) -> bool:
+    """文本是否命中任一中/英语汇.
+
+    CJK 走子串匹配; EN 走词首边界 (``\\b``), 避免 "met" 命中 "method" 之类误判.
+    纯判定, 不抛.
+    """
+    low = (text or "").lower()
+    if any(w in low for w in cjk):
+        return True
+    return any(re.search(rf"\b{re.escape(w)}", low) for w in en)
+
+
+def _discrimination_gap(report_text: str, evidence_text: str) -> tuple[bool, int]:
+    """判别性口径: Results 是否给出对照条件间的**分离性**证据.
+
+    返回 ``(has_contrast, magnitude_count)``. 只审 Results 节 (与 citation 同口径):
+    magnitude_count = |值|>=_CITATION_MIN_MAGNITUDE 的候选数值数; has_contrast =
+    报告中出现对照/分离语汇. 有足量数值却无任何对照描述 → 报告把不同条件并成一条、
+    未证明探针判别 (run79 rigid==fat). 纯判定, 不抛.
+    """
+    results = _results_section(report_text)
+    mag = len(_numeric_tokens(results, _CITATION_MIN_MAGNITUDE))
+    has_contrast = _has_lang_marker(results, _CONTRAST_CJK, _CONTRAST_EN)
+    return has_contrast, mag
+
+
+def _decisive_gap(report_text: str) -> tuple[bool, bool]:
+    """决定性口径: 报告是否对硬口径给出**二元判定**而非模糊措辞.
+
+    返回 ``(has_binary, has_hedge)``. 有模糊措辞却无任何判定语汇 → 未给决定性闭环
+    (run79 'partial support'). 审全文 (判定/模糊都可能写在 Results 或 Discussion).
+    纯判定, 不抛.
+    """
+    text = report_text or ""
+    has_binary = _has_lang_marker(text, _BINARY_CJK, _BINARY_EN)
+    has_hedge = _has_lang_marker(text, _HEDGE_CJK, _HEDGE_EN)
+    return has_binary, has_hedge
+
+
 def _ledger_evidence_text(ledger: Any) -> str:
     """把执行台账渲染成 ``[ev#] tool: result`` 文本 (报告面与验收门共用)."""
     if not isinstance(ledger, list):
@@ -3909,6 +3967,26 @@ class EngineReflect:
                 action="annotate" if _cite_flagged else "advisory_hint",
             )
 
+        # 判别性 / 决定性纪律 (C 族续): 与 citation 门同一风格 —— 纯观测 + 条件标注,
+        # 不替书生下判断、不终止。每轮落 trace 供触发率统计 (run79: rigid==fat 无对照;
+        # 硬口径只给 partial support).
+        _has_contrast, _mag_n = _discrimination_gap(report_narrative, evidence_text)
+        _disc_flagged = (not _has_contrast) and _mag_n >= _DISC_MIN_VALUES
+        if _mag_n > 0:
+            self._emit_control_trace(
+                "report_discrimination",
+                f"contrast={_has_contrast} values={_mag_n}",
+                action="annotate" if _disc_flagged else "advisory_hint",
+            )
+        _has_binary, _has_hedge = _decisive_gap(report_narrative)
+        _dec_flagged = _has_hedge and not _has_binary
+        if _has_hedge or _has_binary:
+            self._emit_control_trace(
+                "report_decisive",
+                f"binary={_has_binary} hedge={_has_hedge}",
+                action="annotate" if _dec_flagged else "advisory_hint",
+            )
+
         report_path = (
             self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
         )
@@ -3942,6 +4020,23 @@ class EngineReflect:
                 "无法在本轮真实 execution_result 台账中找到出处 (见上方 "
                 "`[ev#]` 记录)。这些数值不应作为结论引用, 需回到可复现的执行证据"
                 "重新核对。\n"
+            )
+        # 判别性告警: 有足量报告数值却无任何对照/分离描述 → 提示证明探针判别 (只标注).
+        if _disc_flagged and report_narrative:
+            report_content += (
+                "\n\n## Discrimination Audit\n\n"
+                f"**判别性告警：** Results 列出了 {_mag_n} 个候选数值, 但未见对**对照"
+                "条件之间分离性**的描述。若实验含对照/分组 (如 rigid vs fat), 必须证明"
+                "两组结果真分离; 若两组给出相同结果, 应显式声明该探针**不可判别**, "
+                "不得据此支持或反驳假设。\n"
+            )
+        # 决定性告警: 有模糊措辞却无二元判定 → 提示对硬口径给判定 (只标注).
+        if _dec_flagged and report_narrative:
+            report_content += (
+                "\n\n## Decisive Closure Audit\n\n"
+                "**决定性告警：** 报告未对命题的硬口径给出二元判定 (满足/未满足), "
+                "而是用了模糊措辞。应对硬口径给出明确的通过/未通过判定 + 方向/趋势; "
+                "证据不足时写\"未判定\"并说明缺口, 不要用部分支持/初步/可能代替判定。\n"
             )
         report_path.write_text(report_content, encoding="utf-8")
 
@@ -4363,6 +4458,25 @@ class EngineReflect:
             "raw value and the threshold separately and label the comparison as "
             "unverified.\n" if evidence_ledger else ""
         )
+        # 判别性/决定性纪律: 与 citation/provenance 同一"硬纪律"风格 (只加规则,
+        # 不替书生计算、不改写其结论). run79: rigid==fat 却当结论; 硬口径只给
+        # "partial support". 让报告作者显式处理这两件事.
+        discrimination_rule = (
+            "\nDISCRIMINATION RULE (hard): if the experiment has a control/comparison "
+            "condition (e.g. two groups expected to differ), Results MUST show whether "
+            "the two groups actually separate. If they yield the same values, state "
+            "explicitly that the probe is NOT discriminative, and do NOT use such a "
+            "result to support or refute the hypothesis — otherwise the experiment is "
+            "void and must not be reported as a finding.\n" if evidence_ledger else ""
+        )
+        decisive_rule = (
+            "\nDECISIVE CLOSURE RULE (hard): give a BINARY verdict on the objective's "
+            "hard criterion (met / not met), with the direction or trend. Do NOT "
+            "substitute hedges such as 'partial support', 'preliminary', or 'suggests' "
+            "for a verdict. If the evidence is insufficient, write 'undecided' and state "
+            "the evidence gap explicitly — never present a hedge as a conclusion.\n"
+            if evidence_ledger else ""
+        )
 
         return (
             "You are writing a structured scientific research report based on an "
@@ -4372,7 +4486,7 @@ class EngineReflect:
             f"Phases:\n{phases_blob}\n"
             f"Surprise score: {surprise:.2f} (0=predicted, 1=unexpected)"
             f"{hyp_section}{exec_section}{ledger_section}{visual_section}{val_section}{kb_section}"
-            f"{citation_rule}{protocol_rule}"
+            f"{citation_rule}{protocol_rule}{discrimination_rule}{decisive_rule}"
             "\nWrite the report with these sections (Markdown):\n"
             "## Introduction\n"
             "State the scientific question and why it matters. Reference domain knowledge above.\n\n"

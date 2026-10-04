@@ -40,7 +40,7 @@
 - run79: darwin best **5.88**; 观察者 `control_trace` 覆盖 refute/support/skip, `summary_len` 960–1573。
 - run79 报告: 13+ 实验全部 `reproducible=true`, **但** [ev4] rigid 与 fat 结果完全相同(探针不判别)、N_c 出现 `[-1,-1,4]` / `[Infinity,4,4,4]` 等矛盾值、`surprise score 0.07`、结论"partial support", 结尾漂移到 materials science(违反命题禁令)。
 
-## 待补 (创新 / 解决问题层)
-1. **判别性门槛**: 对照组必须真分离(rigid ≠ fat), 否则该实验作废, 不许进报告。
-2. **决定性闭环**: 对硬口径给出二元判定 + 趋势, 而非 "partial support"。
-3. **novelty 并入评分 (进展门控)**: 已实现 (E). 开关 `HUGINN_NOVELTY_EVAL=1` 触发评估, novelty 落节点; darwin 里 novelty **不独立加分** —— 只在同时有真实进展 (`_last_task_perf`) 时按进展幅度计入 (`novelty × task_perf`)。"新而无用"不进棘轮, 只作探索整形信号。
+## 已补 (创新 / 解决问题层) — 一律"信号 + 诚实标注", 不做硬控制流
+1. **判别性门槛**: 报告生成期加 `DISCRIMINATION RULE`; 事后 `_discrimination_gap` 审 Results —— 有足量数值却无对照/分离描述 → 落 `report_discrimination` trace (annotate) + 附 `Discrimination Audit` 告警。只标注, 不改结论、不终止。
+2. **决定性闭环**: 报告生成期加 `DECISIVE CLOSURE RULE`; 事后 `_decisive_gap` 审全文 —— 有模糊措辞 (partial support / preliminary / suggests) 却无二元判定 → 落 `report_decisive` trace (annotate) + 附 `Decisive Closure Audit` 告警。只标注。
+3. **novelty 并入评分 (进展门控)**: 开关 `HUGINN_NOVELTY_EVAL=1` 触发评估, novelty 落节点; darwin 里 novelty **不独立加分** —— 只在同时有真实进展 (`_last_task_perf`) 时按进展幅度计入 (`novelty × task_perf`)。"新而无用"不进棘轮, 只作探索整形信号。

@@ -1188,6 +1188,113 @@ async def test_report_flags_untraceable_numbers_and_annotates(tmp_path) -> None:
     assert traces and traces[0]["action"] == "annotate"
 
 
+def test_discrimination_gap_flags_numbers_without_contrast() -> None:
+    """有足量 Results 数值却无对照/分离描述 → 未证明探针判别 (run79 rigid==fat)."""
+    from huginn.autoloop.engine_reflect import _discrimination_gap
+
+    report = (
+        "## Results\n\n| w | Nc |\n|---|---|\n| 10 | 12 |\n| 50 | 20 |\n"
+        "| 100 | 30 |\n\n## Discussion\nok\n"
+    )
+    has_contrast, mag = _discrimination_gap(report, "")
+    assert mag >= 3
+    assert has_contrast is False
+
+
+def test_discrimination_gap_ok_with_contrast() -> None:
+    from huginn.autoloop.engine_reflect import _discrimination_gap
+
+    report = "## Results\n\nrigid vs fat: Nc(10)=12, Nc(50)=20; the two differ.\n"
+    has_contrast, _mag = _discrimination_gap(report, "")
+    assert has_contrast is True
+
+
+def test_decisive_gap_flags_hedge_without_verdict() -> None:
+    """有模糊措辞却无二元判定 → 未给决定性闭环 (run79 'partial support')."""
+    from huginn.autoloop.engine_reflect import _decisive_gap
+
+    report = (
+        "## Discussion\n\nThe results give partial support to the hypothesis; "
+        "more work may be needed.\n"
+    )
+    has_binary, has_hedge = _decisive_gap(report)
+    assert has_hedge is True
+    assert has_binary is False
+
+
+def test_decisive_gap_ok_with_binary_verdict() -> None:
+    from huginn.autoloop.engine_reflect import _decisive_gap
+
+    report = (
+        "## Results\n\nThe hard criterion is NOT MET: N_c was not reachable "
+        "within the scan range.\n"
+    )
+    has_binary, has_hedge = _decisive_gap(report)
+    assert has_binary is True
+    assert has_hedge is False
+
+
+def test_science_report_prompt_includes_discipline_rules_with_ledger() -> None:
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    base = {"objective": "x", "total_time_seconds": 1.0, "phases": []}
+    with_ledger = EngineReflect._build_science_report_prompt(
+        dict(base), evidence_ledger="[ev1] code_lab: {Nc: 4}"
+    )
+    assert "DISCRIMINATION RULE" in with_ledger
+    assert "DECISIVE CLOSURE RULE" in with_ledger
+    without = EngineReflect._build_science_report_prompt(dict(base))
+    assert "DISCRIMINATION RULE" not in without
+    assert "DECISIVE CLOSURE RULE" not in without
+
+
+async def test_report_flags_nondiscriminative_and_hedged(tmp_path) -> None:
+    """端到端: 报告有数值无对照 + 只给模糊措辞 → 两条 trace 落 annotate + 附告警."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    captured: list[tuple[str, dict]] = []
+    hedged = (
+        "## Results\n\n| w | Nc |\n|---|---|\n| 10 | 12 |\n| 50 | 20 |\n"
+        "| 100 | 30 |\n\n## Discussion\n\n"
+        "The results give partial support to the hypothesis.\n"
+    )
+
+    class _StubEngine:
+        workspace = tmp_path
+        _iteration = 4
+        _last_execution_result = {
+            "_tool_name": "code_lab",
+            "result": {"objectives": {"Nc": 45}},
+        }
+        _last_visual_context = ""
+        _last_validation = ""
+        _last_surprise = 0.0
+        _last_hypothesis = ""
+        _execution_ledger = [
+            {"idx": 1, "tool": "code_lab", "result": '{"objectives": {"Nc": 45}}'}
+        ]
+
+        def _build_kb_text(self, query):  # noqa: ANN001
+            return ""
+
+        def _render_report(self, data):  # noqa: ANN001
+            return "# Huginn Autoloop Report\n"
+
+        def _emit_campaign(self, event_type, data):  # noqa: ANN001
+            captured.append((event_type, data))
+
+        async def _llm_chat(self, prompt, **kw):  # noqa: ANN001
+            return hedged
+
+    path = await EngineReflect(_StubEngine())._report("命题", [], 1.0)
+    text = (tmp_path / path.split("/")[-1]).read_text(encoding="utf-8")
+    assert "Discrimination Audit" in text
+    assert "Decisive Closure Audit" in text
+    by_name = {d.get("name"): d for _, d in captured}
+    assert by_name["report_discrimination"]["action"] == "annotate"
+    assert by_name["report_decisive"]["action"] == "annotate"
+
+
 # ===== 单一完成出口 + 验收门 (完成 ≠ 验收) =====
 
 def test_ledger_has_finite_evidence_accepts_finite_objectives() -> None:
