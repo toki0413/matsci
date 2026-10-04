@@ -40,5 +40,33 @@
     ],
     "mode": "explore",
     "description": "Design a controlled numerical experiment to probe solution space rigidity using small MLPs. Define an analytically constrained function family (e.g., low-degree polynomial with explicit equality const"
+  },
+  {
+    "scene_tag": "auto_constraints",
+    "hyp_key": "2f43b42fd833",
+    "reason": "Plan is invalid because MODE is set to 'explore' but the task requires implementing a numerical experiment, which falls under 'coder' mode (writing code). Additionally, the DESCRIPTION lacks critical specification of the target function and constraint set, making the experiment non-reproducible and the hypothesis untestable without these mathematical definitions.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' to indicate code implementation",
+      "Define the specific target function f(x) to be approximated",
+      "Specify the exact analytical constraints (values and/or derivatives) at w points",
+      "Define the search range for hidden layer width N_c",
+      "Specify the held-out validation set strategy"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test whether the solution space of small feedforward networks is rigid or fat by scanning hidden layer width $N_c$ vs. constraint count $w$. Define a target function a"
+  },
+  {
+    "scene_tag": "auto_constraints",
+    "hyp_key": "2f43b42fd833",
+    "reason": "The plan contains critical gaps that make it non-reproducible and untestable. First, the constraint definition is ambiguous: the prompt mentions 'first derivatives' but the mathematical structure of 'rigidity vs fatness' is heavily dependent on whether constraints are only values (interpolation) or include derivatives (Hermite-type). Without specifying the exact constraint formulation (e.g., w points with only values, or w points with both values and derivatives), the experiment lacks a fixed mathematical form. Second, the target function f(x) is defined but the constraint penalty method (weighting scheme for derivative constraints vs value constraints) is not specified, which critically affects training convergence. Third, while MODE=coder is correct, the plan lacks the actual code implementation details needed for reproducibility, and the historical failure mentioned 'lack of specification for target function and constraint set' which this plan still ambiguously addresses.",
+    "missing_steps": [
+      "Precisely define constraint types: specify whether constraints are only function values at w points, or include first derivatives at those points (Hermite constraints)",
+      "Specify the constraint penalty weighting scheme: how to balance value errors vs derivative errors in the loss function",
+      "Provide the actual code implementation for the numerical experiment (not just description)",
+      "Define the held-out validation set generation method (random sampling vs grid)",
+      "Clarify the initialization and optimization algorithm (Adam? SGD? learning rate schedule)"
+    ],
+    "mode": "coder",
+    "description": "Implement a numerical experiment to test solution space rigidity in small MLPs. Define target function f(x) = sin(πx) on [-1, 1] with analytical constraints: values and first derivatives at w equally "
   }
 ]
