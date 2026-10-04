@@ -156,3 +156,19 @@ control_trace name=darwin_stagnation iteration=34 evidence=stagnation=5 best=5.8
 metacog: 假设可能为换名归约 (trap=, target=The bootstrap constraints define a low-dimensional algebraic variety in function space; for rigid families, the solution space has dimension $d \ll w$, allowing fixed-width networks to interpolate; for fat families, $d \sim w$, requiring $N_c \propto w$.): ** [DIM: geometry] The solution space of the rigid family corresponds to a manifold with non-vanishi
 phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
 phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2768, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+darwin ratchet: stagnation 6 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=39 evidence=stagnation=6 best=5.88 action=advisory_hint
+control_trace name=hypothesis_status_writeback iteration=40 evidence=support hyp=h_91714eb7 tests_passed=True action=support

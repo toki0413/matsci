@@ -386,6 +386,68 @@
       "r_phys": 1.0,
       "iteration": 35,
       "id": "persona_use:dft_expert_iter35"
+    },
+    {
+      "label": "** [DIM: geometry] The solution space of the rigid family corresponds to a manif",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:02:19.879743",
+      "last_seen": "2026-10-04T02:02:19.879743",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "persona": "dft_expert",
+      "id": "experiment:** [DIM: geometry] The solution space of the rigid family corresponds to a manif"
+    },
+    {
+      "label": "plan_workflow_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879785",
+      "last_seen": "2026-10-04T02:02:19.879785",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879794",
+      "last_seen": "2026-10-04T02:02:19.879794",
+      "mentions": 1,
+      "surprise": 0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: geometry] The solution space of the rigid family corresponds to a manif",
+        "Method:plan_workflow_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "label": "dft_expert_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:02:19.879872",
+      "last_seen": "2026-10-04T02:02:19.879872",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "6028125f6a8c5c56",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:dft_expert_iter40"
     }
   ],
   "links": [
@@ -550,6 +612,33 @@
       "last_seen": "2026-10-04T02:00:57.361427",
       "mentions": 1,
       "target": "he_experiment_pipeline_ea810a0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: geometry] The solution space of the rigid family corresponds to a manif",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2a05a6ce"
     }
   ]
 }
