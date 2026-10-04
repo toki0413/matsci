@@ -7,10 +7,10 @@
         "[Feynman known_unknown] I don’t understand why the test output showed “no tests ran” despite the framework reporting constraints satisfied — was this a silent skip due to configuration, or a runtime error masked by the runner?",
         "[Feynman unknown_unknown] I never considered that generative verification might require explicit textual reasoning alongside numerical output, which my raw number sequence lacked — so even if mathematically correct, it was rejected as incomplete."
       ],
-      "iteration": 8,
+      "iteration": 13,
       "status": "active",
       "created_at": "2026-10-04T01:44:02.963719+00:00",
-      "updated_at": "2026-10-04T01:50:38.144098+00:00",
+      "updated_at": "2026-10-04T01:54:11.275167+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -109,9 +109,49 @@
           "discovered_at": "2026-10-04T01:48:22.739264+00:00",
           "resolved_at": null,
           "iteration": 5
+        },
+        {
+          "id": "unk_c578c65c",
+          "text": "The definition of \"rigid\" relies on N_c(w) remaining small and finite as w increases, but this assumes that increasing constraint samples (w) doesn’t fundamentally alter the function class’s expressivity or induce hidden correlations that invalidate the bootstrap assumption — a potential structural flaw in assuming w scales independently of solution space structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:52:26.615331+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_f385e781",
+          "text": "Zero-violation tolerance (1e-3) may be numerically unstable due to floating-point precision limits during training; convergence failures or local minima could falsely indicate “fatness” when the true N_c is just beyond reach due to optimization artifacts.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:52:26.616466+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_1ec2da9b",
+          "text": "No ground-truth analytical constraints are provided for validation — without known exact solutions or benchmarks, it’s impossible to verify whether observed zero-violation behavior reflects true generalization or mere overfitting to noise or sampling artifacts.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:52:26.617210+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_30216163",
+          "text": "For very small w (e.g., w=1), any non-degenerate network can trivially achieve zero violation at one point, making N_c(w) artificially low — this edge case may skew the perceived rigidity unless explicitly excluded or normalized.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:52:26.617920+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_852ecaab",
+          "text": "Using hidden layer width as the sole proxy for network capacity ignores other architectural factors (depth, activation type, initialization, regularization) that may dominate N_c(w); thus, the metric may misrepresent true solution space geometry.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:52:26.618602+00:00",
+          "resolved_at": null,
+          "iteration": 10
         }
       ],
-      "unknowns_discovered": 12,
+      "unknowns_discovered": 17,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
