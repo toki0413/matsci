@@ -137,12 +137,12 @@
       "huginn",
       "value",
       "label",
-      "constraints",
-      "error",
       "constraint",
+      "error",
+      "constraints",
+      "polynomial",
       "rigid",
-      "small",
-      "polynomial"
+      "small"
     ],
     "workflow_steps": [
       {

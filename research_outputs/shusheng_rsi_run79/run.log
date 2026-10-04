@@ -172,3 +172,20 @@ json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 darwin ratchet: stagnation 6 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
 control_trace name=darwin_stagnation iteration=39 evidence=stagnation=6 best=5.88 action=advisory_hint
 control_trace name=hypothesis_status_writeback iteration=40 evidence=support hyp=h_91714eb7 tests_passed=True action=support
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2768, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+control_trace name=goal_judge iteration=44 evidence=achieved=False score=0.15 llm=1 action=advisory_hint
+darwin ratchet: stagnation 7 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=44 evidence=stagnation=7 best=5.88 action=advisory_hint
+control_trace name=hypothesis_status_writeback iteration=45 evidence=support hyp=h_da985287 tests_passed=True action=support
