@@ -19,7 +19,7 @@ import re
 from huginn import env_access as ea
 from huginn import env_schema as es
 from huginn.cli import config_audit as ca
-from huginn.feature_flags import FeatureFlags as FF
+from huginn.feature_flags import FeatureFlags
 
 # 与 env_schema 生成口径一致: 丢弃表达式默认值 (如 str(x)) 与裸常量名 (如 _DEFAULT_X),
 # 只对字面量默认值做漂移比对, 避免推断误差造成假阳性.
@@ -42,8 +42,8 @@ def _inventory() -> dict[str, dict]:
 
 def _dynamic_names() -> set[str]:
     """经 ``FeatureFlags`` 动态读的变量名 —— 静态扫描抓不到, 不算死声明."""
-    canon = {f"HUGINN_FEATURE_{name.upper()}" for name in FF._DEFAULTS}
-    return canon | set(FF._ENV_ALIASES)
+    canon = {f"HUGINN_FEATURE_{name.upper()}" for name in FeatureFlags._DEFAULTS}
+    return canon | set(FeatureFlags._ENV_ALIASES)
 
 
 def test_every_referenced_env_is_declared():
@@ -72,7 +72,7 @@ def test_feature_flags_declared_and_consistent():
     经 ``HUGINN_FEATURE_<NAME>`` 动态读, 静态扫描抓不到) —— 这正是双真值来源的
     高发区. 本测试把两处钉死: 新增 flag 未登记 → 红; 两处默认值不一致 → 红.
     """
-    for name, default in FF._DEFAULTS.items():
+    for name, default in FeatureFlags._DEFAULTS.items():
         canon = f"HUGINN_FEATURE_{name.upper()}"
         assert canon in es.SCHEMA, (
             f"FeatureFlags 新增了 flag {name!r} 但 SCHEMA 未登记 {canon}. "
@@ -88,7 +88,7 @@ def test_feature_flags_declared_and_consistent():
 
 def test_feature_flag_aliases_declared():
     """不变量 2c: 旧开关变量名 (``_ENV_ALIASES``) 必须已登记, 否则读端会漏."""
-    missing = sorted(a for a in FF._ENV_ALIASES if a not in es.SCHEMA)
+    missing = sorted(a for a in FeatureFlags._ENV_ALIASES if a not in es.SCHEMA)
     assert not missing, (
         "以下 FeatureFlags 别名未在 SCHEMA 登记 (旧变量名仍在生效, 读端非法): "
         + ", ".join(missing)
@@ -149,7 +149,7 @@ def test_env_access_enforces_declaration_and_types():
     """访问器自检: 未登记抛错; 声明变量的类型/默认值按 SCHEMA 生效."""
     import pytest
 
-    with pytest.raises(ea.UndeclaredEnvVar):
+    with pytest.raises(ea.UndeclaredEnvVarError):
         ea.env_str("HUGINN_DEFINITELY_NOT_DECLARED_XYZ")
 
     # 每个已登记变量的默认值都能按其声明类型解析 (无坏声明).

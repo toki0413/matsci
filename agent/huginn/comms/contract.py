@@ -183,7 +183,7 @@ def audit_agent_event(ev: Any) -> list[Violation]:
                           f"type={etype!r} 未登记进事件词表 (登记或改用既有名)"))
     if ts is None:
         out.append(_violation("envelope.timestamp", "hard", "timestamp", "事件缺少 timestamp"))
-    elif not isinstance(ts, (int, float)) or isinstance(ts, bool) or ts <= 0:
+    elif not isinstance(ts, int | float) or isinstance(ts, bool) or ts <= 0:
         out.append(_violation("envelope.timestamp", "advisory", "timestamp", "timestamp 非正数"))
     if not source:
         out.append(_violation("envelope.source", "advisory", "source", "事件未标 source (出端身份缺失)"))

@@ -395,7 +395,7 @@ class _PseudoStepCtx:
 
 
 def make_branch_value_fn(
-    hook: "StepVerifierHook",
+    hook: StepVerifierHook,
     *,
     mode: str = "mean_min",
 ) -> Callable[[Any], Awaitable[float | None]]:

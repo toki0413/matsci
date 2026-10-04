@@ -10,9 +10,9 @@ import pytest
 
 from huginn.core_types import ToolContext
 from huginn.plugins.asd_ste100.main import (
-    AsdSte100Star,
     SEGMENT_NAME,
     TOOL_NAME,
+    AsdSte100Star,
     SteLintInput,
     SteLintTool,
     current_mode,

@@ -469,7 +469,7 @@ def test_repeat_chain_lights_hard_directive_after_threshold() -> None:
     真实代码路径, 补上 run53/run54 都没能自然触发的那一环.
     """
     from huginn.autoloop.engine_act import EngineAct
-    from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
+    from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK, EngineReflect
 
     eng = _repeat_stub()
     ref = EngineReflect(eng)
@@ -869,7 +869,7 @@ def test_engine_exposes_emit_control_trace_delegation() -> None:
 def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:
     """改参数 = 新实验: streak 归零, 硬标志撤销 (不误伤正常扫描)."""
     from huginn.autoloop.engine_act import EngineAct
-    from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
+    from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK, EngineReflect
 
     eng = _repeat_stub()
     ref = EngineReflect(eng)
@@ -992,7 +992,7 @@ async def test_hard_directive_reaches_real_author_prompt() -> None:
     产出的真实 execution_result. 补上 run53/54/55 都没能自然触发的那一环.
     """
     from huginn.autoloop.engine_act import EngineAct
-    from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
+    from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK, EngineReflect
 
     script = (
         "import numpy as np\n\n\n"
@@ -1013,7 +1013,7 @@ async def test_hard_directive_reaches_real_author_prompt() -> None:
 
     # 2) 真实沙箱跑两次同代码 → 指纹相同 → streak 累积越阈值
     first: dict = {}
-    for i in range(_REPEAT_HARD_STREAK + 1):
+    for _ in range(_REPEAT_HARD_STREAK + 1):
         res, reason = act._run_code_lab(code)
         assert res is not None, reason
         out: dict = {}

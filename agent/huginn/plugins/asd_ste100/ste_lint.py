@@ -469,7 +469,8 @@ def main(argv):
     findings, words_total = [], 0
     if paths:
         for p in paths:
-            f, w = lint(open(p, encoding="utf-8").read(), filename=p)
+            with open(p, encoding="utf-8") as fh:
+                f, w = lint(fh.read(), filename=p)
             findings.extend(f)
             words_total += w
     else:

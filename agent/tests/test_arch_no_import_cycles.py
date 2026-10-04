@@ -75,7 +75,7 @@ def _edges(mods: dict[str, Path], prefix: str) -> dict[str, set[str]]:
 
     def collect(node: ast.AST, out: list[str]) -> None:
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
                 continue  # 延迟 import: 断环手段, 不算边
             if isinstance(child, ast.If) and "TYPE_CHECKING" in ast.dump(child.test):
                 continue  # 永不执行
