@@ -151,3 +151,5 @@ control_trace name=collab_blind_reconstruct iteration=19 evidence=refute: blind_
 control_trace name=collab_blind_reconstruct iteration=24 evidence=support(legacy): blind_holds=True summary_len=1573 action=support
 control_trace name=collab_blind_reconstruct iteration=29 evidence=skip: node status=supported action=skip
 control_trace name=goal_judge iteration=29 evidence=achieved=False score=0.1 llm=1 action=advisory_hint
+darwin ratchet: stagnation 5 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=34 evidence=stagnation=5 best=5.88 action=advisory_hint
