@@ -149,3 +149,5 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic variety hypothesis
 control_trace name=collab_blind_reconstruct iteration=19 evidence=refute: blind_holds=False vs orig_holds=True summary_len=1425 action=refute
 [FINALLY-REFLECT] tool_results_this_turn=1
 control_trace name=collab_blind_reconstruct iteration=24 evidence=support(legacy): blind_holds=True summary_len=1573 action=support
+control_trace name=collab_blind_reconstruct iteration=29 evidence=skip: node status=supported action=skip
+control_trace name=goal_judge iteration=29 evidence=achieved=False score=0.1 llm=1 action=advisory_hint

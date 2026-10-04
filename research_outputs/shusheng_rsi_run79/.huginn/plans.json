@@ -178,6 +178,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_363b1849",
+      "objective": "\".",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a bootstrap sampling experiment to probe the rigidity of the solution space for a simple analytical constraint (e.g., a linear or low-degree polynomial constraint) using small feedforward networks. For each constraint sample size w, increase hidden layer width N until the network achieves zero violation (max absolute error ≤ 1e-3) on a held-out set of constraint points. Record the minimal N_c(w) for each w. Evaluate whether N_c(w) remains bounded (rigid) or diverges (fat).",
+          "tool": "skill",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/ml_rigidity_probe.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-04T02:00:23.130983+00:00",
+      "confirmed_at": "2026-10-04T02:00:23.132349+00:00",
+      "completed_at": "2026-10-04T02:00:36.106325+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "skill",
+        "source": "autoloop"
+      }
     }
   ]
 }
