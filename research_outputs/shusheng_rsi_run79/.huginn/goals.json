@@ -5,12 +5,14 @@
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "sub_goals": [
         "[Feynman known_unknown] I don’t understand why the test output showed “no tests ran” despite the framework reporting constraints satisfied — was this a silent skip due to configuration, or a runtime error masked by the runner?",
-        "[Feynman unknown_unknown] I never considered that generative verification might require explicit textual reasoning alongside numerical output, which my raw number sequence lacked — so even if mathematically correct, it was rejected as incomplete."
+        "[Feynman unknown_unknown] I never considered that generative verification might require explicit textual reasoning alongside numerical output, which my raw number sequence lacked — so even if mathematically correct, it was rejected as incomplete.",
+        "[Feynman known_unknown] I don’t understand why the test framework reported “no tests ran” despite claiming constraints were satisfied — was this a simulation artifact or a real null result?",
+        "[Feynman unknown_unknown] I never considered that the generative verifier might reject outputs solely for lack of narrative structure, even if numerically correct — I assumed correctness was purely mathematical."
       ],
-      "iteration": 13,
+      "iteration": 18,
       "status": "active",
       "created_at": "2026-10-04T01:44:02.963719+00:00",
-      "updated_at": "2026-10-04T01:54:11.275167+00:00",
+      "updated_at": "2026-10-04T01:55:10.177370+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -149,9 +151,65 @@
           "discovered_at": "2026-10-04T01:52:26.618602+00:00",
           "resolved_at": null,
           "iteration": 10
+        },
+        {
+          "id": "unk_f56f6f1c",
+          "text": "The definition of \"zero violation\" as max absolute error ≤ 1e-3 may be too strict or too loose depending on the scale of target outputs; if outputs are large (e.g., >>1), this tolerance might allow significant relative errors, while if outputs are near zero, it may be numerically unstable without normalization.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:54:35.143258+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_25468f9f",
+          "text": "The optimization landscape of small feedforward networks is highly non-convent and multimodal; convergence to a solution with zero violation on held-out points may depend heavily on initialization and optimizer, leading to false negatives in N_c(w) estimation.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:54:35.144431+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_4cf76f45",
+          "text": "There is no specified distribution over the constraint points w; if they are adversarially chosen or clustered, the resulting N_c(w) may not reflect generalizable rigidity but rather overfitting to specific regions.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:54:35.145155+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_e257659f",
+          "text": "The assumption that network width alone controls solution space rigidity ignores depth, activation function, and initialization scheme — all of which can drastically alter representational capacity and generalization behavior independently of width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:54:35.145825+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_9ab69498",
+          "text": "For very small w (e.g., w=1), even a single point might be interpolated by arbitrarily narrow networks due to parameter redundancy, making N_c(w) artificially low and misleading about true solution space dimensionality.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-04T01:54:35.146476+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_22b3d701",
+          "text": "I don’t understand why the test framework reported “no tests ran” despite claiming constraints were satisfied — was this a simulation artifact or a real null result?",
+          "type": "known_unknown",
+          "discovered_at": "2026-10-04T01:54:45.056540+00:00",
+          "resolved_at": null,
+          "iteration": 15
+        },
+        {
+          "id": "unk_1fca12bc",
+          "text": "I never considered that the generative verifier might reject outputs solely for lack of narrative structure, even if numerically correct — I assumed correctness was purely mathematical.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-10-04T01:54:45.058004+00:00",
+          "resolved_at": null,
+          "iteration": 15
         }
       ],
-      "unknowns_discovered": 17,
+      "unknowns_discovered": 24,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:54:41.281896",
+      "last_seen": "2026-10-04T01:54:41.281896",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid (low-dimensional algebraic) system: N_c(w) will be small (≤ 8) and roughly constant across w=10,50,100. For the fat (higher-dimensional) system: N_c will exceed scan limit (e.g., >64) or",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs"
+    },
+    {
+      "label": "plan_workflow_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281936",
+      "last_seen": "2026-10-04T01:54:41.281936",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281946",
+      "last_seen": "2026-10-04T01:54:41.281946",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs",
+        "Method:plan_workflow_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "label": "dft_expert_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:54:41.282033",
+      "last_seen": "2026-10-04T01:54:41.282033",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "6eb4977c10b02d62",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:dft_expert_iter15"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-10-04T01:48:18.503681",
       "mentions": 1,
       "target": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1710ba24"
     }
   ]
 }

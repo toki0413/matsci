@@ -89,6 +89,36 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_e9c1ddae",
+      "objective": "[DIM: structure] The bootstrap constraints define a low-dimensional algebraic variety in the function space; for rigid families (e.g., polynomial constraints of degree d), the solution space has dimension d+1, so N_c(w) remains constant (≈ d+1) as w increases, since the variety is fixed and low-dimensional. | predict: N_c(w) = constant (e.g., 4) for all w in scan range. | pro: Most directly testable (constant vs. growth prediction); aligns with algebraic variety hypothesis (previous success); clear mathematical foundation (polynomial interpolation). con: May fail if constraints are not exactly polynomial; but we can design constraints to be polynomial (e.g., y = x^3) to test. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a Python script to test the bootstrap algebraic variety hypothesis. The script will generate polynomial constraints of degree d (e.g., y = x^3, d=3), systematically vary the number of constraints w, and perform a scan of network widths (hidden layer sizes) to find the minimum capacity N_c(w) that achieves zero violation (max absolute error ≤ 1e-3) on held-out constraints. We will verify if N_c(w) remains constant (≈ d+1) as w increases, indicating a rigid, low-dimensional solution space. The script will use a simple MLP architecture, polynomial constraint generation, and a training loop with early stopping.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run79/test_bootstrap_rigidity.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-04T01:55:10.174097+00:00",
+      "confirmed_at": "2026-10-04T01:55:10.175230+00:00",
+      "completed_at": "2026-10-04T01:55:23.518125+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
