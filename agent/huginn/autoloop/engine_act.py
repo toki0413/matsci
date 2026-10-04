@@ -368,11 +368,21 @@ class EngineAct:
         # **真正写实验**的作者提示 → 指纹照旧、循环撞收敛提前离场 (run50 实测 streak
         # 1-4 指纹恒同). 这里**按 streak 现算**强制变异令并注入作者提示, 附上一轮真实
         # 结果(_prev_exec_fp_src), 逼书生改实验族/参数而非原样重跑. 无独立标志状态机.
-        if int(getattr(self, "_repeat_exec_streak", 0) or 0) >= _REPEAT_HARD_STREAK:
+        _streak = int(getattr(self, "_repeat_exec_streak", 0) or 0)
+        _cycling = bool(getattr(self, "_exec_cycling", False))
+        if _streak >= _REPEAT_HARD_STREAK or _cycling:
             _prev = str(getattr(self, "_prev_exec_fp_src", "") or "")
+            # 两种病态共用一条硬约束, 但病因不同, 措辞要分开 —— 否则给作者看错方向.
+            _why = (
+                "【强制变异·硬约束】最近数轮实验在**两种等价结果间来回换**"
+                "(A,B,A,B…), 无新信息 (=未推进研究). "
+                if _cycling and _streak < _REPEAT_HARD_STREAK
+                else "【强制变异·硬约束】上一轮真实执行结果与更早一轮指纹完全一致"
+                     "(=无效重跑, 未推进研究). "
+            )
             parts.append(
-                "【强制变异·硬约束】上一轮真实执行结果与更早一轮指纹完全一致"
-                "(=无效重跑, 未推进研究). 本轮实验**必须**至少改动一项结构: "
+                _why
+                + "本轮实验**必须**至少改动一项结构: "
                 "更换 family/约束族、改扫描范围或步长、改网络架构/宽度集合、"
                 "改优化器或 seeds. 禁止原样重跑上一配置."
                 + (("上一轮真实结果(你必须产出与它不同的数值):" + _prev[:500])

@@ -1255,6 +1255,14 @@ class EngineReflect:
         _counter = str(_inv.get("counterfactual", "") or "").strip()
         if not _reasoning:
             return ""
+        # 控制面审计 §11.4: 旧实现只在**失败**分支发 trace, 成功路径无观测点 →
+        # 野外一旦正常产出, 统计侧看到的仍是 0, 会被误判为"死代码". 补成功面.
+        self._emit_control_trace(
+            "collab_failure_inverter",
+            f"use: reasoning_len={len(_reasoning)} "
+            f"break={bool(_break)} counterfactual={bool(_counter)}",
+            action="use",
+        )
         return (
             f"[FAILURE TRACE]\n{_reasoning}\n\n"
             f"[BREAK POINT]\n{_break}\n\n"
@@ -1669,12 +1677,6 @@ class EngineReflect:
                 # 故越阈值时把强制变异令**也写进作者面**: _build_codelab_focus 直接按
                 # _repeat_exec_streak 现算 (消费 streak 与 _prev_exec_fp_src 两个已有
                 # 状态), 不再维护 _force_exec_variation 独立标志状态机.
-                if _streak >= _REPEAT_HARD_STREAK:
-                    self._emit_control_trace(
-                        "pivot_directive",
-                        f"streak={_streak} threshold={_REPEAT_HARD_STREAK}",
-                        action="inject_directive",
-                    )
                 logger.warning(
                     "repeat execution detected (streak=%d): %s",
                     _streak,
@@ -1699,9 +1701,35 @@ class EngineReflect:
                     _hist = _deque(maxlen=6)
                     self._exec_fp_history = _hist
                 _hist.append(_fp)
-                self._exec_converged = len(_hist) >= 5 and len(set(_hist)) <= 2
+                _uniq = set(_hist)
+                self._exec_converged = len(_hist) >= 5 and len(_uniq) <= 2
+                # 等价族打转: 窗口去重<=2 **且每种结果都反复出现** (min 计数>=2).
+                # 与 `_exec_converged` 分开算: 后者只认"种类少", 连 A,A,A,A,B (刚做过
+                # 一次改变) 也算; 前者专门抓 A,B,A,B 来回换 —— 这正是连续 streak 口径
+                # 永远够不到阈值的病态 (见 1688-1691 自述).
+                self._exec_cycling = (
+                    len(_hist) >= 5
+                    and len(_uniq) <= 2
+                    and min(_hist.count(x) for x in _uniq) >= 2
+                )
             else:
                 self._exec_converged = False
+                self._exec_cycling = False
+            # pivot 硬指令的**唯一**观测点: 连续 streak 或 等价族打转 任一成立即注入
+            # (engine_act._build_codelab_focus 消费同一对信号). 旧实现在"连续相同"
+            # 分支内部发 trace → 打转路径 (streak 被反复清零) 永远看不到, run50 之后
+            # 21 个已接线 run 零命中即此 (控制面审计 §11.4 ②).
+            if (
+                getattr(self, "_exec_cycling", False)
+                or getattr(self, "_repeat_exec_streak", 0) >= _REPEAT_HARD_STREAK
+            ):
+                self._emit_control_trace(
+                    "pivot_directive",
+                    f"streak={getattr(self, '_repeat_exec_streak', 0)} "
+                    f"cycling={bool(getattr(self, '_exec_cycling', False))} "
+                    f"threshold={_REPEAT_HARD_STREAK}",
+                    action="inject_directive",
+                )
         except Exception:  # 防御: 重复实验检测失败不阻断主循环
             logger.debug("repeat-execution check failed", exc_info=True)
 

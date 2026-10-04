@@ -8,9 +8,9 @@
 | `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:75 | — | external |
 | `HUGINN_ADMIN_API_KEY` | '' | security/auth.py:115 | — | external |
 | `HUGINN_AGENTS` | '' | config.py:900 | routes/config.py:317 | code-set |
-| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:2037 | — | external |
+| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:2056 | — | external |
 | `HUGINN_ALERT_WEBHOOK_URL` | '' | diagnostics/system_health.py:391 | — | external |
-| `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:3018 | — | external |
+| `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:3206 | — | external |
 | `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:791, security/execution.py:22 | routes/agents.py:84, tools/__init__.py:200, cli/rcb_runner.py:57 | code-set |
 | `HUGINN_ALLOW_POWERSHELL` | '' | security/sandbox.py:33 | — | external |
 | `HUGINN_ALLOW_UNRESTRICTED_READ` | '' | routes/fs.py:60, tools/file_read_tool.py:80, tools/sci/xrd_sim_tool.py:141 | — | external |
@@ -18,10 +18,11 @@
 | `HUGINN_APPROVAL_MODE` | '' | agent/code_act_loop.py:705, agent/core.py:335 | — | external |
 | `HUGINN_ATOMWORLD_DATA_DIR` | ./atomworld_data | bench/atomworld_bench.py:23 | — | external |
 | `HUGINN_AUDIT_SIGNING_KEY` | '' | security/audit.py:626 | — | external |
-| `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:3599, autoloop/engine_reflect.py:4183 | — | external |
+| `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:3734, autoloop/engine_reflect.py:4408 | — | external |
+| `HUGINN_AUTOLOOP_NO_PLUGINS` | 0 | cli/commands/autoloop.py:37 | — | external |
 | `HUGINN_AUTOLOOP_STREAMING` | 1 | autoloop/engine.py:113 | — | external |
 | `HUGINN_AUTO_APPROVE` | False | agent_config.py:183, config.py:769, server_core.py:612, +3 处 | — | external |
-| `HUGINN_AUTO_WAKE` | 1 | autoloop/engine.py:709 | — | external |
+| `HUGINN_AUTO_WAKE` | 1 | autoloop/engine.py:723 | — | external |
 | `HUGINN_BANDIT_Q_PATH` | '' | agent/bandit_controller.py:136 | cli/rcb_runner.py:66 | code-set |
 | `HUGINN_BASE_URL` | '' | config.py:692, config.py:715 | — | external |
 | `HUGINN_BELIEF_ENTROPY_FACT_CHECK` | 0 | utils/belief_entropy.py:455 | — | external |
@@ -30,19 +31,21 @@
 | `HUGINN_BENCHMARK_MODE_PROMPT` | '' | agent/core.py:899 | cli/rcb_runner.py:72 | code-set |
 | `HUGINN_BING_API_KEY` | '' | tools/web_search_tool.py:286, tools/web_search_tool.py:377 | — | external |
 | `HUGINN_BING_ENDPOINT` | https://api.bing.microsoft.com/v7.0/search | tools/web_search_tool.py:381 | — | external |
-| `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:788 | — | external |
+| `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:888 | — | external |
 | `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:201 | — | external |
-| `HUGINN_BRANCH_INCUBATOR_DEPTH` | 2 | autoloop/hypothesis_loop.py:2075 | — | external |
-| `HUGINN_BRANCH_VALUE_PRM` | 1 | autoloop/hypothesis_loop.py:2055 | — | external |
+| `HUGINN_BRANCH_INCUBATOR_DEPTH` | 2 | autoloop/hypothesis_loop.py:2082 | — | external |
+| `HUGINN_BRANCH_VALUE_PRM` | 1 | autoloop/hypothesis_loop.py:2062 | — | external |
 | `HUGINN_BRAVE_API_KEY` | '' | tools/web_search_tool.py:288, tools/web_search_tool.py:419 | — | external |
 | `HUGINN_BUDGET_APPROVAL` | off | budget_pause.py:168 | — | external |
+| `HUGINN_BUDGET_DEADLINE_UNIFIED` | 1 | autoloop/engine_control.py:537 | — | external |
+| `HUGINN_BUDGET_EXPIRE_SEMANTICS` | 1 | autoloop/cognitive_loop.py:2774 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:192, cli/rcb_runner.py:60, +21 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +11 处, autoloop/variant_gen.py:310, tools/evidence_reducer.py:147, tools/observation_pack.py:273 | code-set |
-| `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:939 | — | external |
+| `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:958 | — | external |
 | `HUGINN_CHECKPOINTER_PATH` | '' | agent_config.py:154, bench/orchestrator.py:172, checkpointer.py:90, +4 处 | bench/orchestrator.py:451, bench/orchestrator.py:475, bench/orchestrator.py:490, bench/orchestrator.py:501 | code-set |
 | `HUGINN_CI` | '' | tools/sci/gp_tool.py:675 | — | external |
 | `HUGINN_CODEACT_MEM_CAP` | 2147483648 | agent/code_act_loop.py:794 | — | external |
-| `HUGINN_CODELAB_REPAIR_ATTEMPTS` | 3 | autoloop/engine_act.py:412 | — | external |
+| `HUGINN_CODELAB_REPAIR_ATTEMPTS` | 3 | autoloop/engine_act.py:422 | — | external |
 | `HUGINN_CODELAB_SCAFFOLD` | '' | autoloop/engine_act.py:339 | — | external |
 | `HUGINN_CODELAB_TIMEOUT_S` | 600 | autoloop/engine_act.py:336 | — | external |
 | `HUGINN_CODER_DONE_MARKER` | [DONE] | config.py:1310 | — | external |
@@ -50,7 +53,7 @@
 | `HUGINN_COEVOLUTION` | 0 | cli/rcb_runner.py:1246 | — | external |
 | `HUGINN_COGNITIVE_LLM_DECIDER` | 1 | autoloop/engine.py:482 | cli/rcb_runner.py:97 | code-set |
 | `HUGINN_COMPACT_KIND` | remote | agent/reflection.py:60 | — | external |
-| `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:846, agent/streaming.py:969 | — | external |
+| `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:865, agent/streaming.py:988 | — | external |
 | `HUGINN_COMPACT_THRESHOLD` | '' | models/registry.py:716 | — | external |
 | `HUGINN_COMPLETION_CHECK_INTERVAL` | 10 | cli/rcb_step2.py:421 | — | external |
 | `HUGINN_CONFIG_FILE` | huginn.toml | config.py:1362, routes/config.py:56, routes/config.py:794, +3 处 | — | external |
@@ -70,7 +73,7 @@
 | `HUGINN_CSM_SUBSET_MODE` | '' | agent/reflection.py:368 | cli/causal_runner.py:162, cli/rcb_runner.py:64 | code-set |
 | `HUGINN_DARWIN_LLM_EVAL` | 0 | metacog/llm_likelihood.py:46, metacog/llm_likelihood.py:271, metacog/step_evaluator.py:557, +1 处 | metacog/llm_likelihood.py:274, metacog/llm_likelihood.py:277, metacog/step_evaluator.py:1045, +3 处, metacog/step_evaluator.py:1107 | code-set |
 | `HUGINN_DARWIN_LLM_INTERVAL` | 5 | metacog/step_evaluator.py:573, metacog/step_evaluator.py:1042 | metacog/step_evaluator.py:1046, metacog/step_evaluator.py:1077, metacog/step_evaluator.py:1109, metacog/step_evaluator.py:1111 | code-set |
-| `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:1142 | cli/rcb_runner.py:346 | code-set |
+| `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:965, autoloop/cognitive_loop.py:1193 | cli/rcb_runner.py:346 | code-set |
 | `HUGINN_DEEPSEEK_OCR_PATH` | '' | tools/vision_describe_tool.py:67 | — | external |
 | `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:158, middleware/ws_governance.py:169, routes/agents.py:83, +2 处 | — | external |
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:582, tools/literature/_http.py:40, tools/web_search_tool.py:61 | tools/web_search_tool.py:849, tools/web_search_tool.py:854 | code-set |
@@ -78,7 +81,7 @@
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
 | `HUGINN_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | knowledge/store.py:36 | — | external |
 | `HUGINN_EM_RECALL_TOP_K` | 5 | config.py:850 | — | external |
-| `HUGINN_ENABLE_AGENT_COLLAB` | 0 | cli/commands/autoloop.py:31 | — | external |
+| `HUGINN_ENABLE_AGENT_COLLAB` | 0 | cli/commands/autoloop.py:55 | — | external |
 | `HUGINN_ENABLE_EXPLORATION` | true | config.py:770 | — | external |
 | `HUGINN_ENABLE_SCIHUB` | '' | tools/literature/pdf_fetch.py:238 | — | external |
 | `HUGINN_ENCRYPTION_ENABLED` | '' | config.py:793 | — | external |
@@ -96,8 +99,8 @@
 | `HUGINN_EXTREME_DISPATCH` | 0 | agent/core.py:501, config.py:845 | cli/rcb_runner.py:324, agent/core.py:504, agent/core.py:514, memory/session.py:387, agent/core.py:512, memory/session.py:377, memory/session.py:467 | code-set |
 | `HUGINN_EZPROXY_DOMAINS` | '' | tools/literature/crawl_web.py:204 | — | external |
 | `HUGINN_EZPROXY_PREFIX` | '' | tools/literature/crawl_web.py:197 | — | external |
-| `HUGINN_FAILURE_INVERSION` | 0 | autoloop/engine_reflect.py:3377 | — | external |
-| `HUGINN_FALLBACK_STREAM_IDLE` | '' | agent/streaming.py:103 | — | external |
+| `HUGINN_FAILURE_INVERSION` | 0 | autoloop/engine_reflect.py:3565 | — | external |
+| `HUGINN_FALLBACK_STREAM_IDLE` | '' | agent/streaming.py:116 | — | external |
 | `HUGINN_FEATURE_LOOP_DETECTOR` | '' | — | cli/rcb_runner.py:339, cli/rcb_runner.py:104 | code-set |
 | `HUGINN_FILE_READ_MAX_OUTPUT_TOKENS` | str(DEFAULT_MAX_OUTPUT_TOKENS | tools/file_read_tool.py:109 | — | external |
 | `HUGINN_FILE_READ_MAX_SIZE_BYTES` | str(DEFAULT_MAX_SIZE_BYTES | tools/file_read_tool.py:104 | — | external |
@@ -119,11 +122,11 @@
 | `HUGINN_INHERIT_STABLE_PRINCIPLES` | 1 | memory/longterm.py:1903 | — | external |
 | `HUGINN_ISING_RERANK` | 1 | memory/longterm.py:620 | memory/longterm.py:2177, memory/longterm.py:2179 | code-set |
 | `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:77 | — | external |
-| `HUGINN_JEPA_CORPUS` | '' | autoloop/engine_reflect.py:2216 | — | external |
-| `HUGINN_JEPA_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-mpnet-base-v2 | autoloop/engine_reflect.py:2409 | — | external |
+| `HUGINN_JEPA_CORPUS` | '' | autoloop/engine_reflect.py:2344 | — | external |
+| `HUGINN_JEPA_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-mpnet-base-v2 | autoloop/engine_reflect.py:2537 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:555 | — | external |
-| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:1046, agent/streaming.py:1739, agent/streaming.py:1782 | cli/rcb_runner.py:85 | code-set |
+| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:1065, agent/streaming.py:1758, agent/streaming.py:1801 | cli/rcb_runner.py:85 | code-set |
 | `HUGINN_KG_DEPTH` | 1 | config.py:788 | — | external |
 | `HUGINN_KG_ENABLED` | '' | config.py:787 | — | external |
 | `HUGINN_KG_TOP_K` | 10 | config.py:789 | — | external |
@@ -133,12 +136,12 @@
 | `HUGINN_LLM_LIKELIHOOD_INTERVAL` | 5 | metacog/llm_likelihood.py:52 | metacog/llm_likelihood.py:285, metacog/llm_likelihood.py:287 | code-set |
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:161 | — | external |
 | `HUGINN_LOCAL_ONLY` | 0 | config.py:790, models/registry.py:1625 | — | external |
-| `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1412, vision/local_decoder.py:24 | — | external |
+| `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1431, vision/local_decoder.py:24 | — | external |
 | `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:30 | — | external |
 | `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:28 | — | external |
 | `HUGINN_LOG_LEVEL` | INFO | utils/json_logging.py:126 | — | external |
-| `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:3294 | — | external |
-| `HUGINN_LOOP_ROLLBACK` | 1 | autoloop/cognitive_loop.py:2241 | — | external |
+| `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:3429 | — | external |
+| `HUGINN_LOOP_ROLLBACK` | 1 | autoloop/cognitive_loop.py:2321 | — | external |
 | `HUGINN_MAINTENANCE` | '' | middleware/maintenance.py:40 | — | external |
 | `HUGINN_MAX_BODY_SIZE_MB` | _DEFAULT_MAX_BODY_MB | middleware/limits.py:88 | — | external |
 | `HUGINN_MAX_BRANCHES` | 5 | config.py:774 | — | external |
@@ -172,7 +175,7 @@
 | `HUGINN_MCMC_PARALLEL` | 1 | metacog/hypothesis_manifold.py:940 | — | external |
 | `HUGINN_MCMC_SE3` | 0 | cli/rcb_runner.py:1334 | — | external |
 | `HUGINN_MCMC_SE3_ANGLE_SIGMA` | 30.0 | cli/rcb_runner.py:1339 | — | external |
-| `HUGINN_MCMC_SEED` | 42 | autoloop/engine.py:719, cli/rcb_mcmc.py:230, cli/rcb_step2.py:395, +1 处 | — | external |
+| `HUGINN_MCMC_SEED` | 42 | autoloop/engine.py:733, cli/rcb_mcmc.py:230, cli/rcb_step2.py:395, +1 处 | — | external |
 | `HUGINN_MCMC_STEPS` | 7000000 | cli/rcb_runner.py:1319 | — | external |
 | `HUGINN_MCMC_T_HIGH` | 10 | cli/rcb_mcmc.py:277 | — | external |
 | `HUGINN_MCP_ALLOWED_COMMANDS` | '' | config.py:764, mcp_client.py:76 | — | external |
@@ -187,6 +190,7 @@
 | `HUGINN_MP_API_KEY` | '' | tools/literature/search_sources.py:1575 | — | external |
 | `HUGINN_MULTI_AGENT` | 0 | memory/longterm.py:1913 | — | external |
 | `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:152 | — | external |
+| `HUGINN_NOVELTY_EVAL` | 0 | autoloop/cognitive_loop.py:3114 | — | external |
 | `HUGINN_NO_RUST_SANDBOX` | '' | — | cli/rcb_runner.py:94 | code-set |
 | `HUGINN_OAUTH_TOKEN` | '' | cli/availability.py:52 | — | external |
 | `HUGINN_OCR_ENGINE` | auto | knowledge/ocr_loader.py:196, knowledge/ocr_loader.py:251, knowledge/ocr_loader.py:302 | — | external |
@@ -197,14 +201,14 @@
 | `HUGINN_OTEL_SERVICE_NAME` | huginn | otel.py:291 | — | external |
 | `HUGINN_PASTE_OFFLOAD` | 1 | tools/paste_offload.py:33 | — | external |
 | `HUGINN_PASTE_OFFLOAD_THRESHOLD` | '' | tools/paste_offload.py:43 | — | external |
-| `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:927, autoloop/cognitive_loop.py:959, autoloop/cognitive_loop.py:2675, +4 处 | cli/rcb_runner.py:350, cli/commands/autoloop.py:199 | code-set |
+| `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:927, autoloop/cognitive_loop.py:986, autoloop/cognitive_loop.py:2764, +5 处 | cli/rcb_runner.py:350, cli/commands/autoloop.py:226 | code-set |
 | `HUGINN_PERSISTENT_TERMINAL_TIMEOUT` | '' | tools/persistent_terminal.py:30 | — | external |
 | `HUGINN_PERSONA` | default | config.py:706, config.py:775 | cli/commands/persona.py:131, routes/agents.py:462 | code-set |
 | `HUGINN_PERSONA_AUTO_ROUTE` | true | config.py:776 | — | external |
 | `HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD` | 0.3 | config.py:781 | — | external |
 | `HUGINN_PERSONA_AUTO_SYNC` | '' | config.py:783 | — | external |
 | `HUGINN_PERSONA_SYNC_DIR` | '' | config.py:785 | — | external |
-| `HUGINN_PER_HYP_BUDGET` | 0 | autoloop/cognitive_loop.py:1288, autoloop/cognitive_loop.py:2981, autoloop/engine_reflect.py:857 | — | external |
+| `HUGINN_PER_HYP_BUDGET` | 0 | autoloop/cognitive_loop.py:1339, autoloop/cognitive_loop.py:3113, autoloop/engine_reflect.py:946 | — | external |
 | `HUGINN_PET_NAME` | 渡鸦 | config.py:843 | — | external |
 | `HUGINN_PET_PERSONALITY` | cheerful | config.py:844 | — | external |
 | `HUGINN_PLAN_AUTO_CONFIRM` | 0 | config.py:722 | — | external |
@@ -217,6 +221,7 @@
 | `HUGINN_PRM_VERIFIER` | 0 | agents/factory.py:306 | — | external |
 | `HUGINN_PROFILE_MODEL` | '' | tools/personalization_tool.py:158 | — | external |
 | `HUGINN_PROFILE_PROVIDER` | deepseek | tools/personalization_tool.py:157 | — | external |
+| `HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING` | 1 | autoloop/engine_control.py:574 | — | external |
 | `HUGINN_PROMPT_CACHE_CONTROL` | true | config.py:821 | — | external |
 | `HUGINN_PROVENANCE_ENABLED` | 1 | provenance/registry.py:370 | — | external |
 | `HUGINN_PROVIDER` | default | config.py:659, config.py:1290 | — | external |
@@ -244,7 +249,7 @@
 | `HUGINN_REPEAT_EXEC_HARD_STREAK` | 2 | autoloop/engine_reflect.py:50 | — | external |
 | `HUGINN_REQUEST_TIMEOUT_SEC` | _DEFAULT_TIMEOUT_SEC | middleware/limits.py:178 | — | external |
 | `HUGINN_RESTRICTED_PYTHON` | 1 | cli/rcb_runner.py:250 | — | external |
-| `HUGINN_ROOT_MARKERS` | _DEFAULT_ROOT_MARKERS | agent/streaming.py:265 | cli/rcb_runner.py:89 | code-set |
+| `HUGINN_ROOT_MARKERS` | _DEFAULT_ROOT_MARKERS | agent/streaming.py:284 | cli/rcb_runner.py:89 | code-set |
 | `HUGINN_SANDBOX_BLOCKED_PATHS` | '' | permissions.py:303, validation/scope_authority.py:88 | cli/rcb_runner.py:83 | code-set |
 | `HUGINN_SANDBOX_ISOLATE_NETWORK` | '' | security/sandbox.py:46 | — | external |
 | `HUGINN_SANDBOX_MAX_CPU_SECONDS` | '' | security/sandbox.py:178 | — | external |
@@ -253,11 +258,11 @@
 | `HUGINN_SANDBOX_RELAX` | '' | security/sandbox.py:244 | — | external |
 | `HUGINN_SEARXNG_URL` | '' | tools/web_search_tool.py:290, tools/web_search_tool.py:461 | — | external |
 | `HUGINN_SECRET_BACKEND` | env | security/secrets.py:439 | — | external |
-| `HUGINN_SELF_GOAL_SYNTHESIS` | 0 | autoloop/engine_reflect.py:1259 | — | external |
-| `HUGINN_SELF_MODEL` | 0 | autoloop/engine_reflect.py:3552 | — | external |
+| `HUGINN_SELF_GOAL_SYNTHESIS` | 0 | autoloop/engine_reflect.py:1367 | — | external |
+| `HUGINN_SELF_MODEL` | 0 | autoloop/engine_reflect.py:3740 | — | external |
 | `HUGINN_SERVER_URL` | '' | cli/slash_commands.py:268 | — | external |
 | `HUGINN_SESSION_TTL_HOURS` | 24 | server_core.py:112 | — | external |
-| `HUGINN_SKILL_ABSTRACTION` | 0 | autoloop/engine_reflect.py:1180 | — | external |
+| `HUGINN_SKILL_ABSTRACTION` | 0 | autoloop/engine_reflect.py:1288 | — | external |
 | `HUGINN_SKILL_CONTEXT` | 0 | autoloop/engine_observe.py:646 | — | external |
 | `HUGINN_SKIP_CSM` | '' | agent/reflection.py:229 | — | external |
 | `HUGINN_SKIP_LOOP_DETECTOR` | '' | — | cli/rcb_runner.py:103, cli/rcb_runner.py:340 | code-set |
@@ -268,40 +273,42 @@
 | `HUGINN_SPECULATIVE_ENABLED` | '' | models/registry.py:1174 | — | external |
 | `HUGINN_SPECULATIVE_MODEL` | '' | models/registry.py:1178 | — | external |
 | `HUGINN_SPECULATOR_HISTORY` | '' | agents/speculator.py:32 | — | external |
+| `HUGINN_STALL_AS_ACTION` | 0 | autoloop/cognitive_loop.py:959 | — | external |
 | `HUGINN_STANDING_RULES` | '' | tools/adapter.py:610, tools/adapter.py:645 | — | external |
 | `HUGINN_STARTUP_DEADCODE` | '' | diagnostics/startup_validator.py:239 | — | external |
 | `HUGINN_STATE_BACKEND` | '' | server_core.py:79 | — | external |
 | `HUGINN_STATE_REGISTRY_PATH` | '' | persistence/state_registry.py:74 | — | external |
-| `HUGINN_STREAM_FALLBACK_RESUME` | 1 | agent/streaming.py:121 | — | external |
-| `HUGINN_STREAM_IDLE_TIMEOUT` | 60 | agent/streaming.py:66 | — | external |
-| `HUGINN_STRENGTH_SCHEDULE` | 1 | autoloop/signals.py:206 | — | external |
+| `HUGINN_STE_MODE` | agents | plugins/asd_ste100/main.py:127 | plugins/asd_ste100/main.py:136 | code-set |
+| `HUGINN_STREAM_FALLBACK_RESUME` | 1 | agent/streaming.py:140 | — | external |
+| `HUGINN_STREAM_IDLE_TIMEOUT` | 60 | agent/streaming.py:67 | — | external |
+| `HUGINN_STRENGTH_SCHEDULE` | 1 | autoloop/signals.py:219 | — | external |
 | `HUGINN_SURPRISE_HIST_CAP` | 200 | autoloop/engine_reflect.py:55 | — | external |
 | `HUGINN_SWARM_DISTRIBUTED` | '' | agents/swarm.py:577 | cli/rcb_runner.py:354, agents/swarm.py:677, agents/swarm.py:668 | code-set |
 | `HUGINN_TASK_TOOL_ROUTER` | '' | — | cli/rcb_runner.py:364 | code-set |
 | `HUGINN_TEAM_MODE` | '' | config.py:718 | — | external |
 | `HUGINN_TELEMETRY_ENABLED` | true | config.py:826 | — | external |
 | `HUGINN_TELEMETRY_PATH` | '' | autoloop/phase_gate.py:156 | — | external |
-| `HUGINN_THINKING` | high | agent/streaming.py:73, agent/streaming.py:86, cli/causal_runner.py:253, +2 处 | cli/causal_runner.py:159, cli/rcb_runner.py:335 | code-set |
+| `HUGINN_THINKING` | high | agent/streaming.py:81, agent/streaming.py:94, cli/causal_runner.py:253, +2 处 | cli/causal_runner.py:159, cli/rcb_runner.py:335 | code-set |
 | `HUGINN_THREAD_POOL_SIZE` | 64 | lifespan.py:601 | — | external |
 | `HUGINN_TOOLUNIVERSE_ENABLED` | 0 | lifespan.py:176 | — | external |
 | `HUGINN_TOOL_COMPRESSION_MAX_TOKENS` | 8000 | agent_config.py:135, config.py:839, tools/adapter.py:537 | — | external |
 | `HUGINN_TOOL_TIMEOUT` | '' | tools/timeouts.py:113 | — | external |
 | `HUGINN_TORCH_DEVICE` | cpu | cli/rcb_runner.py:270, tools/sci/__init__.py:27 | — | external |
 | `HUGINN_TRACE_SHARD_INTERVAL` | str(_DEFAULT_SHARD_INTERVAL | cli/rcb_step2.py:239, events/audit_log.py:54 | events/audit_log.py:650, events/audit_log.py:706, events/audit_log.py:701, events/audit_log.py:760 | code-set |
-| `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:2157 | — | external |
+| `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:2237 | — | external |
 | `HUGINN_TRANSCRIPT_DIR` | '' | events/transcript.py:88 | — | external |
 | `HUGINN_UNPAYWALL_EMAIL` | user@example.com | tools/literature/pdf_fetch.py:309, tools/literature/search_sources.py:490 | — | external |
 | `HUGINN_USE_ATOMWORLD` | 0 | bench/atomworld_bench.py:53, bench/atomworld_bench.py:151, security/code_act_sandbox.py:126 | bench/atomworld_bench.py:154, bench/atomworld_bench.py:162, bench/atomworld_bench.py:173, +1 处, security/code_act_sandbox.py:231, security/code_act_sandbox.py:245 | code-set |
 | `HUGINN_USE_COGNITIVE_MAP` | 0 | bench/mini_rotation_baseline.py:522, security/code_act_sandbox.py:133 | cli/rcb_runner.py:325, security/code_act_sandbox.py:247 | code-set |
-| `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:2375 | — | external |
-| `HUGINN_USE_CROSS_DOMAIN` | 0 | autoloop/hypothesis_loop.py:2888 | — | external |
+| `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:2455 | — | external |
+| `HUGINN_USE_CROSS_DOMAIN` | 0 | autoloop/hypothesis_loop.py:2910 | — | external |
 | `HUGINN_USE_DOCKER` | '' | security/sandbox.py:772 | — | external |
-| `HUGINN_USE_EVOLUTION_MANAGER` | 1 | autoloop/engine_reflect.py:3391, autoloop/engine_reflect.py:3504, memory/manager.py:1408 | — | external |
+| `HUGINN_USE_EVOLUTION_MANAGER` | 1 | autoloop/engine_reflect.py:3579, autoloop/engine_reflect.py:3692, memory/manager.py:1408 | — | external |
 | `HUGINN_USE_KNOWLEDGE_GRAPH` | 0 | cli/rcb_runner.py:554 | cli/rcb_runner.py:333 | code-set |
 | `HUGINN_USE_MENTAL_IMAGERY` | 0 | cli/rcb_step2.py:737 | cli/rcb_runner.py:332 | code-set |
 | `HUGINN_USE_MISI` | 0 | bench/misi_bench.py:77, bench/misi_bench.py:208 | bench/misi_bench.py:211, bench/misi_bench.py:219, bench/misi_bench.py:262 | code-set |
 | `HUGINN_USE_RUST_SANDBOX` | '' | tools/bash_tool.py:281 | — | external |
-| `HUGINN_USE_UNIFIED_DECISION` | 0 | autoloop/cognitive_loop.py:2332 | — | external |
+| `HUGINN_USE_UNIFIED_DECISION` | 0 | autoloop/cognitive_loop.py:2412 | — | external |
 | `HUGINN_VALIDATE_FAIL_THRESHOLD` | 0.8 | autoloop/engine.py:459 | — | external |
 | `HUGINN_VALIDATE_WINDOW` | 100 | autoloop/engine.py:457 | — | external |
 | `HUGINN_VAULT_ADDR` | '' | security/secrets.py:166 | — | external |
@@ -319,4 +326,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 312 个环境变量。
+共 319 个环境变量。

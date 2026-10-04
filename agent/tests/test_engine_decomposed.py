@@ -886,6 +886,30 @@ def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:
     assert "强制变异" not in act._build_codelab_focus("扫描 w=10")
 
 
+def test_repeat_chain_alternating_families_lights_directive() -> None:
+    """回归 (控制面审计 §11.4 ②): A,B,A,B 来回换也须点亮 pivot 硬指令.
+
+    旧口径只看"连续两轮指纹相同", 而书生常在两种等价 family 间来回换 → streak
+    反复被清零, 21 个已接线 run 里 `pivot_directive` 零命中. 新增 `_exec_cycling`
+    (窗口去重<=2 **且**每种结果都反复出现, min 计数>=2) 作为第二判据; 它刻意不认
+    A,A,A,A,B (刚做过一次改变) —— 那仍由连续 streak 负责, 且改后应放行 (上一测试).
+    """
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    eng = _repeat_stub()
+    ref = EngineReflect(eng)
+    act = EngineAct(eng)
+    for i in range(6):  # A,B,A,B,A,B —— 从不连续相同
+        ref._detect_repeat_execution(_lab_result(f"W = [2, 4, {6 if i % 2 else 7}]\n"), {})
+
+    assert getattr(eng, "_repeat_exec_streak", 0) == 0, "交替时连续 streak 恒为 0"
+    assert getattr(eng, "_exec_cycling", False) is True
+    focus = act._build_codelab_focus("扫描 w=10")
+    assert "强制变异" in focus
+    assert "来回换" in focus  # 措辞指向"打转", 不是"无效重跑"
+
+
 def test_repeat_chain_ignores_reused_result_object() -> None:
     """run52 回归: 同一个 result 对象再喂一遍 (= 本轮没跑实验) 不得记重复/收敛.
 

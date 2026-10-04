@@ -1492,6 +1492,31 @@ class CognitiveRunner:
             },
         )
 
+    def _emit_convergence_advisory(
+        self, kind: str, detail: str, hint: str, iteration: int
+    ) -> None:
+        """三种“收敛/停滞”提示 (surprise / exec / rename) 的统一出口.
+
+        三者是同一模式: 判据成立 → metacog 复核 → 写 `_speculator_hint` → 发 trace.
+        控制面审计 §11: 各自登记一个机制名会让野外计数被同类机制摊薄 (23 个名里
+        真正点亮的只有 11 个), 合并为单一机制 `convergence_advisory`, 由 `kind`
+        区分来源. 行为不变 (仍是 advisory-only, 不终止 run), 名义机制数 -2.
+        """
+        _blk, _why = False, ""
+        try:
+            _blk, _why = self._metacog_check_completion()
+        except Exception:  # 防御: 完成复核失败不阻断提示
+            logger.debug("metacog completion check failed (non-fatal)", exc_info=True)
+        self._speculator_hint = (
+            (getattr(self, "_speculator_hint", "") or "") + "\n" + hint
+        ).strip()
+        self._control_trace(
+            "convergence_advisory",
+            f"kind={kind} {detail}",
+            iteration=iteration,
+            advisory=_why if _blk else "",
+        )
+
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.
 
@@ -3773,26 +3798,18 @@ Respond JSON only:
                         _avg_noise = sum(s for _, s in _recent) / len(_recent)
                         _thr = max(0.08, 0.20 - 0.4 * _avg_noise)
                         if all(w < _thr for w in _worsts):
-                            # 控制面审计 A3 同族: surprise 收敛是**启发式**(可能只是
-                            #   噪声小), 不是证据, 不该硬终止; 降为提示 + trace, 真终止
-                            #   交给挂钟/目标达成. 完成审计仅作 advisory 记录.
-                            _blk, _why = self._metacog_check_completion()
                             logger.warning(
                                 "v10 surprise converged < %.2f (noise=%.2f) "
                                 "→ advisory only (hint, no stop)",
                                 _thr, _avg_noise,
                             )
-                            self._speculator_hint = (
-                                self._speculator_hint
-                                + f"\n[surprise 收敛·提示] 最近 3 轮 surprise < {_thr:.2f} "
-                                f"(noise={_avg_noise:.2f}): 观测不再带来意外信息. "
-                                "要么给出最终数值结论, 要么换一个能产生高 surprise 的方向."
-                            ).strip()
-                            self._control_trace(
-                                "surprise_convergence",
+                            self._emit_convergence_advisory(
+                                "surprise",
                                 f"threshold={_thr:.2f} noise={_avg_noise:.2f}",
-                                iteration=state.iteration,
-                                advisory=_why if _blk else "",
+                                f"[surprise 收敛·提示] 最近 3 轮 surprise < {_thr:.2f} "
+                                f"(noise={_avg_noise:.2f}): 观测不再带来意外信息. "
+                                "要么给出最终数值结论, 要么换一个能产生高 surprise 的方向.",
+                                state.iteration,
                             )
                     except Exception:  # 防御: 意外早停失败忽略
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
@@ -3810,23 +3827,18 @@ Respond JSON only:
                 if not state.should_stop and getattr(self, "_exec_converged", False):
                     _fp_hist = getattr(self, "_exec_fp_history", None)
                     _uniq = len(set(_fp_hist)) if _fp_hist else 0
-                    _blk, _why = self._metacog_check_completion()
                     logger.warning(
                         "v10 exec convergence (unique fingerprints=%d over window, "
                         "no new info) → advisory only (hint, no stop)",
                         _uniq,
                     )
-                    self._speculator_hint = (
-                        (getattr(self, "_speculator_hint", "") or "")
-                        + f"\n[执行收敛·提示] 最近 6 轮执行指纹只出现 {_uniq} 种结果: "
-                        "你在有限几种等价实验间打转, 已无新信息. 请改变实验族/参数, "
-                        "或直接据此给出最终数值结论."
-                    )
-                    self._control_trace(
-                        "exec_convergence",
+                    self._emit_convergence_advisory(
+                        "exec",
                         f"unique_fingerprints={_uniq}",
-                        iteration=state.iteration,
-                        advisory=_why if _blk else "",
+                        f"[执行收敛·提示] 最近 6 轮执行指纹只出现 {_uniq} 种结果: "
+                        "你在有限几种等价实验间打转, 已无新信息. 请改变实验族/参数, "
+                        "或直接据此给出最终数值结论.",
+                        state.iteration,
                     )
 
                 # v11: 进展不变量 (假设层). **已降级为提示 + trace**
@@ -3839,23 +3851,18 @@ Respond JSON only:
                 if not state.should_stop:
                     _debt = int(getattr(self, "_rename_debt", 0) or 0)
                     if _debt >= _RENAME_DEBT_LIMIT:
-                        _blk, _why = self._metacog_check_completion()
                         logger.warning(
                             "v11 rename debt=%d (monotone, reset-proof) over limit=%d "
                             "→ advisory only (hint, no stop)",
                             _debt, _RENAME_DEBT_LIMIT,
                         )
-                        self._speculator_hint = (
-                            (getattr(self, "_speculator_hint", "") or "")
-                            + f"\n[换名债务·提示] 已连续 {_debt} 轮被判为换名归约"
-                            "(无实质进展): 必须换方法族, 并给出**可与旧机制区分的"
-                            "数值预测** (如同一被测量随参数的趋势), 仅换术语不算进展."
-                        )
-                        self._control_trace(
-                            "rename_debt",
+                        self._emit_convergence_advisory(
+                            "rename",
                             f"debt={_debt} limit={_RENAME_DEBT_LIMIT}",
-                            iteration=state.iteration,
-                            advisory=_why if _blk else "",
+                            f"[换名债务·提示] 已连续 {_debt} 轮被判为换名归约"
+                            "(无实质进展): 必须换方法族, 并给出**可与旧机制区分的"
+                            "数值预测** (如同一被测量随参数的趋势), 仅换术语不算进展.",
+                            state.iteration,
                         )
 
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.

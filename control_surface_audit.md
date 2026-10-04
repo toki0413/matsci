@@ -108,8 +108,12 @@
 
 1. **它替书生做了哪一步判断？** ——科学判断（要不要换族、有没有进展、何时收结）
    一律下沉给书生；只有"这条证据算不算数"可以硬。
-2. **能不能改成提示或观测？** ——能改就改。硬终止只保留两个出口：
-   **挂钟预算耗尽** 与 **目标达成**。
+2. **能不能改成提示或观测？** ——能改就改。**科学**硬终止只保留两个出口：
+   **挂钟预算耗尽** 与 **目标达成**。此外只允许一类**资源熔断**：它不替书生做
+   任何科学判断、只防烧钱 —— 即 `failure_budget`（同类失败连续触顶即停）。
+   它不属科学出口, 故不受"两个出口"约束; 但须记 §11.4 ① 的实测: 21 个已接线
+   run 零触发。区分标准 = **"停的是不是科学结论"**: 是 → 禁硬; 否 (只是别再烧
+   资源) → 可硬。
 
 配套：每个硬控触发时写一条结构化 trace（`name / iteration / evidence / action / advisory`），
 双通道落盘：`campaign.control_trace` 事件（装了 audit 订阅器时进 `audit.jsonl`）
@@ -156,15 +160,14 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 
 | `name` | 机制 | 期望判读 |
 |--------|------|---------|
-| `exec_convergence` | A1 | 每轮出现 = 长期误杀风险高，降级后仍应观察其是否伴随真停滞 |
-| `rename_debt` | A2 | 同上 |
+| `convergence_advisory` | A1/A2/A3 合流 (v34) | `kind=surprise/exec/rename`；同模式三合为一，野外计数不再被摊薄。每轮出现 = 长期误杀风险高，降级后仍应观察是否伴随真停滞 |
 | `darwin_stagnation` / `belief_convergence` | A3/A4 | 长期 0 触发 → 删 |
 | `decider_stop` | A5 | 每轮出现 = 书生常想收结但被拦，需回看是否目标真未达成 |
 | `execute_budget_gate` | A6 | `action=bypassed` 占比高 = 阶段门在长程下基本无意义 |
-| `failure_budget` | A8 | 触发即硬终止；若常在非真失败时触发 → 降 |
+| `failure_budget` | A8 | **资源熔断** (非科学出口, 见 §3 澄清)；触发即停；21 个已接线 run 零触发 (§11.4 ①) |
 | `effort_floor` | B4 | 长期 0 触发 → 删；高频 = 门设计或命题不匹配 |
 | `curiosity_hint` | B7 | 默认 off；若开启后频繁注入但不改行为 → 删 |
-| `pivot_directive` | B1 | 越阈值注入强制变异令的次数 |
+| `pivot_directive` | B1 | 越阈值/等价族打转时注入强制变异令的次数；`cycling=` 见 §11.4 ② |
 | `report_citation` | C2 | 报告 Results 未溯源数值数/总数；长期低触发 = 提示面已够，长期高 = 需收紧 |
 | `goal_judge` | 出口 | 每次到期完成判定（每 3 轮）一条；`action=stop_candidate` 占比 = judge 认为达成的频率 |
 | `goal_acceptance` | 验收门·证据 | `action=block` = 台账无有限数值被拦；长期 100% block = judge 提前宣布达成 |
@@ -907,12 +910,38 @@ predictor 双缺失"环境下正是 §8.9 判定为**饱和在 1.0** 的 jaccard
 `collab_failure_inverter`（[engine_reflect.py](agent/huginn/autoloop/engine_reflect.py#L1236)）。
 一词两拼正是 §通信契约审计要拦的类型，已按下表口径更正。
 
-### 11.6 结论与下一步
+### 11.6 执行结果（动手后修正了三处判读）
 
-- **不能按 v1 的"12 个零触发"删**。真正可独立判定的只有：
-  降级类（`decider_stop` / `exec_convergence` / `rename_debt` / `surprise_convergence`，
-  均为 advisory-only，删只减噪不减行为）+ 真死候选（`collab_failure_inverter`）；
-- `failure_budget` 按 §3 **降级**（硬 → 提示 + trace），不是删；
-- `pivot_directive` **先查回归**再定删留；
-- `goal_*` 三件套**留**（条件式诚实门）；`report_*` 两条**等复验**；
-- 审计脚本口径升级为 v2（带版本轴），后续统计一律用它，避免再出"0 命中即死"的误读。
+**已改 (4 项)**
+
+1. **`pivot_directive` — 修接线错配 (真 bug)**。新增 `_exec_cycling` (窗口去重≤2
+   **且** min 计数≥2 = 真在 A,B,A,B 打转), 与连续 streak 并列驱动硬指令, 并把 trace
+   移到**唯一**观测点 ([engine_reflect.py](agent/huginn/autoloop/engine_reflect.py#L1696-L1724)、
+   [engine_act.py](agent/huginn/autoloop/engine_act.py#L371-L390))。原判"先查回归" →
+   查实为**结构性铁证** (§11.4 ②)。新增回归测试
+   `test_repeat_chain_alternating_families_lights_directive`。
+2. **`collab_failure_inverter` — 原判"真死候选"是错的**。它只在**失败**分支发 trace,
+   成功面没有观测点 → 一旦正常产出, 统计侧仍计 0。**这是观测缺口, 不是死代码**;
+   已补成功面 trace。
+3. **三条收敛提示合流** — `surprise_convergence` / `exec_convergence` / `rename_debt`
+   合并为单一机制 `convergence_advisory` (`kind` 区分来源), 行为不变 (仍 advisory-only)。
+   **名义机制数 -2**, 且野外计数不再被同类机制摊薄 —— 这才是"降熵不降能力"。
+4. **§3 政策澄清** — `failure_budget` **不降级**: 它不替书生做任何科学判断, 是**资源
+   熔断**, §3 单列一类合法硬出口 (原"只留两出口"与它自相矛盾, 已改口径)。代码不动。
+
+**未删 (原候选, 动手时被代码/测试反驳)**
+
+- `decider_stop` —— **不是死代码, 它本身就是 run50 的修复** (拦"LLM 一句 stop 被静默
+  丢弃")。0 命中 = decider 从未选过 stop。删它 = 把 run50 的病放回去。
+- `goal_acceptance` / `goal_metacog_audit` / `goal_skeptic` —— 条件式诚实门, 上游
+  (judge 判达成) 从未发生, 不是不通电。
+- `surprise_convergence` 的**整体删除** —— 其源 `_surprise_history` 是 env 受限
+  (embedder/JEPA 双缺失 → jaccard 饱和), 恢复环境后即有效; 且字段已落盘, 全删会级联
+  到 signals 持久化与 `SIGNAL_NAMES >= 28` 断言。故只合流, 不减字段。
+
+**对"系统是否太高熵"的正面回答**
+
+野外看到的"死代码", 多数是**条件式守卫**与**观测缺口**, 不是可删冗余 —— 拿 0 命中
+清单直接删会误杀。真正的问题只在两处**接线**: ① pivot 口径错配 (已修) ② 观测面只记
+失败不记成功 (已补)。加三合一, 控制面机制 **23 → 21** 名, 且每一名都可达。
+配置面 (390 个 `HUGINN_*`) 仍是最大一笔账, 属下一阶段。
