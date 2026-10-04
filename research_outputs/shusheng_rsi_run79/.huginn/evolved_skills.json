@@ -138,11 +138,11 @@
       "value",
       "label",
       "constraint",
-      "error",
       "constraints",
-      "polynomial",
-      "rigid",
-      "small"
+      "error",
+      "small",
+      "prediction",
+      "rigid"
     ],
     "workflow_steps": [
       {

@@ -189,3 +189,8 @@ control_trace name=goal_judge iteration=44 evidence=achieved=False score=0.15 ll
 darwin ratchet: stagnation 7 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
 control_trace name=darwin_stagnation iteration=44 evidence=stagnation=7 best=5.88 action=advisory_hint
 control_trace name=hypothesis_status_writeback iteration=45 evidence=support hyp=h_da985287 tests_passed=True action=support
+darwin ratchet: stagnation 8 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=49 evidence=stagnation=8 best=5.88 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0999 μ=5.64 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=49 evidence=sigma2=0.0999 mu=5.64 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=The information flow in the rigid family saturates early (information bottleneck reached), so adding more constraints does not increase the required internal representation size; in the fat family, the gradient flow remains exploratory and requires increasing capacity to maintain signal-to-noise ratio): [DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient flow on the weight 

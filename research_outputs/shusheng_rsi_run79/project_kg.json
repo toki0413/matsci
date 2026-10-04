@@ -327,10 +327,10 @@
       "label": "\".",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-10-04T02:00:57.361370",
-      "last_seen": "2026-10-04T02:00:57.361370",
-      "mentions": 1,
+      "last_seen": "2026-10-04T02:06:18.745697",
+      "mentions": 2,
       "iteration": 35,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -512,6 +512,55 @@
       "r_phys": 1.0,
       "iteration": 45,
       "id": "persona_use:dft_expert_iter45"
+    },
+    {
+      "label": "plan_coder_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745727",
+      "last_seen": "2026-10-04T02:06:18.745727",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745748",
+      "last_seen": "2026-10-04T02:06:18.745748",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_coder_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "label": "dft_expert_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:06:18.745855",
+      "last_seen": "2026-10-04T02:06:18.745855",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "681e59063ba6ecf3",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:dft_expert_iter50"
     }
   ],
   "links": [
@@ -661,6 +710,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_skill_iter35",
       "confidence": 0.5,
       "created_at": "2026-10-04T02:00:57.361427",
@@ -730,6 +788,24 @@
       "last_seen": "2026-10-04T02:04:23.250323",
       "mentions": 1,
       "target": "he_experiment_pipeline_9ad37b81"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a97d430f"
     }
   ]
 }
