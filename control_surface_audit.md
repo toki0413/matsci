@@ -178,6 +178,12 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `collab_failure_inverter` | 协作·失败反推 | 同上 |
 | `code_lab_timeout` | 证据·算力 | 被沙箱超时饿死的修复尝试数；高频 = 作者提示仍产出过重扫描（见 §7.5） |
 
+> **机制清单的代码权威源**：上表是人工可读视图；机器可读的**单一权威登记**在
+> [`agent/huginn/autoloop/control_mechanisms.py`](agent/huginn/autoloop/control_mechanisms.py)
+> 的 `MECHANISMS`，计数受 `CONTROL_MECHANISM_BUDGET`（only-shrink）约束，由
+> `tests/test_control_mechanism_governance.py` 强制：**发射未登记 / 登记无发射 /
+> 越预算 / 非白名单的 `effect=stop`** 均测试红。增删机制先改代码登记表，再同步本表。
+
 ---
 
 ## 5. run56 观测结果（触发率第一批数据）
