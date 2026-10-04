@@ -252,3 +252,14 @@ def run(cfg):
             if all(n >= 32 for n in Nc_vals):
                 objectives['score'] += 1.0
     return {'success': True, 'summary': summary, 'objectives': objectives}
+FTS5 stale: MATCH 'largevolumeitem0' = 0, rebuilding index
+FTS5 stale: MATCH 'largevolumeitem0' = 0, rebuilding index
+control_trace name=effort_floor iteration=59 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 原始问题中关于'小型前馈网络泛化行为作为解空间刚性探针'的命题"] | 缺少显式不完整性自白 action=advisory_hint
+[FINALLY-REFLECT] tool_results_this_turn=8
+control_trace name=collab_blind_reconstruct iteration=59 evidence=refute: blind_holds=False vs orig_holds=True summary_len=1338 action=refute
+control_trace name=goal_judge iteration=59 evidence=achieved=False score=0.15 llm=1 action=advisory_hint
+darwin ratchet: stagnation 10 rounds (Δ<0.5), best=5.88 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=59 evidence=stagnation=10 best=5.88 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0833 μ=5.66 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=59 evidence=sigma2=0.0833 mu=5.66 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=The solution space of the bootstrap constraints is the attractor of a chaotic dynamical system, characterized by a positive Lyapunov exponent λ. The network width required to achieve zero violation grows exponentially with the number of constraint samples w, as the network must resolve the exponenti): ". We have generated three, and we are to select one. We can select dynamics.

@@ -16,3 +16,9 @@ Statement: [DIM: structure] The bootstrap constraints define a low-dimensional a
 Modality: blind_reconstruction
 Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
 Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
+
+## [h_ccb81826] 2026-10-04T02:10:11+00:00
+Statement: [Hypothesis Name]
+Modality: blind_reconstruction
+Obstruction: blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result
+Reopen-if: new evidence in blind_reconstruction contradicts the obstruction above.
