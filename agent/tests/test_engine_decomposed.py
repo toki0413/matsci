@@ -645,8 +645,60 @@ def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
     trace = next(d for _, d in captured if d.get("name") == "collab_blind_reconstruct")
     assert trace["action"] == "refute"
     assert "blind_holds=False" in trace["evidence"]
+    # 受控独立观察者: mismatch → 差分读数 True; 置信度落盘
+    assert eng._last_reconstruct_disagree is True
+    assert eng._last_blind_confidence == 0.5
+    # 观察者是传感器不是 reward: 不得写 _last_task_perf (darwin 第 5 维)
+    assert "_last_task_perf" not in vars(eng.engine)
     assert "summary_len=" in trace["evidence"]
     assert eng.hypothesis_graph.refuted[0] == "h1"
+
+
+def test_blind_reconstruct_gate_force_and_default(monkeypatch) -> None:
+    """观察者门控: =1 强制开; 未设/0 关 (默认零行为变化)."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    class _StubEngine:
+        _iteration = 1
+
+    eng = EngineReflect(_StubEngine())
+    monkeypatch.delenv("HUGINN_BLIND_RECONSTRUCTION", raising=False)
+    assert eng._blind_reconstruct_enabled() is False
+    monkeypatch.setenv("HUGINN_BLIND_RECONSTRUCTION", "0")
+    assert eng._blind_reconstruct_enabled() is False
+    monkeypatch.setenv("HUGINN_BLIND_RECONSTRUCTION", "1")
+    assert eng._blind_reconstruct_enabled() is True
+
+
+def test_blind_reconstruct_gate_auto_uses_budget_tier(monkeypatch) -> None:
+    """auto: 只 medium/open 档开; light 关 (让位真实实验); 解析失败保守关."""
+    from huginn.autoloop.budget import IterationBudget
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    class _Ctl:
+        def __init__(self, label: str) -> None:
+            self._label = label
+
+        def _resolve_budget_tier(self, iteration: int) -> IterationBudget:
+            return IterationBudget(
+                allowed_modes=None, max_calls=None, label=self._label
+            )
+
+    class _Boom:
+        def _resolve_budget_tier(self, iteration: int):  # noqa: ANN201
+            raise RuntimeError("no budget")
+
+    class _StubEngine:
+        _iteration = 5
+        _engine_controller = None
+
+    monkeypatch.setenv("HUGINN_BLIND_RECONSTRUCTION", "auto")
+    eng = EngineReflect(_StubEngine())
+    for label, expected in (("open", True), ("medium", True), ("light", False)):
+        eng._engine_controller = _Ctl(label)
+        assert eng._blind_reconstruct_enabled() is expected, label
+    eng._engine_controller = _Boom()
+    assert eng._blind_reconstruct_enabled() is False  # fail-closed
 
 
 def test_writeback_hypothesis_status_supports_on_tests_passed() -> None:

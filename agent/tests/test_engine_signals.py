@@ -175,6 +175,25 @@ def test_hypothesis_strength_tolerates_missing_fields():
     assert 0.0 <= s <= 1.0
 
 
+def test_hypothesis_strength_observer_disagreement_lowers_strength():
+    """受控独立观察者: 本轮观测到分歧 → 降 strength (转探索); 无观测零扰动."""
+    kw = {"rel": 0.3, "window": [True] * 5, "best": 6.0, "stag": 0}
+    neutral = hypothesis_strength(_StubEngine(**kw))
+    eng = _StubEngine(**kw)
+    # 无观测 / 一致 (None/False) → 与无观察者完全一致
+    eng._last_reconstruct_disagree = None
+    assert hypothesis_strength(eng) == neutral
+    eng._last_reconstruct_disagree = False
+    assert hypothesis_strength(eng) == neutral
+    # 分歧 + 高置信 → 精确降 0.1
+    eng._last_reconstruct_disagree = True
+    eng._last_blind_confidence = 1.0
+    assert abs(hypothesis_strength(eng) - (neutral - 0.1)) < 1e-9
+    # 分歧 + 零置信 → 扰动为 0 (不轻信无把握的观察者)
+    eng._last_blind_confidence = 0.0
+    assert abs(hypothesis_strength(eng) - neutral) < 1e-9
+
+
 def test_strength_schedule_flag_default_on_and_can_disable(monkeypatch):
     monkeypatch.delenv("HUGINN_STRENGTH_SCHEDULE", raising=False)
     assert strength_schedule_enabled() is True

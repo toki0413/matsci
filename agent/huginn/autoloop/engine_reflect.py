@@ -279,6 +279,7 @@ class EngineReflect:
     _OWN_ATTRS: frozenset[str] = frozenset({
         "_validate",
         "_blind_reconstruct_verify",
+        "_blind_reconstruct_enabled",
         "_judge_derivation_consistency",
         "_invert_failure_trace",
         "_abstract_skill_if_ready",
@@ -785,8 +786,12 @@ class EngineReflect:
         # 之前 _validate 算出分数但不调 hypothesis_graph.support/refute, 图全 untested.
         # 现在开 toggle 时: (1) fresh subagent 从 statement 独立推导 (2) 比对盲重建
         # vs execution_result (3) mismatch→refute / match→support, 写 FAILED/PROVED.md.
-        # ponytail: 默认 off (贵, 多一次 subagent dispatch). 升级: 只在割点/关键假设上开.
-        if os.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0") == "1":
+        # 门控: HUGINN_BLIND_RECONSTRUCTION=auto 时按预算档位开 (medium/open).
+        # 每轮先清空差分读数 —— 只有本轮真正观测到才刷新, 否则上一轮的分歧会一直
+        # 压低 strength (陈旧观测). 具体读数在 _blind_reconstruct_verify 内写回.
+        self._last_reconstruct_disagree = None
+        self._last_blind_confidence = 0.0
+        if self._blind_reconstruct_enabled():
             try:
                 await self._blind_reconstruct_verify(execution_result, results)
             except Exception:  # 防御: 盲重建失败忽略
@@ -810,6 +815,31 @@ class EngineReflect:
         return results
 
 
+
+    def _blind_reconstruct_enabled(self) -> bool:
+        """受控独立观察者的门控: 环境开关 + 预算档位 (auto 模式).
+
+        观察者效应不是白嫖的 —— 每次打开发一次 subagent dispatch, 和真实实验
+        抢预算. 所以把它降级为**按预算档位启用**的差分传感器:
+          - ``HUGINN_BLIND_RECONSTRUCTION=1``      强制开 (向后兼容, 忽略档位)
+          - ``=auto`` / ``=tier``                  仅 medium/open 档开; light 档
+            (预算 <0.3) 关掉, 把这次 dispatch 让给真实实验
+          - ``0`` / 未设                            关 (默认, 零行为变化)
+        档位解析失败 → 保守关闭 (fail-closed, 不赌预算).
+        """
+        _mode = os.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0").strip().lower()
+        if _mode == "1":
+            return True
+        if _mode not in ("auto", "tier"):
+            return False
+        try:
+            _tier = self._engine_controller._resolve_budget_tier(
+                int(getattr(self, "_iteration", 0) or 0)
+            )
+            return getattr(_tier, "label", "light") in ("open", "medium")
+        except Exception:  # 防御: 档位解析失败 → 保守关闭观察者
+            logger.debug("blind reconstruct tier gate failed", exc_info=True)
+            return False
 
     async def _blind_reconstruct_verify(
         self, execution_result: Any, results: dict[str, Any],
@@ -921,6 +951,17 @@ class EngineReflect:
             or results.get("grader_reward", 0) > 0.5
             or results.get("generative_verify", {}).get("score", 0) > 0.5
         )
+        # 受控独立观察者: 记录**差分读数** (传感器, 不是 reward). 独立观察者不看
+        # 执行结果, 所以它与执行判据的分歧是真正独立的信号. 下一轮由 signals.
+        # hypothesis_strength 读它缩放探索强度 (分歧→降 strength→转探索);
+        # **不**并入 darwin / _last_task_perf, 避免把观测当成优化目标 (自指).
+        self._last_reconstruct_disagree = bool(_blind_holds != _orig_holds)
+        try:
+            self._last_blind_confidence = max(
+                0.0, min(1.0, float(_blind.get("confidence", 0.5)))
+            )
+        except (TypeError, ValueError):  # 防御: 置信度非数值 → 中性 0.5
+            self._last_blind_confidence = 0.5
         # derivation 字段 (可能缺, 向后兼容)
         _blind_derivation = str(_blind.get("derivation", "") or "").strip()
         _has_derivation = bool(_blind_derivation)

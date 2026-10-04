@@ -156,6 +156,8 @@ def hypothesis_strength(engine: Any) -> float:
       - 0.3 · _validate_window 近窗成功率  实验验证通过率 (空窗回落 0.5 中性)
       - 0.2 · (_darwin_best_score/10)     演化质量分 (0-10 → 0-1)
       - 停滞惩罚: 连续无增益每轮 -0.05, 最多 -0.2
+      - 观察者差分: 独立观察者 (blind reconstruct) 与执行判据分歧
+        → -0.1·置信度 (信念受质疑转探索; 无观测则零扰动)
     结果 clamp 到 [0,1]. 全字段缺失 (stub) 时 ≈ 0.4 (偏探索), 不误判为强.
 
     surprise 取秩归一 routing_surprise(); 但"尚无 history"时 (rel 与 raw 都缺)
@@ -178,6 +180,17 @@ def hypothesis_strength(engine: Any) -> float:
 
     stag = int(getattr(engine, "_darwin_stagnation", 0) or 0)
     s -= min(0.2, 0.05 * stag)
+
+    # 受控独立观察者 (blind reconstruction) 差分: 独立观察者与执行判据分歧 →
+    # 当前信念受质疑 → 降 strength (转探索). 只在**本轮真观测到分歧**时生效
+    # (None/False → 零扰动, 缺字段的 stub 不受影响); 缩放不并入 reward
+    # (不回写图状态 / 任务性能), 只改搜索超参, 避免把观测当成优化目标.
+    if bool(getattr(engine, "_last_reconstruct_disagree", False)):
+        _bconf = getattr(engine, "_last_blind_confidence", None)
+        # 注意: 不能用 `or 0.5` —— 0.0 是合法置信度 (会误判成缺省).
+        _bconf = 0.5 if _bconf is None else float(_bconf)
+        s -= 0.1 * _clamp01(_bconf)
+
     return _clamp01(s)
 
 

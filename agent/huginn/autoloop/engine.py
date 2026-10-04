@@ -564,6 +564,12 @@ class AutoloopEngine:
         # D: 最近一次真实执行的任务性能 (r_phys, 缺省回落 tests_passed 1/0),
         # 并入 darwin 评分让 best 反映真实质量; None = 无信号, 不参与.
         self._last_task_perf: float | None = None
+        # 受控独立观察者: 上一轮 blind_reconstruct 与执行判据的**分歧**.
+        # 这是差分传感器读数 (不是 reward): None=未观测, True=分歧, False=一致.
+        # 分歧 → 信念受质疑 → 下一轮降 strength (转探索, 见 signals.hypothesis_strength).
+        self._last_reconstruct_disagree: bool | None = None
+        # 观察者自报置信度 (0-1), 与分歧一起缩放强度扰动.
+        self._last_blind_confidence: float = 0.0
         # H4: GRILL 模式状态. should_pause_for_decision 触发 GRILL 后设为 active,
         # _llm_chat 构造 system prompt 时注入 GRILL_SYSTEM_PROMPT_CN. 用户确认
         # shared understanding 后 (LLM 输出含标记) 退出.

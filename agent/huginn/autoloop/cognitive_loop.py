@@ -1582,6 +1582,8 @@ class CognitiveRunner:
         self._last_raw_hypothesis = ""  # 完整 LLM 输出, 含 LUCID review
         self._last_selected_prediction = ""  # A: 选中候选的 predict 字段
         self._last_task_perf = None  # D: 真实任务性能信号 (无则 None)
+        self._last_reconstruct_disagree = None  # 观察者差分读数 (每轮 _validate 刷新)
+        self._last_blind_confidence = 0.0
         # G2: 加载历史 trajectory action 序列, 给 _check_stuck 当 VF2 匹配历史.
         # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
         try:
