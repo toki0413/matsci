@@ -172,7 +172,7 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `goal_skeptic` | 验收门·对抗 | `verdict` 分布；`block` 高频 = judge 过于乐观或常识证伪未过 |
 | `collab_blind_reconstruct` | 协作·盲重建 | `action=skip` 携带跳过原因；**长期全 skip 或 0 条 = 该协作没通电/没生效**（见 §7.5） |
 | `collab_branch_incubator` | 协作·N 路孵化 | 同上；`empty:` = 跑了但 N 路子 agent 全空手 |
-| `collab_failure_invert` | 协作·失败反推 | 同上 |
+| `collab_failure_inverter` | 协作·失败反推 | 同上 |
 | `code_lab_timeout` | 证据·算力 | 被沙箱超时饿死的修复尝试数；高频 = 作者提示仍产出过重扫描（见 §7.5） |
 
 ---
@@ -809,4 +809,110 @@ run70 复验确认 §9 修复生效：`collab_branch_incubator ... branches=3 ok
 
 > run71：`control_trace name=collab_branch_incubator iteration=1
 > evidence=use: branches=3 ok=3 valued=3 winner_value=1.0 winner_tokens=13819
-> depth=2 action=use`。
+> depth=2 action=use`.
+
+---
+
+## 11. 通电清单审计：版本感知版（v34）
+
+### 11.1 v1 的口径错误
+
+§3 定的删减口径是"**长期** 0 触发 → 删或降"。第一次审计（v1，跨 79 个 run.log 直接
+`grep -o 'control_trace name=[a-z_]*' | uniq -c`）给出 23 个登记机制里 **12 个 0 命中**，
+看起来是一条现成的删除清单。**它不能直接用**：
+
+79 个 run 横跨多个代码版本，`control_trace` 本身是**逐步接线**的（§6.5 run58 才点亮
+`goal_judge`，§8.4 run62 才有 `collab_*`/`code_lab_timeout`，v29 才补
+`collab_blind_reconstruct` 的 refute/support 分支）。于是 0 命中里混着大量
+"**当时那条线还没接上**"，与"接了但从不触发"无法区分 —— 照 v1 删会误杀。
+
+run 目录的 mtime 不可用（全部是复制进 `research_outputs` 的时间，清一色 10-04）；
+版本轴只能取自 `git log -S`（机制名的首次引入）与 run 目录内嵌日期。
+
+### 11.2 v2 方法（`/tmp/ct_audit_v2.py`）
+
+- 机制名 → `git log --reverse -S'"<name>"' --date=short` 取**首次引入日期**；
+- run → 目录内嵌 `2026-*` 日期取 **min**（保守：开跑时线就得在了）；
+- 只在 `run_min_date >= intro_date` 的 run 上统计命中；`elig` = 已接线 run 数。
+
+### 11.3 结果（79 run / 23 机制）
+
+| name | intro | hit | elig | e_hit | 判读 |
+|------|-------|----:|----:|----:|------|
+| collab_blind_reconstruct | 10-01 | 96 | 21 | 8 | 活 |
+| darwin_stagnation | 10-01 | 92 | 21 | 10 | 活 |
+| belief_convergence | 10-01 | 85 | 21 | 7 | 活 |
+| goal_judge | 09-24 | 43 | 79 | 11 | 稀有 |
+| effort_floor | 10-01 | 39 | 21 | 14 | 活 |
+| report_citation | 10-01 | 13 | 21 | 13 | 活 |
+| code_lab_timeout | 10-01 | 7 | 21 | 6 | 活 |
+| collab_branch_incubator | 10-01 | 7 | 21 | 6 | 活 |
+| execute_budget_gate | 10-01 | 7 | 21 | 1 | 稀有（长程已收，见 §4.3） |
+| stall_as_action | 10-03 | 3 | 5 | 1 | 活 |
+| hypothesis_status_writeback | 10-03 | 2 | 5 | 1 | 活 |
+| **failure_budget** | 10-01 | 0 | 21 | 0 | 见 §11.4 ① |
+| **pivot_directive** | 10-01 | 0 | 21 | 0 | 见 §11.4 ② |
+| **collab_failure_inverter** | 10-01 | 0 | 21 | 0 | 真死候选 |
+| **decider_stop** | 10-01 | 0 | 21 | 0 | 已降级，0 为期望 |
+| **surprise_convergence** | 10-01 | 0 | 21 | 0 | 见 §11.4 ③ |
+| **exec_convergence** | 09-30 | 0 | 25 | 0 | 已降级，0 为期望 |
+| **rename_debt** | 09-30 | 0 | 25 | 0 | 已降级，0 为期望 |
+| goal_acceptance | 10-01 | 0 | 21 | 0 | **条件式**：judge 从未判达成 |
+| goal_metacog_audit | 10-01 | 0 | 21 | 0 | 同上 |
+| goal_skeptic | 10-01 | 0 | 21 | 0 | 同上 |
+| report_discrimination | 10-04 | 0 | 1 | 0 | **未测**（语料只有 1 个 run 在引入后） |
+| report_decisive | 10-04 | 0 | 1 | 0 | **未测** |
+
+**关键**：`goal_acceptance` / `goal_metacog_audit` / `goal_skeptic` 三件套的 0
+**不是死**——它们只在 `GoalJudge` 判 `achieved=True` 后才进入。`goal_judge` 野外
+43 次（11 个 run）里没有一次判达成（run56 `score=0.2`、run61 `achieved=False`），
+故验收门本就到不了。这是**条件式**，删掉等于删掉"如果哪天判达成时的诚实门"。
+
+### 11.4 v2 顺带坐实的三处
+
+**① `failure_budget` 是**政策**违规项，不只是 0 命中。**
+它是 §2 A 族唯一没被降级的**硬终止**（[cognitive_loop.py](agent/huginn/autoloop/cognitive_loop.py)
+`action="stop"`，`return should_stop=True`）。而 §3 明写"硬终止只保留两个出口：
+挂钟预算耗尽 与 目标达成"。它 0/21，说明野外从未触发 —— 即它既**违反准入原则**，
+又**没有实测价值**。按 §3 应降为提示 + trace，而不是删（保底仍需一个失败熔断）。
+
+**② `pivot_directive` 0/21 是**结构性**失配，不是"重复真的消失了"。**
+`_repeat_exec_streak` 只有**连续两轮指纹完全相同**才自增，否则清零
+（[engine_reflect.py](agent/huginn/autoloop/engine_reflect.py#L1650-L1686)）。而**同一文件自己**
+在 1689-1691 行写明："书生常在两种等价 family 间来回换 (A,B,A,B…), **连续相同 streak
+反复被重置, 永远到不了阈值**" —— 正因如此旁边的收敛检测器才改用**窗口去重**口径。
+但 B1 改造把 pivot 硬指令的触发仍挂在 `_repeat_exec_streak` 上
+（[engine_act.py](agent/huginn/autoloop/engine_act.py#L371) 与
+[engine_reflect.py](agent/huginn/autoloop/engine_reflect.py#L1672) 均按 `>= _REPEAT_HARD_STREAK=2`）→
+**沿用了文件自己已判定为不可达的口径** ⇒ 21 个已接线 run 全 0。
+
+定性：这是**接线错配**，不是"该不该加控制流"的问题。修法应让 pivot 与收敛检测器
+共用**同一口径**（窗口去重），而不是各挂一条；§3 过闸：它不替书生做科学判断、
+只是把"在等价实验间打转"翻译成作者面的强制变异令，属 B 族提示，可保留。
+
+**③ `surprise_convergence` 读的是**饱和的原始信号**（v31 未收口）。**
+[cognitive_loop.py](agent/huginn/autoloop/cognitive_loop.py#L3769-L3775) 拿
+`_surprise_history[-3:]` 的 `w` 与阈值 `[0.08, 0.20]` 比；而
+[engine_reflect.py](agent/huginn/autoloop/engine_reflect.py#L692) 写入的是
+`(surprise_exposed, std)` —— 即 **`surprise_exposed`**，在"语义 embedder + JEPA
+predictor 双缺失"环境下正是 §8.9 判定为**饱和在 1.0** 的 jaccard 原值。v31 把 9 个
+**行为**消费点收口到 `signals.routing_surprise()`，但这条早停路径漏了。
+**注意修法不是换成 `routing_surprise()`**：秩信号按构造是均匀分布，"最近 3 轮秩 <
+阈值"是**水平量**测试，用秩会退化成按概率随机触发，语义相反。要么删（advisory-only、
+0/21、源盲），要么等 embedder/predictor 恢复后它自然可用。
+
+### 11.5 命名漂移（通信契约应拦未拦）
+
+§4 观测口径表把该机制写作 `collab_failure_invert`，代码实际发的是
+`collab_failure_inverter`（[engine_reflect.py](agent/huginn/autoloop/engine_reflect.py#L1236)）。
+一词两拼正是 §通信契约审计要拦的类型，已按下表口径更正。
+
+### 11.6 结论与下一步
+
+- **不能按 v1 的"12 个零触发"删**。真正可独立判定的只有：
+  降级类（`decider_stop` / `exec_convergence` / `rename_debt` / `surprise_convergence`，
+  均为 advisory-only，删只减噪不减行为）+ 真死候选（`collab_failure_inverter`）；
+- `failure_budget` 按 §3 **降级**（硬 → 提示 + trace），不是删；
+- `pivot_directive` **先查回归**再定删留；
+- `goal_*` 三件套**留**（条件式诚实门）；`report_*` 两条**等复验**；
+- 审计脚本口径升级为 v2（带版本轴），后续统计一律用它，避免再出"0 命中即死"的误读。
