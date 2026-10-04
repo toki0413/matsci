@@ -90,17 +90,18 @@ os.environ.setdefault(
     "HUGINN_ROOT_MARKERS",
     "## Methodology Checklist;## Selected Execution Plan;## Report Coverage Compass;## Intuitive Gamer",
 )
-# RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr
-os.environ["HUGINN_NO_RUST_SANDBOX"] = "1"
+# RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr.
+# P0-7: 真实开关是 HUGINN_USE_RUST_SANDBOX (bash_tool 只读它); 旧写的
+# HUGINN_NO_RUST_SANDBOX 全仓无人读 = 死配置, 已改为强写真实开关为 0.
+os.environ["HUGINN_USE_RUST_SANDBOX"] = "0"
 # RCB 跑分关掉 LLM decider — 跑分需要确定性, run_cognitive 的规则版 decide_fn 已够用.
 # 生产路径 (deli_research/cli/routes) 不设这个变量, 默认开 LLM decider.
 os.environ["HUGINN_COGNITIVE_LLM_DECIDER"] = "0"
 # RCB 场景关熔断器 — file_read_tool 误触发 circuit_open 阻止 agent 读文件 (σ₇)
 os.environ["HUGINN_HEALTH_MONITOR"] = "0"
-# RCB 场景关循环检测 — agent 反复跑 code_tool 是正常行为, 误判为 loop (σ₈)
-# 统一走 FeatureFlags (streaming.py 已不读 HUGINN_SKIP_LOOP_DETECTOR, 此处保留向后兼容).
-# ponytail: 双写新旧 env var, 升级路径是删掉 HUGINN_SKIP_LOOP_DETECTOR 一行.
-os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "1")
+# RCB 场景关循环检测 — agent 反复跑 code_tool 是正常行为, 误判为 loop (σ₈).
+# streaming.py 读 FeatureFlags, 唯一真实开关是 HUGINN_FEATURE_LOOP_DETECTOR;
+# 旧的 HUGINN_SKIP_LOOP_DETECTOR 全仓无人读, 已删除 (契约收敛).
 os.environ["HUGINN_FEATURE_LOOP_DETECTOR"] = "false"
 
 # === 从拆分模块 re-export (rcb_runner 作为向后兼容聚合入口) ===
@@ -334,10 +335,9 @@ async def run(
         # ponytail: 让 _check_stuck VF2 cycle 和 StructureCognitiveMap 15 个 transform 真触发
         os.environ.setdefault("HUGINN_THINKING", "high")
         # extreme 长任务开 LoopDetector — 200+ 步轨迹需要死循环保护.
-        # 双写新旧 env var: HUGINN_FEATURE_LOOP_DETECTOR 给 FeatureFlags,
-        # HUGINN_SKIP_LOOP_DETECTOR 兼容旧路径. 普通模式顶部已设 false/1, 这里覆盖.
+        # 唯一真实开关 HUGINN_FEATURE_LOOP_DETECTOR (FeatureFlags); 普通模式顶部已设
+        # false, 这里覆盖为 true. 旧 HUGINN_SKIP_LOOP_DETECTOR 无人读, 已删除.
         os.environ.setdefault("HUGINN_FEATURE_LOOP_DETECTOR", "true")
-        os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "0")
         # v7 长任务: extreme 模式同时放宽 autoloop stop 阈值, 允许 200+ 步轨迹.
         # 对标 Oxelra 206 步. 默认值已放宽 (20/20/10/5), extreme 再翻倍.
         os.environ.setdefault("HUGINN_MAX_CONSECUTIVE_FAILURES", "50")
@@ -1407,7 +1407,7 @@ if __name__ == "__main__":
             "HUGINN_RATE_LIMIT_ENABLED": "0",
             "HUGINN_ALLOW_LOCAL_BASH": "1",
             "HUGINN_CSM_SUBSET_MODE": "1",
-            "HUGINN_NO_RUST_SANDBOX": "1",
+            "HUGINN_USE_RUST_SANDBOX": "0",
             "HUGINN_COGNITIVE_LLM_DECIDER": "0",
             "HUGINN_HEALTH_MONITOR": "0",
             "HUGINN_FEATURE_LOOP_DETECTOR": "false",

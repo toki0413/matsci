@@ -38,10 +38,9 @@ class FeatureFlags:
         "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
         "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
         # v23 Round 9: 两个 router 之前是 raw env var (HUGINN_CONTEXT_ROUTER /
-        # HUGINN_TASK_TOOL_ROUTER), 极端模式 setdefault "1". 现纳入 FeatureFlags
-        # 统一接管, 默认关 (普通模式不开), 极端模式通过 FeatureFlags.enable() 开.
-        # 注意: 模块代码仍读 env var, FeatureFlags 这里只是登记, 不直接控制.
-        # 升级路径: 模块代码改为读 FeatureFlags 后, 删除 env var setdefault.
+        # HUGINN_TASK_TOOL_ROUTER). 现模块只读 FeatureFlags (context_builder /
+        # agent.core / streaming), 旧变量名经 _ENV_ALIASES 仍生效: 极端模式的
+        # setdefault 旧变量名在 FeatureFlags 构造时读入 alias, 模块读 flag. 默认关.
         "context_router": False,       # P3 信息路径多样性稀疏化 (context_builder)
         # 设备端/小模型懒加载: 默认常驻. 按 task 路由最小工具子集, 无命中给
         # core 基础子集而非全量 132 工具 (省 token/attention). 可

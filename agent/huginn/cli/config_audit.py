@@ -14,6 +14,10 @@
     - 只做静态扫描, 不判死. "是否死"需结合运行时契约人工判断.
     - 状态字段: writes>0 → "code-set"(代码里被设置); ==0 → "external"(未在
       代码设, 可能是用户 shell/.env 注入, 需人工确认).
+    - **扫描盲区 (reads 计数会偏低)**: 经 ``FeatureFlags._ENV_ALIASES`` 动态读的
+      旧变量名与 ``HUGINN_FEATURE_<NAME>`` 规范名走 ``os.environ.get(alias)``
+      循环变量, 正则抓不到 → 会显示 reads=0. 这类**不是**死配置, 判死前先核对
+      ``huginn/feature_flags.py`` 的别名表.
 """
 from __future__ import annotations
 
