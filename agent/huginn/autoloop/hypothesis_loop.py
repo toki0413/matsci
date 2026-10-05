@@ -2188,6 +2188,9 @@ class HypothesisLoop:
 
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:
         """Generate a hypothesis from perceived context."""
+        # 阶段开始清零: 成功产出保持 False; 若因 LLM 瞬时不可用而彻底失败, 末尾置
+        # True, 供 reflect 抑制 redirect→pivot (否则一次限流被放大成状态清空+停机).
+        self._last_phase_unavailable = False
         # BranchIncubator gating: flag on + factory 注入时走 N=3 隔离采样,
         # 失败/None 时 fallback 到下面 main+hot_model 2 路.
         # H4: env name + selected marker 从 PhaseRegistry extra 取 (toggle off 回退 hardcode)
@@ -2319,8 +2322,18 @@ class HypothesisLoop:
                     self._record_backup_candidates(raw, self._last_hypothesis)
                     self._metacog_audit_hypothesis(self._last_hypothesis, context)
                     return self._last_hypothesis
+            # 两路调用**全部**失败 → 区分"LLM 瞬时不可用"与"确实没产出". 前者置
+            # 标记, 让 reflect 原地重试而非 redirect→pivot (清空状态 → 停机).
+            _excs = [r for r in results if isinstance(r, Exception)]
+            if _excs and len(_excs) == len(results):
+                from huginn.llm_retry import is_transient_error
+                if any(is_transient_error(e) for e in _excs):
+                    self._last_phase_unavailable = True
             return None
-        except Exception:  # 防御: 尽力生成失败返回空
+        except Exception as _exc:  # 防御: 尽力生成失败返回空
+            from huginn.llm_retry import is_transient_error
+            if is_transient_error(_exc):
+                self._last_phase_unavailable = True
             logger.debug("best-effort op failed", exc_info=True)
             return None
 

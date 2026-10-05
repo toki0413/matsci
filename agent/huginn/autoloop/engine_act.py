@@ -35,7 +35,11 @@ from typing import Any
 
 # 提示面升级阈值 (与 engine_reflect 同一旋钮): 由本对象在组装作者提示时**消费**,
 # 故常量必须同源. engine_reflect 不反向 import 本模块, 无循环风险.
+# with_retry: autoloop 的 LLM 调用此前**绕开**了统一重试层 (agent/streaming.py 有,
+# 这条路径没有), 一次限流/网络抖动就被当成"阶段无产出" → redirect→pivot→停机
+# (run74). 这里接上.
 from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+from huginn.llm_retry import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +89,13 @@ class EngineAct:
                 prompt, persona_name="default", task="planning"
             )
             plan = self._parse_plan(response)
-        except Exception:  # 防御: 尽力操作失败返回空
+            # LLM 可达 (即便解析为空) → 不是"不可用": 清标记, 让空产出正常驱动
+            # reflect 的重定向逻辑, 不被上一阶段的瞬时故障标记误伤.
+            self._last_phase_unavailable = False
+        except Exception as _exc:  # 防御: 尽力操作失败返回空
+            from huginn.llm_retry import is_transient_error
+            if is_transient_error(_exc):
+                self._last_phase_unavailable = True
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1284,7 +1294,11 @@ Please modify the code to address this task."""
 
         _cb = _progress_cb.get(None)
         if _cb is None or not hasattr(llm, "astream") or not _autoloop_streaming_enabled():
-            response = await llm.ainvoke(messages)
+            # with_retry: 429/限流(含 400 包装)/529/网络抖动 分级退避重试, 不可重试
+            # 错误原样抛出 (语义与改动前一致, 只是多了瞬时错误的韧性).
+            response = await with_retry(
+                lambda: llm.ainvoke(messages), source="autoloop"
+            )
             await self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)
         # 流式: 累积 content, 同时推 thinking chunk 到 WS
@@ -1319,8 +1333,11 @@ Please modify the code to address this task."""
             await self._track_llm_usage(_usage_meta)
             return "".join(parts)
         except Exception as e:
-            # 流式失败回退 ainvoke (某些 provider astream 实现有 bug)
+            # 流式失败回退 ainvoke (某些 provider astream 实现有 bug).
+            # 回退同样走 with_retry — astream 抛限流时, 这一步是唯一的韧性出口.
             logger.debug("astream failed, fallback to ainvoke: %s", e)
-            response = await llm.ainvoke(messages)
+            response = await with_retry(
+                lambda: llm.ainvoke(messages), source="autoloop"
+            )
             await self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)

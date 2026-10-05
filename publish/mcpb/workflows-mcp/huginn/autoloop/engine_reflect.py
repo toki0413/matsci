@@ -3043,6 +3043,9 @@ class EngineReflect:
                 _ev = {
                     "modality": "execution",
                     "data_source": "tests_passed",
+                    # 落地锚: 本回写来自真实执行的判据 (tests_passed), 标 tool_output
+                    # 让该假设成为"有据假设" (darwin 第 7 维 grounded_ratio 计入).
+                    "source_class": "tool_output",
                     "r_phys": r_phys,
                     "tests_passed": _tests_passed,
                 }

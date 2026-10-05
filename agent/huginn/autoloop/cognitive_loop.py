@@ -3419,8 +3419,29 @@ Respond JSON only:
             advice = ""
             redirect = False
 
-            # 失败检测 — 各 action 的"无产出"判为 failed → redirect
-            if action == "hypothesize" and not cog["hypothesis"]:
+            # 失败检测 — 各 action 的"无产出"判为 failed → redirect.
+            # 但"无产出"分两种: (a) 确实没想法 → 该重定向; (b) LLM 瞬时不可用
+            # (限流/超时/过载) → 重定向会经 pivot 清空 hypothesis/current_hyp_id,
+            # 把一次故障放大成"no hyp to pivot from"停机 (run74). (b) 时不 redirect,
+            # 原地重试; 粘性标记由产出成功的阶段清 False.
+            _llm_unavailable = bool(getattr(self, "_last_phase_unavailable", False))
+            if _llm_unavailable:
+                advice = (advice + " | LLM 暂不可用, 原地重试 (不重定向)").strip(" |")
+                self._speculator_hint = (
+                    (self._speculator_hint or "")
+                    + "\n[transient] 上一阶段因 LLM 暂时不可用而无产出: 保持当前假设/计划, "
+                    "原地重试该阶段, 不要换方向.\n"
+                ).strip()
+                try:
+                    self._control_trace(
+                        "llm_unavailable",
+                        f"action={action} reason=transient_empty",
+                        action="retry_in_place",
+                        iteration=state.iteration,
+                    )
+                except Exception:  # 防御: trace 失败不影响主循环
+                    logger.debug("control_trace llm_unavailable failed", exc_info=True)
+            elif action == "hypothesize" and not cog["hypothesis"]:
                 redirect = True
                 advice = "hypothesize 无产出, 下轮重新 observe"
             elif action == "plan" and not cog["plan"]:

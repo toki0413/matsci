@@ -476,6 +476,11 @@ class AutoloopEngine:
         # 跳过 hypothesize 直接进 plan/execute. ponytail: 只存文本不存 id,
         # graph 操作仍走 _current_hyp_id 流程.
         self._refined_hypothesis: str | None = None
+        # 瞬时不可用标记: 上个阶段的空产出是否因 LLM 暂时不可用 (限流/超时/过载).
+        # reflect 据此抑制 redirect→pivot, 避免把一次瞬时故障放大成状态清空+停机
+        # (run74: 400 限流 → hypothesize 空 → pivot → "no hyp to pivot from" stop).
+        # 粘性: 由产出成功的阶段清 False, 由瞬时失败的阶段置 True.
+        self._last_phase_unavailable = False
         # Step C: LLM 自主选 action (run_cognitive 的 decide_fn 用).
         # 默认开, RCBench 跑分需要确定性时设 HUGINN_COGNITIVE_LLM_DECIDER=0 关掉.
         # 失败/超时/非法 action 自动 fallback 到规则版, 不影响死循环防护.

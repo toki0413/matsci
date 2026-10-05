@@ -1280,6 +1280,8 @@ class MemoryManager:
                 "mid": tier_counts["mid"],
                 "long": tier_counts["long"],
             },
+            # 落地锚覆盖率: "知识是否可回查"的可观测面 (0-1). 只读, 不参与排序决策.
+            "anchored_ratio": self.longterm.anchored_ratio(),
         }
 
     # ── 模糊意图捕捉 (见 huginn/memory/intuition.py) ──────────────
