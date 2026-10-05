@@ -84,6 +84,11 @@ class HypothesisNode:
     # 使用 —— 让棘轮奖励"新", 而非只奖励"结构规整"(graph_diversity 用字符串唯一性,
     # 重述可以骗过). 未评估时 darwin 不并入该维 (行为不变).
     novelty: float = 0.0
+    # 落地锚: 该假设验证证据的主导来源类别 (ARGUS source_class 词汇). 只有
+    # external_content (外部内容) / tool_output (工具实测) 才算"落地"; 空串 =
+    # 未验证或来源未知, agent_generated = 自说自话. support/refute 时自动写入,
+    # 让"有据假设"与 supported_ratio (含 agent 自洽) 语义区分开.
+    grounding: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -99,6 +104,7 @@ class HypothesisNode:
             "dimension": self.dimension,
             "sibling_group_id": self.sibling_group_id,
             "novelty": self.novelty,
+            "grounding": self.grounding,
         }
 
     @classmethod
@@ -116,6 +122,7 @@ class HypothesisNode:
             dimension=d.get("dimension", ""),
             sibling_group_id=d.get("sibling_group_id"),
             novelty=d.get("novelty", 0.0),
+            grounding=d.get("grounding", ""),
         )
 
 
@@ -154,6 +161,27 @@ from huginn.autoloop.hypothesis_semantic import (  # noqa: E402
 def _extract_dimension(statement: str) -> str:
     """从假设陈述抽 dimension. P1#1: 接 LLM 语义判定; 无 LLM/关 flag 时回退关键词命中."""
     return _classify_dimension(statement)
+
+
+# 落地锚: 假设的验证证据是否可回查到"真实来源". 复用 ARGUS source_class 词汇 ——
+# external_content (外部内容) / tool_output (工具实测) 算落地; agent_generated 是
+# 自说自话, 不算; 空串 = 未验证或来源未知. 这跟 supported_ratio 语义不同: 后者
+# 连 agent 自洽的 support 也算, 前者只认外部/实测根据.
+_GROUNDED_SOURCE_CLASSES: tuple[str, ...] = ("external_content", "tool_output")
+
+
+def _dominant_grounding(evidence: dict[str, Any]) -> str:
+    """evidence 里占比最高的 source_class; 无 → "" (未知, 不臆造).
+
+    复用 red_team 的同一实现, 不重造词汇/逻辑.
+    """
+    try:
+        from huginn.autoloop.red_team import _dominant_source_class
+
+        return _dominant_source_class(evidence)
+    except Exception:  # 防御: 来源扫描失败按"未知"处理, 不臆造锚
+        logger.debug("_dominant_source_class failed", exc_info=True)
+        return ""
 
 
 # ── 实质内容 / 重复守卫 ──────────────────────────────────────────────────────
@@ -480,6 +508,18 @@ class HypothesisGraph:
     def refuted(self) -> list[HypothesisNode]:
         return [n for n in self._nodes.values() if n.status == "refuted"]
 
+    def grounded_ratio(self) -> float:
+        """有落地锚的假设占比 (0-1): 验证证据来自外部内容/工具实测, 而非自说自话.
+
+        空图 → 0.0 (无信号, 不臆造). 供 darwin 第 7 维使用 —— 让棘轮奖励"有据的
+        假设", 与 supported_ratio (含 agent 自洽) 区分.
+        """
+        nodes = list(self._nodes.values())
+        if not nodes:
+            return 0.0
+        grounded = sum(1 for n in nodes if n.grounding in _GROUNDED_SOURCE_CLASSES)
+        return grounded / len(nodes)
+
     def events(self) -> list[dict[str, Any]]:
         """返回事件日志副本 (append-only, 调用方不应修改).
         用于回放/调试: 重放事件可重建图状态."""
@@ -560,6 +600,9 @@ class HypothesisGraph:
             )
         node.status = "supported"
         node.evidence = {**node.evidence, **evidence}
+        _g = _dominant_grounding(evidence)
+        if _g:
+            node.grounding = _g
         self._edges.append(HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="support", evidence=evidence,
         ))
@@ -589,6 +632,9 @@ class HypothesisGraph:
             )
         node.status = "refuted"
         node.evidence = {**node.evidence, **evidence}
+        _g = _dominant_grounding(evidence)
+        if _g:
+            node.grounding = _g
         self._edges.append(HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="refute", evidence=evidence,
         ))

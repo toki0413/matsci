@@ -1018,6 +1018,7 @@ class CognitiveRunner:
         - topology_richness * 10: 假设网络结构丰富度 (β₁/n, 独立环数占比)
         - task_perf * 10: 真实任务性能 (r_phys / tests_passed; 无信号时不参与)
         - novelty * task_perf: 进展门控的创新分 (仅在 novelty 伴随真实进展时计入)
+        - grounded_ratio * 10: 落地锚 (证据来自工具实测/外部内容的假设占比; 无信号时不参与)
         命中维度平均 → 0-10 分
 
         创新纪律: novelty 不独立加分 —— "新而无用"不进棘轮, 只作探索整形信号.
@@ -1119,6 +1120,14 @@ class CognitiveRunner:
                 # 进展门控的 novelty: 无进展 (tp=0) 时贡献 0.
                 _dims.append((sum(_nov_vals) / len(_nov_vals)) * _tp_val)
             _dims.append(_tp_val)  # 真实任务性能本身仍独立一维
+        # 第 7 维 (落地锚): 有据假设 — 验证证据来自工具实测/外部内容 — 的占比.
+        # 只在确已存在落地假设 (ratio>0) 时并入: 无信号时并入会无故拉低每轮分数,
+        # 改变既有棘轮行为. 与 novelty 的"无信号不进分"同纪律. 让棘轮奖励
+        # "可回查的经验", 与 supported_ratio (含 agent 自洽) 区分开.
+        _gr = graph.grounded_ratio()
+        if _gr > 0.0:
+            _dims.append(_gr)
+            logger.debug("darwin: grounded_ratio=%.2f 并入落地锚维度", _gr)
         score = (sum(_dims) / len(_dims)) * 10.0
 
         delta = score - self._darwin_last_score
