@@ -3,7 +3,7 @@
 配置面的**声明**在 :mod:`huginn.env_schema` (``SCHEMA``, 单一权威源); 本模块是
 **读端**: 新代码读 ``HUGINN_*`` 一律经此, 不再裸 ``os.environ.get``. 收益有三:
 
-- **未声明即报错**: 读一个不在 ``SCHEMA`` 里的变量抛 :class:`UndeclaredEnvVar`,
+- **未声明即报错**: 读一个不在 ``SCHEMA`` 里的变量抛 :class:`UndeclaredEnvVarError`,
   迫使新增配置先登记 (拦截配置面静默膨胀);
 - **默认值单一来源**: 默认值只来自 ``SCHEMA``, 不在每个读点重复 (消除双真值);
 - **类型统一**: int/float/bool/json 解析集中一处, 解析失败 fail-open 回落默认值.
@@ -36,7 +36,7 @@ _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off", "")
 
 
-class UndeclaredEnvVar(KeyError):
+class UndeclaredEnvVarError(KeyError):
     """读取了未在 :data:`huginn.env_schema.SCHEMA` 登记的 ``HUGINN_*`` 变量.
 
     这是配置面治理的硬闸: 新增环境变量必须先在 ``env_schema.SCHEMA`` 登记,
@@ -45,11 +45,11 @@ class UndeclaredEnvVar(KeyError):
 
 
 def spec(name: str) -> EnvSpec:
-    """取变量的权威声明; 未登记抛 :class:`UndeclaredEnvVar`."""
+    """取变量的权威声明; 未登记抛 :class:`UndeclaredEnvVarError`."""
     try:
         return SCHEMA[name]
     except KeyError:
-        raise UndeclaredEnvVar(
+        raise UndeclaredEnvVarError(
             f"{name!r} 未在 huginn.env_schema.SCHEMA 登记; "
             f"新增配置请先登记再经 env_access 读取"
         ) from None
@@ -134,7 +134,7 @@ def env_bool(name: str, default: Any = _UNSET) -> bool:
 def env_json(name: str, default: Any = _UNSET) -> Any:
     """读 JSON; 未设/解析失败 → 默认值解析; 再失败 → None."""
     s, raw, is_set = _read(name, default)
-    if isinstance(raw, (dict, list)):
+    if isinstance(raw, dict | list):
         return raw
     if is_set:
         try:

@@ -57,7 +57,11 @@ COMMS_TOOL_NAME = "comms_lint"
 # then the discipline for the strings it emits to other agents.
 SEGMENT_PRIORITY = 65
 
-_VALID_MODES = ("agents", "strict", "flavored", "off")
+# Plugin-scoped name: a bare `_VALID_MODES` collides with
+# `huginn/metacog/critique.py::_VALID_MODES` (agent chat/plan/research) on a
+# different value domain — the MECE vocabulary audit flags that as a
+# same-name-across-modules violation.
+_STE_MODES = ("agents", "strict", "flavored", "off")
 
 # ── Rule text ────────────────────────────────────────────────────────
 # Adapted from danyuchn/asd-ste100-skill SKILL.md (MIT).  Trimmed so the
@@ -125,14 +129,14 @@ _BLOCKS = {
 def current_mode() -> str:
     """The active STE mode, read from ``HUGINN_STE_MODE`` each call."""
     mode = os.environ.get("HUGINN_STE_MODE", "agents").strip().lower()
-    return mode if mode in _VALID_MODES else "agents"
+    return mode if mode in _STE_MODES else "agents"
 
 
 def set_mode(mode: str) -> str:
     """Set the STE mode for this process. Returns the mode actually applied."""
     mode = (mode or "").strip().lower()
-    if mode not in _VALID_MODES:
-        raise ValueError(f"unknown STE mode {mode!r}; use one of {_VALID_MODES}")
+    if mode not in _STE_MODES:
+        raise ValueError(f"unknown STE mode {mode!r}; use one of {_STE_MODES}")
     os.environ["HUGINN_STE_MODE"] = mode
     return mode
 

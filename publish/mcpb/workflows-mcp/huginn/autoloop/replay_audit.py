@@ -30,7 +30,7 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from huginn.autoloop.hypothesis_loop import _is_substantive_statement, _statement_key
@@ -49,7 +49,7 @@ _DEBT_LIMIT = int(os.environ.get("HUGINN_RENAME_DEBT_LIMIT", "8"))
 def _iso_epoch(s: str) -> float | None:
     try:
         return datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(
-            tzinfo=timezone.utc).timestamp()
+            tzinfo=UTC).timestamp()
     except Exception:  # — 原因: 时间戳格式不可解析, 视为无时间 (该节点不参与排序)
         return None
 

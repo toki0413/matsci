@@ -48,7 +48,7 @@ _KEYWORD_STOPWORDS = frozenset(
         "only", "also", "over", "under", "between", "within", "when", "while",
         "their", "there", "these", "those", "they", "them", "its", "about",
         "after", "before", "because", "been", "being", "does", "doing", "done",
-        "and", "the", "yes", "none", "true", "false",
+        "yes", "none", "true", "false",
     }
 )
 

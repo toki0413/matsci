@@ -72,7 +72,7 @@ def _normalize_script_for_fp(script: str) -> str:
 
         return _ast.dump(_ast.parse(script))
     except Exception:  # — 原因: 残缺代码无法 parse, 退化为去空行原文 (比内容哈希稳)
-        return "\n".join(l.strip() for l in script.splitlines() if l.strip())
+        return "\n".join(line.strip() for line in script.splitlines() if line.strip())
 
 
 def _non_finite_objective_keys(execution_result: Any) -> list[str]:
@@ -1605,7 +1605,7 @@ class EngineReflect:
             )
         except Exception:  # 防御: 遥测未接线/失败不打断控制流
             logger.debug("control_trace telemetry emit failed (fail-open)", exc_info=True)
-        try:
+        with contextlib.suppress(Exception):  # 防御: 引擎无事件通道 (替身) → 日志已落, 忽略
             self._emit_campaign(
                 "campaign.control_trace",
                 {
@@ -1616,8 +1616,6 @@ class EngineReflect:
                     "advisory": "",
                 },
             )
-        except Exception:  # 防御: 引擎无事件通道 (替身) → 日志已落, 忽略
-            pass
 
     def _detect_repeat_execution(
         self, execution_result: Any, results: dict[str, Any]
