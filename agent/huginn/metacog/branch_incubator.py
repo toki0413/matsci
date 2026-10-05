@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -111,6 +113,9 @@ class BranchIncubator:
         wave_mode: str = "push",
         model_families: list[str] | None = None,
         value_fn: Callable[[BranchResult], Any] | None = None,
+        budget_remaining_fn: Callable[[], float | None] | None = None,
+        trace_fn: Callable[[str, str, str], None] | None = None,
+        slice_min_s: float | None = None,
     ) -> list[BranchResult]:
         """跑一轮隔离探索.
 
@@ -133,7 +138,30 @@ class BranchIncubator:
           结果写进 .value (越高越好). layer2 prune 优先取 max value; value 缺失
           (None) 时回退旧价值 min(tokens_used). None 时所有 .value 保持 None →
           行为 100% 不变.
+
+        D-slice (细粒度预算切片, 不设硬时长):
+        把一轮拆成**有序、各自独立有价值**的 slice —
+          S1 layer1 扇出   (产出 N 条可用假设, 核心)
+          S2 layer1 PRM 打分 (可选)
+          S3 layer2 精修扇出 (逐 parent, 可选)
+          S4 layer2 PRM 打分 (可选)
+          S5 prune          (廉价, 总是执行)
+        每个可选 slice **启动前**查一次剩余挂钟预算 `budget_remaining_fn()`; 剩余
+        不足 `slice_min_s` 就跳过该 slice, 用"已产出的最优结果"收尾 —— 单阶段超支
+        被限制在**一个 slice** 以内 (而非整棵树 2 层 × N 路). 这是"少给硬时长、多
+        切细粒度"的实现: 不 kill 正在跑的动作, 只拒绝启动注定越预算的下一个 slice.
+
+        切片成本**自校准**: 下一片 (layer2) 的成本用上一片 (layer1) 的**实测挂钟**
+        估计, 门槛取 `max(slice_min_s, 上一片实测)`. 于是"刚烧了 300s 只剩 120s"
+        时不会再启动一个同样要 ~300s 的 layer2 —— 而不是拿一个拍脑袋的固定阈值.
+        `budget_remaining_fn=None` (非长程 / 无 goal) 或返回 None → 全部 slice 照跑,
+        行为 100% 不变. `slice_min_s` 缺省读 HUGINN_BRANCH_SLICE_MIN_S (默认 60s).
         """
+        # slice 最低成本 (秒): 剩余预算 < 此值就不启动下一个可选 slice.
+        _min_s = (
+            slice_min_s if slice_min_s is not None
+            else float(os.environ.get("HUGINN_BRANCH_SLICE_MIN_S", "60"))
+        )
         bundle = ContextBundle(
             global_math_background=math_background,
             task_definition=task,
@@ -149,14 +177,19 @@ class BranchIncubator:
             if model_families else [""] * n_branches
         )
         # Layer 1: flat asyncio.gather (depth=1 和 depth=2 都跑这步)
+        # D-slice S1: 核心 slice, 不可跳过 (调用方启动前已查 _budget_exhausted).
+        _t_layer1 = time.monotonic()
         coros = [
             self._run_single_branch(
                 fam, bundle, task, agent_factory, round_idx,
                 model_family=mf, wave_mode=wave_mode,
+                budget_remaining_fn=budget_remaining_fn,
             )
             for fam, mf in zip(family_assignments, model_assignments)
         ]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
+        # D-slice 自校准: layer1 实测挂钟 = 下一片 (同形状的 layer2) 的成本估计.
+        _layer1_cost = time.monotonic() - _t_layer1
 
         layer1: list[BranchResult] = []
         for family_id, raw in zip(family_assignments, raw_results):
@@ -176,16 +209,41 @@ class BranchIncubator:
         # 反完成审计: 过热族 mark_blocked, 下一轮强制 redirect
         # (layer1 后调, 跟 Part 1 一致; layer2 是 refinement, 不改 family 分布)
         self._check_convergence(round_idx, total_rounds, layer1)
-        # rollout value: 给 layer1 注入价值 (value_fn=None 时全 None, 行为不变).
-        await self._assign_values(layer1, value_fn)
+        # D-slice 自校准门槛: 后续可选 slice 至少要有"跑完一个同形状切片"的预算.
+        # 固定 _min_s 只作下限; 上界用 layer1 实测 (run72: layer1 烧 300s 只剩
+        # 120s → 门槛 300s → 拒绝启动同样要 ~300s 的 layer2).
+        _need = max(_min_s, _layer1_cost)
+        # D-slice S2: layer1 PRM 打分 (可选). 预算不足则跳过 → value 保持 None,
+        # prune 回退 tokens_used, 结果仍可用.
+        if self._slice_affordable(budget_remaining_fn, _need):
+            await self._assign_values(layer1, value_fn)
+        else:
+            self._slice_skip(
+                trace_fn, "slice=layer1_value", _need,
+            )
 
         if depth < 2:
             return layer1  # Part 1 flat 行为
+
+        # D-slice S3 门: layer2 精修是可选 slice. 剩余预算不足 → 直接用 layer1
+        # 收尾, 不启动注定越预算的深搜. 单阶段超支由此 ≤ 一个 slice (layer1).
+        if not self._slice_affordable(budget_remaining_fn, _need):
+            self._slice_skip(
+                trace_fn, "slice=layer2 (return layer1)", _need,
+            )
+            logger.info(
+                "branch_incubator: skip layer2 (budget<%.0fs, layer1 cost %.0fs), "
+                "return %d layer1 branches",
+                _need, _layer1_cost, len(layer1),
+            )
+            return layer1
 
         # Layer 2: PTD tree-shape — 每 layer1 成功 branch 派 width 个 sub-branch
         layer2_by_parent = await self._run_tree_layer(
             layer1, bundle, task, agent_factory, round_idx, width,
             wave_mode=wave_mode, value_fn=value_fn,
+            budget_remaining_fn=budget_remaining_fn,
+            slice_min_s=_need, trace_fn=trace_fn,
         )
 
         # Prune + Fallback: 每 parent 保留 top-1 (value 最大 + success;
@@ -204,18 +262,71 @@ class BranchIncubator:
         return final
 
     @staticmethod
+    def _slice_affordable(
+        budget_remaining_fn: Callable[[], float | None] | None,
+        need_s: float,
+    ) -> bool:
+        """下一个可选 slice 是否负担得起 (剩余挂钟预算 ≥ need_s).
+
+        D-slice 的单一预算判据. `budget_remaining_fn=None` (非长程) 或返回 None
+        (无 goal) → 视为不受预算约束, 返回 True (行为 100% 不变). 查询异常
+        fail-open (不误判耗尽而跳过真该跑的 slice).
+        """
+        if budget_remaining_fn is None:
+            return True
+        try:
+            rem = budget_remaining_fn()
+        except Exception:  # 防御: 预算查询失败 fail-open
+            logger.debug("branch budget_remaining_fn failed", exc_info=True)
+            return True
+        if rem is None:
+            return True
+        return rem >= need_s
+
+    @staticmethod
+    def _slice_skip(
+        trace_fn: Callable[[str, str, str], None] | None,
+        what: str,
+        need_s: float,
+    ) -> None:
+        """记录一次"因预算不足跳过可选 slice" — 控制面可观测, 不静默."""
+        logger.info("branch_incubator: skip %s (budget<%.0fs)", what, need_s)
+        if trace_fn is None:
+            return
+        try:
+            trace_fn(
+                "branch_slice_skip",
+                f"{what}: budget<{need_s:.0f}s",
+                "skip",
+            )
+        except Exception:  # 防御: 观测失败不影响主流程
+            logger.debug("branch trace_fn failed", exc_info=True)
+
+    @staticmethod
     async def _assign_values(
         results: list[BranchResult],
         value_fn: Callable[[BranchResult], Any] | None,
+        budget_remaining_fn: Callable[[], float | None] | None = None,
+        need_s: float = 0.0,
     ) -> None:
         """用 value_fn 给每个 branch 注入 rollout value (原地改 .value).
 
         value_fn 可为同步或 async (返回协程时自动 await, 如 step_verifier 的
         PRM 打分). None → 全部保持 None (旧行为). 单个失败不影响其他 branch.
+
+        D-slice S2/S4: PRM 打分逐 branch 是顺序 LLM 调用 (累计耗时). 每条前查一次
+        剩余预算, 不足 need_s 就停在此条, 后面 branch 的 value 保持 None (回退
+        token 剪枝) —— 把"打分"也切成可中断的细粒度 slice.
         """
         if value_fn is None:
             return
         for r in results:
+            if not BranchIncubator._slice_affordable(budget_remaining_fn, need_s):
+                logger.info(
+                    "branch_incubator: stop value scoring at %s (budget<%.0fs)",
+                    r.agent_id, need_s,
+                )
+                return
             try:
                 v = value_fn(r)
                 if inspect.isawaitable(v):
@@ -247,17 +358,30 @@ class BranchIncubator:
         width: int,
         wave_mode: str = "push",
         value_fn: Callable[[BranchResult], Any] | None = None,
+        budget_remaining_fn: Callable[[], float | None] | None = None,
+        slice_min_s: float = 0.0,
+        trace_fn: Callable[[str, str, str], None] | None = None,
     ) -> dict[str, list[BranchResult]]:
         """对 layer_branches 里成功的 branch 派 width 个 sub-branch 做 refinement.
 
         PTD tree-shape 的 layer2 — sub-branch 复用父 family_id (不重派),
         看到父 hypothesis (祖先 π(v)). 返回 {parent_agent_id: [sub-branch results]}.
+
+        D-slice S3: 逐 parent 是一个细 slice. 派某 parent 的 sub-branch **前**查一次
+        剩余预算, 不足 slice_min_s 就停止派新 parent (已派的照常收, 不 kill) ——
+        避免"已经没预算还继续摊大扇出".
         """
         eligible = [b for b in layer_branches if b.success and b.hypothesis]
 
         coros = []
         parent_map: list[str] = []  # 每 coro 对应的 parent_agent_id
         for parent in eligible:
+            # D-slice S3 逐 parent 预算门: 剩余不足就不再派新 parent.
+            if not self._slice_affordable(budget_remaining_fn, slice_min_s):
+                self._slice_skip(
+                    trace_fn, f"layer2 parent {parent.agent_id}", slice_min_s,
+                )
+                break
             for _ in range(width):
                 coros.append(self._run_single_branch(
                     family_id=parent.family_id,
@@ -269,13 +393,17 @@ class BranchIncubator:
                     parent_agent_id=parent.agent_id,
                     model_family=parent.model_family,
                     wave_mode=wave_mode,
+                    budget_remaining_fn=budget_remaining_fn,
                 ))
                 parent_map.append(parent.agent_id)
 
         if not coros:
             return {}
 
+        _t_l2 = time.monotonic()
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
+        # D-slice 自校准: layer2 实测挂钟 = S4 打分 slice 的成本估计 (下限 slice_min_s).
+        _need_l2 = max(slice_min_s, time.monotonic() - _t_l2)
 
         layer2: dict[str, list[BranchResult]] = {}
         for parent_id, raw in zip(parent_map, raw_results):
@@ -283,9 +411,12 @@ class BranchIncubator:
                 # 不应发生, _run_single_branch 内部已 catch. 跳过, 不入 layer2
                 continue
             layer2.setdefault(parent_id, []).append(raw)
-        # prune 前先注入 rollout value (value_fn=None 时全 None, 行为不变).
+        # prune 前先注入 rollout value (value_fn=None 时全 None, 行为不变);
+        # D-slice S4: 逐 sub-branch 预算门在 _assign_values 内.
         for _subs in layer2.values():
-            await self._assign_values(_subs, value_fn)
+            await self._assign_values(
+                _subs, value_fn, budget_remaining_fn, _need_l2,
+            )
         return layer2
 
     def _assign_families(self, n: int) -> list[str]:
@@ -343,6 +474,7 @@ class BranchIncubator:
         parent_agent_id: str = "",
         model_family: str = "",
         wave_mode: str = "push",
+        budget_remaining_fn: Callable[[], float | None] | None = None,
     ) -> BranchResult:
         """起单个 Subagent, 注入隔离后的 context + family 引导.
 
@@ -351,7 +483,20 @@ class BranchIncubator:
 
         P4: wave_mode="verify" 时 enhanced_task 加验证引导 (而非生成引导).
         model_family 非 "" 时记录到 BranchResult 供调用方调度.
+
+        D-slice: 起 Subagent **前**把"此刻"的剩余挂钟预算刷进 `remaining_budget_s`
+        contextvar (随 task 传播给子智能体的 streaming) — 子智能体据此自限降级空闲
+        阈值, 而不是被父级硬砍. budget_remaining_fn=None 时不写, 保持旧行为.
         """
+        # D-slice: 刷新预算 contextvar (尽力, 失败不影响 branch).
+        if budget_remaining_fn is not None:
+            try:
+                from huginn.agent.streaming import remaining_budget_s as _rb_s
+
+                _rb_s.set(budget_remaining_fn())
+            except Exception:  # 防御: streaming 不可用 / 查询失败 → 不刷
+                logger.debug("branch budget contextvar refresh failed", exc_info=True)
+
         ctx = isolate(bundle, role="exploration")
         family = self._registry.by_id(family_id)
         family_essence = family.essence if family else ""
@@ -916,6 +1061,134 @@ def _selfcheck() -> None:
         f"{[r.value for r in _res_async]}"
     )
     print("21. run_round async value_fn (PRM coroutine) OK")
+
+    # 22. D-slice _slice_affordable: None / None-return / 高 / 低 / 异常 五态
+    assert BranchIncubator._slice_affordable(None, 60.0) is True, \
+        "budget_remaining_fn=None (非长程) 应视为不受约束"
+    assert BranchIncubator._slice_affordable(lambda: None, 60.0) is True, \
+        "无 goal (返回 None) 应视为不受约束"
+    assert BranchIncubator._slice_affordable(lambda: 100.0, 60.0) is True, \
+        "剩余 100s ≥ 60s 应负担得起"
+    assert BranchIncubator._slice_affordable(lambda: 10.0, 60.0) is False, \
+        "剩余 10s < 60s 应负担不起"
+
+    def _boom() -> float:
+        raise RuntimeError("budget query failed")
+
+    assert BranchIncubator._slice_affordable(_boom, 60.0) is True, \
+        "预算查询异常应 fail-open (不误判耗尽)"
+    print("22. D-slice _slice_affordable 五态 OK")
+
+    # 23. D-slice 预算不足: depth=2 也跳过 layer2, 只跑 layer1 (3 dispatch)
+    mock_low = _MockSubagentDispatch()
+    results_low = asyncio.run(BranchIncubator(dispatch=mock_low).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        budget_remaining_fn=lambda: 5.0, slice_min_s=60.0,
+    ))
+    assert len(results_low) == 3, f"应返回 3 条 layer1, got {len(results_low)}"
+    assert len(mock_low.calls) == 3, (
+        f"预算不足应跳过 layer2 (只 3 dispatch), got {len(mock_low.calls)}"
+    )
+    assert all(r.parent_agent_id == "" for r in results_low), \
+        "预算不足返回的应是 layer1 (parent_agent_id 空)"
+    assert all(r.hypothesis for r in results_low), "layer1 结果仍应可用"
+    print("23. D-slice 预算不足跳过 layer2 (3 dispatch) OK")
+
+    # 24. D-slice 预算充足 / 无预算约束: 行为与旧版一致 (9 dispatch)
+    mock_rich = _MockSubagentDispatch()
+    _res_rich = asyncio.run(BranchIncubator(dispatch=mock_rich).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        budget_remaining_fn=lambda: 1000.0, slice_min_s=60.0,
+    ))
+    assert len(mock_rich.calls) == 9, (
+        f"预算充足应跑满 layer1+layer2 (9 dispatch), got {len(mock_rich.calls)}"
+    )
+    assert all(r.parent_agent_id for r in _res_rich), "充足预算应返回 layer2 winner"
+    # budget_remaining_fn=None → 不受约束, 同样 9 dispatch (向后兼容)
+    mock_none = _MockSubagentDispatch()
+    asyncio.run(BranchIncubator(dispatch=mock_none).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+    ))
+    assert len(mock_none.calls) == 9, "无 budget_remaining_fn 行为应不变 (9 dispatch)"
+    print("24. D-slice 预算充足/无约束行为不变 (9 dispatch) OK")
+
+    # 25. D-slice _assign_values 逐 branch 预算门: 中途预算掉线 → 后续保持 None
+    _rs = [BranchResult(family_id="f", agent_id=f"a{i}", hypothesis="h")
+           for i in range(4)]
+    _seq = iter([100.0, 100.0, 1.0, 100.0])
+    asyncio.run(BranchIncubator._assign_values(
+        _rs, lambda r: 0.7, lambda: next(_seq), 60.0,
+    ))
+    assert _rs[0].value == 0.7 and _rs[1].value == 0.7, "预算足时应打分"
+    assert _rs[2].value is None and _rs[3].value is None, (
+        "预算掉线后应停止打分, 后续 value 保持 None"
+    )
+    print("25. D-slice _assign_values 逐 branch 预算门 OK")
+
+    # 26. D-slice trace_fn: 跳过 slice 时上报 branch_slice_skip (控制面可观测)
+    _traces: list[tuple[str, str, str]] = []
+
+    def _tf(name: str, evidence: str, action: str) -> None:
+        _traces.append((name, evidence, action))
+
+    asyncio.run(BranchIncubator(dispatch=_MockSubagentDispatch()).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        budget_remaining_fn=lambda: 5.0, slice_min_s=60.0, trace_fn=_tf,
+    ))
+    assert any(n == "branch_slice_skip" for n, _, _ in _traces), (
+        f"应上报 branch_slice_skip trace, got {_traces}"
+    )
+    print("26. D-slice trace_fn branch_slice_skip 上报 OK")
+
+    # 27. D-slice 自校准: layer1 实测成本 > 剩余预算 → 跳过同形状的 layer2.
+    #     场景复刻 run72: layer1 烧掉大部分预算, 只剩一点, 不足以再跑一个 layer2.
+    #     用"模拟花费时钟"记账 (不依赖真 LLM 计时, 也不依赖 streaming 是否可导入).
+    _clock = {"t": 0.0}
+    _total = 0.25  # 总预算 0.25s; layer1 花 0.2s → 只剩 0.05s, 不够再跑 0.2s 的 layer2
+
+    def _spend_budget() -> float:
+        return _total - _clock["t"]
+
+    class _SlowL1Mock(_MockSubagentDispatch):
+        """layer1 (无 Parent hypothesis) 慢且记账, layer2 快 — 制造"上一片昂贵"."""
+
+        def __init__(self, l1_cost: float) -> None:
+            super().__init__()
+            self._l1_cost = l1_cost
+
+        async def dispatch(self, spec_name, task, context=None, on_state=None):
+            if "[Parent hypothesis:" not in task:
+                await asyncio.sleep(self._l1_cost)  # 真挂钟 → _layer1_cost 实测
+                _clock["t"] = self._l1_cost         # 记账 (并发分支同值, 幂等)
+            return await super().dispatch(spec_name, task, context, on_state)
+
+    _slow = _SlowL1Mock(l1_cost=0.2)
+    _res_cal = asyncio.run(BranchIncubator(dispatch=_slow).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        budget_remaining_fn=_spend_budget, slice_min_s=0.01,
+    ))
+    assert len(_slow.calls) == 3, (
+        f"自校准应据 layer1 实测 (~0.2s) 跳过 layer2 (剩 ~0.05s), "
+        f"got {len(_slow.calls)} dispatch"
+    )
+    assert len(_res_cal) == 3 and all(r.parent_agent_id == "" for r in _res_cal)
+    # 对照: layer1 飞快 (实测≈0, 不记账) → 门槛回落到固定下限 0.01s → 跑满 9
+    _clock["t"] = 0.0
+    _fast = _MockSubagentDispatch()
+    asyncio.run(BranchIncubator(dispatch=_fast).run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10, depth=2, width=2,
+        budget_remaining_fn=_spend_budget, slice_min_s=0.01,
+    ))
+    assert len(_fast.calls) == 9, (
+        f"layer1 便宜时同一预算应够跑 layer2 (9 dispatch), got {len(_fast.calls)}"
+    )
+    print("27. D-slice 自校准门槛 (layer1 实测 → 决定 layer2 是否负担得起) OK")
 
     print("branch_incubator selfcheck OK")
 

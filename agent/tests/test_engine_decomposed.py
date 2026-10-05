@@ -859,6 +859,55 @@ def test_branch_incubator_empty_candidates_emits_trace() -> None:
     assert "empty" in trace["evidence"]
 
 
+def test_branch_incubator_low_budget_skips_layer2(monkeypatch) -> None:
+    """D-slice: 预算将尽时真实 _hypothesize 路径上 layer2 被跳过 (只 3 dispatch) + trace.
+
+    复刻 run72/73 单阶段超支的场景: 用真实 BranchIncubator (depth=2) + mock dispatch,
+    但 `_budget_remaining_s()` 返回远小于门槛的值 → 应只跑 layer1 并留 `branch_slice_skip`
+    控制面 trace, 而不是硬砍正在飞的动作.
+    """
+    from huginn.autoloop.hypothesis_loop import HypothesisLoop
+    from huginn.metacog.branch_incubator import BranchIncubator, _MockSubagentDispatch
+
+    monkeypatch.setenv("HUGINN_BRANCH_INCUBATOR_DEPTH", "2")
+    monkeypatch.setenv("HUGINN_STRENGTH_SCHEDULE", "0")  # 关强度调度 → 直接 depth=2
+    monkeypatch.setenv("HUGINN_BRANCH_VALUE_PRM", "0")  # 免 PRM LLM, value 恒 None
+
+    captured: list[dict] = []
+    mock = _MockSubagentDispatch()
+
+    class _StubEngine:
+        _iteration = 1
+        _max_pivots = 2
+        _agent_factory = object()
+        _branch_incubator = BranchIncubator(dispatch=mock)
+
+        def _budget_remaining_s(self):  # 预算将尽 (5s << slice 门槛 60s)
+            return 5.0
+
+        def _emit_control_trace(self, name, evidence, action="advisory_hint"):
+            captured.append({"name": name, "evidence": evidence, "action": action})
+
+        async def _symreg_hint(self, context):
+            return ""
+
+        def _conjecture_hint(self, context):
+            return ""
+
+        def _build_hypothesis_prompt(self, context):
+            return "prompt"
+
+    loop = HypothesisLoop(_StubEngine())
+    out = asyncio.run(loop._hypothesize_via_branch_incubator({}))
+    assert out, "layer1 仍应产出可用假设 (跳过的是可选 slice, 不是核心 slice)"
+    assert len(mock.calls) == 3, (
+        f"预算将尽应只跑 layer1 (3 dispatch), got {len(mock.calls)} — layer2 未被门控"
+    )
+    skips = [d for d in captured if d["name"] == "branch_slice_skip"]
+    assert skips, f"应留下 branch_slice_skip 控制面 trace, got {captured}"
+    assert all(d["action"] == "skip" for d in skips)
+
+
 def test_engine_exposes_emit_control_trace_delegation() -> None:
     """协作对象经 __getattr__ 走 engine._emit_control_trace → 必须有该委托方法."""
     from huginn.autoloop.engine import AutoloopEngine
@@ -1962,6 +2011,11 @@ def test_darwin_novelty_gated_by_progress(monkeypatch) -> None:
 
         def edges(self):  # noqa: ANN201
             return []
+
+        def grounded_ratio(self) -> float:
+            # 第 7 维 (落地锚) 探针: _darwin_ratchet_check 会读. 无锚 → 0.0,
+            # 与"无信号不进分"一致, 不影响 novelty/progress 的断言.
+            return 0.0
 
     monkeypatch.setenv("HUGINN_STRENGTH_SCHEDULE", "0")  # 绕开强度调度读字段
 

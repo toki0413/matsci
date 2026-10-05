@@ -63,6 +63,40 @@ def _derive_light_on_track(action: str, cog: dict) -> str:
     return "unsure"
 
 
+def progress_invariant_action(
+    cog: dict, action_history: list[str], *, window: int = 4
+) -> str | None:
+    """P3.2 在线进展不变量 — 连续 window 轮停在执行前阶段 ⇒ 强制推进流水线.
+
+    背景: agent 可能反复选 hypothesize/plan 而从不 execute (run74 实测 h→plan→h;
+    更极端的"只 hypothesize"会让整轮 0 tool_calls)。既有软信号 (rename_debt /
+    light_off_track) 抓不到这种"有产出但不推进"的形态 —— 每轮都有产出, 累积信号
+    被不断重置。
+
+    这里用**动作尾部**做单调进展判据, 不看 cog 的 key 是否非空 (旧的 plan /
+    execution_result 会跨轮残留, 用 key 判断会误以为"已推进"):
+
+    - 尾部含 execute/validate/learn/pivot → 本轮已在前行, 不干预 (None);
+    - 尾部全是 skip/observe (无 hypothesize/plan) → monitor-hold 类的静默,
+      不是空转, 不干预 (None);
+    - 否则 (纯 hypothesize/plan 打转):
+        · 尾部无 plan → 需要为当前假设重算计划: 有假设 → "plan", 无 → "hypothesize"
+        · 尾部有 plan 但无 execute → 计划已就绪, 强制 "execute"
+
+    返回 None 表示不触发, 交给正常决策。
+    """
+    tail = list(action_history)[-window:]
+    if len(tail) < window:
+        return None
+    if any(a in ("execute", "validate", "learn", "pivot") for a in tail):
+        return None
+    if not any(a in ("hypothesize", "plan") for a in tail):
+        return None
+    if "plan" in tail:
+        return "execute"
+    return "plan" if cog.get("hypothesis") else "hypothesize"
+
+
 def _snapshot_structure_desc(cog: dict, cmap: Any = None) -> list[float]:
     """从活跃 StructureCognitiveMap / cog 提取结构描述符, 缺失填 16 维全 0.
 

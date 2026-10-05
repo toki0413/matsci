@@ -52,6 +52,7 @@ from huginn.autoloop.cognitive_checks import (
     metacog_check_completion,
     metacog_check_selection_bias,
     metacog_check_topology_collapse,
+    progress_invariant_action,
 )
 from huginn.autoloop.cognitive_persist import load_run_context, persist_run_context
 from huginn.autoloop.goal_scheduler import GoalScheduler
@@ -2978,6 +2979,37 @@ Respond JSON only:
                 return ActionDecision(action="plan", rationale="hint=plan")
             if hint == "perceive":
                 return ActionDecision(action="observe", rationale="hint=perceive")
+            # P3.2 在线进展不变量: 连续多轮停在执行前阶段 (只 hypothesize/plan,
+            # 从不 execute) → 忽略 LLM 偏好, 强制推进到下一未完成阶段. 这是把
+            # "0 tool_calls 空转"变成可达 execute 的**有向路由**; 默认开, 窗口可调
+            # (HUGINN_PROGRESS_INVARIANT_WINDOW).
+            if os.environ.get("HUGINN_PROGRESS_INVARIANT", "1") == "1" and not bool(
+                getattr(self, "_last_phase_unavailable", False)
+            ):
+                _win = int(os.environ.get("HUGINN_PROGRESS_INVARIANT_WINDOW", "4"))
+                _tail = state.action_history[-_win:]
+                _forced = progress_invariant_action(cog, state.action_history, window=_win)
+                if _forced is not None:
+                    logger.warning(
+                        "P3.2 progress invariant: last %d actions=%s at iter %d "
+                        "→ force action=%s",
+                        _win, _tail, state.iteration, _forced,
+                    )
+                    self._control_trace(
+                        "progress_invariant",
+                        f"window={_win} tail={','.join(_tail)}",
+                        action="force_route",
+                        iteration=state.iteration,
+                    )
+                    return ActionDecision(
+                        action=_forced,
+                        force=True,
+                        rationale=(
+                            f"progress invariant: 最近 {_win} 轮 {','.join(_tail)} "
+                            f"未推进到 execute, 强制 {_forced}"
+                        ),
+                        expected_outcome="推进流水线到 execute, 产生 tool_calls 而非继续空转",
+                    )
             # Monitor-hold 减负 (对齐 Hermes monitor): 连续空观测达阈值 → 保持
             # silent, 跳过昂贵 LLM 推理. 只新增 skip 决策, 绝不改其他分支合法性.
             if getattr(self, "_monitor_state", None) is not None:
