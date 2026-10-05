@@ -791,7 +791,9 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         反复回灌同一结论 (run45 的自我污染死循环). 按假设指纹隔离即断链.
         """
         norm = re.sub(r"\s+", " ", (hypothesis or "").strip().lower())
-        return hashlib.md5(norm.encode("utf-8")).hexdigest()[:12]
+        return hashlib.md5(
+            norm.encode("utf-8"), usedforsecurity=False
+        ).hexdigest()[:12]
 
     def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
         """从 plan 抽场景标签, 给失败模式记忆和分桶自适应用.

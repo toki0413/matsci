@@ -1390,6 +1390,41 @@ class LongTermMemory:
             rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
+    def count_matching(
+        self,
+        category: str | None = None,
+        tier: str | None = None,
+        alive_only: bool = True,
+        user_id: str | None = None,
+    ) -> int:
+        """与 ``list_all`` / ``list_by_category`` 同过滤条件的**去重内容**计数.
+
+        口径对齐 ``/memory`` 路由的 ``_dedupe_by_content`` (按 content 去重并跳过
+        空串), 故前端 ``entries.length < total`` 才能正确判定"还有更多" —— 响应体
+        的 total 与 entries 必须同口径, 否则会恒真/恒假. 单条 SQL, 不受 limit 截断.
+        """
+        if alive_only:
+            alive_where, alive_params = self._where_alive()
+        else:
+            alive_where, alive_params = "1=1", []
+        sql = (
+            "SELECT COUNT(DISTINCT TRIM(COALESCE(content, ''))) AS c "
+            f"FROM memories AS m WHERE {alive_where} AND TRIM(COALESCE(content, '')) != ''"
+        )
+        params: list[Any] = [*alive_params]
+        if category is not None:
+            sql += " AND category = ?"
+            params.append(category)
+        if tier is not None:
+            sql += " AND tier = ?"
+            params.append(tier)
+        if user_id is not None:
+            sql += " AND m.user_id = ?"
+            params.append(user_id)
+        with self._connect() as conn:
+            row = conn.execute(sql, tuple(params)).fetchone()
+        return int(row["c"]) if row else 0
+
     def count_alive_by_tier(self) -> dict[str, int]:
         """Single SQL query for tier counts — replaces list_all + 3x traversal."""
         alive_where, alive_params = self._where_alive()

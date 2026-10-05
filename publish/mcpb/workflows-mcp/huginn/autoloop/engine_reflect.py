@@ -299,7 +299,9 @@ def _exec_fingerprint(execution_result: Any) -> tuple[str, str]:
         else _fp_src
     )
     _fp = (
-        hashlib.sha1(_key.encode("utf-8", "ignore")).hexdigest() if _key else ""
+        hashlib.sha1(_key.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()
+        if _key
+        else ""
     )
     return _fp, _fp_src
 

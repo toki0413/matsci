@@ -6639,12 +6639,12 @@ def _http_field_class_config_src(cls: ast.ClassDef) -> str:
     """
     parts: list[str] = []
     for stmt in cls.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         if isinstance(stmt, ast.ClassDef):
             # 嵌套 Config 类: 只取它的类级配置, 再剔一层方法体.
             for inner in stmt.body:
-                if not isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not isinstance(inner, ast.FunctionDef | ast.AsyncFunctionDef):
                     parts.append(ast.unparse(inner))
             continue
         parts.append(ast.unparse(stmt))
