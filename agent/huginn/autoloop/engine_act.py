@@ -335,15 +335,23 @@ class EngineAct:
         return code
 
     def _run_code_lab(
-        self, code: str, guards: dict[str, Any] | None = None
+        self, code: str, guards: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
     ) -> tuple[dict[str, Any] | None, str]:
         """在 Code Lab 安全沙箱真跑书生的实验代码; 无证据返回 (None, 原因).
-        返回原因让上层能把真实报错回灌书生重写 (自修复), 不伪造."""
+        返回原因让上层能把真实报错回灌书生重写 (自修复), 不伪造.
+
+        ``timeout_s`` 非空时覆盖 env 默认超时 —— D6① 用它把单片沙箱超时封顶到
+        剩余挂钟预算, 使单次尝试不可能烧穿预算 (None = 用 `HUGINN_CODELAB_TIMEOUT_S`).
+        """
         import os as _os
 
         from huginn.research.code_lab import load_scaffold, sandbox_run
 
-        timeout = float(_os.environ.get("HUGINN_CODELAB_TIMEOUT_S", "600"))
+        timeout = (
+            float(timeout_s) if timeout_s is not None
+            else float(_os.environ.get("HUGINN_CODELAB_TIMEOUT_S", "600"))
+        )
         extra = tuple((guards or {}).get("imports_whitelist_extra") or ())
         aliases = (guards or {}).get("cfg_aliases") or None
         scaffold = load_scaffold(_os.environ.get("HUGINN_CODELAB_SCAFFOLD", ""))
@@ -438,6 +446,18 @@ class EngineAct:
         # 可越过挂钟上限近一小时 (run56 实测). 纯时间边界, 不做科学判断; fail-open.
         # 旧私有 ``_wall_clock_expired`` 已删除: 时间口径下沉到 ``_budget_exhausted``
         # (且按本 run goal id 判定, 旧实现用全局 get_active() 会跨 run 串台).
+        #
+        # D6 (D-slice 同款, execute 侧): 把"修复循环"切成细粒度 slice, 不设硬时长.
+        #   核心 slice (attempt 0) 必跑, 但其沙箱超时**封顶到剩余预算** → 单片越不了界;
+        #   可选 slice (修复重写 attempt>=1) 启动前查可负担性, 门槛自校准 = max(下限,
+        #   上一片实测挂钟). 非长程/关开关时两函数 fail-open → 逐字节等价旧行为.
+        _prev_slice_cost = 0.0  # 上一片 (上一次尝试: 沙箱 + 其后作者 LLM) 的实测挂钟
+        # D6 钩子: 长程宿主 (Engine/engine_control) 提供预算切片三函数; 短程宿主 /
+        # 离线 stub 无这三个属性 → None, 门与封顶整体 fail-open, 行为 100% 不变
+        # (与 branch_incubator 的 fail-open 一致). getattr 兜底避免 stub 上 AttributeError.
+        _attempt_timeout = getattr(self, "_codelab_attempt_timeout", None)
+        _repair_affordable = getattr(self, "_codelab_repair_affordable", None)
+        _slice_budget = getattr(self, "_codelab_slice_budget", None)
         for attempt in range(max_repairs + 1):
             if self._budget_exhausted():
                 last_err = "挂钟预算耗尽, 中止 code_lab 修复循环"
@@ -445,7 +465,30 @@ class EngineAct:
                     "code_lab 修复循环: 挂钟预算已耗尽, 停止第 %d 次尝试", attempt + 1
                 )
                 break
-            res, reason = self._run_code_lab(code)
+            # D6② 可选 slice 门: 修复重写启动前查可负担性 (自校准门槛).
+            if (
+                attempt > 0
+                and callable(_repair_affordable)
+                and not _repair_affordable(_prev_slice_cost)
+            ):
+                _rem = _slice_budget() if callable(_slice_budget) else None
+                self._emit_control_trace(
+                    "code_lab_slice_skip",
+                    f"slice=repair#{attempt}: budget<max(min,{_prev_slice_cost:.0f}s) "
+                    f"remaining={-1 if _rem is None else round(_rem)}s",
+                    action="skip",
+                )
+                logger.warning(
+                    "code_lab 修复循环: 剩余预算不足以再跑一轮修复(≈%.0fs), 收尾",
+                    _prev_slice_cost,
+                )
+                break
+            _t_slice = time.monotonic()
+            res, reason = self._run_code_lab(
+                code,
+                timeout_s=_attempt_timeout() if callable(_attempt_timeout) else None,
+            )
+            _prev_slice_cost = time.monotonic() - _t_slice  # D6 自校准: 实测本片
             if res is not None:
                 return {
                     "mode": "code_lab",
@@ -466,9 +509,13 @@ class EngineAct:
                     action="advisory_hint",
                 )
             if attempt < max_repairs:
+                # D6 自校准: 修复重写的作者 LLM 调用也是下一个 slice 的成本, 计入
+                # 实测 —— 否则低估下一片 (run79 超支主要来自作者调用, 非沙箱).
+                _t_auth = time.monotonic()
                 repaired = await self._request_code_lab_experiment(
                     goal, repair_hint=last_err, prev_code=code, focus=focus
                 )
+                _prev_slice_cost += time.monotonic() - _t_auth
                 if not repaired:
                     break
                 code = repaired

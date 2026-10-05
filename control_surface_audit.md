@@ -177,6 +177,10 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `collab_branch_incubator` | 协作·N 路孵化 | 同上；`empty:` = 跑了但 N 路子 agent 全空手 |
 | `collab_failure_inverter` | 协作·失败反推 | 同上 |
 | `code_lab_timeout` | 证据·算力 | 被沙箱超时饿死的修复尝试数；高频 = 作者提示仍产出过重扫描（见 §7.5） |
+| `branch_slice_skip` | D5 预算切片 | hypothesize 侧预算不足跳过可选 slice（PRM 打分 / layer2）；`budget<Ns` = 被拦门槛。高频 = 单 slice 成本逼近挂钟，需查树宽/超时 |
+| `code_lab_slice_skip` | D6 预算切片 | execute 侧预算不足跳过 code_lab 修复重写 slice；与 `branch_slice_skip` 同族，分两 phase 便于定位超支源 |
+| `progress_invariant` | P3.2 进展不变量 | `action=force_route` + `tail=`；连续 window 轮停在执行前阶段 → 强制推进。高频 = 长期空转（见 run72/73/74） |
+| `llm_unavailable` | P1/P2 瞬时故障 | `action=retry_in_place`；瞬时 LLM 故障（限流/过载）拦破坏性 redirect。高频 = provider 不稳，非科学停滞 |
 
 > **机制清单的代码权威源**：上表是人工可读视图；机器可读的**单一权威登记**在
 > [`agent/huginn/autoloop/control_mechanisms.py`](agent/huginn/autoloop/control_mechanisms.py)
@@ -951,3 +955,18 @@ predictor 双缺失"环境下正是 §8.9 判定为**饱和在 1.0** 的 jaccard
 清单直接删会误杀。真正的问题只在两处**接线**: ① pivot 口径错配 (已修) ② 观测面只记
 失败不记成功 (已补)。加三合一, 控制面机制 **23 → 21** 名, 且每一名都可达。
 配置面 (390 个 `HUGINN_*`) 仍是最大一笔账, 属下一阶段。
+
+### 11.7 补登记: 治理盲区 + 上界债偿还 (2026-10-05, 21 → 26 上限 22 → 26)
+
+本轮 P1/P2 (`llm_unavailable`)、P3.2 (`progress_invariant`)、D5 (`branch_slice_skip`)、
+D6 (`code_lab_slice_skip`) 四类机制**已落代码并发射**, 但漏登记 —— `pytest
+tests/test_control_mechanism_governance.py` 报红。四者均为"长程空转 / 预算超支"修复链
+的组成, 各自带回归测试, 属**上界债偿还而非扩张**; 预算上限一次性 22 → 26, 自此继续
+only-shrink。
+
+同时修一处**扫描盲区**: D5 的 `branch_slice_skip` 经调用方注入的 `trace_fn("name", …)`
+回调上报, 此前 `scan_emitted_names` 只认 `_control_trace(` / 直发 `campaign.control_trace`
+两种形态, 故该 trace 对治理面**不可见**(= 可静默新增机制的缺口)。已补 `_TRACE_FN_CALL`
+正则, 把注入式回调纳入扫描 —— 这也是 §通信契约审计要拦的"绕开单一发射点"类型。
+
+改代码登记表后须重跑治理测试; 新增 `emit` 点仍须先过 §3 两问再登记。

@@ -1104,7 +1104,7 @@ async def test_codelab_repair_loop_stops_on_wall_clock_expiry(monkeypatch) -> No
 
     monkeypatch.setattr(EngineAct, "_request_code_lab_experiment", _fake_author)
 
-    def _fake_run(self, code):  # noqa: ANN001
+    def _fake_run(self, code, **_kw):  # noqa: ANN001
         attempts.append(1)
         return None, "执行超时"
 
@@ -1137,7 +1137,7 @@ async def test_codelab_repair_loop_runs_when_no_long_horizon(monkeypatch) -> Non
 
     monkeypatch.setattr(EngineAct, "_request_code_lab_experiment", _fake_author)
 
-    def _fake_run(self, code):  # noqa: ANN001
+    def _fake_run(self, code, **_kw):  # noqa: ANN001
         attempts.append(1)
         return None, "执行异常"
 
