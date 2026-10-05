@@ -416,7 +416,14 @@ jobs:
       - name: npm dependency vulnerability scan
         run: |
           cd desktop
-          npm audit --audit-level=high || { echo "::error::npm dependency vulnerability(s) found. 运行 npm audit fix 修复, 或升级受影响包"; exit 1; }
+          # Blocking gate: 只拦**生产依赖**里 high/critical 的漏洞 —— 只有它们会随
+          # 桌面产物进入用户侧。devDependencies (tailwindcss 构建链 / vitest / jsdom)
+          # 的漏洞不进用户产物; 且 `braces` 当前 advisory 的受影响范围是 `*`、上游
+          # **无修复版本**, npm 唯一解法是升 tailwindcss@4 (破坏性迁移, 见 PR 讨论,
+          # 另案处理)。故 dev 漏洞不阻断, 下面独立一行只打印供跟进。
+          npm audit --omit=dev --audit-level=high || { echo "::error::npm production dependency vulnerability(s) found. 运行 npm audit fix 修复, 或升级受影响包"; exit 1; }
+          # 非阻断: 完整审计 (含 dev) 只打印, 不改变退出码 —— 上游发布修复后可据此收敛。
+          npm audit --audit-level=high || true
 
       - name: Install test dependencies
         run: |

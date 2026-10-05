@@ -5,8 +5,8 @@
 
 | 开关 | 默认 | 描述 | 旧 env 别名 | 消费点 |
 |---|---|---|---|---|
-| `anti_hacking_reward` | False | Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关) | — | autoloop/engine_reflect.py:2961 |
-| `asd_ste100` | True | ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档) | — | plugins/asd_ste100/main.py:145 |
+| `anti_hacking_reward` | False | Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关) | — | autoloop/engine_reflect.py:2959 |
+| `asd_ste100` | True | ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档) | — | plugins/asd_ste100/main.py:149 |
 | `bandit_mdp` | True | bandit MDP 决策 (HUGINN_BANDIT_MDP) | HUGINN_BANDIT_MDP | agent/bandit_controller.py:117 |
 | `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | HUGINN_BELIEF_DARWIN | autoloop/cognitive_loop.py:1140, autoloop/cognitive_loop.py:1246 |
 | `belief_mode_switch` | True | 信念模式切换 (HUGINN_BELIEF_MODE_SWITCH) | HUGINN_BELIEF_MODE_SWITCH | task_reflector.py:297, task_reflector.py:39 |
@@ -19,7 +19,7 @@
 | `crdt_merge` | True | CRDT 合并 (HUGINN_CRDT_MERGE) | HUGINN_CRDT_MERGE | tools/subagent_tool.py:33 |
 | `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:407, cli/rcb_step2.py:868 |
 | `external_thinking` | False | 外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关) | — | agent/prompt_builder.py:300 |
-| `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2133 +1 处 |
+| `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2131 +1 处 |
 | `fts_auto_rebuild` | True | 全文检索自动重建 (HUGINN_FTS_AUTO_REBUILD) | HUGINN_FTS_AUTO_REBUILD | — |
 | `harness_adoption_gate` | False | 严格 gate 模式: RED 不自动采纳 (实验性, 默认 advisory 只评分不拦) | — | — |
 | `harness_joint_optimizer` | False | 联合优化 phase/block/params (实验性, 默认关) | — | — |
@@ -31,7 +31,7 @@
 | `harness_workflow_evolution` | False | H2 variant bandit 演化回路 (实验性, 默认关) | — | — |
 | `hils_attention` | True | HILS 注意力 (HUGINN_HILS_ATTENTION) | HUGINN_HILS_ATTENTION | — |
 | `hypothesis_llm_semantic` | False | 假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级) | — | — |
-| `intent_scope_reward` | False | Anti-Hacking ② 意图口径越界清零: 改动偏离 plan 声明的目标集即清零 (默认关) | — | autoloop/engine_reflect.py:2962 |
+| `intent_scope_reward` | False | Anti-Hacking ② 意图口径越界清零: 改动偏离 plan 声明的目标集即清零 (默认关) | — | autoloop/engine_reflect.py:2960 |
 | `ising_frontier` | True | Ising 前沿 (HUGINN_ISING_FRONTIER) | HUGINN_ISING_FRONTIER | autoloop/hypothesis_loop.py:1798, autoloop/hypothesis_loop.py:56 |
 | `ising_rerank` | True | Ising 重排 (HUGINN_ISING_RERANK) | HUGINN_ISING_RERANK | — |
 | `jev_enabled` | False | JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束) | — | — |

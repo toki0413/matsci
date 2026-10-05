@@ -19,6 +19,13 @@ from huginn.cli import contract_audit as ca
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 
+# 本模块多处调用 `build_mece_snapshot()` —— 它是**整仓**静态审计 (遍历 ~1600 个
+# py + 前端 ts 文件), 单个夹具首次构建即数十秒, 远超 CI 的 `--timeout=60` 通用
+# 单元测试预算 (实测旧版 58s/机, CI 版更慢, 直接触发 thread-timeout 杀掉全量套件).
+# 显式给本模块一个整仓审计级别的上界: 仍是有界超时 (卡死照杀), 只是不再把
+# "全仓扫" 误当 "单元测试" 计时. 首次构建结果按 `functools.cache` 全模块共享.
+pytestmark = pytest.mark.timeout(180)
+
 
 # ──────────────────── 真实仓: 奖励面 ────────────────────
 

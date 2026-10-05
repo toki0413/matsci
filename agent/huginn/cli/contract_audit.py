@@ -152,14 +152,31 @@ _SCOPE_FLAGS = ("anti_hacking_reward", "intent_scope_reward")
 _FLAG_IS_ENABLED = re.compile(r'is_enabled\(\s*["\']([a-z0-9_]+)["\']\s*\)')
 
 
-def _iter_py(root: Path):
+@functools.cache
+def _py_files(root: Path) -> tuple[Path, ...]:
     # 排序遍历: 未排序的 rglob 顺序取决于文件系统 readdir, 会让词汇簇编号 / 文档
     # 生成物 / 基线串在换机或换目录后产出不同结果 —— 直接威胁 doc-drift 门与
     # `--check --baseline` 棘轮门的逐字比对. 固定为字典序, 保证跨机确定.
-    for py in sorted(root.rglob("*.py")):
-        if "__pycache__" in str(py) or py.resolve() == _SELF:
-            continue
-        yield py
+    # 缓存: 十七面各自全仓遍历一次, 不缓存则同一目录树被 rglob 十几遍.
+    return tuple(
+        py
+        for py in sorted(root.rglob("*.py"))
+        if "__pycache__" not in str(py) and py.resolve() != _SELF
+    )
+
+
+def _iter_py(root: Path):
+    yield from _py_files(root)
+
+
+@functools.cache
+def _source(path: Path) -> str | None:
+    """读模块源码; 不可读 → ``None``. 缓存: `_scan_surface` / `_parse` / 各文本面
+    重复读同一文件数十遍. 只读不改, 同一进程内路径→源码稳定."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
 
 @functools.cache
@@ -167,9 +184,12 @@ def _parse(path: Path) -> ast.Module | None:
     """解析模块 AST. 结果缓存: 五面审计各自全仓扫一遍, 不缓存则同一文件重解析
     数十次 (奖励面单面即 45s, 五面合计 >60s, 挡住 `--check` 进 CI). 只读不改,
     同一进程内路径→AST 稳定."""
+    src = _source(path)
+    if src is None:
+        return None
     try:
-        return ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, SyntaxError):
+        return ast.parse(src)
+    except SyntaxError:
         return None
 
 
@@ -246,7 +266,32 @@ def _attr_dotted(node: ast.AST) -> str | None:
     return None
 
 
-def _module_bindings(tree: ast.Module, target: str, rel: str) -> tuple[set[str], set[str]]:
+@functools.cache
+def _file_imports(path: Path) -> tuple[
+    tuple[tuple[int, str, tuple[tuple[str, str | None], ...]], ...],
+    tuple[tuple[str, str | None], ...],
+]:
+    """模块内 Import / ImportFrom 的静态事实 (from_imports, plain_imports).
+
+    缓存: `_scan_surface` 逐 target 反查导入绑定, 不缓存则同一模块被 full
+    `ast.walk` 十几遍 (奖励面 + 授权面各全仓扫一轮). 只解析不改.
+    """
+    tree = _parse(path)
+    if tree is None:
+        return (), ()
+    froms: list[tuple[int, str, tuple[tuple[str, str | None], ...]]] = []
+    plains: list[tuple[str, str | None]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            froms.append(
+                (node.level, node.module or "", tuple((a.name, a.asname) for a in node.names))
+            )
+        elif isinstance(node, ast.Import):
+            plains.extend((a.name, a.asname) for a in node.names)
+    return tuple(froms), tuple(plains)
+
+
+def _module_bindings(path: Path, target: str, rel: str) -> tuple[set[str], set[str]]:
     """模块级绑定: (直接 from-import 的符号名, 指向 target 模块的本地别名).
 
     覆盖两种真实写法:
@@ -257,23 +302,22 @@ def _module_bindings(tree: ast.Module, target: str, rel: str) -> tuple[set[str],
       - `import huginn.validation.claim_reward` (无 as) → alias 记全点分名,
         消费点写 `huginn.validation.claim_reward.X` 时按属性链匹配.
     """
+    froms, plains = _file_imports(path)
     direct: set[str] = set()
     aliases: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            mod = _resolve_relative(rel, node.level, node.module or "")
-            for a in node.names:
-                if f"{mod}.{a.name}" == target:
-                    # `from <pkg> import <target 末段> [as A]` —— 把子模块绑到别名.
-                    aliases.add(a.asname or a.name)
-                elif mod == target:
-                    # `from <target> import N` —— N 是 target 自己的符号.
-                    direct.add(a.name)
-        elif isinstance(node, ast.Import):
-            for a in node.names:
-                if a.name == target:
-                    # `import <target> [as A]` —— 无 as 时记全点分名, 供属性链匹配.
-                    aliases.add(a.asname or a.name)
+    for level, module, names in froms:
+        mod = _resolve_relative(rel, level, module)
+        for name, asname in names:
+            if f"{mod}.{name}" == target:
+                # `from <pkg> import <target 末段> [as A]` —— 把子模块绑到别名.
+                aliases.add(asname or name)
+            elif mod == target:
+                # `from <target> import N` —— N 是 target 自己的符号.
+                direct.add(name)
+    for name, asname in plains:
+        if name == target:
+            # `import <target> [as A]` —— 无 as 时记全点分名, 供属性链匹配.
+            aliases.add(asname or name)
     return direct, aliases
 
 
@@ -300,17 +344,15 @@ def _scan_surface(
     }
     name_set = set(names)
     for py in _iter_py(root):
-        try:
-            text = py.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
+        # 走 `_source` / `_parse` 缓存: 本函数被奖励面每个词条 + 授权面每个口径
+        # 各调一次 (全仓重扫 ~20 遍), 裸 read+parse 是快照 57s 里的主项.
+        text = _source(py)
+        tree = _parse(py)
+        if text is None or tree is None:
             continue
         frel = py.relative_to(root).as_posix()
         bucket = "internal" if frel == rel else ("test" if _is_test(frel) else "prod")
-        direct, aliases = _module_bindings(tree, target, frel)
+        direct, aliases = _module_bindings(py, target, frel)
         # 动态按文件路径加载本模块的兜底信号: 文件名 + spec_from_file_location 同时出现.
         dyn = base in text and "spec_from_file_location" in text
         hits: set[str] = {n for n in name_set if n in direct}
@@ -480,9 +522,8 @@ def _flag_info(root: Path) -> dict[str, dict]:
 
     reads: dict[str, list[str]] = defaultdict(list)
     for py in _iter_py(root):
-        try:
-            text = py.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(py)
+        if text is None:
             continue
         for m in _FLAG_IS_ENABLED.finditer(text):
             reads[m.group(1)].append(
@@ -583,9 +624,8 @@ def _read(root: Path, rel: str) -> str:
     自测 fixture (如 phase_spec 注册的 `custom_mode` 覆盖项) 不是生产契约,
     不剥会让"登记面 vs 执行面"误报。仓内自测统一在文末, 故首个标记处截断安全。
     """
-    try:
-        text = (root / rel).read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _source(root / rel)
+    if text is None:
         return ""
     m = _SELFTEST_RE.search(text)
     return text[: m.start()] if m else text
@@ -1977,6 +2017,7 @@ _EVENT_SUBSCRIBE_CALLS = frozenset({"subscribe"})
 _EVENT_ALL_CONST = "ALL"
 
 
+@functools.cache
 def _event_declarations(root: Path) -> dict:
     """读声明面: 点分事件常量 (名→值)、`ALL_TYPES` 成员、以及两侧缺口."""
     tree = _parse(root / _EVENTS_MODULE)
@@ -2030,14 +2071,20 @@ def _event_declarations(root: Path) -> dict:
 
 
 def _event_bindings(
-    tree: ast.Module, rel: str, decl: dict[str, str]
+    nodes: list[ast.AST], rel: str, decl: dict[str, str]
 ) -> tuple[dict[str, str], set[str]]:
-    """模块内解析: 事件常量本地名 → 常量名; 及绑到 event_types 的模块别名."""
+    """模块内解析: 事件常量本地名 → 常量名; 及绑到 event_types 的模块别名.
+
+    `nodes` 是调用方**一次** `list(ast.walk(tree))` 的产物 (BFS 序); 事件面每个
+    文件原先要 `ast.walk` 四遍 (本函数 + collections + loop_vars + 主扫描),
+    `ast.walk` 的 deque/iter_child_nodes 全是 Python 级开销, 四遍即事件面 16s
+    中的大头. 共享同一份节点序列, 顺序/语义不变, 遍历开销降为 1/4.
+    """
     direct: dict[str, str] = (
         {name: name for name in decl} if rel == _EVENTS_MODULE else {}
     )
     mod_aliases: set[str] = set()
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.ImportFrom):
             mod = _resolve_relative(rel, node.level, node.module or "")
             for a in node.names:
@@ -2086,11 +2133,11 @@ def _resolve_event_type(
 
 
 def _event_collections(
-    tree: ast.Module, direct: dict[str, str], mod_aliases: set[str], decl: dict[str, str]
+    nodes: list[ast.AST], direct: dict[str, str], mod_aliases: set[str], decl: dict[str, str]
 ) -> dict[str, set[str]]:
     """收集 `X = (<事件值>, …)` (含 `frozenset({…})`) —— 供 for 循环变量反解."""
     colls: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
+    for node in nodes:
         name: str | None = None
         value: ast.AST | None = None
         if (
@@ -2117,7 +2164,7 @@ def _event_collections(
 
 
 def _event_loop_vars(
-    tree: ast.Module,
+    nodes: list[ast.AST],
     colls: dict[str, set[str]],
     direct: dict[str, str],
     mod_aliases: set[str],
@@ -2125,7 +2172,7 @@ def _event_loop_vars(
 ) -> dict[str, set[str]]:
     """`for X in <常量集合>` 的 X → 该集合的事件值集合 (反解动态订阅)."""
     loop_vars: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
+    for node in nodes:
         if not isinstance(node, ast.For) or not isinstance(node.target, ast.Name):
             continue
         it = node.iter
@@ -2172,8 +2219,14 @@ def _event_type_kwarg(call: ast.Call) -> ast.AST | None:
     return call.args[0] if call.args else None
 
 
+@functools.cache
 def _event_wiring(root: Path) -> dict:
-    """扫发布/订阅点, 按事件值归集 prod/test 位置."""
+    """扫发布/订阅点, 按事件值归集 prod/test 位置.
+
+    缓存: 事件面 / SSE 消费面 / SSE 负载面各自调一次, 每次全仓 ast.walk 三遍
+    (`_event_bindings` + `_event_collections` + `_event_loop_vars`) —— 不缓存即
+    三倍全仓重扫. 只读不改.
+    """
     decl = _event_declarations(root)["consts"]
     declared_values = set(decl.values())
     wiring: dict[str, dict[str, list[str]]] = {}
@@ -2183,11 +2236,13 @@ def _event_wiring(root: Path) -> dict:
         tree = _parse(py)
         if tree is None:
             continue
-        direct, mod_aliases = _event_bindings(tree, rel, decl)
-        colls = _event_collections(tree, direct, mod_aliases, decl)
-        loop_vars = _event_loop_vars(tree, colls, direct, mod_aliases, decl)
+        # 单次遍历: 三helper + 主扫描共享同一 BFS 节点序列 (见 `_event_bindings` doc).
+        nodes = list(ast.walk(tree))
+        direct, mod_aliases = _event_bindings(nodes, rel, decl)
+        colls = _event_collections(nodes, direct, mod_aliases, decl)
+        loop_vars = _event_loop_vars(nodes, colls, direct, mod_aliases, decl)
         bucket = "test" if _is_test(rel) else "prod"
-        for node in ast.walk(tree):
+        for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
             fn = node.func
@@ -2547,11 +2602,10 @@ def _frontend_listen_sites(frontend: Path) -> dict:
     for p in sorted(frontend.rglob("*")):
         if not p.is_file() or p.suffix not in (".ts", ".tsx"):
             continue
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
-        f, pl = _scan_ts_source(_display(frontend, p), lines)
+        f, pl = _scan_ts_source(_display(frontend, p), text.splitlines())
         frames.extend(f)
         payloads.extend(pl)
     return {"frames": frames, "payloads": payloads}
@@ -2570,9 +2624,8 @@ def _campaign_payload_literals(root: Path) -> set[str]:
     """`event_type="…"` 字面量 → campaign 通道 payload 事件名 (静态可见的部分)."""
     vals: set[str] = set()
     for py in _iter_py(root):
-        try:
-            src = py.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        src = _source(py)
+        if src is None:
             continue
         vals.update(_SSE_CAMPAIGN_EMIT_RE.findall(src))
     return vals
@@ -2983,9 +3036,8 @@ def _fe_ts_files(
         rel = _display(frontend, p)
         if skip_suffixes and rel.endswith(skip_suffixes):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         yield p, rel, text
 
@@ -3651,9 +3703,8 @@ def _ws_scan_frontend(frontend: Path) -> dict:
         rel = _display(frontend, p)
         if rel.endswith(".spec.ts") or rel.endswith(_WS_DECL_SUFFIX):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         ch = _ws_file_channel(rel, text)
         ws_vars = set(_FE_WS_MSG_VAR_RE.findall(text))
@@ -3687,7 +3738,7 @@ def build_ws_contract(root: Path | None = None, frontend: Path | None = None) ->
     decl_path = frontend / _WS_DECL_SUFFIX
     declared: set[str] = set()
     if decl_path.is_file():
-        declared = set(_WS_DECL_TYPE_RE.findall(decl_path.read_text(encoding="utf-8", errors="replace")))
+        declared = set(_WS_DECL_TYPE_RE.findall(_source(decl_path) or ""))
     scan = _ws_scan_frontend(frontend)
 
     channel_out: dict[str, dict] = {}
@@ -4124,9 +4175,8 @@ def _http_scan_frontend(frontend: Path) -> list[dict]:
         rel = _display(frontend, p)
         if rel.endswith(".spec.ts") or rel.endswith(".spec.tsx"):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         for m in _HTTP_CALL_RE.finditer(text):
             verb = m.group(1)
@@ -4783,9 +4833,8 @@ def _payload_scan_frontend(frontend: Path) -> list[dict]:
         rel = _display(frontend, p)
         if rel.endswith(".spec.ts") or rel.endswith(".spec.tsx"):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         for m in _HTTP_CALL_RE.finditer(text):
             verb = m.group(1)
@@ -5225,9 +5274,8 @@ def _resp_frontend_types(frontend: Path) -> dict[str, tuple[set[str], bool]]:
     for p in sorted(frontend.rglob("*")):
         if not p.is_file() or p.suffix not in (".ts", ".tsx"):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         for m in _RESP_TYPE_DECL_RE.finditer(text):
             name = m.group(1)
@@ -5550,9 +5598,8 @@ def _resp_scan_frontend(
         rel = _display(frontend, p)
         if rel.endswith(".spec.ts") or rel.endswith(".spec.tsx"):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         for m in _HTTP_CALL_RE.finditer(text):
             verb = m.group(1)
@@ -5988,9 +6035,8 @@ def _ws_payload_scan_sends(frontend: Path) -> list[dict]:
             or rel.endswith(_WS_DECL_SUFFIX)
         ):
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = _source(p)
+        if text is None:
             continue
         ch = _ws_file_channel(rel, text)
         for m in _WS_SEND_OBJ_RE.finditer(text):
@@ -6581,6 +6627,30 @@ def _http_field_own_fields(cls: ast.ClassDef) -> set[str]:
     }
 
 
+def _http_field_class_config_src(cls: ast.ClassDef) -> str:
+    """类级配置源码 (剔除方法体) —— `extra="allow"` 的检索域.
+
+    `extra="allow"` 只会出现在类级 `model_config = ConfigDict(...)` 或嵌套
+    `class Config:` 里, 绝不在方法体内. 而 `ast.unparse(cls)` 会把整个类 (含大
+    docstring 的逐字符转义) 反解析一遍 —— 全仓模型类扫下来是 O(类体总量), 实测
+    在 CI 上是数十秒级, 直接被 pytest-timeout 杀掉 (test_contract_audit 超时).
+    只反解析类级非函数语句, 语义等价 (检索域覆盖所有 `extra=` 出现位置), 代价降
+    一个数量级.
+    """
+    parts: list[str] = []
+    for stmt in cls.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if isinstance(stmt, ast.ClassDef):
+            # 嵌套 Config 类: 只取它的类级配置, 再剔一层方法体.
+            for inner in stmt.body:
+                if not isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    parts.append(ast.unparse(inner))
+            continue
+        parts.append(ast.unparse(stmt))
+    return "\n".join(parts)
+
+
 def _http_field_models(root: Path) -> tuple[dict[str, set[str]], set[str]]:
     """全仓 Pydantic 模型名 → **全部**声明字段 (含继承链 fixpoint); 及 extra=allow 模型.
 
@@ -6616,7 +6686,7 @@ def _http_field_models(root: Path) -> tuple[dict[str, set[str]], set[str]]:
     extra_allow = {
         name
         for name, cls in classes.items()
-        if _HTTP_FIELD_EXTRA_ALLOW_RE.search(ast.unparse(cls))
+        if _HTTP_FIELD_EXTRA_ALLOW_RE.search(_http_field_class_config_src(cls))
     }
     return models, extra_allow
 

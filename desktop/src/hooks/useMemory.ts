@@ -35,14 +35,16 @@ export function useMemory() {
       if (memoryFilter.tier) params.set('tier', memoryFilter.tier);
       const limit = loadMore ? memories.length + 100 : 100;
       params.set('limit', String(limit));
-      const data = await api.get<{ entries?: MemoryEntry[] }>(`/memory?${params.toString()}`);
+      const data = await api.get<{ entries?: MemoryEntry[]; total?: number }>(`/memory?${params.toString()}`);
       const newEntries = data.entries || [];
-      if (loadMore) {
-        setMemories(prev => [...prev, ...newEntries.slice(prev.length)]);
-      } else {
-        setMemories(newEntries);
-      }
-      setMemoryHasMore(newEntries.length >= limit);
+      const merged = loadMore ? [...memories, ...newEntries.slice(memories.length)] : newEntries;
+      setMemories(merged);
+      // Prefer the server-reported total: a filtered first page can return far fewer
+      // rows than `limit` while more remain (e.g. 1 of 350). Fall back to the old
+      // heuristic only when the endpoint omits `total`.
+      setMemoryHasMore(
+        typeof data.total === 'number' ? merged.length < data.total : newEntries.length >= limit
+      );
       setMemoriesLoading(false);
     } catch (e: any) {
       setMemoryMsg(`Load failed: ${e.message}`);
