@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from huginn.utils.common import hash_text
-from huginn.utils.process import kill_process_group, new_group_popen_kwargs
+from huginn.utils.process import (
+    kill_process_group,
+    new_group_popen_kwargs,
+    track_live_child,
+    untrack_live_child,
+)
 
 if TYPE_CHECKING:
     from huginn.security.docker_sandbox import DockerSandboxExecutor
@@ -597,6 +602,7 @@ class SandboxExecutor:
             _default_kwargs, _own_group = new_group_popen_kwargs()
             _popen_kwargs.update(_default_kwargs)
 
+        _tracked_pid: int | None = None
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -610,6 +616,10 @@ class SandboxExecutor:
                 shell=False,
                 **_popen_kwargs,
             )
+            # 登记在册: 父进程若先退出 (autoloop CLI 无 lifespan 钩子), 退出兜底
+            # ``kill_tracked_children()`` 才能按进程组整组回收, 不留 PPID→1 孤儿.
+            track_live_child(proc.pid, own_group=_own_group)
+            _tracked_pid = proc.pid
             try:
                 _out, _err = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -627,6 +637,9 @@ class SandboxExecutor:
                 )
             result = subprocess.CompletedProcess(cmd, proc.returncode, _out, _err)
         finally:
+            # 子进程已结束 (或已被整组回收) → 注销登记, 防止 pid 复用被退出兜底误杀.
+            if _tracked_pid is not None:
+                untrack_live_child(_tracked_pid)
             # 恢复父进程 soft limit, 避免子进程内存上限反过来卡死 agent 自身.
             # 只恢复 soft limit — hard limit 从未被降低, 无需恢复.
             if _saved_rlimit_soft is not None:

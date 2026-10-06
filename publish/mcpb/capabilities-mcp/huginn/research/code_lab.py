@@ -16,18 +16,33 @@ schema 不过 → 分支弃用 (不产生证据, 不伪造).
 
 安全: 复用 code_act_sandbox 的 make_safe_builtins (无 exec/eval/compile/
 open/globals/locals) + safe_import 白名单 (numpy/scipy/sympy/math/json/...)
-+ exec_with_mem_cap 内存峰值监控; 运行再用超时子线程兜底, 防死循环.
++ exec_with_mem_cap 内存峰值监控. 执行再放进**独立子进程**(自立新组): 超时按进程组
+整组回收, 连代码 spawn 的孙进程(torch DataLoader worker 等)一并带走; 重活全在一次性
+子进程里, 宿主进程内存不随实验膨胀. 子进程内部另有超时子线程兜底, 防死循环.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import json
+import os
 import re
+import signal
+import subprocess
+import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from huginn.utils.process import (
+    kill_process_group,
+    new_group_popen_kwargs,
+    track_live_child,
+    untrack_live_child,
+)
 
 SAFE_MEM_CAP = 512 * 1024 * 1024      # 512MB 峰值 (tracemalloc 监控)
 SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
@@ -64,6 +79,9 @@ class Scaffold:
     hints: str = ""
     primitives: dict[str, Any] = field(default_factory=dict)
     primitive_names: tuple[str, ...] = ()
+    # 可重载来源("....py" 路径 / "pkg.mod" 模块名). 隔离执行时子进程据此重建同一套
+    # 原语; 程序化构造的 Scaffold 无 source → 无法在子进程重建 → 回退进程内执行.
+    source: str = ""
 
 
 def load_scaffold(source: Any) -> Scaffold | None:
@@ -99,6 +117,7 @@ def load_scaffold(source: Any) -> Scaffold | None:
         hints=str(getattr(mod, "HINTS", "") or ""),
         primitives=prims,
         primitive_names=names,
+        source=str(source),
     )
 
 
@@ -437,24 +456,18 @@ def _alias_cfg(cfg: dict, extra_aliases: dict | None = None) -> dict:
     return out
 
 
-def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
-                timeout: float = SAFE_TIMEOUT_S,
-                imports_whitelist_extra: tuple[str, ...] = (),
-                cfg_aliases: dict | None = None,
-                scaffold: Scaffold | None = None) -> tuple[dict | None, str | None]:
-    """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
+def _sandbox_run_inproc(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
+                        timeout: float = SAFE_TIMEOUT_S,
+                        imports_whitelist_extra: tuple[str, ...] = (),
+                        cfg_aliases: dict | None = None,
+                        scaffold: Scaffold | None = None,
+                        ) -> tuple[dict | None, str | None]:
+    """当前进程内跑沙箱(原 sandbox_run 主体). 供隔离子进程入口与无 fork 回退复用.
 
-    ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
-    ``cfg_aliases``: 冷启动守卫的域级 cfg 键别名(compile_domain_guards 的 cfg_aliases),
-    ``_alias_cfg`` 据此补齐别名, 域专用别名不进通用 harness.
-    ``scaffold``: 任务脚手架; 其声明的原语注入沙箱(不给则只有 np 基座).
+    诚实红线不变: 不伪造数值 —— 抛错/超时/schema 不过即 (None, 原因).
     """
     if not code.strip():
         return None, "空代码"
-    # 无显示主机的 matplotlib: 强制 Agg 后端, 避免 pyplot 因无 DISPLAY 崩 —
-    # 数值计算/存图照常走 Agg, 不依赖 GUI 头. (对已设 MPLBACKEND 的调用方生效)
-    import os as _os
-    _os.environ.setdefault("MPLBACKEND", "Agg")
     cfg = _alias_cfg(cfg, extra_aliases=cfg_aliases)
     try:
         ns = _load_namespace(code, mem_cap,
@@ -483,6 +496,144 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
         "summary": _to_py(res["summary"]),
         "objectives": {str(k): float(v) for k, v in res["objectives"].items()},
     }, None
+
+
+# 子进程入口: 复用同一份 _sandbox_run_inproc, 不另立实现.
+_WORKER_SNIPPET = (
+    "from huginn.research.code_lab import _worker_main; _worker_main()"
+)
+
+
+def _worker_main() -> None:
+    """隔离执行子进程入口: 从 stdin 读 JSON 任务, 跑沙箱, 结果写回文件.
+
+    结果走**独立文件**而非 stdout/stderr —— 书生代码的 print 不会污染结果通道,
+    也不会撑爆管道. 跑完(无论成败)对本进程组自杀式 SIGKILL: 结果文件已 flush/close,
+    用户代码 spawn 的孙进程(如 torch DataLoader worker)随之被一并带走, 不留孤儿.
+    """
+    payload = json.loads(sys.stdin.read() or "{}")
+    result_path = payload.get("result_path")
+    try:
+        scaffold = load_scaffold(payload.get("scaffold_spec") or "")
+        res, reason = _sandbox_run_inproc(
+            payload.get("code") or "", payload.get("cfg") or {},
+            mem_cap=int(payload.get("mem_cap") or SAFE_MEM_CAP),
+            timeout=float(payload.get("timeout") or SAFE_TIMEOUT_S),
+            imports_whitelist_extra=tuple(payload.get("imports_whitelist_extra") or ()),
+            cfg_aliases=payload.get("cfg_aliases") or None,
+            scaffold=scaffold,
+        )
+        body = {"res": res, "reason": reason}
+    except BaseException as e:  # noqa: BLE001 — 子进程任何异常都如实写回, 不静默吞
+        body = {"res": None, "reason": f"隔离执行异常: {type(e).__name__}: {e}"}
+    if result_path:
+        with open(result_path, "w", encoding="utf-8") as fh:
+            json.dump(body, fh, ensure_ascii=False, default=str)
+    # 结果已落盘 → 整组自杀, 带走用户代码 spawn 的孙进程. 安全闸: 仅当本进程确是
+    # 自己组的组长(pid == pgid, 即 start_new_session 生效)才 killpg —— 否则 getpgid(0)
+    # 是宿主的组, 会误杀宿主. 失败也不影响已写入的结果.
+    if os.name == "posix" and os.getpid() == os.getpgid(0):
+        with contextlib.suppress(Exception):
+            os.killpg(os.getpid(), signal.SIGKILL)
+
+
+def _run_isolated(code: str, cfg: dict, *, timeout: float, mem_cap: int,
+                  imports_whitelist_extra: tuple[str, ...],
+                  cfg_aliases: dict | None,
+                  scaffold_spec: str) -> tuple[dict | None, str | None]:
+    """在独立子进程(自立新组)里跑沙箱, 超时按进程组整组回收.
+
+    动机: 线程超时终止不了在跑的代码(Python 无法 kill 线程) —— 失控实验会继续吃
+    CPU/BLAS 线程, 其 spawn 的子进程(torch DataLoader worker 等)更会在宿主退出后
+    orphan 到 init 继续全速跑. 独立子进程经 ``start_new_session`` 自立新组 → 超时
+    ``killpg`` 连孙进程一起回收; 且重活都在一次性子进程里, 宿主内存不随实验膨胀.
+    子进程登记进在册表, 宿主退出时 ``kill_tracked_children`` 再兜底一次.
+    """
+    import huginn as _huginn
+    pkg_root = str(Path(_huginn.__file__).resolve().parent.parent)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = pkg_root + os.pathsep + env.get("PYTHONPATH", "")
+    fd, result_path = tempfile.mkstemp(suffix=".json", prefix="codelab_")
+    os.close(fd)
+    payload = json.dumps({
+        "code": code, "cfg": cfg, "mem_cap": int(mem_cap),
+        "timeout": float(timeout),
+        "imports_whitelist_extra": list(imports_whitelist_extra or ()),
+        "cfg_aliases": cfg_aliases or None,
+        "scaffold_spec": scaffold_spec or "",
+        "result_path": result_path,
+    }, ensure_ascii=False, default=str)
+    kwargs, own_group = new_group_popen_kwargs()
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _WORKER_SNIPPET],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+            errors="replace", env=env, **kwargs,
+        )
+    except Exception as e:  # noqa: BLE001 — 起不来就如实报, 回退由调用方决定
+        with contextlib.suppress(OSError):
+            os.unlink(result_path)
+        return None, f"隔离执行启动失败: {type(e).__name__}: {e}"
+    track_live_child(proc.pid, own_group=own_group)
+    timed_out = False
+    try:
+        try:
+            proc.communicate(payload, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            kill_process_group(proc.pid, own_group=own_group)
+            with contextlib.suppress(Exception):
+                proc.communicate()
+    finally:
+        untrack_live_child(proc.pid)
+    try:
+        if timed_out:
+            return None, f"code_lab 执行超时 (> {timeout}s)"
+        try:
+            with open(result_path, encoding="utf-8") as fh:
+                body = json.load(fh)
+        except Exception:  # noqa: BLE001 — 无结果文件 = 子进程未写回(崩/被杀)
+            return None, f"隔离执行无结果(退出码 {proc.returncode})"
+        if not isinstance(body, dict):
+            return None, f"隔离执行结果格式异常(退出码 {proc.returncode})"
+        return body.get("res"), body.get("reason")
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(result_path)
+
+
+def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
+                timeout: float = SAFE_TIMEOUT_S,
+                imports_whitelist_extra: tuple[str, ...] = (),
+                cfg_aliases: dict | None = None,
+                scaffold: Scaffold | None = None) -> tuple[dict | None, str | None]:
+    """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
+
+    ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
+    ``cfg_aliases``: 冷启动守卫的域级 cfg 键别名(compile_domain_guards 的 cfg_aliases),
+    ``_alias_cfg`` 据此补齐别名, 域专用别名不进通用 harness.
+    ``scaffold``: 任务脚手架; 其声明的原语注入沙箱(不给则只有 np 基座).
+
+    执行放进独立子进程(进程组可回收). 仅当脚手架是**程序化构造**(无 source, 子进程
+    无法重建同一套原语)时才回退进程内执行 —— 这不是特例分支, 而是"能隔离就隔离"的
+    能力边界: 从文件/模块装配的脚手架(唯一实际用法)恒走隔离路径.
+    """
+    # 无显示主机的 matplotlib: 强制 Agg 后端, 避免 pyplot 因无 DISPLAY 崩 —
+    # 数值计算/存图照常走 Agg, 不依赖 GUI 头. (对已设 MPLBACKEND 的调用方生效)
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    scaffold_spec = getattr(scaffold, "source", "") if scaffold is not None else ""
+    if scaffold is None or scaffold_spec:
+        return _run_isolated(
+            code, cfg, timeout=float(timeout), mem_cap=mem_cap,
+            imports_whitelist_extra=imports_whitelist_extra,
+            cfg_aliases=cfg_aliases, scaffold_spec=scaffold_spec,
+        )
+    return _sandbox_run_inproc(
+        code, cfg, mem_cap=mem_cap, timeout=timeout,
+        imports_whitelist_extra=imports_whitelist_extra,
+        cfg_aliases=cfg_aliases, scaffold=scaffold,
+    )
 
 
 def author_probe_specs(code: str, scaffold: Scaffold | None = None) -> list[dict]:

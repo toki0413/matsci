@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 273 站点, 按值域 Jaccard 重叠自动聚成 249 簇 (其中闭集簇 165). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 274 站点, 按值域 Jaccard 重叠自动聚成 250 簇 (其中闭集簇 165). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -289,9 +289,9 @@
 | `SESSION_END` | `huginn/events/unified_bus.py:169` | — |
 | `STOP` | `huginn/events/unified_bus.py:199` | `huginn/hooks/science_hooks.py:843` |
 | `SUBAGENT_STOP` | `huginn/agents/subagent.py:387` | — |
-| `PRE_COMPACT` | `huginn/agent/streaming.py:902` | — |
+| `PRE_COMPACT` | `huginn/agent/streaming.py:918` | — |
 | `POST_COMPACT` | `huginn/events/unified_bus.py:365` | — |
-| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1620` | `huginn/agents/factory.py:322`, `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332` |
+| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1636` | `huginn/agents/factory.py:322`, `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332` |
 | `POST_TOOL_USE_FAILURE` | `huginn/hooks/__init__.py:280` | — |
 
 ### 互斥违例 (mutually exclusive)

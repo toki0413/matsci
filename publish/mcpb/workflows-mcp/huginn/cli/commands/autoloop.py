@@ -44,6 +44,32 @@ def _load_star_plugins() -> None:
         logger.warning("Star plugin loading failed; autoloop runs without plugins", exc_info=True)
 
 
+def _reap_on_exit(engine: Any) -> None:
+    """退出前回收子进程 + 停掉共享调度器, 堵住孤儿泄漏.
+
+    autoloop CLI **不走 FastAPI lifespan**, 没有任何退出钩子: 后台 bash 任务
+    (``bash_tool`` 尾随 '&' → ToolScheduler) 以及超出主循环的沙箱子进程在父进程
+    退出后会成为 PPID→1 的孤儿继续全速运行 (run87 实测: 主进程退出后实验子进程
+    仍跑 15min). 这里依次做两件收尾: (1) 按进程组整组回收所有在册沙箱子进程;
+    (2) 停掉共享调度器, 取消 drainer 与在飞后台任务. 全部尽力而为, 不抛异常.
+    """
+    try:
+        from huginn.utils.process import kill_tracked_children
+
+        n = kill_tracked_children()
+        if n:
+            logger.warning("reaped %d live sandbox child process(es) at exit", n)
+    except Exception:  # 防御: 回收失败不阻塞退出
+        logger.debug("child reaping failed", exc_info=True)
+    try:
+        factory = getattr(engine, "_agent_factory", None)
+        sched = getattr(factory, "_shared_scheduler", None)
+        if sched is not None:
+            sched.stop()
+    except Exception:  # 防御: 调度器停不掉不阻塞退出
+        logger.debug("scheduler stop failed", exc_info=True)
+
+
 def _maybe_agent_factory() -> Any:
     """多智能体协作通电开关 — 默认 None (纯单 agent, 零额外成本).
 
@@ -254,6 +280,8 @@ def autoloop(
             ))
         except KeyboardInterrupt:
             console.print("\n[yellow]Watch mode stopped.[/yellow]")
+        finally:
+            _reap_on_exit(engine)
     else:
         console.print(
             Panel(
@@ -311,6 +339,9 @@ def autoloop(
             except Exception as e:
                 progress.update(task, completed=True)
                 console.print(f"[red]Autoloop failed: {e}[/red]")
+            finally:
+                # 退出兜底: 回收在飞的沙箱子进程, 堵住 PPID→1 孤儿泄漏 (run87).
+                _reap_on_exit(engine)
 
 
 async def _watch_loop(

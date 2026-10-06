@@ -16,9 +16,16 @@ import contextlib
 import os
 import signal
 import subprocess
+import threading
 from typing import Any
 
-__all__ = ["new_group_popen_kwargs", "kill_process_group"]
+__all__ = [
+    "new_group_popen_kwargs",
+    "kill_process_group",
+    "track_live_child",
+    "untrack_live_child",
+    "kill_tracked_children",
+]
 
 
 def new_group_popen_kwargs() -> tuple[dict[str, Any], bool]:
@@ -65,3 +72,42 @@ def kill_process_group(pid: int, *, own_group: bool) -> bool:
             return True
         return False
     return False
+
+
+# ── 在册子进程 (退出兜底回收) ─────────────────────────────────────────
+# 动机: 子进程经 ``start_new_session``/``CREATE_NEW_PROCESS_GROUP`` 自立新组后,
+# **父进程退出不会带走它们** —— 它们收不到任何信号, 直接成为 PPID→1 的孤儿继续
+# 全速运行 (run87 实测: 主进程退出后实验子进程仍跑 15min). 超时路径已有整组回收,
+# 但"父进程先退出"这条路径没有: 唯一解法是退出前主动按进程组杀掉在册子进程.
+# 登记表放在本模块, 与 :func:`kill_process_group` 同一处理语义.
+_LIVE_CHILDREN: dict[int, bool] = {}
+_LIVE_LOCK = threading.Lock()
+
+
+def track_live_child(pid: int, *, own_group: bool) -> None:
+    """登记一个正在运行的子进程, 供进程退出时兜底整组回收."""
+    with _LIVE_LOCK:
+        _LIVE_CHILDREN[int(pid)] = bool(own_group)
+
+
+def untrack_live_child(pid: int) -> None:
+    """子进程已正常结束/已被回收 → 注销登记 (避免 pid 复用误杀)."""
+    with _LIVE_LOCK:
+        _LIVE_CHILDREN.pop(int(pid), None)
+
+
+def kill_tracked_children() -> int:
+    """整组回收所有仍在册的子进程, 返回成功处理的个数.
+
+    在进程退出前调用 (CLI 无 lifespan 钩子时由调用方兜底). 幂等: 清空登记表后
+    逐个 :func:`kill_process_group`; 已自行退出的 pid 会因 ProcessLookupError 被
+    静默跳过. 全部尽力而为, 绝不抛异常打断退出流程.
+    """
+    with _LIVE_LOCK:
+        items = list(_LIVE_CHILDREN.items())
+        _LIVE_CHILDREN.clear()
+    killed = 0
+    for pid, own_group in items:
+        if kill_process_group(pid, own_group=own_group):
+            killed += 1
+    return killed
