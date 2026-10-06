@@ -973,6 +973,49 @@ class CognitiveRunner:
             return None
         return "pivot"
 
+    def _stash_last_good(self, cog: dict[str, Any]) -> None:
+        """P3: pivot **清除 cog 之前**把当前方向暂存为 last-good 快照.
+
+        非破坏性 pivot 的一半: pivot 会 ``cog[k] = None`` 原地抹掉假设/计划, 抹掉后
+        若新方向也走不通, redirect 分支只看到"无 hyp 可转"就停机 —— 不可逆丢失.
+        这里先存一份, 让 ``_restore_last_good`` 能在没路可走时回到"上一次有计划的"
+        方向 (仍可重新 plan/execute), 而不是停机.
+
+        只存非空假设 (假设是恢复主体, 计划可为空). 计划若非 JSON 友好类型则降级为
+        str, 保证 engine_state 落盘不因快照而失败.
+        """
+        hyp = cog.get("hypothesis")
+        if not hyp:
+            return
+        plan = cog.get("plan")
+        if plan is not None and not isinstance(
+            plan, (dict, str, list, int, float, bool)
+        ):
+            plan = str(plan)
+        self._last_good_hypothesis = str(hyp)
+        self._last_good_hyp_id = cog.get("current_hyp_id")
+        self._last_good_plan = plan
+
+    def _restore_last_good(self, cog: dict[str, Any]) -> bool:
+        """P3: 用 last-good 快照恢复 cog; 消费式 (恢复即清空) 防无限回退.
+
+        返回是否恢复成功. 恢复 hypothesis/plan/current_hyp_id 到 cog; 有 hyp_id 时
+        同步 ``_current_hyp_id_for_plan`` (计划阶段读点). 恢复后立刻清空快照 —— 同一
+        快照只救一次, 不让"pivot↔restore"互相触发成死循环 (pivot 次数上限另有兜底).
+        """
+        hyp = getattr(self, "_last_good_hypothesis", None)
+        if not hyp:
+            return False
+        cog["hypothesis"] = hyp
+        cog["current_hyp_id"] = getattr(self, "_last_good_hyp_id", None)
+        cog["plan"] = getattr(self, "_last_good_plan", None)
+        if cog["current_hyp_id"]:
+            self._current_hyp_id_for_plan = cog["current_hyp_id"]
+        self._last_good_hypothesis = None
+        self._last_good_hyp_id = None
+        self._last_good_plan = None
+        return True
+
     def _long_horizon_iteration_cap(self, goal: Goal | None, max_iterations: int) -> int:
         """长程探索: 依据 goal 的挂钟预算抬高步数上限.
 
@@ -2955,8 +2998,29 @@ Respond JSON only:
             # 首轮 (last in ("", "skip")) 不调 LLM, 直接走规则版 hypothesize.
             if state.should_redirect:
                 state.should_redirect = False
-                # 没 hyp 可以 pivot → 直接停, 避免 pivot 空转死循环
+                # 没 hyp 可以 pivot: 先试非破坏性回退 (P3) —— pivot 前暂存的 last-good
+                # 快照能救回"上一次有计划的方向", 避免原地清除造成的不可逆丢失.
+                # 无快照才停 (pivot 空转死循环防护保持不变).
                 if not cog.get("current_hyp_id") and not cog.get("hypothesis"):
+                    if self._restore_last_good(cog):
+                        self._control_trace(
+                            "pivot_restore",
+                            f"redirect={state.redirect_reason}",
+                            action="restore_last_good",
+                            iteration=state.iteration,
+                        )
+                        logger.warning(
+                            "P3 pivot 非破坏性回退: 无 hyp 可转 → 恢复 last-good "
+                            "(iter %d)", state.iteration,
+                        )
+                        if cog.get("plan"):
+                            return ActionDecision(
+                                action="execute",
+                                rationale="restore last-good hypothesis+plan",
+                            )
+                        return ActionDecision(
+                            action="plan", rationale="restore last-good hypothesis",
+                        )
                     return ActionDecision(action="stop", rationale="no hyp to pivot from")
                 return ActionDecision(action="pivot", rationale=f"redirect: {state.redirect_reason}")
             # D3: 长程停滞 → 强制转向 (非终止). 无进展且预算未尽时不再静默空转,
@@ -3418,6 +3482,7 @@ Respond JSON only:
                 if action == "pivot":
                     _obj = self._objective if hasattr(self, "_objective") else ""
                     _cur = cog.get("current_hyp_id")
+                    _pivoted = False
                     if _cur:
                         try:
                             new_hyp = self.hypothesis_graph.pivot(
@@ -3426,28 +3491,46 @@ Respond JSON only:
                                 model=self._get_refine_model(),
                                 objective=_obj,
                             )
-                            self._refine_count = 0
-                            self._pivot_count += 1
-                            self._next_phase_hint = "perceive"
-                            logger.info("CognitiveLoop pivot: %s → %s", _cur, new_hyp)
-                            # P1.4: pivot → campaign.refine 对齐 run() L1729
-                            self._emit_campaign(
-                                "campaign.refine",
-                                {
-                                    "iteration": state.iteration,
-                                    "old_hyp_id": _cur,
-                                    "new_hyp_id": new_hyp,
-                                    "reason": "cognitive pivot",
-                                },
-                            )
-                            # P15: pivot 是关键事件, 立刻 save (force=True)
-                            self._maybe_save_engine_state(force=True, reason="pivot")
+                            # pivot 可能被交叉授粉延迟拒绝 (返回 None): 那不算转向,
+                            # 不能清 cog — 否则原地抹掉假设又无新方向可换.
+                            if new_hyp:
+                                self._refine_count = 0
+                                self._pivot_count += 1
+                                self._next_phase_hint = "perceive"
+                                _pivoted = True
+                                logger.info("CognitiveLoop pivot: %s → %s", _cur, new_hyp)
+                                # P1.4: pivot → campaign.refine 对齐 run() L1729
+                                self._emit_campaign(
+                                    "campaign.refine",
+                                    {
+                                        "iteration": state.iteration,
+                                        "old_hyp_id": _cur,
+                                        "new_hyp_id": new_hyp,
+                                        "reason": "cognitive pivot",
+                                    },
+                                )
                         except Exception:  # 防御: 认知转向失败忽略
                             logger.warning("cognitive pivot failed", exc_info=True)
-                    # 清中间状态, 下轮重新 observe
-                    for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
-                        cog[k] = None
-                    return "pivoted"
+                    if _pivoted:
+                        # P3 非破坏性: 清除 cog 前先暂存 last-good 快照 — 转向后若新
+                        # 方向也走不通, redirect 分支可经 _restore_last_good 回到此方向,
+                        # 而非落入 "no hyp to pivot from" 停机 (不可逆丢失).
+                        self._stash_last_good(cog)
+                        # P15: pivot 是关键事件, 立刻 save (force=True) — 快照已含 stash
+                        self._maybe_save_engine_state(force=True, reason="pivot")
+                        # 清中间状态, 下轮重新 observe
+                        for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
+                            cog[k] = None
+                        return "pivoted"
+                    # pivot 未产出新方向 (被拒/无 cur/异常): **保留** cog 现状, 不原地
+                    # 清除 → 下轮照常推进, 状态不丢.
+                    self._control_trace(
+                        "pivot_skipped",
+                        f"pivot produced no new direction (cur={_cur})",
+                        action="noop",
+                        iteration=state.iteration,
+                    )
+                    return "pivot_skipped"
                 if action in ("skip", "stop", "report"):
                     # report 由 _finalize_run 跑; stop/skip 是控制信号
                     return action

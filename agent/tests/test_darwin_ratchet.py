@@ -5,6 +5,7 @@
   2. 棘轮只保留改进: score 退化时不更新 best_score
   3. 连续 2 轮 Δ<0.5 → advisory hint, 不 stop (控制面审计 A3 降级)
   4. topology_richness 维: 有环图比树图得分高
+外加 P3 pivot 非破坏性回退: last-good 快照 stash/restore (含消费式防死循环).
 """
 from __future__ import annotations
 
@@ -236,3 +237,67 @@ class TestDarwinRatchet:
         engine._darwin_ratchet_check()
 
         assert 7.0 < engine._darwin_best_score < 8.0  # =7.5
+
+
+def _cog(hyp=None, plan=None, hyp_id=None):
+    return {
+        "context": {}, "hypothesis": hyp, "plan": plan,
+        "execution_result": None, "validation": None,
+        "current_hyp_id": hyp_id, "phases": [], "completed_steps": 0,
+    }
+
+
+class TestPivotLastGood:
+    """P3 pivot 非破坏性回退: stash / restore (消费式)."""
+
+    def test_stash_restore_roundtrip(self):
+        """暂存 cog 方向 → 清空 → 恢复: 假设/计划/hyp_id 全回来, 快照被消费."""
+        engine = _make_engine()
+        runner = engine._cognitive_runner
+        cog = _cog("H_A", {"description": "plan A", "mode": "coder"}, "n1")
+
+        runner._stash_last_good(cog)
+        assert engine._last_good_hypothesis == "H_A"
+        assert engine._last_good_hyp_id == "n1"
+        assert engine._last_good_plan == {"description": "plan A", "mode": "coder"}
+
+        # 模拟 pivot 清除
+        for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
+            cog[k] = None
+
+        assert runner._restore_last_good(cog) is True
+        assert cog["hypothesis"] == "H_A"
+        assert cog["plan"] == {"description": "plan A", "mode": "coder"}
+        assert cog["current_hyp_id"] == "n1"
+        assert engine._current_hyp_id_for_plan == "n1"
+        # 消费式: 快照已清空 → 同一快照救不了第二次 (防 pivot↔restore 死循环)
+        assert engine._last_good_hypothesis is None
+        assert engine._last_good_plan is None
+        assert runner._restore_last_good(cog) is False
+
+    def test_stash_skips_empty_hypothesis(self):
+        """无假设可存 → 不建快照 (避免用空壳污染回退门)."""
+        engine = _make_engine()
+        runner = engine._cognitive_runner
+        cog = _cog(None, {"description": "orphan plan"}, "n1")
+
+        runner._stash_last_good(cog)
+
+        assert engine._last_good_hypothesis is None
+        assert engine._last_good_plan is None
+
+    def test_restore_without_snapshot_false(self):
+        """无快照 → restore 返回 False (redirect 分支据此回落 stop)."""
+        engine = _make_engine()
+        assert engine._cognitive_runner._restore_last_good(_cog()) is False
+
+    def test_stash_degrades_non_json_plan(self):
+        """计划若为非 JSON 友好对象 → 降级 str, 不污染 engine_state 落盘."""
+        engine = _make_engine()
+        runner = engine._cognitive_runner
+        sentinel = object()
+        cog = _cog("H_A", sentinel, "n1")
+
+        runner._stash_last_good(cog)
+
+        assert isinstance(engine._last_good_plan, str)
