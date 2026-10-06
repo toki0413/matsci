@@ -218,13 +218,24 @@ run86（与 run85 同配置）为"点亮观测面新增 episodic 字段"的真�
 | episodic 逐轮出现 `prompt_len`(execute=4786) / `obj_len`(509) / `nobj`(execute=1)，下轮 `prompt_len` 归 `None` | 新增字段**野外生效**，consume-once 无残值 ⇒ "输入冻结/执行输出恒同"判词不再静默失明（详见 `control_surface_audit.md` §8） |
 | 退场后无 `ppid==1` python 孤儿 | 进程组回收在野外仍成立（run83 泄漏修复未见回退） |
 
-**新缺口（暂记，未改码）**：run86 预算 700s，实际跑到 **22min+（≈1300s）**仍未触发挂钟硬停，人工中止。
+**新缺口 → 已补（D7 续，仅长程生效）**：run86 预算 700s，实际跑到 **22min+（≈1300s）**仍未触发挂钟硬停，人工中止。
 进程状态 `do_epoll_wait`、无子进程、到代理的 3 条连接 `ESTAB` 空闲但 `/proc/<pid>/io` 的 `rchar`
 以 **~3.8KB/s 持续增长** —— 即**流式 token 涓流**：每个 chunk 重置 D7 的空闲阈值，`idle` 永不触发；
-而主流（`streaming.py:2045` 的 `_primary_idle`）**只有空闲封顶、没有总时长封顶**（D7 只把**降级收集**
-的总超时封顶了，`streaming.py:2129`）。故单条"慢而不死"的流能把一段 phase 拖到远超挂钟，observe
-步边界的 `_budget_exhausted()` 无机会执行。**方向**：给主流也上"总时长 × 实时剩余预算"封顶
-（与降级路径同一 `_cap_timeout_by_budget` 口径），而非再加固定 idle。
+而主流（`streaming.py` 的 `_primary_idle`）**只有空闲封顶、没有总时长封顶**（D7 原本只把**降级收集**
+的总超时封顶了）。故单条"慢而不死"的流能把一段 phase 拖到远超挂钟，observe 步边界的
+`_budget_exhausted()` 无机会执行。
+
+**修法（不设固定硬时长，只按实时剩余自限）**：
+- `_astream_with_watchdog` 新增 `total_timeout` 入参：每轮先查绝对 deadline，`到点即抛`；
+  取 chunk 的实际等待取 `min(idle_timeout, 距 deadline 剩余)` ⇒ 与"chunk 是否还在到"无关。
+- 主流调用点：`_budget_left = live_budget_left()`；有预算时 `total_timeout =
+  _cap_timeout_by_budget(inf, _budget_left)` = **实时剩余减收尾余量**（复用同一 reserve/floor 口径，
+  不额外引入固定总时长）；预算充裕不缩小、`None`（非长程/无 goal）→ `total_timeout=None`，
+  **行为 100% 等价旧行为**。
+- 主流到点抛 `TimeoutError` → 走既有降级路径（其**总**超时亦按实时剩余封顶，见 D7）⇒ 两段
+  合计仍 ≈ 剩余预算，而非无界。
+- 单测：`tests/test_streaming.py::TestAstreamWatchdog` 新增涓流三态（到点即抛 / `None` 全量透传 /
+  预算 0 立即抛）；`streaming.py` 自检块同步加例。
 
 ---
 
@@ -238,7 +249,7 @@ run86（与 run85 同配置）为"点亮观测面新增 episodic 字段"的真�
 | D4 耗尽语义 | `HUGINN_BUDGET_EXPIRE_SEMANTICS=0` | 开 | 下游若依赖 `completed` 需同步 |
 | D5 D-slice | `budget_remaining_fn=None`（非长程自动等价） | 开（仅长程生效） | 门槛自校准依赖"上一片实测"，首片无参考时用固定下限 |
 | D6 code_lab 切片 | `HUGINN_CODELAB_SLICE=0`（非长程自动等价） | 开（仅长程生效） | 核心 slice 必跑，只门控"修复重写"；沙箱超时封顶到剩余预算 |
-| D7 实时预算封顶 | `live_budget_left()` 返回 None（非长程/无 goal） | 开（仅长程生效） | 绝对 deadline 每秒重算；收尾余量 `HUGINN_BUDGET_RESERVE_S` / 下限 `HUGINN_BUDGET_MIN_SLICE_S` 可调 |
+| D7 实时预算封顶 | `live_budget_left()` 返回 None（非长程/无 goal） | 开（仅长程生效） | 绝对 deadline 每秒重算；收尾余量 `HUGINN_BUDGET_RESERVE_S` / 下限 `HUGINN_BUDGET_MIN_SLICE_S` 可调；**主流总时长**（`_astream_with_watchdog(total_timeout=)`）同样只在有预算时启用 ⇒ 非长程零变化 |
 
 ---
 

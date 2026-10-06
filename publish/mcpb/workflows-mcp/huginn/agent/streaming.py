@@ -203,15 +203,31 @@ def _fallback_collect_inputs(states_yielded: int, inputs: Any) -> Any:
 async def _astream_with_watchdog(
     aiter: AsyncIterator,
     idle_timeout: float = _STREAM_IDLE_TIMEOUT,
+    total_timeout: float | None = None,
 ) -> AsyncIterator:
     """包装 async iterator, 空闲超时抛 asyncio.TimeoutError.
 
     每次取下一个 chunk 用 asyncio.wait_for 限时. 超时 → 上层捕获后走 ainvoke 降级.
     ponytail: 不在这里做降级, 只负责报时. 降级逻辑在 chat() 里, 因为需要 graph + inputs.
+
+    D7 补漏 (run86): ``total_timeout`` 给定时, 整段流另受**总时长**约束. 原实现只有
+    空闲超时 —— 一条**涓流** (chunk 间隔始终 < ``idle_timeout``, 但整体极慢) 会不断
+    重置空闲计时, 永不触发, 单段 phase 被拖到远超挂钟 (run86 实测: 预算 700s, 实跑
+    1300s+, `/proc/<pid>/io` 的 rchar 以 ~3.8KB/s 持续增长). 每次取 chunk 的实际等待
+    取 ``min(idle_timeout, 距 deadline 剩余)``, 并每轮先查 deadline ⇒ 到点即抛, 与
+    "chunk 是否还在到"无关. ``total_timeout=None`` (非长程) 完全等价旧行为.
     """
+    _deadline = None if total_timeout is None else time.monotonic() + total_timeout
     while True:
+        if _deadline is None:
+            _wait = idle_timeout
+        else:
+            _left = _deadline - time.monotonic()
+            if _left <= 0:
+                raise TimeoutError("stream total timeout")
+            _wait = min(idle_timeout, _left)
         try:
-            item = await asyncio.wait_for(aiter.__anext__(), timeout=idle_timeout)
+            item = await asyncio.wait_for(aiter.__anext__(), timeout=_wait)
         except StopAsyncIteration:
             logger.debug("best-effort op failed", exc_info=True)
             return
@@ -2034,17 +2050,30 @@ class StreamingMixin:
                             # A3: 流式 watchdog 包裹 — 空闲超时后走 ainvoke 降级.
                             # thinking=high 时首 token 前的深度推理可能 >60s 无 chunk,
                             # 用随 thinking 放宽的空闲超时, 减少不必要的降级.
+                            # D7: 主流空闲阈值也按**实时**剩余预算封顶 — 预算见底
+                            # 时不再让主流维持一段注定越预算的阻塞, 尽早降级/失败.
+                            # 无预算 (None) 时原样 = 旧行为.
+                            _primary_budget_left = live_budget_left()
+                            # D7 补漏 (run86): 仅封顶**空闲**挡不住涓流 — chunk 间隔始终
+                            # < idle 时会不断重置计时, 永不触发 (run86: 预算 700s 实跑
+                            # 1300s+). 故长程下再给整段流加**总时长**上限 = 实时剩余
+                            # (留收尾余量, 复用同一 reserve/floor 口径); 只在有预算时
+                            # 生效, 预算充裕/非长程完全等价旧行为.
+                            _primary_total = (
+                                None if _primary_budget_left is None
+                                else _cap_timeout_by_budget(
+                                    float("inf"), _primary_budget_left
+                                )
+                            )
                             async for mode, data in _astream_with_watchdog(
                                 graph.astream(
                                     inputs, config,
                                     stream_mode=["values", "messages"],
                                 ),
-                                # D7: 主流空闲阈值也按**实时**剩余预算封顶 — 预算见底
-                                # 时不再让主流维持一段注定越预算的阻塞, 尽早降级/失败.
-                                # 无预算 (None) 时原样 = 旧行为.
                                 idle_timeout=_cap_timeout_by_budget(
-                                    _primary_idle, live_budget_left()
+                                    _primary_idle, _primary_budget_left
                                 ),
+                                total_timeout=_primary_total,
                             ):
                                 if mode == "messages":
                                     chunk, _meta = data
@@ -2109,7 +2138,7 @@ class StreamingMixin:
                         # 只有完全空闲 (thinking 阶段也无 chunk 太久) 才终止.
                         # 外层再套一个 thinking 缩放的总兜底, 防无限 thinking 循环.
                         logger.warning(
-                            "stream idle timeout after %ds (states_yielded=%d), "
+                            "stream watchdog timeout after %ds (states_yielded=%d), "
                             "falling back to progress-aware stream collect",
                             _primary_idle, states_yielded,
                         )
@@ -2548,6 +2577,32 @@ if __name__ == "__main__":
         except TimeoutError:
             logger.debug("best-effort op failed", exc_info=True)
         assert seen == ["fast"], f"first chunk not yielded before timeout: {seen}"
+
+        # 5. D7 补漏: 总时长封顶挡涓流 (chunk 间隔 < idle, 整体超 total)
+        async def _trickle():
+            for i in range(100):
+                await asyncio.sleep(0.02)
+                yield i
+
+        _trick_seen = []
+        try:
+            async for item in _astream_with_watchdog(
+                _trickle(), idle_timeout=1.0, total_timeout=0.1
+            ):
+                _trick_seen.append(item)
+        except TimeoutError:
+            logger.debug("best-effort op failed", exc_info=True)
+        assert 0 < len(_trick_seen) < 100, f"total_timeout failed to cap trickle: {len(_trick_seen)}"
+
+        # 6. total_timeout=None → 完全等价旧行为 (全量透传)
+        _all = []
+        async for item in _astream_with_watchdog(
+            _trickle(), idle_timeout=1.0, total_timeout=None
+        ):
+            _all.append(item)
+            if len(_all) >= 5:
+                break
+        assert _all == [0, 1, 2, 3, 4], f"None total_timeout changed behaviour: {_all}"
 
     asyncio.run(_test_watchdog())
 

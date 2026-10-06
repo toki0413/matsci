@@ -415,6 +415,51 @@ class TestAstreamWatchdog:
             pass
         assert seen == ["fast"]
 
+    # ── D7 补漏 (run86): 总时长封顶 —— 挡涓流 ──────────────────────────
+    # 涓流: chunk 间隔始终 < idle_timeout, 但整体极慢. 只封顶空闲时永不触发
+    # (run86: 预算 700s 实跑 1300s+). total_timeout 必须在"还在到 chunk"时也到点即抛.
+
+    async def test_total_timeout_stops_trickle(self):
+        async def _trickle():
+            for i in range(100):
+                await asyncio.sleep(0.05)  # 间隔 < idle, 空闲永不触发
+                yield i
+
+        seen = []
+        with pytest.raises(asyncio.TimeoutError):
+            async for item in _astream_with_watchdog(
+                _trickle(), idle_timeout=1.0, total_timeout=0.2
+            ):
+                seen.append(item)
+        # 已产出的不丢, 但整体被总时长截断 (远不到 100).
+        assert 0 < len(seen) < 100, seen
+
+    async def test_total_timeout_none_passthrough(self):
+        # 非长程 (无预算) → total_timeout=None, 行为 100% 不变: 全量透传.
+        async def _trickle():
+            for i in range(6):
+                await asyncio.sleep(0.01)
+                yield i
+
+        out = []
+        async for item in _astream_with_watchdog(
+            _trickle(), idle_timeout=1.0, total_timeout=None
+        ):
+            out.append(item)
+        assert out == [0, 1, 2, 3, 4, 5]
+
+    async def test_total_timeout_zero_raises_before_first_chunk(self):
+        # 预算已耗尽 (总时长 0) → 立即抛, 不再消费.
+        async def _fast():
+            for i in range(5):
+                yield i
+
+        with pytest.raises(asyncio.TimeoutError):
+            async for _ in _astream_with_watchdog(
+                _fast(), idle_timeout=1.0, total_timeout=0.0
+            ):
+                pass
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # _is_root_message — root metadata 标记判定 (Task B 核心)
