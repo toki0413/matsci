@@ -1,0 +1,32 @@
+[
+  {
+    "rule_id": "heuristic_read_file_1791281554955",
+    "rule_type": "heuristic_fix",
+    "trigger": "read_file|Error: File <path> not found",
+    "action": "{\"description\": \"re-check file path and try alternative locations\"}",
+    "source": "failure_analysis",
+    "confidence": 0.4,
+    "usage_count": 6,
+    "success_count": 0,
+    "created_at": "2026-10-06T10:12:34.955622",
+    "tags": [
+      "auto_generated",
+      "read_file"
+    ]
+  },
+  {
+    "rule_id": "heuristic_ls_1791281827096",
+    "rule_type": "heuristic_fix",
+    "trigger": "ls|Error: Path <path>: path_not_found",
+    "action": "{\"description\": \"retry ls with corrected input after checking error: Error: Path <path>: path_not_found\"}",
+    "source": "failure_analysis",
+    "confidence": 0.7,
+    "usage_count": 7,
+    "success_count": 0,
+    "created_at": "2026-10-06T10:17:07.096828",
+    "tags": [
+      "auto_generated",
+      "ls"
+    ]
+  }
+]

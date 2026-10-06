@@ -237,6 +237,30 @@ run86（与 run85 同配置）为"点亮观测面新增 episodic 字段"的真�
 - 单测：`tests/test_streaming.py::TestAstreamWatchdog` 新增涓流三态（到点即抛 / `None` 全量透传 /
   预算 0 立即抛）；`streaming.py` 自检块同步加例。
 
+### 7.5 run87 判读（D7 续野外验证：挂钟回到预算内）
+
+run87 与 run86 配置**完全一致**（同命题、`-i 6`、`--wall-clock-budget 700`、同减负/同 D6/同协作/同 D-slice），
+唯一差别 = 代码已含 D7 续（主流总时长封顶）。对照结论：
+
+| 观察 | run86（修复前） | run87（修复后） |
+|---|---|---|
+| 循环挂钟 | **1300s+ 未自停，人工中止** | **701.4s**（≈预算 700，超支 ~1.4s），**自停** |
+| 阶段 | 卡在后续 hypothesize 的慢流，execute 后再无进展 | 五阶段全 completed：hypothesize 333.7 / plan 67.5 / execute 104.5 / validate 37.5 / learn 23.9 |
+| goal 终态 | （中止，无终态） | `expired` / `metadata.expired_reason=wall_clock`（D4 野外生效） |
+| 孤儿 | 8 个 `ppid==1` python | 无（仅 supervisord） |
+
+- **D7 续为安全网、本轮非绑定约束**：`stream total timeout` 命中 0 次 —— 本 run 里主流是
+  **60s 空闲**先触发（`states_yielded=2/14/42` 后降级），降级流 `idle=30s / total=300s`；
+  预算最终由步边界 `_budget_exhausted` 在预算到点收口。故"涓流总时长封顶"是防跑飞的兜底（run86 那种
+  idle 永不触发的场景），run87 未复现该极端场景 → 未直接点亮，属**未被触发的正确安全网**，非失效。
+- **观测面判据野外全亮**（`replay_audit run87`）：`执行=1`、`执行输出恒同: nobj 恒为 [1]`、
+  `结构通道未激活`（新措辞，非"编码器坏"），并落 `report_discrimination` / `report_decisive` /
+  `report_citation` trace。
+- **仍存的科学层退化（非预算/观测问题）**：`[ev1]` 里 rigid 与 fat 给出**完全相同**的
+  `N_c=999 / max_err=1.0`，`objectives.score=0.0` —— 探针不判别、执行层零新信息。这正是
+  `longrun-loop-lessons.md` 记录的"报告 ≠ 结果 / 目标函数奖励结构良好而非新"的**创新层缺口**，
+  与预算控制正交，留待创新层（novelty 门控 / 判别性门槛）处理。
+
 ---
 
 ## 8. 风险与回滚汇总
