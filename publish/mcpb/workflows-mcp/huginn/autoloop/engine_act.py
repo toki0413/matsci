@@ -318,6 +318,9 @@ class EngineAct:
             goal, scaffold=scaffold, guard_block=guard_block,
             repair_hint=repair_hint, prev_code=prev_code, focus=focus,
         )
+        # 落一份不自带调试开关的长度快照: replay_audit 的"输入冻结"判定改由
+        # episodic 的 prompt_len 取(旧码只读 HUGINN_EXEC_ROUTE_DEBUG 下的 run.log 行).
+        self._last_author_prompt_len = len(prompt)
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
         except Exception as e:  # — LLM 不可用/超时 → 拿不到实验代码, 回落, 不阻塞
@@ -531,6 +534,9 @@ class EngineAct:
 
     async def _execute(self, plan: dict[str, Any], context: dict[str, Any]) -> Any:
         """Execute the plan using the appropriate sub-engine."""
+        # 本轮 execute 起点清空: 供 episodic 快照读"本轮作者提示长度"(不依赖调试开关).
+        # 只有本轮真调过 build_author_prompt 才有值; 未调 → None, 不入冻结判定.
+        self._last_author_prompt_len = None
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
         import os as _osd

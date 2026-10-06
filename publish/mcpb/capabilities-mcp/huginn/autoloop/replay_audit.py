@@ -143,8 +143,41 @@ def exec_evidence_from_episodic(rows: list[dict]) -> dict:
     return {"execs": execs, "exec_ok": exec_ok}
 
 
+def input_stats_from_episodic(rows: list[dict]) -> dict:
+    """从 episodic 取"输入长度/执行输出规模" —— 不依赖 run.log 的调试开关.
+
+    run.log 的 ``[code-lab-author] prompt_len=`` / ``[exec-route] obj_len=`` /
+    ``[code-lab-run] nobj=`` 三行都只在 ``HUGINN_EXEC_ROUTE_DEBUG`` 下输出; 不打开时
+    ``scan_runlog`` 得空 Counter ⇒ "输入冻结 / 执行输出恒同"判定**静默失明**
+    (run80-84 实测: 关掉开关, 三项全空, 判词整段不触发). episodic 快照的
+    ``prompt_len`` / ``obj_len`` / ``nobj`` 是结构化权威源 (每轮必然落盘), 作回退.
+
+    注意 ``prompt_len`` / ``nobj`` 为 ``None``(本轮未调作者 / 非 execute 轮)时不计入:
+    记录它们是**本轮真值**, 不是残值; 计 0 会把"没调"混进"调了多长"消掉区分度.
+    """
+    pl: Counter = Counter()
+    ol: Counter = Counter()
+    nb: Counter = Counter()
+    for r in rows:
+        v = r.get("prompt_len")
+        if v:
+            pl[int(v)] += 1
+        v = r.get("obj_len")
+        if v is not None:
+            ol[int(v)] += 1
+        v = r.get("nobj")
+        if v is not None:
+            nb[int(v)] += 1
+    return {"prompt_lens": pl, "obj_lens": ol, "nobj": nb}
+
+
 def scan_runlog(run_dir: str) -> dict:
-    """把 run.log 折成计数/序列: 用于出口体检与"输入冻结"检测."""
+    """把 run.log 折成计数/序列: 用于出口体检与"输入冻结"检测.
+
+    ⚠ ``prompt_len`` / ``obj_len`` / ``nobj`` 三项的来源行都在 ``HUGINN_EXEC_ROUTE_DEBUG``
+    调试开关下 —— 这里抓到就抓到, 抓不到由 :func:`input_stats_from_episodic` 从
+    episodic 结构化字段回退 (见 :func:`audit`), 以免关掉开关就静默失明.
+    """
     p = Path(run_dir) / "run.log"
     ev = {"execs": 0, "exec_ok": 0, "nobj": Counter(), "prompt_lens": Counter(),
           "surprises": Counter(), "obj_lens": Counter(), "repeat_streaks": [],
@@ -164,7 +197,9 @@ def scan_runlog(run_dir: str) -> dict:
         # 注意: 不解析 run.log 的 `surprise=`. 那些全是自由文本(计划描述前缀 /
         # LLM 复述), 不是信号 —— 会误报"路由信号死". surprise 改由 episodic 的
         # 统一秩信号取 (surprises_from_episodic), 见 audit().
-        m = re.search(r"obj_len=(\d+)", ln)
+        # 锚定到行内真实字段位 (`obj_len=%d is_exp_desc=%s`): 该行 desc[:80] 是 repr 的
+        # **自由文本**, 未锚定的 `obj_len=(\d+)` 会被描述里字面出现的 "obj_len=N" 假命中.
+        m = re.search(r"obj_len=(\d+) is_exp_desc=", ln)
         if m:
             ev["obj_lens"][int(m.group(1))] += 1
         m = re.search(r"repeat execution detected \(streak=(\d+)\)", ln)
@@ -366,6 +401,12 @@ def audit(
     if log["execs"] == 0:
         epi = exec_evidence_from_episodic(rows)
         log["execs"], log["exec_ok"] = epi["execs"], epi["exec_ok"]
+    # 输入长度/执行规模回退: 同 execs 的坑 —— 那三行的来源全在 HUGINN_EXEC_ROUTE_DEBUG
+    # 下, 关掉开关 scan_runlog 得空 ⇒ "输入冻结/执行输出恒同"静默失明. 空则取 episodic.
+    _epi_in = input_stats_from_episodic(rows)
+    for _k in ("prompt_lens", "obj_lens", "nobj"):
+        if not log[_k]:
+            log[_k] = _epi_in[_k]
 
     # 每轮"新增假设节点"数: 按 graph.created_at 落进 [cycle.ts, next.ts)
     node_ts = sorted(t for t, _ in nodes if t is not None)
@@ -400,11 +441,12 @@ def audit(
 
     n_cycles = len(cycles)
     zero_progress_cycles = [i for i in range(n_cycles) if new_nodes[i] == 0]
-    frozen_prompt = (len(log["prompt_lens"]) == 1)
-    # 恒定才叫"死", 且至少要两个样本 —— 单轮轨迹的 1 个值不算饱和.
+    # "恒定才叫死"三处统一口径: 恰好 1 个取值 **且** 样本 >=2 —— 单样本轨迹
+    # (只调过一次作者 / 只有一轮)的 1 个值不足以证明冻结, 否则短 run 一律假阳性.
+    frozen_prompt = (len(log["prompt_lens"]) == 1 and sum(log["prompt_lens"].values()) >= 2)
     saturated_surprise = (
         len(log["surprises"]) == 1 and sum(log["surprises"].values()) >= 2)
-    frozen_goal = (len(log["obj_lens"]) == 1)
+    frozen_goal = (len(log["obj_lens"]) == 1 and sum(log["obj_lens"].values()) >= 2)
 
     return {
         "run_dir": run_dir,

@@ -721,6 +721,22 @@ run65 **无 `rename_debt` trace** ⇒ 线上债务从未越限（与离线反推
   `[1.5, 90, 0, 1.43, 15.6, …]`）。故判词降级为"结构通道**未激活**"，并显式声明
   **不是**编码器坏 / 通道无信息；字段 `structure_encoder_dead` →
   `structure_channel_unexercised`。
+- **其余 run.log 计数的同源坑**（"读法依赖调试开关 / 自由文本"）：逐项核过 ——
+  - `obj_len` / `prompt_len` / `nobj`：来源行（`[exec-route]` / `[code-lab-author]` /
+    `[code-lab-run]`）**全在 `HUGINN_EXEC_ROUTE_DEBUG` 下**，关掉开关 `scan_runlog`
+    得空 ⇒ "输入冻结 / 执行输出恒同"判词**静默失明**（run80–84 实测：三项全空，整段不触发）。
+    权威源改取 episodic 新增的结构化字段 `prompt_len` / `obj_len` / `nobj`（每轮必然落盘，
+    与 `surprise` / `exec_ok` 同向）；run.log 仅作老 run 的回退。`prompt_len` / `nobj`
+    为 `None`（本轮未调作者 / 非 execute 轮）时不计入。另把 `obj_len` 正则锚定到真实字段位
+    `obj_len=(\d+) is_exp_desc=` —— 该行 `desc[:80]` 是 repr 的**自由文本**，未锚定会被
+    描述里字面出现的 `obj_len=N` 假命中。三处"恒定才叫死"统一为**恰好 1 个取值且样本 ≥2**
+    （单样本短 run 不再假阳性）。
+  - `counterexample hunt triggered`：原 `logger.info` —— CLI autoloop 默认 root logger 无
+    handler，INFO 被静默吞掉，机制**触发过却离线不可见**（run65 实测：`renamed-reduction`
+    触发 4 次 ⇒ 反例搜索必已 fire，但 run.log 计 0）。升为 `logger.warning`（run.log 一定
+    捕获 WARNING），`hunt` 计数与 `SOFT_MARKERS` 探测随之可观测。
+  - `repeat execution detected` / `renamed-reduction` / `plan_check failed`：经核实均为
+    `logger.warning`（非自由文本、非调试门），**本就可靠，未改**。
 
 ---
 

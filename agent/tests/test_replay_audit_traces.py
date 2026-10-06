@@ -203,3 +203,117 @@ def test_structure_nonzero_channel_reports_nothing(tmp_path: Path) -> None:
     a = ra.audit(str(run_dir))
     assert a["structure_channel_unexercised"] is False
     assert "结构通道未激活" not in "\n".join(ra._verdict(a))
+
+
+# ── 输入/输出计数: 权威源 = episodic, 不依赖 HUGINN_EXEC_ROUTE_DEBUG ─────
+#
+# 坑: run.log 的 ``[code-lab-author] prompt_len=`` / ``[exec-route] obj_len=`` /
+# ``[code-lab-run] nobj=`` 三行都在调试开关下 ⇒ 关掉时 scan_runlog 得空, "输入冻结 /
+# 执行输出恒同"判定**静默失明**(run80-84 实测: 三项全空, 判词整段不触发). 权威源改
+# 取 episodic 的 prompt_len / obj_len / nobj 结构化字段(每轮必然落盘).
+
+def test_prompt_len_frozen_read_from_episodic_without_debug_lines(tmp_path: Path) -> None:
+    """无调试行时, prompt_len 恒定从 episodic 取 ⇒ 冻结判定不被静默吞掉."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines here\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "execute", "prompt_len": 5379},
+        {"action": "execute", "prompt_len": 5379},
+        {"action": "hypothesize", "prompt_len": None},  # 未调作者: 不计入
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["input_frozen"]["prompt_len_values"] == {5379: 2}, a["input_frozen"]
+    assert a["input_frozen"]["prompt_frozen"] is True
+    assert "输入冻结: prompt_len 恒定" in "\n".join(ra._verdict(a))
+
+
+def test_prompt_len_single_sample_not_frozen(tmp_path: Path) -> None:
+    """只调过一次作者(单样本)不算冻结 —— 否则短 run 一律假阳性."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [{"action": "execute", "prompt_len": 5379}])
+    a = ra.audit(str(run_dir))
+    assert a["input_frozen"]["prompt_frozen"] is False
+    assert "输入冻结: prompt_len" not in "\n".join(ra._verdict(a))
+
+
+def test_obj_len_frozen_falls_back_to_episodic(tmp_path: Path) -> None:
+    """无 prompt_len 采样时, obj_len 恒定(>=2 样本)从 episodic 取 ⇒ 报冻结."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "hypothesize", "obj_len": 509},
+        {"action": "execute", "obj_len": 509},
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["input_frozen"]["goal_frozen"] is True
+    assert "输入冻结: obj_len 恒定" in "\n".join(ra._verdict(a))
+
+
+def test_nobj_constant_from_episodic_reports_zero_new_info(tmp_path: Path) -> None:
+    """nobj 恒定从 episodic 取(不依赖调试行) ⇒ 报"执行层零新信息"."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "execute", "exec_ok": True, "nobj": 3},
+        {"action": "execute", "exec_ok": True, "nobj": 3},
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["execs"] == 2
+    assert a["nobj_distribution"] == {3: 2}, a["nobj_distribution"]
+    assert "执行输出恒同" in "\n".join(ra._verdict(a))
+
+
+def test_obj_len_regex_ignores_freetext_in_desc(tmp_path: Path) -> None:
+    """[exec-route] 的 desc[:80] 是自由文本: 正则必须锚定真实字段位, 不被字面假命中."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text(
+        "[exec-route] mode='explore' desc[:80]='plan literally quotes obj_len=999 x' "
+        "obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False\n",
+        encoding="utf-8")
+    ev = ra.scan_runlog(str(run_dir))
+    assert dict(ev["obj_lens"]) == {509: 1}, ev["obj_lens"]
+
+
+# ── 反例搜索: 机制 WARNING 可观测 (旧 INFO 被静默吞掉) ───────────────────
+
+def test_counterexample_hunt_emits_warning() -> None:
+    """_trigger_counterexample_hunt 必须发 WARNING (run.log 只捕获 WARNING+)."""
+    import logging
+
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    class _Stub:
+        _current_hyp_id_for_plan = None
+        _force_imaginate = False
+        _speculator_hint = ""
+        memory = None
+
+    stub = _Stub()
+    records: list[logging.LogRecord] = []
+
+    class _Cap(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    _log = logging.getLogger("huginn.autoloop.cognitive_loop")
+    _cap = _Cap(level=logging.INFO)
+    _log.addHandler(_cap)
+    _old = _log.level
+    _log.setLevel(logging.INFO)
+    try:
+        CognitiveRunner._trigger_counterexample_hunt(stub)
+    finally:
+        _log.removeHandler(_cap)
+        _log.setLevel(_old)
+
+    assert stub._force_imaginate is True
+    assert any(
+        r.levelno == logging.WARNING and "counterexample hunt triggered" in r.getMessage()
+        for r in records
+    ), [(r.levelname, r.getMessage()) for r in records]

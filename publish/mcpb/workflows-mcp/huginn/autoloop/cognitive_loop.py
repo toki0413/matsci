@@ -1454,7 +1454,11 @@ class CognitiveRunner:
         self._speculator_hint = (
             (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
         )
-        logger.info("P2 counterexample hunt triggered, hint injected")
+        # warning 级 (非 info): CLI autoloop 默认 root logger 无 handler, INFO 被静默
+        # 吞掉, 该"循环改变方向"机制会**触发过却离线不可见**(run65 实测: renamed-reduction
+        # 触发 4 次 → 反例搜索必已 fire, 但 run.log 里 `counterexample hunt triggered` 计 0).
+        # run.log 一定捕获 WARNING, 故升到 warning 让 replay_audit 的 hunt 计数可观测.
+        logger.warning("counterexample hunt triggered, hint injected")
     def _control_trace(
         self,
         name: str,
@@ -3953,6 +3957,15 @@ Respond JSON only:
             # 能看到 N-k 轮的 hypothesis/plan/result, 避免重复试错.
             # ponytail: 字段都从 cog 取, 不引入新状态. 截断长字段防 prompt 膨胀.
             try:
+                # 执行输出规模 (本轮 execute 的 objectives 个数): 供 replay_audit 判
+                # "执行输出恒同 → 执行层零新信息". 只在 execute 轮记 (非 execute 轮的
+                # execution_result 会跨轮残留, 记了会假性恒定).
+                _er = cog.get("execution_result")
+                _nobj = len(_er.get("objectives") or {}) if isinstance(_er, dict) else 0
+                # 读一次即清 (consume-once): 该值由本轮 execute 写入, 若不清, 后续
+                # 非 execute 轮会读到上一轮的残值 → 假性"prompt_len 恒定".
+                _plen = getattr(self, "_last_author_prompt_len", None)
+                self._last_author_prompt_len = None
                 _snapshot = {
                     "iter": state.iteration,
                     "action": action,
@@ -3982,6 +3995,14 @@ Respond JSON only:
                     # 单调于原始值、免绝对阈值; 秩未就绪时回落原始 _last_surprise.
                     "surprise": routing_surprise(self),
                     "rule_hit": getattr(self, "_last_rule_hit_id", "") or "",
+                    # 观测面 (与 surprise/exec_ok 同向): "作者提示长度 / 目标长度 /
+                    # 执行输出规模" 写进 episodic 结构化字段, 使 replay_audit 的
+                    # "输入冻结 / 执行输出恒同"判定**不依赖 HUGINN_EXEC_ROUTE_DEBUG**
+                    # 下的 run.log 诊断行. 旧码仅在调试开关打开时才有这三项 ⇒ 关掉
+                    # 就静默失明 (run80-84 实测: 三项全空, 判词整段不触发).
+                    "prompt_len": _plen,
+                    "obj_len": len(getattr(self, "_objective", "") or ""),
+                    "nobj": _nobj if action == "execute" else None,
                 }
                 state.iteration_history.append(_snapshot)
                 if len(state.iteration_history) > _MAX_ITER_HIST:
