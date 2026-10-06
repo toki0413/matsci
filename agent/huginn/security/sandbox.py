@@ -10,7 +10,6 @@ import contextlib
 import logging
 import os
 import shutil
-import signal
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from huginn.utils.common import hash_text
+from huginn.utils.process import kill_process_group, new_group_popen_kwargs
 
 if TYPE_CHECKING:
     from huginn.security.docker_sandbox import DockerSandboxExecutor
@@ -228,23 +228,13 @@ def _kill_process_tree(proc: subprocess.Popen, *, own_group: bool) -> None:
     修法: 子进程自立新会话/进程组执行 (posix ``start_new_session`` / win32
     ``CREATE_NEW_PROCESS_GROUP``), 超时时整组回收. ``own_group=False`` (调用方显式
     要求共用进程组) 时退回只杀直接子进程 —— 绝不 killpg 一个可能含 agent 自身的组.
-    全部尽力而为, 失败不影响主流程 (真正的回收兜底是随后的 ``communicate()``).
+    整组回收交由 :func:`huginn.utils.process.kill_process_group` 统一实现 (sandbox /
+    PersistentTerminal / 外部计算工具共用一套语义). 全部尽力而为, 失败不影响主流程
+    (真正的回收兜底是随后的 ``communicate()``).
     """
-    pid = proc.pid
-    if own_group and os.name == "posix":
-        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
-            return
-    elif own_group and os.name == "nt":
+    if not kill_process_group(proc.pid, own_group=own_group):
         with contextlib.suppress(Exception):
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True,
-                timeout=10,
-            )
-            return
-    with contextlib.suppress(Exception):
-        proc.kill()
+            proc.kill()
 
 
 class SandboxExecutor:
@@ -603,14 +593,9 @@ class SandboxExecutor:
                 _popen_kwargs.get("creationflags", 0)
                 & getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             )
-        elif os.name == "posix":
-            _popen_kwargs["start_new_session"] = True
-            _own_group = True
-        elif os.name == "nt":
-            _popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-            _own_group = True
         else:
-            _own_group = False
+            _default_kwargs, _own_group = new_group_popen_kwargs()
+            _popen_kwargs.update(_default_kwargs)
 
         try:
             proc = subprocess.Popen(

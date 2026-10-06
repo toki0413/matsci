@@ -2056,3 +2056,49 @@ def test_darwin_novelty_gated_by_progress(monkeypatch) -> None:
         nov_prog_eng._darwin_last_score,
         prog_only_eng._darwin_last_score,
     )
+
+
+async def test_execute_workflow_stage_results_reads_real_stage_fields() -> None:
+    """run84 回归: ``WorkflowResult.stages`` 是 dict[str, ComputationalStage].
+
+    旧实现 ``for s in result.stages`` 迭代出的是 **id 字符串**, 又读
+    ``s.stage_name`` / ``s.output_data`` (真实字段是 ``name`` / ``result.data``) →
+    AttributeError 被 ``_execute_workflow`` 的 except 兜成
+    ``{"success": false, "error": "'str' object has no attribute 'stage_name'"}``,
+    整条 workflow 证据归零 (run84 的 execute ledger 只剩这条失败, 报告遂无 Results)。
+    """
+    from pathlib import Path
+
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.signals import EngineSignals
+    from huginn.core_types import ToolResult
+    from huginn.workflows.stages import ComputationalStage, WorkflowResult
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng.workspace = Path("/tmp")
+    eng.settings = None
+    eng._engine_actor = EngineAct(eng)
+
+    done = ComputationalStage(id="s1", name="setup", tool="dummy", tool_input={})
+    done.status = "completed"
+    done.result = ToolResult(data={"x": 7}, success=True)
+    pending = ComputationalStage(id="s2", name="relax", tool="dummy", tool_input={})
+
+    class _FakeWorkflowEngine:
+        async def execute(self, stages, context):
+            return WorkflowResult(
+                success=True,
+                stages={"s1": done, "s2": pending},
+                outputs={"s1": {"x": 7}},
+            )
+
+    eng.workflow_engine = _FakeWorkflowEngine()
+
+    out = await eng._execute_workflow("compute something", {})
+    assert out["success"] is True, out
+    assert out["stage_results"] == [
+        {"name": "setup", "success": True, "output": {"x": 7}},
+        {"name": "relax", "success": False, "output": None},
+    ], out["stage_results"]

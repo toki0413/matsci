@@ -1156,13 +1156,24 @@ Please modify the code to address this task."""
                 "domain": domain,
                 "outputs": result.outputs,
                 "error": result.error,
+                # ``WorkflowResult.stages`` 是 ``dict[id, ComputationalStage]``, 直接
+                # 迭代拿到的是 **id 字符串**, 不是 stage 对象; ``ComputationalStage``
+                # 也只有 ``name`` / ``result``(ToolResult) 字段, 无 ``stage_name`` /
+                # ``output_data``。run84 里这一处 AttributeError 被下方 except 兜成
+                # ``{"success": false, "error": "'str' object has no attribute
+                # 'stage_name'"}``, 使 execute 的**整条 workflow 证据归零**。取
+                # ``.values()`` 并按真实字段名组装。
                 "stage_results": [
                     {
-                        "name": s.stage_name,
-                        "success": s.success,
-                        "output": s.output_data,
+                        "name": s.name,
+                        "success": (
+                            bool(s.result.success)
+                            if s.result is not None
+                            else s.status == "completed"
+                        ),
+                        "output": s.result.data if s.result is not None else None,
                     }
-                    for s in result.stages
+                    for s in result.stages.values()
                 ],
             }
         except Exception as e:
