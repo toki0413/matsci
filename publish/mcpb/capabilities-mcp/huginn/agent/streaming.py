@@ -18,6 +18,7 @@ from huginn.context_manager import (
     calculate_context_usage,
     format_context_usage,
 )
+from huginn.env_access import env_float
 from huginn.hooks import (
     PRE_COMPACT,
     USER_PROMPT_SUBMIT,
@@ -72,6 +73,61 @@ _STREAM_IDLE_TIMEOUT = float(os.environ.get("HUGINN_STREAM_IDLE_TIMEOUT", "60"))
 remaining_budget_s: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "huginn_remaining_budget_s", default=None
 )
+
+# D7: 挂钟预算的**绝对单调时钟 deadline**, 与上面相对值同时设置.
+# 动机 (run83 实测): 相对值在**长片段内会僵死** — autoloop 每步 (或孵化器每次派
+# 分支前) 把"此刻剩余"写进 remaining_budget_s, 但一个切片可能跑 300s+, 期间该值
+# 不再更新. 于是"剩 30s"被冻结, 而降级收集的**总**超时 (下面 _ainvoke_timeout)
+# 当时并未按预算封顶 → 仍能阻塞 300s, 直接烧穿挂钟 (run.log `fallback stream
+# collect timed out (idle=30s, total=300s)`).
+# deadline 一设即成**绝对时刻**, 任何时刻读取都能算出**实时**剩余 = deadline - now,
+# 不受冻结影响. 这是"不设硬时长、只做更细切片"的最小实现: 每个阻塞动作自限到
+# **当前**剩余 (而非某个固定档), 天然随预算收敛.
+budget_deadline_monotonic: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "huginn_budget_deadline_monotonic", default=None
+)
+
+
+def set_budget_deadline(remaining_s: float | None) -> None:
+    """把相对剩余预算存成**绝对** deadline (单调时钟). None = 不限制 (旧行为).
+
+    与 ``remaining_budget_s`` 配套使用: 后者保留给按相对值判断的旧调用点, 这里
+    额外提供可实时求值的绝对时刻. 失败不抛 (预算源异常不应影响 LLM 主流程).
+    """
+    budget_deadline_monotonic.set(
+        None if remaining_s is None else time.monotonic() + float(remaining_s)
+    )
+
+
+def live_budget_left() -> float | None:
+    """**实时**剩余挂钟秒数: 优先绝对 deadline, 无则回退相对 contextvar.
+
+    None = 不受预算约束 (非长程 / 无 goal) → 调用方保持旧行为. 这是 D7 的单一
+    取值口: 冻结的相对值只在无 deadline 时兜底, 有 deadline 时永远算实时的.
+    """
+    deadline = budget_deadline_monotonic.get()
+    if deadline is not None:
+        return deadline - time.monotonic()
+    return remaining_budget_s.get()
+
+
+def _cap_timeout_by_budget(
+    total: float, budget_left: float | None, *, reserve: float | None = None,
+) -> float:
+    """D7: 把单个阻塞动作的**总**超时封顶到**实时**剩余预算 (留收尾余量).
+
+    ``budget_left=None`` (非长程 / 无 goal) → 原样返回, 行为 100% 不变. 下限避免
+    0/负值造成病态立即超时 —— 预算真耗尽时应快速失败交还控制权, 而非再阻塞.
+
+    收尾余量与下限经配置面取值 (``HUGINN_BUDGET_RESERVE_S`` / ``_MIN_SLICE_S``,
+    声明见 ``env_schema``), 让"留多少收尾 / 最短自限"可按任务调, 不必改码. 显式传
+    ``reserve`` 时以入参为准 (供调用方覆盖).
+    """
+    if budget_left is None:
+        return total
+    _reserve = env_float("HUGINN_BUDGET_RESERVE_S") if reserve is None else reserve
+    _floor = env_float("HUGINN_BUDGET_MIN_SLICE_S")
+    return max(_floor, min(total, budget_left - _reserve))
 
 # ainvoke 超时随 thinking 强度放宽 — 我们鼓励深度思考 (thinking=high) 却给
 # 固定 300s, 长推理一超就 kill, 自相矛盾. 按档位给足预算, 避免"三思而后行
@@ -1983,7 +2039,12 @@ class StreamingMixin:
                                     inputs, config,
                                     stream_mode=["values", "messages"],
                                 ),
-                                idle_timeout=_primary_idle,
+                                # D7: 主流空闲阈值也按**实时**剩余预算封顶 — 预算见底
+                                # 时不再让主流维持一段注定越预算的阻塞, 尽早降级/失败.
+                                # 无预算 (None) 时原样 = 旧行为.
+                                idle_timeout=_cap_timeout_by_budget(
+                                    _primary_idle, live_budget_left()
+                                ),
                             ):
                                 if mode == "messages":
                                     chunk, _meta = data
@@ -2053,17 +2114,26 @@ class StreamingMixin:
                             _primary_idle, states_yielded,
                         )
                         turn_span.metadata["stream_watchdog_timeout"] = True
-                        _ainvoke_timeout = float(os.environ.get(
+                        _ainvoke_base = float(os.environ.get(
                             "HUGINN_AINVOKE_TIMEOUT",
                             str(_thinking_scale_timeout()),
                         ))
+                        # D1/D7: 读取 autoloop 的**实时**剩余挂钟预算 (优先绝对 deadline,
+                        # 相对值兜底), 给降级路径封顶, 不让"降级"吞掉超过 goal 剩余预算
+                        # 的时间 (未设置则保持旧行为).
+                        _budget_left = live_budget_left()
+                        # D7: 旧实现只把**空闲**阈值按预算封顶, 降级收集的**总**超时仍是
+                        # 固定的 300s — 于是"剩 30s"时仍可再阻塞 300s, 直接烧穿挂钟
+                        # (run83 run.log: `fallback stream collect timed out (idle=30s,
+                        # total=300s)`). 这里把总超时也封顶到实时剩余 (留收尾余量).
+                        _ainvoke_timeout = _cap_timeout_by_budget(
+                            _ainvoke_base, _budget_left
+                        )
                         # 降级必须放宽空闲阈值: 主流刚以 _primary_idle 空闲失败,
                         # 再用同一阈值重跑只会重演同一失败, 白烧 _ainvoke_timeout
                         # (run72 实测两次各 300s). 长耗时工具期间无 chunk 属合法长空闲.
-                        # D1: 读取 autoloop 每步设置的剩余挂钟预算, 给降级空闲阈值封顶,
-                        # 不让"降级"吞掉超过 goal 剩余预算的时间 (未设置则保持旧行为).
                         _collect_idle = _fallback_stream_idle(
-                            _ainvoke_timeout, budget_left=remaining_budget_s.get()
+                            _ainvoke_timeout, budget_left=_budget_left
                         )
                         # run72 根因: 降级从 inputs 重放整个 turn, 把主流已提交的
                         # 40+ 步重做一遍 → 累计必然超 _ainvoke_timeout, 两次各烧

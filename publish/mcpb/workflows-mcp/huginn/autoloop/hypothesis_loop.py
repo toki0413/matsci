@@ -2142,6 +2142,14 @@ class HypothesisLoop:
                 depth=_depth,
                 width=2,
                 value_fn=value_fn,
+                # D-slice: 细粒度预算切片 — 把"此刻剩余挂钟"注入孵化器, 让 layer1/
+                # PRM打分/layer2 各可选 slice 在启动前自检预算, 不足即用已产出结果
+                # 收尾 (不 kill 在跑的, 只拒绝启动注定越预算的下一片). 非长程/无 goal
+                # 时该函数返回 None → 全部 slice 照跑, 行为不变.
+                # getattr 兜底: host 未暴露预算钩子 (如离线 stub) 时视为不受约束,
+                # 与 _slice_affordable 的 fail-open 一致, 不因缺钩子把整轮打成 skip.
+                budget_remaining_fn=getattr(self, "_budget_remaining_s", None),
+                trace_fn=self._emit_control_trace,
             )
         except Exception:  # 防御: 孵化轮失败回退主模型
             logger.warning(

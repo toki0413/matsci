@@ -90,6 +90,16 @@ def _write_episodic(run_dir: Path, actions: list[tuple[str, bool]]) -> None:
     (shard / "shard_0_99.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_episodic_entries(run_dir: Path, entries: list[dict]) -> None:
+    shard = run_dir / ".huginn" / "memory" / "episodic" / "loop_x"
+    shard.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps({"iter": i, "ts": float(i), "entry": e})
+        for i, e in enumerate(entries, start=1)
+    ]
+    (shard / "shard_0_99.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def test_episodic_exec_count_fallback_when_no_debug_lines(tmp_path: Path) -> None:
     """无调试行时, 执行数从 episodic 的 execute 动作取 (不再误报 0)."""
     run_dir = tmp_path / "run"
@@ -118,3 +128,78 @@ def test_episodic_fallback_does_not_double_count_with_debug_lines(tmp_path: Path
     _write_episodic(run_dir, [("execute", True)])
     a = ra.audit(str(run_dir))
     assert a["execs"] == 3, a["execs"]  # 调试行优先, 不叠加 episodic 的 1
+
+
+# ── surprise 信号源: 不读 run.log 的自由文本 ───────────────────────────
+#
+# 坑: run.log 的 ``surprise=`` 全是自由文本(计划描述前缀 ``[auto-routed:
+# surprise=1.00]`` / LLM 复述), 正则抓它会把"计划里字面复现"误报成路由退化.
+# run65 实测: run.log 字面全 1.0, 但 episodic 秩信号有 4 个不同值 = 未退化.
+
+def test_surprise_reads_unified_episodic_signal_not_runlog_text(tmp_path: Path) -> None:
+    """run.log 满是 ``surprise=1.00`` 自由文本, 但 episodic 信号有区分 ⇒ 不报退化."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text(
+        "[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] foo'\n"
+        "[exec-route] mode='explore' desc[:80]='... surprise=1.0 ...'\n",
+        encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "hypothesize", "surprise": 1.0},
+        {"action": "execute", "surprise": 0.142857},
+        {"action": "validate", "surprise": 0.16},
+    ])
+    a = ra.audit(str(run_dir))
+    assert set(a["input_frozen"]["surprise_values"]) == {1.0, 0.142857, 0.16}
+    assert a["input_frozen"]["surprise_saturated"] is False
+    assert "路由信号死" not in "\n".join(ra._verdict(a))
+
+
+def test_surprise_saturated_only_when_signal_truly_constant(tmp_path: Path) -> None:
+    """统一信号真恒定(>=2 样本)才算饱和, 报"路由信号死"."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "hypothesize", "surprise": 0.5},
+        {"action": "execute", "surprise": 0.5},
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["input_frozen"]["surprise_saturated"] is True
+    assert "路由信号死" in "\n".join(ra._verdict(a))
+
+
+# ── 结构通道: 全 0 = 未激活(非结构域正常), 非"编码器坏" ─────────────────
+
+def _sd(nonzero: bool) -> list[float]:
+    return [1.5, 90.0] + [0.0] * 14 if nonzero else [0.0] * 16
+
+
+def test_structure_all_zero_reports_unexercised_not_dead(tmp_path: Path) -> None:
+    """全 0 结构描述符 ⇒ 报"未激活"(非结构域正常), 不得称"编码器坏/通道无信息"."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "hypothesize", "structure_desc": _sd(False)},
+        {"action": "execute", "structure_desc": _sd(False)},
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["structure_channel_unexercised"] is True
+    joined = "\n".join(ra._verdict(a))
+    assert "结构通道未激活" in joined
+    # 旧判词"→ 该通道无信息"(断言编码器坏)必须消失; 只留"不是编码器坏"的澄清.
+    assert "该通道无信息" not in joined
+
+
+def test_structure_nonzero_channel_reports_nothing(tmp_path: Path) -> None:
+    """有非零结构描述符 ⇒ 通道已激活, 不报未激活."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines\n", encoding="utf-8")
+    _write_episodic_entries(run_dir, [
+        {"action": "execute", "structure_desc": _sd(True)},
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["structure_channel_unexercised"] is False
+    assert "结构通道未激活" not in "\n".join(ra._verdict(a))

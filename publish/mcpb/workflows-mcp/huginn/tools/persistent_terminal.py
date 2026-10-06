@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.process import kill_process_group, new_group_popen_kwargs
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 1800  # 30 分钟, spec "跨调用状态保持"
@@ -62,6 +64,11 @@ class _SubprocessHandle:
             args, shell = cmd, True
         else:
             args, shell = list(cmd), False
+        # 超时孤儿泄漏修复: 让 session 子进程自立新会话/进程组, kill 时由
+        # ``kill_process_group`` 整组回收 — 连 ``sh -c '...; python3 heavy.py'``
+        # 派生的孙进程一并杀掉 (旧实现只 terminate 直接子进程, 孙进程 orphan 后
+        # 继续全速跑).
+        _popen_kwargs, self._own_group = new_group_popen_kwargs()
         # binary mode + 默认 bufsize: stdout 是 BufferedReader, 有 read1;
         # text mode 是 TextIOWrapper 没 read1, bufsize=0 是 FileIO 也没 read1.
         # 边界处手动 encode/decode utf-8.
@@ -73,6 +80,7 @@ class _SubprocessHandle:
             cwd=cwd,
             shell=shell,  # nosec B602 - 工具设计本质就是执行 shell 命令
             bufsize=-1,
+            **_popen_kwargs,
         )
         self._buf: list[str] = []
         self._lock = threading.Lock()
@@ -118,7 +126,10 @@ class _SubprocessHandle:
             if self.proc.stdin and not self.proc.stdin.closed:
                 with contextlib.suppress(Exception):
                     self.proc.stdin.close()
-            self.proc.terminate()
+            # 先整组回收 (孙进程一并杀); 未能整组 (非同类平台/已自立组失败) 时退回
+            # 只杀直接子进程.
+            if not kill_process_group(self.proc.pid, own_group=self._own_group):
+                self.proc.terminate()
             try:
                 self.proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -136,6 +147,9 @@ class _PexpectHandle:
         if isinstance(cmd, list):
             cmd = " ".join(cmd)
         self.proc = pexpect.spawn(cmd, cwd=cwd, encoding="utf-8", echo=False)
+        # pexpect 走 pty.fork, 子进程在 fork 时 setsid → 已是新会话/进程组首领
+        # (pgid == pid), 孙进程同组. kill 时按 pid 整组回收.
+        self._own_group = True
 
     def write(self, data: str) -> None:
         self.proc.send(data)
@@ -149,6 +163,9 @@ class _PexpectHandle:
 
     def kill(self) -> None:
         try:
+            # 先整组回收 (默认 close(force=True) 只 HUP 直接子进程, sh -c 派生的
+            # 孙进程会 orphan). 再 close 收尾, 释放 PTY 并回收子进程防僵尸.
+            kill_process_group(self.proc.pid, own_group=self._own_group)
             self.proc.close(force=True)
         except Exception as e:
             logger.warning("_PexpectHandle.kill error: %s", e)

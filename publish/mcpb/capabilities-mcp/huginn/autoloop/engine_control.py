@@ -37,6 +37,7 @@ from typing import Any
 from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.autoloop.budget import BudgetExhausted, IterationBudget
 from huginn.autoloop.phase_gate import PhaseGate, get_shared_phase_gate_state
+from huginn.env_access import env_bool, env_float
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -559,6 +560,49 @@ class EngineControl:
             return False
         remaining = self._budget_remaining_s()
         return remaining is not None and remaining <= 0
+
+    # ── D6: code_lab 修复循环细粒度切片 (execute 侧补 D-slice) ────────
+    # D1 的 `_budget_exhausted()` 是**硬 0 门**: 只在剩余 ≤0 时才拦. 但 code_lab
+    # 一次尝试 = 书生写码 (LLM) + 沙箱真跑 (最长 `HUGINN_CODELAB_TIMEOUT_S`), 若
+    # 剩余 30s 而单次尝试要 200s, 仍会启动并烧穿挂钟 (run79 实测 execute 857.5s,
+    # 该轮 `HUGINN_CODELAB_TIMEOUT_S=60` → 超支主要来自作者 LLM 调用 × 修复轮数).
+    # D-slice 同款思路, 但 execute 的"尝试"是**产出证据的唯一路径 (核心 slice)**,
+    # 不能像 BranchIncubator 那样整片跳过; 故分两层:
+    #   ① 每次尝试的沙箱超时**封顶到剩余预算** → 单片不可能越界 (核心 slice 自限);
+    #   ② **修复重写**是可选 slice, 启动前查可负担性, 门槛**自校准** = max(固定下限,
+    #      上一片实测挂钟).
+    # 回滚: HUGINN_CODELAB_SLICE=0; 非长程/无 goal 时 `_budget_remaining_s()` 为
+    # None → 两函数均 fail-open, 行为 100% 不变.
+    def _codelab_slice_budget(self) -> float | None:
+        """本 run 剩余挂钟; 关开关 / 非长程 → None (D6 fail-open)."""
+        if not env_bool("HUGINN_CODELAB_SLICE"):
+            return None
+        return self._budget_remaining_s()
+
+    def _codelab_attempt_timeout(self) -> float | None:
+        """D6①: 把单次 code_lab 沙箱超时封顶到剩余预算 (留收尾余量).
+
+        返回 None = 不封顶, 用 env 默认 `HUGINN_CODELAB_TIMEOUT_S` (非长程行为不变).
+        """
+        rem = self._codelab_slice_budget()
+        if rem is None:
+            return None
+        base = env_float("HUGINN_CODELAB_TIMEOUT_S")
+        reserve = env_float("HUGINN_CODELAB_TAIL_RESERVE_S")
+        return max(1.0, min(base, rem - reserve))
+
+    def _codelab_repair_affordable(self, est_cost_s: float) -> bool:
+        """D6②: 可选 slice (修复重写) 启动前查可负担性.
+
+        est_cost_s 是上一片 (上一次尝试: 沙箱 + 其后的作者 LLM) 的**实测挂钟**,
+        作下一片的成本估计. 门槛 `max(固定下限, 实测)` —— 自校准, 不拍脑袋定硬阈值.
+        非长程/关开关 → True (照跑, 行为不变).
+        """
+        rem = self._codelab_slice_budget()
+        if rem is None:
+            return True
+        min_s = env_float("HUGINN_CODELAB_SLICE_MIN_S")
+        return rem >= max(min_s, est_cost_s)
 
     # ── D2: 档位预算改按剩余预算 ────────────────────────────────────
     def _resolve_budget_tier(self, iteration: int) -> IterationBudget:

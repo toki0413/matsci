@@ -105,6 +105,24 @@ def load_graph_nodes(run_dir: str) -> list[tuple[float | None, str]]:
     return nodes
 
 
+def surprises_from_episodic(rows: list[dict]) -> Counter:
+    """统一 surprise 分布 —— 与路由/记忆/展示同源 (``signals.routing_surprise``).
+
+    run.log 里出现的 ``surprise=`` **全是自由文本**: 计划描述里的
+    ``[auto-routed: surprise=1.00]`` 前缀、LLM 复述的 "surprise=1.0" 等, 不是信号.
+    拿它统计会把"计划里字面复现的值"误报成"路由信号死"(run65 实测: run.log 字面
+    全 1.0, 但 episodic 的秩归一信号有 4 个不同值 ⇒ 路由**未**退化). episodic
+    快照的 ``surprise`` 就是 ``routing_surprise``(v31 统一), 是同一事实源.
+    """
+    c: Counter = Counter()
+    for r in rows:
+        v = r.get("surprise")
+        if v is None:
+            continue
+        c[round(float(v), 6)] += 1
+    return c
+
+
 def exec_evidence_from_episodic(rows: list[dict]) -> dict:
     """从 episodic 轨迹提取**真实执行证据** (不受调试开关影响).
 
@@ -143,9 +161,9 @@ def scan_runlog(run_dir: str) -> dict:
             ev["execs"] += 1
             ev["exec_ok"] += 1 if m.group(1) == "True" else 0
             ev["nobj"][int(m.group(2))] += 1
-        m = re.search(r"surprise=([0-9.]+)", ln)
-        if m:
-            ev["surprises"][float(m.group(1))] += 1
+        # 注意: 不解析 run.log 的 `surprise=`. 那些全是自由文本(计划描述前缀 /
+        # LLM 复述), 不是信号 —— 会误报"路由信号死". surprise 改由 episodic 的
+        # 统一秩信号取 (surprises_from_episodic), 见 audit().
         m = re.search(r"obj_len=(\d+)", ln)
         if m:
             ev["obj_lens"][int(m.group(1))] += 1
@@ -367,15 +385,25 @@ def audit(
     # v11 出口验证: 在新"换名债务"不变量下, 这条旧轨迹是否**必然终止**
     debt_replay = replay_rename_debt(log["rename"])
 
-    # 结构编码是否恒零 (JEPA 编码器死信号)
+    # surprise 分布一律取**统一信号** (episodic 的 routing_surprise 秩归一),
+    # 不用 run.log 的自由文本 `surprise=` (见 surprises_from_episodic).
+    log["surprises"] = surprises_from_episodic(rows)
+
+    # 结构通道是否**被激活过**: 有活跃 map 时 StructureDescriptor.encode 必产出
+    # 非零 (已自检: 最小晶体胞得 [1.5,90,0,1.43,15.6,...]); 全 0 ⇒ 该 run 从未
+    # 建结构 map (非结构域目标如 ML/数学属正常), **不是**编码器坏. 旧判据把"全 0"
+    # 当"编码器死", 对每个 ML/数学 run 都误报 (cognitive_checks
+    # ``_snapshot_structure_desc`` 已注明此坑).
     struct_vecs = [r.get("structure_desc") for r in rows if r.get("structure_desc")]
-    struct_dead = bool(struct_vecs) and all(
+    struct_unexercised = bool(struct_vecs) and all(
         not any(float(v) != 0.0 for v in vec) for vec in struct_vecs)
 
     n_cycles = len(cycles)
     zero_progress_cycles = [i for i in range(n_cycles) if new_nodes[i] == 0]
     frozen_prompt = (len(log["prompt_lens"]) == 1)
-    saturated_surprise = (len(log["surprises"]) == 1)
+    # 恒定才叫"死", 且至少要两个样本 —— 单轮轨迹的 1 个值不算饱和.
+    saturated_surprise = (
+        len(log["surprises"]) == 1 and sum(log["surprises"].values()) >= 2)
     frozen_goal = (len(log["obj_lens"]) == 1)
 
     return {
@@ -408,7 +436,7 @@ def audit(
             "goal_frozen": frozen_goal,
             "surprise_saturated": saturated_surprise,
         },
-        "structure_encoder_dead": struct_dead,
+        "structure_channel_unexercised": struct_unexercised,
         "nobj_distribution": dict(log["nobj"]),
     }
 
@@ -509,9 +537,13 @@ def _verdict(a: dict) -> list[str]:
         # 把健康 run 误报为"输入冻结"(run50 实测: prompt_len 变动, obj_len 恒 509).
         out.append(f"输入冻结: obj_len 恒定 {list(ifr['obj_len_values'])} → 计划描述不变")
     if ifr["surprise_saturated"]:
-        out.append(f"路由信号死: surprise 恒定 {list(ifr['surprise_values'])} → 路由退化为恒同一条")
-    if a["structure_encoder_dead"]:
-        out.append("结构编码恒零: JEPA structure_desc 全 0 → 该通道无信息")
+        out.append(
+            f"路由信号死: 统一 surprise(秩归一) 恒定 {list(ifr['surprise_values'])}"
+            " → 路由退化为恒同一条")
+    if a["structure_channel_unexercised"]:
+        out.append(
+            "结构通道未激活: structure_desc 全 0 (该 run 未建结构 map) —— 非结构域"
+            "目标(ML/数学)属正常; 编码器自检可产出非零 ⇒ **不是**'编码器坏/通道无信息'")
     if ex["repeat_streaks"]:
         out.append(f"重复执行 streak 峰值={max(ex['repeat_streaks'])} (最长 {len(ex['repeat_streaks'])} 次命中)")
     if len(a["nobj_distribution"]) == 1 and a["execs"]:

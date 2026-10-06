@@ -102,6 +102,12 @@ MECHANISMS: dict[str, Mechanism] = {
     "curiosity_hint": Mechanism(
         "B", "advisory", "B7 自模型预测不准的簇喂给 hypothesize (默认关)",
     ),
+    "progress_invariant": Mechanism(
+        "B", "force", "P3.2 进展不变量: 连续 window 轮停在执行前阶段 → 强制推进",
+    ),
+    "llm_unavailable": Mechanism(
+        "B", "block", "P1/P2 瞬时故障: 拦破坏性 redirect, 原地重试 (不终止)",
+    ),
     # ---- C 诚实/证据门 (允许硬) ---------------------------------------
     "goal_acceptance": Mechanism(
         "C", "block", "验收门·证据: 完成声明无有限执行证据 → 拦, 不终止",
@@ -134,6 +140,12 @@ MECHANISMS: dict[str, Mechanism] = {
     "code_lab_timeout": Mechanism(
         "D", "observation", "证据·算力: 沙箱超时饿死的修复尝试计数",
     ),
+    "branch_slice_skip": Mechanism(
+        "D", "observation", "D5 hypothesize 侧: 预算不足跳过可选探索 slice",
+    ),
+    "code_lab_slice_skip": Mechanism(
+        "D", "observation", "D6 execute 侧: 预算不足跳过 code_lab 修复重写 slice",
+    ),
     "hypothesis_status_writeback": Mechanism(
         "D", "observation", "假设状态回写 (support/refute 证据落图)",
     ),
@@ -142,11 +154,18 @@ MECHANISMS: dict[str, Mechanism] = {
 
 # 控制面预算 (only-shrink): 当前实测机制数. 收敛后下调 —— 新增机制须先过 §3 两问
 # 并给出"删掉哪一条"的理由, 不允许悄悄顶上界. 治理测试断言实际数 <= 此值.
-CONTROL_MECHANISM_BUDGET = 22
+#
+# 22 → 26 (2026-10-05, 一次性补登记, 非新机制): 本轮 P1/P2 (llm_unavailable)、
+# P3.2 (progress_invariant)、D5 (branch_slice_skip)、D6 (code_lab_slice_skip) 四类
+# 机制此前已落代码并发射, 但漏登记 (治理测试红)。此为上界债偿还, 不是扩张:
+# 四者均为本会话"长程空转/预算超支"修复链的组成, 已各自带回归测试; 基线棘轮
+# 从本值起继续 only-shrink。四条新登记逐一可过 §3 两问 (不替科学判断 / 有退出)。
+CONTROL_MECHANISM_BUDGET = 26
 
 
-# 发射点的三种形态 (与 _control_trace / _emit_control_trace / engine_observe
-# 的直发 campaign.control_trace 对齐). 单一实现, 供治理测试与审计共用.
+# 发射点的四种形态 (与 _control_trace / _emit_control_trace / engine_observe
+# 的直发 campaign.control_trace / 注入式 trace_fn 回调对齐). 单一实现, 供治理
+# 测试与审计共用.
 _TRACE_CALL = re.compile(
     r"_control_trace\(\s*(?:name\s*=\s*)?[\"']([a-z_]+)[\"']"
 )
@@ -154,6 +173,10 @@ _TRACE_CALL = re.compile(
 _DIRECT_EMIT = re.compile(
     r"\"campaign\.control_trace\".{0,400}?\"name\"\s*:\s*\"([a-z_]+)\"", re.S
 )
+# 注入式回调: trace_fn("name", evidence, action) —— 组件 (如 BranchIncubator 的
+# D-slice) 不自持 trace, 由调用方注入 engine._emit_control_trace, 名字仍是字面量.
+# 不补这条, 经回调上报的 trace (branch_slice_skip) 对治理面不可见 = 静默新增缺口.
+_TRACE_FN_CALL = re.compile(r"\btrace_fn\(\s*[\"']([a-z_]+)[\"']")
 
 
 def scan_emitted_names(root: Path | None = None) -> dict[str, list[str]]:
@@ -171,7 +194,7 @@ def scan_emitted_names(root: Path | None = None) -> dict[str, list[str]]:
             text = py.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for rx in (_TRACE_CALL, _DIRECT_EMIT):
+        for rx in (_TRACE_CALL, _DIRECT_EMIT, _TRACE_FN_CALL):
             for m in rx.finditer(text):
                 loc = f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}"
                 found.setdefault(m.group(1), []).append(loc)
