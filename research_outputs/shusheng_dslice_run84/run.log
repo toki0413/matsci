@@ -79,3 +79,69 @@ fallback stream collect timed out (idle=30s, total=250s)
 [FINALLY-REFLECT] tool_results_this_turn=30
 control_trace name=collab_branch_incubator iteration=1 evidence=use: branches=3 ok=1 valued=1 winner_value=0.4 winner_tokens=11563 depth=2 action=use
 control_trace name=code_lab_timeout iteration=3 evidence=attempt=1/4 code_lab 执行超时 (> 60.0s) action=advisory_hint
+control_trace name=code_lab_timeout iteration=3 evidence=attempt=2/4 code_lab 执行超时 (> 60.0s) action=advisory_hint
+code_lab 修复循环: 挂钟预算已耗尽, 停止第 3 次尝试
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 挂钟预算耗尽, 中止 code_lab 修复循环
+code_lab 最后一版书生代码:
+import numpy as np
+from scipy.optimize import minimize
+
+def poly_basis(X, n):
+    X1 = X.flatten()
+    return np.array([X1**i for i in range(n)]).T
+
+def _as_2d(x):
+    return x.reshape(-1, 1) if x.ndim == 1 else x
+
+def zero_violation(err):
+    return float(np.max(np.abs(err))) <= 1e-3
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([0.5, 2.0, -1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(w + 10)
+        y = poly_basis(X, w + 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, w + 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(np.concatenate([y, yv]))
+    if scale > 1e-10:
+        y = y / scale
+        yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def mlp_fit(X, y, h, seeds=1):
+    import torch
+    import torch.nn as nn
+    class M(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = nn.Linear(1, h)
+            self.l2 = nn.Linear(h, 1)
+        def forward(self, x):
+            return torch.tanh(self.l1(torch.tanh(self.l1(x)))).float()
+    model = M()
+    criterion = nn.MSELoss()
+    optim = torch.optim.LBFGS(model.parameters(), lr=0.1)
+    Xf, yf = torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+    best_loss, best_state = float('inf'), None
+    for seed in range(seeds):
+        torch.manual_seed(seed)
+        model.reset_parameters()
+        for _ in range(50):
+            optim.zero_grad()
+            out = model(Xf)
+            loss = criterion(out, yf)
+            loss.backward()
+            optim.step()
+        if loss.item() < best_loss:
+            best_loss, best_state = loss.item(), model.state_dict()
+    if best_state:
+        model.load_state_dict(best_state)
+    return model
+
+def mlp_
