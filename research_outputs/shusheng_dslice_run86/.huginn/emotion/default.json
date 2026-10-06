@@ -1,12 +1,12 @@
 {
-  "valence": -0.0797112281990776,
-  "arousal": 0.15989174969157455,
-  "trust": 0.470021681377854,
+  "valence": -0.0392052227126846,
+  "arousal": 0.18934692946988876,
+  "trust": 0.47007642197523825,
   "affection": 0.2,
-  "fatigue": 0.039891847401457875,
+  "fatigue": 0.07920908405717557,
   "loneliness": 0.0,
-  "interest": 0.55,
-  "timestamp": "2026-10-06T12:16:47.109728+00:00",
+  "interest": 0.6496553947496193,
+  "timestamp": "2026-10-06T12:22:16.091451+00:00",
   "events": [
     {
       "timestamp": "2026-10-06T12:14:36.974380+00:00",
@@ -23,6 +23,32 @@
     },
     {
       "timestamp": "2026-10-06T12:16:47.109717+00:00",
+      "source": "user",
+      "type": "task_success",
+      "deltas": {
+        "valence": 0.01999999999999999,
+        "trust": 0.0,
+        "fatigue": 0.02,
+        "interest": 0.05,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; task succeeded; greeting detected"
+    },
+    {
+      "timestamp": "2026-10-06T12:19:27.894667+00:00",
+      "source": "user",
+      "type": "task_success",
+      "deltas": {
+        "valence": 0.01999999999999999,
+        "trust": 0.0,
+        "fatigue": 0.02,
+        "interest": 0.05
+      },
+      "note": "negative user message; task succeeded"
+    },
+    {
+      "timestamp": "2026-10-06T12:22:16.091442+00:00",
       "source": "user",
       "type": "task_success",
       "deltas": {

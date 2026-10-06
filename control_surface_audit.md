@@ -737,6 +737,22 @@ run65 **无 `rename_debt` trace** ⇒ 线上债务从未越限（与离线反推
     捕获 WARNING），`hunt` 计数与 `SOFT_MARKERS` 探测随之可观测。
   - `repeat execution detected` / `renamed-reduction` / `plan_check failed`：经核实均为
     `logger.warning`（非自由文本、非调试门），**本就可靠，未改**。
+- **野外点亮证据（run86，2026-10-06）**：run86 与 run85 配置一致，仅代码已含上述新增
+  episodic 字段。实测 episodic 逐轮（`HUGINN_EXEC_ROUTE_DEBUG` **未开**）：
+
+  | iter | action | surprise | prompt_len | obj_len | nobj |
+  |---|---|---|---|---|---|
+  | 1 | hypothesize | 0.0 | None | 509 | None |
+  | 2 | plan | 0.0 | None | 509 | None |
+  | 3 | execute | 0.0 | **4786** | 509 | **1** |
+  | 4 | validate | 0.5 | **None** | 509 | None |
+  | 5 | learn | 0.5 | None | 509 | None |
+
+  - `prompt_len` 只在 execute 轮出现、下轮即 `None` ⇒ **consume-once 生效**，不再假性"恒定"；
+  - `obj_len` 每轮必落盘；`nobj` 只在 execute 轮 ⇒ 与 `surprise` / `exec_ok` 同向、不依赖调试开关；
+  - surprise 非恒定（`{0.0, 0.5}`）⇒ "路由信号死"判词消失；
+  - `replay_audit` 据此**首次野外点亮** `执行输出恒同: nobj 恒为 [1] → 执行层零新信息`
+    ——旧码三项全空时此判词整段静默失明（run80–85 从未出现）。
 
 ---
 

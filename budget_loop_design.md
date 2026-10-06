@@ -209,6 +209,23 @@ def expire(self, goal_id: str, reason: str = "wall_clock") -> Goal:
 
 **D7 单测**：`_cap_timeout_by_budget` 五态（None 透传 / 封顶到剩余减收尾 / 不放大 / 下限 / run83 精确例）+ env 覆盖；`live_budget_left` 绝对 deadline 实时递减且优先于冻结的相对值。
 
+### 7.4 run86 判读（观测面字段点亮 + 涓流压穿预算 → 新缺口）
+
+run86（与 run85 同配置）为"点亮观测面新增 episodic 字段"的真跑，两条独立结论：
+
+| 观察 | 结论 |
+|---|---|
+| episodic 逐轮出现 `prompt_len`(execute=4786) / `obj_len`(509) / `nobj`(execute=1)，下轮 `prompt_len` 归 `None` | 新增字段**野外生效**，consume-once 无残值 ⇒ "输入冻结/执行输出恒同"判词不再静默失明（详见 `control_surface_audit.md` §8） |
+| 退场后无 `ppid==1` python 孤儿 | 进程组回收在野外仍成立（run83 泄漏修复未见回退） |
+
+**新缺口（暂记，未改码）**：run86 预算 700s，实际跑到 **22min+（≈1300s）**仍未触发挂钟硬停，人工中止。
+进程状态 `do_epoll_wait`、无子进程、到代理的 3 条连接 `ESTAB` 空闲但 `/proc/<pid>/io` 的 `rchar`
+以 **~3.8KB/s 持续增长** —— 即**流式 token 涓流**：每个 chunk 重置 D7 的空闲阈值，`idle` 永不触发；
+而主流（`streaming.py:2045` 的 `_primary_idle`）**只有空闲封顶、没有总时长封顶**（D7 只把**降级收集**
+的总超时封顶了，`streaming.py:2129`）。故单条"慢而不死"的流能把一段 phase 拖到远超挂钟，observe
+步边界的 `_budget_exhausted()` 无机会执行。**方向**：给主流也上"总时长 × 实时剩余预算"封顶
+（与降级路径同一 `_cap_timeout_by_budget` 口径），而非再加固定 idle。
+
 ---
 
 ## 8. 风险与回滚汇总
