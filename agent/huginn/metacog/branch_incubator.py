@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from huginn.agents.subagent import SubagentDispatch, SubagentResult
+from huginn.env_access import env_float
 from huginn.metacog.context_isolation import ContextBundle, isolate
 from huginn.metacog.depth_search import PrematureConvergenceDetector
 from huginn.metacog.method_registry import MethodRegistry
@@ -160,7 +161,7 @@ class BranchIncubator:
         # slice 最低成本 (秒): 剩余预算 < 此值就不启动下一个可选 slice.
         _min_s = (
             slice_min_s if slice_min_s is not None
-            else float(os.environ.get("HUGINN_BRANCH_SLICE_MIN_S", "60"))
+            else env_float("HUGINN_BRANCH_SLICE_MIN_S")
         )
         bundle = ContextBundle(
             global_math_background=math_background,
@@ -489,11 +490,18 @@ class BranchIncubator:
         阈值, 而不是被父级硬砍. budget_remaining_fn=None 时不写, 保持旧行为.
         """
         # D-slice: 刷新预算 contextvar (尽力, 失败不影响 branch).
+        # D7: 同时写绝对 deadline, 让子智能体的 LLM 阻塞随时按**实时**剩余自限
+        # (相对值在 300s+ 的分支片段内会僵死).
         if budget_remaining_fn is not None:
             try:
-                from huginn.agent.streaming import remaining_budget_s as _rb_s
+                from huginn.agent.streaming import (
+                    remaining_budget_s as _rb_s,
+                    set_budget_deadline as _set_deadline,
+                )
 
-                _rb_s.set(budget_remaining_fn())
+                _rb_now = budget_remaining_fn()
+                _rb_s.set(_rb_now)
+                _set_deadline(_rb_now)
             except Exception:  # 防御: streaming 不可用 / 查询失败 → 不刷
                 logger.debug("branch budget contextvar refresh failed", exc_info=True)
 

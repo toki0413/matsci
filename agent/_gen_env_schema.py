@@ -86,7 +86,12 @@ for name, item in inv.items():
     if len(ds) > 1:
         dispersion[name] = ds
 
-raw_read_sites = sum(len(item["reads"]) for item in inv.values())
+raw_read_sites = sum(
+    1
+    for item in inv.values()
+    for r in item["reads"]
+    if not r.get("canonical")
+)
 
 _SCOPE_ORDER = ["deployment", "feature", "tuning", "internal", "legacy"]
 

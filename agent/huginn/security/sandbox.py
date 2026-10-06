@@ -6,9 +6,11 @@ working directories, and enforcing timeouts/output limits.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
+import signal
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -213,6 +215,36 @@ class SandboxResult:
     timed_out: bool = False  # True 当命令因超时被终止 (returncode 仍为 -1)
     # T3: 结构化错误分类, 供下游按类决策 (重试/追踪/降级). 默认 NONE 保持兼容.
     error_kind: str = "none"
+
+
+def _kill_process_tree(proc: subprocess.Popen, *, own_group: bool) -> None:
+    """终止子进程**及其同组的所有后代** — 修超时孤儿泄漏.
+
+    背景: ``subprocess.run(timeout=...)`` 超时时 CPython 只 ``kill()`` **直接子
+    进程**. 若命令是 ``sh -c '...; python3 heavy.py'``, 真正跑计算的孙进程会被
+    orphan 到 init (PPID→1) 后**继续全速运行** (实测 run83 遗留 8 个 python 孤儿,
+    最早烧 37min CPU, 并让主进程收尾多等 300s join 线程).
+
+    修法: 子进程自立新会话/进程组执行 (posix ``start_new_session`` / win32
+    ``CREATE_NEW_PROCESS_GROUP``), 超时时整组回收. ``own_group=False`` (调用方显式
+    要求共用进程组) 时退回只杀直接子进程 —— 绝不 killpg 一个可能含 agent 自身的组.
+    全部尽力而为, 失败不影响主流程 (真正的回收兜底是随后的 ``communicate()``).
+    """
+    pid = proc.pid
+    if own_group and os.name == "posix":
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            return
+    elif own_group and os.name == "nt":
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=10,
+            )
+            return
+    with contextlib.suppress(Exception):
+        proc.kill()
 
 
 class SandboxExecutor:
@@ -561,29 +593,54 @@ class SandboxExecutor:
                     exc_info=True,
                 )
 
+        # P0 修复 (超时孤儿泄漏): 让子进程自立新会话/进程组, 超时时由
+        # ``_kill_process_tree`` 整组回收 —— 连 ``sh -c '...; python3 heavy.py'``
+        # 派生的孙进程一并杀掉 (旧实现只杀直接子进程 = 那层 sh, 孙进程 orphan 后
+        # 继续跑). 调用方显式指定进程组行为时尊重之, 仅在其确实自立新组时才整组杀.
+        _popen_kwargs = dict(run_kwargs)
+        if "start_new_session" in _popen_kwargs or "creationflags" in _popen_kwargs:
+            _own_group = bool(_popen_kwargs.get("start_new_session")) or bool(
+                _popen_kwargs.get("creationflags", 0)
+                & getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+        elif os.name == "posix":
+            _popen_kwargs["start_new_session"] = True
+            _own_group = True
+        elif os.name == "nt":
+            _popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            _own_group = True
+        else:
+            _own_group = False
+
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(valid_cwd) if valid_cwd else None,
-                capture_output=capture_output,
+                stdout=subprocess.PIPE if capture_output else None,
+                stderr=subprocess.PIPE if capture_output else None,
                 text=text,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
                 env=env,
                 shell=False,
-                **run_kwargs,
+                **_popen_kwargs,
             )
-        except subprocess.TimeoutExpired as e:
-            return SandboxResult(
-                success=False,
-                returncode=-1,
-                stdout=e.stdout or "",
-                stderr=e.stderr or "",
-                command=cmd,
-                dry_run=False,
-                timed_out=True,
-            )
+            try:
+                _out, _err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _kill_process_tree(proc, own_group=_own_group)
+                # 回收直接子进程 (防僵尸) 并取回已产出的部分输出; 孙进程已被整组杀掉.
+                _out, _err = proc.communicate()
+                return SandboxResult(
+                    success=False,
+                    returncode=-1,
+                    stdout=_out or "",
+                    stderr=_err or "",
+                    command=cmd,
+                    dry_run=False,
+                    timed_out=True,
+                )
+            result = subprocess.CompletedProcess(cmd, proc.returncode, _out, _err)
         finally:
             # 恢复父进程 soft limit, 避免子进程内存上限反过来卡死 agent 自身.
             # 只恢复 soft limit — hard limit 从未被降低, 无需恢复.

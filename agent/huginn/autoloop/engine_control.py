@@ -37,6 +37,7 @@ from typing import Any
 from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.autoloop.budget import BudgetExhausted, IterationBudget
 from huginn.autoloop.phase_gate import PhaseGate, get_shared_phase_gate_state
+from huginn.env_access import env_bool, env_float
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -574,7 +575,7 @@ class EngineControl:
     # None → 两函数均 fail-open, 行为 100% 不变.
     def _codelab_slice_budget(self) -> float | None:
         """本 run 剩余挂钟; 关开关 / 非长程 → None (D6 fail-open)."""
-        if os.environ.get("HUGINN_CODELAB_SLICE", "1") != "1":
+        if not env_bool("HUGINN_CODELAB_SLICE"):
             return None
         return self._budget_remaining_s()
 
@@ -586,8 +587,8 @@ class EngineControl:
         rem = self._codelab_slice_budget()
         if rem is None:
             return None
-        base = float(os.environ.get("HUGINN_CODELAB_TIMEOUT_S", "600"))
-        reserve = float(os.environ.get("HUGINN_CODELAB_TAIL_RESERVE_S", "5"))
+        base = env_float("HUGINN_CODELAB_TIMEOUT_S")
+        reserve = env_float("HUGINN_CODELAB_TAIL_RESERVE_S")
         return max(1.0, min(base, rem - reserve))
 
     def _codelab_repair_affordable(self, est_cost_s: float) -> bool:
@@ -600,7 +601,7 @@ class EngineControl:
         rem = self._codelab_slice_budget()
         if rem is None:
             return True
-        min_s = float(os.environ.get("HUGINN_CODELAB_SLICE_MIN_S", "30"))
+        min_s = env_float("HUGINN_CODELAB_SLICE_MIN_S")
         return rem >= max(min_s, est_cost_s)
 
     # ── D2: 档位预算改按剩余预算 ────────────────────────────────────

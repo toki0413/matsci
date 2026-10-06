@@ -65,6 +65,7 @@ from huginn.autoloop.signals import (
     strength_stagnation_limit,
 )
 from huginn.autoloop.types import AutoloopResult, LoopPhase
+from huginn.env_access import env_bool, env_int
 from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
@@ -2732,10 +2733,17 @@ Respond JSON only:
             # D1: 每步刷新剩余挂钟预算 contextvar — 供 streaming 降级路径给空闲
             # 阈值封顶, 不让"降级"吞掉超过 goal 剩余预算的时间. contextvar 随 task
             # 传播, 本步 execute 内的 LLM/子智能体可见. None = 无限制, 保持旧行为.
+            # D7: 同时写**绝对** deadline — 相对值在本步的长片段内会僵死, 绝对时刻
+            # 让每个阻塞动作随时算出实时剩余, 自限到"当前"预算 (不设硬时长, 只细切).
             try:
-                from huginn.agent.streaming import remaining_budget_s as _rb_s
+                from huginn.agent.streaming import (
+                    remaining_budget_s as _rb_s,
+                    set_budget_deadline as _set_deadline,
+                )
 
-                _rb_s.set(self._budget_remaining_s())
+                _rb_now = self._budget_remaining_s()
+                _rb_s.set(_rb_now)
+                _set_deadline(_rb_now)
             except Exception:  # 防御: 预算刷新失败不影响主循环
                 logger.debug("remaining_budget_s refresh failed", exc_info=True)
             # P1.4: 每轮开头发 campaign.iteration — 对齐 run() L1305.
@@ -2983,10 +2991,10 @@ Respond JSON only:
             # 从不 execute) → 忽略 LLM 偏好, 强制推进到下一未完成阶段. 这是把
             # "0 tool_calls 空转"变成可达 execute 的**有向路由**; 默认开, 窗口可调
             # (HUGINN_PROGRESS_INVARIANT_WINDOW).
-            if os.environ.get("HUGINN_PROGRESS_INVARIANT", "1") == "1" and not bool(
+            if env_bool("HUGINN_PROGRESS_INVARIANT") and not bool(
                 getattr(self, "_last_phase_unavailable", False)
             ):
-                _win = int(os.environ.get("HUGINN_PROGRESS_INVARIANT_WINDOW", "4"))
+                _win = env_int("HUGINN_PROGRESS_INVARIANT_WINDOW")
                 _tail = state.action_history[-_win:]
                 _forced = progress_invariant_action(cog, state.action_history, window=_win)
                 if _forced is not None:

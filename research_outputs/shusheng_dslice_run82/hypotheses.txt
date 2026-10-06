@@ -1,0 +1,148 @@
+Three Mutually Discriminable Hypotheses on Solution Space Rigidity and Neural Network Generalization
+
+================================================================================
+HYPOTHESIS 1: [DIM: Computation/Approximation] - Structured Function Hypothesis
+================================================================================
+
+STATEMENT: 
+The constraint samples define a target function from a structured analytic class
+(e.g., composition of smooth functions, low-degree polynomial, or function with
+bounded Barron norm). Approximation theory bounds imply that the minimal network
+width needed to achieve zero violation grows sublinearly with w.
+
+PREDICTION:
+N_c(w) ~ C · w^β, where 0 < β < 1 (sublinear growth). Specifically, for a
+function with smoothness parameter k in d-dimensional input space, 
+β ≈ d/(d+2k) < 1. For example, with d=2, k=2: β ≈ 2/6 = 1/3.
+
+PRO:
+- Grounded in well-established approximation theory (Barron's theorem, Kolmogorov
+  superposition theorem, neural network universal approximation bounds)
+- Makes a clear quantitative prediction (specific scaling exponent)
+- Distinguishes between structured vs arbitrary function classes
+
+CON:
+- Requires knowledge of the function class structure
+- May not capture optimization effects (local minima, initialization sensitivity)
+- The exponent β depends on unknown smoothness parameters
+
+MATHEMATICAL GROUNDING:
+For a single-hidden-layer ReLU network f_h(x) = Σ a_j σ(w_j^T x + b_j),
+Barron's (1993) bound states that for functions with bounded Barron norm ||f||_B,
+the approximation error satisfies:
+ε(h) ≤ C · ||f||_B / √h
+
+For functions with additional smoothness (e.g., in Sobolev spaces W^{k,p}),
+better rates apply: ε(h) ≤ C · h^{-k/d} (Cucker & Smale, 2002).
+
+To achieve ε ≤ 1e-3: h ≥ C · (1e-3)^{-d/k} = O(1) if k,d fixed, but if the
+effective dimension grows with w due to more diverse constraint locations,
+we get sublinear scaling.
+
+================================================================================
+HYPOTHESIS 2: [DIM: Geometry/Manifold] - Manifold Rigidity Hypothesis
+================================================================================
+
+STATEMENT:
+The constraint samples lie on a low-dimensional submanifold M ⊂ ℝ^d with
+intrinsic dimension k ≪ d. The solution space is rigid because the network
+only needs to learn the k-dimensional geometry of M, not the full d-dimensional
+ambient space.
+
+PREDICTION:
+N_c(w) = constant (independent of w) for w ≥ w_min, where w_min is the minimum
+number of points needed to sufficiently cover the manifold. Once w ≥ w_min,
+increasing w further does not increase N_c.
+
+PRO:
+- Makes the clearest binary prediction (constant vs growing N_c)
+- Directly addresses the rigid vs floppy dichotomy
+- Grounded in manifold learning theory where sample complexity depends on
+  intrinsic, not ambient, dimension
+
+CON:
+- Assumes manifold structure exists; may fail if constraints are adversarially
+  distributed or lie in a high-curvature region
+- w_min is unknown and may be large for complex manifolds
+- Does not account for optimization difficulties
+
+MATHEMATICAL GROUNDING:
+Let the constraint set be {(x_i, y_i)}_{i=1}^w ⊂ ℝ^d × ℝ, where x_i ∈ M,
+a k-dimensional submanifold of ℝ^d. The target function f* satisfies
+f*|_M ∈ C^∞(M).
+
+For a single-hidden-layer ReLU network with h units:
+f_h(x) = Σ_{j=1}^h a_j σ(w_j^T x + b_j) + b_0
+
+By manifold extension of Barron's theorem (Caponnetto & De Vito, 2007;
+Mallasto & Feragen, 2018), the approximation error on M scales as:
+ε(h) ≤ C · h^{-k/d_M} 
+
+where d_M is the manifold-related dimension parameter. For fixed ε = 1e-3:
+h ≥ C^{d_M/k} · ε^{-d_M/k} = O(1) (constant in w).
+
+The sample complexity for learning a function on a k-dimensional manifold
+scales as O(ε^{-2k}) (not O(ε^{-2d})), so increasing w beyond what's needed
+to cover M doesn't increase the required network width.
+
+================================================================================
+HYPOTHESIS 3: [DIM: Optimization/Landscape] - Landscape Complexity Hypothesis
+================================================================================
+
+STATEMENT:
+As w increases, the loss landscape of the training problem develops more local
+minima and the basin of attraction for the correct solution narrows proportionally.
+To achieve zero violation on held-out points, network width must increase to
+navigate this increasingly complex landscape and find the correct solution basin.
+
+PREDICTION:
+N_c(w) grows linearly: N_c(w) ~ α · w for some α > 0. In the worst case where
+each constraint introduces an independent "degree of freedom" that the network
+must satisfy, we need at least α = O(1) units per constraint.
+
+PRO:
+- Conservative baseline prediction; easy to test against
+- Follows from the intuitive idea that interpolating w points requires at least
+  w degrees of freedom in the worst case (universal interpolation bounds)
+- Accounts for optimization landscape effects
+
+CON:
+- May overestimate requirements by ignoring structure in constraints
+- Ignores the possibility that shared representations could satisfy multiple
+  constraints simultaneously
+- Doesn't distinguish between structured vs unstructured constraint sets
+
+MATHEMATICAL GROUNDING:
+For a neural network with h hidden units in a single layer, the total number of
+trainable parameters is approximately P = h·(d+1) + (h+1) ≈ h·(d+2) for d-dimensional input.
+
+Classical interpolation results (e.g., for radial basis functions, or wide
+neural networks in the NTK regime) show that to interpolate w points exactly,
+one typically needs P ≥ w degrees of freedom. Thus:
+h · (d+2) ≳ w  ⇒  h ≳ w/(d+2)
+
+For fixed d, this gives N_c(w) ~ α·w with α = 1/(d+2).
+
+More refined analysis using covering numbers of the hypothesis class shows
+that the optimization landscape for interpolating w points has at least
+O(w) local minima in the worst case (Arora et al., 2019; Neyshabur et al., 2017).
+To consistently find the global minimum (zero violation), the network width
+must scale with w to maintain a sufficiently wide basin of attraction.
+
+================================================================================
+COMPARISON OF PREDICTIONS
+================================================================================
+
+Hypothesis | Scaling of N_c(w) with w | Key parameter
+-----------|--------------------------|--------------
+1 (Computation) | N_c(w) ~ C · w^β, 0<β<1 | β ≈ d/(d+2k)
+2 (Geometry)    | N_c(w) = constant        | w_min (manifold coverage)
+3 (Optimization)| N_c(w) ~ α·w            | α ≈ 1/(d+2)
+
+These three hypotheses make mutually discriminable predictions:
+- If N_c(w) grows linearly → supports Hypothesis 3 (floppy)
+- If N_c(w) stays constant → supports Hypothesis 2 (rigid)
+- If N_c(w) grows sublinearly (e.g., w^0.5) → supports Hypothesis 1 (intermediate)
+
+A single experiment measuring N_c(w) for w ∈ {10, 50, 100, 200, 500, 1000}
+could distinguish between these three scaling behaviors.

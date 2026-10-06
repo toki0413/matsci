@@ -1,9 +1,9 @@
 # 长程研究闭环与预算控制：矛盾分析与设计说明
 
-> 状态：**P1–P3 已实现**（D1+D4 / D2 / D3 / D5），各带回滚开关，单测已覆盖。范围：`agent/huginn/autoloop/`、`agent/huginn/metacog/branch_incubator.py` 与 `agent/huginn/agent/streaming.py`。
+> 状态：**P1–P3 及 D6/D7 已实现**（D1+D4 / D2 / D3 / D5 / D6 / D7），各带回滚开关，单测已覆盖。范围：`agent/huginn/autoloop/`、`agent/huginn/metacog/branch_incubator.py` 与 `agent/huginn/agent/streaming.py`。
 > 目标：把「闭环要不要继续探索（科学判据）」与「还能不能继续（资源判据）」解耦到正确的层。
 >
-> 落地清单：D1 `_budget_remaining_s`/`_budget_exhausted`（`engine_control.py`）+ streaming 降级阈值封顶（`streaming.py`）；D2 `for_remaining`/`stricter_tier`/`_resolve_budget_tier`（`budget.py`/`engine_control.py`）；D3 `_long_horizon_stall_action` + `_force_stall_redirect` + `decide_fn` 强制 pivot（`cognitive_loop.py`，默认关）；D4 `GoalStore.expire`（`goal_store.py`）；D5 D-slice 细粒度预算切片（`branch_incubator.py`）+ budget contextvar 刷新（`_run_single_branch`）。
+> 落地清单：D1 `_budget_remaining_s`/`_budget_exhausted`（`engine_control.py`）+ streaming 降级阈值封顶（`streaming.py`）；D2 `for_remaining`/`stricter_tier`/`_resolve_budget_tier`（`budget.py`/`engine_control.py`）；D3 `_long_horizon_stall_action` + `_force_stall_redirect` + `decide_fn` 强制 pivot（`cognitive_loop.py`，默认关）；D4 `GoalStore.expire`（`goal_store.py`）；D5 D-slice 细粒度预算切片（`branch_incubator.py`）+ budget contextvar 刷新（`_run_single_branch`）；D6 code_lab 切片（`engine_control.py` `_codelab_slice_budget`/`_codelab_attempt_timeout`/`_codelab_repair_affordable`）；D7 实时预算封顶（绝对 deadline，`streaming.py` `set_budget_deadline`/`live_budget_left`/`_cap_timeout_by_budget`）。
 
 > **D3 实测（run78，同命题混元 endpoint，精简资源配置，35 步 / 7 个认知环）**：
 > - `darwin_stagnation` advisory 触发 3 次（步 14/24/34，均 `stagnation=2, best=2.50`）；
@@ -146,6 +146,19 @@ def expire(self, goal_id: str, reason: str = "wall_clock") -> Goal:
 
 **回滚/等价**：`budget_remaining_fn=None`（非长程/无 goal）或查询返回 `None` → 所有 slice 照跑，行为 100% 不变；查询异常 fail-open。
 
+### D7 实时预算封顶（绝对 deadline，针对 run83 单阶段饿死）
+
+**问题（run83）**：D5 让核心 slice 内自限靠"把此刻剩余预算刷进 `remaining_budget_s` contextvar"。但该相对值在**一个长片段内会僵死** —— autoloop 每步（或孵化器每次派分支前）写一次，之后 300s+ 的片段里不再更新。run83 里 hypothesize 阶段累计 566.2s（占总预算 81%），4 次 LLM 降级收集各按**固定总超时 300s** 阻塞；其中"剩 30s"时仍阻塞满 300s（`run.log`：`fallback stream collect timed out (idle=30s, total=300s)`），execute 被整段饿死。根因是降级收集的**总**超时从未按预算封顶（此前只封顶了**空闲**阈值）。
+
+**方案（不设硬时长，只让每个阻塞动作自限到"当前"剩余）**：
+- `budget_deadline_monotonic` contextvar 存**绝对** deadline（`time.monotonic()+remaining`），与相对值同时设置。任何时刻读取都能算出**实时**剩余 = `deadline - now`，不受片段内冻结影响。
+- `live_budget_left()` 单一取值口：优先绝对 deadline，无则回退相对 contextvar（None = 非长程/无 goal → 旧行为）。
+- `_cap_timeout_by_budget(total, budget_left)`：把单个阻塞动作的**总**超时封顶到实时剩余（留收尾余量）；预算充裕时不放大固定总超时；耗尽时下限快速失败交还控制权。收尾余量/下限经 `HUGINN_BUDGET_RESERVE_S`（默认 5）/`HUGINN_BUDGET_MIN_SLICE_S`（默认 1）配置。
+- 应用点：主流空闲阈值（`idle_timeout`）与降级流**总**超时（`_ainvoke_timeout`）均按实时预算封顶。
+- 预算源刷新：`cognitive_loop` 每步、`branch_incubator._run_single_branch` 派分支前，同时写相对值与绝对 deadline。
+
+**回滚/等价**：`live_budget_left()` 返回 `None`（非长程/无 goal）→ `_cap_timeout_by_budget` 原样返回，行为 100% 不变。
+
 ---
 
 ## 6. 分期与依赖
@@ -166,6 +179,36 @@ def expire(self, goal_id: str, reason: str = "wall_clock") -> Goal:
 4. **D5 单测**（`branch_incubator._selfcheck` 22–27）：`_slice_affordable` 五态；预算不足时 depth=2 仍只跑 layer1（3 dispatch）；预算充足/无约束时行为不变（9 dispatch）；`_assign_values` 逐 branch 预算门；`branch_slice_skip` trace 上报；自校准门槛（layer1 实测 → 决定 layer2 是否负担得起）。
 5. **D5 end-to-end**：长程 run 的 run.log 应在预算将尽时出现 `skip slice=layer2 (return layer1)` / `branch_slice_skip`，且单次 hypothesize 阶段耗时不再显著超出一个 layer1 slice 的实测成本。
 
+### 7.1 实测证据（真跑 + 离线重放，2026-10-05）
+
+| run | 预算 | 观测 |
+|---|---|---|
+| run72/73（改前） | 420s | hypothesize 累计 **887s**（3 layer1+6 layer2 各 ~300s 流式超时）；run.log **无** slice 门控痕迹 |
+| run80（D5 真跑） | 420s | run.log 出现 `branch_slice_skip×2`（`slice=layer1_value` / `slice=layer2 (return layer1)`，`budget<212s`）；总 **459.6s**，hypothesize 217.3s、execute 105.0s |
+| run81（D5 真跑） | 300s | `branch_slice_skip×2`（`budget<372s`）；hypothesize **376.3s** 单核 slice 越了 300s 预算 → plan/execute 被整段砍掉 |
+
+**D5 判读**：门控**已点亮且生效**（layer2 被拒启动，不再出现 887s 累积）。但 run81 暴露一处**边界**：单阶段超支被限制在"**一个 slice** 以内"，而 layer1 这个**核心 slice 不可预占**——当 layer1 实测 372s > 预算 300s 时，仅靠"拒绝下一个 slice"**拦不住本片自身越界**。这与设计预期一致（"不 kill 在跑的，只拒启动注定越预算的下一片"），但也说明：**核心 slice 的成本必须由 D1 的流式降级阈值（`remaining_budget_s` contextvar）在片内自限**，否则把预算压到低于一个 layer1 成本时，整轮仍会因核心 slice 越界而丢阶段。后续若要进一步收口，方向是**给核心 slice 也上片内预算感知**，而非再降预算数字。
+
+**dslice run80 vs run79（execute 侧）**：run79 单次 execute 857.5s（作者 LLM 修复轮未计入预算判断）；run80 execute 105.0s。D6 的"上一片实测（沙箱+作者 LLM）作自校准门槛"方向正确，但 run80 的 execute 是经 `_budget_exhausted()`（硬 0 门）收尾的，**未走到 D6② 的修复重写门** → `code_lab_slice_skip` 尚无野外样本（见下条）。
+
+### 7.2 replay_audit 判据（R1：无进展可观测）
+
+`replay_audit` 是"无进展是否**可观测**"的离线判据；本轮修一处**判词盲区**并加回归：
+
+- **盲区**：`_verdict` 原仅在 `soft>0` 时打印 `落盘 control_trace` 行。零进展但**无软动作**的轮（run80 正是此形态：只发 `branch_slice_skip`/`collab_branch_incubator`/`code_lab_timeout`）会被整段吞掉，证据只剩 `--json` 可见 = 判词对"可观测"失明。已改为**只要有任何落盘 trace 就报**。
+- **计数核验**：`exits.control_traces` 能按名累加四类新登记机制。run80 实测 → `branch_slice_skip×2, collab_branch_incubator×1, code_lab_timeout×1`。
+- **回归**：`tests/test_replay_audit_traces.py`（合成 run.log，覆盖 `progress_invariant`/`llm_unavailable`/`branch_slice_skip`/`code_lab_slice_skip` 的 scan→audit→verdict 全链路）。
+- **待点亮的野外样本**：`progress_invariant` / `llm_unavailable` / `code_lab_slice_skip` 在现有历史 run 中为 0（三者接码晚于这些 run，或需特定触发条件）。点亮标准：run.log 出现该 `control_trace name=` 且被 replay_audit 计到。
+
+### 7.3 run83 判读（D6 未触发 + 孤儿泄漏 → D7）
+
+| 现象 | 根因 | 处置 |
+|---|---|---|
+| `code_lab_slice_skip` 野外样本仍为 0 | execute 被 hypothesize 整段饿死（hypothesize 566.2s / 占总预算 81%），D6 门根本没机会跑 | D7：降级流**总**超时按实时预算封顶，先保证 execute 可达 |
+| 超时遗留 8 个 python 孤儿（最早烧 37min CPU，主进程收尾多等 300s join） | `subprocess.run(timeout=)` 超时只 `kill()` 直接子进程；`sh -c '...; python3 heavy.py'` 的孙进程 orphan 后继续跑 | 进程组回收：子进程自立新会话/进程组，超时 `killpg`/`taskkill /T` 整组回收（`security/sandbox.py` `_kill_process_tree`），带回回归测试 |
+
+**D7 单测**：`_cap_timeout_by_budget` 五态（None 透传 / 封顶到剩余减收尾 / 不放大 / 下限 / run83 精确例）+ env 覆盖；`live_budget_left` 绝对 deadline 实时递减且优先于冻结的相对值。
+
 ---
 
 ## 8. 风险与回滚汇总
@@ -177,6 +220,8 @@ def expire(self, goal_id: str, reason: str = "wall_clock") -> Goal:
 | D3 无进展转动作 | `HUGINN_STALL_AS_ACTION=0` | **关** | 强制动作可能与 decide 冲突 |
 | D4 耗尽语义 | `HUGINN_BUDGET_EXPIRE_SEMANTICS=0` | 开 | 下游若依赖 `completed` 需同步 |
 | D5 D-slice | `budget_remaining_fn=None`（非长程自动等价） | 开（仅长程生效） | 门槛自校准依赖"上一片实测"，首片无参考时用固定下限 |
+| D6 code_lab 切片 | `HUGINN_CODELAB_SLICE=0`（非长程自动等价） | 开（仅长程生效） | 核心 slice 必跑，只门控"修复重写"；沙箱超时封顶到剩余预算 |
+| D7 实时预算封顶 | `live_budget_left()` 返回 None（非长程/无 goal） | 开（仅长程生效） | 绝对 deadline 每秒重算；收尾余量 `HUGINN_BUDGET_RESERVE_S` / 下限 `HUGINN_BUDGET_MIN_SLICE_S` 可调 |
 
 ---
 

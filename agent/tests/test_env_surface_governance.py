@@ -136,8 +136,18 @@ def test_default_dispersion_does_not_grow():
 
 
 def test_raw_read_sites_ratchet():
-    """不变量 4b: 裸 HUGINN_* 读点总数只减不增 (棘轮)."""
-    total = sum(len(item["reads"]) for item in _inventory().values())
+    """不变量 4b: **不经 env_access 的** HUGINN_* 读点总数只减不增 (棘轮).
+
+    只算"裸读": 直接 ``os.environ.*`` 与 ad-hoc 包装 (``_env_int`` 等). 经
+    ``huginn.env_access`` 规范访问器的读点标 ``canonical`` —— 它们是治理的**目标
+    态**, 不计入棘轮 (否则"迁移读点到 env_access"反而推高计数, 与棘轮自相矛盾).
+    """
+    total = sum(
+        1
+        for item in _inventory().values()
+        for r in item["reads"]
+        if not r.get("canonical")
+    )
     assert total <= es.RAW_READ_BASELINE, (
         f"裸 HUGINN_* 读点 {total} 超过基线 {es.RAW_READ_BASELINE}. "
         "新增读点请用 huginn.env_access; 若已迁移读点, 请下调 "

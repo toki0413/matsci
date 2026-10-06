@@ -457,17 +457,24 @@ def _verdict(a: dict) -> list[str]:
                 "本身取决于口径"
                 % (_mode, ga["nodes"], ga["graph_based_rename_flags"],
                    100 * ga["flag_rate"], _ev, _d_ev, _dr, _d_dr))
-    if ex["terminal"] == 0 and ex["soft"] > 0:
+    if ex["terminal"] == 0:
+        # A2 后终止出口只保留挂钟/目标达成: 判据从"是否终止"改为"无进展是否**可观测**"。
+        # 落盘 control_trace 计数就是这条判据的实测证据 —— 故**只要有任何 trace 就报**,
+        # 不能再挂在 `soft>0` 下: 零进展但无软动作的轮 (如 run80 D-slice 只发
+        # branch_slice_skip) 会被整段吞掉, 证据只在 --json 里可见 = 判词失效。
         _tr = ex.get("control_traces") or {}
         _tr_s = ", ".join(
-            f"{k}×{v}" for k, v in sorted(_tr.items(), key=lambda kv: -kv[1])) or "**无**"
-        out.append(
-            "出口体检 (A2 语义): 软动作 %d 次, 可终止出口 0 次 —— A2 后终止出口只保留"
-            "**挂钟预算/目标达成**, 收敛·换名债务·结题类均已降级为 advisory, 故此**不是**"
-            "不变量违规; 改判「无进展是否**可观测**」" % ex["soft"])
-        out.append(
-            "  ⇒ 落盘 control_trace: " + _tr_s
-            + ("" if _tr else " —— 无进展却无任何 trace = 真·不可观测"))
+            f"{k}×{v}" for k, v in sorted(_tr.items(), key=lambda kv: -kv[1]))
+        if ex["soft"] > 0:
+            out.append(
+                "出口体检 (A2 语义): 软动作 %d 次, 可终止出口 0 次 —— A2 后终止出口只保留"
+                "**挂钟预算/目标达成**, 收敛·换名债务·结题类均已降级为 advisory, 故此**不是**"
+                "不变量违规; 改判「无进展是否**可观测**」" % ex["soft"])
+        if _tr_s:
+            out.append("  ⇒ 落盘 control_trace: " + _tr_s)
+        elif ex["soft"] > 0 or z:
+            out.append(
+                "  ⇒ 落盘 control_trace: **无** —— 有无进展轮却无任何 trace = 真·不可观测")
     ifr = a["input_frozen"]
     if ifr["prompt_frozen"]:
         out.append(f"输入冻结: prompt_len 恒定 {list(ifr['prompt_len_values'])} → 同一问题反复问")

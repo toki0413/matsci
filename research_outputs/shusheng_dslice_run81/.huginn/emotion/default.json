@@ -1,0 +1,25 @@
+{
+  "valence": -0.1,
+  "arousal": 0.13,
+  "trust": 0.47,
+  "affection": 0.2,
+  "fatigue": 0.02,
+  "loneliness": 0.0,
+  "interest": 0.5,
+  "timestamp": "2026-10-06T04:30:00.014397+00:00",
+  "events": [
+    {
+      "timestamp": "2026-10-06T04:30:00.014387+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "valence": -0.1,
+        "trust": -0.03,
+        "fatigue": 0.02,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; greeting detected"
+    }
+  ]
+}
