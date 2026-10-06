@@ -105,6 +105,26 @@ def load_graph_nodes(run_dir: str) -> list[tuple[float | None, str]]:
     return nodes
 
 
+def exec_evidence_from_episodic(rows: list[dict]) -> dict:
+    """从 episodic 轨迹提取**真实执行证据** (不受调试开关影响).
+
+    run.log 的 ``[code-lab-run]`` 行只在 ``HUGINN_EXEC_ROUTE_DEBUG`` 打开时输出
+    (见 :meth:`engine_act._run_code_lab`) ⇒ 正常 run 里 ``scan_runlog`` 恒得
+    ``execs=0``, 误报"执行=0". 但 episodic 每轮的 ``execute`` 动作**总是**落盘,
+    且带 ``exec_ok`` (= ``execution_result is not None``), 是不依赖开关的权威源.
+    故以它为回退: 没抓到调试行时用这里的计数, 而非把"没开调试"当成"没执行".
+    """
+    execs = 0
+    exec_ok = 0
+    for r in rows:
+        if r.get("action") != "execute" or "exec_ok" not in r:
+            continue
+        execs += 1
+        if r.get("exec_ok"):
+            exec_ok += 1
+    return {"execs": execs, "exec_ok": exec_ok}
+
+
 def scan_runlog(run_dir: str) -> dict:
     """把 run.log 折成计数/序列: 用于出口体检与"输入冻结"检测."""
     p = Path(run_dir) / "run.log"
@@ -323,6 +343,11 @@ def audit(
     cycles = cycles_from_episodic(rows)
     nodes = load_graph_nodes(run_dir)
     log = scan_runlog(run_dir)
+    # 执行计数回退: run.log 的 [code-lab-run] 只在 HUGINN_EXEC_ROUTE_DEBUG 下输出,
+    # 正常 run 抓不到 ⇒ 用 episodic 的 execute 动作计数, 免把"没开调试"误报成"没执行".
+    if log["execs"] == 0:
+        epi = exec_evidence_from_episodic(rows)
+        log["execs"], log["exec_ok"] = epi["execs"], epi["exec_ok"]
 
     # 每轮"新增假设节点"数: 按 graph.created_at 落进 [cycle.ts, next.ts)
     node_ts = sorted(t for t, _ in nodes if t is not None)

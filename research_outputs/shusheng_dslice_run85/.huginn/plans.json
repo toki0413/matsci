@@ -1,0 +1,67 @@
+{
+  "plans": [
+    {
+      "id": "plan_314a818b",
+      "objective": "Based on the provided context and blind spots, here is the summary of the three divergent candidate hypotheses regarding the relationship between constraint sample count ($w$) and minimum network capacity ($N_c(w)$).\n\n### Summary of Candidate Hypotheses\n\n**1. [DIM: STRUCTURE] Algebraic Variety Dimension Hypothesis**\n*   **Mathematical Grounding:** Algebraic Geometry (Hilbert's Syzygy Theorem). Assumes constraints sample from a low-dimensional algebraic variety where intrinsic dimension $d$ is invariant to sample count $w$.\n*   **Prediction:** $N_c(w) \\approx \\text{constant}$ (Flat scaling; slope $\\approx 0$ on log-log plot).\n*   **Pros:** Theoretically robust for strict polynomial constraints; implies rigidity is intrinsic to the structure.\n*   **Cons:** Fails if constraints are noisy or do not form an exact algebraic variety (addressing the \"Data\" blind spot).\n\n**2. [DIM: GEOMETRY] Manifold Curvature and Metric Entropy Hypothesis**\n*   **Mathematical Grounding:** Differential Geometry & Metric Entropy. Assumes constraints sample from a curved $d$-dimensional manifold. The covering number required for stable interpolation scales with curvature, linking sample count $w$ to capacity $N_c$ via $w \\sim N_c^2$.\n*   **Prediction:** $N_c(w) \\propto \\sqrt{w}$ (Square-root scaling; slope $\\approx 0.5$ on log-log plot).\n*   **Pros:** Novel and distinct from linear/constant models; accounts for geometric complexity of the solution space.\n*   **Cons:** Requires non-trivial manifold curvature; sensitive to optimization failures distorting the observed minimum width (addressing the \"Computational\" blind spot).\n\n**3. [DIM: OPTIMIZATION] Landscape Connectivity Hypothesis**\n*   **Mathematical Grounding:** Optimization Theory (Loss Landscapes). Assumes each additional constraint introduces a new local minimum/barrier in the loss landscape. Network width must grow linearly to maintain gradient flow connectivity across these barriers.\n*   **Prediction:** $N_c(w) \\propto w$ (Linear scaling; slope $\\approx 1$ on log-log plot).\n*   **Pros:** Directly addresses the non-convexity and local minima issues (addressing the \"Computational\" blind spot).\n*   **Cons:** Highly dependent on initialization and optimizer strength; may artificially inflate $N_c$ due to optimization difficulty rather than true capacity needs.\n\n### Conclusion & Selection\nThe three hypotheses are **mutually discriminable** based on the scaling exponent of $N_c(w)$ versus $w$ (0, 0.5, and 1 respectively). \n\n**Selected Hypothesis:** **[DIM: GEOMETRY] Manifold Curvature Hypothesis**. It is selected as the most testable and novel candidate because it bridges the gap between the rigid algebraic limit and the naive linear optimization limit, offering a specific, checkable prediction ($\\sqrt{w}$) that distinguishes \"fat\" geometric rigidity from simple over-parameterization.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Generate synthetic polynomial constraints (algebraic variety) of intrinsic dimension d=1 (e.g., y = x^2) sampled at w points. Design a Python workflow to sweep network hidden width N from 2 to 50, train on w constraints (loss = MSE), and evaluate on held-out test points. Record the minimum N achieving max abs error ≤ 1e-3 on test set for each w. Compare scaling trend against hypotheses: constant (rigid), sqrt(w), or linear. Ensure convergence by checking training error also reaches ≤1e-3. Run with fixed random seed for reproducibility.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/constraint_scanner.py",
+            "src/network_capacity_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-06T10:12:59.416716+00:00",
+      "confirmed_at": "2026-10-06T10:13:59.455002+00:00",
+      "completed_at": "2026-10-06T10:15:11.469758+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_c24d2827",
+      "objective": "[DIM: measure] **Rademacher Complexity Scaling:** For rigid families, constraints lie in a d-dimensional subspace (d fixed). The Rademacher complexity of width-N networks scales as O(√(d/N)). To achieve zero violation on w test points with ε=1e-3, uniform convergence requires N_c(w) ≥ C·d·log(w/ε²). Thus N_c(w) = Θ(log w) for rigid families. For fat families with w independent constraints, the effective dimension scales with w, giving N_c(w) = Θ(w). | predict: rigid: N_c(w) grows logarithmically in w; fat: N_c(w) grows linearly in w | pro: Grounded in statistical learning theory; connects sample complexity directly to network width; makes a quantitative, checkable prediction about the growth rate | con: Uniform convergence bounds may be loose; actual N_c could be smaller than predicted by worst-case bounds |\n\n[DIM: computation] **NTK Rank Condition:** In the NTK regime, a width-N network can interpolate w points iff the NTK matrix on those points has full rank. For rigid families with algebraic dependencies, the NTK restricted to the constraint manifold has rank saturating at d (manifold dimension), so N_c(w) = Θ(d) suffices for any w. For fat families with independent constraints, the NTK requires N ≥ w to achieve full rank on all w points, giving N_c(w) = Θ(w). | predict: rigid: N_c(w) = constant (independent of w); fat: N_c(w) grows linearly with w | pro: Directly connects neural network expressivity to kernel methods; prediction is sharp and testable via NTK computation; regime is well-understood theoretically | con: NTK regime requires very wide networks; finite-width effects may modify scaling; may not capture practical training dynamics |\n\n[DIM: dynamics] **Landscape Conditioning:** For rigid families with algebraic constraints, the loss landscape has a connected manifold of solutions with benign curvature (Hessian eigenvalues bounded). Gradient flow converges to zero-violation solutions with N_c = Θ(1) regardless of w. For fat families, the landscape develops exponentially many local minima as w increases, with the Hessian becoming increasingly ill-conditioned (condition number κ ∝ w^α). Escaping these requires N_c(w) that grows polynomially: N_c(w) ∝ w^α for some α ∈ (0,1], where α quantifies the landscape ruggedness. | predict: rigid: N_c(w) = constant; fat: N_c(w) ∝ w^α for some α ∈ (0,1] (sublinear polynomial growth) | pro: Connects to practical optimization behavior; explains why wider networks help in hard cases; α is a measurable quantity from Hessian spectra during training | con: α is problem-dependent and hard to predict a priori; depends on optimization algorithm and initialization; convergence to global minimum not guaranteed |\n\n**SELECTED:** [DIM: computation] **NTK Rank Condition**\n\n**Rationale:** This hypothesis is the most testable and novel. It makes a sharp, binary prediction (constant vs linear) that directly discriminates between rigid and fat families. The NTK framework provides a concrete mathematical mechanism (rank condition) that can be verified independently of training dynamics. The prediction is checkable by computing the NTK rank analytically or via finite-width approximation, providing a ground truth against which the empirical N_c(w) can be compared. This is novel in the context because previous hypotheses focused on algebraic structure or optimization dynamics, but the NTK perspective provides a direct link between neural network expressivity and constraint satisfaction that hasn't been systematically explored for the rigid/fat dichotomy.\n\n**Mathematics:** The NTK for a width-N ReLU network with variance-prescaling is K(x,x') = (2/π)·√(x·x')·arccos(-x·x'/‖x‖‖x'‖) + (1/π)·x·x' for the standard case. For a network to interpolate w points X = {x_i}^{w}_{i=1}, we need K(X,X) to be positive definite (full rank). For rigid families where constraints lie on a d-dimensional algebraic variety, the effective NTK rank saturates at d because the data lies in a low-dimensional subspace. Thus N_c(w) = Θ(d) for all w. For fat families with w linearly independent constraints in high-dimensional space, the NTK requires N ≥ w to achieve full rank, giving N_c(w) = Θ(w).\n\n**Necessary Condition:** The network must be sufficiently wide to enter the NTK regime (typically N ≫ w). If N is too small, finite-width effects dominate and the NTK prediction breaks down.\n\n**Hidden Assumption:** The NTK regime assumption—that the network behaves like a linear model during training—may not hold for the small widths (N_c) we're probing. Practical training dynamics may differ significantly from NTK predictions at finite width.\n\n**Falsifiable Test:** If empirical N_c(w) for the rigid family grows with w (e.g., logarithmically or polynomially) rather than remaining constant, the NTK rank hypothesis is refuted. Alternatively, if computing the actual NTK rank shows it grows with w for the rigid family, the hypothesis fails.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a computational pipeline to test the NTK Rank Condition hypothesis by generating rigid and fat constraint families, training width-N networks to verify zero-violation capacity N_c(w), and computing NTK rank to validate the theoretical prediction. Steps: 1) Generate rigid family (constraints on low-dimensional manifold) and fat family (independent high-dimensional constraints); 2) Sweep N from 1 to w, train ReLU networks on w points, measure if max absolute error ≤ 1e-3 on held-out points; 3) Compute NTK matrix K(X,X) for each w, determine rank; 4) Compare empirical N_c(w) scaling (rigid: constant vs fat: linear) against NTK rank saturation (rigid: saturates at d vs fat: grows with w).",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/rademacher_ntk_test.py",
+            "src/generate_constraints.py",
+            "src/ntk_computation.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-06T10:19:08.408774+00:00",
+      "confirmed_at": "2026-10-06T10:20:08.470619+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
+    }
+  ]
+}

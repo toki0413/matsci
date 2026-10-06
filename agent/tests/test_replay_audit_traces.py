@@ -1,4 +1,4 @@
-"""replay_audit 控制面 trace 计数 + 判词可见性回归.
+"""replay_audit 控制面 trace 计数 + 判词可见性 + 执行计数回归.
 
 背景: replay_audit 是"离线重放历史轨迹, 核对无进展轮是否**可观测**"的工具
 (见 :mod:`huginn.autoloop.replay_audit`). A2 后线上终止出口只留挂钟/目标达成,
@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from huginn.autoloop import replay_audit as ra
@@ -70,3 +71,50 @@ def test_verdict_reports_traces_without_soft_actions(tmp_path: Path) -> None:
     assert "落盘 control_trace" in joined, joined
     assert "branch_slice_skip×2" in joined, joined
     assert "progress_invariant×1" in joined, joined
+
+
+# ── 执行计数: 不依赖 HUGINN_EXEC_ROUTE_DEBUG ──────────────────────────
+#
+# 坑: run.log 的 ``[code-lab-run]`` 行只在调试开关打开时输出(engine_act
+# ``_run_code_lab``) ⇒ 正常 run 里 ``scan_runlog`` 恒得 execs=0, replay_audit
+# 误报"执行=0"(run85 实测: 有真实 execute 阶段却报 0). 回退源 = episodic 的
+# ``execute`` 动作(总落盘, 带 exec_ok).
+
+def _write_episodic(run_dir: Path, actions: list[tuple[str, bool]]) -> None:
+    shard = run_dir / ".huginn" / "memory" / "episodic" / "loop_x"
+    shard.mkdir(parents=True)
+    lines = []
+    for i, (action, ok) in enumerate(actions, start=1):
+        entry = {"iter": i, "action": action, "exec_ok": ok, "surprise": 0.0}
+        lines.append(json.dumps({"iter": i, "ts": float(i), "entry": entry}))
+    (shard / "shard_0_99.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_episodic_exec_count_fallback_when_no_debug_lines(tmp_path: Path) -> None:
+    """无调试行时, 执行数从 episodic 的 execute 动作取 (不再误报 0)."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.log").write_text("no debug lines here\n", encoding="utf-8")
+    _write_episodic(run_dir, [
+        ("hypothesize", False), ("plan", False),
+        ("execute", True), ("validate", True),
+        ("execute", False),  # 第二次 execute 未产出证据
+    ])
+    a = ra.audit(str(run_dir))
+    assert a["execs"] == 2, a["execs"]  # 两个 execute 动作都算一次执行
+    assert "执行=2" in "\n".join(ra._verdict(a))
+
+
+def test_episodic_fallback_does_not_double_count_with_debug_lines(tmp_path: Path) -> None:
+    """有调试行时用调试行(更细, 含重试), episodic 仅回退 ⇒ 不叠加."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    debug = [
+        "[code-lab-run] res_none=False success=True nobj=3 reason=''",
+        "[code-lab-run] res_none=False success=True nobj=3 reason=''",
+        "[code-lab-run] res_none=False success=True nobj=3 reason=''",
+    ]
+    (run_dir / "run.log").write_text("\n".join(debug) + "\n", encoding="utf-8")
+    _write_episodic(run_dir, [("execute", True)])
+    a = ra.audit(str(run_dir))
+    assert a["execs"] == 3, a["execs"]  # 调试行优先, 不叠加 episodic 的 1
