@@ -104,10 +104,13 @@ class TestSandboxTimeout:
             max_output_bytes=100,
         )
         sandbox = SandboxExecutor(cfg)
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "x" * 500
-            mock_run.return_value.stderr = ""
+        # 沙箱已改用 subprocess.Popen 让子进程自立进程组 (超时整组回收孤儿),
+        # 故 mock Popen 而非 subprocess.run — 后者已不再被调用.
+        with patch("subprocess.Popen") as mock_popen:
+            proc = mock_popen.return_value
+            proc.pid = 424242
+            proc.returncode = 0
+            proc.communicate.return_value = ("x" * 500, "")
             result = sandbox.run([sys.executable, "-c", "print(1)"])
         assert "truncated" in result.stdout
 

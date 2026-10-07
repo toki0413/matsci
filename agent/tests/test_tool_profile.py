@@ -62,6 +62,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "resolve_executable_tool",
         "rdkit_tool",
         "inverse_design_tool",
+        "pybullet_tool",
     },
     ResearchPhase.EXECUTION: _CORE_TOOLS | {
         "vasp_tool",
@@ -94,6 +95,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "gnn_tool",
         "pybamm_tool",
         "experiment_protocol_tool",
+        "pybullet_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
         "validate_tool",
