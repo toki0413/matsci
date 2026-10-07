@@ -1077,9 +1077,25 @@ Please modify the code to address this task."""
         "dft": "standard_dft",
     }
 
+    #: DFT 域的**显式**关键词. 只有描述里真出现这些词才认 DFT —— 绝不因"没匹配上
+    #: 别的域"就默认 DFT: 旧实现 ``return "dft"`` 会让纯 ML/数学命题(如"解空间刚性")
+    #: 被静默塞进 standard_dft 模板, 报告随之为 DFT workflow 写 Methods/Results
+    #: (run88 实测域漂移: 目标是小前馈网络, 报告却在讲 scf/band/dos).
+    _DFT_DOMAIN_KEYWORDS = (
+        "dft", "density functional", "vasp", "quantum espresso", "ab initio",
+        "第一性原理", "scf", "band structure", "band gap", "density of states",
+        "k-point", "kpoint", "pseudopotential", "electronic structure",
+        "能带", "态密度", "电子结构",
+    )
+
     def _classify_workflow_domain(self, description: str) -> str:
-        """廉价关键词分类, 决定走哪个 workflow 模板."""
-        text = description.lower()
+        """廉价关键词分类, 决定走哪个 workflow 模板; **认不出返回 ""**(不默认 DFT).
+
+        返回 "" 表示"这不是已知的 cfd/fea/qc/symbolic/dft 计算域", 调用方
+        ``_execute_workflow`` 据此拒绝伪造 domain 流程, 交上层回落 —— 宁可如实
+        失败, 也不把无关命题套进某个物理模板 (报告漂移的根因).
+        """
+        text = (description or "").lower()
         if any(k in text for k in ("cfd", "fluid", "fluent", "openfoam")):
             return "cfd"
         if any(k in text for k in ("fea", "stress", "mechanical", "abaqus", "ansys")):
@@ -1088,7 +1104,9 @@ Please modify the code to address this task."""
             return "qc"
         if any(k in text for k in ("symbolic", "regression", "拟合")):
             return "symbolic"
-        return "dft"
+        if any(k in text for k in self._DFT_DOMAIN_KEYWORDS):
+            return "dft"
+        return ""
 
     async def _execute_workflow(
         self, description: str, context: dict[str, Any]
@@ -1101,8 +1119,30 @@ Please modify the code to address this task."""
                 standard_dft_workflow,
             )
 
-            domain = self._classify_workflow_domain(description)
-            template_name = self._DOMAIN_TEMPLATE_NAMES.get(domain, "standard_dft")
+            # 认域时同时看 plan 描述与全局 objective —— plan 可能只写动作短语,
+            # 真正的领域约束常待在 objective 里.
+            domain = self._classify_workflow_domain(
+                description or str(getattr(self, "_objective", "") or "")
+            )
+            if not domain:
+                # 认不出计算域 → **拒绝默认套 DFT 模板**. 旧实现 fallback 到
+                # standard_dft, 于是纯 ML/数学命题的报告被写成 DFT workflow 的
+                # Methods/Results (run88 实测域漂移). 如实失败, 交上层回落, 不伪造.
+                logger.warning(
+                    "workflow 无法归入已知计算域, 拒绝 DFT 兜底 (避免报告域漂移): "
+                    "desc[:80]=%r",
+                    (description or "")[:80],
+                )
+                return {
+                    "mode": "workflow",
+                    "success": False,
+                    "domain": None,
+                    "error": (
+                        "目标无法归入 cfd/fea/qc/symbolic/dft 任一计算域, "
+                        "拒绝默认 DFT 模板 (防止报告域漂移)"
+                    ),
+                }
+            template_name = self._DOMAIN_TEMPLATE_NAMES[domain]
             template_fn = get_template(template_name) or standard_dft_workflow
 
             # 找工作区里的输入文件; 只对 DFT/QC 用 structure_path

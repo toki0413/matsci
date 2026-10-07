@@ -2096,9 +2096,39 @@ async def test_execute_workflow_stage_results_reads_real_stage_fields() -> None:
 
     eng.workflow_engine = _FakeWorkflowEngine()
 
-    out = await eng._execute_workflow("compute something", {})
+    # 描述须含已知计算域关键词, 否则 _execute_workflow 会按新域闸拒绝兜底 DFT
+    # (见 _classify_workflow_domain); 本用例只验证 stage 字段读取, 域无关紧要.
+    out = await eng._execute_workflow("run a DFT band structure calculation", {})
     assert out["success"] is True, out
     assert out["stage_results"] == [
         {"name": "setup", "success": True, "output": {"x": 7}},
         {"name": "relax", "success": False, "output": None},
     ], out["stage_results"]
+
+
+def test_classify_workflow_domain_rejects_unknown() -> None:
+    """run88 回归: 纯 ML/数学命题不得被默认归成 dft (报告域漂移根因).
+
+    旧实现 ``_classify_workflow_domain`` 认不出即返回 "dft", 于是"解空间刚性"
+    这类纯 ML 命题被套进 DFT workflow 模板, 报告的 Methods/Results 全写成
+    structure relaxation / SCF / band structure (run88 实测域漂移).
+    """
+    from huginn.autoloop.engine_act import EngineAct
+
+    eng = EngineAct(None)
+    ml = "解空间刚性: 小型前馈网络的泛化行为作为探针, 扫描 N_c(w)"
+    assert eng._classify_workflow_domain(ml) == ""
+    # 显式关键词仍正确识别.
+    assert eng._classify_workflow_domain("run a DFT band structure") == "dft"
+    assert eng._classify_workflow_domain("CFD turbulent flow") == "cfd"
+
+
+async def test_execute_workflow_refuses_unknown_domain() -> None:
+    """认不出计算域时如实失败, 不伪造 DFT 模板 (报告域漂移的止损点)."""
+    from huginn.autoloop.engine_act import EngineAct
+
+    eng = EngineAct(None)
+    out = await eng._execute_workflow("关于解空间刚性的数值实验", {})
+    assert out["success"] is False, out
+    assert out["domain"] is None, out
+    assert "拒绝默认 DFT" in out["error"], out

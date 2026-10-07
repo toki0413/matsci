@@ -874,6 +874,11 @@ class AutoloopEngine:
     def _is_deterministic_numeric(self, description: str) -> bool:
         return self._engine_actor._is_deterministic_numeric(description)
 
+    def _is_code_experiment(self, text: str) -> bool:
+        # PlanCheck._is_code_experiment_plan 经 __getattr__ 转发到此 —— 缺它则
+        # "代码实验不套物理 workflow" 硬路由在生产里静默失效 (run88 报告域漂移).
+        return self._engine_actor._is_code_experiment(text)
+
     async def _request_numeric_probe(self, description: str) -> str:
         return await self._engine_actor._request_numeric_probe(description)
 

@@ -80,6 +80,8 @@ class PlanCheck:
         "_build_plan_prompt",
         "_plan_context_hint",
         "_override_plan_mode",
+        "_asks_to_write_and_run_code",
+        "_is_code_experiment_plan",
         "_log_plan_override",
         "_parse_plan",
         "_plan_check_and_refine",
@@ -408,7 +410,25 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             )
             logger.info("override mode %s→coder: 目标要求写并运行代码", _orig_mode)
             self._log_plan_override("code_task_force_coder", "目标要求写并运行代码")
-        # 割点节点: 强制非 coder mode
+        # 计算实验目标绝不套"物理管线"模式: workflow 只认 cfd/fea/qc/symbolic/dft
+        # 几类模板, 把纯 ML/数学命题(如"解空间刚性")塞进去 → 报告被写成 DFT workflow
+        # 的 Methods/Results (run88 实测域漂移). 目标是代码实验时改走真实执行路径.
+        if current_mode == "workflow" and self._is_code_experiment_plan(plan):
+            _orig_mode = current_mode
+            # 走 coder(Write+Bash 真写码真执行) 而非再叫一次 code_lab —— execute 的
+            # 实验快路径已经先试过 Code Lab, 这里换一条真实执行路径推进, 不重复空转.
+            plan["mode"] = "coder"
+            current_mode = "coder"
+            plan["override_reason"] = "code_experiment_not_physics_workflow"
+            plan["description"] = (
+                f"[auto-routed: 代码实验走真实执行] {plan.get('description', '')}"
+            )
+            logger.info("override mode %s→coder: 目标是代码实验, 非物理管线", _orig_mode)
+            self._log_plan_override(
+                "code_experiment_not_physics_workflow", "代码实验不套物理 workflow 模板"
+            )
+        # 割点节点: 强制非 coder mode (需能跑验证). 代码实验的"验证模态"就是 Code Lab
+        # 真跑, 故代码实验走 code_lab, 其余走 workflow.
         try:
             current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
             if (
@@ -416,13 +436,14 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                 and self.hypothesis_graph.needs_dual_coverage(current_hyp)
                 and current_mode == "coder"
             ):
-                plan["mode"] = "workflow"
+                _dual_mode = "code_lab" if self._is_code_experiment_plan(plan) else "workflow"
+                plan["mode"] = _dual_mode
                 plan["override_reason"] = "cut_vertex_dual_coverage"
                 plan["description"] = (
                     f"[auto-routed: 割点需双覆盖] {plan.get('description', '')}"
                 )
                 logger.info(
-                    "override mode coder→workflow for cut vertex %s", current_hyp
+                    "override mode coder→%s for cut vertex %s", _dual_mode, current_hyp
                 )
                 self._log_plan_override(
                     "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖"
@@ -468,6 +489,28 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             )
         ).lower()
         return any(m in blob for m in self._CODE_TASK_MARKERS)
+
+    def _is_code_experiment_plan(self, plan: dict[str, Any]) -> bool:
+        """目标/plan 是否为"需亲手写代码真跑的计算实验" (命题无关).
+
+        复用引擎的 ``_is_code_experiment`` 词表(单一出处, 不在这里另立一份), 同时
+        看 objective 与 plan 描述 —— plan 常只写动作短语, 实验意图待在 objective.
+        引擎缺该方法(测试 mock)时降级 False, 不误改路由.
+        """
+        try:
+            fn = self._is_code_experiment   # __getattr__ 转发到引擎
+        except AttributeError:
+            return False
+        if not callable(fn):
+            return False
+        blob = " ".join(
+            str(x)
+            for x in (
+                getattr(self, "_objective", "") or "",
+                plan.get("description", "") or "",
+            )
+        )
+        return bool(fn(blob))
 
     def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
         """把 mode 覆盖记到 PhaseGateState.history, 补审计缺口.

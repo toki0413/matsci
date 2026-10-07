@@ -131,3 +131,58 @@ def test_no_leftover_tracked_children(tmp_path: Path):
     code = 'def run(cfg):\n    return {"success": True, "summary": {}, "objectives": {"x": 1.0}}\n'
     assert sandbox_run(code, {}, timeout=30)[0] is not None
     assert not proc_util._LIVE_CHILDREN, proc_util._LIVE_CHILDREN
+
+
+# ── B: 证据链自修复 — 报错必须带回出错行号 (run88) ──────────────────────────
+# 背景: run88 书生代码在沙箱报 ``TypeError: int() argument must be ... not list``,
+# 但旧实现只回 "类型: 消息", 无行号 → 4 轮自修复全落空 → 整轮零证据 → 回落 DFT
+# workflow 造成报告域漂移. 修法: ``_format_exec_error`` 从 traceback 取书生代码
+# (<code_act>) 帧, 附上出错行号与附近源码, 让书生能对症定位.
+
+
+def test_exec_error_reports_line_and_source():
+    """沙箱报错须带"出错位置: 代码第 N 行"与出错源码行."""
+    from huginn.research.code_lab import _format_exec_error
+
+    code = (
+        "def run(cfg):\n"
+        "    xs = [1, 2, 3]\n"
+        "    bad = int(xs)\n"  # 第 3 行: int() 收到 list
+        "    return {'success': True, 'summary': {}, 'objectives': {'x': bad}}\n"
+    )
+    ns: dict = {}
+    exec(compile(code, "<code_act>", "exec"), ns)  # noqa: S102 — 测试自有代码
+    try:
+        ns["run"]({})
+    except Exception as e:
+        msg = _format_exec_error(e, code)
+    assert "出错位置: 代码第 3 行" in msg, msg
+    assert "bad = int(xs)" in msg, msg
+
+
+def test_sandbox_run_error_carries_line_number():
+    """隔离执行路径把"出错行号"如实回灌 (证据链不断裂)."""
+    code = (
+        "def run(cfg):\n"
+        "    xs = [1, 2, 3]\n"
+        "    bad = int(xs)\n"  # 第 3 行
+        "    return {'success': True, 'summary': {}, 'objectives': {'x': bad}}\n"
+    )
+    res, reason = sandbox_run(code, {}, timeout=60)
+    assert res is None, "失败代码不应产出结果"
+    assert reason and "出错位置: 代码第 3 行" in reason, reason
+
+
+def test_repair_prompt_carries_line_and_advice():
+    """自修复提示须含"出错行号"字样与针对 int(list) 的对症建议."""
+    from huginn.research.code_lab import build_author_prompt
+
+    hint = (
+        "执行异常: TypeError: int() argument must be a string, a bytes-like "
+        "object or a real number, not 'list'\n出错位置: 代码第 3 行; 附近源码:\n"
+        "   3|>>    bad = int(xs)"
+    )
+    prompt = build_author_prompt("研究目标 X", repair_hint=hint)
+    assert "出错行号" in prompt, "修复提示未强调行号"
+    assert "int()" in prompt and "先取元素" in prompt, "缺少 int(list) 对症建议"
+    assert "出错位置: 代码第 3 行" in prompt, "未把真实报错原文回灌"
