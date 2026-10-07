@@ -1,0 +1,1116 @@
+Rigidity Experiment v2 - Improved Optimization
+=======================================================
+
+--- Function: linear ---
+  Adam epoch 0, loss = 4.887220e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 5.628073e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 3.778044e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 4.888120e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 3.403795e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 4.933055e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 2.182384e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 4.182776e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 5.238753e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 5.544231e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.927855e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 4.888615e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 1.118862e+01
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 3.933827e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 1.470569e+01
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.423954e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 6.691704e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.537847e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 1.526535e+01
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.465825e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 1.062016e+01
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 1.067006e+01
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 1.249461e+01
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.246651e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 1.080767e+01
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.321656e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 4.545841e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.847090e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 7.051718e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.310202e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 1.078592e+01
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 4.178194e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 6.774729e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 3.247938e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 5.576159e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.630366e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 5.901072e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.605902e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 9.020159e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.926188e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 7.240078e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.141212e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 4.801523e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.202990e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 8.880365e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 3.711859e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 7.226553e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 3.023863e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 3.704900e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.180461e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 8.744592e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.888393e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 5.351406e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.265982e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 3.156008e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 5.117029e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 8.905647e+00
+  Width 29, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 7.848323e+00
+  Width 29, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 29: best holdout error = inf (no width-29 solution)
+  Adam epoch 0, loss = 6.533698e+00
+  Width 30, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 6.616292e+00
+  Width 30, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 30: best holdout error = inf (no width-30 solution)
+  Adam epoch 0, loss = 6.904369e+00
+  Width 31, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 2.709680e+00
+  Width 31, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 31: best holdout error = inf (no width-31 solution)
+  Adam epoch 0, loss = 1.187819e+01
+  Width 32, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Adam epoch 0, loss = 5.306380e+00
+  Width 32, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 2)
+  Width 32: best holdout error = inf (no width-32 solution)
+  w= 2 -> Nc=UNBOUNDED
+  Adam epoch 0, loss = 3.560956e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.981452e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 2.953135e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.561461e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 2.757738e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.586706e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 2.249447e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.170932e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 3.759396e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.933448e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.522325e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.561740e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 7.289356e+00
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.036289e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 9.446020e+00
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.441376e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 4.597597e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.350311e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 9.791757e+00
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.465761e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 6.944018e+00
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 6.974289e+00
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 8.086528e+00
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.338310e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 7.057805e+00
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.381871e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 3.370500e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.484582e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 4.808653e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.271377e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 7.044602e+00
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.168437e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 4.646172e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.678666e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 3.951718e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.388326e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 4.138388e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.378053e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 5.978579e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.734939e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 4.919499e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.373964e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 3.512921e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.312979e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 5.894761e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.918099e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 4.911531e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.568198e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 2.914426e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.249451e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 5.813447e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.712770e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 3.823421e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.535217e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 2.632834e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.690443e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 5.909913e+00
+  Width 29, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 5.279198e+00
+  Width 29, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 29: best holdout error = inf (no width-29 solution)
+  Adam epoch 0, loss = 4.505326e+00
+  Width 30, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 4.553530e+00
+  Width 30, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 30: best holdout error = inf (no width-30 solution)
+  Adam epoch 0, loss = 4.722138e+00
+  Width 31, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 2.422555e+00
+  Width 31, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 31: best holdout error = inf (no width-31 solution)
+  Adam epoch 0, loss = 7.709651e+00
+  Width 32, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Adam epoch 0, loss = 3.797808e+00
+  Width 32, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 3)
+  Width 32: best holdout error = inf (no width-32 solution)
+  w= 3 -> Nc=UNBOUNDED
+  Adam epoch 0, loss = 4.642005e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 5.323270e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 3.624497e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 4.642832e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 3.282272e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 4.684124e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 2.180008e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 3.995328e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 4.965141e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 5.246125e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.848537e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 4.643287e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 1.045374e+01
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 3.767155e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 1.370607e+01
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 6.056065e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 6.302760e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.495476e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 1.422388e+01
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 6.094638e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 9.928441e+00
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 9.974548e+00
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 1.166101e+01
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 5.892748e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 1.010170e+01
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 5.961832e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 4.328457e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.775183e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 6.634578e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.291823e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 1.008160e+01
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 3.991127e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 6.379271e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 3.140012e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 5.275502e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.578915e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 5.574537e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.556827e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 8.450649e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 6.518865e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 6.808232e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.158863e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 4.563269e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 5.852536e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 8.321593e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 3.563921e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 6.795762e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.935849e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 3.557553e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.178363e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 8.196260e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 6.484029e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 5.068743e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.283820e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 3.056194e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 4.853223e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 8.344933e+00
+  Width 29, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 7.369192e+00
+  Width 29, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 29: best holdout error = inf (no width-29 solution)
+  Adam epoch 0, loss = 6.157170e+00
+  Width 30, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 6.233270e+00
+  Width 30, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 30: best holdout error = inf (no width-30 solution)
+  Adam epoch 0, loss = 6.498754e+00
+  Width 31, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 2.650631e+00
+  Width 31, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 31: best holdout error = inf (no width-31 solution)
+  Adam epoch 0, loss = 1.109111e+01
+  Width 32, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Adam epoch 0, loss = 5.027333e+00
+  Width 32, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 4)
+  Width 32: best holdout error = inf (no width-32 solution)
+  w= 4 -> Nc=UNBOUNDED
+  Adam epoch 0, loss = 4.964288e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 5.768481e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 3.730065e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 4.965273e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 3.300148e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 5.014412e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 1.717076e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 4.185979e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 5.347383e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 5.678050e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.735226e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 4.965815e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 1.159326e+01
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 3.906490e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 1.518790e+01
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 6.621008e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 6.905737e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 2.243245e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 1.575634e+01
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 6.665596e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 1.100776e+01
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 1.105922e+01
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 1.293314e+01
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 6.431929e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 1.120105e+01
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 6.511970e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 4.589128e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 2.636294e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 7.287187e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 1.926217e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 1.117864e+01
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 4.180860e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 6.993842e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 3.117906e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 5.712503e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 2.363834e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 6.062057e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 2.332256e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 9.350664e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 7.154355e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 7.486177e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 1.466708e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 4.870425e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 6.385298e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 9.205140e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 3.654703e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 7.471901e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 2.851431e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 3.646764e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 1.713464e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 9.063673e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 7.114326e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 5.469550e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 1.476370e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 3.009293e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 5.215065e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 9.231469e+00
+  Width 29, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 8.126300e+00
+  Width 29, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 29: best holdout error = inf (no width-29 solution)
+  Adam epoch 0, loss = 6.737824e+00
+  Width 30, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 6.825636e+00
+  Width 30, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 30: best holdout error = inf (no width-30 solution)
+  Adam epoch 0, loss = 7.131247e+00
+  Width 31, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 2.464934e+00
+  Width 31, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 31: best holdout error = inf (no width-31 solution)
+  Adam epoch 0, loss = 1.230158e+01
+  Width 32, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Adam epoch 0, loss = 5.420755e+00
+  Width 32, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 5)
+  Width 32: best holdout error = inf (no width-32 solution)
+  w= 5 -> Nc=UNBOUNDED
+  Adam epoch 0, loss = 4.378531e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.031340e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 3.382250e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 4.379329e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 3.037655e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 4.419150e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 1.800327e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 3.749264e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 4.689231e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 4.957824e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.588038e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 4.379768e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 9.798840e+00
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 3.524105e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 1.275823e+01
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.725500e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 5.957728e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.201406e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 1.322691e+01
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.761855e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 9.317699e+00
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 9.359973e+00
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 1.090093e+01
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.571386e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 9.476506e+00
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.636616e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 4.074845e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.509820e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 6.269107e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 1.957034e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 9.458093e+00
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 3.745136e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 6.029623e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.892142e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 4.985830e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.295554e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 5.270166e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.270852e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 7.957746e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 6.160643e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 6.431655e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 1.635261e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 4.302493e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.533392e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 7.838461e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 3.321727e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 6.419992e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.680143e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 3.315354e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 1.797677e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 7.722527e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 6.127965e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 4.788423e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 1.666448e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 2.805613e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 4.581856e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 7.860041e+00
+  Width 29, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 6.955015e+00
+  Width 29, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 29: best holdout error = inf (no width-29 solution)
+  Adam epoch 0, loss = 5.820756e+00
+  Width 30, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 5.892380e+00
+  Width 30, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 30: best holdout error = inf (no width-30 solution)
+  Adam epoch 0, loss = 6.141778e+00
+  Width 31, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 2.374837e+00
+  Width 31, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 31: best holdout error = inf (no width-31 solution)
+  Adam epoch 0, loss = 1.038128e+01
+  Width 32, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Adam epoch 0, loss = 4.748798e+00
+  Width 32, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 6)
+  Width 32: best holdout error = inf (no width-32 solution)
+  w= 6 -> Nc=UNBOUNDED
+  Adam epoch 0, loss = 4.652871e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 5.358124e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 3.584761e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 4.653731e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 3.218911e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 4.696654e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 1.952045e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 3.976756e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 4.988122e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 5.278545e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.746289e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 4.654204e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 1.056597e+01
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 3.736022e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 1.382370e+01
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 6.111146e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 6.363635e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.347236e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 1.434064e+01
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 6.150655e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 1.003761e+01
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 1.008401e+01
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 1.177772e+01
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 5.943732e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 1.021196e+01
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 6.014576e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 4.326036e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.664846e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 6.702567e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.102221e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 1.019174e+01
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 3.972336e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 6.441854e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 3.065256e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 5.308856e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.443472e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 5.616886e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.418150e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 8.546758e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 6.584458e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 6.879659e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 1.829577e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 4.570953e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 5.902478e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 8.416201e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 3.520331e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 6.866949e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.842538e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 3.513550e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 1.949596e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 8.289347e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 6.548883e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 5.095314e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 1.897429e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 2.974171e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 4.872172e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 8.439817e+00
+  Width 29, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 7.450529e+00
+  Width 29, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 29: best holdout error = inf (no width-29 solution)
+  Adam epoch 0, loss = 6.214681e+00
+  Width 30, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 6.292559e+00
+  Width 30, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 30: best holdout error = inf (no width-30 solution)
+  Adam epoch 0, loss = 6.563920e+00
+  Width 31, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 2.525050e+00
+  Width 31, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 31: best holdout error = inf (no width-31 solution)
+  Adam epoch 0, loss = 1.120612e+01
+  Width 32, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Adam epoch 0, loss = 5.052485e+00
+  Width 32, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 8)
+  Width 32: best holdout error = inf (no width-32 solution)
+  w= 8 -> Nc=UNBOUNDED
+  Adam epoch 0, loss = 4.212229e+00
+  Width 1, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 4.828341e+00
+  Width 1, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 1: best holdout error = inf (no width-1 solution)
+  Adam epoch 0, loss = 3.270501e+00
+  Width 2, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 4.212982e+00
+  Width 2, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 2: best holdout error = inf (no width-2 solution)
+  Adam epoch 0, loss = 2.944140e+00
+  Width 3, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 4.250583e+00
+  Width 3, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 3: best holdout error = inf (no width-3 solution)
+  Adam epoch 0, loss = 1.764015e+00
+  Width 4, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 3.617680e+00
+  Width 4, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 4: best holdout error = inf (no width-4 solution)
+  Adam epoch 0, loss = 4.505536e+00
+  Width 5, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 4.758986e+00
+  Width 5, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 5: best holdout error = inf (no width-5 solution)
+  Adam epoch 0, loss = 2.517479e+00
+  Width 6, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 4.213397e+00
+  Width 6, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 6: best holdout error = inf (no width-6 solution)
+  Adam epoch 0, loss = 9.317706e+00
+  Width 7, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 3.404734e+00
+  Width 7, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 7: best holdout error = inf (no width-7 solution)
+  Adam epoch 0, loss = 1.210002e+01
+  Width 8, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.482934e+00
+  Width 8, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 8: best holdout error = inf (no width-8 solution)
+  Adam epoch 0, loss = 5.701824e+00
+  Width 9, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 2.149285e+00
+  Width 9, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 9: best holdout error = inf (no width-9 solution)
+  Adam epoch 0, loss = 1.254048e+01
+  Width 10, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.517204e+00
+  Width 10, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 10: best holdout error = inf (no width-10 solution)
+  Adam epoch 0, loss = 8.865127e+00
+  Width 11, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 8.904895e+00
+  Width 11, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 11: best holdout error = inf (no width-11 solution)
+  Adam epoch 0, loss = 1.035411e+01
+  Width 12, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.337645e+00
+  Width 12, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 12: best holdout error = inf (no width-12 solution)
+  Adam epoch 0, loss = 9.014515e+00
+  Width 13, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.399142e+00
+  Width 13, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 13: best holdout error = inf (no width-13 solution)
+  Adam epoch 0, loss = 3.925393e+00
+  Width 14, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 2.443117e+00
+  Width 14, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 14: best holdout error = inf (no width-14 solution)
+  Adam epoch 0, loss = 5.995250e+00
+  Width 15, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 1.915293e+00
+  Width 15, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 15: best holdout error = inf (no width-15 solution)
+  Adam epoch 0, loss = 8.997194e+00
+  Width 16, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 3.613777e+00
+  Width 16, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 16: best holdout error = inf (no width-16 solution)
+  Adam epoch 0, loss = 5.769580e+00
+  Width 17, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 2.806180e+00
+  Width 17, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 17: best holdout error = inf (no width-17 solution)
+  Adam epoch 0, loss = 4.785408e+00
+  Width 18, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 2.239109e+00
+  Width 18, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 18: best holdout error = inf (no width-18 solution)
+  Adam epoch 0, loss = 5.053609e+00
+  Width 19, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 2.215555e+00
+  Width 19, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 19: best holdout error = inf (no width-19 solution)
+  Adam epoch 0, loss = 7.585448e+00
+  Width 20, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.893048e+00
+  Width 20, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 20: best holdout error = inf (no width-20 solution)
+  Adam epoch 0, loss = 6.148398e+00
+  Width 21, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 1.598352e+00
+  Width 21, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 21: best holdout error = inf (no width-21 solution)
+  Adam epoch 0, loss = 4.140425e+00
+  Width 22, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.301823e+00
+  Width 22, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 22: best holdout error = inf (no width-22 solution)
+  Adam epoch 0, loss = 7.473167e+00
+  Width 23, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 3.213212e+00
+  Width 23, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 23: best holdout error = inf (no width-23 solution)
+  Adam epoch 0, loss = 6.137409e+00
+  Width 24, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 2.604982e+00
+  Width 24, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 24: best holdout error = inf (no width-24 solution)
+  Adam epoch 0, loss = 3.207178e+00
+  Width 25, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 1.761441e+00
+  Width 25, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 25: best holdout error = inf (no width-25 solution)
+  Adam epoch 0, loss = 7.364033e+00
+  Width 26, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 5.862254e+00
+  Width 26, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 26: best holdout error = inf (no width-26 solution)
+  Adam epoch 0, loss = 4.599146e+00
+  Width 27, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 1.621747e+00
+  Width 27, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 27: best holdout error = inf (no width-27 solution)
+  Adam epoch 0, loss = 2.724091e+00
+  Width 28, restart 0: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Adam epoch 0, loss = 4.404187e+00
+  Width 28, restart 1: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 1 is different from 10)
+  Width 28: best holdout error = inf (no width-28 solution)
+  Adam epoch 0, loss = 7.493480e+00
+  Width 29, r
+
+... Output truncated at 100000 bytes.
+[Command succeeded with exit code 0]
+[Output was truncated due to size limits]
