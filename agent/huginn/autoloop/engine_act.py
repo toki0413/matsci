@@ -787,6 +787,10 @@ class EngineAct:
 
         只留数值来源字段 (objectives/summary/result...), 丢掉脚本体与标准输出;
         容量与单条长度都封顶, 台账本身不成为新的状态负担. 纯 best-effort.
+
+        ARTEX 借鉴: 额外带 ``intent`` (本轮假设 id, 即"方向") 与 ``ts`` —— 让台账
+        从"报告 citation 的数值面"升级为**可按方向检索的过程级 trace**
+        (ARTEX 的 ``get_worker_trace(intent_id, step_ids)`` 同构).
         """
         try:
             ledger = getattr(self, "_execution_ledger", None)
@@ -805,12 +809,81 @@ class EngineAct:
             if len(text) > _EXEC_LEDGER_ENTRY_CHARS:
                 text = text[:_EXEC_LEDGER_ENTRY_CHARS]
             ledger.append(
-                {"idx": len(ledger) + 1, "tool": tool_name, "result": text}
+                {
+                    "idx": len(ledger) + 1,
+                    "tool": tool_name,
+                    "intent": str(getattr(self, "_current_hyp_id_for_plan", "") or ""),
+                    "ts": time.time(),
+                    "result": text,
+                }
             )
             if len(ledger) > _EXEC_LEDGER_MAX:
                 del ledger[: len(ledger) - _EXEC_LEDGER_MAX]
         except Exception:  # 防御: 台账 best-effort, 挂了不能带挂 execute
             logger.debug("append execution ledger failed", exc_info=True)
+
+    # ── ARTEX 借鉴: 过程级 trace 检索 ────────────────────────────────────────
+    # ARTEX 的 worker 能检索同僚的**过程级**执行日志 (search_all_worker_traces /
+    # list_worker_traces / get_worker_trace), 把"特殊报错/隐藏参数"这类未进官方
+    # fact 的线索在 worker 间复用. 本仓库对应物是 execution_ledger (每次 execute
+    # 一条紧凑快照). 这里补上按 关键词 / tool / intent 的检索口 + exclude_self
+    # (不检索自己刚写的那条, 避免自证). 纯读, fail-open.
+
+    def list_execution_traces(self) -> list[dict[str, Any]]:
+        """按追加顺序列出全部过程级 trace (深拷贝浅层字段, 防外部改写台账)."""
+        ledger = getattr(self, "_execution_ledger", None) or []
+        return [dict(e) for e in ledger]
+
+    def get_execution_trace(self, idx: int) -> dict[str, Any] | None:
+        """按稳定 idx 取一条 trace; 不存在 → None."""
+        for e in getattr(self, "_execution_ledger", None) or []:
+            if e.get("idx") == idx:
+                return dict(e)
+        return None
+
+    def search_execution_traces(
+        self,
+        query: str = "",
+        *,
+        tool: str = "",
+        intent: str = "",
+        exclude_self: bool = True,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """检索过程级 trace (ARTEX ``search_all_worker_traces`` 同构).
+
+        - ``query``: 关键词 (大小写不敏感), 在 result/tool/intent 文本里匹配.
+        - ``tool`` / ``intent``: 精确过滤.
+        - ``exclude_self=True``: 剔除 intent == 当前方向的条目 (不检索自己).
+        - ``limit``: 最多返回条数 (默认 8), 最近的优先.
+        纯读 fail-open: 任何异常返回 [].
+        """
+        try:
+            ledger = getattr(self, "_execution_ledger", None) or []
+            self_intent = str(getattr(self, "_current_hyp_id_for_plan", "") or "")
+            q = (query or "").strip().lower()
+            out: list[dict[str, Any]] = []
+            for e in ledger:
+                if tool and e.get("tool") != tool:
+                    continue
+                if intent and e.get("intent") != intent:
+                    continue
+                if exclude_self and self_intent and e.get("intent") == self_intent:
+                    continue
+                if q:
+                    hay = (
+                        f"{e.get('tool', '')} {e.get('intent', '')} "
+                        f"{e.get('result', '')}"
+                    ).lower()
+                    if q not in hay:
+                        continue
+                out.append(dict(e))
+            # 最近优先; 返回时按时间正序 (调用方按 idx 递增阅读更自然).
+            out = out[-limit:]
+            return out
+        except Exception:  # 防御: 检索 best-effort, 挂了返回空
+            logger.debug("search execution traces failed", exc_info=True)
+            return []
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]

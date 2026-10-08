@@ -727,6 +727,17 @@ class CognitiveRunner:
         # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
         # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
         self._current_phase = name
+        # 单写者 frontier 纪律 (ARTEX planner 独占追加): 用 phase 名标注"当前写
+        # 假设图的阶段", 让 add_hypothesis 能判定越权. 只有 hypothesize/branch 是
+        # 写者阶段; 其它阶段内部若追加方向 → 计数 (默认只观测, strict flag 才拒).
+        # 单一接线点: 所有 phase 经此方法, 覆盖 refine/pivot 等内部生产者.
+        try:
+            from huginn.autoloop.hypothesis_loop import set_frontier_writer_phase
+
+            _frontier_phase_tok = set_frontier_writer_phase(name)
+        except Exception:  # 防御: 标注失败不阻断 phase; 未标注 → 不检查 (兼容)
+            _frontier_phase_tok = None
+            logger.debug("set frontier writer phase failed (non-fatal)", exc_info=True)
         # H3: phase 切换写进事件日志 (best-effort). 事件日志是 source of truth,
         # 读模型经 AutoloopStateProjection 派生 — 可重放/可恢复.
         try:
@@ -795,6 +806,14 @@ class CognitiveRunner:
             logger.debug(
                 "autoloop progress publish (complete) failed (non-fatal)", exc_info=True,
             )
+        # 单写者纪律: 复位 phase 标注, 避免泄漏到下个非 phase 上下文 (best-effort).
+        if _frontier_phase_tok is not None:
+            try:
+                from huginn.autoloop.hypothesis_loop import reset_frontier_writer_phase
+
+                reset_frontier_writer_phase(_frontier_phase_tok)
+            except Exception:  # 防御: 复位失败不阻断 (下个 phase 会覆盖)
+                logger.debug("reset frontier writer phase failed (non-fatal)", exc_info=True)
         return phase
 
     def _render_report(self, data: dict[str, Any]) -> str:
@@ -3183,6 +3202,56 @@ Respond JSON only:
                     self._last_had_activity = had_activity
                     return phase.result
                 if action == "hypothesize":
+                    # ARTEX 借鉴: 前沿状态观测 + 可选"空即停"终止判据.
+                    # 预算降级为安全上限 —— 当图非空且无可执行方向 (未执行且前置
+                    # 证据满足) 时, 主终止. 默认只落 trace 观测 (frontier_empty_stop
+                    # flag 打开才真停, 避免失败轮被误判为"探索完了").
+                    try:
+                        _rep = self.hypothesis_graph.frontier_report()
+                        if _rep.get("exhausted"):
+                            _stop = FeatureFlags.shared().is_enabled("frontier_empty_stop")
+                            self._control_trace(
+                                "frontier_empty_stop",
+                                f"nodes={_rep['nodes']} untested={_rep['untested']} "
+                                f"blocked={_rep['blocked']} actionable=0",
+                                action="stop" if _stop else "advisory_hint",
+                                iteration=state.iteration,
+                            )
+                            if _stop:
+                                state.should_stop = True
+                                return None
+                    except Exception:  # 防御: 前沿观测失败不阻断
+                        logger.debug(
+                            "frontier exhaustion check failed (non-fatal)",
+                            exc_info=True,
+                        )
+                    # ARTEX 借鉴: 单写者领用 — execute 优先领一条已有可执行方向, 而非
+                    # 每轮凭空生成新假设 (frontier_claim flag; 默认关 = 旧行为不变).
+                    try:
+                        if FeatureFlags.shared().is_enabled("frontier_claim"):
+                            _claimed = self.hypothesis_graph.claim_next_actionable(
+                                claimer=f"iter{state.iteration}"
+                            )
+                            if _claimed is not None:
+                                cog["current_hyp_id"] = _claimed.id
+                                self._current_hyp_id_for_plan = _claimed.id
+                                cog["hypothesis"] = _claimed.statement
+                                self._control_trace(
+                                    "frontier_claim",
+                                    f"claim {_claimed.id}",
+                                    iteration=state.iteration,
+                                )
+                                self._emit_campaign(
+                                    "campaign.hypothesis",
+                                    {
+                                        "iteration": state.iteration,
+                                        "hypothesis": _claimed.statement[:300],
+                                        "claimed": True,
+                                    },
+                                )
+                                return _claimed.statement
+                    except Exception:  # 防御: 领用失败回退到生成路径
+                        logger.debug("frontier claim failed (non-fatal)", exc_info=True)
                     # v11: FDE 对齐轮 — hypothesize 前问用户方向 (首轮/有 blind_spots).
                     # 不阻塞, 60s timeout, 用户回答 append 到 _speculator_hint.
                     # ponytail: 复用 _maybe_clarify 管道, 不新增 phase.

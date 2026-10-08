@@ -12,18 +12,22 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
 import os
 import re
+import threading
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from huginn.autoloop.hypothesis_events import HypothesisEventStore
+from huginn.memory.anchor import ANCHOR_KINDS, Anchor, parse_anchor
 
 # P3 slim-down: engine.py helper re-import — _classify_failure (H3 batch) 调用
 from huginn.autoloop.phase_gate import (
@@ -54,6 +58,47 @@ def _ising_frontier_enabled() -> bool:
     """toggle: FeatureFlags `ising_frontier` (默认 on). off 时回退原 frontier()."""
     from huginn.feature_flags import FeatureFlags
     return FeatureFlags.shared().is_enabled("ising_frontier")
+
+
+# ── ARTEX 借鉴: 单写者 frontier 纪律 ─────────────────────────────────────────
+# ARTEX 的 planner 是方向的**唯一追加者** (worker 只领执行), 保证 todolist 不被
+# 并发写乱. 搬到本仓库: 只有 hypothesize / branch 阶段可以**追加**方向 (假设);
+# 其它阶段 (execute/validate/learn...) 追加 = 越权. 用 contextvar 标注当前阶段,
+# 由 loop 在调阶段前设置. 诚实边界: 阶段未标注 ("") 时**不检查** (向后兼容,
+# 避免测试/旧路径因未接线被误判越权).
+_FRONTIER_WRITER_PHASE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "frontier_writer_phase", default=""
+)
+_FRONTIER_WRITE_PHASES = frozenset({"hypothesize", "branch"})
+
+
+def _frontier_single_writer_strict() -> bool:
+    """toggle: FeatureFlags `frontier_single_writer_strict` (默认 off = 只观测)."""
+    from huginn.feature_flags import FeatureFlags
+    return FeatureFlags.shared().is_enabled("frontier_single_writer_strict")
+
+
+def set_frontier_writer_phase(phase: str):
+    """标注当前写假设图所处的阶段; 返回 token 供 reset."""
+    return _FRONTIER_WRITER_PHASE.set(phase or "")
+
+
+def reset_frontier_writer_phase(token: Any) -> None:
+    """复位写者阶段标注 (与 set_frontier_writer_phase 配对)."""
+    try:
+        _FRONTIER_WRITER_PHASE.reset(token)
+    except (ValueError, LookupError):  # 跨 context reset → 覆盖回空串, 不抛
+        _FRONTIER_WRITER_PHASE.set("")
+
+
+@contextlib.contextmanager
+def frontier_write_phase(phase: str):
+    """with 块内把当前阶段标为写者阶段 (hypothesize/branch)."""
+    tok = set_frontier_writer_phase(phase)
+    try:
+        yield
+    finally:
+        reset_frontier_writer_phase(tok)
 
 
 # ── data structures ──────────────────────────────────────────────────────────
@@ -89,6 +134,16 @@ class HypothesisNode:
     # 未验证或来源未知, agent_generated = 自说自话. support/refute 时自动写入,
     # 让"有据假设"与 supported_ratio (含 agent 自洽) 语义区分开.
     grounding: str = ""
+    # 落地锚 (ARTEX 借鉴): 可回查的锚 token 集合 ("kind:ref", 白名单前缀).
+    # grounding 是有损的单一 source_class 投影, anchors 是**无损**的一等表示 ——
+    # 同一锚上的假设跨场景可复用 (迁移单位). support/refute 时从 evidence 自动
+    # 抽取, 也可由生产端显式 attach_anchors 写入.
+    anchors: list[str] = field(default_factory=list)
+    # 单写者领用 (ARTEX "execute 一次只领一条" 借鉴): 该方向被哪个执行者领走.
+    # 空串 = 未被领用 (可领). 非空 = 已被领用, claim_next_actionable 不再返回,
+    # 避免同一方向被并发/多轮重复领取 (与 status 解耦: 领用不改验证状态).
+    claimed_by: str = ""
+    claimed_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +160,9 @@ class HypothesisNode:
             "sibling_group_id": self.sibling_group_id,
             "novelty": self.novelty,
             "grounding": self.grounding,
+            "anchors": list(self.anchors),
+            "claimed_by": self.claimed_by,
+            "claimed_at": self.claimed_at,
         }
 
     @classmethod
@@ -123,6 +181,9 @@ class HypothesisNode:
             sibling_group_id=d.get("sibling_group_id"),
             novelty=d.get("novelty", 0.0),
             grounding=d.get("grounding", ""),
+            anchors=list(d.get("anchors", [])),
+            claimed_by=d.get("claimed_by", ""),
+            claimed_at=d.get("claimed_at", ""),
         )
 
 
@@ -134,6 +195,8 @@ class HypothesisEdge:
     to_id: str
     edge_type: EdgeType
     evidence: dict[str, Any] = field(default_factory=dict)
+    # 落地锚 (ARTEX 借鉴): 该关系边自身锚定的可回查来源 token 集合.
+    anchors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +204,7 @@ class HypothesisEdge:
             "to_id": self.to_id,
             "edge_type": self.edge_type,
             "evidence": dict(self.evidence),
+            "anchors": list(self.anchors),
         }
 
 
@@ -182,6 +246,67 @@ def _dominant_grounding(evidence: dict[str, Any]) -> str:
     except Exception:  # 防御: 来源扫描失败按"未知"处理, 不臆造锚
         logger.debug("_dominant_source_class failed", exc_info=True)
         return ""
+
+
+# 落地锚 (ARTEX 借鉴): 把"证据可回查的来源"从有损的单一 source_class 字符串
+# (grounding) 升级为一等的锚集合 + 双向索引. 迁移的单位是锚不是文本相似度:
+# 同一锚 (同 run / 工具会话 / 实测值 / 引用) 上的假设跨场景可复用.
+# 诚实边界 (同 memory/anchor.py): 只认白名单前缀, 自由文本一律判"无锚",
+# 宁缺勿猜 —— 假锚会像 "structure_desc 全 0" 一样看着有机制、实际无信息.
+_ANCHOR_TOKEN_RE = re.compile(r"^([a-z]+):(.+)$")
+
+
+def _normalize_anchor(obj: Any) -> str | None:
+    """把候选锚归一到 ``kind:ref`` token; 白名单外 / 自由文本返 None (不猜)."""
+    if isinstance(obj, Anchor):
+        return obj.token()
+    if isinstance(obj, str):
+        s = obj.strip()
+        m = _ANCHOR_TOKEN_RE.match(s)
+        if m and m.group(1) in ANCHOR_KINDS and m.group(2).strip():
+            return f"{m.group(1)}:{m.group(2).strip()}"
+        return None
+    if isinstance(obj, Mapping):
+        a = parse_anchor(obj)
+        return a.token() if a else None
+    return None
+
+
+def _anchor_tokens_from_evidence(evidence: Mapping[str, Any] | None) -> list[str]:
+    """从 evidence 抽可回查锚 (白名单前缀), 不臆造.
+
+    识别来源 (按优先级):
+      - ``evidence['anchors']``: list[str|dict] 显式锚 (生产端写入, 最可靠)
+      - ``evidence['source']`` / ``evidence['run_id']``: 复用 memory.anchor.parse_anchor
+      - evidence 值里的一层嵌套 mapping / list-of-mapping (如 {'support': {'source': ...}})
+    """
+    if not evidence:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _push(tok: str | None) -> None:
+        if tok and tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+
+    raw = evidence.get("anchors")
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        for item in raw:
+            _push(_normalize_anchor(item))
+    elif raw is not None:
+        _push(_normalize_anchor(raw))
+
+    _push(_normalize_anchor(evidence))  # 顶层 source / run_id
+
+    for v in evidence.values():
+        if isinstance(v, Mapping):
+            _push(_normalize_anchor(v))
+        elif isinstance(v, (list, tuple)):
+            for item in v:
+                if isinstance(item, Mapping):
+                    _push(_normalize_anchor(item))
+    return out
 
 
 # ── 实质内容 / 重复守卫 ──────────────────────────────────────────────────────
@@ -248,6 +373,17 @@ class HypothesisGraph:
         # 被守卫拒绝的入图尝试计数 (非实质陈述 / 精确重复). 供上层判断"新颖性枯竭":
         # 连续多轮只产出重复/空壳 → 应触发 pivot/反例搜索, 而非原地重述.
         self._rejected_adds: int = 0
+        # 落地锚双向索引 (ARTEX exploration_anchors 借鉴): anchor token → 被它锚定的
+        # 图元素 key 集合 (节点用 node_id; 边用 "edge:<from>|<to>|<type>").
+        # 反向 (元素 → 锚) 直接读 node.anchors / edge.anchors. 让"某实测值/工具会话
+        # 支撑过哪些假设"与"某假设由哪些来源支撑"都可 O(1) 双向查.
+        self._anchor_index: dict[str, set[str]] = {}
+        # 单写者领用锁 (ARTEX "execute 一次只领一条"): 保证并发下同一方向不被
+        # 重复领走. 领用只写 claimed_by/claimed_at, 与 status 解耦.
+        self._claim_lock = threading.Lock()
+        # 写者阶段纪律 (ARTEX planner 独占追加): 记录"非 hypothesize/branch 阶段
+        # 追加方向"的越权次数. 默认只计数观测, 严格模式 (flag) 才拒绝.
+        self._out_of_phase_writes: int = 0
         # ponytail: in-memory event log 为主, 段升级 P1#3: 有 workspace 时同写
         # SQLite+FTS5 (hypothesis_events.py), 支持跨进程 resume/replay/搜索.
         # P0: workspace 路径用于写 FAILED.md / PROVED.md durable state 文件.
@@ -303,6 +439,22 @@ class HypothesisGraph:
         """新增假设节点, 返回 node id. parent_id 非空时自动加 derive 边."""
         if not statement.strip():
             raise HypothesisGraphError("假设陈述不能为空")
+        # 单写者 frontier 纪律 (ARTEX planner 独占追加): 只有 hypothesize/branch
+        # 阶段可追加方向. 阶段已标注且非写者阶段 = 越权: 默认只计数观测 (fail-open,
+        # 不丢节点), strict flag 打开才拒绝. 阶段未标注 ("") → 不检查 (向后兼容).
+        _phase = _FRONTIER_WRITER_PHASE.get()
+        if _phase and _phase not in _FRONTIER_WRITE_PHASES:
+            self._out_of_phase_writes += 1
+            if _frontier_single_writer_strict():
+                logger.info(
+                    "add_hypothesis 拒绝非写者阶段追加 (phase=%s): %r",
+                    _phase, statement[:60],
+                )
+                return None
+            logger.debug(
+                "add_hypothesis 非写者阶段追加 (phase=%s, 只观测): %r",
+                _phase, statement[:60],
+            )
         # 实质内容守卫: "**" / 仅 [DIM: ...] 标签 / 纯符号 → 返回 None (同交叉授粉
         # 拒绝语义), 调用方按 falsy 处理. 阻止空壳节点灌满 frontier.
         if not _is_substantive_statement(statement):
@@ -395,9 +547,114 @@ class HypothesisGraph:
         """未测试的假设 (campaign 该排队的)."""
         return [n for n in self._nodes.values() if n.status == "untested"]
 
+    # ── ARTEX 借鉴: 可执行前沿 / 前置证据 / 单写者领用 ───────────────────────
+    # ARTEX 的 planner 共享 todolist 只把"前置 fact 已完全成立"的步骤派给 worker,
+    # 保证无状态 LLM 下串行链不乱序 (它的核心自治机制之一). 这里把同一纪律搬进
+    # 假设图: 一个派生假设 (有 parent) 只在 parent 已被验证 (supported/refuted/
+    # superseded) 后才是"可执行"的 —— 前置证据满足 = parent 已 resolve.
+    # 诚实边界: parent 被删/缺失时**不判阻塞** (宁可放行也不制造死锁), 避免链路
+    # 因历史节点缺失而永久冻死.
+
+    def _prereq_satisfied(self, node: HypothesisNode) -> bool:
+        """该假设的前置证据是否满足 (ARTEX: predecessor fact 是否完全成立)."""
+        if not node.parent_id:
+            return True  # 根方向, 无前置
+        parent = self._nodes.get(node.parent_id)
+        if parent is None:
+            return True  # 孤儿 parent (被删/缺失) → 不阻塞, 防死锁
+        return parent.status in ("supported", "refuted", "superseded")
+
+    def actionable_frontier(self) -> list[HypothesisNode]:
+        """可执行前沿: untested 且前置证据满足 (ARTEX todolist 的"可派"集合)."""
+        return [
+            n for n in self._nodes.values()
+            if n.status == "untested" and self._prereq_satisfied(n)
+        ]
+
+    def blocked_frontier(self) -> list[HypothesisNode]:
+        """被前置证据阻塞的 untested 假设 (可观测: 非空=链路在等前序)."""
+        return [
+            n for n in self._nodes.values()
+            if n.status == "untested" and not self._prereq_satisfied(n)
+        ]
+
+    def unclaimed_actionable_frontier(self) -> list[HypothesisNode]:
+        """可执行前沿中尚未被领用的部分 (单写者纪律: execute 只从这里领)."""
+        return [n for n in self.actionable_frontier() if not n.claimed_by]
+
+    def frontier_exhausted(self) -> bool:
+        """终止判据 (ARTEX "frontier 空即停"): 图非空但无可执行方向 → True.
+
+        - 空图 → False (还没开始, 不是"探索完了").
+        - 图非空且 actionable_frontier 为空 → True (或全部 resolved, 或全被阻塞).
+        仅作**主终止判据**; 预算/挂钟降级为安全上限 (由调用方决定是否采信).
+        """
+        if not self._nodes:
+            return False
+        return not self.actionable_frontier()
+
+    def frontier_report(self) -> dict[str, Any]:
+        """前沿状态快照 (可观测/落 trace 用). 纯读, 不改状态."""
+        untested = self.frontier()
+        actionable = self.actionable_frontier()
+        blocked = self.blocked_frontier()
+        return {
+            "nodes": len(self._nodes),
+            "untested": len(untested),
+            "actionable": len(actionable),
+            "blocked": len(blocked),
+            "unclaimed": len([n for n in actionable if not n.claimed_by]),
+            "exhausted": self.frontier_exhausted(),
+        }
+
+    def claim_next_actionable(self, claimer: str = "", *, node_id: str | None = None):
+        """单写者领用: 原子地领走一条可执行方向 (ARTEX "execute 一次只领一条").
+
+        - 默认领**能量最低** (经 frontier_ranked 排序) 的未领用可执行方向.
+        - 指定 ``node_id`` 时只领该节点 (须为未领用的可执行方向), 否则返 None.
+        - 领用**不改** status, 只写 claimed_by/claimed_at; 并发下用锁保证同一
+          方向不被重复领走.
+        返回领到的 HypothesisNode, 无可领 → None.
+        """
+        with self._claim_lock:
+            if node_id is not None:
+                node = self._nodes.get(node_id)
+                if (
+                    node is None
+                    or node.status != "untested"
+                    or node.claimed_by
+                    or not self._prereq_satisfied(node)
+                ):
+                    return None
+                candidate = node
+            else:
+                pool = self.unclaimed_actionable_frontier()
+                if not pool:
+                    return None
+                # 复用现有 Ising 排序, 让领用顺序与注入 prompt 顺序一致.
+                ranked = self.frontier_ranked(top_k=1, base=pool)
+                candidate = ranked[0] if ranked else pool[0]
+            candidate.claimed_by = claimer or "autoloop"
+            candidate.claimed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._record_event(
+                "claim", candidate.id, claimer=candidate.claimed_by,
+            )
+            return candidate
+
+    def release_claim(self, node_id: str) -> bool:
+        """释放尚未验证的领用 (验证完成后节点 status 已变, 领用随之失效)."""
+        with self._claim_lock:
+            node = self._nodes.get(node_id)
+            if node is None or not node.claimed_by:
+                return False
+            node.claimed_by = ""
+            node.claimed_at = ""
+            self._record_event("release_claim", node_id)
+            return True
+
     def frontier_ranked(
         self, top_k: int | None = None, beta: float = 1.0,
-        phys_gain: float = 0.0,
+        phys_gain: float = 0.0, base: list[HypothesisNode] | None = None,
     ) -> list[HypothesisNode]:
         """P1-1 Ising-ranked frontier — 能量最低 K-子集排.
 
@@ -409,10 +666,13 @@ class HypothesisGraph:
                   的子假设 H 加分, 已 refute 的 parent 的兄弟 H 加分.
             E(S) = -Σ Hᵢ - β Σ Tᵢⱼ, 贪心 ΔE<0 接受.
 
+        ``base``: 自定义候选池 (如 unclaimed_actionable_frontier), None 回退
+        hypothesis ``frontier()`` —— 让"领用顺序"与"注入 prompt 顺序"同源.
+
         ponytail: 不引入 embedding (跟 longterm._ising_rerank 不同).
         ceiling: 结构耦合粗, 不捕捉语义矛盾. 升级: LLM/embedding 算 Tᵢⱼ.
         """
-        untested = self.frontier()
+        untested = self.frontier() if base is None else list(base)
         if top_k is None or len(untested) <= top_k or not _ising_frontier_enabled():
             return untested
         if top_k <= 1:
@@ -603,9 +863,13 @@ class HypothesisGraph:
         _g = _dominant_grounding(evidence)
         if _g:
             node.grounding = _g
-        self._edges.append(HypothesisEdge(
+        _anchors = _anchor_tokens_from_evidence(evidence)
+        _edge = HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="support", evidence=evidence,
-        ))
+            anchors=list(_anchors),
+        )
+        self._edges.append(_edge)
+        self._record_anchors(node, _edge, _anchors)
         self._record_event("support", node_id,
                            modality=evidence.get("modality"),
                            data_source=evidence.get("data_source"))
@@ -635,9 +899,13 @@ class HypothesisGraph:
         _g = _dominant_grounding(evidence)
         if _g:
             node.grounding = _g
-        self._edges.append(HypothesisEdge(
+        _anchors = _anchor_tokens_from_evidence(evidence)
+        _edge = HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="refute", evidence=evidence,
-        ))
+            anchors=list(_anchors),
+        )
+        self._edges.append(_edge)
+        self._record_anchors(node, _edge, _anchors)
         self._record_event("refute", node_id,
                            reason=str(evidence.get("errors", ""))[:200])
         self._log_research(
@@ -1438,6 +1706,93 @@ class HypothesisGraph:
 
     def edges(self) -> list[HypothesisEdge]:
         return list(self._edges)
+
+    # ── 落地锚 (ARTEX exploration_anchors 借鉴): 一等锚 + 双向索引 ────────
+    #
+    # ARTEX 用 exploration_anchors(node_id, asset_id) 把"探索过程"锚到"世界真值"
+    # 并支持双向查. 这里等价地把每个假设/关系锚到它的可回查来源 (run / 工具会话 /
+    # 实测值 / 引用), 让"某来源支撑过哪些假设"与"某假设由哪些来源支撑"都 O(1) 查,
+    # 且跨场景迁移时以锚为键复用旧知识.
+
+    @staticmethod
+    def _edge_key(edge: HypothesisEdge) -> str:
+        """边在图内锚索引里的稳定 key (唯一标识一条关系)."""
+        return f"edge:{edge.from_id}|{edge.to_id}|{edge.edge_type}"
+
+    def _register_anchors(self, elem_key: str, tokens: Iterable[str]) -> None:
+        for t in tokens:
+            self._anchor_index.setdefault(t, set()).add(elem_key)
+
+    def _record_anchors(
+        self, node: HypothesisNode, edge: HypothesisEdge, tokens: list[str],
+    ) -> None:
+        """把锚同时挂到节点与边上, 并写双向索引 (support/refute 共用)."""
+        if not tokens:
+            return
+        added = [t for t in tokens if t not in node.anchors]
+        if added:
+            node.anchors = [*node.anchors, *added]
+        self._register_anchors(node.id, tokens)
+        self._register_anchors(self._edge_key(edge), tokens)
+
+    def attach_anchors(self, node_id: str, anchors: Iterable[Any]) -> list[str]:
+        """显式给节点挂锚 (生产端写入工具会话 / 实测值 / 引用). 返新增 token.
+
+        归一白名单 (kind:ref), 自由文本 / 未知前缀一律丢弃 —— 不臆造锚.
+        """
+        self._check_node(node_id)
+        node = self._nodes[node_id]
+        toks = [t for t in (_normalize_anchor(a) for a in anchors) if t]
+        added = [t for t in toks if t not in node.anchors]
+        if added:
+            node.anchors = [*node.anchors, *added]
+            self._register_anchors(node_id, added)
+        return added
+
+    def anchors_of(self, node_id: str) -> list[str]:
+        """该假设的全部落地锚 (反向查)."""
+        self._check_node(node_id)
+        return list(self._nodes[node_id].anchors)
+
+    def _resolve_anchor_keys(self, token: str) -> set[str]:
+        """把查询 (完整 kind:ref 或裸 ref) 解析成索引里的元素 key 集合."""
+        t = _normalize_anchor(token)
+        if t and t in self._anchor_index:
+            return set(self._anchor_index[t])
+        ref = str(token).strip()
+        out: set[str] = set()
+        for k, v in self._anchor_index.items():
+            if k == ref or k.endswith(f":{ref}"):
+                out |= v
+        return out
+
+    def nodes_for_anchor(self, token: str) -> list[str]:
+        """被该锚支撑/反驳过的假设节点 id 列表 (正向查)."""
+        keys = self._resolve_anchor_keys(token)
+        return sorted(k for k in keys if not k.startswith("edge:"))
+
+    def edges_for_anchor(self, token: str) -> list[str]:
+        """锚定在该锚上的关系边 key 列表."""
+        keys = self._resolve_anchor_keys(token)
+        return sorted(k for k in keys if k.startswith("edge:"))
+
+    def anchor_index(self) -> dict[str, list[str]]:
+        """完整双向索引快照 (anchor token → 图元素 key)."""
+        return {t: sorted(v) for t, v in self._anchor_index.items()}
+
+    def anchored_node_ratio(self) -> float:
+        """已测节点 (supported/refuted) 中有落地锚的占比.
+
+        无已测节点 → 0.0 (无信号, 不臆造). 与 supported_ratio 语义不同: 后者连
+        agent 自洽的 support 也算, 前者只认"可回查来源"的锚.
+        """
+        tested = [
+            n for n in self._nodes.values()
+            if n.status in ("supported", "refuted")
+        ]
+        if not tested:
+            return 0.0
+        return sum(1 for n in tested if n.anchors) / len(tested)
 
     def children(self, node_id: str) -> list[HypothesisNode]:
         """直接衍生子节点."""
