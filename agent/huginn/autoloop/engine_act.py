@@ -39,6 +39,7 @@ from typing import Any
 # 这条路径没有), 一次限流/网络抖动就被当成"阶段无产出" → redirect→pivot→停机
 # (run74). 这里接上.
 from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+from huginn.autoloop.exec_observation import classify_exit_class
 from huginn.llm_retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -814,6 +815,9 @@ class EngineAct:
                     "tool": tool_name,
                     "intent": str(getattr(self, "_current_hyp_id_for_plan", "") or ""),
                     "ts": time.time(),
+                    # 执行健康标签 (只读): 把"成功/空跑/工具报错/超时/环境错误"分开,
+                    # 避免把工具故障误判成假设被证伪. 不改控制流, 仅作台账元信息.
+                    "exit_class": classify_exit_class(output),
                     "result": text,
                 }
             )
