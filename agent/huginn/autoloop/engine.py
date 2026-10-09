@@ -145,6 +145,7 @@ from huginn.interaction.progress import ProgressTracker  # noqa: E402
 from huginn.kg.builder import ProjectKnowledgeGraph  # noqa: E402
 from huginn.llm import get_model  # noqa: E402
 from huginn.memory.manager import MemoryManager  # noqa: E402
+from huginn.permissions import PermissionConfig  # noqa: E402
 from huginn.tools.report_tool import ReportTool  # noqa: E402
 from huginn.utils.runtime import HUGINN_DIR_NAME  # noqa: E402
 from huginn.workflows.engine import WorkflowEngine  # noqa: E402
@@ -410,7 +411,15 @@ class AutoloopEngine:
         self.workflow_engine = WorkflowEngine(
             tool_registry=ToolRegistry,  # 传类本身, .get() 是 classmethod
         )
-        self.coder = CoderRunner()
+        # autoloop 是**无人值守**的自主循环: 内部 coder 若沿用默认 ASK 策略,
+        # 在无 approval_callback 时写文件/跑 bash 会被 hard-deny
+        # (adapter._check_permission 末段 "requires approval") —— coder 模式
+        # 形同死码. run89 实测: execute 的 coder 因无法落盘脚本而交白卷.
+        # 故给内部 coder 显式 auto_approve_all. 危险命令模式 (rm -rf /,
+        # git push --force 等) 在 adapter 里**先于**该放行判定被拦, 不受影响.
+        self.coder = CoderRunner(
+            permission_config=PermissionConfig(auto_approve_all=True)
+        )
 
         self._init_failure_state()
         self._init_lazy_backends(goal_scheduler)

@@ -994,7 +994,11 @@ class EngineReflect:
                 f"skip: dispatch returned nothing success={_res.success} "
                 f"summary_len={len(_res.summary or '')} "
                 f"full_len={len(getattr(_res, 'full_output', '') or '')} "
-                f"tool_calls={len(getattr(_res, 'tool_calls', []) or [])}",
+                f"tool_calls={len(getattr(_res, 'tool_calls', []) or [])} "
+                # 失败根因此前只在 logger.debug 里 (run.log 不见) → 野外只见
+                # "dispatch returned nothing" 却不知为何空手 (create 失败? 执行异常?).
+                # 把 error 摘要落到控制面, 让静默空转可诊断 (run89 实测 success=False).
+                f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
                 action="skip",
             )
             return
@@ -1243,7 +1247,8 @@ class EngineReflect:
             self._emit_control_trace(
                 "collab_failure_inverter",
                 f"skip: dispatch returned nothing success={_res.success} "
-                f"summary_len={len(_res.summary or '')}",
+                f"summary_len={len(_res.summary or '')} "
+                f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
                 action="skip",
             )
             return ""

@@ -246,3 +246,48 @@ class TestCliAgentCollabWiring:
 
         monkeypatch.setattr(server_core, "get_agent_factory", _boom)
         assert cli_autoloop._maybe_agent_factory() is None
+
+
+class TestInternalCoderAutoApprove:
+    """autoloop 的内部 coder 必须能无人值守地写文件 / 跑 bash.
+
+    回归: 旧实现 ``CoderRunner()`` 用默认 PermissionConfig (auto_approve_all=False),
+    而 file_write_tool / bash_tool 默认 ASK + 无 approval_callback → 每次写盘都被
+    adapter hard-deny ("requires approval"). 无人值守循环里没人能确认 ⇒ coder 模式
+    形同死码 (run89 实测: execute 的 coder 无法落盘脚本而交白卷).
+    """
+
+    def _build_real_engine(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        # 除 coder 外, 其余重部件照 fixture 打桩; 关键是**不**打桩 CoderRunner,
+        # 否则测不到真实接线. CoderRunner.__init__ 会调 coder.loop.get_model.
+        monkeypatch.setattr(
+            "huginn.autoloop.engine.get_model", lambda settings: MagicMock()
+        )
+        monkeypatch.setattr(
+            "huginn.autoloop.engine.MemoryManager", lambda *a, **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            "huginn.autoloop.engine.BenchmarkRunner", lambda *a, **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            "huginn.coder.loop.get_model", lambda *a, **kw: MagicMock()
+        )
+        monkeypatch.setattr(
+            "huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None
+        )
+        monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
+        return AutoloopEngine(workspace=tmp_path)
+
+    def test_internal_coder_auto_approves_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from huginn.core_types import PermissionMode
+
+        eng = self._build_real_engine(tmp_path, monkeypatch)
+        assert eng.coder.permission_config.auto_approve_all is True
+        # 写/执行工具在默认策略下是 ASK; auto_approve_all 应把它们降为 AUTO.
+        assert eng.coder.permission_config.get_mode("file_write_tool") == PermissionMode.AUTO
+        assert eng.coder.permission_config.get_mode("bash_tool") == PermissionMode.AUTO
