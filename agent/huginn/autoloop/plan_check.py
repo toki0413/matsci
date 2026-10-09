@@ -113,6 +113,51 @@ class PlanCheck:
         lines.append("### End Sub-goal Constraints\n")
         return "\n".join(lines)
 
+    def _plan_mode_enum(self) -> str:
+        """计划格式里的 MODE 枚举. VISTA 借鉴的两个 mode 仅对应 flag 开时才列出.
+
+        默认全关 → 返回值与历史硬编码完全一致
+        (coder|workflow|explore|skill|visual_inspect), 提示词向后兼容.
+        """
+        modes = ["coder", "workflow", "explore", "skill", "visual_inspect"]
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            ff = FeatureFlags.shared()
+            if ff.is_enabled("trace_inspect"):
+                modes.append("trace_inspect")
+            if ff.is_enabled("visual_frame_memory"):
+                modes.append("frame_inspect")
+        except Exception:  # 防御: flag 层异常 → 回落历史枚举
+            logger.debug("plan mode enum flag read failed", exc_info=True)
+        return "|".join(modes)
+
+    def _plan_extra_mode_lines(self) -> str:
+        """VISTA 借鉴 mode 的说明行; 对应 flag 关时为空串 (提示词与历史一致)."""
+        lines: list[str] = []
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            ff = FeatureFlags.shared()
+            if ff.is_enabled("trace_inspect"):
+                lines.append(
+                    "- trace_inspect: recall your OWN past execution traces "
+                    "(process-level) by keyword/tool/intent. Read-only. Put a JSON object "
+                    'in DESCRIPTION, e.g. {"query":"timeout","tool":"code_lab","limit":8}. '
+                    "Use it to reuse earlier runs' numbers/errors instead of re-running."
+                )
+            if ff.is_enabled("visual_frame_memory"):
+                lines.append(
+                    "- frame_inspect: re-view a previously captured frame losslessly. "
+                    'DESCRIPTION JSON: {"action":"view|region|pixels","frame_id":N,'
+                    '"box":[x0,y0,x1,y1],"points":[[x,y],...],"normalized":false}. '
+                    "region crops the ORIGINAL pixels faithfully; pixels returns exact RGB "
+                    "— use it to read values off a figure without re-rendering."
+                )
+        except Exception:  # 防御: flag 层异常 → 不追加
+            logger.debug("plan extra mode lines failed", exc_info=True)
+        return "\n".join(lines)
+
     def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
         # 同 hypothesize: 用 hypothesis 串检索 KB, 把参考块喂给 planner
         kb_block = self._build_kb_text(query=hypothesis)
@@ -271,6 +316,10 @@ class PlanCheck:
         except Exception:  # 防御: 建议失败不阻塞流程
             logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
 
+        # VISTA 借鉴: 两个实验 mode 的说明与枚举 (flag 关时与历史文本逐字一致).
+        extra_mode_lines = self._plan_extra_mode_lines()
+        mode_enum = self._plan_mode_enum()
+
         blocks = self._apply_block_patches(
             [
                 (
@@ -286,7 +335,7 @@ Choose ONE mode and describe the plan:
 - explore: search a design space for optimal parameters
 - skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
 - visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
-
+{extra_mode_lines}
 Protocol completeness check (RCBench failure mode: experimental protocol mismatch):
 Before finalizing, verify your plan covers all necessary steps:
 - For DFT: structure optimization BEFORE property calculation? Convergence test (encut/kpoints)?
@@ -311,7 +360,7 @@ Alignment gate (plan_check will reject the plan if this fails):
   ignores the current hypothesis is invalid even if the code runs and returns numbers.
 
 Respond in this exact format:
-MODE: <coder|workflow|explore|skill|visual_inspect>
+MODE: <{mode_enum}>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
 FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
@@ -1351,7 +1400,7 @@ risks: {check.get('risks', [])}
 
 # 任务
 根据反馈重新生成 plan. 参考成功示例的结构 (不要照抄内容). 严格按格式输出:
-MODE: <coder|workflow|explore|skill|visual_inspect>
+MODE: <{self._plan_mode_enum()}>
 DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""

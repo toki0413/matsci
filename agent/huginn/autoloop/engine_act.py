@@ -734,11 +734,23 @@ class EngineAct:
             result = await self._execute_visual_inspect(
                 description, context, consistency_check=consistency
             )
+        elif mode == "trace_inspect":
+            # VISTA 借鉴: 模型主动 recall 自己的过程级执行 trace (read-only).
+            # flag 关时执行体直接返回 disabled 说明, 不改控制流.
+            result = await self._execute_trace_inspect(description, context)
+        elif mode == "frame_inspect":
+            # VISTA 借鉴: 无损帧回看 / 区域裁剪 / read_pixels (flag 关时返回 disabled).
+            result = await self._execute_frame_inspect(description, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
 
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
+        # VISTA 借鉴: 本轮若产出视觉帧, 原样落盘进无损观测记忆.
+        # flag (visual_frame_memory) 关时 capture_if_enabled 直返, 零成本零回归.
+        # frame_inspect 本身是"回看已有帧", 不重复入库.
+        if mode != "frame_inspect":
+            self._recall_modes.capture_if_enabled(mode, result)
         # Step 8: 力学结果自动收集到 AlignmentDataset (失败不阻塞主循环)
         self._collect_alignment_pair(result, tool_name=mode)
         # 缓存给 _build_plan_prompt 的 pipeline suggest_next 用

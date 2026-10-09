@@ -381,6 +381,13 @@ class AutoloopEngine:
         # 去 mixin 阶段3: VisualInspect 协作对象. visual_inspect 方法经薄委托走这里,
         # 只读引擎字段(_last_visual_context/_visual_base64/_last_visual_base64), 写经转发回引擎.
         self._visual_inspector = VisualInspect(self)
+        # VISTA 借鉴: trace_inspect / frame_inspect 两个"模型可调"mode 协作对象.
+        # flag 关时捕获零成本直返, 两个 mode 被误产出也只返回 disabled 说明.
+        from huginn.autoloop.recall_modes import RecallModes
+
+        self._recall_modes = RecallModes(self)
+        # 无损视觉帧存储 (懒加载; 只在 visual_frame_memory 开且真产出帧时才建).
+        self._frame_store: Any = None
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -869,6 +876,32 @@ class AutoloopEngine:
     def _pick_image_action(self, description: str) -> str:
         return self._visual_inspector._pick_image_action(description)
 
+    # ── VISTA 借鉴: 无损帧存储 + 两个模型可调 mode 的薄委托 ──────────
+    def _get_frame_store(self) -> Any:
+        """懒建 workspace 内的无损帧存储; 失败返回 None (观测记忆 best-effort)."""
+        store = getattr(self, "_frame_store", None)
+        if store is not None:
+            return store
+        try:
+            from huginn.autoloop.frame_store import FrameStore
+
+            store = FrameStore(self.workspace)
+            self._frame_store = store
+            return store
+        except Exception:  # 防御: 建不起来就当无观测记忆
+            logger.debug("frame store init failed", exc_info=True)
+            return None
+
+    async def _execute_trace_inspect(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._recall_modes._execute_trace_inspect(description, context)
+
+    async def _execute_frame_inspect(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._recall_modes._execute_frame_inspect(description, context)
+
     # ── 去 mixin 阶段4: EngineAct 薄委托 ────────────────────────
     # plan/execute/llm_chat 方法族已下沉为 EngineAct 协作对象 (self._engine_actor).
     # 被 multiple mixin 共用 (_llm_chat 被 reflect/hypothesis/plan_check 调,
@@ -900,6 +933,18 @@ class AutoloopEngine:
         self, tool_name: str, input_params: dict[str, Any], output: Any
     ) -> None:
         self._engine_actor._record_provenance(tool_name, input_params, output)
+
+    # ARTEX/VISTA 借鉴: 过程级 trace 检索的薄委托 (方法族在 EngineAct).
+    def list_execution_traces(self) -> list[dict[str, Any]]:
+        return self._engine_actor.list_execution_traces()
+
+    def get_execution_trace(self, idx: int) -> dict[str, Any] | None:
+        return self._engine_actor.get_execution_trace(idx)
+
+    def search_execution_traces(
+        self, query: str = "", **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        return self._engine_actor.search_execution_traces(query, **kwargs)
 
     async def _try_evolved_fix(
         self, mode: str, description: str, result: Any
