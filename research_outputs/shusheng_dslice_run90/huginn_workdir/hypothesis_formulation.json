@@ -1,0 +1,49 @@
+{
+  "hypotheses": [
+    {
+      "id": 1,
+      "dimension": "STRUCTURE",
+      "name": "Algebraic Variety Hypothesis",
+      "statement": "The constraint function f* lies on a low-dimensional algebraic variety. The solution space dimension depends only on the variety's intrinsic dimension, not on w.",
+      "mathematical_grounding": "Let f* satisfy polynomial equations P_k(x, f(x)) = 0 for k=1,...,m. The solution space has dimension d_var (the variety dimension). By the Weierstrass preparation theorem, any function on this variety can be approximated by a neural network with width scaling as O(d_var * log(1/epsilon)), independent of w.",
+      "prediction": "N_c(w) = O(1) - constant, bounded by a small integer across all w in the scan",
+      "classification": "rigid",
+      "pro": "Strong mathematical foundation in algebraic geometry; low-dimensional varieties are common in physics and engineering; the prediction is clean and falsifiable.",
+      "con": "Many real-world functions do not lie on low-dimensional algebraic varieties; the assumption may be too restrictive for generic constraint functions."
+    },
+    {
+      "id": 2,
+      "dimension": "COMPUTATION",
+      "name": "Barron Space Hypothesis",
+      "statement": "The constraint function f* belongs to Barron space B, admitting an integral representation with bounded Barron norm. The required width grows logarithmically with w due to uniform approximation requirements.",
+      "mathematical_grounding": "Barron (1993) showed that for f in B, there exists a two-layer network with N hidden units such that ||f - f_N||_{L^2} <= C ||f||_B / sqrt(N). To achieve pointwise error <= epsilon at w points, uniform approximation requires N >= ||f||_B^2 * log(w/delta). If ||f||_B grows slowly (e.g., log w), then N_c(w) ~ O(log w).",
+      "prediction": "N_c(w) = O(log w) - logarithmic growth, e.g., N_c(w) approx a log w + b with small constants a, b",
+      "classification": "quasi-rigid (intermediate)",
+      "pro": "Grounded in rigorous approximation theory; Barron space captures a rich class of functions; the logarithmic prediction is distinct from both constant and polynomial scaling.",
+      "con": "The Barron norm may not be easy to compute or bound for arbitrary constraint functions; the logarithmic growth might be too slow to detect in a finite scan."
+    },
+    {
+      "id": 3,
+      "dimension": "MEASURE",
+      "name": "VC-Dimension Hypothesis",
+      "statement": "The neural network class has VC-dimension growing superlinearly with width. To achieve zero violation on w out-of-sample points with high probability, the network must have sufficient capacity to shatter constraint configurations.",
+      "mathematical_grounding": "For a two-layer ReLU network with width N, VC-dimension satisfies V(N) = O(N d log N) (Bartlett et al., 1998). Uniform convergence requires w >= V(N) / epsilon^2. Inverting: N such that N log N >= w * epsilon^2, giving N_c(w) = Omega(w / log w), effectively polynomial (linear up to log factors). Conservatively, N_c(w) = O(w^alpha) for alpha in (0, 1].",
+      "prediction": "N_c(w) = O(w^alpha) with alpha approx 0.5-1.0 - polynomial (linear or sublinear) growth, e.g., N_c(w) approx a w^alpha + b with alpha > 0",
+      "classification": "floppy",
+      "pro": "Grounded in statistical learning theory; VC-dimension is a well-established measure of capacity; the prediction reflects the intuition that more constraints require more capacity to generalize.",
+      "con": "VC-dimension bounds are often loose in practice; the non-convex optimization landscape may prevent reaching the theoretical capacity; the polynomial growth may be hard to distinguish from logarithmic in a finite scan."
+    }
+  ],
+  "selected_hypothesis": 2,
+  "selected_name": "Barron Space Hypothesis",
+  "selection_rationale": "The Barron Space Hypothesis is selected as the most testable and novel choice. It occupies an intermediate position between the extreme rigid (constant) and floppy (polynomial) predictions, making it highly discriminable from both alternatives. The logarithmic scaling N_c(w) ~ O(log w) is: (1) mathematically precise, following from Barron's theorem with covering arguments; (2) numerically distinguishable - a log fit can be cleanly contrasted with constant or power-law fits; (3) novel in this context - applying Barron's theorem to bootstrap solution space rigidity via N_c(w) scaling is fresh; (4) testable with modest resources - the logarithmic growth is slow enough that even a moderate scan over w should reveal the trend.",
+  "experiment_design": {
+    "constraint_function": "Choose a smooth function in Barron space (e.g., f(x) = sin(2*pi*x) or f(x) = exp(-x^2)*cos(5x) on [0,1])",
+    "sample_generation": "For each w in [10, 20, 50, 100, 200, 500], draw w points uniformly from [0,1] and compute y_i = f(x_i)",
+    "network_architecture": "Two-layer feedforward network with ReLU activation, input dimension 1, output dimension 1, hidden width N varying from 4 to 200 (step 4)",
+    "training": "Minimize MSE on the w training points using Adam (lr=1e-3, max epochs 2000). Use multiple random seeds (e.g., 5) per (w, N) to mitigate local minima",
+    "leave_out_evaluation": "For each trained network, compute max absolute error on a held-out set of 100 points (not used in training). Zero violation = max error <= 1e-3",
+    "Nc_determination": "For each w, find the smallest N such that at least 4 out of 5 seeds achieve zero violation on the hold-out set",
+    "scaling_analysis": "Fit N_c(w) to constant, logarithmic, and power-law models; compare via residual sum of squares and AIC"
+  }
+}

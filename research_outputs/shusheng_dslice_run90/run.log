@@ -64,3 +64,25 @@ Long-horizon goal: goal_90fc1a38
 │ Max iterations: 6                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
+empty required_results for target_1 — fallback
+[FINALLY-REFLECT] tool_results_this_turn=4
+[FINALLY-REFLECT] tool_results_this_turn=8
+[FINALLY-REFLECT] tool_results_this_turn=0
+[FINALLY-REFLECT] tool_results_this_turn=0
+[FINALLY-REFLECT] tool_results_this_turn=7
+[FINALLY-REFLECT] tool_results_this_turn=4
+[FINALLY-REFLECT] tool_results_this_turn=1
+[FINALLY-REFLECT] tool_results_this_turn=6
+[FINALLY-REFLECT] tool_results_this_turn=7
+control_trace name=collab_branch_incubator iteration=1 evidence=use: branches=3 ok=3 valued=2 winner_value=1.0 winner_tokens=13516 depth=2 action=use
+[autoloop] 429 rate limit, retry in 1.07s (attempt 1/5)
+[autoloop] 429 rate limit, retry in 1.88s (attempt 2/5)
+[autoloop] 429 rate limit, retry in 4.73s (attempt 3/5)
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1791520643.556382   41858 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1791520643.562306   41858 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+I0000 00:00:1791520643.662091   41858 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX512_FP16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1791520645.244861   41858 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1791520645.248294   41858 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
