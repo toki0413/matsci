@@ -113,7 +113,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_WETLAB_ENDPOINT": EnvSpec("str", "", "deployment"),
     "HUGINN_WM_TOKEN_BUDGET": EnvSpec("int", "8192", "deployment"),
     "HUGINN_WORKSPACE": EnvSpec("str", ".", "deployment"),
-    # ---- feature (62) -----------------------------------------------
+    # ---- feature (67) -----------------------------------------------
     "HUGINN_AUTO_APPROVE": EnvSpec("bool", "false", "feature"),
     "HUGINN_BUDGET_APPROVAL": EnvSpec("bool", "false", "feature"),
     "HUGINN_ENABLE_EXPLORATION": EnvSpec("bool", "true", "feature"),
@@ -134,6 +134,9 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_FEATURE_CURIOSITY_HINT": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_EXTERNAL_THINKING": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_EXTREME_DISPATCH": EnvSpec("bool", "false", "feature"),
+    "HUGINN_FEATURE_FRONTIER_CLAIM": EnvSpec("bool", "false", "feature"),
+    "HUGINN_FEATURE_FRONTIER_EMPTY_STOP": EnvSpec("bool", "false", "feature"),
+    "HUGINN_FEATURE_FRONTIER_SINGLE_WRITER_STRICT": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_FTS_AUTO_REBUILD": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_HARNESS_ADOPTION_GATE": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_HARNESS_JOINT_OPTIMIZER": EnvSpec("bool", "false", "feature"),
@@ -172,8 +175,10 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_FEATURE_TELEMETRY": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_THREE_CABIN": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_TOOL_CALL_ROUTER": EnvSpec("bool", "true", "feature"),
+    "HUGINN_FEATURE_TRACE_INSPECT": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_USE_ATOMWORLD": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_USE_COGNITIVE_MAP": EnvSpec("bool", "false", "feature"),
+    "HUGINN_FEATURE_VISUAL_FRAME_MEMORY": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_WORLD_MODEL": EnvSpec("bool", "true", "feature"),
     "HUGINN_PERSONA_AUTO_ROUTE": EnvSpec("bool", "true", "feature"),
     # ---- tuning (136) ------------------------------------------------
@@ -413,7 +418,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_USE_RUST_SANDBOX": EnvSpec("str", "", "internal"),
     "HUGINN_VAULT_ADDR": EnvSpec("str", "", "internal"),
     "HUGINN_WM_SUMMARIZE": EnvSpec("str", "rule", "internal"),
-    # ---- legacy (25) ------------------------------------------------
+    # ---- legacy (30) ------------------------------------------------
     "HUGINN_BANDIT_MDP": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_BELIEF_DARWIN": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_BELIEF_MODE_SWITCH": EnvSpec("bool", "true", "legacy", status="deprecated"),
@@ -433,11 +438,16 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_PRIVACY_REDACT_SECRETS": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_PROMPT_CACHE_CONTROL": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_TASK_TOOL_ROUTER": EnvSpec("bool", "true", "legacy", status="deprecated"),
+    "HUGINN_FRONTIER_CLAIM": EnvSpec("bool", "false", "legacy", status="deprecated"),
+    "HUGINN_FRONTIER_EMPTY_STOP": EnvSpec("bool", "false", "legacy", status="deprecated"),
+    "HUGINN_FRONTIER_SINGLE_WRITER_STRICT": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_TELEMETRY_ENABLED": EnvSpec("bool", "true", "legacy", status="deprecated"),
+    "HUGINN_TRACE_INSPECT": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_USE_ATOMWORLD": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_USE_COGNITIVE_MAP": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_USE_MEMORY_TYPING": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_USE_THREE_CABIN": EnvSpec("bool", "false", "legacy", status="deprecated"),
+    "HUGINN_VISUAL_FRAME_MEMORY": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_WORLD_MODEL": EnvSpec("bool", "true", "legacy", status="deprecated"),
 }
 

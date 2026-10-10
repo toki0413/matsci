@@ -45,6 +45,13 @@ def _get_math_signals():
     return _MATH_SIGNALS
 
 
+# planner 提示教的 MODE 候选基线. 不要在源码里把它改成 f-string 占位符:
+# contract_audit 的 workflow 面用正则静态解析本文件里 "MODE:" 后的候选枚举
+# (huginn/cli/contract_audit.py), 占位符会让该门禁看不到任何候选 mode → 变红.
+# VISTA 借鉴的两个实验 mode 由 _plan_mode_enum/_extend_mode_enum 在运行时按 flag 追加.
+_BASE_MODE_ENUM = "coder|workflow|explore|skill|visual_inspect"
+
+
 class PlanCheck:
     """plan_check 方法族协作对象.
 
@@ -80,6 +87,8 @@ class PlanCheck:
         "_build_plan_prompt",
         "_plan_context_hint",
         "_override_plan_mode",
+        "_asks_to_write_and_run_code",
+        "_is_code_experiment_plan",
         "_log_plan_override",
         "_parse_plan",
         "_plan_check_and_refine",
@@ -109,6 +118,61 @@ class PlanCheck:
         for i, sg in enumerate(sgs, 1):
             lines.append(f"{i}. {sg}")
         lines.append("### End Sub-goal Constraints\n")
+        return "\n".join(lines)
+
+    def _plan_mode_enum(self) -> str:
+        """计划格式里的 MODE 枚举. VISTA 借鉴的两个 mode 仅对应 flag 开时才列出.
+
+        默认全关 → 返回值与历史硬编码完全一致 (_BASE_MODE_ENUM), 提示词向后兼容.
+        """
+        modes = _BASE_MODE_ENUM.split("|")
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            ff = FeatureFlags.shared()
+            if ff.is_enabled("trace_inspect"):
+                modes.append("trace_inspect")
+            if ff.is_enabled("visual_frame_memory"):
+                modes.append("frame_inspect")
+        except Exception:  # 防御: flag 层异常 → 回落历史枚举
+            logger.debug("plan mode enum flag read failed", exc_info=True)
+        return "|".join(modes)
+
+    def _extend_mode_enum(self, prompt: str) -> str:
+        """把提示词里的基线 MODE 枚举按 feature flag 展开 (flag 关时原样返回).
+
+        提示词模板里保留字面量 ``MODE: <coder|workflow|...>`` 供 contract_audit
+        静态门读取; 这里只在 flag 开启时把它替换成含新 mode 的枚举.
+        """
+        enum = self._plan_mode_enum()
+        if enum == _BASE_MODE_ENUM:
+            return prompt
+        return prompt.replace(f"MODE: <{_BASE_MODE_ENUM}>", f"MODE: <{enum}>")
+
+    def _plan_extra_mode_lines(self) -> str:
+        """VISTA 借鉴 mode 的说明行; 对应 flag 关时为空串 (提示词与历史一致)."""
+        lines: list[str] = []
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            ff = FeatureFlags.shared()
+            if ff.is_enabled("trace_inspect"):
+                lines.append(
+                    "- trace_inspect: recall your OWN past execution traces "
+                    "(process-level) by keyword/tool/intent. Read-only. Put a JSON object "
+                    'in DESCRIPTION, e.g. {"query":"timeout","tool":"code_lab","limit":8}. '
+                    "Use it to reuse earlier runs' numbers/errors instead of re-running."
+                )
+            if ff.is_enabled("visual_frame_memory"):
+                lines.append(
+                    "- frame_inspect: re-view a previously captured frame losslessly. "
+                    'DESCRIPTION JSON: {"action":"view|region|pixels","frame_id":N,'
+                    '"box":[x0,y0,x1,y1],"points":[[x,y],...],"normalized":false}. '
+                    "region crops the ORIGINAL pixels faithfully; pixels returns exact RGB "
+                    "— use it to read values off a figure without re-rendering."
+                )
+        except Exception:  # 防御: flag 层异常 → 不追加
+            logger.debug("plan extra mode lines failed", exc_info=True)
         return "\n".join(lines)
 
     def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
@@ -269,6 +333,10 @@ class PlanCheck:
         except Exception:  # 防御: 建议失败不阻塞流程
             logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
 
+        # VISTA 借鉴: 两个实验 mode 的说明 (flag 关时为空串); 枚举由
+        # _extend_mode_enum 在返回前按 flag 展开 (模板保留基线字面量).
+        extra_mode_lines = self._plan_extra_mode_lines()
+
         blocks = self._apply_block_patches(
             [
                 (
@@ -284,7 +352,7 @@ Choose ONE mode and describe the plan:
 - explore: search a design space for optimal parameters
 - skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
 - visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
-
+{extra_mode_lines}
 Protocol completeness check (RCBench failure mode: experimental protocol mismatch):
 Before finalizing, verify your plan covers all necessary steps:
 - For DFT: structure optimization BEFORE property calculation? Convergence test (encut/kpoints)?
@@ -336,7 +404,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             ],
             "plan",
         )
-        return self._trim_to_budget(blocks, phase="plan")
+        return self._extend_mode_enum(self._trim_to_budget(blocks, phase="plan"))
 
     def _plan_context_hint(self) -> str:
         """B: 把上下文信号转成 plan prompt 提示文本 (软路由).
@@ -408,7 +476,25 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             )
             logger.info("override mode %s→coder: 目标要求写并运行代码", _orig_mode)
             self._log_plan_override("code_task_force_coder", "目标要求写并运行代码")
-        # 割点节点: 强制非 coder mode
+        # 计算实验目标绝不套"物理管线"模式: workflow 只认 cfd/fea/qc/symbolic/dft
+        # 几类模板, 把纯 ML/数学命题(如"解空间刚性")塞进去 → 报告被写成 DFT workflow
+        # 的 Methods/Results (run88 实测域漂移). 目标是代码实验时改走真实执行路径.
+        if current_mode == "workflow" and self._is_code_experiment_plan(plan):
+            _orig_mode = current_mode
+            # 走 coder(Write+Bash 真写码真执行) 而非再叫一次 code_lab —— execute 的
+            # 实验快路径已经先试过 Code Lab, 这里换一条真实执行路径推进, 不重复空转.
+            plan["mode"] = "coder"
+            current_mode = "coder"
+            plan["override_reason"] = "code_experiment_not_physics_workflow"
+            plan["description"] = (
+                f"[auto-routed: 代码实验走真实执行] {plan.get('description', '')}"
+            )
+            logger.info("override mode %s→coder: 目标是代码实验, 非物理管线", _orig_mode)
+            self._log_plan_override(
+                "code_experiment_not_physics_workflow", "代码实验不套物理 workflow 模板"
+            )
+        # 割点节点: 强制非 coder mode (需能跑验证). 代码实验的"验证模态"就是 Code Lab
+        # 真跑, 故代码实验走 code_lab, 其余走 workflow.
         try:
             current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
             if (
@@ -416,13 +502,14 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                 and self.hypothesis_graph.needs_dual_coverage(current_hyp)
                 and current_mode == "coder"
             ):
-                plan["mode"] = "workflow"
+                _dual_mode = "code_lab" if self._is_code_experiment_plan(plan) else "workflow"
+                plan["mode"] = _dual_mode
                 plan["override_reason"] = "cut_vertex_dual_coverage"
                 plan["description"] = (
                     f"[auto-routed: 割点需双覆盖] {plan.get('description', '')}"
                 )
                 logger.info(
-                    "override mode coder→workflow for cut vertex %s", current_hyp
+                    "override mode coder→%s for cut vertex %s", _dual_mode, current_hyp
                 )
                 self._log_plan_override(
                     "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖"
@@ -468,6 +555,28 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             )
         ).lower()
         return any(m in blob for m in self._CODE_TASK_MARKERS)
+
+    def _is_code_experiment_plan(self, plan: dict[str, Any]) -> bool:
+        """目标/plan 是否为"需亲手写代码真跑的计算实验" (命题无关).
+
+        复用引擎的 ``_is_code_experiment`` 词表(单一出处, 不在这里另立一份), 同时
+        看 objective 与 plan 描述 —— plan 常只写动作短语, 实验意图待在 objective.
+        引擎缺该方法(测试 mock)时降级 False, 不误改路由.
+        """
+        try:
+            fn = self._is_code_experiment   # __getattr__ 转发到引擎
+        except AttributeError:
+            return False
+        if not callable(fn):
+            return False
+        blob = " ".join(
+            str(x)
+            for x in (
+                getattr(self, "_objective", "") or "",
+                plan.get("description", "") or "",
+            )
+        )
+        return bool(fn(blob))
 
     def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
         """把 mode 覆盖记到 PhaseGateState.history, 补审计缺口.
@@ -1312,6 +1421,7 @@ MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""
+        prompt = self._extend_mode_enum(prompt)
         try:
             response = await self._llm_chat(
                 prompt,

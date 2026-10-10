@@ -134,7 +134,20 @@ class FeatureFlags:
         # privacy_local_only / privacy_redact 时整条链路短路). 消费点读 _flag_enabled.
         "jev_enabled": False,          # JEV 总闸 (外部判断能力总开关)
         "jev_tool_router": False,      # 未知域工具子集用 JEV 并行 Noul 宽松补充 (advisory)
-        "jev_guardrail": False,        # 工具调用放行初筛 (deny/ask/allow, advisory)
+        "jev_guardrail": False,      # 工具调用放行初筛 (deny/ask/allow, advisory)
+        # ---- ARTEX 借鉴: 假设图单写者 frontier 纪律 + 空即停 (默认全关) ----
+        # frontier_claim: execute 优先领用已有的"可执行前沿"方向 (前置证据满足),
+        #   而非每轮凭空生成新假设. 领用不改 status, 只标记 claimed_by.
+        "frontier_claim": False,          # 单写者领用前沿 (HUGINN_FRONTIER_CLAIM)
+        "frontier_single_writer_strict": False,  # 越权追加方向时拒绝 (默认只观测)
+        "frontier_empty_stop": False,     # 可执行前沿空 → 主终止 (预算降为安全上限)
+        # ---- VISTA 借鉴: 无损观测记忆 + 模型侧主动检索 (默认全关) ----
+        # 两个 mode 把"已有的 capacity"变成模型可调动作 (VISTA 的 inspect/read_pixels):
+        #   trace_inspect    — 把 engine.search_execution_traces 暴露成模型可选 mode;
+        #   visual_frame_memory — 每次 execute 的视觉帧原样落盘 + frame_inspect 回看/取像素.
+        # 默认关: 关时计划提示词不列这两个 mode, 模型不会产出 → 行为与改动前完全一致.
+        "trace_inspect": False,        # 过程级 trace 检索 mode (HUGINN_TRACE_INSPECT)
+        "visual_frame_memory": False,  # 无损帧记忆 + frame_inspect/read_pixels (HUGINN_VISUAL_FRAME_MEMORY)
     }
 
     # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
@@ -167,6 +180,11 @@ class FeatureFlags:
         "HUGINN_HILS_ATTENTION": "hils_attention",
         "HUGINN_FTS_AUTO_REBUILD": "fts_auto_rebuild",
         "HUGINN_CRDT_MERGE": "crdt_merge",
+        "HUGINN_FRONTIER_CLAIM": "frontier_claim",
+        "HUGINN_FRONTIER_SINGLE_WRITER_STRICT": "frontier_single_writer_strict",
+        "HUGINN_FRONTIER_EMPTY_STOP": "frontier_empty_stop",
+        "HUGINN_TRACE_INSPECT": "trace_inspect",
+        "HUGINN_VISUAL_FRAME_MEMORY": "visual_frame_memory",
     }
 
     # 给 list_flags 用的功能描述
@@ -225,6 +243,11 @@ class FeatureFlags:
         "jev_enabled": "JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束)",
         "jev_tool_router": "未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory)",
         "jev_guardrail": "工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory)",
+        "frontier_claim": "假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关)",
+        "frontier_single_writer_strict": "假设图单写者纪律: 非 hypothesize/branch 阶段追加方向时拒绝 (默认关, 只观测计数)",
+        "frontier_empty_stop": "可执行前沿空即停: 无'未执行且前置证据满足'的方向 → 主终止, 预算降为安全上限 (ARTEX 借鉴, 默认关)",
+        "trace_inspect": "模型侧过程级 trace 检索 mode: 按关键词/tool/intent recall 过往执行 (VISTA inspect 借鉴, 默认关)",
+        "visual_frame_memory": "无损观测记忆: 每次 execute 的视觉帧原样落盘 + frame_inspect 区域回看/read_pixels (VISTA 借鉴, 默认关)",
     }
 
     _singleton_lock = threading.Lock()

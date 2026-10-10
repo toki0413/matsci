@@ -45,6 +45,13 @@ def _get_math_signals():
     return _MATH_SIGNALS
 
 
+# planner 提示教的 MODE 候选基线. 不要在源码里把它改成 f-string 占位符:
+# contract_audit 的 workflow 面用正则静态解析本文件里 "MODE:" 后的候选枚举
+# (huginn/cli/contract_audit.py), 占位符会让该门禁看不到任何候选 mode → 变红.
+# VISTA 借鉴的两个实验 mode 由 _plan_mode_enum/_extend_mode_enum 在运行时按 flag 追加.
+_BASE_MODE_ENUM = "coder|workflow|explore|skill|visual_inspect"
+
+
 class PlanCheck:
     """plan_check 方法族协作对象.
 
@@ -116,10 +123,9 @@ class PlanCheck:
     def _plan_mode_enum(self) -> str:
         """计划格式里的 MODE 枚举. VISTA 借鉴的两个 mode 仅对应 flag 开时才列出.
 
-        默认全关 → 返回值与历史硬编码完全一致
-        (coder|workflow|explore|skill|visual_inspect), 提示词向后兼容.
+        默认全关 → 返回值与历史硬编码完全一致 (_BASE_MODE_ENUM), 提示词向后兼容.
         """
-        modes = ["coder", "workflow", "explore", "skill", "visual_inspect"]
+        modes = _BASE_MODE_ENUM.split("|")
         try:
             from huginn.feature_flags import FeatureFlags
 
@@ -131,6 +137,17 @@ class PlanCheck:
         except Exception:  # 防御: flag 层异常 → 回落历史枚举
             logger.debug("plan mode enum flag read failed", exc_info=True)
         return "|".join(modes)
+
+    def _extend_mode_enum(self, prompt: str) -> str:
+        """把提示词里的基线 MODE 枚举按 feature flag 展开 (flag 关时原样返回).
+
+        提示词模板里保留字面量 ``MODE: <coder|workflow|...>`` 供 contract_audit
+        静态门读取; 这里只在 flag 开启时把它替换成含新 mode 的枚举.
+        """
+        enum = self._plan_mode_enum()
+        if enum == _BASE_MODE_ENUM:
+            return prompt
+        return prompt.replace(f"MODE: <{_BASE_MODE_ENUM}>", f"MODE: <{enum}>")
 
     def _plan_extra_mode_lines(self) -> str:
         """VISTA 借鉴 mode 的说明行; 对应 flag 关时为空串 (提示词与历史一致)."""
@@ -316,9 +333,9 @@ class PlanCheck:
         except Exception:  # 防御: 建议失败不阻塞流程
             logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
 
-        # VISTA 借鉴: 两个实验 mode 的说明与枚举 (flag 关时与历史文本逐字一致).
+        # VISTA 借鉴: 两个实验 mode 的说明 (flag 关时为空串); 枚举由
+        # _extend_mode_enum 在返回前按 flag 展开 (模板保留基线字面量).
         extra_mode_lines = self._plan_extra_mode_lines()
-        mode_enum = self._plan_mode_enum()
 
         blocks = self._apply_block_patches(
             [
@@ -360,7 +377,7 @@ Alignment gate (plan_check will reject the plan if this fails):
   ignores the current hypothesis is invalid even if the code runs and returns numbers.
 
 Respond in this exact format:
-MODE: <{mode_enum}>
+MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
 FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
@@ -387,7 +404,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             ],
             "plan",
         )
-        return self._trim_to_budget(blocks, phase="plan")
+        return self._extend_mode_enum(self._trim_to_budget(blocks, phase="plan"))
 
     def _plan_context_hint(self) -> str:
         """B: 把上下文信号转成 plan prompt 提示文本 (软路由).
@@ -1400,10 +1417,11 @@ risks: {check.get('risks', [])}
 
 # 任务
 根据反馈重新生成 plan. 参考成功示例的结构 (不要照抄内容). 严格按格式输出:
-MODE: <{self._plan_mode_enum()}>
+MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""
+        prompt = self._extend_mode_enum(prompt)
         try:
             response = await self._llm_chat(
                 prompt,

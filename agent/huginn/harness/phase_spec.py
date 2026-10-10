@@ -75,6 +75,11 @@ _PHASE_BASELINE: dict[str, PhaseSpec] = {
             "code_lab": ["_execute_code_lab", "description"],
             "skill": ["_execute_skill", "plan"],
             "visual_inspect": ["_execute_visual_inspect", "description"],
+            # VISTA 借鉴: 两个 flag-gated mode 与 engine_act 的硬编码分支保持一致
+            # (登记面必须与执行面穷尽一致, 见 contract_audit workflow 面). flag 关时
+            # 对应 executor 直接返回 disabled 说明, 不改变控制流.
+            "trace_inspect": ["_execute_trace_inspect", "description"],
+            "frame_inspect": ["_execute_frame_inspect", "description"],
         },
     ),
     "_report": PhaseSpec(

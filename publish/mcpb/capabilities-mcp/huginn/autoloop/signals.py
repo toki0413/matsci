@@ -65,6 +65,17 @@ class EngineSignals:
     _last_visual_context: str = ""
     _last_rule_hit_id: str = ""
 
+    # ── G5 P3 pivot 非破坏性回退 (last-good 快照) ─────────────────
+    # pivot 会把当前假设/计划原地清空 (cog[...] = None)。若不先存一份, 转向后若新
+    # 方向也走不通, 就再也回不到"上次能进展的"假设 —— "no hyp to pivot from"停机
+    # 即此不可逆丢失的终点。三个字段在 pivot 成功清除前暂存当前方向, redirect 无
+    # hyp 可转时经 _restore_last_good 消费式恢复 (恢复即清空, 不做无限回退)。
+    _last_good_hypothesis: str | None = None
+    _last_good_hyp_id: str | None = None
+    # ponytail: 只存 JSON 可安全落盘的形态 (plan 是 dict/str, 已在 plans.json 落盘);
+    # 非安全类型由 _stash_last_good 侧自行降级为 str, 不污染 engine_state 序列化。
+    _last_good_plan: Any = None
+
     # ── 序列化 ──────────────────────────────────────────────────
 
     def to_snapshot(self) -> dict[str, Any]:

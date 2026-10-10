@@ -39,6 +39,7 @@ from typing import Any
 # 这条路径没有), 一次限流/网络抖动就被当成"阶段无产出" → redirect→pivot→停机
 # (run74). 这里接上.
 from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+from huginn.autoloop.exec_observation import classify_exit_class
 from huginn.llm_retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -733,11 +734,23 @@ class EngineAct:
             result = await self._execute_visual_inspect(
                 description, context, consistency_check=consistency
             )
+        elif mode == "trace_inspect":
+            # VISTA 借鉴: 模型主动 recall 自己的过程级执行 trace (read-only).
+            # flag 关时执行体直接返回 disabled 说明, 不改控制流.
+            result = await self._execute_trace_inspect(description, context)
+        elif mode == "frame_inspect":
+            # VISTA 借鉴: 无损帧回看 / 区域裁剪 / read_pixels (flag 关时返回 disabled).
+            result = await self._execute_frame_inspect(description, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
 
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
+        # VISTA 借鉴: 本轮若产出视觉帧, 原样落盘进无损观测记忆.
+        # flag (visual_frame_memory) 关时 capture_if_enabled 直返, 零成本零回归.
+        # frame_inspect 本身是"回看已有帧", 不重复入库.
+        if mode != "frame_inspect":
+            self._recall_modes.capture_if_enabled(mode, result)
         # Step 8: 力学结果自动收集到 AlignmentDataset (失败不阻塞主循环)
         self._collect_alignment_pair(result, tool_name=mode)
         # 缓存给 _build_plan_prompt 的 pipeline suggest_next 用
@@ -787,6 +800,10 @@ class EngineAct:
 
         只留数值来源字段 (objectives/summary/result...), 丢掉脚本体与标准输出;
         容量与单条长度都封顶, 台账本身不成为新的状态负担. 纯 best-effort.
+
+        ARTEX 借鉴: 额外带 ``intent`` (本轮假设 id, 即"方向") 与 ``ts`` —— 让台账
+        从"报告 citation 的数值面"升级为**可按方向检索的过程级 trace**
+        (ARTEX 的 ``get_worker_trace(intent_id, step_ids)`` 同构).
         """
         try:
             ledger = getattr(self, "_execution_ledger", None)
@@ -805,12 +822,84 @@ class EngineAct:
             if len(text) > _EXEC_LEDGER_ENTRY_CHARS:
                 text = text[:_EXEC_LEDGER_ENTRY_CHARS]
             ledger.append(
-                {"idx": len(ledger) + 1, "tool": tool_name, "result": text}
+                {
+                    "idx": len(ledger) + 1,
+                    "tool": tool_name,
+                    "intent": str(getattr(self, "_current_hyp_id_for_plan", "") or ""),
+                    "ts": time.time(),
+                    # 执行健康标签 (只读): 把"成功/空跑/工具报错/超时/环境错误"分开,
+                    # 避免把工具故障误判成假设被证伪. 不改控制流, 仅作台账元信息.
+                    "exit_class": classify_exit_class(output),
+                    "result": text,
+                }
             )
             if len(ledger) > _EXEC_LEDGER_MAX:
                 del ledger[: len(ledger) - _EXEC_LEDGER_MAX]
         except Exception:  # 防御: 台账 best-effort, 挂了不能带挂 execute
             logger.debug("append execution ledger failed", exc_info=True)
+
+    # ── ARTEX 借鉴: 过程级 trace 检索 ────────────────────────────────────────
+    # ARTEX 的 worker 能检索同僚的**过程级**执行日志 (search_all_worker_traces /
+    # list_worker_traces / get_worker_trace), 把"特殊报错/隐藏参数"这类未进官方
+    # fact 的线索在 worker 间复用. 本仓库对应物是 execution_ledger (每次 execute
+    # 一条紧凑快照). 这里补上按 关键词 / tool / intent 的检索口 + exclude_self
+    # (不检索自己刚写的那条, 避免自证). 纯读, fail-open.
+
+    def list_execution_traces(self) -> list[dict[str, Any]]:
+        """按追加顺序列出全部过程级 trace (深拷贝浅层字段, 防外部改写台账)."""
+        ledger = getattr(self, "_execution_ledger", None) or []
+        return [dict(e) for e in ledger]
+
+    def get_execution_trace(self, idx: int) -> dict[str, Any] | None:
+        """按稳定 idx 取一条 trace; 不存在 → None."""
+        for e in getattr(self, "_execution_ledger", None) or []:
+            if e.get("idx") == idx:
+                return dict(e)
+        return None
+
+    def search_execution_traces(
+        self,
+        query: str = "",
+        *,
+        tool: str = "",
+        intent: str = "",
+        exclude_self: bool = True,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """检索过程级 trace (ARTEX ``search_all_worker_traces`` 同构).
+
+        - ``query``: 关键词 (大小写不敏感), 在 result/tool/intent 文本里匹配.
+        - ``tool`` / ``intent``: 精确过滤.
+        - ``exclude_self=True``: 剔除 intent == 当前方向的条目 (不检索自己).
+        - ``limit``: 最多返回条数 (默认 8), 最近的优先.
+        纯读 fail-open: 任何异常返回 [].
+        """
+        try:
+            ledger = getattr(self, "_execution_ledger", None) or []
+            self_intent = str(getattr(self, "_current_hyp_id_for_plan", "") or "")
+            q = (query or "").strip().lower()
+            out: list[dict[str, Any]] = []
+            for e in ledger:
+                if tool and e.get("tool") != tool:
+                    continue
+                if intent and e.get("intent") != intent:
+                    continue
+                if exclude_self and self_intent and e.get("intent") == self_intent:
+                    continue
+                if q:
+                    hay = (
+                        f"{e.get('tool', '')} {e.get('intent', '')} "
+                        f"{e.get('result', '')}"
+                    ).lower()
+                    if q not in hay:
+                        continue
+                out.append(dict(e))
+            # 最近优先; 返回时按时间正序 (调用方按 idx 递增阅读更自然).
+            out = out[-limit:]
+            return out
+        except Exception:  # 防御: 检索 best-effort, 挂了返回空
+            logger.debug("search execution traces failed", exc_info=True)
+            return []
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]
@@ -1077,9 +1166,25 @@ Please modify the code to address this task."""
         "dft": "standard_dft",
     }
 
+    #: DFT 域的**显式**关键词. 只有描述里真出现这些词才认 DFT —— 绝不因"没匹配上
+    #: 别的域"就默认 DFT: 旧实现 ``return "dft"`` 会让纯 ML/数学命题(如"解空间刚性")
+    #: 被静默塞进 standard_dft 模板, 报告随之为 DFT workflow 写 Methods/Results
+    #: (run88 实测域漂移: 目标是小前馈网络, 报告却在讲 scf/band/dos).
+    _DFT_DOMAIN_KEYWORDS = (
+        "dft", "density functional", "vasp", "quantum espresso", "ab initio",
+        "第一性原理", "scf", "band structure", "band gap", "density of states",
+        "k-point", "kpoint", "pseudopotential", "electronic structure",
+        "能带", "态密度", "电子结构",
+    )
+
     def _classify_workflow_domain(self, description: str) -> str:
-        """廉价关键词分类, 决定走哪个 workflow 模板."""
-        text = description.lower()
+        """廉价关键词分类, 决定走哪个 workflow 模板; **认不出返回 ""**(不默认 DFT).
+
+        返回 "" 表示"这不是已知的 cfd/fea/qc/symbolic/dft 计算域", 调用方
+        ``_execute_workflow`` 据此拒绝伪造 domain 流程, 交上层回落 —— 宁可如实
+        失败, 也不把无关命题套进某个物理模板 (报告漂移的根因).
+        """
+        text = (description or "").lower()
         if any(k in text for k in ("cfd", "fluid", "fluent", "openfoam")):
             return "cfd"
         if any(k in text for k in ("fea", "stress", "mechanical", "abaqus", "ansys")):
@@ -1088,7 +1193,9 @@ Please modify the code to address this task."""
             return "qc"
         if any(k in text for k in ("symbolic", "regression", "拟合")):
             return "symbolic"
-        return "dft"
+        if any(k in text for k in self._DFT_DOMAIN_KEYWORDS):
+            return "dft"
+        return ""
 
     async def _execute_workflow(
         self, description: str, context: dict[str, Any]
@@ -1101,8 +1208,30 @@ Please modify the code to address this task."""
                 standard_dft_workflow,
             )
 
-            domain = self._classify_workflow_domain(description)
-            template_name = self._DOMAIN_TEMPLATE_NAMES.get(domain, "standard_dft")
+            # 认域时同时看 plan 描述与全局 objective —— plan 可能只写动作短语,
+            # 真正的领域约束常待在 objective 里.
+            domain = self._classify_workflow_domain(
+                description or str(getattr(self, "_objective", "") or "")
+            )
+            if not domain:
+                # 认不出计算域 → **拒绝默认套 DFT 模板**. 旧实现 fallback 到
+                # standard_dft, 于是纯 ML/数学命题的报告被写成 DFT workflow 的
+                # Methods/Results (run88 实测域漂移). 如实失败, 交上层回落, 不伪造.
+                logger.warning(
+                    "workflow 无法归入已知计算域, 拒绝 DFT 兜底 (避免报告域漂移): "
+                    "desc[:80]=%r",
+                    (description or "")[:80],
+                )
+                return {
+                    "mode": "workflow",
+                    "success": False,
+                    "domain": None,
+                    "error": (
+                        "目标无法归入 cfd/fea/qc/symbolic/dft 任一计算域, "
+                        "拒绝默认 DFT 模板 (防止报告域漂移)"
+                    ),
+                }
+            template_name = self._DOMAIN_TEMPLATE_NAMES[domain]
             template_fn = get_template(template_name) or standard_dft_workflow
 
             # 找工作区里的输入文件; 只对 DFT/QC 用 structure_path

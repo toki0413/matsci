@@ -727,6 +727,17 @@ class CognitiveRunner:
         # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
         # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
         self._current_phase = name
+        # 单写者 frontier 纪律 (ARTEX planner 独占追加): 用 phase 名标注"当前写
+        # 假设图的阶段", 让 add_hypothesis 能判定越权. 只有 hypothesize/branch 是
+        # 写者阶段; 其它阶段内部若追加方向 → 计数 (默认只观测, strict flag 才拒).
+        # 单一接线点: 所有 phase 经此方法, 覆盖 refine/pivot 等内部生产者.
+        try:
+            from huginn.autoloop.hypothesis_loop import set_frontier_writer_phase
+
+            _frontier_phase_tok = set_frontier_writer_phase(name)
+        except Exception:  # 防御: 标注失败不阻断 phase; 未标注 → 不检查 (兼容)
+            _frontier_phase_tok = None
+            logger.debug("set frontier writer phase failed (non-fatal)", exc_info=True)
         # H3: phase 切换写进事件日志 (best-effort). 事件日志是 source of truth,
         # 读模型经 AutoloopStateProjection 派生 — 可重放/可恢复.
         try:
@@ -795,6 +806,14 @@ class CognitiveRunner:
             logger.debug(
                 "autoloop progress publish (complete) failed (non-fatal)", exc_info=True,
             )
+        # 单写者纪律: 复位 phase 标注, 避免泄漏到下个非 phase 上下文 (best-effort).
+        if _frontier_phase_tok is not None:
+            try:
+                from huginn.autoloop.hypothesis_loop import reset_frontier_writer_phase
+
+                reset_frontier_writer_phase(_frontier_phase_tok)
+            except Exception:  # 防御: 复位失败不阻断 (下个 phase 会覆盖)
+                logger.debug("reset frontier writer phase failed (non-fatal)", exc_info=True)
         return phase
 
     def _render_report(self, data: dict[str, Any]) -> str:
@@ -972,6 +991,49 @@ class CognitiveRunner:
         if getattr(self, "_darwin_stagnation", 0) < _stag_limit:
             return None
         return "pivot"
+
+    def _stash_last_good(self, cog: dict[str, Any]) -> None:
+        """P3: pivot **清除 cog 之前**把当前方向暂存为 last-good 快照.
+
+        非破坏性 pivot 的一半: pivot 会 ``cog[k] = None`` 原地抹掉假设/计划, 抹掉后
+        若新方向也走不通, redirect 分支只看到"无 hyp 可转"就停机 —— 不可逆丢失.
+        这里先存一份, 让 ``_restore_last_good`` 能在没路可走时回到"上一次有计划的"
+        方向 (仍可重新 plan/execute), 而不是停机.
+
+        只存非空假设 (假设是恢复主体, 计划可为空). 计划若非 JSON 友好类型则降级为
+        str, 保证 engine_state 落盘不因快照而失败.
+        """
+        hyp = cog.get("hypothesis")
+        if not hyp:
+            return
+        plan = cog.get("plan")
+        if plan is not None and not isinstance(
+            plan, (dict, str, list, int, float, bool)
+        ):
+            plan = str(plan)
+        self._last_good_hypothesis = str(hyp)
+        self._last_good_hyp_id = cog.get("current_hyp_id")
+        self._last_good_plan = plan
+
+    def _restore_last_good(self, cog: dict[str, Any]) -> bool:
+        """P3: 用 last-good 快照恢复 cog; 消费式 (恢复即清空) 防无限回退.
+
+        返回是否恢复成功. 恢复 hypothesis/plan/current_hyp_id 到 cog; 有 hyp_id 时
+        同步 ``_current_hyp_id_for_plan`` (计划阶段读点). 恢复后立刻清空快照 —— 同一
+        快照只救一次, 不让"pivot↔restore"互相触发成死循环 (pivot 次数上限另有兜底).
+        """
+        hyp = getattr(self, "_last_good_hypothesis", None)
+        if not hyp:
+            return False
+        cog["hypothesis"] = hyp
+        cog["current_hyp_id"] = getattr(self, "_last_good_hyp_id", None)
+        cog["plan"] = getattr(self, "_last_good_plan", None)
+        if cog["current_hyp_id"]:
+            self._current_hyp_id_for_plan = cog["current_hyp_id"]
+        self._last_good_hypothesis = None
+        self._last_good_hyp_id = None
+        self._last_good_plan = None
+        return True
 
     def _long_horizon_iteration_cap(self, goal: Goal | None, max_iterations: int) -> int:
         """长程探索: 依据 goal 的挂钟预算抬高步数上限.
@@ -2955,8 +3017,29 @@ Respond JSON only:
             # 首轮 (last in ("", "skip")) 不调 LLM, 直接走规则版 hypothesize.
             if state.should_redirect:
                 state.should_redirect = False
-                # 没 hyp 可以 pivot → 直接停, 避免 pivot 空转死循环
+                # 没 hyp 可以 pivot: 先试非破坏性回退 (P3) —— pivot 前暂存的 last-good
+                # 快照能救回"上一次有计划的方向", 避免原地清除造成的不可逆丢失.
+                # 无快照才停 (pivot 空转死循环防护保持不变).
                 if not cog.get("current_hyp_id") and not cog.get("hypothesis"):
+                    if self._restore_last_good(cog):
+                        self._control_trace(
+                            "pivot_restore",
+                            f"redirect={state.redirect_reason}",
+                            action="restore_last_good",
+                            iteration=state.iteration,
+                        )
+                        logger.warning(
+                            "P3 pivot 非破坏性回退: 无 hyp 可转 → 恢复 last-good "
+                            "(iter %d)", state.iteration,
+                        )
+                        if cog.get("plan"):
+                            return ActionDecision(
+                                action="execute",
+                                rationale="restore last-good hypothesis+plan",
+                            )
+                        return ActionDecision(
+                            action="plan", rationale="restore last-good hypothesis",
+                        )
                     return ActionDecision(action="stop", rationale="no hyp to pivot from")
                 return ActionDecision(action="pivot", rationale=f"redirect: {state.redirect_reason}")
             # D3: 长程停滞 → 强制转向 (非终止). 无进展且预算未尽时不再静默空转,
@@ -3119,6 +3202,56 @@ Respond JSON only:
                     self._last_had_activity = had_activity
                     return phase.result
                 if action == "hypothesize":
+                    # ARTEX 借鉴: 前沿状态观测 + 可选"空即停"终止判据.
+                    # 预算降级为安全上限 —— 当图非空且无可执行方向 (未执行且前置
+                    # 证据满足) 时, 主终止. 默认只落 trace 观测 (frontier_empty_stop
+                    # flag 打开才真停, 避免失败轮被误判为"探索完了").
+                    try:
+                        _rep = self.hypothesis_graph.frontier_report()
+                        if _rep.get("exhausted"):
+                            _stop = FeatureFlags.shared().is_enabled("frontier_empty_stop")
+                            self._control_trace(
+                                "frontier_empty_stop",
+                                f"nodes={_rep['nodes']} untested={_rep['untested']} "
+                                f"blocked={_rep['blocked']} actionable=0",
+                                action="stop" if _stop else "advisory_hint",
+                                iteration=state.iteration,
+                            )
+                            if _stop:
+                                state.should_stop = True
+                                return None
+                    except Exception:  # 防御: 前沿观测失败不阻断
+                        logger.debug(
+                            "frontier exhaustion check failed (non-fatal)",
+                            exc_info=True,
+                        )
+                    # ARTEX 借鉴: 单写者领用 — execute 优先领一条已有可执行方向, 而非
+                    # 每轮凭空生成新假设 (frontier_claim flag; 默认关 = 旧行为不变).
+                    try:
+                        if FeatureFlags.shared().is_enabled("frontier_claim"):
+                            _claimed = self.hypothesis_graph.claim_next_actionable(
+                                claimer=f"iter{state.iteration}"
+                            )
+                            if _claimed is not None:
+                                cog["current_hyp_id"] = _claimed.id
+                                self._current_hyp_id_for_plan = _claimed.id
+                                cog["hypothesis"] = _claimed.statement
+                                self._control_trace(
+                                    "frontier_claim",
+                                    f"claim {_claimed.id}",
+                                    iteration=state.iteration,
+                                )
+                                self._emit_campaign(
+                                    "campaign.hypothesis",
+                                    {
+                                        "iteration": state.iteration,
+                                        "hypothesis": _claimed.statement[:300],
+                                        "claimed": True,
+                                    },
+                                )
+                                return _claimed.statement
+                    except Exception:  # 防御: 领用失败回退到生成路径
+                        logger.debug("frontier claim failed (non-fatal)", exc_info=True)
                     # v11: FDE 对齐轮 — hypothesize 前问用户方向 (首轮/有 blind_spots).
                     # 不阻塞, 60s timeout, 用户回答 append 到 _speculator_hint.
                     # ponytail: 复用 _maybe_clarify 管道, 不新增 phase.
@@ -3418,6 +3551,7 @@ Respond JSON only:
                 if action == "pivot":
                     _obj = self._objective if hasattr(self, "_objective") else ""
                     _cur = cog.get("current_hyp_id")
+                    _pivoted = False
                     if _cur:
                         try:
                             new_hyp = self.hypothesis_graph.pivot(
@@ -3426,28 +3560,46 @@ Respond JSON only:
                                 model=self._get_refine_model(),
                                 objective=_obj,
                             )
-                            self._refine_count = 0
-                            self._pivot_count += 1
-                            self._next_phase_hint = "perceive"
-                            logger.info("CognitiveLoop pivot: %s → %s", _cur, new_hyp)
-                            # P1.4: pivot → campaign.refine 对齐 run() L1729
-                            self._emit_campaign(
-                                "campaign.refine",
-                                {
-                                    "iteration": state.iteration,
-                                    "old_hyp_id": _cur,
-                                    "new_hyp_id": new_hyp,
-                                    "reason": "cognitive pivot",
-                                },
-                            )
-                            # P15: pivot 是关键事件, 立刻 save (force=True)
-                            self._maybe_save_engine_state(force=True, reason="pivot")
+                            # pivot 可能被交叉授粉延迟拒绝 (返回 None): 那不算转向,
+                            # 不能清 cog — 否则原地抹掉假设又无新方向可换.
+                            if new_hyp:
+                                self._refine_count = 0
+                                self._pivot_count += 1
+                                self._next_phase_hint = "perceive"
+                                _pivoted = True
+                                logger.info("CognitiveLoop pivot: %s → %s", _cur, new_hyp)
+                                # P1.4: pivot → campaign.refine 对齐 run() L1729
+                                self._emit_campaign(
+                                    "campaign.refine",
+                                    {
+                                        "iteration": state.iteration,
+                                        "old_hyp_id": _cur,
+                                        "new_hyp_id": new_hyp,
+                                        "reason": "cognitive pivot",
+                                    },
+                                )
                         except Exception:  # 防御: 认知转向失败忽略
                             logger.warning("cognitive pivot failed", exc_info=True)
-                    # 清中间状态, 下轮重新 observe
-                    for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
-                        cog[k] = None
-                    return "pivoted"
+                    if _pivoted:
+                        # P3 非破坏性: 清除 cog 前先暂存 last-good 快照 — 转向后若新
+                        # 方向也走不通, redirect 分支可经 _restore_last_good 回到此方向,
+                        # 而非落入 "no hyp to pivot from" 停机 (不可逆丢失).
+                        self._stash_last_good(cog)
+                        # P15: pivot 是关键事件, 立刻 save (force=True) — 快照已含 stash
+                        self._maybe_save_engine_state(force=True, reason="pivot")
+                        # 清中间状态, 下轮重新 observe
+                        for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
+                            cog[k] = None
+                        return "pivoted"
+                    # pivot 未产出新方向 (被拒/无 cur/异常): **保留** cog 现状, 不原地
+                    # 清除 → 下轮照常推进, 状态不丢.
+                    self._control_trace(
+                        "pivot_skipped",
+                        f"pivot produced no new direction (cur={_cur})",
+                        action="noop",
+                        iteration=state.iteration,
+                    )
+                    return "pivot_skipped"
                 if action in ("skip", "stop", "report"):
                     # report 由 _finalize_run 跑; stop/skip 是控制信号
                     return action

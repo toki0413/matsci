@@ -161,11 +161,15 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
         else:
             _repair_block = (
                 "上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
+                "报错里已给出**出错行号**, 先看那一行再改, 不要凭空重写:\n"
                 "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 "
                 + builtin_ref + ", 不要自己重写已有工具; "
                 "(b) 形状不匹配(matmul/广播/concatenate) → 数组一律 .reshape(-1, 1) 对齐二维; "
                 "(c) Generator 没有 randn → 用 rng.standard_normal(n); "
-                "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值。\n"
+                "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值; "
+                "(e) int()/float() 收到 list/数组 → 说明该处变量是序列不是标量, "
+                "先取元素(如 arr[i])再转换, 别直接把整个数组喂给 int(); "
+                "(f) 中间量(系数/幂次/权重)保持一维 (n,), 不要无谓地 reshape 成二维。\n"
                 "报错原文:\n" + repair_hint[:800] + "\n"
             )
         if prev_code:
@@ -325,6 +329,48 @@ def _call_with_timeout(fn, arg: dict, timeout: float = SAFE_TIMEOUT_S):
     return out[0]
 
 
+def _format_exec_error(e: BaseException, code: str) -> str:
+    """把沙箱执行异常格式化成"带出错行号 + 源码行"的可修复提示.
+
+    诚实红线不变: 只增强诊断信息, 不改任何数值/判据. 书生自修复**必须**知道出错
+    行, 旧实现只回 "类型: 消息" —— run88 实测: 报 'TypeError: int() argument must
+    be ... not list' 却无行号, 4 轮自修复全落空, 整轮实验零证据后回落 DFT workflow
+    (域漂移). 这里从 traceback 取**最深**一条落在书生代码(<code_act>)的帧, 附上其
+    附近源码, 让书生能直接定位并对症改.
+    """
+    lines = code.splitlines()
+    frame_lineno: int | None = None
+    tb = e.__traceback__
+    while tb is not None:
+        # 书生代码由 exec(compile(code, "<code_act>", "exec")) 执行 → 帧文件名固定.
+        if tb.tb_frame.f_code.co_filename == "<code_act>":
+            frame_lineno = tb.tb_lineno
+        tb = tb.tb_next
+    head = f"执行异常: {type(e).__name__}: {e}"
+    if not frame_lineno or frame_lineno > len(lines):
+        return head
+    lo = max(0, frame_lineno - 3)
+    hi = min(len(lines), frame_lineno + 2)
+    snippet = "\n".join(
+        f"{i + 1:>4}|{'>>' if i + 1 == frame_lineno else '  '} {lines[i]}"
+        for i in range(lo, hi)
+    )
+    return f"{head}\n出错位置: 代码第 {frame_lineno} 行; 附近源码:\n{snippet}"
+
+
+def _prepare_code(code: str, scaffold: Scaffold | None) -> str:
+    """把书生代码规整成**真正会被 exec 的源码** (确定性去断言 + 剥原语重定义).
+
+    单一出处: ``_load_namespace`` 执行它、``_sandbox_run_inproc`` 报错定位也用它 ——
+    两处必须看到同一份源码, 否则 traceback 行号会与原始代码错位 (AST 往返会挪行).
+    """
+    code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
+    if scaffold and scaffold.primitive_names:
+        # 剥除对脚手架原语的顶层重定义(用注入版), 避免书生重写引入 bug.
+        code = strip_primitive_redefinitions(code, scaffold.primitive_names)
+    return code
+
+
 def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
                     imports_whitelist_extra: tuple[str, ...] = (),
                     scaffold: Scaffold | None = None) -> dict:
@@ -344,10 +390,7 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         make_safe_builtins,
         safe_import,
     )
-    code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
-    if scaffold and scaffold.primitive_names:
-        # 剥除对脚手架原语的顶层重定义(用注入版), 避免书生重写引入 bug.
-        code = strip_primitive_redefinitions(code, scaffold.primitive_names)
+    code = _prepare_code(code, scaffold)
     # 只注入平台基座(np) — 领域原语全部来自 scaffold, 内核不内置任何命题专用工具.
     ns: dict = {
         "__builtins__": make_safe_builtins(),
@@ -479,8 +522,8 @@ def _sandbox_run_inproc(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
         res = _call_with_timeout(run_fn, cfg, timeout)
     except TimeoutError as te:
         return None, str(te)
-    except Exception as e:  # noqa: BLE001 — 执行异常如实记录
-        return None, f"执行异常: {type(e).__name__}: {e}"
+    except Exception as e:  # noqa: BLE001 — 执行异常如实记录(带出错行, 供自修复定位)
+        return None, _format_exec_error(e, _prepare_code(code, scaffold))
     res, _ = _coerce_author_result(res)   # 宽容"裸数值 dict", 不伪造数值
     reason = _check_run_schema(res)
     if reason is not None:

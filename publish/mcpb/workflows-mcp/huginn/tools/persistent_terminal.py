@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from huginn.utils.process import kill_process_group, new_group_popen_kwargs
+from huginn.utils.process import (
+    kill_process_group,
+    new_group_popen_kwargs,
+    track_live_child,
+    untrack_live_child,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,10 @@ class _SubprocessHandle:
             bufsize=-1,
             **_popen_kwargs,
         )
+        # 登记在册: session 子进程自立新组后, 父进程退出**不会**带走它 —— 若宿主
+        # 先退出, 退出兜底 ``kill_tracked_children()`` 才能按进程组整组回收, 不留
+        # PPID→1 孤儿 (run88 实测: persistent session 的实验子进程持续占 CPU).
+        track_live_child(self.proc.pid, own_group=self._own_group)
         self._buf: list[str] = []
         self._lock = threading.Lock()
         self._reader = threading.Thread(target=self._drain, daemon=True)
@@ -102,6 +111,8 @@ class _SubprocessHandle:
         except (OSError, ValueError):
             # pipe 已关
             logger.debug("best-effort op failed", exc_info=True)
+        # 进程自行结束 (stdout EOF) → 注销登记, 防 pid 复用被退出兜底误杀.
+        untrack_live_child(self.proc.pid)
 
     def write(self, data: str) -> None:
         if self.proc.stdin is None or self.proc.stdin.closed:
@@ -138,6 +149,9 @@ class _SubprocessHandle:
                     self.proc.wait(timeout=2)
         except Exception as e:
             logger.warning("_SubprocessHandle.kill error: %s", e)
+        finally:
+            # 已整组回收/自行结束 → 注销登记, 防 pid 复用被退出兜底误杀.
+            untrack_live_child(self.proc.pid)
 
 
 class _PexpectHandle:
@@ -150,6 +164,8 @@ class _PexpectHandle:
         # pexpect 走 pty.fork, 子进程在 fork 时 setsid → 已是新会话/进程组首领
         # (pgid == pid), 孙进程同组. kill 时按 pid 整组回收.
         self._own_group = True
+        # 同样登记在册: 宿主先退出时由 ``kill_tracked_children`` 兜底整组回收.
+        track_live_child(self.proc.pid, own_group=self._own_group)
 
     def write(self, data: str) -> None:
         self.proc.send(data)
@@ -169,6 +185,8 @@ class _PexpectHandle:
             self.proc.close(force=True)
         except Exception as e:
             logger.warning("_PexpectHandle.kill error: %s", e)
+        finally:
+            untrack_live_child(self.proc.pid)
 
 
 def _spawn(cmd: str | list, cwd: str | None) -> _SubprocessHandle | _PexpectHandle:

@@ -19,6 +19,8 @@
 同轴惩罚候选 (轮次): efficiency_discount, idle_turn_penalty
 工作流 mode 未在 planner 提示暴露: code_lab
 工作流 mode 未在 planner 提示暴露: dynamic_workflow
+工作流 mode 未在 planner 提示暴露: frame_inspect
+工作流 mode 未在 planner 提示暴露: trace_inspect
 模式: 各来源词表互相不一致
 模式有 prompt 段却无 set_mode 生产者: code
 模式有 prompt 段却无 set_mode 生产者: extreme

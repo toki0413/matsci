@@ -34,6 +34,7 @@ import uuid
 from typing import Any
 
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
+from huginn.autoloop.exec_observation import detect_soliloquy, exit_class_counts
 from huginn.autoloop.signals import routing_surprise
 from huginn.autoloop.types import LoopPhase
 from huginn.core_types import ToolContext
@@ -223,7 +224,7 @@ def _ledger_evidence_text(ledger: Any) -> str:
 
 # 台账里与"测量到的数值"无关的结构字段 (exec 元信息), 不算执行证据.
 _EVIDENCE_STRUCTURAL_KEYS = frozenset({
-    "idx", "exit_code", "returncode", "seed", "iteration", "elapsed",
+    "idx", "exit_code", "exit_class", "returncode", "seed", "iteration", "elapsed",
     "duration", "time", "timestamp", "round", "step", "attempt",
 })
 
@@ -993,7 +994,11 @@ class EngineReflect:
                 f"skip: dispatch returned nothing success={_res.success} "
                 f"summary_len={len(_res.summary or '')} "
                 f"full_len={len(getattr(_res, 'full_output', '') or '')} "
-                f"tool_calls={len(getattr(_res, 'tool_calls', []) or [])}",
+                f"tool_calls={len(getattr(_res, 'tool_calls', []) or [])} "
+                # 失败根因此前只在 logger.debug 里 (run.log 不见) → 野外只见
+                # "dispatch returned nothing" 却不知为何空手 (create 失败? 执行异常?).
+                # 把 error 摘要落到控制面, 让静默空转可诊断 (run89 实测 success=False).
+                f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
                 action="skip",
             )
             return
@@ -1242,7 +1247,8 @@ class EngineReflect:
             self._emit_control_trace(
                 "collab_failure_inverter",
                 f"skip: dispatch returned nothing success={_res.success} "
-                f"summary_len={len(_res.summary or '')}",
+                f"summary_len={len(_res.summary or '')} "
+                f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
                 action="skip",
             )
             return ""
@@ -4018,6 +4024,24 @@ class EngineReflect:
                 action="annotate" if _dec_flagged else "advisory_hint",
             )
 
+        # 执行健康 + 自演探针 (只读, 零约束): RapidPen 式 exit_class 统计 +
+        # EnIGMA 式"声称执行却查无成功回执"提示. 与上面三条同一风格: 只落 trace 供
+        # 触发率统计 + 条件附诚实告示, 不改写结论、不终止任何东西.
+        _exit_counts = exit_class_counts(_ledger)
+        self._emit_control_trace(
+            "exec_exit_classes",
+            " ".join(f"{k}={v}" for k, v in _exit_counts.items() if v) or "none",
+            action="advisory_hint",
+        )
+        _soli = detect_soliloquy(report_narrative, _ledger)
+        if _soli["claimed"] or _soli["total"]:
+            self._emit_control_trace(
+                "report_soliloquy",
+                f"claimed={_soli['claimed']} ok_receipts={_soli['receipts']} "
+                f"total={_soli['total']}",
+                action="annotate" if _soli["flagged"] else "advisory_hint",
+            )
+
         report_path = (
             self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
         )
@@ -4068,6 +4092,16 @@ class EngineReflect:
                 "**决定性告警：** 报告未对命题的硬口径给出二元判定 (满足/未满足), "
                 "而是用了模糊措辞。应对硬口径给出明确的通过/未通过判定 + 方向/趋势; "
                 "证据不足时写\"未判定\"并说明缺口, 不要用部分支持/初步/可能代替判定。\n"
+            )
+        # 自演告警: 正文声称"已执行/已观测", 但台账里没有任何成功回执 → 只标注提示
+        # 补跑或删除该主张 (不替书生改结论, 也不终止; 与上面几条同风格).
+        if _soli["flagged"] and report_narrative:
+            report_content += (
+                "\n\n## Self-Execution Audit\n\n"
+                "**自演告警：** 报告正文出现了\"已执行 / 已观测\"式陈述, 但本轮执行台账"
+                "中**没有任何一次成功回执** (exit_class=ok; 超时与工具报错都不算"
+                "\"观测到了\")。凡未绑定真实执行回执的环境观测不应作为结论依据, "
+                "需补跑工具获取真实结果, 或删除该主张。\n"
             )
         report_path.write_text(report_content, encoding="utf-8")
 

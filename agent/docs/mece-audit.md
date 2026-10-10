@@ -43,8 +43,8 @@
 
 | 开关 | 已注册 | 默认 | 消费点 |
 |---|---|---|---|
-| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2961 |
-| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2962 |
+| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2967 |
+| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2968 |
 
 ## 工作流面: 执行 mode 分发 vs planner 提示面
 
@@ -52,14 +52,14 @@
 
 | 面 | 集合 |
 |---|---|
-| dispatch_table | `code_lab`, `coder`, `dynamic_workflow`, `explore`, `skill`, `visual_inspect`, `workflow` |
-| engine_act 分支 | `code_lab`, `coder`, `dynamic_workflow`, `explore`, `skill`, `visual_inspect`, `workflow` |
+| dispatch_table | `code_lab`, `coder`, `dynamic_workflow`, `explore`, `frame_inspect`, `skill`, `trace_inspect`, `visual_inspect`, `workflow` |
+| engine_act 分支 | `code_lab`, `coder`, `dynamic_workflow`, `explore`, `frame_inspect`, `skill`, `trace_inspect`, `visual_inspect`, `workflow` |
 | planner 提示 #1 | `coder`, `explore`, `skill`, `visual_inspect`, `workflow` |
 | planner 提示 #2 | `coder`, `explore`, `skill`, `visual_inspect`, `workflow` |
 
 - dispatch_table == 硬编码分支: ✅ 一致
 - planner 多处提示互相一致: ✅
-- dispatch 支持但 planner 未教 (非 prompt 路径触达): `code_lab`, `dynamic_workflow`
+- dispatch 支持但 planner 未教 (非 prompt 路径触达): `code_lab`, `dynamic_workflow`, `frame_inspect`, `trace_inspect`
 
 ## 模式面: agent 顶层模式词表一致性
 
@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 274 站点, 按值域 Jaccard 重叠自动聚成 250 簇 (其中闭集簇 165). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 276 站点, 按值域 Jaccard 重叠自动聚成 252 簇 (其中闭集簇 166). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -110,10 +110,10 @@
 | `code_tool` | `huginn/modes/pi.py::PRIMITIVES`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/adapter.py::_CODING_TOOLS` |
 | `coding` | `huginn/models/router.py::TaskT`, `huginn/pet/__init__.py::class PetMood` |
 | `cp2k_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
+| `data` | `huginn/autoloop/exec_observation.py::_EVIDENCE_KEYS`, `huginn/metacog/failure_modes.py::Category` |
 | `deny` | `huginn/core_types.py::class BudgetDecision`, `huginn/core_types.py::class PermissionMode` |
 | `distinct` | `huginn/autoloop/engine_reflect.py::_CONTRAST_EN`, `huginn/perception/cross_validator.py::_HIGH_INTENSITY_QUALIFIERS` |
 | `dos` | `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
-| `elapsed` | `huginn/autoloop/engine_reflect.py::_EVIDENCE_STRUCTURAL_KEYS`, `huginn/runtime/sanity_gate.py::_TIME_FIELDS` |
 | `elastic_constants` | `huginn/hooks/science_hooks.py::_ELASTIC_KEYS`, `huginn/tools/hypothesis_generator_tool.py::_WORKFLOW_TEMPLATES` |
 | `exec` | `huginn/harness/joint_optimizer.py::_CORE_BLOCKS`, `huginn/memory/anchor.py::ANCHOR_KINDS` |
 | `execute` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/session_state.py::class SessionPhase` |
@@ -157,7 +157,7 @@
 | `relax` | `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
 | `report` | `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/session_state.py::class SessionPhase` |
 | `research` | `huginn/metacog/critique.py::_VALID_MODES`, `huginn/workflows/registry.py::_KINDS` |
-| `result` | `huginn/cli/slash_commands.py::_BG_SUBCOMMANDS`, `huginn/workflows/registry.py::_STAGE_RUNTIME_FIELDS` |
+| `result` | `huginn/autoloop/exec_observation.py::_EVIDENCE_KEYS`, `huginn/cli/slash_commands.py::_BG_SUBCOMMANDS`, `huginn/workflows/registry.py::_STAGE_RUNTIME_FIELDS` |
 | `run` | `huginn/memory/anchor.py::ANCHOR_KINDS`, `huginn/tools/sim/lammps_tool.py::_LAMMPS_COMPUTE_ACTIONS` |
 | `scipy` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/provenance/_legacy.py::_TRACKED_PACKAGES` |
 | `secret` | `huginn/events/audit_log.py::_SECRET_KEYS`, `huginn/rag/vector_store.py::SENSITIVE_META_FIELDS` |
@@ -170,7 +170,9 @@
 | `table` | `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/perception/doc_types.py::class ElementType` |
 | `text` | `huginn/events/audit_log.py::_BODY_KEYS`, `huginn/perception/doc_types.py::class ElementType` |
 | `thinking` | `huginn/pet/__init__.py::class PetMood`, `huginn/plugins/prompt_segments.py::_FRAMEWORK_SEGMENTS` |
+| `timeout` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/core_types.py::class ErrorKind` |
 | `tool` | `huginn/catalog/models.py::KINDS`, `huginn/comms/contract.py::_AGENT_ROLES`, `huginn/memory/anchor.py::ANCHOR_KINDS` |
+| `tool_error` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/autoloop/hypothesis_semantic.py::_FAILURE_LABELS` |
 | `topological` | `huginn/metacog/imagination.py::_TRANSFORM_TYPES`, `huginn/metacog/topology_lens.py::Family` |
 | `user` | `huginn/comms/contract.py::_AGENT_ROLES`, `huginn/memory/types.py::class MemoryType` |
 | `validate` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES` |
@@ -324,7 +326,7 @@
 | `PIPELINE_STAGE_CHANGE` | `pipeline.stage_change` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
 | `CAMPAIGN_ITERATION` | `campaign.iteration` | 2 | 1 | 0 | 0 | `published` |  |
 | `CAMPAIGN_REFINE` | `campaign.refine` | 1 | 1 | 0 | 0 | `published` |  |
-| `CAMPAIGN_HYPOTHESIS` | `campaign.hypothesis` | 1 | 1 | 0 | 0 | `published` |  |
+| `CAMPAIGN_HYPOTHESIS` | `campaign.hypothesis` | 2 | 1 | 0 | 0 | `published` |  |
 | `SNAPSHOT_TAKE` | `snapshot.take` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
 | `SNAPSHOT_REVERT` | `snapshot.revert` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
 | `QUALITY_CHECK` | `quality.check` | 1 | 1 | 0 | 0 | `published` |  |
@@ -339,10 +341,10 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2804`, `huginn/autoloop/cognitive_loop.py:2840` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1499`, `huginn/autoloop/engine_observe.py:936`, `huginn/autoloop/engine_reflect.py:1611` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3330` | `huginn/events/audit_log.py:571` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3350` | `huginn/events/audit_log.py:571` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2866`, `huginn/autoloop/cognitive_loop.py:2902` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1561`, `huginn/autoloop/engine_observe.py:936`, `huginn/autoloop/engine_reflect.py:1617` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3463` | `huginn/events/audit_log.py:571` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3483` | `huginn/events/audit_log.py:571` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:337` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:159` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:153`, `huginn/knowledge/store.py:163`, `huginn/knowledge/store.py:261` | — |
@@ -1302,6 +1304,8 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 同轴惩罚候选 (轮次): efficiency_discount, idle_turn_penalty
 - 工作流 mode 未在 planner 提示暴露: code_lab
 - 工作流 mode 未在 planner 提示暴露: dynamic_workflow
+- 工作流 mode 未在 planner 提示暴露: frame_inspect
+- 工作流 mode 未在 planner 提示暴露: trace_inspect
 - 模式有 prompt 段却无 set_mode 生产者: code
 - 模式有 prompt 段却无 set_mode 生产者: extreme
 - 模式有 prompt 段却无 set_mode 生产者: fusion
