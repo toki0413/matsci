@@ -1,0 +1,107 @@
+{
+  "goals": [
+    {
+      "id": "goal_b8c3de7a",
+      "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "sub_goals": [],
+      "iteration": 6,
+      "status": "active",
+      "created_at": "2026-10-06T12:13:28.013669+00:00",
+      "updated_at": "2026-10-06T12:22:14.670428+00:00",
+      "session_id": "",
+      "metadata": {},
+      "unknowns": [
+        {
+          "id": "unk_34e4dc56",
+          "text": "The definition of \"rigidity\" based solely on minimum width $N_c(w)$ for zero violation may overlook the role of depth, activation functions, and initialization schemes, which can significantly affect expressivity and generalization independently of width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:13:30.489004+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_a43291d6",
+          "text": "Achieving zero violation (≤1e-3 error) on out-of-sample constraints may be numerically unstable due to ill-conditioned optimization landscapes in small networks, leading to false negatives in rigidity assessment even if a solution exists.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:13:30.490023+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_96216b6e",
+          "text": "The distribution and geometry of the constraint points (e.g., clustered vs. uniform, low-dimensional manifold vs. full space) are unspecified; this could drastically alter $N_c(w)$ and mislead rigidity conclusions if not controlled.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:13:30.490728+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_5bd144ec",
+          "text": "The assumption that generalization behavior on held-out constraints reflects intrinsic solution space rigidity ignores potential overfitting to specific constraint patterns or symmetries not representative of the true function class.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:13:30.491399+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_35c88087",
+          "text": "In the limit of very small $w$, the network may trivially interpolate constraints without capturing underlying structure, causing $N_c(w)$ to be artificially low and falsely suggesting rigidity where none exists asymptotically.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:13:30.492065+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_b6c6c793",
+          "text": "将“泛化行为”作为解空间刚性探针存在因果倒置风险：网络泛化能力强可能源于优化器偏好或正则化效应，而非解空间本身刚性，二者无直接等价性。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:22:10.074370+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_855965dc",
+          "text": "零违规判定依赖最大绝对误差 ≤ 1e-3，但数值优化中梯度消失/爆炸或浮点精度限制可能导致即使理论可解也无法在有限步内达到该精度，误判为“胖”。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:22:10.075546+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_ebc92822",
+          "text": "当约束样本 w 高度冗余或共线时，N_c(w) 可能异常小，造成虚假刚性；反之，若样本分布稀疏但结构复杂，可能高估所需容量，需考虑样本几何构型的影响。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:22:10.076317+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_94c577e2",
+          "text": "未定义“留出约束点”的生成机制（是否同分布？是否对抗性？），若测试集与训练集分布偏移，零违规表现无法反映真实解空间性质，导致评估偏差。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:22:10.077030+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_95c3bdbb",
+          "text": "假设隐藏层宽度是唯一容量度量，忽略深度、激活函数、初始化方案等对解空间拓扑的影响，不同架构下 N_c(w) 不可比，可能掩盖真实刚性特征。",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T12:22:10.077714+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        }
+      ],
+      "unknowns_discovered": 10,
+      "unknowns_resolved": 0,
+      "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "success_criteria": [],
+      "max_iterations": 70,
+      "completed_at": null,
+      "completion_condition": null,
+      "wall_clock_budget_seconds": 700.0,
+      "started_at": "2026-10-06T12:13:28.014399+00:00",
+      "origin": "user"
+    }
+  ]
+}

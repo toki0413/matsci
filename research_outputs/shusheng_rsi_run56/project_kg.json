@@ -1,0 +1,540 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-10-01T05:17:58.249451",
+      "last_seen": "2026-10-01T05:34:17.595126",
+      "mentions": 2,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will produce a set of N_c(w) values. If the solution space is rigid, we expect N_c to remain small (e.g., < 50) and relatively constant as w increases. If fat, N_c will exceed the searc",
+      "persona": "dft_expert",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:17:58.249490",
+      "last_seen": "2026-10-01T05:17:58.249490",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:17:58.249498",
+      "last_seen": "2026-10-01T05:17:58.249498",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T05:17:58.249508",
+      "last_seen": "2026-10-01T05:17:58.249508",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_c297f6d8"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:17:58.249595",
+      "last_seen": "2026-10-01T05:17:58.249595",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "e530173726ae2573",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "[DIM: algebraic] The constraint satisfaction problem for the rigid family corres",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:19:23.535298",
+      "last_seen": "2026-10-01T05:19:23.535298",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family, N_c(w) stabilizes at 3 for all w ≤ W_max; for fat family, N_c(w) grows without bound or diverges erratically as w increases, indicating lack of fixed null space resolution.\nPLAN_SLOT",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: algebraic] The constraint satisfaction problem for the rigid family corres"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:19:23.535338",
+      "last_seen": "2026-10-01T05:19:23.535338",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:19:23.535347",
+      "last_seen": "2026-10-01T05:19:23.535347",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T05:19:23.535358",
+      "last_seen": "2026-10-01T05:19:23.535358",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: algebraic] The constraint satisfaction problem for the rigid family corres",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_ab85f9c9"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:19:23.535427",
+      "last_seen": "2026-10-01T05:19:23.535427",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b2e6f986dff4e5ce",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: dynamics] Gradient flow in the weight space of rigid networks converges to",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:21:02.645857",
+      "last_seen": "2026-10-01T05:21:02.645857",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid networks, N_c(w) will saturate to a small constant (e.g., N_c ≈ 3-5) independent of w. For fat networks, N_c(w) will grow sublinearly with w, approximately following N_c(w) ∝ w^0.7, indicati",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] Gradient flow in the weight space of rigid networks converges to"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:21:02.645911",
+      "last_seen": "2026-10-01T05:21:02.645911",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:21:02.645922",
+      "last_seen": "2026-10-01T05:21:02.645922",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T05:21:02.645931",
+      "last_seen": "2026-10-01T05:21:02.645931",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] Gradient flow in the weight space of rigid networks converges to",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_a9c1ea2b"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:21:02.646002",
+      "last_seen": "2026-10-01T05:21:02.646002",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ad44e13d182e69e4",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: dynamics] The solution space exhibits a phase transition in the NTK regime",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:22:41.020721",
+      "last_seen": "2026-10-01T05:22:41.020721",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will show logarithmic growth for w < w_c (e.g., N_c ~ log(w) up to ~10-20), then saturate to N_c ≈ 4-6 for w > w_c, confirming the rich training regime and low-dimensional manifold hypothesis.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The solution space exhibits a phase transition in the NTK regime"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:22:41.020758",
+      "last_seen": "2026-10-01T05:22:41.020758",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:22:41.020766",
+      "last_seen": "2026-10-01T05:22:41.020766",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T05:22:41.020774",
+      "last_seen": "2026-10-01T05:22:41.020774",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The solution space exhibits a phase transition in the NTK regime",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_fcc9058f"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:22:41.020840",
+      "last_seen": "2026-10-01T05:22:41.020840",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c07b709702203832",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The bootstrap constraint system has a fixed-rank algebraic stru",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:31:50.495797",
+      "last_seen": "2026-10-01T05:31:50.495797",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will show a step-like or constant behavior around N_c ≈ 8 for w ≥ some threshold (e.g., w > 5), with possible higher values at very low w (e.g., w=1,2) due to under-constrained initial conditio",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The bootstrap constraint system has a fixed-rank algebraic stru"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:31:50.495848",
+      "last_seen": "2026-10-01T05:31:50.495848",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:31:50.495870",
+      "last_seen": "2026-10-01T05:31:50.495870",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T05:31:50.495883",
+      "last_seen": "2026-10-01T05:31:50.495883",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The bootstrap constraint system has a fixed-rank algebraic stru",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_3b6ef435"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:31:50.495982",
+      "last_seen": "2026-10-01T05:31:50.495982",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3fb3571fe42009f0",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:34:17.595155",
+      "last_seen": "2026-10-01T05:34:17.595155",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:34:17.595176",
+      "last_seen": "2026-10-01T05:34:17.595176",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T05:34:17.595185",
+      "last_seen": "2026-10-01T05:34:17.595185",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_3bca6514"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T05:34:17.595246",
+      "last_seen": "2026-10-01T05:34:17.595246",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f37a95157419b69a",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:17:58.249508",
+      "last_seen": "2026-10-01T05:17:58.249508",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c297f6d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:34:17.595185",
+      "last_seen": "2026-10-01T05:34:17.595185",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3bca6514"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:17:58.249508",
+      "last_seen": "2026-10-01T05:17:58.249508",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c297f6d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:17:58.249508",
+      "last_seen": "2026-10-01T05:17:58.249508",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c297f6d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: algebraic] The constraint satisfaction problem for the rigid family corres",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:19:23.535358",
+      "last_seen": "2026-10-01T05:19:23.535358",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ab85f9c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:19:23.535358",
+      "last_seen": "2026-10-01T05:19:23.535358",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ab85f9c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:19:23.535358",
+      "last_seen": "2026-10-01T05:19:23.535358",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ab85f9c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] Gradient flow in the weight space of rigid networks converges to",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:21:02.645931",
+      "last_seen": "2026-10-01T05:21:02.645931",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a9c1ea2b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:21:02.645931",
+      "last_seen": "2026-10-01T05:21:02.645931",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a9c1ea2b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:21:02.645931",
+      "last_seen": "2026-10-01T05:21:02.645931",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a9c1ea2b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The solution space exhibits a phase transition in the NTK regime",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:22:41.020774",
+      "last_seen": "2026-10-01T05:22:41.020774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fcc9058f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:22:41.020774",
+      "last_seen": "2026-10-01T05:22:41.020774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fcc9058f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:22:41.020774",
+      "last_seen": "2026-10-01T05:22:41.020774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fcc9058f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The bootstrap constraint system has a fixed-rank algebraic stru",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:31:50.495883",
+      "last_seen": "2026-10-01T05:31:50.495883",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3b6ef435"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:31:50.495883",
+      "last_seen": "2026-10-01T05:31:50.495883",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3b6ef435"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:31:50.495883",
+      "last_seen": "2026-10-01T05:31:50.495883",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3b6ef435"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:34:17.595185",
+      "last_seen": "2026-10-01T05:34:17.595185",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3bca6514"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T05:34:17.595185",
+      "last_seen": "2026-10-01T05:34:17.595185",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3bca6514"
+    }
+  ]
+}

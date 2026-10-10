@@ -1,0 +1,177 @@
+{
+  "config": {
+    "kind": "osc",
+    "widths": [
+      8,
+      16,
+      32,
+      64
+    ],
+    "ns": [
+      1,
+      3,
+      4
+    ],
+    "seeds": 1,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 3,
+    "tag": "loop02_s2"
+  },
+  "anchor": "u''=-(2pi)^2 cos(2pi x), u*=cos(2pi x)+0.3x-0.2 (2 DOF)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 8,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 6.848532602192347e-10,
+      "v_ho_med_all": 0.9043523175768747,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 3,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.7244068362645517e-09,
+      "v_ho_med_all": 7.580305022332085e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.3592225620941423e-10,
+      "v_ho_med_all": 2.3996069838758622e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.488655083574917e-10,
+      "v_ho_med_all": 1.6427976688655144,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 3,
+      "pass_frac": 0.0,
+      "v_tr_med": 3.468041204107209e-10,
+      "v_ho_med_all": 3.662687659962071e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 3.646295020690017e-10,
+      "v_ho_med_all": 4.1588614878664206e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 1,
+      "pass_frac": 1.0,
+      "v_tr_med": 4.971905449836755e-11,
+      "v_ho_med_all": 1.678753306369019,
+      "v_ho_med_good": 1.678753306369019,
+      "res_ho_rms_good": 9.095954237638646e-06,
+      "val_ho_rms_good": 1.2956671278867433
+    },
+    {
+      "w": 32,
+      "n": 3,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.052847221907537e-10,
+      "v_ho_med_all": 4.1430410587119566e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.0513100467056433e-10,
+      "v_ho_med_all": 2.3042970838780035e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 1,
+      "pass_frac": 1.0,
+      "v_tr_med": 5.636848124317726e-11,
+      "v_ho_med_all": 0.5213362093176753,
+      "v_ho_med_good": 0.5213362093176753,
+      "res_ho_rms_good": 1.7026372749641994e-05,
+      "val_ho_rms_good": 0.7220361549311627
+    },
+    {
+      "w": 64,
+      "n": 3,
+      "pass_frac": 1.0,
+      "v_tr_med": 5.771298310455185e-12,
+      "v_ho_med_all": 2.524979620740108e-10,
+      "v_ho_med_good": 2.524979620740108e-10,
+      "res_ho_rms_good": 1.5890184240994814e-05,
+      "val_ho_rms_good": 2.6193989616808577e-09
+    },
+    {
+      "w": 64,
+      "n": 4,
+      "pass_frac": 1.0,
+      "v_tr_med": 1.0366642715060346e-11,
+      "v_ho_med_all": 1.0800443712588859e-10,
+      "v_ho_med_good": 1.0800443712588859e-10,
+      "res_ho_rms_good": 1.0392518233555398e-05,
+      "val_ho_rms_good": 1.375175320611779e-09
+    }
+  ],
+  "N_c": {
+    "all": {
+      "8": 3,
+      "16": 3,
+      "32": 3,
+      "64": 3
+    },
+    "good": {
+      "8": null,
+      "16": null,
+      "32": null,
+      "64": 3
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": 0.0,
+      "r2": 1.0,
+      "k": 4
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 1
+    }
+  },
+  "verdict": "H1: 饱和点与容量无关 -> N_c 是解的性质, 探针站得住",
+  "elapsed_s": 864.840811252594
+}

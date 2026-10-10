@@ -22,6 +22,7 @@ from typing import Any
 
 from huginn.events.session_log import (
     EVENT_COMPACTION,
+    EVENT_CONTEXT_INJECTION,
     EVENT_MESSAGE,
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
@@ -77,3 +78,17 @@ def record_tool_result(thread_id: str, tool_call_id: str, content: str) -> None:
 
 def record_compaction(thread_id: str, summary: str) -> None:
     append_session_event(thread_id, EVENT_COMPACTION, {"summary": summary})
+
+
+def record_injection(
+    thread_id: str, source: str, payload: dict[str, Any] | None = None
+) -> None:
+    """记录一次上下文注入 (DSH trajectory 按来源审计).
+
+    ``source`` 明确"谁塞进来的" (如 ``context_builder.plan``、``plugin:xxx``),
+    供 trajectory 按来源回溯模型看到了什么. fail-open: 写失败不阻断主流程.
+    """
+    append_session_event(
+        thread_id, EVENT_CONTEXT_INJECTION,
+        {"source": source, **(payload or {})},
+    )

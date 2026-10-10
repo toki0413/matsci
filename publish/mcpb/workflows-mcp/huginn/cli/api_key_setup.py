@@ -105,10 +105,7 @@ def save_api_key(env_var: str, key: str, env_file: str = ".env") -> None:
     _read_env_file(path)
 
     # 读原始行, 用于保留注释和顺序
-    if path.exists():
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
-    else:
-        raw_lines = []
+    raw_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
     pattern = re.compile(rf"^\s*{re.escape(env_var)}\s*=", re.IGNORECASE)
     updated = False

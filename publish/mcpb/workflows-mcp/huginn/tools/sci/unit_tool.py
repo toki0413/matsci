@@ -126,6 +126,22 @@ class UnitToolInput(BaseModel):
     )
 
 
+_DIM_LABEL_TO_DIMENSION: dict[str, tuple[str, ...]] = {
+    "energy": ("M", "L", "T"),
+    "length": ("L",),
+    "pressure": ("M", "L", "T"),
+    "temperature": ("Theta",),
+    "time": ("T",),
+    "force": ("M", "L", "T"),
+    "mass": ("M",),
+    "density": ("M", "L"),
+    "frequency": ("T",),
+    "volume": ("L",),
+    "area": ("L",),
+    "velocity": ("L", "T"),
+}
+
+
 class UnitTool(HuginnTool):
     """Convert units, normalize to SI, and check physical dimensions."""
 
@@ -228,16 +244,34 @@ class UnitTool(HuginnTool):
                 )
 
             elif input_data.action == "check_dimension":
-                from huginn.utils.units import check_units
+                from huginn.research.external_validator import (
+                    resolve_unit_dimension,
+                )
 
-                quantity = Q(input_data.value, input_data.from_unit)
-                is_valid = check_units(quantity, input_data.dimension or "")
+                # 契约层单轨: 解析 from_unit 的量纲签名, 与期望维度字符串比对.
+                sig = resolve_unit_dimension(input_data.from_unit)
+                if sig is None:
+                    return ToolResult(
+                        data={
+                            "value": input_data.value,
+                            "from_unit": input_data.from_unit,
+                            "dimension": input_data.dimension,
+                            "is_valid": False,
+                            "note": f"unit '{input_data.from_unit}' 契约 registry 无法解析(量纲未知)",
+                        },
+                        success=True,
+                    )
+                is_valid = (
+                    input_data.dimension is not None
+                    and self._dim_matches(sig, input_data.dimension)
+                )
                 return ToolResult(
                     data={
                         "value": input_data.value,
                         "from_unit": input_data.from_unit,
                         "dimension": input_data.dimension,
                         "is_valid": is_valid,
+                        "dimension_signature": sig,
                     },
                     success=True,
                 )
@@ -295,64 +329,72 @@ class UnitTool(HuginnTool):
 
     # ── Compound dimension inference ──────────────────────────────────
 
+    @staticmethod
+    def _dim_matches(signature: str, dimension_label: str) -> bool:
+        """契约层量纲签名(如 ``M1·L1·T-2``)是否属于请求的物理量纲标签.
+
+        ``dimension_label`` 取能量/长度/压力/温度/时间/力/质量/密度/频率/体积/面积/速度.
+        用维度字母是否出现(指数非 0)来判定, 与契约层 UnitRegistry 的 7 基维对应.
+        未识别标签 → False(不硬判).
+        """
+        label = (dimension_label or "").strip().lower()
+        inv = _DIM_LABEL_TO_DIMENSION
+        want = inv.get(label)
+        if want is None:
+            return False
+        # want 比如 "M L T" 的子集; 检查签名里这些维度的指数非零即可(签名格式 L{d}g 可能带负).
+        present = signature.split("·")
+        have = set()
+        for chunk in present:
+            if not chunk:
+                continue
+            letter = chunk[0]
+            have.add(letter)
+        return set(want).issubset(have)
+
     def _infer_dimension(
         self, expression: str, variables: dict[str, str]
     ) -> ToolResult:
-        """Infer the dimension of a compound expression.
+        """Infer the dimension of a compound expression (契约层单轨).
 
-        Each variable is turned into a unit quantity (magnitude 1) so that
-        the resulting dimensionality reflects the expression's structure.
+        不再依赖 pint 的维度字符串 —— 把 ``variables`` 当符号单位表, 交给
+        ``external_validator.check_expression_dimensions``(sympy + 契约层 UnitRegistry)
+        推断, 与 FEM/Lean/结构解析等引擎用同一判据. ``expression`` 是纯无量纲的
+        量纲推断式(无目标单位), 故这里只看推断量纲, 不比对目标.
         """
-        try:
-            from huginn.security.safe_eval import safe_eval
-            from huginn.utils.units import Q
+        from huginn.research.external_validator import (
+            _to_symbol,
+            check_expression_dimensions,
+        )
 
-            if not is_pint_available():
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="pint is required for dimension inference.",
-                )
-
-            namespace = {var: Q(1.0, unit) for var, unit in variables.items()}
-            result = safe_eval(expression, namespace)
-
-            if hasattr(result, "dimensionality"):
-                return ToolResult(
-                    data={
-                        "result_dimension": str(result.dimensionality),
-                        "result_unit": str(result.units),
-                        "consistent": True,
-                    },
-                    success=True,
-                )
-
-            # Plain number — dimensionless result
+        sym_units = {var: _to_symbol(str(unit)) for var, unit in (variables or {}).items()}
+        if not sym_units:
             return ToolResult(
-                data={
-                    "result_dimension": "dimensionless",
-                    "result_unit": "dimensionless",
-                    "consistent": True,
-                },
-                success=True,
+                data=None, success=False,
+                error="infer_dimension requires at least one variable with unit.",
             )
-        except Exception as e:
-            # pint raises DimensionalityError when adding incompatible units
-            if type(e).__name__ == "DimensionalityError":
-                return ToolResult(
-                    data={
-                        "result_dimension": "inconsistent",
-                        "result_unit": "unknown",
-                        "consistent": False,
-                        "error": str(e),
-                    },
-                    success=True,
-                )
+        try:
+            # 无量纲推断: 给一个 dummy 目标等于推断结果, 仅取 inferred 签名.
+            out = check_expression_dimensions(expression, sym_units, expected_unit="1")
+        except Exception as e:  # noqa: BLE001
             return ToolResult(
-                data=None,
-                success=False,
+                data=None, success=False,
                 error=f"Dimension inference failed: {e}",
             )
+        if out.get("error") and out.get("inferred") is None:
+            # 解析/量纲引擎不可用 → 如实报不可用(诚实边界), 不硬判.
+            return ToolResult(
+                data=None, success=False,
+                error=out["error"],
+            )
+        return ToolResult(
+            data={
+                "result_dimension": out["inferred"],
+                "result_unit": out["inferred"],
+                "consistent": True,
+            },
+            success=True,
+        )
 
     def _unit_arithmetic(
         self,

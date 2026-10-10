@@ -138,6 +138,28 @@ Objective → 分支生成 → 评估 → Pareto 剪枝 → 失败诊断/回溯 
    上下文管理器；autouse 护栏强制 `ToolRegistry` 测试间逐位一致；CI 覆盖
    3.11/3.12/3.13，覆盖率门禁 60。
 
+## 控制面预算（autoloop 硬决策准入）
+
+autoloop 的契约是「书生(LLM)做科学判断, 框架只供给证据与边界」。每加一个**硬**控制,
+就多一分替书生做判断的风险 —— 实测控制面已是 run 失败的首要原因: 最近 6 轮长程里
+**3 轮被框架自己的硬控误杀**, 只跑到预算的 17%–25% (详见
+[`control_surface_audit.md`](../../control_surface_audit.md))。
+
+新增任何硬机制前必须回答两问, 答不上来就不加:
+
+1. **它替书生做了哪一步判断?** 科学判断(要不要换方法族、有没有进展、何时收结)一律
+   下沉给书生; 只有「这条证据算不算数」(诚实/证据门)可以硬。
+2. **能不能改成提示或观测?** 能改就改。
+
+**硬终止只保留两个出口: 挂钟预算耗尽 与 目标达成**(步数上限作兜底)。
+其余一律降为「提示(写进下一轮 prompt) + 结构化 trace」, 经
+`_emit_campaign("campaign.control_trace", {name, iteration, evidence, action})` 记录,
+便于统计触发率; **长期 0 触发或长期误杀的, 删或降**。
+
+已按此原则降级: A1 执行收敛(exec convergence)、A2 换名债务越限(rename debt) ——
+两者不再 `should_stop`, 只写提示 + trace。参见
+[`cognitive_loop.py`](../huginn/autoloop/cognitive_loop.py)。
+
 ## Configuration
 
 - `pyproject.toml`：依赖与元数据；`huginn.toml` / `huginn/config.py`：运行时配置。

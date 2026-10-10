@@ -585,8 +585,12 @@ export default function App() {
   const solverDerive = async () => {
     setSolverRunning(true); setSolverError(""); setSolverDerived(""); setSolverSolution(""); setSolverPlotUrl("");
     try {
-      const data = await api.post<{ derived?: string }>("/unified/derive", { model: solverModel, input: solverInput });
-      setSolverDerived(data.derived || JSON.stringify(data, null, 2));
+      const data = await api.post<{ principle?: string; equations?: Record<string, string> }>("/unified/derive", { model: solverModel, input: solverInput });
+      setSolverDerived(
+        data.equations || data.principle
+          ? [data.principle, data.equations && JSON.stringify(data.equations, null, 2)].filter(Boolean).join("\n\n")
+          : JSON.stringify(data, null, 2)
+      );
     } catch (e: any) { setSolverError(e.message); }
     setSolverRunning(false);
   };
@@ -603,8 +607,10 @@ export default function App() {
   const solverPlot = async () => {
     setSolverRunning(true); setSolverError(""); setSolverPlotUrl("");
     try {
-      const data = await api.post<{ plot_url?: string; image?: string }>("/unified/plot", { model: solverModel, solution: solverSolution });
-      setSolverPlotUrl(data.plot_url || (data.image ? `data:image/png;base64,${data.image}` : "") || JSON.stringify(data));
+      const data = await api.post<{ plot_base64?: string; plot_path?: string }>("/unified/plot", { model: solverModel, solution: solverSolution });
+      setSolverPlotUrl(
+        data.plot_base64 ? `data:image/png;base64,${data.plot_base64}` : data.plot_path || JSON.stringify(data)
+      );
     } catch (e: any) { setSolverError(e.message); }
     setSolverRunning(false);
   };

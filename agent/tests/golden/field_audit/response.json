@@ -1,0 +1,14 @@
+{
+ "call_count": 177,
+ "coverage": {
+  "checked": 86,
+  "skip_ambiguous": 0,
+  "skip_decl": 61,
+  "skip_shape": 24
+ },
+ "kind_counts": {},
+ "type_count": 166,
+ "untriaged": [],
+ "violations": [],
+ "wired_call_count": 171
+}

@@ -19,7 +19,6 @@ _DFT_MD_TOOLS = frozenset(
         "lammps",
         "lammps_tool",
         "qe",
-        "quantum_espresso",
         "qe_tool",
         "cp2k",
         "cp2k_tool",
@@ -182,7 +181,7 @@ def _extract_walltime_seconds(params: dict[str, Any]) -> float | None:
     val = params.get("walltime")
     if val is None:
         return None
-    if isinstance(val, (int, float)):
+    if isinstance(val, int | float):
         return float(val)
     if isinstance(val, str):
         s = val.strip().lower()

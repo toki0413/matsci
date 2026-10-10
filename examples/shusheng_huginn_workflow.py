@@ -1205,6 +1205,71 @@ def _diagnostic_tools():
                                               "quad_frac", "sigmaH_full", "pred", "err")})
         return json.dumps({"rows": rows}, ensure_ascii=False)
 
+    def h_probe_nc_decoupling(a):
+        """架构容量外推解耦探针: 扫容量 w × 约束数 N, 返回饱和点 N_c(w) 与拟合 beta.
+
+        与命令行实验器 `nn_rigidity_decoupling.py` **共用同一科学内核**(Adam+L-BFGS 两阶段,
+        均方口径阈值), 只是把网格收成可在线调用的有界集合 —— 一处定义不漂移.
+        """
+        _EX = Path(__file__).resolve().parent
+        if str(_EX) not in sys.path:
+            sys.path.insert(0, str(_EX))
+        import importlib
+        import time
+        exp = importlib.import_module("nn_rigidity_decoupling")   # torch/scipy 仅此处按需载入
+
+        kind = str(a.get("kind", "poly"))
+        if kind not in ("poly", "osc", "hi", "hism", "fat"):
+            return json.dumps({"error": f"kind={kind} 不在允许集合 {['poly','osc','hi','hism','fat']}"},
+                              ensure_ascii=False)
+        widths = [int(w) for w in (a.get("widths") or [8, 16]) if int(w) > 0][:4]
+        ns = [int(n) for n in (a.get("ns") or [2, 4]) if int(n) > 0][:6]
+        seeds = min(max(1, int(a.get("seeds", 1))), 3)
+        adam = int(a.get("adam_steps", 2000))
+        if not widths or not ns:
+            return json.dumps({"error": "widths/ns 为空"}, ensure_ascii=False)
+        tasks = len(widths) * len(ns) * seeds
+        if tasks > 24:
+            return json.dumps({"error": f"网格过大 (len(widths)*len(ns)*seeds={tasks} > 24); "
+                                        f"请减小 widths/ns 或 seeds 再提交"}, ensure_ascii=False)
+
+        t0 = time.time()
+        res = [exp.solve(kind=kind, w=w, n=n, seed=s, adam_steps=adam)
+               for w in widths for n in ns for s in range(seeds)]
+        rows = []
+        for w in widths:
+            for n in ns:
+                vs = [r for r in res if r["w"] == w and r["n"] == n]
+                good = [r for r in vs if r["v_tr"] < exp.VTR_GATE]
+                rows.append({
+                    "w": w, "n": n,
+                    "pass_frac": round(len(good) / len(vs), 3),
+                    "v_tr_med": exp._median([r["v_tr"] for r in vs]),
+                    "v_ho_med_all": exp._median([r["v_ho"] for r in vs]),
+                    "v_ho_med_good": exp._median([r["v_ho"] for r in good]) if good else None,
+                })
+        ncs = [exp.compute_nc(ns, [next(r["v_ho_med_all"] for r in rows
+                                        if r["w"] == w and r["n"] == n) for n in ns])
+               for w in widths]
+        beta, r2, k = exp.fit_beta(widths, ncs)
+        if beta is None:
+            verdict = "无法判定: 有效 N_c 点不足 (大量配置无饱和)"
+        elif abs(beta) < 0.15:
+            verdict = "H1: 饱和点与容量无关 -> N_c 是解的性质, 探针站得住"
+        elif beta > 0.3 and (r2 or 0) > 0.85:
+            verdict = "H2: 饱和点随容量增长 -> 归纳偏置假象, 探针被驳回"
+        else:
+            verdict = "灰区: beta 介于两者之间, 需加大网格/种子数再判"
+        return json.dumps({
+            "kind": kind, "widths": widths, "ns": ns, "seeds": seeds, "adam_steps": adam,
+            "thresholds": {"vtr_gate": exp.VTR_GATE, "vho_cut": exp.VHO_CUT,
+                           "basis": "mean_squared"},
+            "rows": rows,
+            "N_c": dict(zip(map(str, widths), ncs)),
+            "fit": {"beta": beta, "r2": r2, "k": k},
+            "verdict": verdict, "elapsed_s": round(time.time() - t0, 1),
+        }, ensure_ascii=False)
+
     return [
         {"tool": {"function": {"name": "probe_Cstar",
             "description": "固定N扫eps, 返回刚性/胖系统达到精度eps所需最小容量C*曲线(真实)",
@@ -1257,6 +1322,17 @@ def _diagnostic_tools():
             "description": "对欠定u''=-cos, 用不同种子数重算k=0/1/2约束下的解族重解散布sigmaH(解族维数探针)",
             "parameters": {"type": "object", "properties": {"seeds": {"type": "integer"}},
                 "required": [], "additionalProperties": False}}}, "handle": h_probe_constraint},
+        {"tool": {"function": {"name": "probe_nc_decoupling",
+            "description": "架构容量外推解耦探针: 扫容量w×约束数N, 返回饱和点N_c(w)与拟合beta. "
+                           "|beta|<0.15 → H1(N_c 是解的性质, 探针站得住); "
+                           "beta>0.3 且 R²>0.85 → H2(饱和点随容量增长, 归纳偏置假象). "
+                           "kind∈{poly,osc,hi,hism,fat}, 其中 fat=真胖阴性对照(应给 N_c=None)",
+            "parameters": {"type": "object", "properties": {
+                "kind": {"type": "string", "enum": ["poly", "osc", "hi", "hism", "fat"]},
+                "widths": {"type": "array", "items": {"type": "integer"}},
+                "ns": {"type": "array", "items": {"type": "integer"}},
+                "seeds": {"type": "integer"}, "adam_steps": {"type": "integer"}},
+                "required": [], "additionalProperties": False}}}, "handle": h_probe_nc_decoupling},
     ]
 
 
@@ -1725,7 +1801,12 @@ def main() -> int:
         for b in out.pareto_front:
             print(f"  surv -> {b['name']}")
         print(f"[gate] {out.verdict} unsubstantiated={out.ungrounded} source={out.report_source}")
-        print(f"[护栏] strictness={args.strictness} 判断层软提示 ×{len(out.judgment_hints or [])}")
+        # 判断层软提示计数已收进聚合头 guardrail.judgment(P3: 不再挂 god-object 字段);
+        # 从 out.consolidated.head_details 取, 不新增字段、不伪造计数.
+        _gj = next((h for h in ((out.consolidated or {}).get("head_details") or [])
+                    if h.get("id") == "guardrail.judgment"), {})
+        print(f"[护栏] strictness={args.strictness} 判断层软提示: "
+              f"{_gj.get('outcome', 'unobserved')} ({_gj.get('detail', '')[:80]})")
 
         # ── 多智能体协同: 书生饰演 CriticAgent 对立审稿(只追加文本, 不碰门禁) ──
         if client is not None and out.report:

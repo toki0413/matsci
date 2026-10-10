@@ -63,7 +63,7 @@ class C2STEvaluatorTool(HuginnTool):
             )
 
         def _is_numeric(x):
-            return isinstance(x, (int, float)) and not isinstance(x, bool)
+            return isinstance(x, int | float) and not isinstance(x, bool)
 
         def _extract_list(obj):
             # 递归从嵌套 dict/list 中扒出纯数值 2D list. agent 传各种格式:

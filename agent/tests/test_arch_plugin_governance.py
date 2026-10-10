@@ -19,7 +19,7 @@ HUGINN_DIR = Path(__file__).resolve().parents[1] / "huginn"
 PLUGINS_DIR = HUGINN_DIR / "plugins"
 
 # 冻结的准入插件清单。新增插件必须显式登记；移除插件也要同步删。
-SANCTIONED_PLUGINS = frozenset({"ponytail"})
+SANCTIONED_PLUGINS = frozenset({"ponytail", "asd_ste100"})
 
 
 def _discover_plugin_dirs() -> list[Path]:

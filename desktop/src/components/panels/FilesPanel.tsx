@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderTree } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -7,6 +7,9 @@ import EmptyState from '../EmptyState';
 import { api } from '../../lib/api';
 import { downloadBlob } from '../../lib/download';
 import { CodeMirrorEditor } from '../editor/CodeMirrorEditor';
+
+/** 远端 SFTP 的默认落点 / 浏览起点 (面板暂无远端路径输入, 固定主目录). */
+const REMOTE_HOME = '~';
 
 interface FilesPanelProps {
   cwd: string;
@@ -34,20 +37,40 @@ export function FilesPanel({
   const { t } = useTranslation();
   const [remoteFiles, setRemoteFiles] = useState<any[] | null>(null);
   const [transferMsg, setTransferMsg] = useState('');
+  const [sshCred, setSshCred] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const [uploadPct, setUploadPct] = useState(0);
 
+  // 远端 SFTP 操作要 credential_id; 取「默认 ssh 凭据」, 用户只需在凭据管理里
+  // 设一次默认, 这里自动带上, 不用每次手填 host/密码。
+  useEffect(() => {
+    api
+      .get<{ ssh?: { id?: string } | null }>('/credentials/defaults')
+      .then((d) => setSshCred(d.ssh?.id ?? null))
+      .catch(() => setSshCred(null));
+  }, []);
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!sshCred) {
+      setTransferMsg(t('files.connectHint'));
+      e.target.value = '';
+      return;
+    }
     setTransferMsg(t('files.uploading', { name: file.name }));
     setUploadPct(0);
     try {
-      await api.uploadWithProgress('/transfer/upload', file, (loaded, total) => {
-        setUploadPct(Math.round((loaded / total) * 100));
-      });
-      setTransferMsg(t('files.uploaded', { name: file.name }));
+      const res = await api.uploadWithProgress<{ remote_path?: string }>(
+        '/transfer/web/upload',
+        file,
+        (loaded, total) => {
+          setUploadPct(Math.round((loaded / total) * 100));
+        },
+        { credential_id: sshCred, remote_dir: REMOTE_HOME },
+      );
+      setTransferMsg(`${t('files.uploaded', { name: file.name })} → ${res.remote_path ?? REMOTE_HOME}`);
       setUploadPct(100);
       setTimeout(() => setUploadPct(0), 2000);
     } catch (err: any) {
@@ -59,8 +82,10 @@ export function FilesPanel({
 
   const browseRemote = async () => {
     if (remoteFiles) { setRemoteFiles(null); return; }
+    if (!sshCred) { setTransferMsg(t('files.connectHint')); return; }
     try {
-      const data = await api.get<any>('/transfer/browse?path=.');
+      const params = new URLSearchParams({ path: REMOTE_HOME, credential_id: sshCred });
+      const data = await api.get<any>(`/transfer/browse?${params}`);
       const list = Array.isArray(data) ? data : (data.entries || data.files || []);
       setRemoteFiles(list);
       setTransferMsg('');
@@ -70,9 +95,15 @@ export function FilesPanel({
   };
 
   const syncRemote = async () => {
+    if (!sshCred) { setTransferMsg(t('files.connectHint')); return; }
+    if (!cwd) { setTransferMsg(t('files.selectHint')); return; }
     setTransferMsg(t('files.syncing'));
     try {
-      await api.post('/transfer/sync', { path: '.' });
+      await api.post('/transfer/sync', {
+        credential_id: sshCred,
+        local_dir: cwd,
+        remote_dir: REMOTE_HOME,
+      });
       setTransferMsg(t('files.syncComplete'));
     } catch (err: any) {
       setTransferMsg(`Sync failed: ${err.message}`);
@@ -95,9 +126,11 @@ export function FilesPanel({
   };
 
   const downloadRemote = async (path: string) => {
+    if (!sshCred) { setTransferMsg(t('files.connectHint')); return; }
     setTransferMsg(`Downloading ${path}…`);
     try {
-      const blob = await api.getBlob(`/transfer/download?path=${encodeURIComponent(path)}`);
+      const params = new URLSearchParams({ path, credential_id: sshCred });
+      const blob = await api.getBlob(`/transfer/web/download?${params}`);
       downloadBlob(blob, path.split('/').pop() || 'download');
       setTransferMsg(`Downloaded ${path}`);
     } catch (err: any) {

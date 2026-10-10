@@ -1,0 +1,369 @@
+"""收敛聚合头 (Consolidation Head) —— 缺陷六("多头摊派、没有收敛点")的架构级解药.
+
+问题背景: 每新增一个认知视角 (C-Space / structural_gate / law_model_used /
+plan_revision / grounding_audit / harness ...) 就往 :class:`ResearchOutcome`
+直写一个新字段, 报告页眉 / Self-Harness / 账本各自再 ad hoc 扫一遍 —— 注意力被
+"每个模块各说各话再拼总报告"派发进越来越多的头, 且没有一条"该把注意力放在哪"的
+仲裁策略 (多头注意力的架构级表达, 继承了稀释与塌缩的双重缺陷).
+
+本模块提供一个**唯一收敛点** :func:`consolidate`: 所有治理/审计头必须先收敛成
+:class:`HeadResult` 契约再注册进来, 聚合头按仲裁策略表产出单一收敛视图
+:class:`Consolidated`. 对表注意力:
+
+  - 单头投影  : 多头上加一层线性投影 → 这里 = 所有 head 收敛成一个 bounded 视图;
+  - 残差连接  : 聚合不丢原头证据 → 每个 head 保留 ref(可证伪定位) 与原始产物;
+  - 多头塌缩  : 显式度量头间分歧 (diversity), 拒绝静默平均相互矛盾的 head;
+  - 可反驳性  : consolidate 是纯函数, 给定同批 head 与策略表输出确定, 重跑即复现.
+
+诚实边界 (失效模式, 可检验):
+  1. 若头数被无限扩充, 聚合头会退化成"又一张表" → 头数需有上限/新头须先证明增益;
+  2. 若 gate 否决权配置过紧, 聚合头从仲裁者变成又一个锚 → 用 gate_blocked 比率监控.
+
+P1 阶段定位: 纯适配器 —— 不改任何既有消费路径(报告/self-harness/账本仍读旧字段),
+只新增 out.consolidated 这一份收敛视图, 供后续 P2/P3 切换消费者与执法.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+# evidence 三态 (与 harness 同语义)
+EVIDENCE_OBSERVED = "observed"
+EVIDENCE_UNOBSERVED = "unobserved"
+EVIDENCE_MISSING = "missing"
+
+# 分值: passed=1 / unobserved=0.5 / missing=0 / observed-but-failed=0
+_SCORE = {
+    "passed": 1.0,
+    "unobserved": 0.5,
+    "missing": 0.0,
+    "failed": 0.0,
+}
+
+
+@dataclass
+class HeadResult:
+    """一个治理/审计头的统一出口 (所有模块的唯一契约).
+
+    id:      稳定标识, 如 "gate.structural" / "audit.score_usage" / "wm.actually_used"
+    name:    人类可读名
+    evidence:/outcome: 与 Self-Harness 同语义的三态 + 四态判据
+    detail:  细节(供 reading 逐条还原)
+    ref:     指向 trace-id / out.* 的来源 (可证伪定位)
+    weight:  聚合加权 (默认 1.0)
+    gate:    True → 该头对"报告是否以 pass 定稿"有否决权
+    """
+
+    id: str
+    name: str
+    evidence: str
+    outcome: str
+    detail: str = ""
+    ref: str = ""
+    weight: float = 1.0
+    gate: bool = False
+
+    def score(self) -> float:
+        return _SCORE.get(self.outcome, 0.0)
+
+
+@dataclass
+class Consolidated:
+    """多头 → 单一收敛视图 (聚合后唯一定稿依据)."""
+
+    verdict: str                                     # 聚合判定: pass / gate_blocked / conflict
+    grounding: str                                   # 透传 grounding 门禁判定 (= out.verdict, P1 一致性锚)
+    gates_failed: list[str] = field(default_factory=list)   # 否决项 id 清单
+    conflicts: list[list[str]] = field(default_factory=list)  # 显式冲突对(不静默合并)
+    diversity: float = 0.0                           # 头间分歧度 (防御多头塌缩)
+    heads: list[str] = field(default_factory=list)   # 本次真实注册的头 id (有界清单)
+    head_details: list[dict] = field(default_factory=list)  # 每头详情(供 P2 消费者投影六维)
+    role_diversity: dict | None = None               # 缺陷三: 存活假说的视角分离度(防多头塌缩)
+    external_verify: dict | None = None              # 缺陷五: 独立验证方(可替换的外部复核)结果
+    overbuild: dict | None = None                    # 缺陷七: 过度建制(second system effect)审计
+    epochs: int = 0                                  # 缺陷一(P-A): 分层流式结算覆盖的层数
+    stream_view: list[dict] | None = None            # 缺陷一(P-A): 增量层摘要(经漏B 门控压缩, 有界)
+    replan: dict | None = None                       # 缺陷二(P-B): 层间重规划(边在证据后修订)元数据
+    early_stop: dict | None = None                 # 缺陷一(P-C): 证据驱动提前终止(分数高原)元数据
+    replication: dict | None = None                # §10 扩展: 重复实验一致性(同体多次执行可复现性)
+    score: float = 0.0                               # 加权总分 (0..1)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "verdict": self.verdict,
+            "grounding": self.grounding,
+            "gates_failed": self.gates_failed,
+            "conflicts": self.conflicts,
+            "diversity": round(self.diversity, 3),
+            "heads": self.heads,
+            "head_details": self.head_details,
+            "role_diversity": self.role_diversity,
+            "external_verify": self.external_verify,
+            "overbuild": self.overbuild,
+            "epochs": self.epochs,
+            "stream_view": self.stream_view,
+            "replan": self.replan,
+            "early_stop": self.early_stop,
+            "replication": self.replication,
+            "score": round(self.score, 3),
+        }
+
+
+def _arbitrate(
+    heads: list[HeadResult], grounding_verdict: str
+) -> tuple[str, float, float, list[str], list[list[str]]]:
+    """核心仲裁 (纯函数) → (verdict, diversity, score, gates_failed, conflicts).
+
+    提取成独立函数供 :func:`consolidate` 与缺陷七的 leave-one-out 消融复用,
+    保证"删除某头重算"与"整体聚合"走同一套规则(可复现、无副作用).
+    """
+    gates_failed = [h.id for h in heads if h.gate and h.outcome == "failed"]
+    gate_passed = [h.id for h in heads if h.gate and h.outcome == "passed"]
+    conflicts: list[list[str]] = []
+    if gates_failed and gate_passed:
+        conflicts.append([",".join(gate_passed), ",".join(gates_failed)])
+
+    n = len(heads)
+    diversity = (len({h.outcome for h in heads}) / n) if n else 0.0
+
+    if gates_failed:
+        verdict = "gate_blocked"
+    elif conflicts:
+        verdict = "conflict"
+    else:
+        verdict = "pass"
+
+    w_sum = sum(h.weight for h in heads) or 1.0
+    score = sum(h.score() * h.weight for h in heads) / w_sum
+    return verdict, diversity, score, gates_failed, conflicts
+
+
+def _overbuild_audit(
+    heads: list[HeadResult], grounding_verdict: str, budget: int
+) -> dict[str, Any]:
+    """缺陷七 · 过度建制审计 (second system effect 反制).
+
+    对治理自身做三点可证伪的体检, 全部基于确定性数据、无副作用:
+      1. **头数预算**: 注册头数超过 ``budget`` → 建制膨胀信号.
+      2. **重复审计检测**: 多个 head 引用同一证据源 (``ref`` 相同) → 同一份证据被
+         重复消费, 是"多一个门控就多摊一份权重"的最直接证据.
+      3. **边际贡献消融 (leave-one-out)**: 逐个剔除每个 head 重算聚合 —— 删除后
+         verdict 与 diversity 都不变、且分数差 < 1e-9 的头对整体零边际贡献 → 冗余.
+
+    verdict 三态(可证伪): healthy / bloating / over_built / duplicate_audit.
+    诚实边界: 本审计只抓"建制冗余的信号", 不裁决"某个头该不该留" —— 后者由人决.
+    """
+    n = len(heads)
+    by_ref: dict[str, list[str]] = {}
+    for h in heads:
+        if h.ref:
+            by_ref.setdefault(h.ref, []).append(h.id)
+    duplicates = sorted({",".join(v) for v in by_ref.values() if len(v) >= 2})
+
+    zero_marginal: list[str] = []
+    verdict0, div0, score0, _, _ = _arbitrate(heads, grounding_verdict)
+    for h in heads:
+        rest = [x for x in heads if x.id != h.id]
+        if not rest:
+            continue
+        v1, d1, s1, _, _ = _arbitrate(rest, grounding_verdict)
+        if v1 == verdict0 and abs(d1 - div0) <= 1e-9 and abs(s1 - score0) < 1e-9:
+            zero_marginal.append(h.id)
+
+    if duplicates:
+        signal, verdict = "has_duplicate_refs", "duplicate_audit"
+    elif n > budget:
+        signal, verdict = "over_budget", "over_built"
+    elif n > int(budget * 0.8):
+        signal, verdict = "near_budget", "bloating"
+    else:
+        signal, verdict = "within_budget", "healthy"
+
+    return {
+        "configured_heads": n,
+        "head_budget": budget,
+        "signal": signal,
+        "verdict": verdict,
+        "duplicate_refs": duplicates,
+        "zero_marginal": zero_marginal,
+    }
+
+
+def consolidate(
+    heads: list[HeadResult],
+    *,
+    grounding_verdict: str = "needs_grounding",
+    role_view: list[dict] | None = None,
+    external_verifier: Any | None = None,
+    head_budget: int = 14,
+    epochs: int = 0,
+    stream_view: list[dict] | None = None,
+    replan: dict | None = None,
+    early_stop: dict | None = None,
+    replication: dict | None = None,
+) -> Consolidated:
+    """多头 → 单一收敛视图 (纯函数, 无副作用).
+
+    仲裁策略 (P1):
+      - **gate 否决**: 任一 ``gate=True`` 且 outcome=``failed`` 的头 → 聚合判定
+        ``gate_blocked``, 并把否决项列入 ``gates_failed`` —— 报告不得以 pass 定稿.
+      - **冲突显式化**: 若既有 gate 头 failed、又有 gate 头 passed → 记入
+        ``conflicts``, 拒绝静默平均相互矛盾的头.
+      - **多头塌缩防御**: ``diversity`` = 去重 outcome 数 / 注册头数 —— 全部头
+        结果一致时接近 0(单文化雷达), 高度分化时接近 1.
+      - **grounding 透传**: ``grounding`` 原样携带 grounding 门禁判定, 保证
+        P1 阶段 ``consolidated.grounding == out.verdict`` 恒成立 (向后兼容锚).
+
+    缺陷三/五/七的接缝:
+      - ``role_view``: 存活假说列表 → ``role_diversity`` 视角分离度 (防共识孤岛);
+      - ``external_verifier``: 可替换的**独立验证方**(纯函数, 不共享策略参数) →
+        在聚合视图上复核并写入 ``external_verify``, 缓解"审计者兼被审者"的自指盲区;
+      - ``head_budget``: 过度建制(second system effect)的上限 —— 审计头数/重复
+        ref/零边际头, 结果入 ``overbuild``, 让"治理自身膨胀"成为可观测、可反驳量.
+      - ``epochs`` / ``stream_view``: 缺陷一(P-A)分层流式结算的元数据 —— 覆盖层数
+        与增量层摘要(经漏B 门控压缩的有界视图), 仅透传记录, 不参与仲裁/建制审计.
+      - ``replan``: 缺陷二(P-B)层间重规划的元数据 —— 被门控评估/跳过的实验与理由,
+        仅透传记录 (重规划是预算决策, 不影响本视图的治理判定).
+      - ``early_stop``: 缺陷一(P-C)证据驱动提前终止的元数据 —— 稳定判据结果与被
+        终止的实验, 仅透传记录 (提前终止是预算决策, 不影响本视图的治理判定).
+      - ``replication``: §10 扩展的重复实验一致性视图 —— 同体实验被多次执行时的
+        可复现性(spread/consistent), 仅透传记录 (一致性是审计发现, 不做质量判据).
+    """
+    heads = list(heads)
+    verdict, diversity, score, gates_failed, conflicts = _arbitrate(
+        heads, grounding_verdict)
+
+    cons = Consolidated(
+        verdict=verdict,
+        grounding=grounding_verdict,
+        gates_failed=gates_failed,
+        conflicts=conflicts,
+        diversity=diversity,
+        heads=[h.id for h in heads],
+        head_details=[h.__dict__ for h in heads],
+        role_diversity=None,
+        external_verify=None,
+        overbuild=_overbuild_audit(heads, grounding_verdict, head_budget),
+        epochs=int(epochs or 0),
+        stream_view=stream_view,
+        replan=replan,
+        early_stop=early_stop,
+        replication=replication,
+        score=score,
+    )
+
+    # 缺陷三: 视角分离度 (决策头之外的第二平面; 失败不阻断聚合)
+    if role_view is not None:
+        try:
+            from huginn.research.decision_gate import role_separation  # 单向依赖
+            cons.role_diversity = role_separation(role_view)
+        except Exception:  # noqa: BLE001 — 分离度计算失败: 如实留空, 不伪造
+            cons.role_diversity = None
+
+    # 缺陷五: 独立外部验证 (可替换; 未被注入 ↔ 未观察到外部复核)
+    if external_verifier is not None:
+        try:
+            v = external_verifier(cons.as_dict())
+            cons.external_verify = {
+                "evidence": EVIDENCE_OBSERVED,
+                "verified": bool(v.get("verified")),
+                "reason": str(v.get("reason", "")),
+            }
+        except Exception as exc:  # noqa: BLE001 — 验证方异常: 如实记为未通过(不静默吞)
+            cons.external_verify = {
+                "evidence": EVIDENCE_OBSERVED,
+                "verified": False,
+                "reason": f"external verifier raised: {exc}",
+            }
+    else:
+        cons.external_verify = {
+            "evidence": EVIDENCE_UNOBSERVED,
+            "verified": None,
+            "reason": "未注入独立验证方",
+        }
+    return cons
+
+
+def oracle_verify_consolidated(cons: dict) -> dict[str, Any]:
+    """出厂最小独立验证器 (可整体替换的外部验证方, 不含 LLM/策略共享参数).
+
+    用与 harness/audit/决策逻辑**相互独立**的确定性规则复核聚合视图, 抓"自评盲区":
+      1. 聚合矛盾: ``gates_failed`` 非空 却 grounding 判定为 pass 系 → 矛盾;
+      2. pass 一致性: 聚合判定 ``pass`` 而 grounding 不在 pass 系 → 声明门禁与
+         聚合视图脱节.
+    任一不满足 → ``verified=False``。可证伪: 改动任一条规则, 输出立即翻转;
+    生产环境可换更强的独立验证方(如跨 run 对账、外部校验服务), 契约不变.
+    """
+    reasons: list[str] = []
+    pass_set = ("pass", "grounded", "accept", "confirmed")
+    gf = cons.get("gates_failed") or []
+    grounding = cons.get("grounding", "")
+    verdict = cons.get("verdict", "")
+    if gf and grounding in pass_set:
+        reasons.append(f"gates_failed={gf} 却 grounding={grounding}")
+    if verdict == "pass" and grounding not in pass_set:
+        reasons.append(f"verdict=pass 但 grounding={grounding}")
+    return {
+        "verified": not reasons,
+        "reason": "；".join(reasons) or "确定性复核一致",
+    }
+
+
+# ── §10 扩展: 重复实验一致性视角 (replication) ─────────────────────────────
+# 确定性信号家族再加一员: "同一实验体被多次执行时, 结果是否可复现".
+# 触发点: 变异回退重跑(parametrize=None 时子代复用父 run) / 任何同体重复执行.
+# 诚实边界: 一致性只是审计发现(供人类决策), 不做"该方向值不值得"的质量判据 ——
+# 与 spec §10 非目标一致; 单次执行(无重复) → 视角未观测(unobserved), 不产生噪音.
+_REPLICATION_TOL = 0.05  # 相对极差容差: objectives 多次执行偏差 <=5% 视为一致
+
+
+def build_replication_view(
+    runs_by_base: dict[str, list[dict]], tol: float = _REPLICATION_TOL
+) -> dict | None:
+    """重复实验一致性视图(纯函数, 确定性).
+
+    runs_by_base: base_name -> [objectives{key: float}, ...](同一实验体被执行多次).
+    只对执行次数 >= 2 的基线计算(一次执行无法谈一致性):
+      - objectives_spread: 每目标键的 {min, max, rel_spread}(rel = 极差/|均值|);
+      - consistent: 所有键 rel_spread <= tol(重复可复现);
+      - inconsistent: consistent=False 的基线清单(可复现性存疑, 供人类决策).
+    无任何基线被重复执行 → 返回 None(视角未观测).
+    """
+    bases = {b: rs for b, rs in runs_by_base.items() if len(rs) >= 2}
+    if not bases:
+        return None
+    view: dict[str, Any] = {"replicated": len(bases), "inconsistent": [], "bases": {}}
+    for base, runs in sorted(bases.items()):
+        keys = sorted({k for r in runs for k in (r or {})})
+        spreads: dict[str, Any] = {}
+        ok = True
+        for k in keys:
+            vals = [float((r or {}).get(k, 0.0) or 0.0) for r in runs]
+            lo, hi = min(vals), max(vals)
+            mean = sum(vals) / len(vals)
+            rel = (hi - lo) / (abs(mean) or 1e-12)
+            spreads[k] = {"min": round(lo, 6), "max": round(hi, 6),
+                          "rel_spread": round(rel, 6)}
+            if rel > tol:
+                ok = False
+        view["bases"][base] = {"runs": len(runs), "objectives_spread": spreads,
+                               "consistent": ok}
+        if not ok:
+            view["inconsistent"].append(base)
+    return view
+
+
+def build_replication_head(
+    runs_by_base: dict[str, list[dict]], tol: float = _REPLICATION_TOL
+) -> HeadResult:
+    """把重复实验一致性视图注册成聚合头(唯一出口, 不新增 out.* 字段)."""
+    view = build_replication_view(runs_by_base, tol=tol)
+    if view is None:
+        return HeadResult(
+            "audit.replication", "重复实验一致性审计(同体多次执行是否可复现)",
+            EVIDENCE_UNOBSERVED, "unobserved",
+            detail="无重复执行(每个实验体仅执行一次)", ref="out.consolidated.replication")
+    return HeadResult(
+        "audit.replication", "重复实验一致性审计(同体多次执行是否可复现)",
+        EVIDENCE_OBSERVED, "passed",
+        detail=str(view), ref="out.consolidated.replication")

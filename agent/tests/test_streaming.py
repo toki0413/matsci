@@ -2,7 +2,8 @@
 
 覆盖范围:
 - 模块级纯函数: ``_strip_dangling_tool_calls`` / ``_load_root_markers`` /
-  ``_thinking_scale_timeout`` / ``_thinking_stream_idle`` / ``_is_root_message``
+  ``_thinking_scale_timeout`` / ``_thinking_stream_idle`` / ``_is_root_message`` /
+  ``_fallback_stream_idle`` / ``_fallback_collect_inputs``
 - 异步 watchdog: ``_astream_with_watchdog`` (超时 / 透传 / 空流)
 - ``StreamingMixin`` 纯逻辑方法: ``_extract_last_ai_content`` / ``_check_phase_transition``
 - 消息压缩: ``compact_messages`` (drop-oldest / root 保护 / thinking 块保护 /
@@ -35,14 +36,20 @@ from huginn.agent.streaming import (
     _STREAM_IDLE_TIMEOUT,
     StreamingMixin,
     _astream_with_watchdog,
+    _cap_timeout_by_budget,
     _compute_common_prefix,
     _dump_completion_records,
+    _fallback_collect_inputs,
+    _fallback_stream_idle,
     _is_root_message,
     _load_root_markers,
     _reconstruct_completion_records,
     _strip_dangling_tool_calls,
     _thinking_scale_timeout,
     _thinking_stream_idle,
+    live_budget_left,
+    remaining_budget_s,
+    set_budget_deadline,
 )
 from huginn.utils.context import (
     _msg_role,
@@ -187,6 +194,171 @@ class TestThinkingTimeouts:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# _fallback_stream_idle — 降级空闲阈值必须比刚失败的那次更宽 (run72 修复)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFallbackStreamIdle:
+    def test_never_narrower_than_primary(self, monkeypatch):
+        # 核心不变量: 降级空闲 ≥ 主流空闲; 否则重演同一失败.
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        for tier in ("", "high", "medium"):
+            monkeypatch.setenv("HUGINN_THINKING", tier)
+            primary = _thinking_stream_idle()
+            assert _fallback_stream_idle(300.0) >= primary
+
+    def test_run72_exact_case(self, monkeypatch):
+        # run72: 无 HUGINN_THINKING → primary 60s, total 300s.
+        # 旧行为降级也用 60s → 必败; 新行为放宽到 300s → 只在真死时终止.
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _thinking_stream_idle() == 60.0
+        assert _fallback_stream_idle(300.0) == 300.0
+
+    def test_scales_with_total_when_total_is_larger(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "high")  # primary 180s
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(900.0) == 900.0
+
+    def test_keeps_primary_when_total_is_smaller(self, monkeypatch):
+        # 总预算比主流空闲还小 → 不应把阈值压到低于主流.
+        monkeypatch.setenv("HUGINN_THINKING", "high")  # primary 180s
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(30.0) == 180.0
+
+    def test_env_override_wins(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "45")
+        assert _fallback_stream_idle(300.0) == 45.0
+
+    def test_bad_env_override_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "not-a-number")
+        assert _fallback_stream_idle(300.0) == 300.0
+
+    # D1: budget_left 给定时封顶, 不让降级吞掉超过 goal 剩余预算的时间.
+
+    def test_budget_left_caps_widened_threshold(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(300.0, budget_left=120.0) == 120.0
+
+    def test_budget_left_floors_at_one_second(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(300.0, budget_left=-5.0) == 1.0
+
+    def test_budget_left_none_keeps_old_behaviour(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_THINKING", "")
+        monkeypatch.delenv("HUGINN_FALLBACK_STREAM_IDLE", raising=False)
+        assert _fallback_stream_idle(300.0, budget_left=None) == 300.0
+
+    def test_budget_left_caps_env_override(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_FALLBACK_STREAM_IDLE", "200")
+        assert _fallback_stream_idle(300.0, budget_left=50.0) == 50.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# D7: 实时预算 deadline + 阻塞动作总超时封顶 (run83 修复)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCapTimeoutByBudget:
+    """``_cap_timeout_by_budget``: 单个阻塞动作的总超时按实时剩余预算封顶."""
+
+    def test_none_budget_passthrough(self):
+        # 非长程 / 无 goal → 行为 100% 不变.
+        assert _cap_timeout_by_budget(300.0, None) == 300.0
+
+    def test_caps_to_budget_minus_reserve(self):
+        # 剩 120s, 留 5s 收尾 → 115s (而非固定的 300s).
+        assert _cap_timeout_by_budget(300.0, 120.0) == 115.0
+
+    def test_never_widens_beyond_total(self):
+        # 预算充裕时不放大固定总超时.
+        assert _cap_timeout_by_budget(100.0, 500.0) == 100.0
+
+    def test_floors_at_one_second(self):
+        # 预算耗尽 (或只剩收尾余量) → 下限 1s, 快速失败交还控制权.
+        assert _cap_timeout_by_budget(300.0, -5.0) == 1.0
+        assert _cap_timeout_by_budget(300.0, 3.0) == 1.0
+
+    def test_run83_exact_case(self):
+        # run83: 剩 30s 而总超时 300s → 旧实现仍阻塞 300s 烧穿挂钟.
+        # 新实现封顶到 25s (30 - 5 收尾).
+        assert _cap_timeout_by_budget(300.0, 30.0) == 25.0
+
+    def test_reserve_and_floor_env_overridable(self, monkeypatch):
+        # 收尾余量与下限经配置面可调 (声明见 env_schema).
+        monkeypatch.setenv("HUGINN_BUDGET_RESERVE_S", "10")
+        monkeypatch.setenv("HUGINN_BUDGET_MIN_SLICE_S", "3")
+        assert _cap_timeout_by_budget(300.0, 120.0) == 110.0  # 120 - 10
+        assert _cap_timeout_by_budget(300.0, 8.0) == 3.0  # 下限抬到 3s
+        # 显式 reserve 入参优先于环境变量 (供调用方覆盖).
+        assert _cap_timeout_by_budget(300.0, 120.0, reserve=2.0) == 118.0
+
+
+class TestLiveBudgetDeadline:
+    """``set_budget_deadline`` / ``live_budget_left``: 绝对 deadline 不受冻结影响."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        # contextvar 跨测试串台会污染, 每例前后重置.
+        remaining_budget_s.set(None)
+        set_budget_deadline(None)
+        yield
+        remaining_budget_s.set(None)
+        set_budget_deadline(None)
+
+    def test_no_budget_returns_none(self):
+        assert live_budget_left() is None
+
+    def test_falls_back_to_relative_when_no_deadline(self):
+        remaining_budget_s.set(42.0)
+        assert live_budget_left() == 42.0
+
+    def test_deadline_takes_priority_and_is_live(self):
+        # 相对值冻结在 30s, 但绝对 deadline 会随真实时间流逝而**递减**.
+        remaining_budget_s.set(30.0)
+        set_budget_deadline(30.0)
+        first = live_budget_left()
+        assert first is not None
+        assert first <= 30.0
+        assert remaining_budget_s.get() == 30.0  # 相对值仍冻结 (证明二者独立)
+        # 再读一次: deadline 口径的剩余只会更小 (单调时钟真实推进).
+        assert live_budget_left() <= first
+
+    def test_none_deadline_clears_constraint(self):
+        set_budget_deadline(100.0)
+        set_budget_deadline(None)
+        remaining_budget_s.set(None)
+        assert live_budget_left() is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _fallback_collect_inputs — 有进度续跑(None), 别重放整个 turn (run72 根因)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestFallbackCollectInputs:
+    def test_with_progress_resumes(self, monkeypatch):
+        # 主流已 yield 42 步 (run72 实测) → 回 None 让 langgraph 从 checkpoint 续跑.
+        monkeypatch.delenv("HUGINN_STREAM_FALLBACK_RESUME", raising=False)
+        assert _fallback_collect_inputs(42, {"messages": ["m"]}) is None
+
+    def test_without_progress_replays(self, monkeypatch):
+        # 零进度 → 无 checkpoint 可续, 只能重放 inputs.
+        monkeypatch.delenv("HUGINN_STREAM_FALLBACK_RESUME", raising=False)
+        inputs = {"messages": ["m"]}
+        assert _fallback_collect_inputs(0, inputs) is inputs
+
+    def test_env_kill_switch_forces_replay(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_STREAM_FALLBACK_RESUME", "0")
+        inputs = {"messages": ["m"]}
+        assert _fallback_collect_inputs(42, inputs) is inputs
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # _astream_with_watchdog — 流式空闲超时 watchdog (A3)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -242,6 +414,51 @@ class TestAstreamWatchdog:
         except TimeoutError:
             pass
         assert seen == ["fast"]
+
+    # ── D7 补漏 (run86): 总时长封顶 —— 挡涓流 ──────────────────────────
+    # 涓流: chunk 间隔始终 < idle_timeout, 但整体极慢. 只封顶空闲时永不触发
+    # (run86: 预算 700s 实跑 1300s+). total_timeout 必须在"还在到 chunk"时也到点即抛.
+
+    async def test_total_timeout_stops_trickle(self):
+        async def _trickle():
+            for i in range(100):
+                await asyncio.sleep(0.05)  # 间隔 < idle, 空闲永不触发
+                yield i
+
+        seen = []
+        with pytest.raises(asyncio.TimeoutError):
+            async for item in _astream_with_watchdog(
+                _trickle(), idle_timeout=1.0, total_timeout=0.2
+            ):
+                seen.append(item)
+        # 已产出的不丢, 但整体被总时长截断 (远不到 100).
+        assert 0 < len(seen) < 100, seen
+
+    async def test_total_timeout_none_passthrough(self):
+        # 非长程 (无预算) → total_timeout=None, 行为 100% 不变: 全量透传.
+        async def _trickle():
+            for i in range(6):
+                await asyncio.sleep(0.01)
+                yield i
+
+        out = []
+        async for item in _astream_with_watchdog(
+            _trickle(), idle_timeout=1.0, total_timeout=None
+        ):
+            out.append(item)
+        assert out == [0, 1, 2, 3, 4, 5]
+
+    async def test_total_timeout_zero_raises_before_first_chunk(self):
+        # 预算已耗尽 (总时长 0) → 立即抛, 不再消费.
+        async def _fast():
+            for i in range(5):
+                yield i
+
+        with pytest.raises(asyncio.TimeoutError):
+            async for _ in _astream_with_watchdog(
+                _fast(), idle_timeout=1.0, total_timeout=0.0
+            ):
+                pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -19,7 +19,8 @@ beforeEach(() => apiPost.mockReset());
 
 describe('useTeam', () => {
   it('plans via the v2 endpoint when it succeeds', async () => {
-    apiPost.mockResolvedValue({ success: true, tasks: [{ id: 't1' }] });
+    // `/team/v2/plan` 返回 `steps`（见 routes/team.py），不是 legacy 的 `tasks`。
+    apiPost.mockResolvedValue({ success: true, steps: [{ id: 't1' }] });
     const { result } = renderHook(() => useTeam());
     await act(async () => result.current.setTeamObjective('设计一个电池材料'));
     await act(async () => {

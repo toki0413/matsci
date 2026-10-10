@@ -1,0 +1,169 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-09-27T11:45:18",
+  "metadata": {
+    "run_id": "loop_d78a8c74",
+    "objective": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针",
+    "phases": [
+      "hypothesize",
+      "plan",
+      "execute",
+      "validate",
+      "hypothesize",
+      "plan",
+      "execute",
+      "report"
+    ],
+    "total_time": 157.58124613761902
+  },
+  "spans": [
+    {
+      "name": "phase:hypothesize",
+      "span_id": "3d02188f4ac2",
+      "start_time": 1790509416.177492,
+      "end_time": 1790509465.153381,
+      "duration_ms": 48975.89,
+      "memory_start_mb": 749.18359375,
+      "memory_end_mb": 779.62109375,
+      "memory_peak_mb": 779.62109375,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:plan",
+      "span_id": "283520742f57",
+      "start_time": 1790509465.1665041,
+      "end_time": 1790509470.0103102,
+      "duration_ms": 4843.81,
+      "memory_start_mb": 780.6015625,
+      "memory_end_mb": 780.7265625,
+      "memory_peak_mb": 780.7265625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:execute",
+      "span_id": "3738535afab9",
+      "start_time": 1790509470.0124707,
+      "end_time": 1790509477.2344785,
+      "duration_ms": 7222.01,
+      "memory_start_mb": 780.7265625,
+      "memory_end_mb": 780.8515625,
+      "memory_peak_mb": 780.8515625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:validate",
+      "span_id": "26aafd5d3812",
+      "start_time": 1790509477.4661565,
+      "end_time": 1790509486.0294292,
+      "duration_ms": 8563.27,
+      "memory_start_mb": 780.9765625,
+      "memory_end_mb": 780.9765625,
+      "memory_peak_mb": 780.9765625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:hypothesize",
+      "span_id": "10cc84a98c0c",
+      "start_time": 1790509492.6747515,
+      "end_time": 1790509503.0042114,
+      "duration_ms": 10329.46,
+      "memory_start_mb": 780.9765625,
+      "memory_end_mb": 780.9765625,
+      "memory_peak_mb": 780.9765625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:plan",
+      "span_id": "046de87e08b9",
+      "start_time": 1790509503.0091095,
+      "end_time": 1790509505.3045719,
+      "duration_ms": 2295.46,
+      "memory_start_mb": 780.9765625,
+      "memory_end_mb": 780.9765625,
+      "memory_peak_mb": 780.9765625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:execute",
+      "span_id": "ab77b85d8639",
+      "start_time": 1790509505.3067281,
+      "end_time": 1790509508.5523462,
+      "duration_ms": 3245.62,
+      "memory_start_mb": 780.9765625,
+      "memory_end_mb": 780.9765625,
+      "memory_peak_mb": 780.9765625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:report",
+      "span_id": "91e15ef43120",
+      "start_time": 1790509511.1568363,
+      "end_time": 1790509518.6886113,
+      "duration_ms": 7531.77,
+      "memory_start_mb": 780.9765625,
+      "memory_end_mb": 780.9765625,
+      "memory_peak_mb": 780.9765625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    }
+  ],
+  "tool_calls": [],
+  "summary": {
+    "total_spans": 8,
+    "by_name": {
+      "phase:hypothesize": {
+        "count": 2,
+        "duration_ms": 59305.35,
+        "avg_memory_delta_mb": 15.219,
+        "max_memory_peak_mb": 780.977
+      },
+      "phase:plan": {
+        "count": 2,
+        "duration_ms": 7139.27,
+        "avg_memory_delta_mb": 0.062,
+        "max_memory_peak_mb": 780.977
+      },
+      "phase:execute": {
+        "count": 2,
+        "duration_ms": 10467.630000000001,
+        "avg_memory_delta_mb": 0.062,
+        "max_memory_peak_mb": 780.977
+      },
+      "phase:validate": {
+        "count": 1,
+        "duration_ms": 8563.27,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 780.977
+      },
+      "phase:report": {
+        "count": 1,
+        "duration_ms": 7531.77,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 780.977
+      }
+    }
+  }
+}

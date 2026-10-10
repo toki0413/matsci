@@ -1,0 +1,52 @@
+{
+  "valence": -0.17760227306494153,
+  "arousal": 0.1891022250931232,
+  "trust": 0.4401806565557053,
+  "affection": 0.2,
+  "fatigue": 0.059105644424952766,
+  "loneliness": 0.0,
+  "interest": 0.55,
+  "timestamp": "2026-10-06T04:48:04.163495+00:00",
+  "events": [
+    {
+      "timestamp": "2026-10-06T04:37:53.197594+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "valence": -0.1,
+        "trust": -0.03,
+        "fatigue": 0.02,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; greeting detected"
+    },
+    {
+      "timestamp": "2026-10-06T04:40:09.528977+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "valence": -0.1,
+        "trust": -0.03,
+        "fatigue": 0.02,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; greeting detected"
+    },
+    {
+      "timestamp": "2026-10-06T04:48:04.163484+00:00",
+      "source": "user",
+      "type": "task_success",
+      "deltas": {
+        "valence": 0.01999999999999999,
+        "trust": 0.0,
+        "fatigue": 0.02,
+        "interest": 0.05,
+        "loneliness": -0.1,
+        "arousal": 0.03
+      },
+      "note": "negative user message; task succeeded; greeting detected"
+    }
+  ]
+}

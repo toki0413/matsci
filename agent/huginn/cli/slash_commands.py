@@ -968,9 +968,11 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
     except Exception:
         table.add_row("KG", "? not initialized", "use /graph to build")
 
-    # Surprise signal
-    surprise = getattr(agent, "_last_surprise", None)
-    if surprise is not None:
+    # Surprise signal — v31 统一: 同 episodic/路由, 用秩归一信号
+    # (0.6/0.3 截止仍在 [0,1] 刻度; 无 autoloop 的 stub agent 仍显示 "—").
+    from huginn.autoloop.signals import routing_surprise
+    if hasattr(agent, "_last_surprise_rel") or hasattr(agent, "_last_surprise"):
+        surprise = routing_surprise(agent)
         level = "high" if surprise > 0.6 else "low" if surprise < 0.3 else "medium"
         table.add_row("Surprise", f"{surprise:.2f} ({level})", "intrinsic motivation")
     else:

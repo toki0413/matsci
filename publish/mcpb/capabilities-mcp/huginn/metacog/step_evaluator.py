@@ -526,7 +526,7 @@ def _parse_darwin_json(text: str) -> list[dict]:
         # bool 是 int 的子类, 得排除掉
         if not isinstance(sid, str) or not isinstance(reason, str):
             continue
-        if not isinstance(score, (int, float)) or isinstance(score, bool):
+        if not isinstance(score, int | float) or isinstance(score, bool):
             continue
         score_f = float(score)
         if score_f < 0.0 or score_f > 1.0:

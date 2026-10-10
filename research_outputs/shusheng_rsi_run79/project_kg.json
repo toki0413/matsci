@@ -1,0 +1,993 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "'. If two candidates would make the SAME numerical prediction, the second is a r",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:48:18.503613",
+      "last_seen": "2026-10-04T01:48:18.503613",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will produce a table of N_c(w) values. If the solution space is rigid, N_c will be small (e.g., < 20) and roughly constant as w increases. If the space is \"fat\", N_c will grow with w or",
+      "persona": "dft_expert",
+      "id": "experiment:'. If two candidates would make the SAME numerical prediction, the second is a r"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503656",
+      "last_seen": "2026-10-04T01:48:18.503656",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503670",
+      "last_seen": "2026-10-04T01:48:18.503670",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "members": [
+        "experiment:'. If two candidates would make the SAME numerical prediction, the second is a r",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:48:18.503785",
+      "last_seen": "2026-10-04T01:48:18.503785",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "132220d8c546493c",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:54:41.281896",
+      "last_seen": "2026-10-04T01:54:41.281896",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid (low-dimensional algebraic) system: N_c(w) will be small (≤ 8) and roughly constant across w=10,50,100. For the fat (higher-dimensional) system: N_c will exceed scan limit (e.g., >64) or",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs"
+    },
+    {
+      "label": "plan_workflow_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281936",
+      "last_seen": "2026-10-04T01:54:41.281936",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281946",
+      "last_seen": "2026-10-04T01:54:41.281946",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs",
+        "Method:plan_workflow_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "label": "dft_expert_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:54:41.282033",
+      "last_seen": "2026-10-04T01:54:41.282033",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "6eb4977c10b02d62",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:dft_expert_iter15"
+    },
+    {
+      "label": "[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:55:53.624345",
+      "last_seen": "2026-10-04T01:55:53.624345",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will converge to a small constant value (approximately d+1, e.g., 4 for cubic constraints) and remain stable across increasing w, confirming the algebraic variety hypothesis with low surprise.",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va"
+    },
+    {
+      "label": "plan_coder_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624384",
+      "last_seen": "2026-10-04T01:55:53.624384",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624395",
+      "last_seen": "2026-10-04T01:55:53.624395",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va",
+        "Method:plan_coder_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "label": "dft_expert_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:55:53.624476",
+      "last_seen": "2026-10-04T01:55:53.624476",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "84994ae5a7cf5469",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:dft_expert_iter20"
+    },
+    {
+      "label": "'\". It also says \"LUCID review (mandatory after generating hypothesis)... State ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:57:48.379719",
+      "last_seen": "2026-10-04T01:57:48.379719",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will yield a finite N_c(w) for small w, but N_c will grow with w, indicating the bootstrap variety is \"fat\" (high-dimensional) rather than rigid. The maximum error on held-out points wi",
+      "persona": "dft_expert",
+      "id": "experiment:'\". It also says \"LUCID review (mandatory after generating hypothesis)... State"
+    },
+    {
+      "label": "plan_coder_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:57:48.379760",
+      "last_seen": "2026-10-04T01:57:48.379760",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:57:48.379769",
+      "last_seen": "2026-10-04T01:57:48.379769",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:57:48.379778",
+      "last_seen": "2026-10-04T01:57:48.379778",
+      "mentions": 1,
+      "members": [
+        "experiment:'\". It also says \"LUCID review (mandatory after generating hypothesis)... State",
+        "Method:plan_coder_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_87046e3a"
+    },
+    {
+      "label": "dft_expert_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:57:48.379854",
+      "last_seen": "2026-10-04T01:57:48.379854",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "414343bb4f7cd48e",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:dft_expert_iter25"
+    },
+    {
+      "label": "[DIM: structure]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:59:06.253308",
+      "last_seen": "2026-10-04T01:59:06.253308",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For a low-degree polynomial constraint (degree $d$), $N_c(w)$ will converge to a small constant (e.g., $d+1$) as $w$ increases, indicating rigidity. For a high-frequency or transcendental function, $N",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: structure]"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:59:06.253344",
+      "last_seen": "2026-10-04T01:59:06.253344",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:59:06.253356",
+      "last_seen": "2026-10-04T01:59:06.253356",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T01:59:06.253365",
+      "last_seen": "2026-10-04T01:59:06.253365",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure]",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_a1b8dd91"
+    },
+    {
+      "label": "dft_expert_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T01:59:06.253436",
+      "last_seen": "2026-10-04T01:59:06.253436",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "1636b0087a63575e",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:dft_expert_iter30"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-10-04T02:00:57.361370",
+      "last_seen": "2026-10-04T02:06:18.745697",
+      "mentions": 2,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For a linear constraint, N_c(w) will remain small (e.g., ≤ 16) and independent of w, indicating rigidity. For a high-degree polynomial, N_c(w) will grow rapidly or become infeasible, indicating fatnes",
+      "persona": "dft_expert",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_skill_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:00:57.361407",
+      "last_seen": "2026-10-04T02:00:57.361407",
+      "mentions": 1,
+      "id": "Method:plan_skill_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:00:57.361418",
+      "last_seen": "2026-10-04T02:00:57.361418",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:00:57.361427",
+      "last_seen": "2026-10-04T02:00:57.361427",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_skill_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_ea810a0"
+    },
+    {
+      "label": "dft_expert_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:00:57.361498",
+      "last_seen": "2026-10-04T02:00:57.361498",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "9f8383a6ca244589",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:dft_expert_iter35"
+    },
+    {
+      "label": "** [DIM: geometry] The solution space of the rigid family corresponds to a manif",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:02:19.879743",
+      "last_seen": "2026-10-04T02:02:19.879743",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "persona": "dft_expert",
+      "id": "experiment:** [DIM: geometry] The solution space of the rigid family corresponds to a manif"
+    },
+    {
+      "label": "plan_workflow_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879785",
+      "last_seen": "2026-10-04T02:02:19.879785",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879794",
+      "last_seen": "2026-10-04T02:02:19.879794",
+      "mentions": 1,
+      "surprise": 0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: geometry] The solution space of the rigid family corresponds to a manif",
+        "Method:plan_workflow_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "label": "dft_expert_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:02:19.879872",
+      "last_seen": "2026-10-04T02:02:19.879872",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "6028125f6a8c5c56",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:dft_expert_iter40"
+    },
+    {
+      "label": "'\". I will choose one of the three new ones I generate.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:04:23.250263",
+      "last_seen": "2026-10-04T02:04:23.250263",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For a low-dimensional constraint family (e.g., linear or quadratic), we expect N_c(w) to remain small and bounded as w increases (rigid). For a high-dimensional family (e.g., high-degree polynomial),",
+      "persona": "dft_expert",
+      "id": "experiment:'\". I will choose one of the three new ones I generate."
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:04:23.250303",
+      "last_seen": "2026-10-04T02:04:23.250303",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:04:23.250313",
+      "last_seen": "2026-10-04T02:04:23.250313",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:04:23.250323",
+      "last_seen": "2026-10-04T02:04:23.250323",
+      "mentions": 1,
+      "members": [
+        "experiment:'\". I will choose one of the three new ones I generate.",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_9ad37b81"
+    },
+    {
+      "label": "dft_expert_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:04:23.250402",
+      "last_seen": "2026-10-04T02:04:23.250402",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "9db42595b8b8534c",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:dft_expert_iter45"
+    },
+    {
+      "label": "plan_coder_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745727",
+      "last_seen": "2026-10-04T02:06:18.745727",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745748",
+      "last_seen": "2026-10-04T02:06:18.745748",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_coder_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "label": "dft_expert_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:06:18.745855",
+      "last_seen": "2026-10-04T02:06:18.745855",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "681e59063ba6ecf3",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:dft_expert_iter50"
+    },
+    {
+      "label": "[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:07:05.342787",
+      "last_seen": "2026-10-04T02:07:05.342787",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be a small finite number (e.g., ≤ 16) for small w and may increase slightly with w but will not diverge, indicating rigidity. If N_c exceeds practical limits or grows with w, the hypothesi",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient"
+    },
+    {
+      "label": "plan_workflow_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342823",
+      "last_seen": "2026-10-04T02:07:05.342823",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342833",
+      "last_seen": "2026-10-04T02:07:05.342833",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient",
+        "Method:plan_workflow_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "label": "dft_expert_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:07:05.342904",
+      "last_seen": "2026-10-04T02:07:05.342904",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "22c1f329778db636",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:dft_expert_iter55"
+    },
+    {
+      "label": "\". We have generated three, and we are to select one. We can select dynamics.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:12:29.500825",
+      "last_seen": "2026-10-04T02:12:29.500825",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain finite and relatively small (e.g., < 50) across the tested range of w, indicating the solution space is rigid. If N_c exceeds the search limit or shows no convergence, the space is",
+      "persona": "dft_expert",
+      "id": "experiment:\". We have generated three, and we are to select one. We can select dynamics."
+    },
+    {
+      "label": "plan_skill_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:12:29.500862",
+      "last_seen": "2026-10-04T02:12:29.500862",
+      "mentions": 1,
+      "id": "Method:plan_skill_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:12:29.500871",
+      "last_seen": "2026-10-04T02:12:29.500871",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-04T02:12:29.500880",
+      "last_seen": "2026-10-04T02:12:29.500880",
+      "mentions": 1,
+      "members": [
+        "experiment:\". We have generated three, and we are to select one. We can select dynamics.",
+        "Method:plan_skill_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_4af83977"
+    },
+    {
+      "label": "dft_expert_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-04T02:12:29.500962",
+      "last_seen": "2026-10-04T02:12:29.500962",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "84e2661b246fc198",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:dft_expert_iter65"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:'. If two candidates would make the SAME numerical prediction, the second is a r",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:48:18.503681",
+      "last_seen": "2026-10-04T01:48:18.503681",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1be3877"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic variety hypothesis — most testable (clear constant vs",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:54:41.281956",
+      "last_seen": "2026-10-04T01:54:41.281956",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1710ba24"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The bootstrap constraints define a low-dimensional algebraic va",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:55:53.624405",
+      "last_seen": "2026-10-04T01:55:53.624405",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4e71fc7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'\". It also says \"LUCID review (mandatory after generating hypothesis)... State",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:57:48.379778",
+      "last_seen": "2026-10-04T01:57:48.379778",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87046e3a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:57:48.379778",
+      "last_seen": "2026-10-04T01:57:48.379778",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87046e3a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:57:48.379778",
+      "last_seen": "2026-10-04T01:57:48.379778",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87046e3a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure]",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:59:06.253365",
+      "last_seen": "2026-10-04T01:59:06.253365",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b8dd91"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:59:06.253365",
+      "last_seen": "2026-10-04T01:59:06.253365",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b8dd91"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T01:59:06.253365",
+      "last_seen": "2026-10-04T01:59:06.253365",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1b8dd91"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:00:57.361427",
+      "last_seen": "2026-10-04T02:00:57.361427",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea810a0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_skill_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:00:57.361427",
+      "last_seen": "2026-10-04T02:00:57.361427",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea810a0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:00:57.361427",
+      "last_seen": "2026-10-04T02:00:57.361427",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea810a0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: geometry] The solution space of the rigid family corresponds to a manif",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:02:19.879804",
+      "last_seen": "2026-10-04T02:02:19.879804",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2a05a6ce"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'\". I will choose one of the three new ones I generate.",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:04:23.250323",
+      "last_seen": "2026-10-04T02:04:23.250323",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ad37b81"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:04:23.250323",
+      "last_seen": "2026-10-04T02:04:23.250323",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ad37b81"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:04:23.250323",
+      "last_seen": "2026-10-04T02:04:23.250323",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ad37b81"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:06:18.745759",
+      "last_seen": "2026-10-04T02:06:18.745759",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a97d430f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The bootstrap constraints for the rigid family induce a gradient",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:07:05.342841",
+      "last_seen": "2026-10-04T02:07:05.342841",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a804f26"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\". We have generated three, and we are to select one. We can select dynamics.",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:12:29.500880",
+      "last_seen": "2026-10-04T02:12:29.500880",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4af83977"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_skill_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:12:29.500880",
+      "last_seen": "2026-10-04T02:12:29.500880",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4af83977"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-10-04T02:12:29.500880",
+      "last_seen": "2026-10-04T02:12:29.500880",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4af83977"
+    }
+  ]
+}

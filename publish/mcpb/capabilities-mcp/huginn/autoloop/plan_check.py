@@ -1,24 +1,38 @@
-"""PlanCheckMixin - plan_check 方法族, 从 engine.py 下沉.
+"""PlanCheck — plan_check 方法族协作对象, 从 engine.py 下沉.
 
-P1 slim-down: 22 个 plan_check 方法从 engine.py 迁入, 定义为 mixin class.
-engine 通过多继承接入, 方法内通过 self 访问 engine 状态字段
-(_plan_check_patterns / _plan_check_history / _plan_check_warnings /
-_plan_check_last_result / _scene_tag_extra_keywords / _iteration / workspace)
-和 engine 方法 (_maybe_clarify / _llm_chat / _build_memory_text /
-_build_metacog_block / _build_hypothesis_prompt 等).
+P1 slim-down: 22 个 plan_check 方法从 engine.py 迁入. 原以 mixin class 多继承
+接入, 去 mixin 阶段6 改为普通类 PlanCheck, 引擎经组合持有 self._plan_checker
+= PlanCheck(self), 保留同名薄委托方法 → 既有 self.method() 调用点零改动.
 
-调用点: engine._prepare_run 调 _load_plan_check_patterns();
-engine._plan 调 _plan_check_and_refine().
+方法经转发访问 engine 状态 (self 未定义属性落回 engine):
+字段如 _plan_check_patterns / _plan_check_history / _plan_check_warnings /
+_plan_check_last_result / _scene_tag_extra_keywords / _iteration / workspace,
+方法如 _maybe_clarify / _llm_chat / _build_memory_text / _build_kb_text /
+_apply_block_patches / _trim_to_budget 等均转发到引擎.
+
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义
+  属性读转发到 engine, __setattr__ 转发写. 字段/方法留引擎不复制.
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写
+  实例 dict.
+- 对 engine.py 模块级符号用方法内 lazy import (_get_math_signals), 避免 circular.
+- 协作对象不额外持有业务状态 (除 engine 引用).
+
+调用点: cognitive_loop 调 _load_plan_check_patterns(); engine_act._plan
+调 _build_plan_prompt / _parse_plan / _override_plan_mode / _plan_check_and_refine.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 from collections import Counter
 from typing import Any
 
+from huginn.autoloop.signals import routing_surprise
 from huginn.memory.longterm import load_stable_principles
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
@@ -26,13 +40,74 @@ logger = logging.getLogger(__name__)
 
 
 def _get_math_signals():
-    """Delayed import to avoid circular dependency (engine imports PlanCheckMixin)."""
+    """Delayed import to avoid circular dependency (engine imports PlanCheck)."""
     from huginn.autoloop.engine import _MATH_SIGNALS
     return _MATH_SIGNALS
 
 
-class PlanCheckMixin:
-    """plan_check 方法族. 通过 self 访问 engine 状态."""
+# planner 提示教的 MODE 候选基线. 不要在源码里把它改成 f-string 占位符:
+# contract_audit 的 workflow 面用正则静态解析本文件里 "MODE:" 后的候选枚举
+# (huginn/cli/contract_audit.py), 占位符会让该门禁看不到任何候选 mode → 变红.
+# VISTA 借鉴的两个实验 mode 由 _plan_mode_enum/_extend_mode_enum 在运行时按 flag 追加.
+_BASE_MODE_ENUM = "coder|workflow|explore|skill|visual_inspect"
+
+
+class PlanCheck:
+    """plan_check 方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _plan_check),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: PlanCheck 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_build_subgoal_block",
+        "_build_plan_prompt",
+        "_plan_context_hint",
+        "_override_plan_mode",
+        "_asks_to_write_and_run_code",
+        "_is_code_experiment_plan",
+        "_log_plan_override",
+        "_parse_plan",
+        "_plan_check_and_refine",
+        "_maybe_trigger_plan_check_clarify",
+        "_plan_check_tier",
+        "_plan_check_complexity_thresholds",
+        "_plan_check_scene_tag",
+        "_discover_scene_tags",
+        "_plan_check_complexity",
+        "_plan_check_max_refines",
+        "_plan_check",
+        "_dimensional_pre_check",
+        "_build_plan_check_prompt",
+        "_record_plan_check_failure",
+        "_load_plan_check_patterns",
+        "_save_plan_check_patterns",
+        "_parse_plan_check",
+        "_refine_plan",
+    })
 
     def _build_subgoal_block(self) -> str:
         """从 agent 或 self 上读 sub_goals, 注入到 prompt."""
@@ -43,6 +118,61 @@ class PlanCheckMixin:
         for i, sg in enumerate(sgs, 1):
             lines.append(f"{i}. {sg}")
         lines.append("### End Sub-goal Constraints\n")
+        return "\n".join(lines)
+
+    def _plan_mode_enum(self) -> str:
+        """计划格式里的 MODE 枚举. VISTA 借鉴的两个 mode 仅对应 flag 开时才列出.
+
+        默认全关 → 返回值与历史硬编码完全一致 (_BASE_MODE_ENUM), 提示词向后兼容.
+        """
+        modes = _BASE_MODE_ENUM.split("|")
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            ff = FeatureFlags.shared()
+            if ff.is_enabled("trace_inspect"):
+                modes.append("trace_inspect")
+            if ff.is_enabled("visual_frame_memory"):
+                modes.append("frame_inspect")
+        except Exception:  # 防御: flag 层异常 → 回落历史枚举
+            logger.debug("plan mode enum flag read failed", exc_info=True)
+        return "|".join(modes)
+
+    def _extend_mode_enum(self, prompt: str) -> str:
+        """把提示词里的基线 MODE 枚举按 feature flag 展开 (flag 关时原样返回).
+
+        提示词模板里保留字面量 ``MODE: <coder|workflow|...>`` 供 contract_audit
+        静态门读取; 这里只在 flag 开启时把它替换成含新 mode 的枚举.
+        """
+        enum = self._plan_mode_enum()
+        if enum == _BASE_MODE_ENUM:
+            return prompt
+        return prompt.replace(f"MODE: <{_BASE_MODE_ENUM}>", f"MODE: <{enum}>")
+
+    def _plan_extra_mode_lines(self) -> str:
+        """VISTA 借鉴 mode 的说明行; 对应 flag 关时为空串 (提示词与历史一致)."""
+        lines: list[str] = []
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            ff = FeatureFlags.shared()
+            if ff.is_enabled("trace_inspect"):
+                lines.append(
+                    "- trace_inspect: recall your OWN past execution traces "
+                    "(process-level) by keyword/tool/intent. Read-only. Put a JSON object "
+                    'in DESCRIPTION, e.g. {"query":"timeout","tool":"code_lab","limit":8}. '
+                    "Use it to reuse earlier runs' numbers/errors instead of re-running."
+                )
+            if ff.is_enabled("visual_frame_memory"):
+                lines.append(
+                    "- frame_inspect: re-view a previously captured frame losslessly. "
+                    'DESCRIPTION JSON: {"action":"view|region|pixels","frame_id":N,'
+                    '"box":[x0,y0,x1,y1],"points":[[x,y],...],"normalized":false}. '
+                    "region crops the ORIGINAL pixels faithfully; pixels returns exact RGB "
+                    "— use it to read values off a figure without re-rendering."
+                )
+        except Exception:  # 防御: flag 层异常 → 不追加
+            logger.debug("plan extra mode lines failed", exc_info=True)
         return "\n".join(lines)
 
     def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
@@ -69,7 +199,7 @@ class PlanCheckMixin:
         # H0: stable_principles 注入 (同 hypothesize, 修 P3 断链)
         try:
             _principles = load_stable_principles()[:5]
-        except Exception:
+        except Exception:  # 防御: 原则加载失败用空表
             _principles = []
         principles_block = (
             "\n".join(f"- {p}" for p in _principles) if _principles else ""
@@ -122,7 +252,7 @@ class PlanCheckMixin:
                     + "\n".join(f"  - {p}" for p in patches[:3])
                     + "\n"
                 )
-        except Exception:
+        except Exception:  # 防御: 技能/补丁拉取失败不阻断提示
             logger.warning(
                 "error in _build_plan_prompt: evolution skill/patch fetch failed",
                 exc_info=True,
@@ -170,7 +300,7 @@ class PlanCheckMixin:
                         + "\n\n".join(lines)
                         + "\n"
                     )
-            except Exception:
+            except Exception:  # 防御: 组合技能查找失败跳过
                 logger.debug("composite skill lookup failed", exc_info=True)
 
         # Pipeline 建议: 基于 provenance 规则推荐下一步工具.
@@ -200,8 +330,12 @@ class PlanCheckMixin:
                         + "\n".join(s_lines)
                         + "\n"
                     )
-        except Exception:
+        except Exception:  # 防御: 建议失败不阻塞流程
             logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
+
+        # VISTA 借鉴: 两个实验 mode 的说明 (flag 关时为空串); 枚举由
+        # _extend_mode_enum 在返回前按 flag 展开 (模板保留基线字面量).
+        extra_mode_lines = self._plan_extra_mode_lines()
 
         blocks = self._apply_block_patches(
             [
@@ -218,7 +352,7 @@ Choose ONE mode and describe the plan:
 - explore: search a design space for optimal parameters
 - skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
 - visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
-
+{extra_mode_lines}
 Protocol completeness check (RCBench failure mode: experimental protocol mismatch):
 Before finalizing, verify your plan covers all necessary steps:
 - For DFT: structure optimization BEFORE property calculation? Convergence test (encut/kpoints)?
@@ -232,11 +366,23 @@ When the hypothesis involves a PDE / variational principle / curved
 geometry, consider the symbolic_math_tool actions listed in the math
 depth block above — but numerical solvers are equally valid.
 
+Alignment gate (plan_check will reject the plan if this fails):
+- Name the exact quantity / structure / assertion the hypothesis makes, and point to
+  the step in DESCRIPTION that measures or computes THAT thing.
+- A numeric scan (capacity / error / scaling) only tests a claim that is itself numeric.
+  If the hypothesis asserts something else (topological / algebraic / existence /
+  uniqueness), either pick a MODE + workflow that computes that object symbolically, or
+  restate the hypothesis to a numerically testable form that the plan actually implements.
+- Never reuse a previous round's DESCRIPTION when the hypothesis has changed. A plan that
+  ignores the current hypothesis is invalid even if the code runs and returns numbers.
+
 Respond in this exact format:
-MODE: <coder|workflow|explore|skill>
+MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
+FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
 PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
+SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
 """,
                 ),
                 ("math", math_block),
@@ -258,7 +404,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             ],
             "plan",
         )
-        return self._trim_to_budget(blocks, phase="plan")
+        return self._extend_mode_enum(self._trim_to_budget(blocks, phase="plan"))
 
     def _plan_context_hint(self) -> str:
         """B: 把上下文信号转成 plan prompt 提示文本 (软路由).
@@ -275,7 +421,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     "CRITICAL: 当前假设是图的关键割点, 需要双模态验证. "
                     "优先选 workflow/skill 跑符号验证, 不要只选 coder."
                 )
-        except Exception:
+        except Exception:  # 防御: 双覆盖提示失败跳过
             logger.debug("dual coverage hint skipped", exc_info=True)
         # 连续失败 → 倾向换方向
         cf = getattr(self, "_consecutive_failures", 0)
@@ -288,8 +434,10 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         rc = getattr(self, "_refine_count", 0)
         if rc >= 3:
             hints.append(f"NOTE: 已 refine {rc} 次. 如果再失败可能需要 pivot 换方向.")
-        # surprise 高 → 预测误差大, 倾向 explore 重新假设
-        surprise = getattr(self, "_last_surprise", 0.0)
+        # surprise 高 → 预测误差大, 倾向 explore 重新假设.
+        # v31: 读秩归一信号 routing_surprise() —— 原始 surprise 在 jaccard 回落时
+        # 饱和于 1.0, 会把"恒定"误当"高", 每轮都提示 explore.
+        surprise = routing_surprise(self)
         if surprise > 0.5:
             hints.append(
                 f"NOTE: 预测误差大 (surprise={surprise:.2f}). "
@@ -314,7 +462,39 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         升级: campaign 队列状态 (queue 满则 workflow 批量验证).
         """
         current_mode = plan.get("mode", "coder")
-        # 割点节点: 强制非 coder mode
+        # 写码类目标: execute 得有"手". explore 模式只有注册了设计空间才真跑, 否则
+        # 秒回一个空 pod (0.0s, 无 script 无数值), 而 report 照旧把 LLM 现编的数字
+        # 当"Results"写出去. 目标/plan 明确要求"写并运行代码"时钉死 coder
+        # (Write+Bash 真执行真取数), 不让 explore 接管.
+        if current_mode != "coder" and self._asks_to_write_and_run_code(plan):
+            _orig_mode = current_mode
+            plan["mode"] = "coder"
+            current_mode = "coder"
+            plan["override_reason"] = "code_task_force_coder"
+            plan["description"] = (
+                f"[auto-routed: 写码目标需真实执行] {plan.get('description', '')}"
+            )
+            logger.info("override mode %s→coder: 目标要求写并运行代码", _orig_mode)
+            self._log_plan_override("code_task_force_coder", "目标要求写并运行代码")
+        # 计算实验目标绝不套"物理管线"模式: workflow 只认 cfd/fea/qc/symbolic/dft
+        # 几类模板, 把纯 ML/数学命题(如"解空间刚性")塞进去 → 报告被写成 DFT workflow
+        # 的 Methods/Results (run88 实测域漂移). 目标是代码实验时改走真实执行路径.
+        if current_mode == "workflow" and self._is_code_experiment_plan(plan):
+            _orig_mode = current_mode
+            # 走 coder(Write+Bash 真写码真执行) 而非再叫一次 code_lab —— execute 的
+            # 实验快路径已经先试过 Code Lab, 这里换一条真实执行路径推进, 不重复空转.
+            plan["mode"] = "coder"
+            current_mode = "coder"
+            plan["override_reason"] = "code_experiment_not_physics_workflow"
+            plan["description"] = (
+                f"[auto-routed: 代码实验走真实执行] {plan.get('description', '')}"
+            )
+            logger.info("override mode %s→coder: 目标是代码实验, 非物理管线", _orig_mode)
+            self._log_plan_override(
+                "code_experiment_not_physics_workflow", "代码实验不套物理 workflow 模板"
+            )
+        # 割点节点: 强制非 coder mode (需能跑验证). 代码实验的"验证模态"就是 Code Lab
+        # 真跑, 故代码实验走 code_lab, 其余走 workflow.
         try:
             current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
             if (
@@ -322,22 +502,25 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 and self.hypothesis_graph.needs_dual_coverage(current_hyp)
                 and current_mode == "coder"
             ):
-                plan["mode"] = "workflow"
+                _dual_mode = "code_lab" if self._is_code_experiment_plan(plan) else "workflow"
+                plan["mode"] = _dual_mode
                 plan["override_reason"] = "cut_vertex_dual_coverage"
                 plan["description"] = (
                     f"[auto-routed: 割点需双覆盖] {plan.get('description', '')}"
                 )
                 logger.info(
-                    "override mode coder→workflow for cut vertex %s", current_hyp
+                    "override mode coder→%s for cut vertex %s", _dual_mode, current_hyp
                 )
                 self._log_plan_override(
                     "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖"
                 )
-        except Exception:
+        except Exception:  # 防御: 双覆盖改写失败跳过
             logger.debug("dual coverage override skipped", exc_info=True)
         # 连败/surprise 强制 explore (合并条件, 共享覆盖路径)
         cf = getattr(self, "_consecutive_failures", 0)
-        surprise = getattr(self, "_last_surprise", 0.0)
+        # v31: 硬阈值改读秩归一信号. 原始 surprise 在 jaccard 回落时饱和 1.0 ⇒ 恒
+        # >0.9 ⇒ 每轮强制 explore(路由退化). 秩下恒定信号 ≈0.5, 不再误触发.
+        surprise = routing_surprise(self)
         explore_reasons: list[str] = []
         if cf >= 5:
             explore_reasons.append(f"连续失败{cf}次")
@@ -353,6 +536,47 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             logger.info("override mode →explore: %s", reason)
             self._log_plan_override("force_explore", reason)
         return plan
+
+    # 强标记: 明确"写并运行代码"的措辞. 不用裸 "python"/"代码" 防误伤
+    # (workflow/explore 目标里出现 python 很常见, 不该被强行改道).
+    _CODE_TASK_MARKERS = (
+        "写并运行", "编写并运行", "写代码", "编写代码", "运行代码", "现写",
+        "写脚本", "写一个脚本", "写个脚本", "python 脚本", "python脚本",
+        "write and run", "write a script", "run the code", "write code and run",
+    )
+
+    def _asks_to_write_and_run_code(self, plan: dict[str, Any]) -> bool:
+        """目标/plan 是否明确要求"写并运行代码"."""
+        blob = " ".join(
+            str(x)
+            for x in (
+                getattr(self, "_objective", "") or "",
+                plan.get("description", "") or "",
+            )
+        ).lower()
+        return any(m in blob for m in self._CODE_TASK_MARKERS)
+
+    def _is_code_experiment_plan(self, plan: dict[str, Any]) -> bool:
+        """目标/plan 是否为"需亲手写代码真跑的计算实验" (命题无关).
+
+        复用引擎的 ``_is_code_experiment`` 词表(单一出处, 不在这里另立一份), 同时
+        看 objective 与 plan 描述 —— plan 常只写动作短语, 实验意图待在 objective.
+        引擎缺该方法(测试 mock)时降级 False, 不误改路由.
+        """
+        try:
+            fn = self._is_code_experiment   # __getattr__ 转发到引擎
+        except AttributeError:
+            return False
+        if not callable(fn):
+            return False
+        blob = " ".join(
+            str(x)
+            for x in (
+                getattr(self, "_objective", "") or "",
+                plan.get("description", "") or "",
+            )
+        )
+        return bool(fn(blob))
 
     def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
         """把 mode 覆盖记到 PhaseGateState.history, 补审计缺口.
@@ -377,7 +601,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     reviewer="auto_router",
                 )
             )
-        except Exception:
+        except Exception:  # 防御: 记录改写失败不阻塞
             logger.debug("log plan override failed", exc_info=True)
 
     def _parse_plan(self, response: str) -> dict[str, Any]:
@@ -386,6 +610,9 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         description = response.strip()
         skill_name = ""
         prediction = ""
+        _slots: list[dict] = []
+        _formula = ""
+        _files: list[str] = []
 
         for line in response.split("\n"):
             if line.startswith("MODE:"):
@@ -396,12 +623,32 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 skill_name = line.replace("SKILL:", "").strip()
             elif line.startswith("PREDICTION:"):
                 prediction = line.replace("PREDICTION:", "").strip()
+            elif line.startswith("SLOTS:"):
+                try:
+                    from huginn.jepa_slots import parse_slots_line
+                    _slots, _formula = parse_slots_line(
+                        line.replace("SLOTS:", "", 1)
+                    )
+                except Exception:  # noqa: BLE001 — 槽解析失败回落空, 不阻塞计划落盘
+                    _slots, _formula = [], ""
+            elif line.startswith("FILES:"):
+                _files = [
+                    f.strip()
+                    for f in line.replace("FILES:", "", 1).replace(",", " ").split()
+                    if f.strip()
+                ]
 
         plan = {"mode": mode, "description": description}
         if skill_name:
             plan["skill"] = skill_name
         if prediction:
             plan["expected_prediction"] = prediction
+        if _slots:
+            plan["prediction_inputs"] = _slots
+        if _formula:
+            plan["plan_formula"] = _formula
+        if _files:
+            plan["target_files"] = _files
         return plan
 
     # ── KRCL plan check (反向校验 + 闭环重生成) ─────────────────
@@ -448,7 +695,10 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             return plan
         scene = self._plan_check_scene_tag(plan)
         max_refines = self._plan_check_max_refines(tier, scene)
-        for attempt in range(max_refines + 1):
+        attempt = 0
+        # 用 while 而非 for range(max_refines+1): 失败时可能需要临时抬高预算
+        # (见下), for 的 range 在进入循环时就固定了, 抬了也无效.
+        while attempt <= max_refines:
             try:
                 check = await self._plan_check(plan, hypothesis, context)
             except Exception as e:
@@ -489,25 +739,21 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 )
             else:
                 # 失败: 记到 patterns (跨 run 持久化, 喂下次 prompt)
-                self._record_plan_check_failure(plan, check, scene)
-                # confidence 分级: 低置信失败 (<0.3) 跳过 refine, LLM 都没把握
-                # 判断, refine 可能也是瞎改, 直接 warning + 触发澄清更靠谱.
+                self._record_plan_check_failure(plan, check, scene, hypothesis)
                 confidence = float(check.get("confidence", 0.8))
+                # is_valid=False 是明确的「plan 达不成 hypothesis」信号, 必须重建.
+                # 原实现 conf<0.3 直接 `return plan` → 把不匹配的 plan 原样放行,
+                # misalign 永不纠正 (run45: 45/45 plan_check 全失败, 零次 refine;
+                # 每轮都在执行同一个 capacity scan, 而假设已漂到拓扑命题).
+                # 现改为: 低置信只降级记 warning (checker 自己没把握), 仍然走 refine,
+                # 直到 attempt 用尽才放行.
                 if confidence < 0.3:
-                    reason = check.get("reason", "unknown")
                     self._plan_check_warnings.append(
-                        f"[{scene}] {reason} (low_conf={confidence:.2f})"
+                        f"[{scene}] {check.get('reason', 'unknown')} "
+                        f"(low_conf={confidence:.2f})"
                     )
-                    logger.warning(
-                        "plan_check failed low-conf (tier=%s, scene=%s, conf=%.2f): %s",
-                        tier,
-                        scene,
-                        confidence,
-                        reason,
-                    )
-                    await self._maybe_trigger_plan_check_clarify(scene, reason, plan)
-                    return plan
-                if attempt >= max_refines:
+                # 预算耗尽且已重建过至少一次 -> 放行
+                if attempt >= max_refines and attempt >= 1:
                     reason = check.get("reason", "unknown")
                     self._plan_check_warnings.append(f"[{scene}] {reason}")
                     logger.warning(
@@ -524,6 +770,12 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                         plan,
                     )
                     return plan
+                if attempt >= max_refines:
+                    # 自适应的 ewma 放宽会把 max_refines 压到 0 (bucket 多数
+                    # 通过时 baseline-1), 首次失败就被放行 → 明知达不成
+                    # hypothesis 的 plan 原样执行 (run45/46: misalign 永不纠正).
+                    # 首次失败时强制给一次重建预算, 通过路径不受影响.
+                    max_refines += 1
             logger.info(
                 "plan_check refining (attempt %d, tier=%s, scene=%s, conf=%.2f): %s",
                 attempt,
@@ -533,6 +785,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 check.get("reason"),
             )
             plan = await self._refine_plan(plan, check, hypothesis, context)
+            attempt += 1
         return plan
 
     async def _maybe_trigger_plan_check_clarify(
@@ -637,6 +890,19 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         if success_rate <= 0.2:
             return (0.6, 0.35)
         return (0.7, 0.25)
+
+    @staticmethod
+    def _hyp_key(hypothesis: str) -> str:
+        """假设指纹: 归一化后取 md5 前 12 位, 用于把"历史失败"限定在同一假设.
+
+        scene_tag 太粗 (capacity scan / 拓扑 / 上同调 plan 全落 "other"), 单靠
+        scene 过滤会让 checker 把上一个假设的失败判定当成当前 plan 的"已知坑",
+        反复回灌同一结论 (run45 的自我污染死循环). 按假设指纹隔离即断链.
+        """
+        norm = re.sub(r"\s+", " ", (hypothesis or "").strip().lower())
+        return hashlib.md5(
+            norm.encode("utf-8"), usedforsecurity=False
+        ).hexdigest()[:12]
 
     def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
         """从 plan 抽场景标签, 给失败模式记忆和分桶自适应用.
@@ -883,7 +1149,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         warnings: list[str] = []
         try:
             from huginn.validation.dimensional import DimensionalValidator
-        except Exception:
+        except Exception:  # 防御: 校验异常返回既有警告
             return warnings
 
         # 拼 plan + hypothesis 文本
@@ -917,7 +1183,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                         f"dimensional inconsistency: '{line.strip()[:80]}' "
                         f"LHS={result.lhs_dimensions} RHS={result.rhs_dimensions}"
                     )
-            except Exception:
+            except Exception:  # 防御: 解析失败跳过该条继续
                 # 解析失败静默跳过 — 量纲库不全不该阻塞 plan_check
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
@@ -934,13 +1200,29 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         failure_modes = context.get("failure_modes", "")
         if not failure_modes and self._speculator_hint:
             failure_modes = self._speculator_hint[-500:]
-        # 同场景历史失败模式 (跨 run 积累, 最近 3 条) — 让 LLM 重点避开
+        # 同假设历史失败模式 (最近 3 条, reason 去重) — 让 LLM 重点避开.
+        # 旧版只按 scene_tag 抽, 而 scene="other" 是万能桶 (capacity scan /
+        # 拓扑 / 上同调 plan 全落这里), 于是 checker 把自己上一轮的判定当"已知
+        # 坑"原样回灌, 锁死结论 (run45 46/46 全失败的自我污染). 现按假设指纹
+        # 隔离 + reason 去重: 只喂真正同一假设下、且互不重复的失败信息.
         scene = self._plan_check_scene_tag(plan)
-        similar = [
+        hyp_key = self._hyp_key(hypothesis)
+        same_hyp = [
             p
             for p in getattr(self, "_plan_check_patterns", [])
-            if p.get("scene_tag") == scene
-        ][-3:]
+            if p.get("scene_tag") == scene and p.get("hyp_key") == hyp_key
+        ]
+        seen_reasons: set[str] = set()
+        similar: list[dict[str, Any]] = []
+        for p in reversed(same_hyp):
+            r = str(p.get("reason") or "")[:120]
+            if r in seen_reasons:
+                continue
+            seen_reasons.add(r)
+            similar.append(p)
+            if len(similar) >= 3:
+                break
+        similar.reverse()
         if similar:
             similar_text = "\n".join(
                 f"- {p['reason']} (缺: {', '.join(p.get('missing_steps', [])) or 'N/A'})"
@@ -992,6 +1274,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         plan: dict[str, Any],
         check: dict[str, Any],
         scene: str,
+        hypothesis: str = "",
     ) -> None:
         """失败模式记到 patterns, 跨 run 持久化给下次注入 prompt.
 
@@ -1002,6 +1285,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         self._plan_check_patterns.append(
             {
                 "scene_tag": scene,
+                "hyp_key": self._hyp_key(hypothesis),
                 "reason": check.get("reason", "unknown"),
                 "missing_steps": check.get("missing_steps", []),
                 "mode": plan.get("mode", ""),
@@ -1137,6 +1421,7 @@ MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""
+        prompt = self._extend_mode_enum(prompt)
         try:
             response = await self._llm_chat(
                 prompt,

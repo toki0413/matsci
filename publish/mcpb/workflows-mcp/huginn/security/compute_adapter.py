@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import sys
@@ -41,6 +42,12 @@ from huginn.security.behavior_lifecycle import (
     InstallResult,
 )
 from huginn.security.world_model import PhysicalAction, WorldModel
+from huginn.utils.process import (
+    kill_process_group,
+    new_group_popen_kwargs,
+    track_live_child,
+    untrack_live_child,
+)
 
 # 理想气体参数 (用能量标量 E = n·Cv·T 作"可观测"), 单原子 Cv = 3/2 R.
 _R = 8.31446261815324
@@ -62,21 +69,38 @@ class JobSpec:
 
 
 def run_job(job: JobSpec) -> subprocess.CompletedProcess:
-    """同步执行外部工具 (带超时). 远程/GPU 作业未来替换本实现即可."""
+    """同步执行外部工具 (带超时). 超时**整组回收**防孤儿; 远程/GPU 作业未来替换本实现即可."""
+    _kwargs, _own_group = new_group_popen_kwargs()
     try:
-        return subprocess.run(
+        proc = subprocess.Popen(
             list(job.command),
             cwd=job.cwd,
             env=job.env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=job.timeout,
-            check=False,
+            **_kwargs,
         )
-    except subprocess.TimeoutExpired as e:
-        raise ToolInvocationError(f"tool timeout after {job.timeout}s: {e.cmd}") from e
     except OSError as e:
         raise ToolInvocationError(f"tool spawn failed: {e}") from e
+    # 登记在册: 子进程自立新组后父进程退出不会带走它; 宿主退出时由
+    # ``kill_tracked_children`` 兜底整组回收, 不留 PPID→1 孤儿.
+    track_live_child(proc.pid, own_group=_own_group)
+    try:
+        try:
+            out, err = proc.communicate(timeout=job.timeout)
+        except subprocess.TimeoutExpired as e:
+            # 超时: 整组回收 (连 ``sh -c '...; python3 heavy.py'`` 派生的孙进程一并杀),
+            # 再 communicate 取回/排空输出并回收直接子进程防僵尸.
+            kill_process_group(proc.pid, own_group=_own_group)
+            with contextlib.suppress(Exception):
+                proc.communicate()
+            raise ToolInvocationError(
+                f"tool timeout after {job.timeout}s: {e.cmd}"
+            ) from e
+    finally:
+        untrack_live_child(proc.pid)
+    return subprocess.CompletedProcess(list(job.command), proc.returncode, out, err)
 
 
 # ── 三形态计算: 作业规格 + 后端抽象 ─────────────────────────────

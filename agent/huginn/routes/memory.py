@@ -33,7 +33,13 @@ async def list_memories(
         if tier:
             entries = [e for e in entries if e.get("tier") == tier]
         # 列表本身按 last_accessed 倒序(最新在前), 直接按 content 去重保留第一条即可.
-        return {"entries": _dedupe_by_content(entries)}
+        # `total` 与 `entries` 同口径 (去重后、不受 limit 截断), 供前端判定"还有更多".
+        return {
+            "entries": _dedupe_by_content(entries),
+            "total": mgr.longterm.count_matching(
+                category=category or None, tier=tier or None
+            ),
+        }
     except Exception as e:
         return {"error": str(e)}
 

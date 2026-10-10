@@ -31,6 +31,14 @@ import os
 import re
 from typing import Any
 
+from huginn.autoloop.signals import (
+    hypothesis_strength,
+    routing_surprise,
+    strength_global_proposal_prob,
+    strength_schedule_enabled,
+    strength_temperature,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -685,8 +693,10 @@ LUCID review (mandatory after generating hypothesis):
                 "phase": context.get("phase", ""),
                 "val_status": context.get("val_status", ""),
                 "structure_desc": context.get("structure_desc"),
-                # 桥 J: cue 带 surprise, 让 replay 能按 surprise 回溯高发现情境
-                "surprise": getattr(self, "_last_surprise", 0.0),
+                # 桥 J: cue 带 surprise, 让 replay 能按 surprise 回溯高发现情境.
+                # v31 统一: 与 episodic 快照 / 路由同源, 一律用秩归一信号
+                # routing_surprise() —— 原始值在 jaccard 回落时饱和 1.0, 无区分度.
+                "surprise": routing_surprise(self),
             }
             replays = replay.replay(cue, top_k=3)
             if not replays:
@@ -824,8 +834,9 @@ LUCID review (mandatory after generating hypothesis):
                 "val_status": "failed",
                 "mode": getattr(self, "_last_failure_mode", "") or "",
                 "phase": getattr(self, "_current_phase", "") or "",
-                # 桥 J: surprise 进 episodic, replay 能按 surprise 回溯 PMK 冲突
-                "surprise": float(getattr(self, "_last_surprise", 0.0)),
+                # 桥 J: surprise 进 episodic, replay 能按 surprise 回溯 PMK 冲突.
+                # v31 统一: 口径同 episodic 快照, 用秩归一信号(见 signals.routing_surprise).
+                "surprise": routing_surprise(self),
             }
             writer = getattr(self, "_episodic_writer", None)
             if writer is None:
@@ -884,12 +895,17 @@ LUCID review (mandatory after generating hypothesis):
         # 由 _apply_block_patches 和下方 math_block 共同消费.
         self._related_chain = self._is_related_chain(context.get("changed_files", []))
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
-        # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
-        # — _speculator_hint 有 5 处 append, 不截断 20 轮后可能数 KB.
+        # 预测只是 hint, LLM 可以无视, 不强制. 截断防止无界增长
+        # — _speculator_hint 有 30+ 处 append, 且每 run 只在启动时 reset 一次,
+        # 长程跑会累积到数 KB.
+        # 关键: 取**尾部** [-500:] 而非首部 [:500]. 所有纠偏指令
+        # (反例搜索 _trigger_counterexample_hunt / [强制重定向] 换名归约升级)
+        # 都是 append 到尾部 —— 取首部等于把"最新、最该被执行的纠偏"最先丢掉,
+        # 这正是"检测到了但不行动"的根因: 信号生成了却从没进 prompt.
         hint_block = ""
         if self._speculator_hint:
             hint_block = (
-                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[:500]}\n"
+                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[-500:]}\n"
                 "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
                 "(方法族/等价性陷阱/连通分量/缺口).\n"
             )
@@ -907,6 +923,26 @@ LUCID review (mandatory after generating hypothesis):
         curiosity_block = self._build_curiosity_block()
         if curiosity_block:
             hint_block = (hint_block + curiosity_block) if hint_block else curiosity_block
+            # 控制面观测 B7: curiosity hint 默认 off, 触发率未知 (审计列为"疑似可删").
+            #   这里只在**真的注入 prompt** 时记一条 trace, 供触发率统计; 纯观测, 不改行为.
+            #   带固定 tag 的 WARNING 进 run.log (CLI autoloop 不持久 campaign.* 事件);
+            #   事件走 campaign.control_trace, fail-open (测试替身无事件通道时静默).
+            logger.warning(
+                "control_trace name=curiosity_hint iteration=%s evidence=%s action=%s",
+                getattr(self, "_iteration", 0), "injected_into_hypothesis_prompt",
+                "advisory_hint",
+            )
+            with contextlib.suppress(Exception):
+                self._emit_campaign(
+                    "campaign.control_trace",
+                    {
+                        "name": "curiosity_hint",
+                        "iteration": getattr(self, "_iteration", 0),
+                        "evidence": "injected_into_hypothesis_prompt",
+                        "action": "advisory_hint",
+                        "advisory": "",
+                    },
+                )
         # 三路检索共用一个 query — 从 context 提取有意义的检索词,
         # 不用 json.dumps (JSON 语法噪声会淹没 embedding 语义锚点)
         ctx_query = self._extract_search_query(context)
@@ -967,11 +1003,33 @@ LUCID review (mandatory after generating hypothesis):
                         if _cur is not None:
                             _prev = _cur
                             _rng = getattr(self, "_mcmc_rng", None)
+                            # Ataraxos 式强度调度: 假设弱→高温 + 多全局跳 (探索),
+                            # 强→低温 + 少全局跳 (锁定 MAP). 关掉则回旧常量 0.3/1.0.
+                            _sched = strength_schedule_enabled()
+                            _st = hypothesis_strength(self) if _sched else 0.5
                             _next_h, _next_logp = _manifold.mcmc_step(
                                 _obs, _cur, rng=_rng,
                                 cached_log_p_current=getattr(
                                     self, "_mcmc_cached_log_p", None),
-                                global_proposal_prob=0.3,
+                                temperature=(
+                                    strength_temperature(_st) if _sched else 1.0),
+                                global_proposal_prob=(
+                                    strength_global_proposal_prob(_st)
+                                    if _sched else 0.3),
+                                # Gramian 谱预条件: 沿假设空间高可控/高信息主轴提议,
+                                # 抑制各向同性随机游走. 数据不足自动退化, 默认开.
+                                gramian_enabled=(
+                                    os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1"),
+                                gramian_k=int(os.environ.get(
+                                    "HUGINN_MCMC_GRAMIAN_K", "1")),
+                                # R-NaD 式锚正则: 向已接受假设的 EMA 锚点漂移,
+                                # 阻尼均衡点附近绕圈. 默认开, λ 由 env 调.
+                                anchor_lambda=(
+                                    float(os.environ.get(
+                                        "HUGINN_MCMC_ANCHOR_LAMBDA", "0.1"))
+                                    if os.environ.get(
+                                        "HUGINN_MCMC_ANCHOR", "1") == "1"
+                                    else 0.0),
                             )
                             self._mcmc_current = _next_h
                             self._mcmc_cached_log_p = _next_logp
@@ -1268,33 +1326,55 @@ LUCID review (mandatory after generating hypothesis):
             [
                 (
                     "body",
-                    f"""You are an autonomous material science research agent.
+                    # 平台的域锚定 = 数学, 而非某个具体学科. 依据: 不论自然
+                    # 科学还是社会科学, 数学都是最基本单元 —— 任何命题先落到数学
+                    # 层, 再谈具体体系. 原先把域锚在材料科学 (composition/
+                    # temperature/defect/structure/transport + "优先写 PDE/变分/
+                    # 守恒律"), 会把非材料命题强行拽进材料语言 (见 run43: 31 条
+                    # 假设全落材料 5 维度, plan_check 连续判 misalign). 改为数学
+                    # 维度表, 让任意学科都先归约到其数学骨架.
+                    f"""You are an autonomous research agent. The base unit of every
+discipline — natural or social science — is mathematics; ground each
+hypothesis in mathematics first, whatever the subject matter.
 
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
-Generate 3 divergent candidate hypotheses. Each MUST be grounded in a
-DIFFERENT assumption dimension. Pick dimensions from this list (or propose
-a new one tagged [NEW]):
-- composition (Ca/Si/Al/O ratio, doping, alloy)
-- temperature (thermal dependence, phase transition)
-- defect (vacancy, dislocation, interface)
-- structure (crystal symmetry, lattice parameter)
-- transport (diffusion, conductivity, mobility)
+Generate 3 divergent candidate hypotheses. They must be MUTUALLY
+DISCRIMINABLE: each must make a different, checkable numerical prediction
+that a SINGLE experiment could tell apart (e.g. the same measured quantity
+growing linearly vs logarithmically vs staying flat as a parameter w
+varies, or different scaling exponents). Grounding each in a different
+mathematical dimension is welcome but NOT sufficient — a different
+dimension carrying the same prediction is just a rename. Dimensions
+(pick one, or propose new tagged [NEW]):
+- structure (algebraic structure, symmetry, invariants)
+- geometry (manifold, curvature, dimension, topology)
+- dynamics (differential equations, variational principles, conservation laws)
+- measure (probability, statistics, distributions, stochastic processes)
+- optimization (objective functionals, convexity, landscape)
+- computation (complexity, information, approximation bounds)
 
 Format each candidate as:
-[DIM: <dimension>] <statement> | pro: ... | con: ...
+[DIM: <dimension>] <statement> | predict: <the measured quantity as a
+function of a parameter, e.g. "rigid family: N_c constant in w; floppy
+family: N_c grows linearly in w"> | pro: ... | con: ...
 
 After listing 3, select the most testable+novel one after "SELECTED:".
-The 3 candidates must NOT be variations of each other — if two share the
-same dimension, the second is invalid and must be replaced.
+If two candidates would make the SAME numerical prediction, the second is
+a rename and MUST be replaced — do not merely relabel it.
 Ground it in the domain knowledge context above when relevant.
-Prefer hypotheses that can be expressed as governing PDEs, variational
-principles, or conservation laws; identify the mathematical structure
-before proposing numerical experiments.
+State the mathematics explicitly — governing equations, invariants,
+variational principles, or complexity/approximation bounds — before
+proposing numerical experiments.
 
 Hypothesis:""",
                 ),
+                # hint 提到 body 之后: _trim_to_budget 从列表尾部往回裁剪,
+                # 原先把 hint 放最后 → 预算紧张时首先被截断/删除, 换名归约的
+                # 强制重定向提示 (见 hypothesis_loop._metacog_audit_hypothesis)
+                # 根本到不了 LLM. 提到高优先级位, 保证纠偏信息不被裁掉.
+                ("hint", hint_block),
                 ("git_log", git_log_block),
                 ("fail", fail_block),
                 ("imagination", imagination_block),
@@ -1314,7 +1394,6 @@ Hypothesis:""",
                 ("topo", topo_block),
                 ("blind_spot", blind_spot_block),
                 ("skill", self._build_skill_context_block()),
-                ("hint", hint_block),
             ],
             "hypothesize",
         )

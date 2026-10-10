@@ -913,30 +913,22 @@ class ToolAdapter:
                 get_pet_bus().publish(mood, message, details)
 
         # Tool-name → fine-grained pet mood classification.
+        # 用**注册名**: 早期写的 `python_tool`/`terminal_tool`/`list_tool`/`read_file`
+        # 等与注册表对不上, 分类静默退化成 WORKING (MECE 审计记的允许表死项).
         _CODING_TOOLS = frozenset(
             {
                 "code_tool",
-                "python_tool",
                 "bash_tool",
-                "terminal_tool",
-                "notebook_tool",
-                "run_code",
-                "execute",
+                "notebook_edit_tool",
             }
         )
         _REVIEWING_TOOLS = frozenset(
             {
                 "file_read_tool",
-                "search_tool",
-                "grep_tool",
-                "list_tool",
-                "read_file",
+                "grep",
+                "glob",
                 "web_search_tool",
-                "web_fetch_tool",
                 "lean_tool",
-                "proof_check",
-                "review",
-                "summarize",
             }
         )
 

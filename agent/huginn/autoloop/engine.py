@@ -145,6 +145,7 @@ from huginn.interaction.progress import ProgressTracker  # noqa: E402
 from huginn.kg.builder import ProjectKnowledgeGraph  # noqa: E402
 from huginn.llm import get_model  # noqa: E402
 from huginn.memory.manager import MemoryManager  # noqa: E402
+from huginn.permissions import PermissionConfig  # noqa: E402
 from huginn.tools.report_tool import ReportTool  # noqa: E402
 from huginn.utils.runtime import HUGINN_DIR_NAME  # noqa: E402
 from huginn.workflows.engine import WorkflowEngine  # noqa: E402
@@ -380,6 +381,13 @@ class AutoloopEngine:
         # 去 mixin 阶段3: VisualInspect 协作对象. visual_inspect 方法经薄委托走这里,
         # 只读引擎字段(_last_visual_context/_visual_base64/_last_visual_base64), 写经转发回引擎.
         self._visual_inspector = VisualInspect(self)
+        # VISTA 借鉴: trace_inspect / frame_inspect 两个"模型可调"mode 协作对象.
+        # flag 关时捕获零成本直返, 两个 mode 被误产出也只返回 disabled 说明.
+        from huginn.autoloop.recall_modes import RecallModes
+
+        self._recall_modes = RecallModes(self)
+        # 无损视觉帧存储 (懒加载; 只在 visual_frame_memory 开且真产出帧时才建).
+        self._frame_store: Any = None
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -410,7 +418,15 @@ class AutoloopEngine:
         self.workflow_engine = WorkflowEngine(
             tool_registry=ToolRegistry,  # 传类本身, .get() 是 classmethod
         )
-        self.coder = CoderRunner()
+        # autoloop 是**无人值守**的自主循环: 内部 coder 若沿用默认 ASK 策略,
+        # 在无 approval_callback 时写文件/跑 bash 会被 hard-deny
+        # (adapter._check_permission 末段 "requires approval") —— coder 模式
+        # 形同死码. run89 实测: execute 的 coder 因无法落盘脚本而交白卷.
+        # 故给内部 coder 显式 auto_approve_all. 危险命令模式 (rm -rf /,
+        # git push --force 等) 在 adapter 里**先于**该放行判定被拦, 不受影响.
+        self.coder = CoderRunner(
+            permission_config=PermissionConfig(auto_approve_all=True)
+        )
 
         self._init_failure_state()
         self._init_lazy_backends(goal_scheduler)
@@ -476,6 +492,11 @@ class AutoloopEngine:
         # 跳过 hypothesize 直接进 plan/execute. ponytail: 只存文本不存 id,
         # graph 操作仍走 _current_hyp_id 流程.
         self._refined_hypothesis: str | None = None
+        # 瞬时不可用标记: 上个阶段的空产出是否因 LLM 暂时不可用 (限流/超时/过载).
+        # reflect 据此抑制 redirect→pivot, 避免把一次瞬时故障放大成状态清空+停机
+        # (run74: 400 限流 → hypothesize 空 → pivot → "no hyp to pivot from" stop).
+        # 粘性: 由产出成功的阶段清 False, 由瞬时失败的阶段置 True.
+        self._last_phase_unavailable = False
         # Step C: LLM 自主选 action (run_cognitive 的 decide_fn 用).
         # 默认开, RCBench 跑分需要确定性时设 HUGINN_COGNITIVE_LLM_DECIDER=0 关掉.
         # 失败/超时/非法 action 自动 fallback 到规则版, 不影响死循环防护.
@@ -556,6 +577,20 @@ class AutoloopEngine:
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
         self._last_hypothesis_confidence: float = 0.0
         self._last_hypothesis_evidence_strength: float = 0.0
+        # A: 本轮回合选中假设的可证伪预测 (从 [DIM: ...] | predict: 解析),
+        # 供主路径 add_hypothesis 写入 testable_prediction.
+        self._last_selected_prediction: str = ""
+        # B: 当前假设 node id (plan/validate/learn 关联用; 盲重建关闭时靠它回写状态).
+        self._current_hyp_id_for_plan: str | None = None
+        # D: 最近一次真实执行的任务性能 (r_phys, 缺省回落 tests_passed 1/0),
+        # 并入 darwin 评分让 best 反映真实质量; None = 无信号, 不参与.
+        self._last_task_perf: float | None = None
+        # 受控独立观察者: 上一轮 blind_reconstruct 与执行判据的**分歧**.
+        # 这是差分传感器读数 (不是 reward): None=未观测, True=分歧, False=一致.
+        # 分歧 → 信念受质疑 → 下一轮降 strength (转探索, 见 signals.hypothesis_strength).
+        self._last_reconstruct_disagree: bool | None = None
+        # 观察者自报置信度 (0-1), 与分歧一起缩放强度扰动.
+        self._last_blind_confidence: float = 0.0
         # H4: GRILL 模式状态. should_pause_for_decision 触发 GRILL 后设为 active,
         # _llm_chat 构造 system prompt 时注入 GRILL_SYSTEM_PROMPT_CN. 用户确认
         # shared understanding 后 (LLM 输出含标记) 退出.
@@ -564,6 +599,11 @@ class AutoloopEngine:
         self._grill_turns: int = 0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
+        # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
+        # _last_execution_result (仅最后一轮) 时, 书生会把中间轮的真实数值丢掉、
+        # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
+        # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
+        self._execution_ledger: list[dict[str, Any]] = []
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -836,6 +876,32 @@ class AutoloopEngine:
     def _pick_image_action(self, description: str) -> str:
         return self._visual_inspector._pick_image_action(description)
 
+    # ── VISTA 借鉴: 无损帧存储 + 两个模型可调 mode 的薄委托 ──────────
+    def _get_frame_store(self) -> Any:
+        """懒建 workspace 内的无损帧存储; 失败返回 None (观测记忆 best-effort)."""
+        store = getattr(self, "_frame_store", None)
+        if store is not None:
+            return store
+        try:
+            from huginn.autoloop.frame_store import FrameStore
+
+            store = FrameStore(self.workspace)
+            self._frame_store = store
+            return store
+        except Exception:  # 防御: 建不起来就当无观测记忆
+            logger.debug("frame store init failed", exc_info=True)
+            return None
+
+    async def _execute_trace_inspect(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._recall_modes._execute_trace_inspect(description, context)
+
+    async def _execute_frame_inspect(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._recall_modes._execute_frame_inspect(description, context)
+
     # ── 去 mixin 阶段4: EngineAct 薄委托 ────────────────────────
     # plan/execute/llm_chat 方法族已下沉为 EngineAct 协作对象 (self._engine_actor).
     # 被 multiple mixin 共用 (_llm_chat 被 reflect/hypothesis/plan_check 调,
@@ -850,6 +916,11 @@ class AutoloopEngine:
     def _is_deterministic_numeric(self, description: str) -> bool:
         return self._engine_actor._is_deterministic_numeric(description)
 
+    def _is_code_experiment(self, text: str) -> bool:
+        # PlanCheck._is_code_experiment_plan 经 __getattr__ 转发到此 —— 缺它则
+        # "代码实验不套物理 workflow" 硬路由在生产里静默失效 (run88 报告域漂移).
+        return self._engine_actor._is_code_experiment(text)
+
     async def _request_numeric_probe(self, description: str) -> str:
         return await self._engine_actor._request_numeric_probe(description)
 
@@ -862,6 +933,18 @@ class AutoloopEngine:
         self, tool_name: str, input_params: dict[str, Any], output: Any
     ) -> None:
         self._engine_actor._record_provenance(tool_name, input_params, output)
+
+    # ARTEX/VISTA 借鉴: 过程级 trace 检索的薄委托 (方法族在 EngineAct).
+    def list_execution_traces(self) -> list[dict[str, Any]]:
+        return self._engine_actor.list_execution_traces()
+
+    def get_execution_trace(self, idx: int) -> dict[str, Any] | None:
+        return self._engine_actor.get_execution_trace(idx)
+
+    def search_execution_traces(
+        self, query: str = "", **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        return self._engine_actor.search_execution_traces(query, **kwargs)
 
     async def _try_evolved_fix(
         self, mode: str, description: str, result: Any
@@ -971,6 +1054,12 @@ class AutoloopEngine:
 
     def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
         return self._engine_controller._check_budget(iteration, plan)
+
+    def _budget_remaining_s(self) -> float | None:
+        return self._engine_controller._budget_remaining_s()
+
+    def _budget_exhausted(self) -> bool:
+        return self._engine_controller._budget_exhausted()
 
     async def _drain_side_questions(self) -> int:
         return await self._engine_controller._drain_side_questions()
@@ -1474,10 +1563,11 @@ class AutoloopEngine:
         report_data: dict[str, Any], kb_text: str = "", exec_summary: str = "",
         visual_ctx: str = "", validation_summary: str = "",
         hypothesis: str = "", surprise: float = 0.0,
+        evidence_ledger: str = "",
     ) -> str:
         return EngineReflect._build_science_report_prompt(
             report_data, kb_text, exec_summary, visual_ctx, validation_summary,
-            hypothesis, surprise)
+            hypothesis, surprise, evidence_ledger)
 
     # ── 去 mixin 阶段9: HypothesisLoop 薄委托 ─────────────────────
     # hypothesis 生成/管理方法族已下沉为 HypothesisLoop 协作对象 (self._hypothesis_loop).
@@ -1590,6 +1680,13 @@ class AutoloopEngine:
 
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         self._cognitive_runner._emit_campaign(event_type, data)
+
+    def _emit_control_trace(
+        self, name: str, evidence: str, action: str = "advisory_hint"
+    ) -> None:
+        # 控制面观测统一入口: HypothesisLoop / EngineAct 等协作对象经 __getattr__
+        # 转发到这里 (EngineReflect 有自己的同名实现走 _OWN_ATTRS).
+        self._engine_reflector._emit_control_trace(name, evidence, action)
 
     def _prepare_run(
         self, objective: str, progressive_budget: bool, goal: Any | None,

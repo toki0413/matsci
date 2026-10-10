@@ -16,13 +16,13 @@
 | ON_LLM_REQUEST | LLM 调用 | api/event.py:94, api/filter.py:190, events/unified_bus.py:266 |
 | ON_LLM_RESPONSE | LLM 调用 | api/event.py:106, api/filter.py:203, events/unified_bus.py:276 |
 | ON_TOOL_CALL | 工具调用三段式 | api/event.py:121, api/filter.py:224, events/unified_bus.py:240 +1 处 |
-| ON_TOOL_EXECUTE | 工具调用三段式 | tools/adapter.py:1029 |
+| ON_TOOL_EXECUTE | 工具调用三段式 | tools/adapter.py:1021 |
 | ON_TOOL_RESPOND | 工具调用三段式 | api/event.py:134, api/filter.py:242, events/unified_bus.py:246 +1 处 |
-| ON_WORKFLOW_BEGIN | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:183 |
-| ON_WORKFLOW_STAGE_START | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:639, autoloop/cognitive_loop.py:715 |
-| ON_WORKFLOW_STAGE_DONE | Workflow 钩子 (材料科研特色) | api/filter.py:255, autoloop/cognitive_loop.py:670, autoloop/cognitive_loop.py:738 +1 处 |
-| ON_WORKFLOW_DONE | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:309 |
-| ON_WORKFLOW_FAILED | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:672, autoloop/cognitive_loop.py:744 |
+| ON_WORKFLOW_BEGIN | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:209 |
+| ON_WORKFLOW_STAGE_START | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:672, autoloop/cognitive_loop.py:759 |
+| ON_WORKFLOW_STAGE_DONE | Workflow 钩子 (材料科研特色) | api/filter.py:255, autoloop/cognitive_loop.py:703, autoloop/cognitive_loop.py:782 +1 处 |
+| ON_WORKFLOW_DONE | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:342 |
+| ON_WORKFLOW_FAILED | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:705, autoloop/cognitive_loop.py:788 |
 | ON_MESSAGE_RECEIVED | 消息 | api/filter.py:129, api/filter.py:143, api/filter.py:157 +2 处 |
 | ON_BEFORE_MESSAGE_SENT | 消息 | events/unified_bus.py:300 |
 | ON_AFTER_MESSAGE_SENT | 消息 | events/unified_bus.py:309 |

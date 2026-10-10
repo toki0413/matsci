@@ -33,13 +33,14 @@ logger = logging.getLogger(__name__)
 # === 常驻基础子集 ===
 #
 # 设备端/小模型懒加载: agent 在任何 task 下都至少需要这几类"基础设施"工具
-# (读写文件/分析/文献/联网). 无 keyword / world-domain 命中时给这份而非全量
+# (读写文件/文献/联网). 无 keyword / world-domain 命中时给这份而非全量
 # 132 工具, 避免每次对话把全部 schema 灌进小模型. 仅在 available 里存在的才保留.
+# 注: 早期还列了 `analysis_tool`, 但全仓无同名注册工具, 永不命中 (MECE 审计记的
+# 允许表死项), 已删 —— 通用分析面由 phases.py::_CORE_TOOLS 的 numerical_tool 承担.
 CORE_TOOL_NAMES: list[str] = [
     "file_read_tool",
     "file_write_tool",
     "file_edit_tool",
-    "analysis_tool",
     "literature_tool",
     "web_search_tool",
 ]
@@ -294,9 +295,20 @@ def compute_effective_subset(
     if not task_message or not available_tool_names:
         return []
     available_set = set(available_tool_names)
-    subset: set[str] = set(route_tools(task_message, available_tool_names))
+    keyword_hits = set(route_tools(task_message, available_tool_names))
+    subset: set[str] = set(keyword_hits)
     subset |= {t for t in CORE_TOOL_NAMES if t in available_set}
     subset |= {t for t in world_domain_tools(task_message) if t in available_set}
+    # 未知域补充: keyword 零命中时, 用 JEV 语义判断建议额外工具.
+    # 默认关 (jev_tool_router), 且受隐私外发闸约束; 失败/不可用 → 空, 不破坏现状.
+    if not keyword_hits:
+        try:
+            from huginn.runtime.jev.tool_router import jev_expand_subset
+
+            extra, _meta = jev_expand_subset(task_message, available_tool_names)
+            subset |= {t for t in extra if t in available_set}
+        except Exception:  # 防御: JEV 扩展异常则跳过, 回退纯规则子集
+            logger.debug("jev tool expansion failed, skipped", exc_info=True)
     return [t for t in subset if t in available_set]
 
 

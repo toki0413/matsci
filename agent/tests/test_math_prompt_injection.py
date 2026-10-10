@@ -102,9 +102,12 @@ class TestMathPromptInjection:
         assert "physics/chemistry" in block
 
     def test_hypothesis_prompt_mentions_pde_preference(self, engine):
-        # 引导文本应明确建议先识别 PDE 结构再上数值实验
+        # 引导文本应明确要求"先写出数学结构 (控制方程/不变量) 再做数值实验".
+        # 旧断言锁死 PDE 专属措辞, 在"任何学科→数学"泛化改写后失效; 契约是
+        # 语义而非字面, 故对齐为泛化后的等价表述.
         prompt = engine._build_hypothesis_prompt(context={})
-        assert "Prefer hypotheses that can be expressed as governing PDEs" in prompt
+        assert "governing equations" in prompt
+        assert "proposing numerical experiments" in prompt
 
     def test_plan_prompt_mentions_symbolic_first(self, engine):
         # planner should mention symbolic_math_tool actions alongside numerical solvers

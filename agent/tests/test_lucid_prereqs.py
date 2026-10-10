@@ -195,12 +195,16 @@ class TestPlanContextRouting:
     """_plan_context_hint (软路由) + _override_plan_mode (硬路由)."""
 
     def _make_engine_with_graph(self):
+        from huginn.autoloop.engine_act import EngineAct
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
         engine = object.__new__(AutoloopEngine)
         # 去 mixin 阶段6: PlanCheck 协作对象 — _override_plan_mode/_plan_context_hint
         # 经引擎薄委托转发到它, object.__new__ 绕过 __init__ 需手动挂载.
         from huginn.autoloop.plan_check import PlanCheck
         engine._plan_checker = PlanCheck(engine)
+        # EngineAct 协作对象: PlanCheck 经引擎薄委托转发 _is_code_experiment 等判定
+        # (生产 __init__ 会建, object.__new__ 绕过需手动挂载).
+        engine._engine_actor = EngineAct(engine)
         # 信号桥 (engine SignalBridge): _consecutive_failures/_refine_count 等
         # 环信号字段读写都经 self.signals, object.__new__ 绕过 __init__ 需手动挂载.
         from huginn.autoloop.signals import EngineSignals
@@ -270,6 +274,30 @@ class TestPlanContextRouting:
         result = engine._override_plan_mode(plan)
         assert result["mode"] == "workflow"
         assert "auto-routed" not in result["description"]
+
+    def test_override_code_experiment_off_workflow(self):
+        """run88 回归: 代码实验命题选到 workflow → 改走 coder 真实执行.
+
+        workflow 只认 cfd/fea/qc/symbolic/dft 几类模板, 把纯 ML/数学命题套进去
+        会写成 DFT 的 Methods/Results (域漂移). 目标含实验意图词时必须改道.
+        """
+        engine = self._make_engine_with_graph()
+        engine._objective = (
+            "解空间刚性: 小型前馈网络的泛化行为作为探针, 扫描 N_c(w), "
+            "设计留出约束点"
+        )
+        plan = {"mode": "workflow", "description": "run the scan"}
+        result = engine._override_plan_mode(plan)
+        assert result["mode"] == "coder", result
+        assert result["override_reason"] == "code_experiment_not_physics_workflow"
+
+    def test_override_keeps_workflow_for_physical_objective(self):
+        """真实物理命题仍保留 workflow (不误伤)."""
+        engine = self._make_engine_with_graph()
+        engine._objective = "run a DFT band structure calculation on silicon"
+        plan = {"mode": "workflow", "description": "relax structure"}
+        result = engine._override_plan_mode(plan)
+        assert result["mode"] == "workflow", result
 
     def test_override_to_explore_after_5_failures(self):
         """连续失败 5 次 → 强制 explore."""
@@ -484,12 +512,16 @@ class TestPlanOverrideAudit:
     """_override_plan_mode 的覆盖要写 PhaseGateState.history 补审计."""
 
     def _make_engine_with_graph(self):
+        from huginn.autoloop.engine_act import EngineAct
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
         engine = object.__new__(AutoloopEngine)
         # 去 mixin 阶段6: PlanCheck 协作对象 — _override_plan_mode/_plan_context_hint
         # 经引擎薄委托转发到它, object.__new__ 绕过 __init__ 需手动挂载.
         from huginn.autoloop.plan_check import PlanCheck
         engine._plan_checker = PlanCheck(engine)
+        # EngineAct 协作对象: PlanCheck 经引擎薄委托转发 _is_code_experiment 等判定
+        # (生产 __init__ 会建, object.__new__ 绕过需手动挂载).
+        engine._engine_actor = EngineAct(engine)
         # 信号桥 (engine SignalBridge): _consecutive_failures/_refine_count 等
         # 环信号字段读写都经 self.signals, object.__new__ 绕过 __init__ 需手动挂载.
         from huginn.autoloop.signals import EngineSignals

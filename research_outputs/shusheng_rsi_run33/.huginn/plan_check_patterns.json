@@ -1,0 +1,38 @@
+[
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan fails to address the core hypothesis about boundary-layer transport effects. The proposed rigid family (f(x)=x) is a trivial linear function that cannot exhibit the non-uniform sampling density or boundary-layer concentration effects described in the hypothesis. The plan tests whether the rigid family achieves zero violation, which is irrelevant to testing transport-dominated error mechanisms. Additionally, the plan lacks executable code as required by the known failure patterns, and the prediction about N_c(w) being finite is unrelated to the transport hypothesis.",
+    "missing_steps": [
+      "Implement a model that can capture boundary-layer transport effects (e.g., a neural network with appropriate architecture)",
+      "Design an experiment with non-uniform sampling density near training-set edges",
+      "Include a diffusive regularization term in the loss function as hypothesized",
+      "Create executable Python code that implements the experiment and produces measurable results",
+      "Analyze error distribution spatially to identify concentration near boundaries",
+      "Compare error distribution with and without diffusive regularization"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family function for the capacity_scan pipeline. The rigid family should be a linear function f(x)=x (as per iteration 10 context) with properly normali"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes a high-level approach (MODE: explore) but lacks concrete executable code, which is required per the 'known failure patterns' and 'task' instructions. Without a runnable Python snippet to generate actual numerical results (e.g., N_c(w) values, error metrics), the hypothesis cannot be validated. The prediction is qualitative ('yielding finite N_c(w) values') rather than quantitative and verifiable.",
+    "missing_steps": [
+      "Generate a concrete Python script implementing the rigid family (f(x)=ax+b) and fat family with proper normalization, training/validation splits, and capacity_scan logic.",
+      "Execute the script to produce numerical outputs (train_err, heldout_err, N_c(w) trends) for comparison against the hypothesis.",
+      "Validate results against expected bounds (e.g., heldout_err ≤1e-3 for rigid family at h≤8)."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family (linear functions f(x)=ax+b) and fat family (high-oscillation polynomials) with proper normalization and shape constraints. Ensure X/y/Xv/yv are"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is a high-level exploration description (MODE: explore) that lacks concrete executable code, which is required per the 'known failure patterns' and 'task instructions'. It describes the approach qualitatively but does not provide a runnable Python script to generate actual numerical results (e.g., N_c(w) values, error metrics). Without concrete numerical outputs, the hypothesis cannot be validated. The prediction is qualitative rather than quantitative and verifiable.",
+    "missing_steps": [
+      "Generate a concrete Python script implementing the rigid family (f(x)=constant) and fat family with proper normalization, training/validation splits, and capacity_scan logic",
+      "Execute the script to produce numerical outputs (train_err, heldout_err, N_c(w) trends) for comparison against the hypothesis",
+      "Validate results against expected bounds (e.g., heldout_err ≤1e-3 for rigid family at h≤8)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family (f'(x)=0 → constant functions) and high-degree polynomial fat family, ensuring y/yv are (N,1) shaped and normal"
+  }
+]

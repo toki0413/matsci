@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -341,7 +341,7 @@ def cacheable(
     """
 
     def decorator(func: Callable) -> Callable:
-        is_async = asyncio.iscoroutinefunction(func)
+        is_async = inspect.iscoroutinefunction(func)
         tname = tool_name or getattr(func, "__qualname__", "").split(".")[0]
 
         def _build_key(args: tuple, kwargs: dict) -> tuple | None:
@@ -406,7 +406,7 @@ def _default_key(args: tuple, kwargs: dict) -> Any:
     for arg in args[1:]:  # 跳过 self
         if hasattr(arg, "model_dump"):
             picked.append(arg.model_dump())
-        elif isinstance(arg, (str, int, float, bool, dict, list, tuple)):
+        elif isinstance(arg, str | int | float | bool | dict | list | tuple):
             picked.append(arg)
         else:
             # 遇到不可序列化的就停，后面的多半是 context 之类
@@ -414,7 +414,7 @@ def _default_key(args: tuple, kwargs: dict) -> Any:
     for k, v in kwargs.items():
         if hasattr(v, "model_dump"):
             picked.append({k: v.model_dump()})
-        elif isinstance(v, (str, int, float, bool, dict, list, tuple)):
+        elif isinstance(v, str | int | float | bool | dict | list | tuple):
             picked.append({k: v})
     return picked if picked else None
 

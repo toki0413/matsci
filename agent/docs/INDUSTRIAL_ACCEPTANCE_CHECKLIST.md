@@ -15,7 +15,7 @@
 | 核心逻辑 + 规范门禁 | 🟢 通过（81 pass, 0 fail） | §3 |
 | 数学/物理计算链路真实可算 | 🟢 通过（50 pass, 5 skip） | §4 |
 | 科研执行层产出可复现数值证据 | 🟢 通过 | §5 |
-| 全量套件绿灯（9526 用例） | ⚪ 待跑（受时间/重型依赖限制） | §6 |
+| 全量套件绿灯（有界快照 8577 用例） | 🟢 通过（8577 pass, 0 fail） | §6 |
 
 > ⚪ 不代表"失败"，代表"尚未给出证据"。验收关键是：每个 ⚪ 都要有人填上实跑数字才能宣称"全绿通过"。
 
@@ -151,14 +151,31 @@ def _run(snippet):
 
 ---
 
-## 6. 未跑项：全量 9526 用例（明确诚实声明）
+## 6. 全量有界快照：绿（2026-10-10 实跑）
 
-- **为何没跑**：全量含 heavy 集成 / 网络 / 需要外部求解器（VASP、LAMMPS、FEniCS 等）的测试（`markers = integration/network`），单机长时间跑会超时，且其中部分依赖第三方可执行文件，环境不具备。
-- **禁忌**：**任何人在未跑全量、未用 `pytest -m "not integration and not network"` 拿到绿之前，不得宣称"全部测试通过"**。这违反验证纪律。
-- **可跑的有界快照**（建议 CI 用）：
-  ```bash
-  python3 -m pytest -o addopts="" -m "not integration and not network" -q
-  ```
+```bash
+cd agent
+python3 -m pytest -o addopts="" -m "not integration and not network" -q -p no:cacheprovider
+```
+
+**本次实测输出**：
+```
+8577 passed, 129 skipped, 1735 deselected, 6 xfailed, 626 warnings in 833.41s (0:13:53)
+```
+
+**判定**：`0 failed / 0 error` → 通过。这是"不跑重型集成 / 网络"前提下能跑的**最大有界快照**。
+
+**为何不含重集/网络**：全量含 heavy 集成 / 网络 / 需外部求解器（VASP、LAMMPS、FEniCS 等）的测试（`markers = integration/network`），单机长时间跑会超时，且其中部分依赖第三方可执行文件，环境不具备。
+
+**本次修掉的跨测试全局污染（历史遗留，非本清单新增用例）**：
+- `tests/test_cross_domain_reuse.py` 顶层注入的 torch 桩未卸载，`torch.Tensor = object` 使 matplotlib
+  `_is_torch_array` 对任意对象恒真 → `get_converter` 无限递归，连累同 session 的绘图/科学测试（曾 20 fail）。
+  修法：加载完示例模块即卸载桩，且桩 `Tensor` 用专用哨兵类。
+- `huginn/tools/extensions.py` 的 `extensions_dir(base)` 全局缓存首个 base，后续显式 base 被忽略 →
+  `build_extension(base=tmp_path)` 落到别的测试 tmp 目录而 FileNotFoundError（曾 6 fail）。
+  修法：显式 base 总被采用，全局缓存只服务默认目录。
+
+**禁忌**：**任何人在未跑全量、未用 `pytest -m "not integration and not network"` 拿到绿之前，不得宣称"全部测试通过"**。这违反验证纪律。
 
 ---
 
@@ -166,12 +183,12 @@ def _run(snippet):
 
 | 门禁 | 命令 | 实测结果 | 通过? |
 |---|---|---|---|
-| 环境可导 | §1 | import OK | 🟢/🔴 |
-| 套件可收集 | §2 | N tests, 0 errors | 🟢/🔴 |
-| 核心+规范 | §3 | X pass, 0 fail | 🟢/🔴 |
-| 计算链路 | §4 | X pass, 0 fail | 🟢/🔴 |
-| 执行层证据 | §5 | 数值可复现 + 边界诚实 | 🟢/🔴 |
-| 全量绿灯 | §6 | X pass, Y fail | 🟢/🔴/⚪ |
+| 环境可导 | §1 | `import huginn` → OK | 🟢 |
+| 套件可收集 | §2 | 10438 tests collected, 0 errors | 🟢 |
+| 核心+规范 | §3 | 81 pass, 0 fail | 🟢 |
+| 计算链路 | §4 | 50 pass, 5 skip, 0 fail | 🟢 |
+| 执行层证据 | §5 | 数值可复现 + 边界诚实 | 🟢 |
+| 全量绿灯 | §6 | 8577 pass, 0 fail | 🟢 |
 
 **产业级可达的一个合理定义**：
 1. §1–§5 全 🟢；

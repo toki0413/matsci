@@ -1,0 +1,177 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses MODE: explore which is appropriate for hypothesis testing, but it lacks a concrete methodology for measuring the spectral gap in the loss landscape. The hypothesis specifically concerns the Hessian's spectral properties during training, yet the plan only describes implementing the polynomial family and capacity scan (N_c(w)) without specifying how to compute/analyze the Hessian eigenvalues. Additionally, the plan does not address how to ensure the fat family is 'x-dependent, high-dimensional but partially learnable' as required by historical failure patterns.",
+    "missing_steps": [
+      "Specify methodology for computing/analyzing Hessian eigenvalues during training to verify the spectral gap claim",
+      "Define concrete criteria for the fat family being x-dependent and high-dimensional (avoiding i.i.d. noise failure mode)",
+      "Include spectral gap measurement metrics (e.g., ratio of dominant to subdominant eigenvalues) in the experimental design",
+      "Ensure proper initialization and optimization settings that would reveal loss landscape geometry"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function as specified, ensuring low-dimensional algebraic structure (≤5 terms), proper normalization (std ≲ 10), non-overlapping trai"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to address the core mathematical structure of the hypothesis. The hypothesis concerns 'rigid polynomial family' as a low-dimensional algebraic manifold with bounded solution space dimension, but the plan's DESCRIPTION only focuses on implementation details (normalized outputs, deterministic solvability) without defining the algebraic manifold structure or proving dimension bounds. Crucially, it completely omits the spectral analysis required to verify the manifold properties (Hessian spectral gap, eigenvalue ratios), which was explicitly identified as a missing step in the historical failure patterns. The PREDICTION about N_c(w) trends is a tangential metric that doesn't directly validate the manifold dimension claim.",
+    "missing_steps": [
+      "Define the explicit algebraic structure of the rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of the loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for the fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function in `family.py` that returns low-dimensional polynomial constraints with normalized outputs (std ≲ 10), ensuring the solution"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses on implementing polynomial families and a capacity scan (N_c(w)) but fundamentally fails to address the core hypothesis about the 'rigid polynomial family' as a low-dimensional algebraic manifold. Specifically, it omits the required spectral analysis (Hessian eigenvalue gap) and algebraic structure verification (ideal generators, dimension bounds) which are explicitly mandated by the hypothesis and identified as critical missing steps in the historical failure patterns. The PREDICTION about N_c(w) trends is tangential to the main claim and does not validate the manifold dimension property.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid polynomial family (≤5 terms) and fat polynomial family (20 random terms) as required by the capacity_scan protocol. Ensure outp"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses on implementing a rigid polynomial family and scanning N_c(w), but fundamentally fails to address the core hypothesis about the 'rigid polynomial family' as a low-dimensional algebraic manifold. It omits the required spectral analysis (Hessian eigenvalue gap) and algebraic structure verification (ideal generators, dimension bounds) which are explicitly mandated by the hypothesis and identified as critical missing steps in the historical failure patterns. The PREDICTION about N_c(w) trends is tangential to the main claim and does not validate the manifold dimension property.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function that returns normalized training/holdout constraint points for the bootstrap rigidity test. The family must produce a low-di"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan is a workflow implementation step ('explore', 'Implement...') rather than a direct test of the hypothesis. It defines data generation but omits the critical measurement of the 'constraint information propagation' itself. Specifically, it lacks any mechanism to compute the quantities required to verify the advection-diffusion equation (e.g., tracking the density of constraints u(x,t) over training steps, calculating the spectral gap of the Hessian to determine v, or measuring D vs degree). Without these measurements, the hypothesis cannot be validated, only the data generation can be executed.",
+    "missing_steps": [
+      "Define the observable 'constraint information' u (e.g., Hessian spectrum or gradient flow) as a function of training step t and position x.",
+      "Implement computation of the spectral gap of the Hessian at initialization to extract v.",
+      "Implement measurement of D as a function of polynomial degree to check inverse scaling.",
+      "Execute the training dynamics and record u(x,t) to fit the advection-diffusion equation parameters."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat polynomial family functions to return normalized training/holdout sets (X, y, Xv, yv) with (N,1) shapes, no overlap, and O(1) scaling. This ena"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to address the core mathematical structure of the hypothesis. It focuses on implementation details (capacity scan, network architecture) without defining the algebraic manifold structure of the rigid polynomial family (polynomial constraints, ideal generators) or implementing the required spectral analysis (Hessian eigenvalue gap, eigenvalue ratios) to verify the low-dimensional manifold property. The prediction about N_c(w) trends is tangential and does not validate the manifold dimension claim. This exactly matches the historical failure patterns identified in the scene history.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid polynomial family (low-dimensional algebraic manifold with ≤5 terms) and the fat polynomial family (high-dimensional, ~20 terms"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划未能涵盖验证假设的核心数学结构。假设要求证明刚性多项式族是低维代数流形，这需要通过谱分析（Hessian特征值间隙）和代数结构验证（理想生成元、维数界限）来实现。当前计划仅关注容量阈值N_c(w)的扫描，忽略了流形维数与网络宽度不变性的关键验证。此外，预测中N_c(w)的趋势分析虽然相关，但不足以验证代数流形假设。历史失败模式明确指出，此类遗漏代数结构和谱分析的计划无法达成假设。",
+    "missing_steps": [
+      "定义刚性多项式族的显式代数结构（多项式约束、理想生成元）",
+      "实现损失景观/Hessian的谱分析，测量特征值分布和间隙",
+      "明确定义fat族作为x相关、高维函数的标准（避免i.i.d.噪声）",
+      "定义解空间维数与网络宽度独立性的度量指标",
+      "定义函数空间中低维流形结构的验证方法"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to define the rigid polynomial family (low-dimensional algebraic manifold) and fat polynomial family (high-dimensional) with proper data norm"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses on capacity scans (N_c(w)) but fails to address the core mathematical structure of the hypothesis: proving the rigid polynomial family is a low-dimensional algebraic manifold. It omits critical required steps: defining the algebraic structure (polynomial constraints, ideal generators), implementing spectral analysis (Hessian eigenvalue gap), and verifying the dimension bound (≤5 terms). The historical failure patterns explicitly state that plans lacking these algebraic and spectral analyses cannot validate the hypothesis.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "Implement the polynomial family functions (rigid and fat) with proper O(1) normalization and non-overlapping held-out sets. Run capacity scans for both families across w values and seeds to compute N_"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划虽然设计了对比实验（刚性 vs 胖多项式），但完全未触及假设的核心数学结构——代数流形验证。历史失败明确指出，仅做容量扫描（N_c(w)）而缺乏代数结构定义（理想生成元）、谱分析（Hessian特征值间隙）和流形维度度量，无法证明刚性多项式族是低维代数流形。计划遗漏了最关键的数学验证步骤。",
+    "missing_steps": [
+      "定义刚性多项式族的显式代数结构（多项式约束方程、理想生成元）",
+      "实现损失函数/Hessian的谱分析，计算特征值分布与特征值间隙以量化流形维度",
+      "定义fat族的具体x相关函数形式（避免纯噪声），并验证其高维性",
+      "构建解空间维度度量（如有效自由度、奇异值衰减）以证明与网络宽度无关",
+      "实施函数空间中低维流形结构的验证方法（如投影误差分析）"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for two algebraic manifolds: a rigid low-dimensional polynomial family (≤5 basis terms, deterministically determined by w points) and a fat h"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is invalid because it describes a theoretical/algebraic investigation (defining ideals, computing Jacobians, analyzing Hessian spectra) rather than a 'coder' or 'workflow' plan that produces executable code or a runnable pipeline to generate the required numerical data (N_c(w) values, training/leave-out errors). The hypothesis requires empirical verification of N_c(w) trends which this plan does not address. Furthermore, it repeats the historical failure of focusing on algebraic structure while ignoring the necessary numerical experiments to validate the capacity threshold and manifold dimension in function space.",
+    "missing_steps": [
+      "Generate executable code (e.g., Python script) to define the rigid polynomial family and compute its algebraic dimension numerically (e.g., via Gröbner basis or numerical rank of constraint Jacobian).",
+      "Implement the 'fat' polynomial family as x-dependent, high-dimensional functions (avoiding i.i.d. noise) with structured correlation.",
+      "Run numerical experiments to measure effective degrees of freedom via SVD decay of the feature matrix and projection error onto the rigid manifold.",
+      "Perform spectral analysis of the Hessian/loss landscape to quantify the low-dimensional manifold (eigenvalue gap) numerically.",
+      "Execute capacity scans to obtain N_c(w) values with independent training and leave-out error measurements, ensuring results align with the hypothesis (flat or decreasing N_c(w)).",
+      "Validate that the solution space dimension is independent of network width through numerical experiments."
+    ],
+    "mode": "explore",
+    "description": "Implement rigorous algebraic structure validation for the rigid polynomial family. Explicitly define the ideal generators $I$ via polynomial constraints (e.g., monomial basis truncation), compute the "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is structured as an 'exploration' but only implements the data generation part of a capacity scan (N_c(w)). It completely fails to address the core mathematical structure of the hypothesis: proving the rigid polynomial family is a low-dimensional algebraic manifold. The plan omits critical required steps including defining the algebraic structure (polynomial constraints, ideal generators), implementing spectral analysis (Hessian eigenvalue gap), and verifying the dimension bound. This directly repeats the '同场景历史失败' patterns where plans focusing only on capacity scans without algebraic and spectral analyses cannot validate the hypothesis.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space",
+      "Generate executable code to define rigid polynomial family and compute its algebraic dimension numerically",
+      "Implement 'fat' polynomial family as x-dependent, high-dimensional functions with structured correlation",
+      "Run numerical experiments to measure effective degrees of freedom via SVD decay of feature matrix",
+      "Execute capacity scans with independent training and leave-out error measurements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function for the capacity_scan experiment. The rigid family should be a low-dimensional algebraic manifold (e.g., a 3-parameter polyn"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan implements a workflow step (data generation) that defines the rigid and fat polynomial families but fails to execute the critical measurements required to validate the hypothesis. Specifically, it lacks the computation of the Betti number β₀ of the constraint manifold, the measurement of zero-violation capacity N_c(w) as a function of sampling density w, and the analysis of topological connectivity invariance. Without these, the hypothesis cannot be verified.",
+    "missing_steps": [
+      "Implement computation of the Betti number β₀ for the constraint manifold of the rigid polynomial family",
+      "Implement measurement of N_c(w) across varying sampling densities w to test linear scaling with β₀",
+      "Verify invariance of topological connectivity under sampling density changes",
+      "Execute training dynamics and record constraint information propagation u(x,t) to analyze spectral properties",
+      "Conduct comparative analysis between rigid and fat families to isolate topological effects from learnability"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function `family(kind, w, seed)` that generates training and held-out constraint points with normalized outputs (std ≈ 1). The family"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is an 'exploration' mode that only implements data generation for a capacity scan. It completely fails to address the core mathematical structure of the hypothesis: proving the rigid polynomial family is a low-dimensional algebraic manifold. The plan omits critical required steps including defining the algebraic structure (polynomial constraints, ideal generators), implementing spectral analysis (Hessian eigenvalue gap), and verifying the dimension bound. It repeats the historical failure of focusing only on capacity scans without algebraic and spectral analyses, which cannot validate the hypothesis that N_c(w) is determined by algebraic independence rather than topological invariants.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space",
+      "Generate executable code to define rigid polynomial family and compute its algebraic dimension numerically",
+      "Run numerical experiments to measure effective degrees of freedom via SVD decay of feature matrix",
+      "Execute capacity scans with independent training and leave-out error measurements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to return training and held-out data for rigid (low-dimensional polynomial) and fat (high-dimensional random polynomial) families, ensuring y"
+  }
+]

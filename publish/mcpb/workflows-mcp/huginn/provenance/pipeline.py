@@ -91,7 +91,9 @@ _KNOWN_TOOLS = [
     "structure_tool", "packing_tool", "convergence_test_tool",
     "vasp_tool", "qe_tool", "cp2k_tool", "lammps_tool", "gromacs_tool",
     "mechanical_tool", "characterization_tool",
-    "compute_msd", "compute_rdf",
+    # 注: MSD/RDF 是 lammps_tool 的 analyze_trajectory 动作, 不是工具. 早期误列为
+    # 工具名, find_by_tool 永不命中 (MECE 审计记的允许表死项), 已移除; 该动作的
+    # 阶段推断改由 _infer_stage 直接识别 (见下).
     # 量子化学
     "gaussian_tool", "orca_tool",
     # 生物医药工具
@@ -210,15 +212,15 @@ PIPELINE_RULES: list[PipelineRule] = [
         tool_name="lammps_tool",
         action_matcher=None,
         next_stages=[PipelineStage.ANALYSIS],
-        next_tool_hints=["compute_msd", "compute_rdf"],
-        description="分子动力学完成, 下一步分析轨迹 (MSD/RDF)",
+        next_tool_hints=["lammps_tool"],
+        description="分子动力学完成, 下一步分析轨迹 (lammps_tool analyze_trajectory 出 MSD/RDF)",
     ),
     PipelineRule(
         stage=PipelineStage.MD,
         tool_name="gromacs_tool",
         action_matcher=None,
         next_stages=[PipelineStage.ANALYSIS],
-        next_tool_hints=["compute_msd", "compute_rdf"],
+        next_tool_hints=["gromacs_tool"],
         description="分子动力学完成, 下一步分析轨迹 (MSD/RDF)",
     ),
     PipelineRule(
@@ -619,6 +621,8 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
         # minimize/cg/fire 等变体. 如果 action 没写或写错, 默认当 MD.
         if action in ("relax", "minimize", "min", "cg"):
             return PipelineStage.RELAX
+        if action == "analyze_trajectory":
+            return PipelineStage.ANALYSIS
         return PipelineStage.MD
 
     if tool_name == "gromacs_tool":
@@ -626,9 +630,6 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
 
     if tool_name in ("mechanical_tool", "characterization_tool"):
         return PipelineStage.PROPERTIES
-
-    if tool_name in ("compute_msd", "compute_rdf"):
-        return PipelineStage.ANALYSIS
 
     # ── 生物医药工具 ──
     if tool_name == "rdkit_tool":

@@ -350,12 +350,12 @@ class AutoFixLoop:
         # Apply fixes
         new_params = dict(current_params)
         for key, val in best_rule["fixes"].items():
-            if val == "halve" and isinstance(current_params.get(key), (int, float)):
+            if val == "halve" and isinstance(current_params.get(key), int | float):
                 new_params[key] = current_params[key] / 2
-            elif val == "double" and isinstance(current_params.get(key), (int, float)):
+            elif val == "double" and isinstance(current_params.get(key), int | float):
                 new_params[key] = current_params[key] * 2
             elif val == "increase" and isinstance(
-                current_params.get(key), (int, float)
+                current_params.get(key), int | float
             ):
                 new_params[key] = current_params[key] * 1.5
             else:

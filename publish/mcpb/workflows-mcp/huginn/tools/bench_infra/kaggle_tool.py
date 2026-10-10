@@ -159,7 +159,7 @@ class KaggleSubmitTool(HuginnTool):
         if isinstance(preds, list):
             out = []
             for item in preds:
-                if isinstance(item, (list, tuple)) and len(item) == 2:
+                if isinstance(item, list | tuple) and len(item) == 2:
                     out.append((item[0], item[1]))
                 elif isinstance(item, dict):
                     # 从 dict 里取 id 字段

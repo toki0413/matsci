@@ -1,0 +1,69 @@
+Hypotheses for Solution Space Rigidity in Small Feedforward Networks
+
+Problem Setup:
+- Solution space: S = {f: R^d → R | f(x_i) = y_i for i=1,...,w} (constraints)
+- Network: f_N(x) = W_2 σ(W_1 x + b_1) + b_2, width N hidden units
+- Zero violation: max_{x_heldout} |f_N(x) - y| ≤ 1e-3
+- N_c(w) = min width achieving zero violation on held-out set
+
+Hypothesis 1 (COMPUTATION - VC Dimension Scaling)
+[DIM: COMPUTATION] Statement: For w independent constraints drawn from a rich class, the solution space dimension grows linearly with w, requiring N_c(w) ∝ w to achieve zero violation.
+
+Mathematical grounding:
+- VC dimension of width-N 2-layer ReLU network: VC_dim ≤ 2N² (Bartlett et al., 1998)
+- To shatter w points with error ε: need VC_dim ≥ c·w for some constant c
+- Therefore N_c(w) ≥ sqrt(c·w/2) ∝ sqrt(w) for worst case
+- But for independent constraints in a well-conditioned regime, linear scaling dominates
+- Prediction: N_c(w) = α·w + β (linear in w)
+
+Pro: Direct connection to classical approximation theory and VC bounds; conservative estimate that's easy to verify empirically.
+Con: May overestimate if constraints are structured/redundant; doesn't account for network expressivity beyond VC counting.
+
+Hypothesis 2 (GEOMETRY - Manifold Covering)
+[DIM: GEOMETRY] Statement: The solution space lies on a low-dimensional manifold with intrinsic dimension d ≪ w, so covering numbers grow logarithmically: N_c(w) ∼ (log w)^(1/d).
+
+Mathematical grounding:
+- Let S_w be the solution manifold after w constraints
+- If S_w has intrinsic dimension d (bounded, independent of w), then its covering number at resolution ε scales as N_cover(ε) ∼ ε^(-d)
+- Network capacity to achieve resolution ε scales as N ∼ log(1/ε) for fixed depth
+- To achieve error ε=1e-3 with w constraints: need coverage of w points
+- N_c(w) ∼ (log w)^(1/d)
+
+Pro: Captures the idea that geometric structure matters more than raw constraint count; naturally explains rigidity (small d means very slow growth).
+Con: Requires estimating intrinsic dimension d; assumes manifold structure which may not hold for all constraint sets.
+
+Hypothesis 3 (OPTIMIZATION - Hessian Degeneracy)
+[DIM: OPTIMIZATION] Statement: Correlation among constraints causes Hessian degeneracy, reducing effective degrees of freedom to √w, so N_c(w) ∼ √w.
+
+Mathematical grounding:
+- Define loss L(w) = Σ_i (f_N(x_i) - y_i)²
+- Hessian H = ∇²L at minimum has rank r_w (effective degrees of freedom)
+- For correlated constraints from a smooth underlying function: r_w ∼ √w (due to smoothness-induced correlations)
+- Network width needed to resolve r_w directions: N_c ∼ √r_w ∼ w^(1/4)... wait, let me reconsider
+- Actually, for a 2-layer network, each neuron can align with one dominant Hessian direction
+- Number of neurons needed to capture r_w significant eigenvalues: N_c ∼ r_w
+- If r_w ∼ √w (from constraint correlation), then N_c ∼ √w
+
+Alternative grounding via SVD:
+- Constraint matrix X ∈ R^(w×N) with entries X_ij = φ_j(x_i) where φ_j are basis functions
+- Effective rank of X (number of singular values above threshold) determines degrees of freedom
+- For smooth constraints on a compact domain: effective rank ∼ √w
+- Network must have width at least effective rank to span the constraint space
+- Prediction: N_c(w) = α·√w + β
+
+Pro: Directly connects to optimization landscape geometry; testable via Hessian analysis if needed; novel perspective linking rigidity to constraint correlation structure.
+Con: Requires assumptions about constraint smoothness/correlation; scaling may vary with constraint distribution.
+
+SELECTED: Hypothesis 3 (Optimization - Square-root scaling)
+
+Rationale: This hypothesis is the most novel because it connects solution space rigidity to the geometry of the loss landscape and constraint correlation structure, rather than simply counting constraints or assuming manifold structure. It makes a distinct numerical prediction (N_c ∝ √w) that differs from both linear (N_c ∝ w) and polylogarithmic (N_c ∝ (log w)^(1/d)) scaling. At w=100, the three predictions are N_c≈100, N_c≈4-6, and N_c≈10 respectively - easily distinguishable in a single experiment. The square-root scaling emerges naturally from considering constraint correlations and the effective dimensionality of the constraint matrix, providing a deeper mathematical insight into why some solution spaces are rigid while others are floppy.
+
+Experimental Design:
+1. Generate constraint sets of size w = {10, 20, 50, 100, 200, 500, 1000}
+2. For each w, sample w constraint points (x_i, y_i) from a smooth function (e.g., sin(x) or a polynomial)
+3. Train 2-layer ReLU networks with varying widths N ∈ {5, 10, 20, 50, 100, 200, 500}
+4. Measure max absolute error on held-out test set (20% of constraints)
+5. Find N_c(w) = smallest N with max error ≤ 1e-3
+6. Plot N_c(w) vs w and fit scaling law
+
+This design directly tests the three competing predictions and will reveal whether the solution space is rigid (N_c bounded) or floppy (N_c growing), and if floppy, which scaling law applies.

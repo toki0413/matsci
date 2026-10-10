@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -84,7 +85,7 @@ class HighThroughputTool(HuginnTool):
             )
         if args.space_type in ("random", "lhs"):
             for _key, vals in args.parameter_space.items():
-                if len(vals) != 2 or not all(isinstance(v, (int, float)) for v in vals):
+                if len(vals) != 2 or not all(isinstance(v, int | float) for v in vals):
                     return ValidationResult(
                         result=False,
                         message=f"{args.space_type} requires [min, max] numeric range for each parameter.",
@@ -140,7 +141,7 @@ class HighThroughputTool(HuginnTool):
                         payload = job.full_input
                         if hasattr(tool, "input_schema") and tool.input_schema is not None:
                             payload = tool.input_schema(**payload).model_dump()
-                        if asyncio.iscoroutinefunction(tool.call):
+                        if inspect.iscoroutinefunction(tool.call):
                             result = await tool.call(payload, context)
                         else:
                             result = tool.call(payload, context)

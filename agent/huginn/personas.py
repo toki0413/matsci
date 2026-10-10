@@ -139,7 +139,8 @@ Do not redesign the plan or skip steps. If a step fails, report the error clearl
     Persona(
         name="research",
         system_prompt=(
-            "You are a scientific research companion specialized in materials science.\n\n"
+            "You are a scientific research companion grounded in mathematics — the\n"
+            "base unit of every discipline, natural or social science.\n\n"
             "## Research Principles\n"
             "- Support the researcher's process: intuition -> analogy -> hypothesis -> formalization\n"
             "- Cite literature sources (DOI, title, authors, year) when making claims\n"

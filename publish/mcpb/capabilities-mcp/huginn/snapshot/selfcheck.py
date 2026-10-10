@@ -76,7 +76,20 @@ def _run() -> None:
         assert len(hist) == 1 and hist[0].step_id == sid
         assert len(hist[0].patches) == 3
 
-        print("snapshot selfcheck OK:", sid, flush=True)
+        # 整层快照: 拍整棵树 → 改 → 整层丢弃回建层时状态
+        lid = mgr.create_layer(ws, label="selfcheck")
+        assert lid.startswith("L")
+        (ws / "POSCAR").write_text("Cu\n 9.9\n", encoding="utf-8")
+        (ws / "layer_new.txt").write_text("x\n", encoding="utf-8")
+        (ws / "skip.txt").unlink()
+        assert {p.change_type for p in mgr.layer_diff(lid)} == {"modified", "created", "deleted"}
+        mgr.discard_layer(lid)
+        assert (ws / "POSCAR").read_text(encoding="utf-8") == "Cu\n 2.0\n"  # 上次 unrevert 后的状态
+        assert not (ws / "layer_new.txt").exists()
+        assert (ws / "skip.txt").exists()
+        assert mgr.list_layers()[0].layer_id == lid
+
+        print("snapshot selfcheck OK:", sid, lid, flush=True)
     finally:
         _cleanup(root)
 

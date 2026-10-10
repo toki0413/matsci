@@ -58,6 +58,9 @@ class Branch:
     parent_branch: str | None = None
     children_branches: list[str] = field(default_factory=list)
     prune_reason: str | None = None
+    # 演化世系/参数等附加信息 (由策略 new_branches 透传, 如 MutationStrategy 的
+    # params / mutation_of; executor 据此把动态子代解析成可真实执行的实验)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def decision_path(self) -> list[str]:

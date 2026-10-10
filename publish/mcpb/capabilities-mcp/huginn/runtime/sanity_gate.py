@@ -41,7 +41,7 @@ def _collect_loss_values(data: Any) -> list[float]:
     out: list[float] = []
     if isinstance(data, dict):
         for k, v in data.items():
-            if k.lower() in _LOSS_FIELDS and isinstance(v, (int, float)):
+            if k.lower() in _LOSS_FIELDS and isinstance(v, int | float):
                 out.append(float(v))
             else:
                 out.extend(_collect_loss_values(v))
@@ -56,7 +56,7 @@ def _collect_time_values(data: Any) -> list[float]:
     out: list[float] = []
     if isinstance(data, dict):
         for k, v in data.items():
-            if k.lower() in _TIME_FIELDS and isinstance(v, (int, float)):
+            if k.lower() in _TIME_FIELDS and isinstance(v, int | float):
                 out.append(float(v))
             else:
                 out.extend(_collect_time_values(v))
@@ -72,7 +72,7 @@ def _collect_loss_curves(data: Any) -> list[list[float]]:
     if isinstance(data, dict):
         for k, v in data.items():
             if k.lower() in _LOSS_FIELDS and isinstance(v, list):
-                nums = [x for x in v if isinstance(x, (int, float))]
+                nums = [x for x in v if isinstance(x, int | float)]
                 if len(nums) >= _MIN_MONOTONE_LEN:
                     out.append([float(x) for x in nums])
             else:

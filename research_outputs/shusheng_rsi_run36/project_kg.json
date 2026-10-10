@@ -1,0 +1,2179 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "**[DIM: structure]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:25:37.446305",
+      "last_seen": "2026-09-28T13:25:37.446305",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family (f''(x)=0) will achieve zero violation at width h=2-4 (anchor), with N_c(w) remaining constant or decreasing as w increases; Fat family (random polynomial) will show trend='unreachable' f",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: structure]**"
+    },
+    {
+      "label": "plan_skill_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446348",
+      "last_seen": "2026-09-28T13:25:37.446348",
+      "mentions": 1,
+      "id": "Method:plan_skill_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446362",
+      "last_seen": "2026-09-28T13:25:37.446362",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: structure]**",
+        "Method:plan_skill_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:25:37.446503",
+      "last_seen": "2026-09-28T13:25:37.446503",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1aefd1ead681a092",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structural] The \"rigid\" constraint family corresponds to a subspace of aff",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:26:34.427503",
+      "last_seen": "2026-09-28T13:26:34.427503",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family should show zero violation at small widths (h=2-8) when properly implemented, with N_c(w) remaining flat or decreasing as w increases. The fat family should show unreachable trend (no",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structural] The \"rigid\" constraint family corresponds to a subspace of aff"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:26:34.427543",
+      "last_seen": "2026-09-28T13:26:34.427543",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:26:34.427552",
+      "last_seen": "2026-09-28T13:26:34.427552",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:26:34.427561",
+      "last_seen": "2026-09-28T13:26:34.427561",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structural] The \"rigid\" constraint family corresponds to a subspace of aff",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_fc2fd37f"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:26:34.427645",
+      "last_seen": "2026-09-28T13:26:34.427645",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3c8ac34eff591305",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: transport] The fat constraint family arises from a nonlinear transport equ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:28:31.940965",
+      "last_seen": "2026-09-28T13:28:31.940965",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation (max abs error $\\le 10^{-3}$) at small widths (e.g., $h=2$ or $4$) with flat/decreasing $N_c(w)$ trend. Fat family will show no zero violation for all $h \\in [",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The fat constraint family arises from a nonlinear transport equ"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:28:31.941005",
+      "last_seen": "2026-09-28T13:28:31.941005",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:28:31.941016",
+      "last_seen": "2026-09-28T13:28:31.941016",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:28:31.941025",
+      "last_seen": "2026-09-28T13:28:31.941025",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The fat constraint family arises from a nonlinear transport equ",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_e7f56aca"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:28:31.941109",
+      "last_seen": "2026-09-28T13:28:31.941109",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f36ef661d8d920f1",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: PDE Structure]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:29:39.275712",
+      "last_seen": "2026-09-28T13:29:39.275712",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family, N_c(w) will be small (h=2~8) and flat/decreasing across w, with heldout error ≤1e-3 at the anchor width. For the fat family, N_c(w) will be unreachable (all h≤64 fail, tre",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: PDE Structure]"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:29:39.275755",
+      "last_seen": "2026-09-28T13:29:39.275755",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:29:39.275764",
+      "last_seen": "2026-09-28T13:29:39.275764",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:29:39.275772",
+      "last_seen": "2026-09-28T13:29:39.275772",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: PDE Structure]",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_66696dd1"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:29:39.275862",
+      "last_seen": "2026-09-28T13:29:39.275862",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e7ceb8d0b9149143",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: PDE Structure] The rigid family is defined by a first-order linear ODE $f'",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:30:40.117505",
+      "last_seen": "2026-09-28T13:30:40.117505",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (h=2~8) and flat/decreasing as w increases, with a clear anchor point showing zero violation at a specific width. For the fat family, N_c(w) will be unreacha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: PDE Structure] The rigid family is defined by a first-order linear ODE $f'"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:30:40.117545",
+      "last_seen": "2026-09-28T13:30:40.117545",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:30:40.117560",
+      "last_seen": "2026-09-28T13:30:40.117560",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:30:40.117568",
+      "last_seen": "2026-09-28T13:30:40.117568",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: PDE Structure] The rigid family is defined by a first-order linear ODE $f'",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_36b30741"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:30:40.117654",
+      "last_seen": "2026-09-28T13:30:40.117654",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a52ad54292d481d5",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:31:43.556797",
+      "last_seen": "2026-09-28T13:31:43.556797",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (h=2~8) and flat/decreasing as w increases, with specific anchor points showing training error ≤1e-4 and validation error ≤1e-3. For the fat family, all widt",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556835",
+      "last_seen": "2026-09-28T13:31:43.556835",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556846",
+      "last_seen": "2026-09-28T13:31:43.556846",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:31:43.556935",
+      "last_seen": "2026-09-28T13:31:43.556935",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8409f871317fe7a5",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:32:22.324182",
+      "last_seen": "2026-09-28T13:32:22.324182",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show finite N_c (h≤8) with flat/decreasing trend as w increases, while fat family will show unreachable (N_c = ∞) across all h≤64. Held-out errors for rigid will be ≤1e-3 at anchor w",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324223",
+      "last_seen": "2026-09-28T13:32:22.324223",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324232",
+      "last_seen": "2026-09-28T13:32:22.324232",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:32:22.324321",
+      "last_seen": "2026-09-28T13:32:22.324321",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d8840423f413b77d",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x) ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:02.100716",
+      "last_seen": "2026-09-28T13:33:02.100716",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite integer (e.g., h=2 or 4) that remains flat or decreases as w increases, with max validation error ≤1e-3 at the anchor width. For the fat family, N_c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x)"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100757",
+      "last_seen": "2026-09-28T13:33:02.100757",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100765",
+      "last_seen": "2026-09-28T13:33:02.100765",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x)",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:02.100853",
+      "last_seen": "2026-09-28T13:33:02.100853",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "54ab3f97079dc976",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T13:33:38.421321",
+      "last_seen": "2026-09-28T13:35:29.089777",
+      "mentions": 2,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve ≤1e-3 validation error at width h=2~4 for all w, with N_c(w) flat or decreasing; fat family will have validation error >1e-3 at all widths up to h=64, marked as 'unreachable'",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421361",
+      "last_seen": "2026-09-28T13:33:38.421361",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421371",
+      "last_seen": "2026-09-28T13:33:38.421371",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:38.421469",
+      "last_seen": "2026-09-28T13:33:38.421469",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b1f795e7d83bcae",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:34:34.503087",
+      "last_seen": "2026-09-28T13:34:34.503087",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve validation error ≤1e-3 at width h=2~4 (e.g., h=2 with train_err ~1e-5 and val_err ~5e-4), N_c(w) will be flat (~2) across w=5,10,20; fat family will have val_err >1e-3 at all",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503127",
+      "last_seen": "2026-09-28T13:34:34.503127",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503135",
+      "last_seen": "2026-09-28T13:34:34.503135",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:34:34.503227",
+      "last_seen": "2026-09-28T13:34:34.503227",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "89932392f47d8bf4",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:35:29.089811",
+      "last_seen": "2026-09-28T13:35:29.089811",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:35:29.089837",
+      "last_seen": "2026-09-28T13:35:29.089837",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:35:29.089849",
+      "last_seen": "2026-09-28T13:35:29.089849",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_712f322d"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:35:29.089961",
+      "last_seen": "2026-09-28T13:35:29.089961",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c537cd2b05af88dc",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family exhibits zero violation because it ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:36:30.134797",
+      "last_seen": "2026-09-28T13:36:30.134797",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation at width h ≤ 8 with training error ≤ 1e-4 and held-out error ≤ 1e-3, showing flat N_c(w) trend across w values. Fat family will show trend='unreachable' with a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family exhibits zero violation because it"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134836",
+      "last_seen": "2026-09-28T13:36:30.134836",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134845",
+      "last_seen": "2026-09-28T13:36:30.134845",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family exhibits zero violation because it",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:36:30.134958",
+      "last_seen": "2026-09-28T13:36:30.134958",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ac20ca525b7f8e18",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family's zero-violation behavior at small ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:37:23.930205",
+      "last_seen": "2026-09-28T13:37:23.930205",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite number (e.g., h=2~4) that remains flat or decreases as w increases, with held-out max absolute error ≤ 1e-3 at the anchor width. For the fat family,",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family's zero-violation behavior at small"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:37:23.930246",
+      "last_seen": "2026-09-28T13:37:23.930246",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:37:23.930255",
+      "last_seen": "2026-09-28T13:37:23.930255",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:37:23.930263",
+      "last_seen": "2026-09-28T13:37:23.930263",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family's zero-violation behavior at small",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_11534fed"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:37:23.930353",
+      "last_seen": "2026-09-28T13:37:23.930353",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "824f585c3a7da70d",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "** [DIM: Solution Space Geometry]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:39:35.085992",
+      "last_seen": "2026-09-28T13:39:35.085992",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Implement the solution space geometry hypothesis test using mathematically correct families: (1) Rigid family = linear ODE dy/dx = λy with Dirichlet BC yielding a 1D solution space, verified symbolica",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Solution Space Geometry]"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:39:35.086033",
+      "last_seen": "2026-09-28T13:39:35.086033",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:39:35.086043",
+      "last_seen": "2026-09-28T13:39:35.086043",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:39:35.086051",
+      "last_seen": "2026-09-28T13:39:35.086051",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Solution Space Geometry]",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_80d69784"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:39:35.086134",
+      "last_seen": "2026-09-28T13:39:35.086134",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1a72d676bfb835e0",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
+    },
+    {
+      "label": "[DIM: solution_space_geometry] The rigid constraint family (low-degree polynomia",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:40:29.999583",
+      "last_seen": "2026-09-28T13:40:29.999583",
+      "mentions": 1,
+      "iteration": 75,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small widths (N_c ≤ 8) with flat or decreasing N_c(w) trend; the fat family will show unreachable (no width ≤ 64 achieves zero vi",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: solution_space_geometry] The rigid constraint family (low-degree polynomia"
+    },
+    {
+      "label": "plan_explore_iter75",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:40:29.999623",
+      "last_seen": "2026-09-28T13:40:29.999623",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter75"
+    },
+    {
+      "label": "pass_iter75",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:40:29.999633",
+      "last_seen": "2026-09-28T13:40:29.999633",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter75"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:40:29.999642",
+      "last_seen": "2026-09-28T13:40:29.999642",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: solution_space_geometry] The rigid constraint family (low-degree polynomia",
+        "Method:plan_explore_iter75",
+        "Fact:pass_iter75"
+      ],
+      "iteration": 75,
+      "id": "he_experiment_pipeline_e218966a"
+    },
+    {
+      "label": "reviewer_iter75",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:40:29.999725",
+      "last_seen": "2026-09-28T13:40:29.999725",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "dd0b1f2ee6490bf8",
+      "r_phys": 1.0,
+      "iteration": 75,
+      "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family corresponds to a finite-dimensional",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:42:14.148583",
+      "last_seen": "2026-09-28T13:42:14.148583",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small widths (h ≤ 8) for w ≥ 3, with N_c(w) being flat or decreasing. The fat family will show unreachable N_c (trend='unreachabl",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family corresponds to a finite-dimensional"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:42:14.148622",
+      "last_seen": "2026-09-28T13:42:14.148622",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:42:14.148632",
+      "last_seen": "2026-09-28T13:42:14.148632",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:42:14.148641",
+      "last_seen": "2026-09-28T13:42:14.148641",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family corresponds to a finite-dimensional",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_e2433ae8"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:42:14.148723",
+      "last_seen": "2026-09-28T13:42:14.148723",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "551347bf8e4e74cd",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T13:43:30.394165",
+      "last_seen": "2026-09-28T13:52:23.704511",
+      "mentions": 2,
+      "iteration": 85,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show constant $N_c \\approx 5$ as $w$ increases (1-50) due to finite-dimensional solution space; fat family will show increasing $N_c$ with $w$ due to infinite-dimensional chaotic beh",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394205",
+      "last_seen": "2026-09-28T13:43:30.394205",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394215",
+      "last_seen": "2026-09-28T13:43:30.394215",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:43:30.394305",
+      "last_seen": "2026-09-28T13:43:30.394305",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "204cabea0ca8ac58",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T13:44:27.806945",
+      "last_seen": "2026-09-28T13:50:22.626924",
+      "mentions": 6,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, the capacity scan will identify a finite minimum width N_c (likely h=3 or h=4) that achieves zero violation on holdout points, and N_c will remain flat or decrease as w increases",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:44:27.806986",
+      "last_seen": "2026-09-28T13:44:27.806986",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:44:27.807003",
+      "last_seen": "2026-09-28T13:44:27.807003",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:44:27.807012",
+      "last_seen": "2026-09-28T13:44:27.807012",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_d100d5d9"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:44:27.807098",
+      "last_seen": "2026-09-28T13:44:27.807098",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d0727b0185937b08",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:45:35.286681",
+      "last_seen": "2026-09-28T13:45:35.286681",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:45:35.286702",
+      "last_seen": "2026-09-28T13:45:35.286702",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:45:35.286712",
+      "last_seen": "2026-09-28T13:45:35.286712",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_551c5c3c"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:45:35.286799",
+      "last_seen": "2026-09-28T13:45:35.286799",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "29d6c4626a0d96ed",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:46:32.509418",
+      "last_seen": "2026-09-28T13:46:32.509418",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:46:32.509438",
+      "last_seen": "2026-09-28T13:46:32.509438",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:46:32.509448",
+      "last_seen": "2026-09-28T13:46:32.509448",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_13406f74"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:46:32.509534",
+      "last_seen": "2026-09-28T13:46:32.509534",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "922530663c145b03",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:47:37.096016",
+      "last_seen": "2026-09-28T13:47:37.096016",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:47:37.096038",
+      "last_seen": "2026-09-28T13:47:37.096038",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:47:37.096048",
+      "last_seen": "2026-09-28T13:47:37.096048",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_1debbd67"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:47:37.096131",
+      "last_seen": "2026-09-28T13:47:37.096131",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "25d5143d7e9d1ec9",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044818",
+      "last_seen": "2026-09-28T13:48:38.044818",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044839",
+      "last_seen": "2026-09-28T13:48:38.044839",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:48:38.044934",
+      "last_seen": "2026-09-28T13:48:38.044934",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "da406bd89928c5e4",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:50:22.626953",
+      "last_seen": "2026-09-28T13:50:22.626953",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:50:22.626976",
+      "last_seen": "2026-09-28T13:50:22.626976",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:50:22.626987",
+      "last_seen": "2026-09-28T13:50:22.626987",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_862f3ce1"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:50:22.627081",
+      "last_seen": "2026-09-28T13:50:22.627081",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "353ea535004ca6cf",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
+    },
+    {
+      "label": "** [DIM: structure]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:51:25.931733",
+      "last_seen": "2026-09-28T13:51:25.931733",
+      "mentions": 1,
+      "iteration": 120,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show anchor at h=4 with training_err ~1e-5 and heldout_err ~5e-4 (≤1e-3); N_c(w) table will show small finite values (e.g., h=4 at w=10, h=3 at w=20) with flat trend. Fat family will",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure]"
+    },
+    {
+      "label": "plan_explore_iter120",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:51:25.931772",
+      "last_seen": "2026-09-28T13:51:25.931772",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter120"
+    },
+    {
+      "label": "pass_iter120",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:51:25.931782",
+      "last_seen": "2026-09-28T13:51:25.931782",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter120"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:51:25.931791",
+      "last_seen": "2026-09-28T13:51:25.931791",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure]",
+        "Method:plan_explore_iter120",
+        "Fact:pass_iter120"
+      ],
+      "iteration": 120,
+      "id": "he_experiment_pipeline_f9fbae0a"
+    },
+    {
+      "label": "reviewer_iter120",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:51:25.931875",
+      "last_seen": "2026-09-28T13:51:25.931875",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f2e2379ad611fcc5",
+      "r_phys": 1.0,
+      "iteration": 120,
+      "id": "persona_use:reviewer_iter120"
+    },
+    {
+      "label": "plan_explore_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:52:23.704538",
+      "last_seen": "2026-09-28T13:52:23.704538",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:52:23.704558",
+      "last_seen": "2026-09-28T13:52:23.704558",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:52:23.704568",
+      "last_seen": "2026-09-28T13:52:23.704568",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a",
+        "Method:plan_explore_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_d5303b95"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:52:23.704662",
+      "last_seen": "2026-09-28T13:52:23.704662",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b3ae454d56cc1b49",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: structure]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_skill_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structural] The \"rigid\" constraint family corresponds to a subspace of aff",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:26:34.427561",
+      "last_seen": "2026-09-28T13:26:34.427561",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fc2fd37f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:26:34.427561",
+      "last_seen": "2026-09-28T13:26:34.427561",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fc2fd37f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:26:34.427561",
+      "last_seen": "2026-09-28T13:26:34.427561",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fc2fd37f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The fat constraint family arises from a nonlinear transport equ",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:28:31.941025",
+      "last_seen": "2026-09-28T13:28:31.941025",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7f56aca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:28:31.941025",
+      "last_seen": "2026-09-28T13:28:31.941025",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7f56aca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:28:31.941025",
+      "last_seen": "2026-09-28T13:28:31.941025",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7f56aca"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: PDE Structure]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:29:39.275772",
+      "last_seen": "2026-09-28T13:29:39.275772",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_66696dd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:29:39.275772",
+      "last_seen": "2026-09-28T13:29:39.275772",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_66696dd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:29:39.275772",
+      "last_seen": "2026-09-28T13:29:39.275772",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_66696dd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: PDE Structure] The rigid family is defined by a first-order linear ODE $f'",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:30:40.117568",
+      "last_seen": "2026-09-28T13:30:40.117568",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36b30741"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:30:40.117568",
+      "last_seen": "2026-09-28T13:30:40.117568",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36b30741"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:30:40.117568",
+      "last_seen": "2026-09-28T13:30:40.117568",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36b30741"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x)",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:35:29.089849",
+      "last_seen": "2026-09-28T13:35:29.089849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_712f322d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:35:29.089849",
+      "last_seen": "2026-09-28T13:35:29.089849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_712f322d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:35:29.089849",
+      "last_seen": "2026-09-28T13:35:29.089849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_712f322d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family exhibits zero violation because it",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family's zero-violation behavior at small",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:37:23.930263",
+      "last_seen": "2026-09-28T13:37:23.930263",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_11534fed"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:37:23.930263",
+      "last_seen": "2026-09-28T13:37:23.930263",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_11534fed"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:37:23.930263",
+      "last_seen": "2026-09-28T13:37:23.930263",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_11534fed"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Solution Space Geometry]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:39:35.086051",
+      "last_seen": "2026-09-28T13:39:35.086051",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_80d69784"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:39:35.086051",
+      "last_seen": "2026-09-28T13:39:35.086051",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_80d69784"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:39:35.086051",
+      "last_seen": "2026-09-28T13:39:35.086051",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_80d69784"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: solution_space_geometry] The rigid constraint family (low-degree polynomia",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:40:29.999642",
+      "last_seen": "2026-09-28T13:40:29.999642",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e218966a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:40:29.999642",
+      "last_seen": "2026-09-28T13:40:29.999642",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e218966a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:40:29.999642",
+      "last_seen": "2026-09-28T13:40:29.999642",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e218966a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family corresponds to a finite-dimensional",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:42:14.148641",
+      "last_seen": "2026-09-28T13:42:14.148641",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2433ae8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:42:14.148641",
+      "last_seen": "2026-09-28T13:42:14.148641",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2433ae8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:42:14.148641",
+      "last_seen": "2026-09-28T13:42:14.148641",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2433ae8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:52:23.704568",
+      "last_seen": "2026-09-28T13:52:23.704568",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d5303b95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:44:27.807012",
+      "last_seen": "2026-09-28T13:44:27.807012",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d100d5d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:45:35.286712",
+      "last_seen": "2026-09-28T13:45:35.286712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_551c5c3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:46:32.509448",
+      "last_seen": "2026-09-28T13:46:32.509448",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_13406f74"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:47:37.096048",
+      "last_seen": "2026-09-28T13:47:37.096048",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1debbd67"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:50:22.626987",
+      "last_seen": "2026-09-28T13:50:22.626987",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_862f3ce1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:44:27.807012",
+      "last_seen": "2026-09-28T13:44:27.807012",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d100d5d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:44:27.807012",
+      "last_seen": "2026-09-28T13:44:27.807012",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d100d5d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:45:35.286712",
+      "last_seen": "2026-09-28T13:45:35.286712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_551c5c3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:45:35.286712",
+      "last_seen": "2026-09-28T13:45:35.286712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_551c5c3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:46:32.509448",
+      "last_seen": "2026-09-28T13:46:32.509448",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_13406f74"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:46:32.509448",
+      "last_seen": "2026-09-28T13:46:32.509448",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_13406f74"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:47:37.096048",
+      "last_seen": "2026-09-28T13:47:37.096048",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1debbd67"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:47:37.096048",
+      "last_seen": "2026-09-28T13:47:37.096048",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1debbd67"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:50:22.626987",
+      "last_seen": "2026-09-28T13:50:22.626987",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_862f3ce1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:50:22.626987",
+      "last_seen": "2026-09-28T13:50:22.626987",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_862f3ce1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:51:25.931791",
+      "last_seen": "2026-09-28T13:51:25.931791",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f9fbae0a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:51:25.931791",
+      "last_seen": "2026-09-28T13:51:25.931791",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f9fbae0a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:51:25.931791",
+      "last_seen": "2026-09-28T13:51:25.931791",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f9fbae0a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:52:23.704568",
+      "last_seen": "2026-09-28T13:52:23.704568",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d5303b95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:52:23.704568",
+      "last_seen": "2026-09-28T13:52:23.704568",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d5303b95"
+    }
+  ]
+}

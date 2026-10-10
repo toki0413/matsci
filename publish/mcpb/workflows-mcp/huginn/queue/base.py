@@ -36,12 +36,12 @@ class TaskBackend(ABC):
         task_id: str | None = None,
     ) -> str:
         """Submit a task and return its ID."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def get_result(self, task_id: str) -> TaskResult:
         """Return the current result/status for ``task_id``."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def wait_for(
@@ -51,7 +51,7 @@ class TaskBackend(ABC):
         poll_interval: float = 1.0,
     ) -> TaskResult:
         """Block until the task reaches a terminal state or times out."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def register_task(
@@ -64,4 +64,4 @@ class TaskBackend(ABC):
         In-memory backends use this directly. Celery/RQ backends discover
         workers via module imports.
         """
-        raise NotImplementedError
+        ...

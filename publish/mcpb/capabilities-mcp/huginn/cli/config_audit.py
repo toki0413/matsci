@@ -14,6 +14,10 @@
     - 只做静态扫描, 不判死. "是否死"需结合运行时契约人工判断.
     - 状态字段: writes>0 → "code-set"(代码里被设置); ==0 → "external"(未在
       代码设, 可能是用户 shell/.env 注入, 需人工确认).
+    - **扫描盲区 (reads 计数会偏低)**: 经 ``FeatureFlags._ENV_ALIASES`` 动态读的
+      旧变量名与 ``HUGINN_FEATURE_<NAME>`` 规范名走 ``os.environ.get(alias)``
+      循环变量, 正则抓不到 → 会显示 reads=0. 这类**不是**死配置, 判死前先核对
+      ``huginn/feature_flags.py`` 的别名表.
 """
 from __future__ import annotations
 
@@ -44,6 +48,22 @@ _ENV_SETITEM = re.compile(
 _ENV_POP = re.compile(
     r'os\.environ\.pop\(\s*["\'](HUGINN_[A-Z0-9_]+)["\']'
 )
+# 经辅助函数间接读: `_env_int("HUGINN_X", 2)` / `_env_float("HUGINN_X")` 这类包装把
+# 变量名藏进字符串参数, 上面几条 os.environ.* 正则抓不到. 名字里带 env 的调用单列
+# 一条兜住 (env_int / _env_bool / read_env_str ...).
+# `os.environ.get(` 不会误命中: 其函数名是 `get`, 不含 env.
+_ENV_HELPER = re.compile(
+    r'(\w*env\w*)\(\s*["\'](HUGINN_[A-Z0-9_]+)["\']\s*'
+    r'(?:,\s*(["\']?[^"\')]*["\']?))?'
+)
+
+# env_access 的规范访问器 —— 配置面读端的**目标态** (见 :mod:`huginn.env_access`).
+# 它们虽也以字符串传变量名 (被 ``_ENV_HELPER`` 命中), 但**不是裸读**: 治理棘轮
+# 只惩罚不经 env_access 的读点. 不排除它们的话, "把读点迁到 env_access" 反而会
+# 推高计数, 与 env_schema 中"迁移后应下调基线"的约定直接矛盾.
+_CANONICAL_ACCESSORS = frozenset(
+    {"env_str", "env_int", "env_float", "env_bool", "env_json"}
+)
 
 
 def _clean(value: str) -> str:
@@ -59,27 +79,44 @@ def _scan_file(path: Path, ops: dict):
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
-    for _offset, (pattern, kind) in enumerate(
-        (
-            (_ENV_GET, "read"),
-            (_ENV_SETDEFAULT, "setdefault"),
-            (_ENV_SETITEM, "set"),
-            (_ENV_POP, "pop"),
-        )
+
+    def _record(name: str, kind: str, default: str, lineno: int, canonical: bool):
+        entry = {
+            "file": path.relative_to(_ROOT).as_posix(),
+            "line": lineno,
+            "default": default,
+        }
+        if canonical:
+            # 规范 env_access 读点: 仍是读点 (供"死声明"检测), 但棘轮不计.
+            entry["canonical"] = True
+        ops[name][kind].append(entry)
+
+    # 直接 os.environ.* 操作 —— 裸读/裸写.
+    for pattern, kind in (
+        (_ENV_GET, "read"),
+        (_ENV_SETDEFAULT, "setdefault"),
+        (_ENV_SETITEM, "set"),
+        (_ENV_POP, "pop"),
     ):
         for m in pattern.finditer(text):
             name = m.group(1)
             default = ""
             if kind == "setdefault" or kind == "read" and m.group(2) is not None:
                 default = _clean(m.group(2))
-            lineno = text[: m.start()].count("\n") + 1
-            ops[name][kind].append(
-                {
-                    "file": path.relative_to(_ROOT).as_posix(),
-                    "line": lineno,
-                    "default": default,
-                }
-            )
+            _record(name, kind, default, text[: m.start()].count("\n") + 1, False)
+
+    # 经辅助函数间接读: 非规范包装 (_env_int / _read_env 等) 仍算裸读; env_access
+    # 的规范访问器 (env_int / env_float / …) 是目标态, 标 canonical 供棘轮排除.
+    for m in _ENV_HELPER.finditer(text):
+        fn = m.group(1)
+        default = _clean(m.group(3)) if m.group(3) is not None else ""
+        _record(
+            m.group(2),
+            "read",
+            default,
+            text[: m.start()].count("\n") + 1,
+            fn in _CANONICAL_ACCESSORS,
+        )
 
 
 def build_inventory(root: Path | None = None) -> dict[str, dict]:
@@ -89,7 +126,8 @@ def build_inventory(root: Path | None = None) -> dict[str, dict]:
         lambda: {"read": [], "setdefault": [], "set": [], "pop": []}
     )
     for py in root.rglob("*.py"):
-        if "__pycache__" in str(py):
+        if "__pycache__" in str(py) or py == _SELF:
+            # 跳过自身: 本文件只在注释/正则里出现 HUGINN_* 示例字样, 不是真实配置面.
             continue
         _scan_file(py, ops)
 

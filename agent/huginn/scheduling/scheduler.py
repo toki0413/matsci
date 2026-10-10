@@ -396,11 +396,22 @@ class ToolScheduler:
         self._drainer = loop.create_task(self._drain())
 
     def stop(self) -> None:
-        """Cancel the drainer and await live tasks best-effort."""
+        """Cancel the drainer **and every in-flight job** (best-effort, sync).
+
+        只停 drainer 不够: 后台任务 (bash_tool 的 '&' 作业) 由 ``_run_job`` 的
+        asyncio Task 承载, drainer 停掉后这些 Task 仍在跑, 进程退出时其子进程会
+        orphan 成 PPID→1 继续全速运行 (run87 实测). 这里逐个 ``cancel()`` —— 取消
+        标记随后由 ``_run_job`` 的 finally 落成 status=cancelled; 真正阻塞在同步
+        ``subprocess`` 调用里的 Task 由退出侧的进程组兜底回收 (见
+        ``huginn.utils.process.kill_tracked_children``). 幂等, 可重复调用.
+        """
         self._stopped = True
         if self._drainer is not None:
             self._drainer.cancel()
             self._drainer = None
+        for task in list(self._live_tasks.values()):
+            if not task.done():
+                task.cancel()
         self._wake_drainer()
 
     def _wake_drainer(self) -> None:

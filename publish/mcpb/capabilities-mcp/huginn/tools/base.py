@@ -282,7 +282,20 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         ``call`` keep working unchanged — their override shadows this wrapper,
         so existing manual provenance capture (vasp_tool / lammps_tool) is
         untouched and never double-captured.
+
+        权限门禁: 在真实执行前跑 ``check_permissions`` (此前已定义但从未被调用 =
+        假门禁). 现在让它实际生效:
+          - mode=DENY   → 拒绝, 不触达 _execute (防越权执行);
+          - mode=ASK    → 除非 context 已带显式确认, 否则拒绝并要求确认;
+          - mode=AUTO   → 放行.
+        兼容红线: 工具默认 check_permissions 回 AUTO(=放行), 只有覆盖为 DENY/ASK 的
+        (破坏性/删除/提交任务等) 才会被真实拦 —— 不改变既有放行行为, 只让"本就该拦的
+        真被拦"。此门禁与 research 侧 governed_handler 是同一治理语义在工具统一入口的落地。
         """
+        # ── 权限门禁(执行前) ─────────────────────────────────────────────────
+        gate = await self._gate_permission(args, context)
+        if gate is not None:
+            return gate
         try:
             result = await self._execute(args, context)
         except Exception as exc:
@@ -311,6 +324,35 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         with contextlib.suppress(Exception):
             self._capture_provenance(args, result)
         return result
+
+    async def _gate_permission(self, args: Any, context: ToolContext) -> ToolResult | None:
+        """执行前权限门禁: 真实调用 check_permissions, 决定是否放行.
+
+        此前 check_permissions 只定义从未被调用(假门禁). 现在在 call() 里真正执行:
+          - DENY  → 拒绝(不触达 _execute), 结果带 reason;
+          - ASK   → 除非 context 已显式确认, 否则拒绝并要求确认;
+          - AUTO  → 放行(返回 None).
+        fail-open: check_permissions 抛异常时降级放行, 不拖垮工具执行(与既有行为一致)。
+        """
+        try:
+            perm = await self.check_permissions(args, context)
+        except Exception:  # noqa: BLE001 — 权限检查异常: 降级放行(维持既有行为, 不破坏)
+            return None
+        from huginn.core_types import PermissionMode
+        mode = getattr(perm, "mode", PermissionMode.AUTO)
+        reason = getattr(perm, "reason", "")
+        if mode == PermissionMode.DENY:
+            return ToolResult(success=False, data=None,
+                              error=f"permission denied: {reason or 'not allowed'}")
+        if mode == PermissionMode.ASK:
+            # ASK 需显式确认才放行: context.permissions 里该工具被显式覆盖为 AUTO
+            # (=用户已批准放行) 才触达执行; 否则拒绝并要求确认 (与既有 approval 语义一致).
+            perms = getattr(context, "permissions", None) or {}
+            overridden = getattr(perms, "get", lambda *_: None)(self.name, None)
+            if overridden != PermissionMode.AUTO:
+                return ToolResult(success=False, data=None,
+                                  error=f"permission required (ask): {reason or 'confirm required'}")
+        return None  # AUTO 或已确认的 ASK → 放行
 
     def _capture_provenance(self, args: Any, result: ToolResult) -> Any:
         """Append a ProvenanceSnapshot to the active collector, if any.

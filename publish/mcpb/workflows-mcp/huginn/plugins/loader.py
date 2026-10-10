@@ -198,6 +198,9 @@ class PluginLoader:
         metas = instance.collect_handlers()
         self.registry.register_iterable(metas)
 
+        # P1: 能力维度 mount — 收集 @capability 注册到 CapabilityRegistry (可逆)
+        self._mount_capabilities(instance)
+
         # 生命周期 on_load
         try:
             import asyncio
@@ -276,6 +279,7 @@ class PluginLoader:
         self.permission_checker.register(meta)
         metas = instance.collect_handlers()
         self.registry.register_iterable(metas)
+        self._mount_capabilities(instance)
 
         await instance.on_load()
 
@@ -320,6 +324,8 @@ class PluginLoader:
 
         self.registry.unregister_plugin(plugin_name)
         self.permission_checker.unregister(plugin_name)
+        # P1: 卸载也撤销该插件提供的能力 (可逆 mount)
+        self._unmount_capabilities(plugin_name)
 
         # 从 sys.modules 清掉, 避免下次 reload 拿到旧模块
         mod_name = f"huginn_plugin_{plugin_name}"
@@ -344,6 +350,23 @@ class PluginLoader:
             plugin_dir = Path(self.plugins_dir) / plugin_name
         self.unload(plugin_name)
         return self.load_one(plugin_dir)
+
+    # ── P1: 能力维度 mount / unmount ─────────────────────────────────
+
+    def _mount_capabilities(self, instance: Star) -> int:
+        """把插件声明的 @capability 能力注册进共享 CapabilityRegistry."""
+        from huginn.capabilities.registry import get_shared_capability_registry
+
+        caps = instance.collect_capabilities()
+        if caps:
+            get_shared_capability_registry().register_iterable(caps)
+        return len(caps)
+
+    def _unmount_capabilities(self, plugin_name: str) -> int:
+        """卸载插件时撤销其提供的所有能力."""
+        from huginn.capabilities.registry import get_shared_capability_registry
+
+        return get_shared_capability_registry().unregister_plugin(plugin_name)
 
     # ── 查询 ─────────────────────────────────────────────────────────
 

@@ -63,21 +63,57 @@ def _derive_light_on_track(action: str, cog: dict) -> str:
     return "unsure"
 
 
-def _snapshot_structure_desc(cog: dict) -> list[float]:
-    """从 cog 提取结构描述符, 缺失填 16 维全 0.
+def progress_invariant_action(
+    cog: dict, action_history: list[str], *, window: int = 4
+) -> str | None:
+    """P3.2 在线进展不变量 — 连续 window 轮停在执行前阶段 ⇒ 强制推进流水线.
 
-    episodic 快照里带一份结构向量, 供后续按空间检索. 当前 cog 不存
-    StructureCognitiveMap, 所以现在基本回退全 0; 将来 cog 挂上 cmap 后
-    这段就是入口, 不用改调用方.
+    背景: agent 可能反复选 hypothesize/plan 而从不 execute (run74 实测 h→plan→h;
+    更极端的"只 hypothesize"会让整轮 0 tool_calls)。既有软信号 (rename_debt /
+    light_off_track) 抓不到这种"有产出但不推进"的形态 —— 每轮都有产出, 累积信号
+    被不断重置。
+
+    这里用**动作尾部**做单调进展判据, 不看 cog 的 key 是否非空 (旧的 plan /
+    execution_result 会跨轮残留, 用 key 判断会误以为"已推进"):
+
+    - 尾部含 execute/validate/learn/pivot → 本轮已在前行, 不干预 (None);
+    - 尾部全是 skip/observe (无 hypothesize/plan) → monitor-hold 类的静默,
+      不是空转, 不干预 (None);
+    - 否则 (纯 hypothesize/plan 打转):
+        · 尾部无 plan → 需要为当前假设重算计划: 有假设 → "plan", 无 → "hypothesize"
+        · 尾部有 plan 但无 execute → 计划已就绪, 强制 "execute"
+
+    返回 None 表示不触发, 交给正常决策。
+    """
+    tail = list(action_history)[-window:]
+    if len(tail) < window:
+        return None
+    if any(a in ("execute", "validate", "learn", "pivot") for a in tail):
+        return None
+    if not any(a in ("hypothesize", "plan") for a in tail):
+        return None
+    if "plan" in tail:
+        return "execute"
+    return "plan" if cog.get("hypothesis") else "hypothesize"
+
+
+def _snapshot_structure_desc(cog: dict, cmap: Any = None) -> list[float]:
+    """从活跃 StructureCognitiveMap / cog 提取结构描述符, 缺失填 16 维全 0.
+
+    episodic 快照里带一份结构向量, 供后续按空间检索. cmap 来源优先级:
+    显式传入 (调用方给 engine._get_active_cognitive_map()) > cog 内嵌键.
+    结构类任务 (晶体/材料) 才有活跃 map; ML/数学类目标无 map ⇒ 全 0 是正确行为
+    (该通道本就无结构信息), 不是编码器坏 —— replay_audit 的"结构编码恒零"对其是误报.
     """
     try:
         from huginn.metacog.structure_descriptor import StructureDescriptor
-        cmap = cog.get("structure_cognitive_map") or cog.get("cmap") or cog.get("structure")
+        if cmap is None:
+            cmap = cog.get("structure_cognitive_map") or cog.get("cmap") or cog.get("structure")
         if cmap is None:
             return [0.0] * 16
         vec = StructureDescriptor().encode(cmap)
         return [float(x) for x in vec]
-    except Exception:
+    except Exception:  # 防御: 特征提取失败返回零向量
         return [0.0] * 16
 
 
@@ -341,7 +377,7 @@ def metacog_check_completion(
             n_comp = hypothesis_graph.component_count()
             # 0 节点 → 0; 否则 [0,1] 标准化, 越多分量越健康
             topo = (n_comp / n_nodes) if n_nodes > 0 else 0.0
-        except Exception:
+        except Exception:  # 防御: 拓扑分计算失败取折中
             logger.debug("best-effort op failed", exc_info=True)
             topo = 0.5  # 不阻断, advisory
     else:
@@ -363,7 +399,7 @@ def metacog_check_completion(
             repro = min(1.0, len(evidence_files) / 5.0)
         else:
             repro = 0.0
-    except Exception:
+    except Exception:  # 防御: 复现分失败取折中
         logger.debug("best-effort op failed", exc_info=True)
         repro = 0.5
     if repro < 0.5:
@@ -379,7 +415,7 @@ def metacog_check_completion(
         )
         # 10+ 引用 → 1.0
         strength = min(1.0, cite_hits / 10.0)
-    except Exception:
+    except Exception:  # 防御: 强度分失败取折中
         logger.debug("best-effort op failed", exc_info=True)
         strength = 0.5
     if strength < 0.5:

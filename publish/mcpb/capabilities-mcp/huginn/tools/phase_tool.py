@@ -17,11 +17,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.autoloop.phase_gate import (
-    PhaseGateConfig,
-    PhaseGateHook,
-    get_shared_phase_gate_state,
-)
 from huginn.core_types import ToolContext, ToolResult
 from huginn.permissions import PermissionConfig
 from huginn.phases import ResearchPhase
@@ -73,6 +68,8 @@ class PhaseTool(HuginnTool):
     def __init__(self) -> None:
         # tool 自己持一个 hook 实例, 默认证据清单. reviewer_fn 不传,
         # 只做硬性证据检查; engine 那边的 hook 同样默认无 reviewer.
+        from huginn.autoloop.phase_gate import PhaseGateConfig, PhaseGateHook
+
         self._hook = PhaseGateHook(config=PhaseGateConfig())
 
     async def call(
@@ -98,6 +95,8 @@ class PhaseTool(HuginnTool):
     # ── action 实现 ──────────────────────────────────────────────
 
     def _get_current_gate(self) -> ToolResult:
+        from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+
         state = get_shared_phase_gate_state()
         last = state.last_gate()
         return ToolResult(
@@ -118,6 +117,8 @@ class PhaseTool(HuginnTool):
         )
 
     def _submit_evidence(self, input_data: PhaseToolInput) -> ToolResult:
+        from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+
         if not input_data.evidence:
             return ToolResult(
                 data=None,
@@ -136,6 +137,8 @@ class PhaseTool(HuginnTool):
         )
 
     def _request_review(self, input_data: PhaseToolInput) -> ToolResult:
+        from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+
         if not input_data.from_phase or not input_data.to_phase:
             return ToolResult(
                 data=None,
@@ -161,6 +164,8 @@ class PhaseTool(HuginnTool):
     async def _override(
         self, input_data: PhaseToolInput, context: ToolContext | None
     ) -> ToolResult:
+        from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+
         if not input_data.from_phase or not input_data.to_phase:
             return ToolResult(
                 data=None,

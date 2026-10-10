@@ -17,10 +17,14 @@ __all__ = [
     "PluginMetadata",
     "PermissionChecker",
     "PluginPermission",
+    # Cordis 式统一挂载点
+    "PluginHost",
+    "Mount",
 ]
 
 from huginn.plugins.autoresearch import AutoresearchTool
 from huginn.plugins.event_bus import EventBus
+from huginn.plugins.host import Mount, PluginHost
 from huginn.plugins.loader import PluginLoader
 from huginn.plugins.metadata import PluginMetadata
 from huginn.plugins.permissions import PermissionChecker, PluginPermission

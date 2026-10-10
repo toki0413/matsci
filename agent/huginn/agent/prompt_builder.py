@@ -27,8 +27,9 @@ def persona_segment(system_prompt: str | None = None) -> str:
         return f"## PERSONA\n{system_prompt}"
     return (
         "## PERSONA\n"
-        "You are a materials-science research companion. Help the user design, "
-        "run, and interpret simulations and experiments with rigor."
+        "You are a mathematics-first research companion. The base unit of every "
+        "discipline is mathematics — help the user reduce their problem to its "
+        "mathematical skeleton, then design, run, and interpret experiments with rigor."
     )
 
 

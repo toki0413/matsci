@@ -10,9 +10,13 @@ pytest.importorskip("openai", reason="openai SDK not installed")
 from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
+from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
 
 from huginn.config import HuginnConfig  # noqa: E402
-from huginn.models.registry import create_langchain_model  # noqa: E402
+from huginn.models.registry import (  # noqa: E402
+    _merge_system_messages,
+    create_langchain_model,
+)
 
 
 class _FakeChatOpenAI:
@@ -148,6 +152,70 @@ class TestDomesticProviders:
         custom_url = "https://private.example.com/v1"
         model = create_langchain_model(provider="zhipu", base_url=custom_url)
         assert model.kwargs["base_url"] == custom_url
+
+
+class TestSystemMessageNormalization:
+    """回归: OpenAI 兼容端点在请求前把多条/错位 system 收敛为队首单条.
+
+    internlm (intern-s2-preview) 只接受最多一条且位于首条的 system 消息,
+    命中即回 "in prompt processing error". huginn 会在会话中注入多条 system,
+    故在模型边界归一是必要的.
+    """
+
+    def test_merges_multiple_systems_to_single_leading(self):
+        msgs = [
+            HumanMessage(content="q"),
+            SystemMessage(content="STYLE"),
+            HumanMessage(content="inner"),
+            SystemMessage(content="BUDGET"),
+        ]
+        out = _merge_system_messages(msgs)
+        assert isinstance(out[0], SystemMessage)
+        assert "STYLE" in out[0].content
+        assert "BUDGET" in out[0].content
+        assert sum(isinstance(m, SystemMessage) for m in out) == 1
+        # 非 system 消息相对顺序不变
+        assert [type(m) for m in out] == [
+            SystemMessage,
+            HumanMessage,
+            HumanMessage,
+        ]
+
+    def test_single_leading_system_unchanged(self):
+        msgs = [SystemMessage(content="SYS"), HumanMessage(content="q")]
+        assert _merge_system_messages(msgs) is msgs
+
+    def test_no_system_unchanged(self):
+        msgs = [HumanMessage(content="q")]
+        assert _merge_system_messages(msgs) is msgs
+
+    def test_hoists_single_trailing_system(self):
+        msgs = [HumanMessage(content="q"), SystemMessage(content="S")]
+        out = _merge_system_messages(msgs)
+        assert isinstance(out[0], SystemMessage)
+        assert [type(m) for m in out] == [SystemMessage, HumanMessage]
+
+    def test_payload_collapses_system_messages(self, monkeypatch: pytest.MonkeyPatch):
+        # 不 mock ChatOpenAI: 走真实 _get_request_payload (不触发网络).
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        model = create_langchain_model(
+            provider="openai-compatible",
+            model_name="m",
+            base_url="http://localhost:8000/v1",
+        )
+        payload = model._get_request_payload(
+            [
+                HumanMessage(content="q"),
+                SystemMessage(content="STYLE"),
+                HumanMessage(content="inner"),
+                SystemMessage(content="BUDGET"),
+            ]
+        )
+        roles = [m["role"] for m in payload["messages"]]
+        assert roles[0] == "system"
+        assert roles.count("system") == 1
+        assert "STYLE" in payload["messages"][0]["content"]
+        assert "BUDGET" in payload["messages"][0]["content"]
 
 
 class TestConfigParsingDomestic:

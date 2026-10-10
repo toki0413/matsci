@@ -232,7 +232,7 @@ class VisualizeTool(HuginnTool):
             data = s.get("data")
             if not label or not isinstance(data, list) or not data:
                 continue
-            nums = [float(x) for x in data if isinstance(x, (int, float))]
+            nums = [float(x) for x in data if isinstance(x, int | float)]
             if not nums:
                 continue
             out[str(label)] = nums[0] if len(nums) == 1 else nums
@@ -305,11 +305,11 @@ class VisualizeTool(HuginnTool):
                 if isinstance(scores, dict):
                     series = [{"label": k, "data": [float(v)]}
                               for k, v in list(scores.items())[:10]
-                              if isinstance(v, (int, float))]
+                              if isinstance(v, int | float)]
                 elif isinstance(scores, list):
                     series = [{"label": f"item_{i}", "data": [float(v)]}
                               for i, v in enumerate(scores[:10])
-                              if isinstance(v, (int, float))]
+                              if isinstance(v, int | float)]
                 # B5: 预定义 key 没找到 → 递归扫描
                 if not series:
                     found = self._scan_numeric_fields(report, max_items=10)
@@ -367,7 +367,7 @@ class VisualizeTool(HuginnTool):
             if len(found) >= max_items:
                 return found
             label = f"{prefix}.{k}" if prefix else k
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if isinstance(v, int | float) and not isinstance(v, bool):
                 found.append((label, float(v)))
             elif isinstance(v, dict):
                 found.extend(self._scan_numeric_fields(
@@ -388,7 +388,7 @@ class VisualizeTool(HuginnTool):
                 return
             if isinstance(d, list):
                 nums = [float(x) for x in d
-                        if isinstance(x, (int, float)) and not isinstance(x, bool)]
+                        if isinstance(x, int | float) and not isinstance(x, bool)]
                 if len(nums) > len(best):
                     best = nums[:max_items]
                 for item in d:
@@ -410,9 +410,9 @@ class VisualizeTool(HuginnTool):
         for gen in timeline[:50]:
             if isinstance(gen, dict):
                 v = gen.get("best_fitness") or gen.get("fitness") or gen.get("score")
-                if isinstance(v, (int, float)):
+                if isinstance(v, int | float):
                     vals.append(float(v))
-            elif isinstance(gen, (int, float)):
+            elif isinstance(gen, int | float):
                 vals.append(float(gen))
         return vals
 
@@ -422,8 +422,8 @@ class VisualizeTool(HuginnTool):
         for c in candidates[:50]:
             if isinstance(c, dict):
                 v = c.get("objective") or c.get("score") or c.get("value")
-                if isinstance(v, (int, float)):
+                if isinstance(v, int | float):
                     pts.append(float(v))
-            elif isinstance(c, (int, float)):
+            elif isinstance(c, int | float):
                 pts.append(float(c))
         return pts

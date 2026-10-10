@@ -287,6 +287,10 @@ async def _run_mcmc_mode(
                 cached_log_p_current=cached_log_p,
                 temperature=T,
                 global_proposal_prob=_gpp,
+                # Gramian 谱预条件 (沿高可控/高信息主轴提议); 数据不足自动退化.
+                gramian_enabled=(
+                    os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1"),
+                gramian_k=int(os.environ.get("HUGINN_MCMC_GRAMIAN_K", "1")),
                 se3_enabled=se3_enabled,
                 se3_angle_sigma=se3_angle_sigma,
                 haptic_enabled=haptic_enabled,

@@ -1,0 +1,38 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes an exploration strategy ('MODE: explore') but lacks executable code as required by the 'known failure pattern' (historical failure for this scenario). The description is high-level and does not include the necessary Python implementation (import + formula + print results) to verify N_c(w) behavior. Without concrete numerical output, the prediction cannot be validated.",
+    "missing_steps": [
+      "Generate executable Python script implementing the rigid exponential family (∂ₓf = λf) and fat polynomial family",
+      "Include data normalization and held-out point separation logic in the code",
+      "Run the script to obtain numerical N_c(w) values for verification",
+      "Compare computed N_c(w) against hypothesis requirements (finite/flat for rigid family)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid exponential family (∂ₓf = λf) and fat polynomial family to test the bootstrap capacity scan. Ensure data is normalized to O(1) "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is classified as 'explore' but describes a computational validation task requiring executable code (coder mode). It lacks the necessary Python implementation to compute N_c(w), normalize data, or verify the hypothesis. Without concrete numerical output, the prediction remains unverified and the plan cannot achieve the hypothesis.",
+    "missing_steps": [
+      "Generate executable Python script implementing the rigid exponential family (∂ₓf = λf) and fat polynomial family",
+      "Include data normalization (O(1) std) and held-out set separation logic in the code",
+      "Run the script to obtain numerical N_c(w) values for verification",
+      "Compare computed N_c(w) against hypothesis requirements (finite/flat for rigid family)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (exponential family from PDE ∂_x f = λ f) and fat family (high-degree polynomial), ensuring data is normalized to O(1)"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is labeled as MODE: explore but describes a computational validation task that requires executable code (coder mode). It lacks the necessary Python implementation to compute N_c(w), normalize data, or verify the hypothesis. The previous iteration already identified that the plan is too high-level and does not include the required executable script with imports, formulas, and print results. This directly matches the known failure pattern for this scenario.",
+    "missing_steps": [
+      "Generate executable Python script implementing the rigid family (polynomial space of fixed degree p) and fat family (exponential/sinusoidal analytic class)",
+      "Include data normalization (O(1) std) and held-out point separation logic in the code",
+      "Run the script to obtain numerical N_c(w) values for verification",
+      "Compare computed N_c(w) against hypothesis requirements (finite/flat for rigid family)"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis distinguishes between rigid and fat function families based on whether a small neural network can achieve zero violation (≤1e-3) on held-out constraints. The previous iteration (iter 20"
+  }
+]

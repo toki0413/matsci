@@ -96,19 +96,34 @@ def _llm_classify(
 
 # ── 1. 维度抽取 ─────────────────────────────────────────────────────────────
 # 原 hypothesis_loop._DIMENSION_KEYWORDS 迁入, 保持确定性 fallback.
+# 域锚定 = 数学 (非某个具体学科): 任意命题先归约到数学维度, 关键词表随之换成
+# 数学词汇, 否则数学/ML 命题无关键词命中 → dimension 恒空, 聚类失效.
 _DIMENSION_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "composition": ("ca/si", "ca_si", "al2o3", "掺杂", "doping", "alloy",
-                    "composition", "ratio", "化学计量", "stoichiometry"),
-    "temperature": ("温度", "temperature", "thermal", "退火", "annealing",
-                    "t-dependent", "phase transition", "相变"),
-    "defect": ("缺陷", "defect", "vacancy", "空位", "dislocation",
-               "位错", "interface", "界面", "itz"),
-    "structure": ("结构", "structure", "crystal", "晶体", "lattice",
-                  "晶格", "symmetry", "对称", "phase", "相"),
-    "transport": ("输运", "diffusion", "扩散", "conductivity",
-                  "电导", "mobility", "迁移率", "percolation"),
+    "structure": ("structure", "algebra", "group", "symmetry", "invariant",
+                  "结构", "代数", "群", "对称", "不变量"),
+    "geometry": ("manifold", "curvature", "topology", "dimension", "metric",
+                 "流形", "曲率", "拓扑", "维数", "几何"),
+    "dynamics": ("differential equation", "ode", "pde", "variational",
+                 "conservation", "flow", "微分方程", "变分", "守恒", "动力学"),
+    "measure": ("probability", "distribution", "statistics", "stochastic",
+                "measure", "概率", "分布", "统计", "随机", "测度"),
+    "optimization": ("optimization", "objective", "convex", "landscape",
+                     "gradient", "minimi", "优化", "凸", "梯度", "极小"),
+    "computation": ("complexity", "information", "entropy", "approximation",
+                    "algorithm", "复杂度", "信息", "熵", "近似", "算法"),
+    # 材料/热力学维度: 与数学标签并存. 旧材料命题 (掺杂/带隙/温度) 曾靠这些关键词
+    # 命中; 数学锚定改造时整表替换, 漏同步 → dimension 恒空、聚类失效, 且违背本模块
+    # docstring "降级回关键词匹配, 行为向后兼容 (现有测试零改动)" 的承诺. 追加在末尾,
+    # 不改数学标签的命中优先级.
+    "composition": ("composition", "doping", "dopant", "band gap", "alloy",
+                    "掺杂", "带隙", "成分", "固溶", "合金"),
+    "temperature": ("temperature", "thermal", "annealing",
+                    "温度", "退火", "热力学"),
 }
-_DIMENSION_LABELS = ("composition", "temperature", "defect", "structure", "transport")
+_DIMENSION_LABELS = (
+    "structure", "geometry", "dynamics", "measure", "optimization", "computation",
+    "composition", "temperature",
+)
 
 
 def _fallback_dimension(statement: str) -> str:
@@ -131,10 +146,11 @@ def classify_dimension(statement: str) -> str:
         return _fallback_dimension(statement)
 
     prompt = (
-        "一个材料/物理/化学研究假设, 判断它主要落在哪个核心维度, "
-        "从以下标签选一个, 只输出标签本身, 不要解释:\n"
-        "composition | temperature | defect | structure | transport\n\n"
-        f"假设: {statement}\n\n标签:"
+        "一个研究假设 (任何学科: 自然科学/社会科学/工程). 数学是各学科的基本"
+        "单元, 判断它主要归约到哪个数学维度, 从以下标签选一个, 只输出标签本身, "
+        "不要解释:\n"
+        + " | ".join(_DIMENSION_LABELS)
+        + f"\n\n假设: {statement}\n\n标签:"
     )
     return _llm_classify(prompt, _DIMENSION_LABELS, fb)
 

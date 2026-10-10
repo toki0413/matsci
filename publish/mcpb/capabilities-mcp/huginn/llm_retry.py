@@ -50,6 +50,7 @@ __all__ = [
     "FallbackTriggeredError",
     "with_retry",
     "call_with_fallback",
+    "is_transient_error",
     "parse_context_overflow",
     "persistent_retry",
 ]
@@ -169,12 +170,28 @@ def parse_context_overflow(error: BaseException) -> int | None:
 
 # ---- 异常分类 ---------------------------------------------------------------
 
+# 部分 provider 不用 429, 而是把限流包成 400 + 自定义错误码/中文文案
+# (观测到的: HTTP 400 + code=-20048 + "请求过于频繁"). 只按 status_code 判会把
+# 这类**瞬时**错误误判成不可重试的坏请求 → autoloop 直接空转 (run74 实测).
+_RATE_LIMIT_KEYWORDS = (
+    "rate limit", "ratelimit", "rate_limit", "too many requests",
+    "too frequent", "requests are too frequent", "请求过于频繁", "速率限制", "限流",
+)
+# 已知用非 429 状态码表达限流的 provider 错误码.
+_RATE_LIMIT_CODES = ("-20048",)
+
+
 def _is_rate_limit(exc: BaseException) -> bool:
-    """429 限流."""
+    """429 限流 (含 provider 用 400/自定义码包装的限流)."""
     if _get_status_code(exc) == 429:
         return True
     name = type(exc).__name__.lower()
-    return "ratelimit" in name or "rate_limit" in name
+    if "ratelimit" in name or "rate_limit" in name:
+        return True
+    if str(getattr(exc, "code", "") or "") in _RATE_LIMIT_CODES:
+        return True
+    text = str(exc).lower()
+    return any(kw in text for kw in _RATE_LIMIT_KEYWORDS)
 
 
 def _is_overloaded(exc: BaseException) -> bool:
@@ -200,6 +217,20 @@ def _is_transient_network(exc: BaseException) -> bool:
     return any(
         kw in name
         for kw in ("timeout", "connection", "network", "reset", "brokenpipe")
+    )
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    """是否为**可重试的瞬时**错误 (限流/过载/网络抖动/上下文溢出).
+
+    供上层区分"这次没产出是因为 LLM 暂时不可用"和"确实没想法": 前者应原地
+    重试, 后者才该换方向. 与 ``with_retry`` 的重试判据同源, 避免两处口径漂移.
+    """
+    return bool(
+        _is_rate_limit(exc)
+        or _is_overloaded(exc)
+        or _is_transient_network(exc)
+        or _is_context_overflow(exc)
     )
 
 

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from huginn.memory.anchor import anchored_ratio, has_anchor
 from huginn.rag.vector_store import VectorStore
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
@@ -78,6 +79,14 @@ def _entry_has_reasoning(row: dict) -> bool:
     else:
         return False
     return "has_reasoning" in tag_list
+
+
+def _entry_has_anchor(row: dict) -> bool:
+    """条目的可验证锚: 结构化 ``source`` 前缀或 ``run_id``. 不解析 content.
+
+    定义见 huginn/memory/anchor.py —— 只认结构化来源, 自由文本一律无锚.
+    """
+    return has_anchor(row)
 
 
 MATERIAL_CATEGORIES = {
@@ -1076,7 +1085,7 @@ class LongTermMemory:
             and self._hils_enabled()
             and len(results) > top_k
         ):
-            return self._hils_attention(query, results, top_k)
+            return self._grounding_prior(self._hils_attention(query, results, top_k))
 
         # P1-1 fallback: Ising 能量函数 re-rank (HILS off 时走这里)
         if (
@@ -1085,14 +1094,28 @@ class LongTermMemory:
             and self._ising_rerank_enabled()
             and len(results) > top_k
         ):
-            return self._ising_rerank(query, results, top_k)
+            return self._grounding_prior(self._ising_rerank(query, results, top_k))
 
         # has_reasoning 优先: 在原 FTS5+vector 排序上叠加 stable sort, 有推理的条目
         # 冒到前面. ponytail: 不改 SQL/HiLS/Ising 主逻辑, 只在默认返回路径 re-rank
         # (retrieve 不暴露数值 score, 用 stable sort 等价表达 +0.1 bonus).
         # 升级路径: SQL CASE WHEN has_reasoning THEN -0.1 ELSE 0 END 加到 ORDER BY.
         results.sort(key=lambda r: 0 if _entry_has_reasoning(r) else 1)
-        return results[:top_k]
+        return self._grounding_prior(results[:top_k])
+
+    @staticmethod
+    def _grounding_prior(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """落地锚先验 — 在既有排序**窗口内**把带可验证锚的条目稳定前移.
+
+        文献检索/记忆召回普遍按语义相似度排, 但"语义像"不等于"能落地". 这里把带
+        可回查来源 (run/session/tool/distiller/exec/measure/cite) 的条目在窗口内前移,
+        让可复查的知识优先进入上下文 —— 这是跨场景迁移的载体.
+
+        ponytail: 复用 stable sort (不引数值分, 不改主排序链路). 只调窗口内相对次序,
+        不跨窗口捞人; 无锚条目相对次序不变. 诚实边界: 锚只认结构化 source/run_id,
+        自由文本不算 —— 全窗无锚时该先验严格 no-op (可观测, 不假装有效).
+        """
+        return sorted(ranked, key=lambda r: 0 if _entry_has_anchor(r) else 1)
 
     def predict_via_analogy(
         self,
@@ -1390,6 +1413,41 @@ class LongTermMemory:
             rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
+    def count_matching(
+        self,
+        category: str | None = None,
+        tier: str | None = None,
+        alive_only: bool = True,
+        user_id: str | None = None,
+    ) -> int:
+        """与 ``list_all`` / ``list_by_category`` 同过滤条件的**去重内容**计数.
+
+        口径对齐 ``/memory`` 路由的 ``_dedupe_by_content`` (按 content 去重并跳过
+        空串), 故前端 ``entries.length < total`` 才能正确判定"还有更多" —— 响应体
+        的 total 与 entries 必须同口径, 否则会恒真/恒假. 单条 SQL, 不受 limit 截断.
+        """
+        if alive_only:
+            alive_where, alive_params = self._where_alive()
+        else:
+            alive_where, alive_params = "1=1", []
+        sql = (
+            "SELECT COUNT(DISTINCT TRIM(COALESCE(content, ''))) AS c "
+            f"FROM memories AS m WHERE {alive_where} AND TRIM(COALESCE(content, '')) != ''"
+        )
+        params: list[Any] = [*alive_params]
+        if category is not None:
+            sql += " AND category = ?"
+            params.append(category)
+        if tier is not None:
+            sql += " AND tier = ?"
+            params.append(tier)
+        if user_id is not None:
+            sql += " AND m.user_id = ?"
+            params.append(user_id)
+        with self._connect() as conn:
+            row = conn.execute(sql, tuple(params)).fetchone()
+        return int(row["c"]) if row else 0
+
     def count_alive_by_tier(self) -> dict[str, int]:
         """Single SQL query for tier counts — replaces list_all + 3x traversal."""
         alive_where, alive_params = self._where_alive()
@@ -1403,6 +1461,20 @@ class LongTermMemory:
             counts[r["tier"]] = r["c"]
         counts["total"] = sum(counts.values())
         return counts
+
+    def anchored_ratio(self) -> float:
+        """存活记忆中带可验证锚 (结构化 source 前缀 / run_id) 的占比 (0-1).
+
+        观测面: 让"知识是否落地"可测. 只读, 不改排序、不写库. 口径见
+        huginn/memory/anchor.py —— 自由文本不计, 故比值本身可能偏低, 那是结论.
+        """
+        alive_where, alive_params = self._where_alive()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT source, run_id FROM memories AS m WHERE {alive_where}",
+                tuple(alive_params),
+            ).fetchall()
+        return anchored_ratio([dict(r) for r in rows])
 
     def list_long_tier(self, limit: int = 200) -> list[dict[str, Any]]:
         """Fetch only long-tier entries, sorted by importance desc."""

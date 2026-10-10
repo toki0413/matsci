@@ -1,0 +1,78 @@
+{
+  "config": {
+    "kind": "hi",
+    "widths": [
+      64
+    ],
+    "ns": [
+      2,
+      4,
+      8
+    ],
+    "seeds": 2,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 3,
+    "tag": "loop05_s2"
+  },
+  "anchor": "u''=-(8pi)^2 cos(8pi x), u*=cos(8pi x)+0.3x-0.2 (2 DOF, 高频表达瓶颈对照)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 64,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 77827.92026971048,
+      "v_ho_med_all": 27651152.849046145,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 52254.48506846705,
+      "v_ho_med_all": 15518200.60790835,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 8,
+      "pass_frac": 0.0,
+      "v_tr_med": 0.18280017849638092,
+      "v_ho_med_all": 73605.09252690988,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    }
+  ],
+  "N_c": {
+    "all": {
+      "64": null
+    },
+    "good": {
+      "64": null
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    }
+  },
+  "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+  "elapsed_s": 856.2253518104553
+}

@@ -232,8 +232,8 @@ export default function StructureViewer({ API_BASE: _API_BASE }: { API_BASE: str
     if (!rawInput.trim()) return;
     setInfo("Analyzing via backend…");
     try {
-      const data = await api.post<{ result?: unknown }>('/tools/structure_tool', { action: "analyze", content: rawInput, format: inputFormat });
-      if (data.result) setInfo(typeof data.result === "string" ? data.result : JSON.stringify(data.result, null, 2));
+      const data = await api.post<{ success?: boolean; data?: unknown }>('/tools/structure_tool', { action: "analyze", content: rawInput, format: inputFormat });
+      if (data.data) setInfo(typeof data.data === "string" ? data.data : JSON.stringify(data.data, null, 2));
     } catch (e: any) {
       setInfo(`Backend error: ${e.message}`);
     }

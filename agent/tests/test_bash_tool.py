@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import time
 import types
 
 import pytest
@@ -465,3 +467,60 @@ class _BoomSandbox(bt.SandboxExecutor):
 
     def run(self, *a, **k):
         raise self._exc
+
+
+# ── 超时孤儿泄漏回归 (run84) ─────────────────────────────────────────
+class TestPersistentTerminalProcessGroup:
+    """session kill 必须整组回收孙进程, 不留 orphan.
+
+    旧实现只 ``terminate()`` 直接子进程; ``sh -c '...; python3 heavy.py'`` 派生的
+    孙进程 orphan 到 init (PPID→1) 后继续全速跑 (run84 实测遗留多个 PPID=1 的
+    python 孤儿). 修法与 ``security/sandbox.py::_kill_process_tree`` 一致: 子进程
+    自立新会话/进程组, kill 时整组回收.
+    """
+
+    pytestmark = pytest.mark.skipif(
+        os.name != "posix", reason="process-group reaping is posix-only"
+    )
+
+    def test_subprocess_handle_starts_new_session(self):
+        import huginn.tools.persistent_terminal as pt
+
+        h = pt._SubprocessHandle(
+            [sys.executable, "-c", "import time; time.sleep(30)"], None
+        )
+        try:
+            assert h._own_group is True
+            # 自立新会话 → pgid == pid (而非继承 agent 自身的进程组)
+            assert os.getpgid(h.proc.pid) == h.proc.pid
+        finally:
+            h.kill()
+
+    def test_kill_reaps_grandchild(self):
+        import huginn.tools.persistent_terminal as pt
+
+        if not os.path.exists("/bin/sh"):
+            pytest.skip("/bin/sh unavailable")
+        h = pt._SubprocessHandle(["/bin/sh", "-c", "sleep 300"], None)
+        sh_pid = h.proc.pid
+        try:
+            out = subprocess.run(
+                ["pgrep", "-P", str(sh_pid)], capture_output=True, text=True
+            ).stdout.split()
+            grand = int(out[0])
+        except (IndexError, ValueError, FileNotFoundError):
+            h.kill()
+            pytest.skip("cannot locate grandchild pid (pgrep unavailable)")
+        assert os.path.exists(f"/proc/{grand}")
+        h.kill()
+        time.sleep(0.3)
+        assert not os.path.exists(f"/proc/{grand}"), "grandchild orphaned after kill"
+        assert not os.path.exists(f"/proc/{sh_pid}"), "direct child survived kill"
+
+    def test_kill_process_group_refuses_own_group(self):
+        from huginn.utils.process import kill_process_group
+
+        # 安全闸: 传入自身 pgid 时绝不整组杀 (否则会连 agent 自身一起杀).
+        assert kill_process_group(os.getpgid(0), own_group=True) is False
+        # own_group=False → 不整组, 由调用方回退默认杀法.
+        assert kill_process_group(12345, own_group=False) is False

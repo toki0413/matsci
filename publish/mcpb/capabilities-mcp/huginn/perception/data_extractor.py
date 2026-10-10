@@ -120,7 +120,7 @@ class FigureDataExtractor:
         for curve in curves:
             curve_pts = curve.get("points", [])
             for pt in curve_pts:
-                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                if isinstance(pt, list | tuple) and len(pt) >= 2:
                     points.append({
                         "x": float(pt[0]),
                         "y": float(pt[1]),

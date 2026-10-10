@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "dft",
+    "reason": "The plan uses a machine learning capacity scan (neural network fitting) to test a mathematical hypothesis about ODE solutions. This approach is fundamentally mismatched with the hypothesis, which concerns the structural properties of functions (affine vs. high-oscillatory Gaussian solutions to ODEs) and their reducibility to low-dimensional manifolds. A neural network capacity test measures learnability, not ODE structure or manifold reducibility. Furthermore, the 'fat' family described as 'high-oscillatory Gaussian' risks violating the 'no i.i.d. noise' failure mode if the oscillation makes it effectively non-learnable, collapsing the comparison to 'learnable vs. unlearnable' rather than 'rigid vs. fat' as intended.",
+    "missing_steps": [
+      "Reformulate hypothesis testing to directly analyze ODE structure using symbolic PDE tools (pde_classify, pde_separation, functional_derivative) as suggested in the hypothesis's own 'pro' section.",
+      "Define the 'fat family' explicitly as solutions to a higher-order ODE with variable coefficients, ensuring it is x-dependent and not noise-like.",
+      "Verify that the fat family's ODE cannot be reduced to a lower-order form via coordinate transformation (using symbolic methods), which is the core falsifiability condition.",
+      "Replace the neural network capacity scan with symbolic/analytical verification of the ODE structures and their solution spaces."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Execute capacity_scan workflow for both rigid and fat families. The family function will implement affine (rigid) and high-oscillatory Gaussian (fat) ODE solutions as desc"
+  }
+]

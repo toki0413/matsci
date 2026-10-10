@@ -43,6 +43,10 @@ class PlanStep:
         step can start. The orchestrator's existing dependency resolver
         handles ordering.
     agent_id: which agent profile runs this step. Defaults to "lead".
+    target_files: repo-relative paths/globs this step intends to modify
+        (意图口径). Feeds ``scope_authority.compute_intent_ratio`` for the
+        anti-hacking audit: a change outside the declared set is out-of-scope.
+        Empty means "unknown" — the intent口径 then no-ops (never punishes).
     """
 
     id: str
@@ -54,6 +58,7 @@ class PlanStep:
     status: str = "pending"  # pending | running | done | error | skipped
     result: str = ""
     error: str | None = None
+    target_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -70,6 +75,7 @@ class PlanStep:
             status=data.get("status", "pending"),
             result=data.get("result", ""),
             error=data.get("error"),
+            target_files=list(data.get("target_files", []) or []),
         )
 
 

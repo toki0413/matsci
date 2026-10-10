@@ -38,10 +38,9 @@ class FeatureFlags:
         "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
         "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
         # v23 Round 9: 两个 router 之前是 raw env var (HUGINN_CONTEXT_ROUTER /
-        # HUGINN_TASK_TOOL_ROUTER), 极端模式 setdefault "1". 现纳入 FeatureFlags
-        # 统一接管, 默认关 (普通模式不开), 极端模式通过 FeatureFlags.enable() 开.
-        # 注意: 模块代码仍读 env var, FeatureFlags 这里只是登记, 不直接控制.
-        # 升级路径: 模块代码改为读 FeatureFlags 后, 删除 env var setdefault.
+        # HUGINN_TASK_TOOL_ROUTER). 现模块只读 FeatureFlags (context_builder /
+        # agent.core / streaming), 旧变量名经 _ENV_ALIASES 仍生效: 极端模式的
+        # setdefault 旧变量名在 FeatureFlags 构造时读入 alias, 模块读 flag. 默认关.
         "context_router": False,       # P3 信息路径多样性稀疏化 (context_builder)
         # 设备端/小模型懒加载: 默认常驻. 按 task 路由最小工具子集, 无命中给
         # core 基础子集而非全量 132 工具 (省 token/attention). 可
@@ -112,6 +111,16 @@ class FeatureFlags:
         # 默认关 (与 harness 实验栅栏同款): 显式开启 + 有 model provider 才生效,
         # 无 model / 异常 / 输出非法标签时优雅降级回关键词匹配, 行为向后兼容.
         "hypothesis_llm_semantic": False,  # LLM 语义判定 (huginn/autoloop/hypothesis_semantic.py)
+        # ASD-STE100 受控语言规范 (huginn/plugins/asd_ste100). 默认开: 向系统
+        # 提示注入"面向 agent 的文本"纪律 (工具描述/错误信息/状态报告/agent 间
+        # 指令), 不约束科研正文. 关掉即不注入; 确定性 ste_lint 工具仍可用.
+        # 档位另由 HUGINN_STE_MODE (agents|strict|flavored|off) 控制.
+        "asd_ste100": True,  # ASD-STE100 受控语言纪律 (默认开)
+        # 通信契约审计 (huginn/comms/contract.py): 把 ASD-STE100 的"一词一义/
+        # 信封完备/载荷契约"纪律扩到**结构化通信** (事件总线/工作流/agent 间)。
+        # 默认开且**只报告不拦截** (advisory, fail-open): EventBus.publish 每次
+        # 检查并按 rule 累积计数 + 首次 hard 告警, 绝不因契约违规丢事件.
+        "comms_contract": True,  # 通信契约审计 (默认开, 只报告)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
@@ -125,7 +134,20 @@ class FeatureFlags:
         # privacy_local_only / privacy_redact 时整条链路短路). 消费点读 _flag_enabled.
         "jev_enabled": False,          # JEV 总闸 (外部判断能力总开关)
         "jev_tool_router": False,      # 未知域工具子集用 JEV 并行 Noul 宽松补充 (advisory)
-        "jev_guardrail": False,        # 工具调用放行初筛 (deny/ask/allow, advisory)
+        "jev_guardrail": False,      # 工具调用放行初筛 (deny/ask/allow, advisory)
+        # ---- ARTEX 借鉴: 假设图单写者 frontier 纪律 + 空即停 (默认全关) ----
+        # frontier_claim: execute 优先领用已有的"可执行前沿"方向 (前置证据满足),
+        #   而非每轮凭空生成新假设. 领用不改 status, 只标记 claimed_by.
+        "frontier_claim": False,          # 单写者领用前沿 (HUGINN_FRONTIER_CLAIM)
+        "frontier_single_writer_strict": False,  # 越权追加方向时拒绝 (默认只观测)
+        "frontier_empty_stop": False,     # 可执行前沿空 → 主终止 (预算降为安全上限)
+        # ---- VISTA 借鉴: 无损观测记忆 + 模型侧主动检索 (默认全关) ----
+        # 两个 mode 把"已有的 capacity"变成模型可调动作 (VISTA 的 inspect/read_pixels):
+        #   trace_inspect    — 把 engine.search_execution_traces 暴露成模型可选 mode;
+        #   visual_frame_memory — 每次 execute 的视觉帧原样落盘 + frame_inspect 回看/取像素.
+        # 默认关: 关时计划提示词不列这两个 mode, 模型不会产出 → 行为与改动前完全一致.
+        "trace_inspect": False,        # 过程级 trace 检索 mode (HUGINN_TRACE_INSPECT)
+        "visual_frame_memory": False,  # 无损帧记忆 + frame_inspect/read_pixels (HUGINN_VISUAL_FRAME_MEMORY)
     }
 
     # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
@@ -158,6 +180,11 @@ class FeatureFlags:
         "HUGINN_HILS_ATTENTION": "hils_attention",
         "HUGINN_FTS_AUTO_REBUILD": "fts_auto_rebuild",
         "HUGINN_CRDT_MERGE": "crdt_merge",
+        "HUGINN_FRONTIER_CLAIM": "frontier_claim",
+        "HUGINN_FRONTIER_SINGLE_WRITER_STRICT": "frontier_single_writer_strict",
+        "HUGINN_FRONTIER_EMPTY_STOP": "frontier_empty_stop",
+        "HUGINN_TRACE_INSPECT": "trace_inspect",
+        "HUGINN_VISUAL_FRAME_MEMORY": "visual_frame_memory",
     }
 
     # 给 list_flags 用的功能描述
@@ -208,12 +235,19 @@ class FeatureFlags:
         "curiosity_hint": "好奇心提示 (HUGINN_CURIOSITY_HINT)",
         "privacy_block_on_secrets": "检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)",
         "hypothesis_llm_semantic": "假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级)",
+        "asd_ste100": "ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档)",
+        "comms_contract": "通信契约审计: 事件总线/工作流/agent 间消息的确定性契约检查 (默认开, 只报告不拦截)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
         "jev_enabled": "JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束)",
         "jev_tool_router": "未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory)",
         "jev_guardrail": "工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory)",
+        "frontier_claim": "假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关)",
+        "frontier_single_writer_strict": "假设图单写者纪律: 非 hypothesize/branch 阶段追加方向时拒绝 (默认关, 只观测计数)",
+        "frontier_empty_stop": "可执行前沿空即停: 无'未执行且前置证据满足'的方向 → 主终止, 预算降为安全上限 (ARTEX 借鉴, 默认关)",
+        "trace_inspect": "模型侧过程级 trace 检索 mode: 按关键词/tool/intent recall 过往执行 (VISTA inspect 借鉴, 默认关)",
+        "visual_frame_memory": "无损观测记忆: 每次 execute 的视觉帧原样落盘 + frame_inspect 区域回看/read_pixels (VISTA 借鉴, 默认关)",
     }
 
     _singleton_lock = threading.Lock()

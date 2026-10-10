@@ -1,0 +1,69 @@
+{
+  "goals": [
+    {
+      "id": "goal_c216735e",
+      "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "sub_goals": [],
+      "iteration": 2,
+      "status": "expired",
+      "created_at": "2026-10-06T04:28:23.234823+00:00",
+      "updated_at": "2026-10-06T04:35:42.421777+00:00",
+      "session_id": "",
+      "metadata": {
+        "expired_reason": "wall_clock"
+      },
+      "unknowns": [
+        {
+          "id": "unk_1df44646",
+          "text": "The definition of \"rigidity\" relies on N_c(w) being small and non-growing with w, but this may not capture true solution space rigidity if the network architecture induces bias that masks underlying flexibility (e.g., width overparameterization hiding structural redundancy).",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T04:28:25.957991+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_c6cf43d7",
+          "text": "Achieving \"zero violation\" (max abs error ≤ 1e-3) on out-of-sample constraints may be numerically unstable due to ill-conditioned optimization landscapes in wide networks or vanishing gradients, leading to false negatives in rigidity detection.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T04:28:25.959361+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_bb845d4b",
+          "text": "No ground-truth analytic solutions are provided for validation; without known exact functions satisfying the constraints, we cannot verify whether the network is truly learning a rigid solution or merely fitting noise within tolerance.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T04:28:25.960139+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_2e0aae87",
+          "text": "For very large w, the required N_c might exceed practical widths before convergence, making \"unreachable\" indistinguishable from \"too narrow to train\"—confusing computational limits with theoretical fatness.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T04:28:25.962332+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_ca33ea1d",
+          "text": "The assumption that minimum width N_c correlates with solution space dimension ignores potential symmetries or reparameterizations in the network that could allow multiple equivalent configurations without increasing effective degrees of freedom.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-06T04:28:25.964016+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        }
+      ],
+      "unknowns_discovered": 5,
+      "unknowns_resolved": 0,
+      "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+      "success_criteria": [],
+      "max_iterations": 30,
+      "completed_at": null,
+      "completion_condition": null,
+      "wall_clock_budget_seconds": 300.0,
+      "started_at": "2026-10-06T04:28:23.235688+00:00",
+      "origin": "user"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ working directories, and enforcing timeouts/output limits.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
@@ -16,6 +17,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from huginn.utils.common import hash_text
+from huginn.utils.process import (
+    kill_process_group,
+    new_group_popen_kwargs,
+    track_live_child,
+    untrack_live_child,
+)
 
 if TYPE_CHECKING:
     from huginn.security.docker_sandbox import DockerSandboxExecutor
@@ -34,6 +41,38 @@ def _powershell_enabled_by_default() -> bool:
     if val is not None and val.strip():
         return val.strip().lower() in ("1", "true", "yes")
     return os.name == "nt"
+
+
+def _net_isolation_enabled_by_default() -> bool:
+    """P1 网络隔离开关默认值: 显式 env > feature flag > 关.
+
+    ``HUGINN_SANDBOX_ISOLATE_NETWORK`` (1/true/yes/on) 显式覆盖;
+    未设置时读 feature flag ``sandbox_net_isolation`` (默认 False, 零回归).
+    放在模块级以便在 dataclass ``default_factory`` 中复用.
+    """
+    val = os.environ.get("HUGINN_SANDBOX_ISOLATE_NETWORK")
+    if val is not None and val.strip():
+        return val.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        return FeatureFlags.shared().is_enabled("sandbox_net_isolation")
+    except Exception:  # 防御: flag 层异常不影响沙箱构造
+        logger.debug("net-isolation default: flag read failed", exc_info=True)
+        return False
+
+
+def _env_int(name: str) -> int | None:
+    """读一个可选的正整数环境变量; 未设/非法 → None (即不设该限制)."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        val = int(float(raw.strip()))
+    except ValueError:
+        logger.warning("ignoring non-numeric %s=%r", name, raw)
+        return None
+    return val if val > 0 else None
 
 
 class SandboxError(Exception):
@@ -132,6 +171,26 @@ class SandboxConfig:
         default_factory=_powershell_enabled_by_default,
     )
 
+    # P1: 内核级网络隔离 (Landlock ABI >= 4, Linux 6.7+). 开后在已做内核
+    # confinement 的路径上把子进程的 TCP bind/connect 全部拒掉 (Landlock 网络
+    # 规则是 allow 规则, 处理了这些位又不加规则 = 全拒). 只收紧网络, 不锁文件系统.
+    # 默认关 (零回归); HUGINN_SANDBOX_ISOLATE_NETWORK=1 或 feature flag
+    # sandbox_net_isolation 可开. 内核不支持时优雅降级 (只做 FS 隔离).
+    isolate_network: bool = field(default_factory=_net_isolation_enabled_by_default)
+
+    # P1: 本地资源限制 (POSIX setrlimit). 在 fork 出的子进程 preexec 里设, 不污染
+    # 父进程 (不像 RLIMIT_AS 那样在父进程设了再恢复, 多线程下无竞态).
+    # None = 不设 (零回归). 可用环境变量给默认值.
+    max_cpu_seconds: int | None = field(
+        default_factory=lambda: _env_int("HUGINN_SANDBOX_MAX_CPU_SECONDS")
+    )
+    max_file_bytes: int | None = field(
+        default_factory=lambda: _env_int("HUGINN_SANDBOX_MAX_FILE_BYTES")
+    )
+    max_processes: int | None = field(
+        default_factory=lambda: _env_int("HUGINN_SANDBOX_MAX_PROCESSES")
+    )
+
     def __post_init__(self) -> None:
         # 开关开 → 把 PowerShell 可执行文件并入白名单; 关 → 从白名单剔除.
         # 保持默认 posix 白名单不含 pwsh (除非显式开关打开), 不破坏既有安全假设.
@@ -161,6 +220,26 @@ class SandboxResult:
     timed_out: bool = False  # True 当命令因超时被终止 (returncode 仍为 -1)
     # T3: 结构化错误分类, 供下游按类决策 (重试/追踪/降级). 默认 NONE 保持兼容.
     error_kind: str = "none"
+
+
+def _kill_process_tree(proc: subprocess.Popen, *, own_group: bool) -> None:
+    """终止子进程**及其同组的所有后代** — 修超时孤儿泄漏.
+
+    背景: ``subprocess.run(timeout=...)`` 超时时 CPython 只 ``kill()`` **直接子
+    进程**. 若命令是 ``sh -c '...; python3 heavy.py'``, 真正跑计算的孙进程会被
+    orphan 到 init (PPID→1) 后**继续全速运行** (实测 run83 遗留 8 个 python 孤儿,
+    最早烧 37min CPU, 并让主进程收尾多等 300s join 线程).
+
+    修法: 子进程自立新会话/进程组执行 (posix ``start_new_session`` / win32
+    ``CREATE_NEW_PROCESS_GROUP``), 超时时整组回收. ``own_group=False`` (调用方显式
+    要求共用进程组) 时退回只杀直接子进程 —— 绝不 killpg 一个可能含 agent 自身的组.
+    整组回收交由 :func:`huginn.utils.process.kill_process_group` 统一实现 (sandbox /
+    PersistentTerminal / 外部计算工具共用一套语义). 全部尽力而为, 失败不影响主流程
+    (真正的回收兜底是随后的 ``communicate()``).
+    """
+    if not kill_process_group(proc.pid, own_group=own_group):
+        with contextlib.suppress(Exception):
+            proc.kill()
 
 
 class SandboxExecutor:
@@ -370,36 +449,51 @@ class SandboxExecutor:
         # Drop scheduler-only hints so they do not reach subprocess.run.
         run_kwargs = {k: v for k, v in kwargs.items() if k not in self._REMOTE_KWARGS}
 
-        # T-BCSE-07: Landlock confinement (Linux). When work dirs are scoped, confine
-        # the child so it can only read/write inside allowed_work_dirs + a small ro
-        # set; everything else is denied by the kernel. Graceful degradation: if the
-        # kernel has no Landlock, preexec_fn is None and we keep the soft sandbox.
+        # T-BCSE-07 / P1: 内核级 confinement (Linux). 把 Landlock (FS 路径规则 +
+        # 可选网络隔离) 与子进程 rlimit 合并成**单个** preexec_fn 注入, 只在 posix
+        # 且确有要收紧的东西时构造, 否则完全不注入 (零回归). 调用方已显式传
+        # preexec_fn 时尊重其注入, 不覆盖.
+        _rlimits = _build_rlimits(cfg)
+        _want_confinement = bool(
+            cfg.isolate_network
+            or _rlimits
+            or (cfg.strict_work_dir and cfg.allowed_work_dirs)
+        )
         if (
             os.name == "posix"
-            and cfg.strict_work_dir
-            and cfg.allowed_work_dirs
+            and _want_confinement
             and "preexec_fn" not in run_kwargs
         ):
             try:
                 from huginn.security.landlock import make_preexec_fn
 
-                # ro 集合含 (a) 工作目录 (只读读/执行) + (b) 白名单可执行文件自身
-                # 所在目录, 否则隔离后子进程读不到二进制本身而无法 exec (正确性缺陷).
-                # rw 全量放行 allowed_work_dirs.
-                rw_dirs = [str(p) for p in cfg.allowed_work_dirs]
-                ro_dirs = [str(valid_cwd)] if valid_cwd else []
-                try:
-                    exe_abs = self._resolve_executable(cmd)
-                    exe_dir = str(Path(exe_abs).resolve().parent)
-                    if exe_dir not in ro_dirs:
-                        ro_dirs.append(exe_dir)
-                except Exception:
-                    logger.debug(
-                        "landlock: exe dir resolution failed, confining cwd only",
-                        exc_info=True,
-                    )
+                # FS 隔离只在 scoped 模式 (strict_work_dir + allowed_work_dirs) 下
+                # 生效; net-only / rlimit-only 时传空 path 集 — 不锁文件系统, 只收紧
+                # 网络与资源. 这也避免"只开网络隔离"把子进程的文件访问一并封死.
+                _scoped = bool(cfg.strict_work_dir and cfg.allowed_work_dirs)
+                rw_dirs = [str(p) for p in cfg.allowed_work_dirs] if _scoped else []
+                # ro 集合含 (a) 工作目录 (只读/执行) + (b) 白名单可执行文件自身所在
+                # 目录, 否则隔离后子进程读不到二进制本身而无法 exec (正确性缺陷).
+                ro_dirs = [str(valid_cwd)] if (valid_cwd and _scoped) else []
+                if _scoped:
+                    try:
+                        exe_abs = self._resolve_executable(cmd)
+                        exe_dir = str(Path(exe_abs).resolve().parent)
+                        if exe_dir not in ro_dirs:
+                            ro_dirs.append(exe_dir)
+                    except Exception:
+                        logger.debug(
+                            "landlock: exe dir resolution failed, confining cwd only",
+                            exc_info=True,
+                        )
                 ro_dirs = [d for d in ro_dirs if d]
-                preexec = make_preexec_fn(ro_dirs, rw_dirs, required=False)
+                preexec = make_preexec_fn(
+                    ro_dirs,
+                    rw_dirs,
+                    required=False,
+                    net_isolate=cfg.isolate_network,
+                    rlimits=_rlimits,
+                )
                 if preexec is not None:
                     run_kwargs["preexec_fn"] = preexec
             except Exception:
@@ -494,30 +588,58 @@ class SandboxExecutor:
                     exc_info=True,
                 )
 
+        # P0 修复 (超时孤儿泄漏): 让子进程自立新会话/进程组, 超时时由
+        # ``_kill_process_tree`` 整组回收 —— 连 ``sh -c '...; python3 heavy.py'``
+        # 派生的孙进程一并杀掉 (旧实现只杀直接子进程 = 那层 sh, 孙进程 orphan 后
+        # 继续跑). 调用方显式指定进程组行为时尊重之, 仅在其确实自立新组时才整组杀.
+        _popen_kwargs = dict(run_kwargs)
+        if "start_new_session" in _popen_kwargs or "creationflags" in _popen_kwargs:
+            _own_group = bool(_popen_kwargs.get("start_new_session")) or bool(
+                _popen_kwargs.get("creationflags", 0)
+                & getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+        else:
+            _default_kwargs, _own_group = new_group_popen_kwargs()
+            _popen_kwargs.update(_default_kwargs)
+
+        _tracked_pid: int | None = None
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(valid_cwd) if valid_cwd else None,
-                capture_output=capture_output,
+                stdout=subprocess.PIPE if capture_output else None,
+                stderr=subprocess.PIPE if capture_output else None,
                 text=text,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
                 env=env,
                 shell=False,
-                **run_kwargs,
+                **_popen_kwargs,
             )
-        except subprocess.TimeoutExpired as e:
-            return SandboxResult(
-                success=False,
-                returncode=-1,
-                stdout=e.stdout or "",
-                stderr=e.stderr or "",
-                command=cmd,
-                dry_run=False,
-                timed_out=True,
-            )
+            # 登记在册: 父进程若先退出 (autoloop CLI 无 lifespan 钩子), 退出兜底
+            # ``kill_tracked_children()`` 才能按进程组整组回收, 不留 PPID→1 孤儿.
+            track_live_child(proc.pid, own_group=_own_group)
+            _tracked_pid = proc.pid
+            try:
+                _out, _err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _kill_process_tree(proc, own_group=_own_group)
+                # 回收直接子进程 (防僵尸) 并取回已产出的部分输出; 孙进程已被整组杀掉.
+                _out, _err = proc.communicate()
+                return SandboxResult(
+                    success=False,
+                    returncode=-1,
+                    stdout=_out or "",
+                    stderr=_err or "",
+                    command=cmd,
+                    dry_run=False,
+                    timed_out=True,
+                )
+            result = subprocess.CompletedProcess(cmd, proc.returncode, _out, _err)
         finally:
+            # 子进程已结束 (或已被整组回收) → 注销登记, 防止 pid 复用被退出兜底误杀.
+            if _tracked_pid is not None:
+                untrack_live_child(_tracked_pid)
             # 恢复父进程 soft limit, 避免子进程内存上限反过来卡死 agent 自身.
             # 只恢复 soft limit — hard limit 从未被降低, 无需恢复.
             if _saved_rlimit_soft is not None:
@@ -625,6 +747,33 @@ class SandboxExecutor:
                     logger.debug("revertible: failed to remove %s", p, exc_info=True)
 
         return result, dispose
+
+
+def _build_rlimits(cfg: SandboxConfig) -> dict[int, tuple[int, int]] | None:
+    """按配置组装子进程 ``{RLIMIT_*: (soft, hard)}``; 全空时返回 None.
+
+    只在 preexec_fn 里 apply (只影响 fork 出的子进程), 不像 RLIMIT_AS 那样在
+    父进程设了再恢复 — 多线程下无竞态. CPU 的 hard 取 soft+grace, 让进程收到
+    SIGXCPU 后还有一点时间做收尾 (超时仍由 subprocess timeout 兜底).
+    """
+    if os.name == "nt":
+        return None
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - 非 POSIX
+        return None
+
+    limits: dict[int, tuple[int, int]] = {}
+    if cfg.max_cpu_seconds:
+        _cpu = int(cfg.max_cpu_seconds)
+        limits[resource.RLIMIT_CPU] = (_cpu, _cpu + 5)
+    if cfg.max_file_bytes:
+        _fsize = int(cfg.max_file_bytes)
+        limits[resource.RLIMIT_FSIZE] = (_fsize, _fsize)
+    if cfg.max_processes:
+        _nproc = int(cfg.max_processes)
+        limits[resource.RLIMIT_NPROC] = (_nproc, _nproc)
+    return limits or None
 
 
 def _profile_mem_bytes(profile: str) -> int | None:
