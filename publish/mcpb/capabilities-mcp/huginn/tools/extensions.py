@@ -40,10 +40,19 @@ _EXTENSIONS_DIR: Path | None = None
 
 
 def extensions_dir(base: Path | None = None) -> Path:
-    """运行时扩展目录 (默认 ~/.huginn/extensions, 可用 base 覆盖)."""
+    """运行时扩展目录 (默认 ~/.huginn/extensions, 可用 base 覆盖).
+
+    显式 ``base`` 给定时**总是**采用该值(不写全局缓存): 全局缓存只服务默认目录,
+    否则首个调用者的 base 会被后续所有调用者悄悄继承(跨测试/跨组件串台 —— 曾致
+    ``build_extension(base=tmp_path)`` 落到别的测试的 tmp 目录而 FileNotFoundError).
+    """
     global _EXTENSIONS_DIR
+    if base is not None:
+        d = Path(base) / "extensions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     if _EXTENSIONS_DIR is None:
-        _EXTENSIONS_DIR = (base or get_runtime_home()) / "extensions"
+        _EXTENSIONS_DIR = get_runtime_home() / "extensions"
         _EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
     return _EXTENSIONS_DIR
 

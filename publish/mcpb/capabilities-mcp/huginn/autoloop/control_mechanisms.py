@@ -89,6 +89,12 @@ MECHANISMS: dict[str, Mechanism] = {
     "goal_judge": Mechanism(
         "A", "stop", "出口: 独立 GoalJudge 判目标达成 → 允许收结",
     ),
+    "frontier_empty_stop": Mechanism(
+        "A", "advisory",
+        "ARTEX 借鉴: 可执行前沿穷尽 (无可执行方向) 观测; 默认关, 只落 trace。"
+        "flag 打开时 action=stop —— 属'探索是否穷尽'的科学判据, 按 §3 不入 "
+        "STOP_ALLOWLIST (要转正当硬出口须先过 §3 两问)",
+    ),
     # ---- B 强制/引导类 ------------------------------------------------
     "stall_as_action": Mechanism(
         "B", "force", "D3 长程停滞且预算未尽 → 强制转向 (默认关)",
@@ -108,6 +114,11 @@ MECHANISMS: dict[str, Mechanism] = {
     "llm_unavailable": Mechanism(
         "B", "block", "P1/P2 瞬时故障: 拦破坏性 redirect, 原地重试 (不终止)",
     ),
+    "frontier_claim": Mechanism(
+        "B", "force",
+        "ARTEX 借鉴: execute 单写者领用已有可执行前沿方向 (而非每轮凭空生成) "
+        "—— 替下一步动作定向; 默认关, 领用时 trace",
+    ),
     # ---- C 诚实/证据门 (允许硬) ---------------------------------------
     "goal_acceptance": Mechanism(
         "C", "block", "验收门·证据: 完成声明无有限执行证据 → 拦, 不终止",
@@ -126,6 +137,11 @@ MECHANISMS: dict[str, Mechanism] = {
     ),
     "report_decisive": Mechanism(
         "C", "advisory", "报告决定性纪律: 只给软语气不给硬口径 → trace + 标注",
+    ),
+    "report_soliloquy": Mechanism(
+        "C", "advisory",
+        "报告面自演探针 (EnIGMA 式): 声称执行却查无成功回执 → trace + 条件标注; "
+        "不改写结论、不终止",
     ),
     # ---- D 观测类 -----------------------------------------------------
     "collab_blind_reconstruct": Mechanism(
@@ -149,6 +165,18 @@ MECHANISMS: dict[str, Mechanism] = {
     "hypothesis_status_writeback": Mechanism(
         "D", "observation", "假设状态回写 (support/refute 证据落图)",
     ),
+    "exec_exit_classes": Mechanism(
+        "D", "observation",
+        "执行健康统计 (RapidPen 式 exit_class 分布): 只落 trace 供触发率, 零约束",
+    ),
+    "pivot_restore": Mechanism(
+        "D", "observation",
+        "P3 无 hyp 可转时的非破坏性回退: 恢复 last-good 快照 (消费式防死循环) + trace",
+    ),
+    "pivot_skipped": Mechanism(
+        "D", "observation",
+        "pivot 未产出新方向时保留现状 (不原地清除) + trace (action=noop)",
+    ),
 }
 
 
@@ -160,7 +188,14 @@ MECHANISMS: dict[str, Mechanism] = {
 # 机制此前已落代码并发射, 但漏登记 (治理测试红)。此为上界债偿还, 不是扩张:
 # 四者均为本会话"长程空转/预算超支"修复链的组成, 已各自带回归测试; 基线棘轮
 # 从本值起继续 only-shrink。四条新登记逐一可过 §3 两问 (不替科学判断 / 有退出)。
-CONTROL_MECHANISM_BUDGET = 26
+#
+# 26 → 32 (2026-10-10, 一次性补登记, 非新机制): 同型上界债——本轮 6 条已发射但漏
+# 登记: exec_exit_classes / report_soliloquy / pivot_restore / pivot_skipped
+# (均为观测/提示类, 只落 trace), frontier_empty_stop / frontier_claim (ARTEX 借鉴,
+# 默认关)。逐一过 §3 两问: 观测/提示类不替科学判断; frontier_empty_stop 打开时虽
+# 可 stop, 但那是"探索是否穷尽"的科学判据, 明确不入 STOP_ALLOWLIST (故登记 effect
+# 为 advisory, 需转正先过 §3)。此亦为债偿还, 棘轮自此继续 only-shrink。
+CONTROL_MECHANISM_BUDGET = 32
 
 
 # 发射点的四种形态 (与 _control_trace / _emit_control_trace / engine_observe

@@ -181,6 +181,12 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `code_lab_slice_skip` | D6 预算切片 | execute 侧预算不足跳过 code_lab 修复重写 slice；与 `branch_slice_skip` 同族，分两 phase 便于定位超支源 |
 | `progress_invariant` | P3.2 进展不变量 | `action=force_route` + `tail=`；连续 window 轮停在执行前阶段 → 强制推进。高频 = 长期空转（见 run72/73/74） |
 | `llm_unavailable` | P1/P2 瞬时故障 | `action=retry_in_place`；瞬时 LLM 故障（限流/过载）拦破坏性 redirect。高频 = provider 不稳，非科学停滞 |
+| `exec_exit_classes` | 执行健康（D） | RapidPen 式 exit_class 分布；只落 trace 供触发率，零约束 |
+| `report_soliloquy` | 报告自演探针（C） | EnIGMA 式"声称执行却查无成功回执"；`flagged` 才附诚实告示，不改结论不终止 |
+| `pivot_restore` | P3 pivot 回退（D） | 无 hyp 可转时非破坏性恢复 last-good 快照（消费式防死循环）+ trace |
+| `pivot_skipped` | pivot 空转保护（D） | pivot 未产出新方向 → 保留现状不原地清除；`action=noop` |
+| `frontier_empty_stop` | ARTEX 前沿穷尽（A, 默认关） | 可执行前沿穷尽观测；flag 开时 `action=stop`，但属科学判据，**不入 STOP_ALLOWLIST**（转正须过 §3） |
+| `frontier_claim` | ARTEX 单写者领用（B, 默认关） | execute 领用已有可执行方向而非凭空生成；领用时 trace |
 
 > **机制清单的代码权威源**：上表是人工可读视图；机器可读的**单一权威登记**在
 > [`agent/huginn/autoloop/control_mechanisms.py`](agent/huginn/autoloop/control_mechanisms.py)

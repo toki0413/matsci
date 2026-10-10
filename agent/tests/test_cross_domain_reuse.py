@@ -22,6 +22,7 @@ grounding 门禁 + objective 提取)驱动其实验, 统计有多少 pipeline �
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 from huginn.research.code_lab import _alias_cfg
@@ -42,26 +43,36 @@ def _load(path: Path, modname: str):
     return mod
 
 
-def _install_torch_stub() -> None:
+def _install_torch_stub() -> list[str]:
     """rigidity 模块顶层 `import torch` 仅为 exp_optimizer_finance 服务; 复用测试只调
     其 numpy 系实验(exp_eps_criterion/exp_constraint_dimension), 故注入最小 torch 桩
-    以绕过 import, 保持测试轻量(不拉 torch)."""
-    import sys  # noqa: E401
+    以绕过 import, 保持测试轻量(不拉 torch).
+
+    返回**本次真正注入**的模块名, 供加载完成后卸载 —— 桩只服务该模块的顶层 import,
+    不得留在 sys.modules 污染全局. 旧实现留下 `torch.Tensor = object`, 使 matplotlib
+    `_is_torch_array` 对任意对象 `isinstance(x, object)` 恒真, 触发 `_unpack_to_numpy`
+    把标量当张量 → `Registry.get_converter` 无限递归, 连累同 session 所有绘图/科学测试.
+    """
     import types
+    installed: list[str] = [n for n in ("torch", "torch.nn") if n not in sys.modules]
     torch = types.ModuleType("torch")
     nn = types.ModuleType("torch.nn")
     nn.Module = type("Module", (), {})
     torch.nn = nn
-    torch.Tensor = object
-    sys.modules.setdefault("torch", torch)
-    sys.modules.setdefault("torch.nn", nn)
+    torch.Tensor = type("Tensor", (), {})
+    for name in installed:
+        sys.modules[name] = nn if name == "torch.nn" else torch
+    return installed
 
 
-_install_torch_stub()
+_STUBBED_MODULES = _install_torch_stub()
 rig = _load(_EXDIR / "nn_rigidity_research_pipeline.py", "rig")
 frac = _load(_EXDIR / "shusheng_fracture_mechanics.py", "frac")
 qc = _load(_EXDIR / "shusheng_quantum_critical.py", "qc")
 eco = _load(_EXDIR / "shusheng_ecology_dynamics.py", "eco")
+# 加载完毕即卸载 torch 桩, 恢复全局状态(仅移除本次注入的, 不碰真 torch).
+for _mod in _STUBBED_MODULES:
+    sys.modules.pop(_mod, None)
 
 
 def _contract_ok(res: dict) -> bool:
