@@ -118,6 +118,13 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_config_migration.py -q -o addopts=""
 
+      # 论文复现评测门禁 (NatureBench-mini)：把"核心科研路径的 eval"接进 CI 闭环。
+      # 覆盖 10 题 Nature 系复现的题集结构、三段容差 SOTA 判分、best_score 跟踪，
+      # 以及 suite 注册未漂移。纯数值/纯逻辑，无网络/无 key，快速 fail。
+      - name: NatureBench repro gate
+        working-directory: agent
+        run: python -m pytest tests/test_naturebench.py -q -o addopts=""
+
       # 技能池弥合门禁：evolution SkillTemplate ⇄ 声明式 SkillRegistry 的同步契约
       # （转换可注册、不覆盖 presets、统计 round-trip 供元技能闭环）。
       - name: Skill pool bridge guard

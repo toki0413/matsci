@@ -76,7 +76,7 @@ Huginn 在 LLM 推理之上叠加了一层数学工具与结构审计（同调�
 | 维度 | 能力 |
 |---|---|
 | 通用科研编排 | 研究项目编排、多智能体 team、知识蒸馏闭环、自进化（evolve）、自主科研闭环（autoloop）、知识图谱 |
-| 形式化数学 | 6 阶段 Lean 4 源码工程：张量代数 → FEM 弱形式 → 数值线性代数 → DFT → 热力学 → 概率；SymPy 表达式翻译为 Lean，经外部 `lake` 做编译与类型检查 |
+| 形式化数学 | SymPy 表达式翻译为 Lean 4，经外部 `lake` 做编译与类型检查；`lean/project/` 为 Lean 工程骨架（类声明 + 示例实例），定理库待补 |
 | 多 Provider LLM | OpenAI、Anthropic、DeepSeek、Google GenAI、OpenRouter、NVIDIA、Ollama、vLLM、LM Studio、任意 OpenAI 兼容本地端点 |
 | 运行模式 | 5 种 Mode（chat/research/extreme/code/fusion，顶层行为）+ 7 种 Phase（文献→假设→规划→执行→验证→报告，每 phase 独立工具预算） |
 | 权限模式 | 4 种 PermissionMode（auto/ask/deny/plan）+ 5 档风险（none/low/medium/high/critical）+ 工具默认矩阵 + 危险命令白名单 + 沙箱硬底线路径 |

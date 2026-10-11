@@ -13,7 +13,7 @@
 | 运行环境可拉起（import / 依赖） | 🟢 通过 | §1 |
 | 测试套件可收集（0 import 错误） | 🟢 通过 | §2 |
 | 核心逻辑 + 规范门禁 | 🟢 通过（81 pass, 0 fail） | §3 |
-| 数学/物理计算链路真实可算 | 🟢 通过（50 pass, 5 skip） | §4 |
+| 数学/物理计算链路真实可算 | 🟢 通过（50 pass, 5 skip；复现门禁 19 pass） | §4 |
 | 科研执行层产出可复现数值证据 | 🟢 通过 | §5 |
 | 全量套件绿灯（有界快照 8577 用例） | 🟢 通过（8577 pass, 0 fail） | §6 |
 
@@ -118,6 +118,27 @@ timeout 300 python3 -m pytest -o addopts="" \
 
 **判定**：`0 failed` → 通过。覆盖：符号守恒校验、2×2 特征值数值分析、安全求值器等。
 
+### 4.1 论文复现评测门禁（NatureBench-mini）
+
+**目的**：把"核心科研路径的可复现 eval"从纸面脚手架变成 CI 门禁 —— 评测套件本身
+（题集结构 + SOTA 判分链路 + best_score 跟踪）必须确定性正确，而不是"有壳无闭环"。
+这也是 CI 里 `NatureBench repro gate` 步骤所跑的同一份用例。
+
+```bash
+timeout 120 python3 -m pytest -o addopts="" \
+  tests/test_naturebench.py -q -p no:cacheprovider
+```
+
+**当日实测输出**：
+```
+19 passed
+```
+
+**判定**：`0 failed` → 通过。覆盖 10 题 Nature 系复现的题集完整性、三段容差
+（`<=tol`→1.0 / `<=2tol`→0.5 / 更远→0.3）SOTA 判分、对数空间判分、best_score
+多次提交取最优、以及 `get_suite_tasks("naturebench")` 注册未漂移。**纯数值 + 纯逻辑，
+无网络、无 API key、无 LLM**，可作快速门禁；真正"跑 agent 解题"的评测需 key，属重型集成。
+
 ---
 
 ## 5. 科研执行层：产出可复现数值证据
@@ -187,6 +208,7 @@ python3 -m pytest -o addopts="" -m "not integration and not network" -q -p no:ca
 | 套件可收集 | §2 | 10438 tests collected, 0 errors | 🟢 |
 | 核心+规范 | §3 | 81 pass, 0 fail | 🟢 |
 | 计算链路 | §4 | 50 pass, 5 skip, 0 fail | 🟢 |
+| 复现门禁 | §4.1 | 19 pass, 0 fail | 🟢 |
 | 执行层证据 | §5 | 数值可复现 + 边界诚实 | 🟢 |
 | 全量绿灯 | §6 | 8577 pass, 0 fail | 🟢 |
 

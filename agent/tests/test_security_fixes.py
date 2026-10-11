@@ -152,6 +152,35 @@ class TestHPCAdminAuth:
             assert not path.startswith("/hpc"), f"HPC path {path} should not be public"
 
 
+# ── Diagnostics routes require auth ──────────────────────────────
+
+
+class TestDiagnosticsNotPublic:
+    """Verify /diagnostics* is auth-gated (leaks process internals)."""
+
+    def test_diagnostics_not_public(self):
+        from huginn.security.auth import _PUBLIC_PATHS
+
+        for path in _PUBLIC_PATHS:
+            assert not path.startswith("/diagnostics"), \
+                f"diagnostics path {path} should not be public"
+
+    def test_diagnostics_requires_auth_when_enforced(self, monkeypatch):
+        """With dev mode off + API key set, unauthenticated /diagnostics → 401."""
+        from fastapi import Depends, FastAPI
+        from fastapi.testclient import TestClient
+
+        from huginn.routes.diagnostics import router
+        from huginn.security.auth import require_api_key
+
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+        monkeypatch.setenv("HUGINN_API_KEY", "secret")
+        app = FastAPI()
+        app.include_router(router, dependencies=[Depends(require_api_key)])
+        with TestClient(app) as c:
+            assert c.get("/diagnostics").status_code == 401
+
+
 # ── Rate limiting default ────────────────────────────────────────
 
 

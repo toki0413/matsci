@@ -53,7 +53,7 @@
 | `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:862 |
 | `prompt_cache_control` | True | prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL) | HUGINN_PROMPT_CACHE_CONTROL | agent_config.py:108 |
 | `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:259, tools/base.py:367 |
-| `sandbox_net_isolation` | False | P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认关; 不支持则降级) | — | security/sandbox.py:59 |
+| `sandbox_net_isolation` | True | P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认开; 不支持则降级) | — | security/sandbox.py:60 |
 | `speculator` | True | 投机执行 (意图预测+工具预热) | — | agents/speculator.py:444 |
 | `system_health_auto_fix` | False | 监控异常后自动熔断工具 (默认关) | — | diagnostics/system_health.py:519 |
 | `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:892, tools/__init__.py:507 |

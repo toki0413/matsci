@@ -48,6 +48,7 @@
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
 | [cost-participation-contract.md](cost-participation-contract.md) | active | 成本-剪枝参与感契约（决策点对话 + 成本叙事，已实现） |
 | [INDUSTRIAL_ACCEPTANCE_CHECKLIST.md](INDUSTRIAL_ACCEPTANCE_CHECKLIST.md) | active | 产业级验收清单（可复现门禁：环境/收集/规范/计算链路/执行层证据） |
+| [TECHNICAL_DEBT_PONYTAIL.md](TECHNICAL_DEBT_PONYTAIL.md) | active | `ponytail:` 临时捷径登记（S1/S2 安全·边界级逐条登记 + 防漂移测试） |
 | [SPEC_openworker_adoption](../huginn/SPEC_openworker_adoption.md) | active | OpenWorker 采纳规范 |
 | [SPEC_visual_kb_loop](../huginn/metacog/SPEC_visual_kb_loop.md) | active | 视觉知识库闭环规范 |
 

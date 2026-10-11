@@ -62,9 +62,10 @@ class FeatureFlags:
         "intent_scope_reward": False,  # 意图口径越界清零 (默认关, 见 validation/scope_authority.py)
         # P1 沙箱硬化: 内核级网络隔离 (Landlock ABI >= 4, Linux 6.7+). 开后软沙箱
         # 注入的 preexec 会把子进程 TCP bind/connect 全拒 (只收紧网络, 不锁文件系统).
-        # 默认关; 内核不支持时优雅降级 (只做 FS 隔离). 也可用
-        # HUGINN_SANDBOX_ISOLATE_NETWORK=1 显式开 (优先级更高).
-        "sandbox_net_isolation": False,  # Landlock 网络隔离 (默认关, 见 security/sandbox.py)
+        # 默认开 (纵深防御: 不依赖外层容器兜底); 内核不支持时优雅降级 (只做 FS
+        # 隔离), 无能力损失. 需要子进程联网 (如沙箱内 pip/下载) 时用
+        # HUGINN_SANDBOX_ISOLATE_NETWORK=0 显式关 (优先级更高).
+        "sandbox_net_isolation": True,  # Landlock 网络隔离 (默认开, 见 security/sandbox.py)
         # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
         # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
@@ -203,7 +204,7 @@ class FeatureFlags:
         "compute_policy": "M2 计算路由目标维度策略 + 预算 (默认关)",
         "anti_hacking_reward": "Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关)",
         "intent_scope_reward": "Anti-Hacking ② 意图口径越界清零: 改动偏离 plan 声明的目标集即清零 (默认关)",
-        "sandbox_net_isolation": "P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认关; 不支持则降级)",
+        "sandbox_net_isolation": "P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认开; 不支持则降级)",
         "harness_workflow_evolution": "H2 variant bandit 演化回路 (实验性, 默认关)",
         "harness_ood_holdout": "H6 OOD 留出验证, 防背题补丁 (实验性, 默认关)",
         "harness_significance_gate": "H5 结果显著性门, 统计检验 (实验性, 默认关)",
