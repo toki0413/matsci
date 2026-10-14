@@ -373,7 +373,8 @@ agent/INCAR
 *.orig
 # 重复/散落脚本 (正式版在 agent/scripts/)
 agent/build_exe.py
-# 注意: agent/demo_comprehensive.py 是 audit-regression.yml 的 quickstart fixture, 保留
+# 注意: agent/demo_comprehensive.py 是 audit-regression.yml (G38) 的 quickstart
+# fixture, 已 tracked (不在忽略之列, 见 agent/.gitignore) —— 此处仅此说明, 勿加忽略规则.
 agent/demo_fem_pipeline.py
 agent/demo_parallel.py
 # 散落分析报告 (非源码)
