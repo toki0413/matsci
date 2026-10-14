@@ -52,9 +52,11 @@ jobs:
 
       - name: Install k6
         run: |
-          sudo gpg -k
-          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
-            --keyserver hkp://keyserver.ubuntu.com --recv-keys C5AD17C747E8713848F5C8D0FBA9424D2283E8FC
+          # 直接走 HTTPS 取签名公钥, 不再依赖 keyserver.ubuntu.com —— 该 keyserver
+          # 在 runner 上间歇性返回 "gpg: keyserver receive failed: No data"
+          # 导致步骤失败 (基础设施 flake, 与代码无关).
+          curl -fsSL https://dl.k6.io/key.gpg \
+            | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
             | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update
