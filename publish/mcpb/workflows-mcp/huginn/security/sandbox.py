@@ -44,10 +44,11 @@ def _powershell_enabled_by_default() -> bool:
 
 
 def _net_isolation_enabled_by_default() -> bool:
-    """P1 网络隔离开关默认值: 显式 env > feature flag > 关.
+    """P1 网络隔离开关默认值: 显式 env > feature flag > 开.
 
-    ``HUGINN_SANDBOX_ISOLATE_NETWORK`` (1/true/yes/on) 显式覆盖;
-    未设置时读 feature flag ``sandbox_net_isolation`` (默认 False, 零回归).
+    ``HUGINN_SANDBOX_ISOLATE_NETWORK`` (1/true/yes/on 开, 0/false/no/off 关)
+    显式覆盖; 未设置时读 feature flag ``sandbox_net_isolation`` (默认 True,
+    纵深防御). 内核不支持 Landlock 网络规则时优雅降级 (只做 FS 隔离).
     放在模块级以便在 dataclass ``default_factory`` 中复用.
     """
     val = os.environ.get("HUGINN_SANDBOX_ISOLATE_NETWORK")
@@ -174,8 +175,8 @@ class SandboxConfig:
     # P1: 内核级网络隔离 (Landlock ABI >= 4, Linux 6.7+). 开后在已做内核
     # confinement 的路径上把子进程的 TCP bind/connect 全部拒掉 (Landlock 网络
     # 规则是 allow 规则, 处理了这些位又不加规则 = 全拒). 只收紧网络, 不锁文件系统.
-    # 默认关 (零回归); HUGINN_SANDBOX_ISOLATE_NETWORK=1 或 feature flag
-    # sandbox_net_isolation 可开. 内核不支持时优雅降级 (只做 FS 隔离).
+    # 默认开 (纵深防御, 不依赖外层容器兜底); HUGINN_SANDBOX_ISOLATE_NETWORK=0 或
+    # feature flag sandbox_net_isolation=false 可关. 内核不支持时优雅降级 (只做 FS 隔离).
     isolate_network: bool = field(default_factory=_net_isolation_enabled_by_default)
 
     # P1: 本地资源限制 (POSIX setrlimit). 在 fork 出的子进程 preexec 里设, 不污染

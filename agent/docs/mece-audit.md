@@ -233,8 +233,8 @@
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/clarify_questions_hook.py:54` | 15 | 4 | keywords | `internal-only` | 0 | 0 | 0 |
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/research_safety_hook.py:18` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `PRIMITIVES` | `huginn/modes/pi.py:22` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
-| `READ_ONLY_TOOLS` | `huginn/permissions.py:43` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:50` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
+| `READ_ONLY_TOOLS` | `huginn/permissions.py:44` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
+| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:51` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `_CORE_TOOLS` | `huginn/phases.py:109` | 15 | 15 | registry | `internal-only` | 0 | 0 | 0 |
 | `_KNOWN_TOOLS` | `huginn/provenance/pipeline.py:90` | 39 | 38 | registry | `internal-only` | 0 | 0 | 1 |
 | `_EXPENSIVE_TOOLS` | `huginn/research_budget.py:24` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
@@ -341,10 +341,10 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2866`, `huginn/autoloop/cognitive_loop.py:2902` | — |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2868`, `huginn/autoloop/cognitive_loop.py:2904` | — |
 | `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1561`, `huginn/autoloop/engine_observe.py:936`, `huginn/autoloop/engine_reflect.py:1617` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3463` | `huginn/events/audit_log.py:571` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3483` | `huginn/events/audit_log.py:571` |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3465` | `huginn/events/audit_log.py:571` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3485` | `huginn/events/audit_log.py:571` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:337` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:159` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:153`, `huginn/knowledge/store.py:163`, `huginn/knowledge/store.py:261` | — |

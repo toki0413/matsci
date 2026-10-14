@@ -1008,7 +1008,7 @@ class CognitiveRunner:
             return
         plan = cog.get("plan")
         if plan is not None and not isinstance(
-            plan, (dict, str, list, int, float, bool)
+            plan, dict | str | list | int | float | bool
         ):
             plan = str(plan)
         self._last_good_hypothesis = str(hyp)
@@ -2804,6 +2804,8 @@ Respond JSON only:
             try:
                 from huginn.agent.streaming import (
                     remaining_budget_s as _rb_s,
+                )
+                from huginn.agent.streaming import (
                     set_budget_deadline as _set_deadline,
                 )
 

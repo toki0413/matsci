@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 
@@ -98,10 +99,7 @@ def _has_evidence(output: Any) -> bool:
     """
     if not isinstance(output, dict):
         return False
-    for key in _EVIDENCE_KEYS:
-        if output.get(key) not in (None, "", {}, [], ()):
-            return True
-    return False
+    return any(output.get(key) not in (None, "", {}, [], ()) for key in _EVIDENCE_KEYS)
 
 
 def classify_exit_class(output: Any) -> str:
@@ -136,10 +134,8 @@ def _ledger_exit_class(entry: Any) -> str:
         return ec
     raw = entry.get("result", "")
     if isinstance(raw, str):
-        try:
+        with contextlib.suppress(Exception):  # 非 JSON 文本 → 原样交关键词判定
             raw = json.loads(raw)
-        except Exception:  # 非 JSON 文本 → 原样交关键词判定
-            pass
     return classify_exit_class(raw)
 
 

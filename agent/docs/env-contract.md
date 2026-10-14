@@ -19,7 +19,7 @@
 | `HUGINN_ATOMWORLD_DATA_DIR` | ./atomworld_data | bench/atomworld_bench.py:23 | — | external |
 | `HUGINN_AUDIT_SIGNING_KEY` | '' | security/audit.py:626 | — | external |
 | `HUGINN_AUTOLOOP_AUTO_APPROVE` | '' | permissions.py:106 | — | external |
-| `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:3960, autoloop/engine_reflect.py:4445 | — | external |
+| `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:3962, autoloop/engine_reflect.py:4445 | — | external |
 | `HUGINN_AUTOLOOP_NO_PLUGINS` | 0 | cli/commands/autoloop.py:37 | — | external |
 | `HUGINN_AUTOLOOP_STREAMING` | 1 | autoloop/engine.py:113 | — | external |
 | `HUGINN_AUTO_APPROVE` | False | agent_config.py:183, config.py:769, permissions.py:94, +5 处 | — | external |
@@ -35,12 +35,12 @@
 | `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:891 | — | external |
 | `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:201 | — | external |
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 2 | autoloop/hypothesis_loop.py:2483 | — | external |
-| `HUGINN_BRANCH_SLICE_MIN_S` | '' | metacog/branch_incubator.py:164 | — | external |
+| `HUGINN_BRANCH_SLICE_MIN_S` | '' | metacog/branch_incubator.py:163 | — | external |
 | `HUGINN_BRANCH_VALUE_PRM` | 1 | autoloop/hypothesis_loop.py:2463 | — | external |
 | `HUGINN_BRAVE_API_KEY` | '' | tools/web_search_tool.py:288, tools/web_search_tool.py:419 | — | external |
 | `HUGINN_BUDGET_APPROVAL` | off | budget_pause.py:168 | — | external |
 | `HUGINN_BUDGET_DEADLINE_UNIFIED` | 1 | autoloop/engine_control.py:538 | — | external |
-| `HUGINN_BUDGET_EXPIRE_SEMANTICS` | 1 | autoloop/cognitive_loop.py:2858 | — | external |
+| `HUGINN_BUDGET_EXPIRE_SEMANTICS` | 1 | autoloop/cognitive_loop.py:2860 | — | external |
 | `HUGINN_BUDGET_MIN_SLICE_S` | '' | agent/streaming.py:129 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_BUDGET_RESERVE_S` | '' | agent/streaming.py:128 | — | external |
@@ -146,7 +146,7 @@
 | `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:30 | — | external |
 | `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:28 | — | external |
 | `HUGINN_LOG_LEVEL` | INFO | utils/json_logging.py:126 | — | external |
-| `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:3655 | — | external |
+| `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:3657 | — | external |
 | `HUGINN_LOOP_ROLLBACK` | 1 | autoloop/cognitive_loop.py:2398 | — | external |
 | `HUGINN_MAINTENANCE` | '' | middleware/maintenance.py:40 | — | external |
 | `HUGINN_MAX_BODY_SIZE_MB` | _DEFAULT_MAX_BODY_MB | middleware/limits.py:88 | — | external |
@@ -196,7 +196,7 @@
 | `HUGINN_MP_API_KEY` | '' | tools/literature/search_sources.py:1575 | — | external |
 | `HUGINN_MULTI_AGENT` | 0 | memory/longterm.py:1985 | — | external |
 | `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:152 | — | external |
-| `HUGINN_NOVELTY_EVAL` | 0 | autoloop/cognitive_loop.py:3300 | — | external |
+| `HUGINN_NOVELTY_EVAL` | 0 | autoloop/cognitive_loop.py:3302 | — | external |
 | `HUGINN_OAUTH_TOKEN` | '' | cli/availability.py:52 | — | external |
 | `HUGINN_OCR_ENGINE` | auto | knowledge/ocr_loader.py:196, knowledge/ocr_loader.py:251, knowledge/ocr_loader.py:302 | — | external |
 | `HUGINN_OTEL_BATCH_SIZE` | 32 | otel.py:292 | — | external |
@@ -206,14 +206,14 @@
 | `HUGINN_OTEL_SERVICE_NAME` | huginn | otel.py:291 | — | external |
 | `HUGINN_PASTE_OFFLOAD` | 1 | tools/paste_offload.py:33 | — | external |
 | `HUGINN_PASTE_OFFLOAD_THRESHOLD` | '' | tools/paste_offload.py:43 | — | external |
-| `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:948, autoloop/cognitive_loop.py:1050, autoloop/cognitive_loop.py:2848, +5 处 | cli/rcb_runner.py:350, cli/commands/autoloop.py:252 | code-set |
+| `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:948, autoloop/cognitive_loop.py:1050, autoloop/cognitive_loop.py:2850, +5 处 | cli/rcb_runner.py:350, cli/commands/autoloop.py:252 | code-set |
 | `HUGINN_PERSISTENT_TERMINAL_TIMEOUT` | '' | tools/persistent_terminal.py:37 | — | external |
 | `HUGINN_PERSONA` | default | config.py:706, config.py:775 | cli/commands/persona.py:131, routes/agents.py:465 | code-set |
 | `HUGINN_PERSONA_AUTO_ROUTE` | true | config.py:776 | — | external |
 | `HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD` | 0.3 | config.py:781 | — | external |
 | `HUGINN_PERSONA_AUTO_SYNC` | '' | config.py:783 | — | external |
 | `HUGINN_PERSONA_SYNC_DIR` | '' | config.py:785 | — | external |
-| `HUGINN_PER_HYP_BUDGET` | 0 | autoloop/cognitive_loop.py:1412, autoloop/cognitive_loop.py:3299, autoloop/engine_reflect.py:949 | — | external |
+| `HUGINN_PER_HYP_BUDGET` | 0 | autoloop/cognitive_loop.py:1412, autoloop/cognitive_loop.py:3301, autoloop/engine_reflect.py:949 | — | external |
 | `HUGINN_PET_NAME` | 渡鸦 | config.py:843 | — | external |
 | `HUGINN_PET_PERSONALITY` | cheerful | config.py:844 | — | external |
 | `HUGINN_PLAN_AUTO_CONFIRM` | 0 | config.py:722 | — | external |
@@ -227,8 +227,8 @@
 | `HUGINN_PROFILE_MODEL` | '' | tools/personalization_tool.py:158 | — | external |
 | `HUGINN_PROFILE_PROVIDER` | deepseek | tools/personalization_tool.py:157 | — | external |
 | `HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING` | 1 | autoloop/engine_control.py:618 | — | external |
-| `HUGINN_PROGRESS_INVARIANT` | '' | autoloop/cognitive_loop.py:3081 | — | external |
-| `HUGINN_PROGRESS_INVARIANT_WINDOW` | '' | autoloop/cognitive_loop.py:3084 | — | external |
+| `HUGINN_PROGRESS_INVARIANT` | '' | autoloop/cognitive_loop.py:3083 | — | external |
+| `HUGINN_PROGRESS_INVARIANT_WINDOW` | '' | autoloop/cognitive_loop.py:3086 | — | external |
 | `HUGINN_PROMPT_CACHE_CONTROL` | true | config.py:821 | — | external |
 | `HUGINN_PROVENANCE_ENABLED` | 1 | provenance/registry.py:370 | — | external |
 | `HUGINN_PROVIDER` | default | config.py:659, config.py:1290 | — | external |

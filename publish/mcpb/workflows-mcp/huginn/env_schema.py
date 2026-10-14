@@ -113,7 +113,8 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_WETLAB_ENDPOINT": EnvSpec("str", "", "deployment"),
     "HUGINN_WM_TOKEN_BUDGET": EnvSpec("int", "8192", "deployment"),
     "HUGINN_WORKSPACE": EnvSpec("str", ".", "deployment"),
-    # ---- feature (67) -----------------------------------------------
+    # ---- feature (68) -----------------------------------------------
+    "HUGINN_AUTOLOOP_AUTO_APPROVE": EnvSpec("bool", "true", "feature"),
     "HUGINN_AUTO_APPROVE": EnvSpec("bool", "false", "feature"),
     "HUGINN_BUDGET_APPROVAL": EnvSpec("bool", "false", "feature"),
     "HUGINN_ENABLE_EXPLORATION": EnvSpec("bool", "true", "feature"),
@@ -167,7 +168,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_FEATURE_PRIVACY_REDACT_SECRETS": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_PROMPT_CACHE_CONTROL": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_PROVENANCE": EnvSpec("bool", "true", "feature"),
-    "HUGINN_FEATURE_SANDBOX_NET_ISOLATION": EnvSpec("bool", "false", "feature"),
+    "HUGINN_FEATURE_SANDBOX_NET_ISOLATION": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_SPECULATOR": EnvSpec("bool", "true", "feature"),
     "HUGINN_FEATURE_SYSTEM_HEALTH_AUTO_FIX": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_SYSTEM_HEALTH_MONITOR": EnvSpec("bool", "true", "feature"),

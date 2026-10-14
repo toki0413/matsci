@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
+from huginn.env_access import env_bool, env_is_set
 
 # 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
 # permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
@@ -76,6 +77,33 @@ def apply_sse_read_only_policy(config: PermissionConfig) -> None:
             tool_name,
             PermissionMode.AUTO if is_read_only_tool(tool_name) else PermissionMode.ASK,
         )
+
+
+def sidecar_auto_approve() -> bool:
+    """非交互 sidecar API 的 auto-approve 策略 (显式配置项, 非硬编码).
+
+    sidecar (``/agents/{id}/chat`` / KB 报告) 没有审批回调, ASK 模式的写/执行
+    工具会被直接拒. 旧实现无条件把 ``agent._permission_config.auto_approve_all``
+    置 True —— 任何 API 调用者都能让 agent 静默落盘/执行, 是 demo 阶段的写法.
+
+    新策略:
+    - ``HUGINN_AUTO_APPROVE`` 显式设置时以它为准 (1/true/yes);
+    - 未设置时**仅在 dev 模式** (``HUGINN_DEV_MODE``) 放行 —— 即 loopback 绑定的
+      本地单用户桌面端; 生产多用户 server 默认不放行, 需运维显式开启.
+    """
+    if env_is_set("HUGINN_AUTO_APPROVE"):
+        return env_bool("HUGINN_AUTO_APPROVE")
+    return env_bool("HUGINN_DEV_MODE")
+
+
+def autoloop_auto_approve() -> bool:
+    """autoloop 是**无人值守**自主循环, 默认放行内部 coder 的写/执行工具.
+
+    默认 True 是有意为之 (否则无 approval_callback 时 coder 形同死码), 但不再是
+    硬编码: ``HUGINN_AUTOLOOP_AUTO_APPROVE=0/false`` 可显式收紧. 危险命令模式
+    (``rm -rf /`` 等) 仍由 adapter 先于该放行判定拦下, 不受此开关影响.
+    """
+    return env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE")
 
 # Default permission rules for material science tools
 # Note: science_* tools (science-skills bridge) are auto-approved via wildcard

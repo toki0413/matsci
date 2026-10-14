@@ -20,14 +20,13 @@ import os
 import re
 import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from huginn.autoloop.hypothesis_events import HypothesisEventStore
-from huginn.memory.anchor import ANCHOR_KINDS, Anchor, parse_anchor
 
 # P3 slim-down: engine.py helper re-import — _classify_failure (H3 batch) 调用
 from huginn.autoloop.phase_gate import (
@@ -39,6 +38,7 @@ from huginn.autoloop.signals import (
     strength_branch_depth,
     strength_schedule_enabled,
 )
+from huginn.memory.anchor import ANCHOR_KINDS, Anchor, parse_anchor
 from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
@@ -291,7 +291,7 @@ def _anchor_tokens_from_evidence(evidence: Mapping[str, Any] | None) -> list[str
             out.append(tok)
 
     raw = evidence.get("anchors")
-    if isinstance(raw, (list, tuple, set, frozenset)):
+    if isinstance(raw, list | tuple | set | frozenset):
         for item in raw:
             _push(_normalize_anchor(item))
     elif raw is not None:
@@ -302,7 +302,7 @@ def _anchor_tokens_from_evidence(evidence: Mapping[str, Any] | None) -> list[str
     for v in evidence.values():
         if isinstance(v, Mapping):
             _push(_normalize_anchor(v))
-        elif isinstance(v, (list, tuple)):
+        elif isinstance(v, list | tuple):
             for item in v:
                 if isinstance(item, Mapping):
                     _push(_normalize_anchor(item))

@@ -60,6 +60,18 @@ def is_declared(name: str) -> bool:
     return name in SCHEMA
 
 
+def env_is_set(name: str) -> bool:
+    """变量是否在环境里显式设置且非空 (用于区分"未设 → 用默认"与"显式设值").
+
+    ``env_bool`` 等访问器只看最终布尔结果, 无法区分"显式设为 false"与"未设(回落
+    默认)". 需要按"是否设置"分支时用本函数. 未在 ``SCHEMA`` 登记仍抛
+    :class:`UndeclaredEnvVarError`.
+    """
+    spec(name)
+    raw = os.environ.get(name)
+    return raw is not None and str(raw).strip() != ""
+
+
 def parse_value(typ: str, raw: Any) -> Any:
     """按声明类型解析字面量; 供访问器与治理测试共用同一解析口径."""
     if typ == "bool":

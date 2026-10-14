@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+from huginn.autoloop.engine_act import EngineAct
 from huginn.autoloop.exec_observation import (
     EXIT_CLASSES,
     classify_exit_class,
     detect_soliloquy,
     exit_class_counts,
 )
-from huginn.autoloop.engine_act import EngineAct
-
 
 # ── exit_class 分类 ────────────────────────────────────────────────────────
 

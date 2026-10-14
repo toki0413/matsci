@@ -20,8 +20,8 @@
 | `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:407, cli/rcb_step2.py:868 |
 | `external_thinking` | False | 外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关) | — | agent/prompt_builder.py:300 |
 | `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2139 +1 处 |
-| `frontier_claim` | False | 假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_CLAIM | autoloop/cognitive_loop.py:3231 |
-| `frontier_empty_stop` | False | 可执行前沿空即停: 无'未执行且前置证据满足'的方向 → 主终止, 预算降为安全上限 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_EMPTY_STOP | autoloop/cognitive_loop.py:3212 |
+| `frontier_claim` | False | 假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_CLAIM | autoloop/cognitive_loop.py:3233 |
+| `frontier_empty_stop` | False | 可执行前沿空即停: 无'未执行且前置证据满足'的方向 → 主终止, 预算降为安全上限 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_EMPTY_STOP | autoloop/cognitive_loop.py:3214 |
 | `frontier_single_writer_strict` | False | 假设图单写者纪律: 非 hypothesize/branch 阶段追加方向时拒绝 (默认关, 只观测计数) | HUGINN_FRONTIER_SINGLE_WRITER_STRICT | autoloop/hypothesis_loop.py:78 |
 | `fts_auto_rebuild` | True | 全文检索自动重建 (HUGINN_FTS_AUTO_REBUILD) | HUGINN_FTS_AUTO_REBUILD | — |
 | `harness_adoption_gate` | False | 严格 gate 模式: RED 不自动采纳 (实验性, 默认 advisory 只评分不拦) | — | — |
@@ -59,7 +59,7 @@
 | `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:892, tools/__init__.py:507 |
 | `task_tool_router` | True | task keyword → tool category 动态路由 (默认开, 无命中给 core 子集) | HUGINN_TASK_TOOL_ROUTER | agent/core.py:667, agent/streaming.py:1379 |
 | `telemetry` | True | 遥测采集 (HUGINN_TELEMETRY_ENABLED) | HUGINN_TELEMETRY_ENABLED | agent_config.py:197 |
-| `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:3857 |
+| `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:3859 |
 | `tool_call_router` | True | 重型工具 sanity check 路由 | — | agents/tool_call_router.py:123 |
 | `trace_inspect` | False | 模型侧过程级 trace 检索 mode: 按关键词/tool/intent recall 过往执行 (VISTA inspect 借鉴, 默认关) | HUGINN_TRACE_INSPECT | autoloop/plan_check.py:133, autoloop/plan_check.py:159 |
 | `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | agent/code_act_loop.py:344, agent/code_act_loop.py:398 |

@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import time
 import uuid
 from collections.abc import Callable
@@ -496,6 +495,8 @@ class BranchIncubator:
             try:
                 from huginn.agent.streaming import (
                     remaining_budget_s as _rb_s,
+                )
+                from huginn.agent.streaming import (
                     set_budget_deadline as _set_deadline,
                 )
 

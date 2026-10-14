@@ -240,7 +240,11 @@ class FrameStore:
                             "y": py,
                             "in_bounds": in_bounds,
                             "rgb": rgb,
-                            "hex": ("#%02X%02X%02X" % tuple(rgb)) if rgb else None,
+                            "hex": (
+                                f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+                                if rgb
+                                else None
+                            ),
                         }
                     )
                 return {"frame_id": frame_id, "size": [W, H], "pixels": out}
