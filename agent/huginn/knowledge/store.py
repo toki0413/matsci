@@ -137,7 +137,7 @@ def _download_embedding_with_progress() -> None:
                     "nrows": 0,
                     "desc": self.desc,
                     "unit": self.unit,
-                    "rate": self.n / elapsed if isinstance(self.n, (int, float)) else None,
+                    "rate": self.n / elapsed if isinstance(self.n, int | float) else None,
                     "postfix": "",
                     "remaining": 0,
                     "bar_format": None,
