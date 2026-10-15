@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -120,6 +121,27 @@ def _download_embedding_with_progress() -> None:
                 self.desc = kwargs.get("desc", "")
                 self.disable = kwargs.get("disable", False)
                 self.unit = kwargs.get("unit", "it")
+                # huggingface_hub 的进度包装会读 format_dict 计算 n/total/rate,
+                # 缺它同样抛 AttributeError: '_ProgressTqdm' object has no attribute
+                # 'format_dict', 让下载在每次进度回调处报错. 如实提供字段.
+                self._start = time.monotonic()
+
+            @property
+            def format_dict(self) -> dict[str, Any]:
+                elapsed = max(time.monotonic() - self._start, 1e-9)
+                return {
+                    "n": self.n,
+                    "total": self.total,
+                    "elapsed": elapsed,
+                    "ncols": 0,
+                    "nrows": 0,
+                    "desc": self.desc,
+                    "unit": self.unit,
+                    "rate": self.n / elapsed if isinstance(self.n, (int, float)) else None,
+                    "postfix": "",
+                    "remaining": 0,
+                    "bar_format": None,
+                }
 
             def reset(self, *args, **kwargs):
                 self.n = 0
@@ -177,7 +199,6 @@ def _download_embedding_with_progress() -> None:
                 last_err = e
                 if attempt > _EMBED_DOWNLOAD_RETRIES:
                     continue
-                import time
                 wait = 2 ** (attempt - 1)  # 1s, 2s, 4s 指数退避
                 logger.warning("embedding download attempt %d failed (%s), retry in %ss", attempt, e, wait)
                 time.sleep(wait)
