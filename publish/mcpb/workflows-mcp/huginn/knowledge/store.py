@@ -108,10 +108,23 @@ def _download_embedding_with_progress() -> None:
         class _ProgressTqdm:
             """Tqdm 兼容壳: 接住 snapshot_download 的 update(), 按字节累计发 progress."""
             def __init__(self, *args, **kwargs):
-                ...
+                # huggingface_hub 会把 total/desc/disable 透传进来, 并在进度循环里
+                # 直接读 self.total / self.n; 缺属性会抛
+                # AttributeError: '_ProgressTqdm' object has no attribute 'total',
+                # 让整次下载失败. 如实挂上这些字段.
+                raw_total = kwargs.get("total")
+                if raw_total is None and args:
+                    raw_total = args[0]
+                self.total = raw_total or 0
+                self.n = 0
+                self.desc = kwargs.get("desc", "")
+                self.disable = kwargs.get("disable", False)
+                self.unit = kwargs.get("unit", "it")
 
             def reset(self, *args, **kwargs):
-                ...
+                self.n = 0
+                if kwargs.get("total") is not None:
+                    self.total = kwargs["total"]
 
             # 新版本 huggingface_hub 把 tqdm_class 当 context manager 用
             # (HfApi._walk 用 `with tqdm_class(...)`), 补上协议以免 "_ProgressTqdm
@@ -121,6 +134,25 @@ def _download_embedding_with_progress() -> None:
 
             def __exit__(self, *exc):
                 return False
+
+            # hf_hub 各版本会调用这些 no-op 方法, 无脑接住避免再有 AttributeError.
+            def set_description(self, *args, **kwargs):
+                ...
+
+            def set_postfix(self, *args, **kwargs):
+                ...
+
+            def set_postfix_str(self, *args, **kwargs):
+                ...
+
+            def refresh(self, *args, **kwargs):
+                ...
+
+            def clear(self, *args, **kwargs):
+                ...
+
+            def close(self, *args, **kwargs):
+                ...
 
             def update(self, n=1):
                 done_bytes[0] += n

@@ -1613,6 +1613,9 @@ class StreamingMixin:
         # 漏掉, 升级路径: 在 model.ainvoke 处再包一层 (monkeypatch BaseChatModel).
         _completion_records: list[dict[str, Any]] = []
         _capture_turn_id = f"{thread_id}_{int(time.time() * 1000)}"
+        # 本轮最终 assistant 回复. 在 try 块里赋值, finally 的 STOP 事件要用它
+        # 给 ISC 反渗透的 MultiTurnSafetyHook 评估; 先初始化防未赋值.
+        _final_ai_content = ""
 
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id
@@ -2315,6 +2318,7 @@ class StreamingMixin:
                         yield {"_auto_continue": True}
 
                     ai_content = self._extract_last_ai_content(final_state)
+                    _final_ai_content = ai_content
                     # 统一事件总线: ON_LLM_RESPONSE + ON_AFTER_MESSAGE_SENT
                     await _ubus.publish_llm_response(thread_id, ai_content[:2000])
                     await _ubus.publish_after_message_sent(thread_id, ai_content[:2000])
@@ -2403,7 +2407,9 @@ class StreamingMixin:
                 # 统一事件总线: 一次调用桥接 STOP hook + SESSION_END hook + 内部EventBus + 插件EventBus
                 from huginn.events.unified_bus import get_unified_bus
                 _ubus = get_unified_bus(self)
-                await _ubus.publish_stop(thread_id, self.workspace)
+                await _ubus.publish_stop(
+                    thread_id, self.workspace, response=_final_ai_content
+                )
                 await _ubus.publish_session_end(thread_id, self._turn_count)
                 # Mode-based memory persistence
                 if self.is_research_mode():

@@ -274,26 +274,26 @@
 | `POST_TOOL_USE` | `post_tool_use` | 3 | 31 | 1 | 0 | `wired` |  |
 | `SESSION_START` | `session_start` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
 | `SESSION_END` | `session_end` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
-| `STOP` | `stop` | 1 | 1 | 0 | 0 | `wired` |  |
+| `STOP` | `stop` | 1 | 2 | 0 | 1 | `wired` |  |
 | `SUBAGENT_STOP` | `subagent_stop` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
 | `PRE_COMPACT` | `pre_compact` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
 | `POST_COMPACT` | `post_compact` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
-| `USER_PROMPT_SUBMIT` | `user_prompt_submit` | 1 | 3 | 0 | 0 | `wired` |  |
+| `USER_PROMPT_SUBMIT` | `user_prompt_submit` | 1 | 4 | 0 | 0 | `wired` |  |
 | `POST_TOOL_USE_FAILURE` | `post_tool_use_failure` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点自带 `if self._callbacks[POST_TOOL_USE_FAILURE]` 守卫 —— 零注册 ⇒ 该分支恒不执行, 是可证死的触发点 |
 
 ### 触发点 / 注册点明细
 
 | 事件常量 | 生产触发点 | 生产注册点 |
 |---|---|---|
-| `PRE_TOOL_USE` | `huginn/agent/callbacks.py:61`, `huginn/events/unified_bus.py:212` | `huginn/agents/factory.py:339`, `huginn/hooks/browser_gate_hook.py:78`, `huginn/hooks/physical_precheck.py:329`, `huginn/hooks/research_safety_hook.py:51`, `huginn/snapshot/integration.py:152` |
-| `POST_TOOL_USE` | `huginn/agent/callbacks.py:113`, `huginn/agent/callbacks.py:100`, `huginn/events/unified_bus.py:255` | `huginn/agents/factory.py:295`, `huginn/agents/factory.py:301`, `huginn/agents/factory.py:313`, `huginn/hooks/science_hooks.py:744`, `huginn/hooks/science_hooks.py:745`, `huginn/hooks/science_hooks.py:750`, `huginn/hooks/science_hooks.py:751`, `huginn/hooks/science_hooks.py:753`, `huginn/hooks/science_hooks.py:755`, `huginn/hooks/science_hooks.py:756`, `huginn/hooks/science_hooks.py:758`, `huginn/hooks/science_hooks.py:759`, `huginn/hooks/science_hooks.py:760`, `huginn/hooks/science_hooks.py:761`, `huginn/hooks/science_hooks.py:762`, `huginn/hooks/science_hooks.py:763`, `huginn/hooks/science_hooks.py:764`, `huginn/hooks/science_hooks.py:765`, `huginn/hooks/science_hooks.py:766`, `huginn/hooks/science_hooks.py:748`, `huginn/hooks/science_hooks.py:771`, `huginn/hooks/science_hooks.py:778`, `huginn/hooks/science_hooks.py:785`, `huginn/hooks/science_hooks.py:795`, `huginn/hooks/science_hooks.py:796`, `huginn/hooks/science_hooks.py:804`, `huginn/hooks/science_hooks.py:805`, `huginn/hooks/science_hooks.py:835`, `huginn/hooks/science_hooks.py:864`, `huginn/hooks/unit_check.py:265`, `huginn/snapshot/integration.py:153` |
+| `PRE_TOOL_USE` | `huginn/agent/callbacks.py:61`, `huginn/events/unified_bus.py:221` | `huginn/agents/factory.py:349`, `huginn/hooks/browser_gate_hook.py:78`, `huginn/hooks/physical_precheck.py:329`, `huginn/hooks/research_safety_hook.py:51`, `huginn/snapshot/integration.py:152` |
+| `POST_TOOL_USE` | `huginn/agent/callbacks.py:113`, `huginn/agent/callbacks.py:100`, `huginn/events/unified_bus.py:264` | `huginn/agents/factory.py:300`, `huginn/agents/factory.py:306`, `huginn/agents/factory.py:318`, `huginn/hooks/science_hooks.py:744`, `huginn/hooks/science_hooks.py:745`, `huginn/hooks/science_hooks.py:750`, `huginn/hooks/science_hooks.py:751`, `huginn/hooks/science_hooks.py:753`, `huginn/hooks/science_hooks.py:755`, `huginn/hooks/science_hooks.py:756`, `huginn/hooks/science_hooks.py:758`, `huginn/hooks/science_hooks.py:759`, `huginn/hooks/science_hooks.py:760`, `huginn/hooks/science_hooks.py:761`, `huginn/hooks/science_hooks.py:762`, `huginn/hooks/science_hooks.py:763`, `huginn/hooks/science_hooks.py:764`, `huginn/hooks/science_hooks.py:765`, `huginn/hooks/science_hooks.py:766`, `huginn/hooks/science_hooks.py:748`, `huginn/hooks/science_hooks.py:771`, `huginn/hooks/science_hooks.py:778`, `huginn/hooks/science_hooks.py:785`, `huginn/hooks/science_hooks.py:795`, `huginn/hooks/science_hooks.py:796`, `huginn/hooks/science_hooks.py:804`, `huginn/hooks/science_hooks.py:805`, `huginn/hooks/science_hooks.py:835`, `huginn/hooks/science_hooks.py:864`, `huginn/hooks/unit_check.py:265`, `huginn/snapshot/integration.py:153` |
 | `SESSION_START` | `huginn/events/unified_bus.py:138` | — |
 | `SESSION_END` | `huginn/events/unified_bus.py:169` | — |
-| `STOP` | `huginn/events/unified_bus.py:199` | `huginn/hooks/science_hooks.py:843` |
+| `STOP` | `huginn/events/unified_bus.py:208` | `huginn/hooks/safety_collapse_hook.py:398`, `huginn/hooks/science_hooks.py:843` |
 | `SUBAGENT_STOP` | `huginn/agents/subagent.py:387` | — |
 | `PRE_COMPACT` | `huginn/agent/streaming.py:918` | — |
-| `POST_COMPACT` | `huginn/events/unified_bus.py:365` | — |
-| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1636` | `huginn/agents/factory.py:322`, `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332` |
+| `POST_COMPACT` | `huginn/events/unified_bus.py:374` | — |
+| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1639` | `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332`, `huginn/agents/factory.py:337`, `huginn/hooks/safety_collapse_hook.py:397` |
 | `POST_TOOL_USE_FAILURE` | `huginn/hooks/__init__.py:280` | — |
 
 ### 互斥违例 (mutually exclusive)
@@ -345,14 +345,14 @@
 | `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1561`, `huginn/autoloop/engine_observe.py:936`, `huginn/autoloop/engine_reflect.py:1617` | — |
 | `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3465` | `huginn/events/audit_log.py:571` |
 | `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3485` | `huginn/events/audit_log.py:571` |
-| `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:337` | — |
-| `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:159` | — |
-| `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:153`, `huginn/knowledge/store.py:163`, `huginn/knowledge/store.py:261` | — |
-| `embedding.download.progress` | 1 | 0 | `huginn/knowledge/store.py:130` | — |
-| `embedding.download.start` | 1 | 0 | `huginn/knowledge/store.py:135` | — |
+| `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:346` | — |
+| `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:191` | — |
+| `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:185`, `huginn/knowledge/store.py:195`, `huginn/knowledge/store.py:293` | — |
+| `embedding.download.progress` | 1 | 0 | `huginn/knowledge/store.py:162` | — |
+| `embedding.download.start` | 1 | 0 | `huginn/knowledge/store.py:167` | — |
 | `event_bus.dropped` | 1 | 0 | `huginn/events/event_bus.py:162` | — |
-| `llm.response` | 1 | 0 | `huginn/events/unified_bus.py:280` | — |
-| `pet.mood` | 1 | 0 | `huginn/events/unified_bus.py:322` | — |
+| `llm.response` | 1 | 0 | `huginn/events/unified_bus.py:289` | — |
+| `pet.mood` | 1 | 0 | `huginn/events/unified_bus.py:331` | — |
 | `team.batch.start` | 1 | 0 | `huginn/agents/team.py:490` | — |
 | `team.member.done` | 2 | 0 | `huginn/agents/team.py:452`, `huginn/agents/team.py:443` | — |
 | `team.member.start` | 1 | 0 | `huginn/agents/team.py:403` | — |
