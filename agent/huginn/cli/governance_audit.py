@@ -111,6 +111,8 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "path": "tests/test_publish_mirror_drift.py",
         "kind": "const-triple",
         "keys": ("MAX_MISSING", "MAX_EXTRA", "MAX_DIFFERING"),
+        "source": "inline",
+        "value": (0, 0, 0),
         "owner_gate": "publish mirror drift (only-shrink)",
     },
     {
@@ -167,6 +169,8 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "path": "tests/test_arch_gate_registry.py",
         "kind": "const",
         "key": "ARCH_GATE_FLOOR",
+        "source": "inline",
+        "value": 17,
         "owner_gate": "Governance gate registry guard",
         "probe": "arch_gate_count",
         "direction": "floor",
@@ -179,6 +183,22 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "owner_gate": "MECE 字段级面",
     },
 )
+
+BUDGET_BY_ID: dict[str, dict] = {s["id"]: s for s in BUDGET_SPECS}
+
+
+def budget_value(budget_id: str) -> int | tuple[int, ...]:
+    """取**权威**(inline)预算的值, 供消费者门 import, 使编辑收敛到单一入口.
+
+    非 inline 项 (值在原位 / 列表内容即契约) 不提供读数并抛 KeyError —— 避免把值
+    搬进台账而丢失其自然归属 (如 env_schema 的层级、插件清单的内容).
+    """
+    spec = BUDGET_BY_ID[budget_id]
+    if spec.get("source") != "inline":
+        raise KeyError(
+            f"预算 `{budget_id}` 非 inline 权威项; 其值在原位 (BUDGET_SPECS.path={spec.get('path')})"
+        )
+    return spec["value"]
 
 
 def _extract_int_const(text: str, key: str) -> int | None:
@@ -222,7 +242,12 @@ def _extract_collection_len(module_text: str, var: str) -> int | None:
 
 
 def _frozen_value(spec: dict, agent_root: Path) -> str:
-    """抽取某预算项的冻结值 (weightless); 抽取失败返回 '?'."""
+    """取某预算项的冻结值 (weightless): inline 权威项读台账声明, 其余从原位抽取."""
+    if spec.get("source") == "inline":
+        value = spec["value"]
+        if isinstance(value, tuple):
+            return "/".join(str(v) for v in value)
+        return str(value)
     path = agent_root / spec["path"]
     kind = spec["kind"]
     if kind == "dir-file-count":
@@ -276,6 +301,7 @@ def collect_budgets(agent_root: Path) -> list[dict]:
                 "id": spec["id"],
                 "name": spec["name"],
                 "path": spec["path"],
+                "mode": "权威" if spec.get("source") == "inline" else "引用",
                 "frozen": frozen,
                 "current": current,
                 "headroom": headroom,
@@ -375,16 +401,17 @@ def render_markdown(reg: dict) -> str:
     lines.append("")
     lines.append(
         "治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). "
-        "实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen)."
+        "**权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, "
+        "台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen)."
     )
     lines.append("")
-    lines.append("| 预算 | 位置 | 冻结值 | 实测 | 余量 | 消费者门 |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |")
+    lines.append("|---|---|---|---|---|---|---|")
     for b in reg["budgets"]:
         cur = "—" if b["current"] is None else str(b["current"])
         head = "—" if b["headroom"] is None else str(b["headroom"])
         lines.append(
-            f"| {b['name']} | `{b['path']}` | {b['frozen']} | {cur} | {head} | {b['owner_gate']} |"
+            f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {b['owner_gate']} |"
         )
     lines.append("")
     lines.append("## 缺口 (gaps)")

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 
 _AGENT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -26,8 +27,9 @@ _spec = importlib.util.spec_from_file_location("governance_audit", _MOD)
 ga = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ga)
 
-# 冻结门数棘轮: 当前 arch 门族条目数. 只减不增 (删门须显式上调, 可见决策).
-ARCH_GATE_FLOOR = 17
+# 冻结门数棘轮: 值由治理台账 (governance_audit.BUDGET_SPECS) **权威声明**, 本门只读.
+# 编辑入口: huginn/cli/governance_audit.py 的 BUDGET_SPECS["arch_gate_floor"]["value"].
+ARCH_GATE_FLOOR = ga.budget_value("arch_gate_floor")
 
 
 def test_all_arch_tests_are_registered():
@@ -61,7 +63,8 @@ def test_arch_gate_count_ratchet_only_shrinks():
     arch = [g for g in reg["gates"] if g["test"].startswith("tests/test_arch_")]
     assert len(arch) >= ARCH_GATE_FLOOR, (
         f"arch 门数从 {ARCH_GATE_FLOOR} 降到 {len(arch)} —— 门被删了? "
-        f"若确为有意合并, 显式下调 ARCH_GATE_FLOOR (可见的发布决策)."
+        f"若确为有意合并, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"arch_gate_floor 的 value (可见的发布决策)."
     )
 
 
@@ -163,4 +166,19 @@ def test_budget_probe_headroom_is_nonneg():
             assert b["headroom"] >= 0, (
                 f"预算 `{b['id']}` 实测 {b['current']} 越过冻结界 {b['frozen']} —— "
                 f"棘轮破了? 检查对应消费者门."
+            )
+
+
+def test_authoritative_budgets_not_redeclared():
+    """权威(inline)预算的值只在台账声明; 消费者门不得再硬编码同名字面量."""
+    for spec in ga.BUDGET_SPECS:
+        if spec.get("source") != "inline":
+            continue
+        gate = (_AGENT / spec["path"]).read_text(encoding="utf-8")
+        keys = (spec["key"],) if "key" in spec else tuple(spec.get("keys", ()))
+        for key in keys:
+            assert not re.search(rf"^{re.escape(key)}\s*=\s*\d", gate, re.M), (
+                f"`{spec['id']}` 是权威预算, 值应只在 BUDGET_SPECS 声明; 但 "
+                f"`{spec['path']}` 仍硬编码 `{key} = <数字>`. "
+                f"改为 ga.budget_value({spec['id']!r})."
             )

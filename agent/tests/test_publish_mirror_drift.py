@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -21,10 +22,16 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import mcpb_vendor  # noqa: E402
 
+# 预算由治理台账 (governance_audit.BUDGET_SPECS) **权威声明**, 本门只读 —— 编辑入口:
+# agent/huginn/cli/governance_audit.py 的 BUDGET_SPECS 里 id=="mirror_drift" 的 value.
+# weightless: 按文件路径加载, 不走 huginn.cli 包 __init__ (后者拉 rich/typer 等重依赖).
+_GOV = REPO_ROOT / "agent" / "huginn" / "cli" / "governance_audit.py"
+_ga_spec = importlib.util.spec_from_file_location("governance_audit", _GOV)
+_ga = importlib.util.module_from_spec(_ga_spec)
+_ga_spec.loader.exec_module(_ga)
+
 # only-shrink 预算 (已跑 scripts/mcpb_vendor.py --write 收敛至 0). 不得上调.
-MAX_MISSING = 0     # 源里有、镜像缺
-MAX_EXTRA = 0       # 镜像里有、源里无 (陈旧自检脚本)
-MAX_DIFFERING = 0   # 两边都有但内容不同
+MAX_MISSING, MAX_EXTRA, MAX_DIFFERING = _ga.budget_value("mirror_drift")
 
 
 def test_publish_mirror_drift_only_shrinks():

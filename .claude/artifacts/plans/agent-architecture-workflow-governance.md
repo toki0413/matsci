@@ -192,13 +192,27 @@
 
 ### 验证（本地）
 
-- `pytest tests/test_arch_gate_registry.py -o addopts=""` → 12 passed。
-- `ruff check`（两文件）→ All checks passed。
+- `pytest tests/test_arch_gate_registry.py -o addopts=""` → 13 passed。
+- `ruff check`（三文件）→ All checks passed。
 - `pytest tests/test_publish_mirror_drift.py` → 2 passed（同步后 0 漂移）。
 - 契约门（`test_config_contracts` / `test_contract_audit`）本地因缺 dev 依赖（rich/pydantic/
   langchain_core…）未能跑；基线无 `governance_audit` 引用，预期不漂 → 由 CI 兜底。
 
-### 未落（phase 2）
+### phase 2（权威读取）— 已落（数值型）
 
-- 各门 `from governance_audit import BUDGET_SPECS` 权威读取（预算编辑收敛单一入口）。
+把**数值型**棘轮的值收敛到 `BUDGET_SPECS` 单一入口，消费者门只读：
+
+- `BUDGET_SPECS` 新增 `source: "inline"` + `value`（`mirror_drift` = (0,0,0)、
+  `arch_gate_floor` = 17）；新增 `budget_value(id)` 供各门 import。
+- `tests/test_publish_mirror_drift.py`：`MAX_MISSING/MAX_EXTRA/MAX_DIFFERING` ← `budget_value("mirror_drift")`。
+- `tests/test_arch_gate_registry.py`：`ARCH_GATE_FLOOR` ← `budget_value("arch_gate_floor")`；
+  新增元门禁 `test_authoritative_budgets_not_redeclared`（inline 值不得在消费者门重新硬编码）。
+- `governance-state.md` 预算表新增「模式」列（权威 / 引用）。
+
+**按设计保留原位（引用）**：`env_schema.RAW_READ_BASELINE`（层级原因）、以及各名单/清单型
+棘轮（`ALLOWED_EXTERNAL_IMPORTS` 等 —— 其**内容即契约**，大小只是登记面）。
+
+### 未落（后续）
+
 - 更多 weightless 探针（镜像漂移实测等，需复用 `scripts/mcpb_vendor` 且不拖慢 fast-fail 门）。
+- 若要把名单型棘轮也纳入权威读取，需先把「内容」与「大小」职责拆开（当前不建议）。

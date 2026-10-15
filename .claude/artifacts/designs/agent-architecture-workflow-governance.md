@@ -57,9 +57,11 @@ G-1 的「预算/基线 → 当前值」最初只落 MECE + 镜像两项；本�
 `governance_audit.BUDGET_SPECS` 台账，覆盖 10 项棘轮：MECE 发现基线 / 镜像漂移预算 /
 环境裸读基线 / 外部直连白名单 / 冻结委托子命令 / 插件准入清单 / 硬编码路径白名单 /
 MCP 接线白名单 / arch 门数下限 / 字段审计 golden。weightless（regex + ast，不 import
-被测模块）抽取冻结值，对可测项给实测/余量；新增三条元门禁（id 唯一且覆盖集冻结、
-冻结值抽取无 `?`、探针余量非负）。**权威读取**（各门 `from 本表 import`，使预算编辑收敛
-到单一入口）留作 phase 2，其中 `env_schema.RAW_READ_BASELINE` 因层级原因保留原处、台账引用。
+被测模块）抽取冻结值，对可测项给实测/余量；新增元门禁（id 唯一且覆盖集冻结、
+冻结值抽取无 `?`、探针余量非负、inline 值不得在消费者门重声明）。**权威读取**已落实：
+数值型棘轮（`mirror_drift`、`arch_gate_floor`）的值在台账声明、消费者门 `budget_value()`
+只读；名单型棘轮与 `env_schema.RAW_READ_BASELINE` 按设计保留原位（内容即契约 / 层级原因），
+台账以「引用」登记。
 
 ## Edge cases & risks
 
