@@ -51,6 +51,16 @@ facade。经 Wave 2 确认，本轮优先面锁定**低熵治理面**，且「�
   且在治理状态工件中登记（孤儿门即红）。
 - 棘轮：冻结当前门数，only-shrink 漂移预算（对齐 `test_publish_mirror_drift.py` 范式）。
 
+### 增量 (2026-10-15, M1′)：统一预算台账
+
+G-1 的「预算/基线 → 当前值」最初只落 MECE + 镜像两项；本轮补齐为单一
+`governance_audit.BUDGET_SPECS` 台账，覆盖 10 项棘轮：MECE 发现基线 / 镜像漂移预算 /
+环境裸读基线 / 外部直连白名单 / 冻结委托子命令 / 插件准入清单 / 硬编码路径白名单 /
+MCP 接线白名单 / arch 门数下限 / 字段审计 golden。weightless（regex + ast，不 import
+被测模块）抽取冻结值，对可测项给实测/余量；新增三条元门禁（id 唯一且覆盖集冻结、
+冻结值抽取无 `?`、探针余量非负）。**权威读取**（各门 `from 本表 import`，使预算编辑收敛
+到单一入口）留作 phase 2，其中 `env_schema.RAW_READ_BASELINE` 因层级原因保留原处、台账引用。
+
 ## Edge cases & risks
 
 | Category | Notes |

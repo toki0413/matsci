@@ -6,11 +6,11 @@
    也未显式声明「只靠全量套件兜底」(状态未知 = 熵).
 2. **悬空门** —— `ci.yml` 的 guard step 指向一个已被改名/删除的测试文件
    (门永远绿灯, 因为它根本没跑).
-3. **基线漂移** —— 棘轮/预算冻结值散落在 `tests/golden/*` 与各测试常量里,
-   没有单一台账可读.
+3. **基线漂移** —— 棘轮/预算冻结值散落在 `tests/golden/*`、`huginn/` 与各测试
+   常量里, 没有单一台账可读; 现由 `BUDGET_SPECS` 收成一张表.
 
 扫描 `tests/test_arch_*.py` 门族 + `.github/workflows/ci.yml` 的 python guard
-step + 两处棘轮基线, 渲染成 `docs/governance-state.md`.
+step, 并把散落的棘轮预算/基线收成单一台账, 渲染成 `docs/governance-state.md`.
 
 设计 (对齐 config_audit / contract_audit):
 - **纯 stdlib**: 不 import huginn.*, 不硬依赖 yaml (有则用, 无则退化行扫描),
@@ -24,6 +24,7 @@ step + 两处棘轮基线, 渲染成 `docs/governance-state.md`.
 from __future__ import annotations
 
 import argparse
+import ast
 import logging
 import re
 from pathlib import Path
@@ -89,33 +90,196 @@ def _parse_guard_steps(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _collect_baselines(agent_root: Path) -> list[dict]:
-    """棘轮/预算冻结值的单一台账 (只读)."""
+# ── 预算登记 (单一机器可读来源) ──
+# 治理棘轮的冻结预算/基线此前散落在 tests/、huginn/、tests/golden/ 各处. 这里收成
+# **一张声明表**: 每项指明位置、抽取方式与消费者门, 供 governance-state.md 单点可读.
+# 抽取**只读、weightless**(regex + ast, 不 import 被测模块), 以免拖慢快速失败门.
+#
+# phase 2 (M1′, 未落): 把测试侧冻结清单逐项提升为**权威读取**(门 from 本表 import),
+# 使预算编辑收敛到单一入口; env_schema.RAW_READ_BASELINE 因层级原因保留原处、此处引用.
+BUDGET_SPECS: tuple[dict, ...] = (
+    {
+        "id": "mece_findings",
+        "name": "MECE 发现基线",
+        "path": "tests/golden/mece_findings_baseline.txt",
+        "kind": "file-lines",
+        "owner_gate": "MECE wiring-contract guard (ratchet)",
+    },
+    {
+        "id": "mirror_drift",
+        "name": "镜像漂移预算",
+        "path": "tests/test_publish_mirror_drift.py",
+        "kind": "const-triple",
+        "keys": ("MAX_MISSING", "MAX_EXTRA", "MAX_DIFFERING"),
+        "owner_gate": "publish mirror drift (only-shrink)",
+    },
+    {
+        "id": "env_raw_read",
+        "name": "环境裸读基线",
+        "path": "huginn/env_schema.py",
+        "kind": "const",
+        "key": "RAW_READ_BASELINE",
+        "owner_gate": "env surface governance",
+    },
+    {
+        "id": "gateway_imports",
+        "name": "外部直连白名单",
+        "path": "tests/test_arch_single_gateway.py",
+        "kind": "collection-len",
+        "var": "ALLOWED_EXTERNAL_IMPORTS",
+        "owner_gate": "Architecture single-gateway guard",
+    },
+    {
+        "id": "gateway_subcommands",
+        "name": "冻结委托子命令",
+        "path": "tests/test_arch_single_gateway.py",
+        "kind": "collection-len",
+        "var": "CLI_DELEGATED_SUBCOMMANDS",
+        "owner_gate": "Architecture single-gateway guard",
+    },
+    {
+        "id": "sanctioned_plugins",
+        "name": "插件准入清单",
+        "path": "tests/test_arch_plugin_governance.py",
+        "kind": "collection-len",
+        "var": "SANCTIONED_PLUGINS",
+        "owner_gate": "Plugin admission guard",
+    },
+    {
+        "id": "hardcoded_allow",
+        "name": "硬编码路径白名单",
+        "path": "tests/test_arch_no_hardcoded_paths.py",
+        "kind": "collection-len",
+        "var": "ALLOWED_HARDCODED_MATCHES",
+        "owner_gate": "No-hardcoded-machine-paths guard",
+    },
+    {
+        "id": "mcp_wiring_allow",
+        "name": "MCP 接线白名单",
+        "path": "tests/test_arch_mcp_governance.py",
+        "kind": "collection-len",
+        "var": "_ALLOWED_WIRING_FILES",
+        "owner_gate": "MCP single-gateway guard",
+    },
+    {
+        "id": "arch_gate_floor",
+        "name": "arch 门数下限",
+        "path": "tests/test_arch_gate_registry.py",
+        "kind": "const",
+        "key": "ARCH_GATE_FLOOR",
+        "owner_gate": "Governance gate registry guard",
+        "probe": "arch_gate_count",
+        "direction": "floor",
+    },
+    {
+        "id": "field_audit_golden",
+        "name": "字段审计 golden",
+        "path": "tests/golden/field_audit",
+        "kind": "dir-file-count",
+        "owner_gate": "MECE 字段级面",
+    },
+)
+
+
+def _extract_int_const(text: str, key: str) -> int | None:
+    """抽取形如 `KEY = 123` 的整数常量 (行首锚定)."""
+    m = re.search(rf"^{re.escape(key)}\s*=\s*(\d+)", text, re.M)
+    return int(m.group(1)) if m else None
+
+
+def _extract_collection_len(module_text: str, var: str) -> int | None:
+    """用 ast 读 `var = <dict/set/frozenset 字面量>` 的元素数 (不 import 模块)."""
+    try:
+        tree = ast.parse(module_text)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        target_name: str | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target_name, value = node.target.id, node.value
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target_name, value = node.targets[0].id, node.value
+        if target_name != var or value is None:
+            continue
+        container = value
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id in {"frozenset", "set", "list", "tuple", "dict"}
+            and value.args
+        ):
+            container = value.args[0]
+        try:
+            return len(ast.literal_eval(container))
+        except (ValueError, SyntaxError):
+            return None
+    return None
+
+
+def _frozen_value(spec: dict, agent_root: Path) -> str:
+    """抽取某预算项的冻结值 (weightless); 抽取失败返回 '?'."""
+    path = agent_root / spec["path"]
+    kind = spec["kind"]
+    if kind == "dir-file-count":
+        if not path.is_dir():
+            return "?"
+        return f"{sum(1 for p in path.iterdir() if p.is_file())} 文件"
+    if not path.is_file():
+        return "?"
+    text = path.read_text(encoding="utf-8")
+    if kind == "file-lines":
+        n = sum(1 for ln in text.splitlines() if ln.strip())
+        return f"{n} 项"
+    if kind == "const":
+        v = _extract_int_const(text, spec["key"])
+        return str(v) if v is not None else "?"
+    if kind == "const-triple":
+        vals = [_extract_int_const(text, k) for k in spec["keys"]]
+        return "/".join("?" if v is None else str(v) for v in vals)
+    if kind == "collection-len":
+        n = _extract_collection_len(text, spec["var"])
+        return f"{n} 项" if n is not None else "?"
+    return "?"
+
+
+def _probe_current(spec: dict, agent_root: Path) -> int | None:
+    """实测当前值. 仅对 weightless 可测项提供; 其余由消费者门自行校验, 此处不重复扫描."""
+    if spec.get("probe") == "arch_gate_count":
+        return len(discover_arch_tests(agent_root))
+    return None
+
+
+def collect_budgets(agent_root: Path) -> list[dict]:
+    """治理棘轮预算的单一台账 (只读): 冻结值 + 可测项的实测值/余量."""
     out: list[dict] = []
-    mece = agent_root / "tests" / "golden" / "mece_findings_baseline.txt"
-    if mece.exists():
-        n = sum(1 for ln in mece.read_text(encoding="utf-8").splitlines() if ln.strip())
+    for spec in BUDGET_SPECS:
+        frozen = _frozen_value(spec, agent_root)
+        current = _probe_current(spec, agent_root)
+        headroom: int | None = None
+        if current is not None:
+            m = re.match(r"^(\d+)", frozen)
+            if m:
+                frozen_n = int(m.group(1))
+                # floor 型: 实测应 ≥ 冻结下限, 余量 = 实测 - 下限; cap 型: 余量 = 上限 - 实测.
+                headroom = (
+                    current - frozen_n
+                    if spec.get("direction") == "floor"
+                    else frozen_n - current
+                )
         out.append(
             {
-                "name": "MECE 发现基线",
-                "path": "tests/golden/mece_findings_baseline.txt",
-                "frozen": f"{n} 项发现",
-            }
-        )
-    mirror = agent_root / "tests" / "test_publish_mirror_drift.py"
-    if mirror.exists():
-        txt = mirror.read_text(encoding="utf-8")
-
-        def _budget(key: str) -> str:
-            m = re.search(rf"^{key}\s*=\s*(\d+)", txt, re.M)
-            return m.group(1) if m else "?"
-
-        out.append(
-            {
-                "name": "镜像漂移预算",
-                "path": "tests/test_publish_mirror_drift.py",
-                "frozen": "missing/extra/differing = "
-                f"{_budget('MAX_MISSING')}/{_budget('MAX_EXTRA')}/{_budget('MAX_DIFFERING')}",
+                "id": spec["id"],
+                "name": spec["name"],
+                "path": spec["path"],
+                "frozen": frozen,
+                "current": current,
+                "headroom": headroom,
+                "owner_gate": spec["owner_gate"],
             }
         )
     return out
@@ -174,7 +338,7 @@ def audit(agent_root: Path, ci_text: str | None = None) -> dict:
         "gates": gates,
         "orphans": sorted(orphans),
         "dangling": dangling,
-        "baselines": _collect_baselines(agent_root),
+        "budgets": collect_budgets(agent_root),
     }
 
 
@@ -207,12 +371,21 @@ def render_markdown(reg: dict) -> str:
             step = f"{step} (悬空)"
         lines.append(f"| `{g['test']}` | {'是' if g['arch'] else '否'} | `{g['status']}` | {step} |")
     lines.append("")
-    lines.append("## 棘轮基线 (ratchet baselines)")
+    lines.append("## 预算 (budgets)")
     lines.append("")
-    lines.append("| 基线 | 冻结值 |")
-    lines.append("|---|---|")
-    for b in reg["baselines"]:
-        lines.append(f"| {b['name']} (`{b['path']}`) | {b['frozen']} |")
+    lines.append(
+        "治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). "
+        "实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen)."
+    )
+    lines.append("")
+    lines.append("| 预算 | 位置 | 冻结值 | 实测 | 余量 | 消费者门 |")
+    lines.append("|---|---|---|---|---|---|")
+    for b in reg["budgets"]:
+        cur = "—" if b["current"] is None else str(b["current"])
+        head = "—" if b["headroom"] is None else str(b["headroom"])
+        lines.append(
+            f"| {b['name']} | `{b['path']}` | {b['frozen']} | {cur} | {head} | {b['owner_gate']} |"
+        )
     lines.append("")
     lines.append("## 缺口 (gaps)")
     lines.append("")

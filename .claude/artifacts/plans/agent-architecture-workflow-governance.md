@@ -162,3 +162,43 @@
 - Critic verdict v1：**APPROVED**，采纳三处改进：①AC-2 加 `status` 语义；②补 INDEX
   登记步骤；③补合成树自检防门禁自失效。
 - Final iterations: 1 / 3
+
+---
+
+## 增量 (2026-10-15, M1′)：统一预算台账
+
+> 状态：已落（M1 部分）；权威读取（phase 2）未落。
+
+原 plan 的 `_collect_baselines` 只登记 2 项（MECE + 镜像）。按用户「先落预算台账」，
+把 `governance_audit` 的预算面补成单一 `BUDGET_SPECS` 台账。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：新增 `BUDGET_SPECS`（10 项棘轮）+ `collect_budgets()`；
+  weightless 抽取（`file-lines` / `const` / `const-triple` / `collection-len`(ast) /
+  `dir-file-count`）；可测项探针（当前仅 `arch_gate_floor`，floor 型余量）；
+  `render_markdown` 的「棘轮基线」节改为「预算 (budgets)」表。
+- `tests/test_arch_gate_registry.py`：新增 3 条元门禁 —— 预算 id 唯一且覆盖集与
+  `_EXPECTED_BUDGET_IDS` 一致（只许显式增删）、冻结值抽取无 `?`、探针余量非负。
+- `docs/governance-state.md`：重生成（含预算表）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像（改动的 `governance_audit.py`）。
+
+### AC
+
+- AC-1 `python -m huginn.cli.governance_audit --out docs/governance-state.md` 与提交文件逐字相等（沿用）。
+- AC-2 每个预算项冻结值抽取成功（无 `?`）；新增/删除棘轮必须同步 `_EXPECTED_BUDGET_IDS`。
+- AC-3 有探针的预算项余量非负。
+- AC-4 镜像漂移门仍绿（`test_publish_mirror_drift.py`）。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py -o addopts=""` → 12 passed。
+- `ruff check`（两文件）→ All checks passed。
+- `pytest tests/test_publish_mirror_drift.py` → 2 passed（同步后 0 漂移）。
+- 契约门（`test_config_contracts` / `test_contract_audit`）本地因缺 dev 依赖（rich/pydantic/
+  langchain_core…）未能跑；基线无 `governance_audit` 引用，预期不漂 → 由 CI 兜底。
+
+### 未落（phase 2）
+
+- 各门 `from governance_audit import BUDGET_SPECS` 权威读取（预算编辑收敛单一入口）。
+- 更多 weightless 探针（镜像漂移实测等，需复用 `scripts/mcpb_vendor` 且不拖慢 fast-fail 门）。

@@ -115,3 +115,52 @@ def test_registered_guard_on_synthetic_tree_is_not_orphan(tmp_path: pathlib.Path
     reg = ga.audit(tmp_path, ci_text=ci)
     assert reg["orphans"] == []
     assert reg["dangling"] == []
+
+
+# ──────────────────── 预算台账 (BUDGET_SPECS) ────────────────────
+
+# 冻结覆盖集: 应被登记的治理棘轮预算. 新增/删除棘轮必须同步此集 (可见决策).
+_EXPECTED_BUDGET_IDS = frozenset(
+    {
+        "mece_findings",
+        "mirror_drift",
+        "env_raw_read",
+        "gateway_imports",
+        "gateway_subcommands",
+        "sanctioned_plugins",
+        "hardcoded_allow",
+        "mcp_wiring_allow",
+        "arch_gate_floor",
+        "field_audit_golden",
+    }
+)
+
+
+def test_budget_ids_unique_and_complete():
+    """预算登记: id 唯一, 且与冻结覆盖集一致 (只许显式增删)."""
+    ids = [s["id"] for s in ga.BUDGET_SPECS]
+    assert len(ids) == len(set(ids)), f"BUDGET_SPECS 存在重复 id: {ids}"
+    have = set(ids)
+    assert have == _EXPECTED_BUDGET_IDS, (
+        f"预算覆盖变化 —— 未登记: {sorted(_EXPECTED_BUDGET_IDS - have)}; "
+        f"多出: {sorted(have - _EXPECTED_BUDGET_IDS)}. 新增/删除棘轮须同步此冻结集."
+    )
+
+
+def test_budget_frozen_values_extract_cleanly():
+    """每个预算项的冻结值都能抽取 (无 '?'), 防位置/写法漂移让台账静默腐烂."""
+    for b in ga.collect_budgets(_AGENT):
+        assert "?" not in b["frozen"], (
+            f"预算 `{b['id']}` 冻结值抽取失败 ({b['frozen']}) —— "
+            f"源文件位置或写法变了? 同步 governance_audit.BUDGET_SPECS."
+        )
+
+
+def test_budget_probe_headroom_is_nonneg():
+    """有实测探针的预算项余量非负 (实测未越过冻结界)."""
+    for b in ga.collect_budgets(_AGENT):
+        if b["headroom"] is not None:
+            assert b["headroom"] >= 0, (
+                f"预算 `{b['id']}` 实测 {b['current']} 越过冻结界 {b['frozen']} —— "
+                f"棘轮破了? 检查对应消费者门."
+            )
