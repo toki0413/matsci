@@ -155,6 +155,13 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_credential_gateway.py -q -o addopts=""
 
+      # 低熵治理门禁：治理门自身的熵 —— `test_arch_*.py` 存在却未登记 (孤儿门)、
+      # ci.yml guard step 指向不存在的测试 (悬空门)、门数萎缩。weightless
+      # (stdlib + 可选 yaml, 不 import huginn.*)，先于重型套件快速 fail。
+      - name: Governance gate registry guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_gate_registry.py -q -o addopts=""
+
       # 接线契约回归门 (棘轮): contract_audit 的既有发现多为「候选登记」
       # (同轴惩罚/跨模块同名/词表漂移 — 工具自述"只提示不判死", 测试断言其存在),
       # 故「零发现」门不可行。按基线冻结当前 47 项, 只拦**基线外的新发现** ——

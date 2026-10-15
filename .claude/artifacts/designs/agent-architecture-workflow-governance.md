@@ -1,6 +1,6 @@
 # Agent 架构 / 工作流 / 低熵治理 完善 Spec
 
-> Status: STUCK
+> Status: ALIGNED
 > Author: user
 > Last updated: 2026-10-15
 
@@ -11,12 +11,12 @@
 无新功能边界。仓库（`matsci` / `huginn-agent`）**已有**成熟地基：MECE 契约审计、
 11 篇自动再生成契约文档、~14 个 CI「arch 门」+ MECE 棘轮基线、`publish/mcpb`
 镜像 only-shrink 棘轮、`ponytail` 技术债登记、OTel / explainability / governance
-facade。当前**目标粒度不足以写出可执行验收**，且「低熵治理」是仓库既有词表外的
-新造词（grep 仅在 env-contract 命中同名英文变量，非项目语义）。
+facade。经 Wave 2 确认，本轮优先面锁定**低熵治理面**，且「低熵治理」= 既有防漂移
+体系（MECE / 契约 / 棘轮 / 债务登记）的延续。
 
-## In scope (candidate — 待用户确认优先面)
+## In scope
 
-推荐面 = **低熵治理面**（增量收益最大、风险最低，沿用既有地基）：
+面 = **低熵治理面**（用户 2026-10-15 确认；增量收益最大、风险最低，沿用既有地基）：
 
 - **G-1 治理门登记**：把散落的治理门（`tests/test_arch_*.py` + CI step + 预算/基线）
   收敛为单一机器可读登记（gate → 测试入口 → 预算/基线 → 当前值）。
@@ -34,7 +34,7 @@ facade。当前**目标粒度不足以写出可执行验收**，且「低熵治�
 ## Assumptions
 
 - A-1 目标为系统级工程改进，非新功能。
-- A-2 三个面本轮只落 **一面**（优先面待用户确认）。
+- A-2 三个面本轮只落 **低熵治理面**（已确认）。
 - A-3 「低熵治理」≈ 既有防漂移体系（MECE / 契约 / 棘轮 / 债务登记）的延续，非另起体系。
 - A-4 现状事实：治理门众多但登记与预算分散在 `ci.yml`、`tests/golden/*`、
   `test_publish_mirror_drift.py`、`TECHNICAL_DEBT_PONYTAIL.md` 各处，缺统一可观察视图与孤儿门检测。
@@ -71,10 +71,10 @@ facade。当前**目标粒度不足以写出可执行验收**，且「低熵治�
 
 ## Open questions
 
-- **OQ-1 (BLOCKER, 需用户决策)**：本轮优先面 = 低熵治理面（建议）/ Agent 运行时架构 /
-  工作流编排 / 可观察-可解释统一？—— 决定 `In scope`，未定则本 spec 无法进入 `dev-plan`。
-- **OQ-2 (需用户决策)**：「低熵治理」是否等同既有防漂移体系？若另有含义，需给出边界。
-- **OQ-3 (可选)**：治理状态工件是否设为 CI 确定性门（防漂移），还是仅作文档？
+- ~~OQ-1 优先面~~ → 已决（2026-10-15）：低熵治理面。
+- ~~OQ-2「低熵治理」含义~~ → 已决（2026-10-15）：= 既有防漂移体系的延续。
+- **OQ-3 (可选，不阻塞)**：治理状态工件是否设为 CI 确定性门（防漂移），还是仅作文档？
+  默认取「仅作文档 + 孤儿门/门数棘轮做门」，实施中如需改判再报告 spec drift。
 
 ## Core entities (ontology)
 
@@ -88,17 +88,17 @@ facade。当前**目标粒度不足以写出可执行验收**，且「低熵治�
 ## Interview metadata
 
 - Mode: default
-- Waves: 1
-- Final ambiguity: ~72%
-- Status: STUCK (CAP pending user；最高杠杆问题未获答)
+- Waves: 2
+- Final ambiguity: ~25%
+- Status: ALIGNED (Wave 2 由用户确认优先面后收敛)
 
 ### Clarity breakdown
 
 | Dimension | Score | Weight | Weighted | gap |
 |---|---|---|---|---|
-| Goal | 0.30 | 0.40 | 0.12 | 三面并列，未定优先面 |
-| Scope | 0.30 | 0.25 | 0.075 | in/out 仅为候选 |
-| AC | 0.40 | 0.25 | 0.10 | 仅对候选面可写 AC |
+| Goal | 0.80 | 0.40 | 0.32 | 单面 + 具体缺口已定 |
+| Scope | 0.75 | 0.25 | 0.1875 | in/out 已定 |
+| AC | 0.75 | 0.25 | 0.1875 | 候选面 AC 可执行 |
 | Context | 0.80 | 0.10 | 0.08 | 已实测既有治理地基 |
 
 ### Ontology convergence
