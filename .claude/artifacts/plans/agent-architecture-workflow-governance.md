@@ -231,3 +231,47 @@
 ### 未落（后续）
 
 - 若要把名单型棘轮也纳入权威读取，需先把「内容」与「大小」职责拆开（当前不建议）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：CLI 门（非 pytest 形态）纳入台账
+
+> 状态：已落。补齐治理层第 3 种熵形态 —— **CLI 门漏登记/悬空**。
+
+原台账只认 `ci.yml` 里 `python -m pytest tests/...` 形态的 guard step，
+`python -m huginn.<module>` 形态的治理门（`contract_audit` 棘轮、`policy_engine`
+自查）被漏掉；其指向的模块改名/删除会形成「永远绿灯的悬空门」。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 新增 `_CLI_GUARD_RE` + `_cli_guard_in_line()`（**单一判据**，yaml 主路径与逐行
+    fallback 共用）+ `_read_ci_text()` + `_parse_cli_guards()`。
+  - `audit()` 增 `cli_guards`（按模块去重、映射到仓内 `.py`/包目录判存在）与
+    `dangling_cli`。
+  - `BUDGET_SPECS` 增 `cli_guard_floor`（inline 权威，值 2）；`_probe_current` 增
+    `cli_guard_count`（weightless，读 `ci.yml` 文本）。
+  - `render_markdown` 增「CLI 门 (cli gates)」表 + 缺口区「CLI 悬空门」。
+- `tests/test_arch_gate_registry.py`：新增 5 条元门禁 —— CLI 悬空检测、去重、
+  数量棘轮（`CLI_GUARD_FLOOR` ← `budget_value`）、合成树幽灵模块自检、
+  **注释行不算门**（yaml/fallback 共用判据的确定性锚点）；`_EXPECTED_BUDGET_IDS`
+  同步增 `cli_guard_floor`。
+- `docs/governance-state.md`：重生成（含 CLI 门表）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 每个 CLI 门指向的模块存在（`dangling_cli == []`）。
+- AC-3 CLI 门数只减不增（棘轮 ≥ `cli_guard_floor`）。
+- AC-4 注释行里的 `python -m huginn.<module>` 不计为门（消除环境相关幻影门）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **21 passed**（with/without PyYAML 各一次）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 CLI 门 = 2（`huginn.cli.contract_audit` / `huginn.security.policy_engine`），
+  yaml 主路径与 fallback 逐字一致（确定性回归确认）。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。

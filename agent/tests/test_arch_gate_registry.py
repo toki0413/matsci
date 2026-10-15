@@ -1,11 +1,13 @@
 """低熵治理台账 (governance_audit) 的门禁自检.
 
-治理层自身的熵: **门存在却未登记 / CI step 指向不存在的测试**. 本测试把
-`tests/test_arch_*.py` 门族与 `ci.yml` 的 python guard step 对齐成硬不变量:
+治理层自身的熵: **门存在却未登记 / CI step 指向不存在的测试 / CLI 门指向已删模块**.
+本测试把 `tests/test_arch_*.py` 门族、`ci.yml` 的 pytest guard step 与
+`python -m huginn.<module>` CLI 门三者对齐成硬不变量:
 
 - 每个 `test_arch_*.py` 必须登记 (显式快速失败门, 或显式声明 full-suite-only);
   未登记者 = 孤儿门 → 红.
-- 每个 CI guard step 指向的测试文件必须存在; 指向幽灵文件的悬空门 → 红.
+- 每个 CI pytest guard step 指向的测试文件必须存在; 指向幽灵文件的悬空门 → 红.
+- 每个 CLI 门 (`python -m huginn.<module>`) 指向的模块必须存在; 指向已删模块 → 红.
 - 门数只减不增 (棘轮); 删掉一个已登记门 → 红.
 - 生成文档 `docs/governance-state.md` 必须与当前扫描逐字一致 (确定性再生成).
 
@@ -30,6 +32,9 @@ _spec.loader.exec_module(ga)
 # 冻结门数棘轮: 值由治理台账 (governance_audit.BUDGET_SPECS) **权威声明**, 本门只读.
 # 编辑入口: huginn/cli/governance_audit.py 的 BUDGET_SPECS["arch_gate_floor"]["value"].
 ARCH_GATE_FLOOR = ga.budget_value("arch_gate_floor")
+
+# CLI 门 (`python -m huginn.<module>`) 数下限棘轮: 同上, 值由台账权威声明.
+CLI_GUARD_FLOOR = ga.budget_value("cli_guard_floor")
 
 
 def test_all_arch_tests_are_registered():
@@ -120,6 +125,64 @@ def test_registered_guard_on_synthetic_tree_is_not_orphan(tmp_path: pathlib.Path
     assert reg["dangling"] == []
 
 
+# ──────────────────── CLI 门 (非 pytest 形态) ────────────────────
+
+
+def test_cli_guards_point_at_existing_modules():
+    """不变量: 每个 CLI 门 (`python -m huginn.<module>`) 指向的模块都存在."""
+    reg = ga.build_gate_registry()
+    assert reg["dangling_cli"] == [], (
+        f"CLI 悬空门 (python -m 指向不存在的模块): {reg['dangling_cli']} —— "
+        f"模块改名/删除后忘了同步 ci.yml."
+    )
+
+
+def test_cli_guard_entries_are_unique():
+    """每个 CLI 门模块只登记一次 (去重; 一处多处调用不算多门)."""
+    reg = ga.build_gate_registry()
+    mods = [c["module"] for c in reg["cli_guards"]]
+    assert len(mods) == len(set(mods)), "CLI 门登记表存在重复模块条目"
+
+
+def test_cli_guard_count_ratchet_only_shrinks():
+    """棘轮: CLI 门数只减不增."""
+    reg = ga.build_gate_registry()
+    assert len(reg["cli_guards"]) >= CLI_GUARD_FLOOR, (
+        f"CLI 门数从 {CLI_GUARD_FLOOR} 降到 {len(reg['cli_guards'])} —— 门被删了? "
+        f"若确为有意合并, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"cli_guard_floor 的 value (可见的发布决策)."
+    )
+
+
+def test_cli_guard_dangling_detection_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证 CLI 门指向幽灵模块能被抓到."""
+    (tmp_path / "tests").mkdir()
+    ci = "steps:\n  - name: Ghost CLI\n    run: python -m huginn.cli.ghost --check\n"
+    reg = ga.audit(tmp_path, ci_text=ci)
+    assert any(d["module"] == "huginn.cli.ghost" for d in reg["dangling_cli"])
+
+
+def test_cli_guard_ignores_comment_lines():
+    """注释行里的 `python -m huginn.<module>` (如重生成提示) 不算门.
+
+    这是 yaml 主路径与逐行 fallback **共用判据**的确定性锚点: 否则注释里的
+    命令会被误登记成幻影门, 且结果随运行环境是否装了 PyYAML 而变. 用合法
+    `jobs` 结构, 装了 PyYAML 时走主路径、没装时走 fallback, 两条结果须一致.
+    """
+    ci = (
+        "jobs:\n"
+        "  g:\n"
+        "    steps:\n"
+        "      - name: Real CLI gate\n"
+        "        run: |\n"
+        "          # 重生成: python -m huginn.cli.fake --update\n"
+        "          python -m huginn.cli.real --check\n"
+    )
+    mods = [m for _, m in ga._parse_cli_guards(ci)]
+    assert "huginn.cli.real" in mods
+    assert "huginn.cli.fake" not in mods
+
+
 # ──────────────────── 预算台账 (BUDGET_SPECS) ────────────────────
 
 # 冻结覆盖集: 应被登记的治理棘轮预算. 新增/删除棘轮必须同步此集 (可见决策).
@@ -134,6 +197,7 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "hardcoded_allow",
         "mcp_wiring_allow",
         "arch_gate_floor",
+        "cli_guard_floor",
         "field_audit_golden",
     }
 )

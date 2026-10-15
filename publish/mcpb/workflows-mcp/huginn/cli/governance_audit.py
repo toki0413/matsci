@@ -1,16 +1,19 @@
 """低熵治理台账 (governance_audit): 治理门登记 + 孤儿门检测 + 确定性再生成.
 
-治理层**自身**的熵有三种典型形态, 本模块把它们变成可观察、可门禁的事实:
+治理层**自身**的熵有四种典型形态, 本模块把它们变成可观察、可门禁的事实:
 
 1. **孤儿门** —— `tests/test_arch_*.py` 存在, 却既未接入 `ci.yml` 快速失败门,
    也未显式声明「只靠全量套件兜底」(状态未知 = 熵).
 2. **悬空门** —— `ci.yml` 的 guard step 指向一个已被改名/删除的测试文件
    (门永远绿灯, 因为它根本没跑).
-3. **基线漂移** —— 棘轮/预算冻结值散落在 `tests/golden/*`、`huginn/` 与各测试
+3. **CLI 门漏登记** —— `ci.yml` 里 `python -m huginn.<module>` 形态的治理门
+   (CLI 自查 / 棘轮, 如 contract_audit 棘轮), 旧解析只认 pytest 会漏掉; 现单列.
+4. **基线漂移** —— 棘轮/预算冻结值散落在 `tests/golden/*`、`huginn/` 与各测试
    常量里, 没有单一台账可读; 现由 `BUDGET_SPECS` 收成一张表.
 
-扫描 `tests/test_arch_*.py` 门族 + `.github/workflows/ci.yml` 的 python guard
-step, 并把散落的棘轮预算/基线收成单一台账, 渲染成 `docs/governance-state.md`.
+扫描 `tests/test_arch_*.py` 门族 + `.github/workflows/ci.yml` 的两类 python guard
+step (pytest 与 `python -m huginn.<module>`), 并把散落的棘轮预算/基线收成单一
+台账, 渲染成 `docs/governance-state.md`.
 
 设计 (对齐 config_audit / contract_audit):
 - **纯 stdlib**: 不 import huginn.*, 不硬依赖 yaml (有则用, 无则退化行扫描),
@@ -48,6 +51,9 @@ FULL_SUITE_ONLY = frozenset(
 
 _ARCH_GLOB = "test_arch_*.py"
 _TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./-]+\.py")
+# 非 pytest 形态的治理门: `python -m huginn.<module>` (CLI 自查 / 棘轮). 旧解析只认
+# pytest, 会漏掉 contract_audit 棘轮、policy_engine 自查这类门.
+_CLI_GUARD_RE = re.compile(r"python\s+-m\s+(huginn\.[A-Za-z0-9_.]+)")
 
 
 def discover_arch_tests(agent_root: Path) -> list[str]:
@@ -87,6 +93,62 @@ def _parse_guard_steps(text: str) -> list[tuple[str, str]]:
             m = _TEST_PATH_RE.search(s)
             if m:
                 out.append((name, m.group(0)))
+    return out
+
+
+def _read_ci_text(agent_root: Path) -> str:
+    """读 `<root>/../.github/workflows/ci.yml`; 不存在则空串."""
+    ci_path = agent_root.parent / ".github" / "workflows" / "ci.yml"
+    return ci_path.read_text(encoding="utf-8") if ci_path.exists() else ""
+
+
+def _cli_guard_in_line(line: str) -> str | None:
+    """一行里若有 CLI 门则返回模块名, 否则 ``None``.
+
+    注释行 (含 `# 重生成: python -m huginn...`) 与 pytest 行都不算门 —— yaml 主路径
+    与逐行 fallback **共用此判据**, 使结果只取决于 ci.yml 内容, 而非运行环境是否装了
+    PyYAML (否则同一份文件会给出不同门集, 破坏确定性再生成).
+    """
+    s = line.strip()
+    if s.startswith("#") or "pytest" in s:
+        return None
+    m = _CLI_GUARD_RE.search(s)
+    return m.group(1) if m else None
+
+
+def _parse_cli_guards(text: str) -> list[tuple[str, str]]:
+    """从 ci.yml 抽出 `python -m huginn.<module>` 形态的门 `(step_name, module)`.
+
+    这是**非 pytest** 的治理门 (CLI 自查 / 棘轮) —— 旧解析只认 pytest, 会漏掉
+    contract_audit 棘轮、policy_engine 自查这类门. 只收 ``huginn.*``, 排除
+    pip / pytest / uv / bandit 等.
+    """
+    try:
+        import yaml  # 可选依赖: 有则精确, 无则退化
+
+        data = yaml.safe_load(text) or {}
+        out: list[tuple[str, str]] = []
+        for job in (data.get("jobs") or {}).values():
+            for step in (job or {}).get("steps") or []:
+                name = step.get("name") or ""
+                for line in (step.get("run") or "").splitlines():
+                    module = _cli_guard_in_line(line)
+                    if module:
+                        out.append((name, module))
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
+        logger.debug("yaml 解析 ci.yml 失败, 退化为行扫描", exc_info=True)
+    out = []
+    name = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- name:"):
+            name = stripped[len("- name:") :].strip()
+            continue
+        module = _cli_guard_in_line(line)
+        if module:
+            out.append((name, module))
     return out
 
 
@@ -178,6 +240,18 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "value": 17,
         "owner_gate": "Governance gate registry guard",
         "probe": "arch_gate_count",
+        "direction": "floor",
+    },
+    {
+        "id": "cli_guard_floor",
+        "name": "CLI 门数下限",
+        "path": "tests/test_arch_gate_registry.py",
+        "kind": "const",
+        "key": "CLI_GUARD_FLOOR",
+        "source": "inline",
+        "value": 2,
+        "owner_gate": "Governance gate registry guard",
+        "probe": "cli_guard_count",
         "direction": "floor",
     },
     {
@@ -288,6 +362,8 @@ def _probe_current(
     probe = spec.get("probe")
     if probe == "arch_gate_count":
         return len(discover_arch_tests(agent_root))
+    if probe == "cli_guard_count":
+        return len(_parse_cli_guards(_read_ci_text(agent_root)))
     if probe == "mirror_drift_live" and heavy:
         return _probe_mirror_drift(agent_root)
     if probe == "env_raw_read_live" and heavy:
@@ -408,8 +484,7 @@ def audit(agent_root: Path, ci_text: str | None = None, heavy: bool = False) -> 
     ``heavy=True`` 才在预算台账里跑重型探针 (见 ``collect_budgets``).
     """
     if ci_text is None:
-        ci_path = agent_root.parent / ".github" / "workflows" / "ci.yml"
-        ci_text = ci_path.read_text(encoding="utf-8") if ci_path.exists() else ""
+        ci_text = _read_ci_text(agent_root)
 
     guard_by_test: dict[str, str] = {}
     for name, test in _parse_guard_steps(ci_text):
@@ -450,10 +525,30 @@ def audit(agent_root: Path, ci_text: str | None = None, heavy: bool = False) -> 
         for g in gates
         if g["status"] == "fast-fail-guard" and not g["exists"]
     ]
+
+    # 非 pytest 形态的治理门 (CLI 自查 / 棘轮): `python -m huginn.<module>`.
+    # 按模块去重 (一个门多处调用只登记一次), module 映射到仓内 .py / 包目录判存在.
+    cli_guards: list[dict] = []
+    seen_cli: set[str] = set()
+    for name, module in _parse_cli_guards(ci_text):
+        if module in seen_cli:
+            continue
+        seen_cli.add(module)
+        rel = module.replace(".", "/")
+        exists = (agent_root / f"{rel}.py").exists() or (agent_root / rel).is_dir()
+        cli_guards.append({"module": module, "ci_step": name, "exists": exists})
+    cli_guards.sort(key=lambda g: g["module"])
+    dangling_cli = [
+        {"ci_step": g["ci_step"], "module": g["module"]}
+        for g in cli_guards
+        if not g["exists"]
+    ]
     return {
         "gates": gates,
         "orphans": sorted(orphans),
         "dangling": dangling,
+        "cli_guards": cli_guards,
+        "dangling_cli": dangling_cli,
         "budgets": collect_budgets(agent_root, heavy=heavy),
     }
 
@@ -495,6 +590,20 @@ def render_markdown(reg: dict) -> str:
             step = f"{step} (悬空)"
         lines.append(f"| `{g['test']}` | {'是' if g['arch'] else '否'} | `{g['status']}` | {step} |")
     lines.append("")
+    lines.append("## CLI 门 (cli gates)")
+    lines.append("")
+    lines.append(
+        "`ci.yml` 里 `python -m huginn.<module>` 形态的治理门 (CLI 自查 / 棘轮, 非 pytest). "
+        "旧解析只认 pytest 会漏掉; 现单列。**存在=否** 即悬空 CLI 门 (指向已删/改名的模块)."
+    )
+    lines.append("")
+    lines.append("| 模块 | CI step | 存在 |")
+    lines.append("|---|---|---|")
+    for c in reg["cli_guards"]:
+        step = c["ci_step"] if c["ci_step"] else "—"
+        mark = "是" if c["exists"] else "否 (悬空)"
+        lines.append(f"| `{c['module']}` | {step} | {mark} |")
+    lines.append("")
     lines.append("## 预算 (budgets)")
     lines.append("")
     lines.append(
@@ -524,6 +633,11 @@ def render_markdown(reg: dict) -> str:
         lines.append(f"- 悬空门 ({len(reg['dangling'])}): {items}")
     else:
         lines.append("- 悬空门 (0): 无")
+    if reg["dangling_cli"]:
+        items = ", ".join(f"`{d['ci_step']}` → `{d['module']}`" for d in reg["dangling_cli"])
+        lines.append(f"- CLI 悬空门 ({len(reg['dangling_cli'])}): {items}")
+    else:
+        lines.append("- CLI 悬空门 (0): 无")
     lines.append("")
     return "\n".join(lines)
 

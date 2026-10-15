@@ -30,6 +30,15 @@
 | `tests/test_naturebench.py` | 否 | `fast-fail-guard` | NatureBench repro gate |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
+## CLI 门 (cli gates)
+
+`ci.yml` 里 `python -m huginn.<module>` 形态的治理门 (CLI 自查 / 棘轮, 非 pytest). 旧解析只认 pytest 会漏掉; 现单列。**存在=否** 即悬空 CLI 门 (指向已删/改名的模块).
+
+| 模块 | CI step | 存在 |
+|---|---|---|
+| `huginn.cli.contract_audit` | MECE wiring-contract guard (ratchet) | 是 |
+| `huginn.security.policy_engine` | Policy engine self-check | 是 |
+
 ## 预算 (budgets)
 
 治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。
@@ -45,9 +54,11 @@
 | 硬编码路径白名单 | `tests/test_arch_no_hardcoded_paths.py` | 引用 | 7 项 | — | — | No-hardcoded-machine-paths guard |
 | MCP 接线白名单 | `tests/test_arch_mcp_governance.py` | 引用 | 7 项 | — | — | MCP single-gateway guard |
 | arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 17 | 0 | Governance gate registry guard |
+| CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 |
 
 ## 缺口 (gaps)
 
 - 孤儿门 (0): 无
 - 悬空门 (0): 无
+- CLI 悬空门 (0): 无
