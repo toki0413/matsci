@@ -346,10 +346,10 @@
 | `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3465` | `huginn/events/audit_log.py:571` |
 | `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3485` | `huginn/events/audit_log.py:571` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:346` | — |
-| `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:191` | — |
-| `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:185`, `huginn/knowledge/store.py:195`, `huginn/knowledge/store.py:293` | — |
-| `embedding.download.progress` | 1 | 0 | `huginn/knowledge/store.py:162` | — |
-| `embedding.download.start` | 1 | 0 | `huginn/knowledge/store.py:167` | — |
+| `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:212` | — |
+| `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:206`, `huginn/knowledge/store.py:216`, `huginn/knowledge/store.py:314` | — |
+| `embedding.download.progress` | 1 | 0 | `huginn/knowledge/store.py:184` | — |
+| `embedding.download.start` | 1 | 0 | `huginn/knowledge/store.py:189` | — |
 | `event_bus.dropped` | 1 | 0 | `huginn/events/event_bus.py:162` | — |
 | `llm.response` | 1 | 0 | `huginn/events/unified_bus.py:289` | — |
 | `pet.mood` | 1 | 0 | `huginn/events/unified_bus.py:331` | — |

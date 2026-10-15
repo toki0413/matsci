@@ -85,7 +85,7 @@
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:582, tools/literature/_http.py:40, tools/web_search_tool.py:61 | tools/web_search_tool.py:849, tools/web_search_tool.py:854 | code-set |
 | `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:831 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
-| `HUGINN_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | knowledge/store.py:36 | — | external |
+| `HUGINN_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | knowledge/store.py:37 | — | external |
 | `HUGINN_EM_RECALL_TOP_K` | 5 | config.py:850 | — | external |
 | `HUGINN_ENABLE_AGENT_COLLAB` | 0 | cli/commands/autoloop.py:81 | — | external |
 | `HUGINN_ENABLE_EXPLORATION` | true | config.py:770 | — | external |
@@ -118,7 +118,7 @@
 | `HUGINN_HARD_CHECKPOINT_PHASES` | '' | autoloop/phase_gate.py:54 | — | external |
 | `HUGINN_HARNESS_GATES` | 0 | evolution/manager.py:35 | — | external |
 | `HUGINN_HEALTH_MONITOR` | 0 | tools/adapter.py:241 | cli/rcb_runner.py:101 | code-set |
-| `HUGINN_HF_ENDPOINT` | '' | knowledge/store.py:44 | — | external |
+| `HUGINN_HF_ENDPOINT` | '' | knowledge/store.py:45 | — | external |
 | `HUGINN_HIDE_DOCS` | '' | security/auth.py:53, server.py:85 | — | external |
 | `HUGINN_HILS_ATTENTION` | 1 | memory/longterm.py:738 | memory/longterm.py:2304, memory/longterm.py:2306 | code-set |
 | `HUGINN_HINT_COORDINATOR` | 1 | cli/rcb_step2.py:194 | — | external |
