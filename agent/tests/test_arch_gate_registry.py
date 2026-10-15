@@ -182,3 +182,11 @@ def test_authoritative_budgets_not_redeclared():
                 f"`{spec['path']}` 仍硬编码 `{key} = <数字>`. "
                 f"改为 ga.budget_value({spec['id']!r})."
             )
+
+
+def test_heavy_probes_disabled_by_default():
+    """门禁路径不跑重型探针 (保持 weightless): mirror_drift 实测应为 None."""
+    by = {b["id"]: b for b in ga.collect_budgets(_AGENT)}
+    assert by["mirror_drift"]["current"] is None, (
+        "默认路径不应跑镜像重型探针 (会拖慢快速失败门); 该探针只在 CLI --probe 下跑."
+    )

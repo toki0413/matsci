@@ -114,6 +114,8 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "source": "inline",
         "value": (0, 0, 0),
         "owner_gate": "publish mirror drift (only-shrink)",
+        "probe": "mirror_drift_live",
+        "heavy": True,
     },
     {
         "id": "env_raw_read",
@@ -272,21 +274,66 @@ def _frozen_value(spec: dict, agent_root: Path) -> str:
     return "?"
 
 
-def _probe_current(spec: dict, agent_root: Path) -> int | None:
-    """实测当前值. 仅对 weightless 可测项提供; 其余由消费者门自行校验, 此处不重复扫描."""
-    if spec.get("probe") == "arch_gate_count":
+def _probe_current(
+    spec: dict, agent_root: Path, heavy: bool = False
+) -> int | tuple[int, ...] | None:
+    """实测当前值.
+
+    默认 (``heavy=False``) 只跑 **weightless** 探针, 保持快速失败门的轻量; ``heavy=True``
+    才跑需遍历全仓的重型探针 (如镜像漂移). 其余项由消费者门自行校验, 此处不重复扫描.
+    """
+    probe = spec.get("probe")
+    if probe == "arch_gate_count":
         return len(discover_arch_tests(agent_root))
+    if probe == "mirror_drift_live" and heavy:
+        return _probe_mirror_drift(agent_root)
     return None
 
 
-def collect_budgets(agent_root: Path) -> list[dict]:
-    """治理棘轮预算的单一台账 (只读): 冻结值 + 可测项的实测值/余量."""
+def _probe_mirror_drift(agent_root: Path) -> tuple[int, int, int] | None:
+    """实测镜像漂移 (missing/extra/differing 合计).
+
+    复用 ``scripts/mcpb_vendor`` 的既有口径 (非重复实现), 失败返回 None (探针不拖垮台账).
+    重型: 需遍历两套镜像 + 源树, 故只在 ``--probe`` 下跑.
+    """
+    try:
+        import importlib.util
+        import sys
+
+        script = agent_root.parent / "scripts" / "mcpb_vendor.py"
+        if not script.is_file():
+            return None
+        mod_spec = importlib.util.spec_from_file_location("mcpb_vendor_probe", script)
+        if mod_spec is None or mod_spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(mod_spec)
+        # 必须先登记进 sys.modules: mcpb_vendor 用了 @dataclass, 而 dataclass 处理
+        # 时会 `sys.modules.get(cls.__module__)`, 未登记则 None.__dict__ → 崩.
+        sys.modules["mcpb_vendor_probe"] = mod
+        mod_spec.loader.exec_module(mod)
+        missing = extra = differing = 0
+        for bundle in mod.BUNDLES:
+            rep = mod.drift_report(bundle)
+            missing += len(rep.missing)
+            extra += len(rep.extra)
+            differing += len(rep.differing)
+        return (missing, extra, differing)
+    except Exception:  # noqa: BLE001 — 探针失败不影响台账
+        logger.debug("mirror drift 探针失败", exc_info=True)
+        return None
+
+
+def collect_budgets(agent_root: Path, heavy: bool = False) -> list[dict]:
+    """治理棘轮预算的单一台账 (只读): 冻结值 + 可测项的实测值/余量.
+
+    ``heavy=True`` 才跑重型探针 (遍历全仓); 默认只跑 weightless 探针, 保证门禁轻量.
+    """
     out: list[dict] = []
     for spec in BUDGET_SPECS:
         frozen = _frozen_value(spec, agent_root)
-        current = _probe_current(spec, agent_root)
+        current = _probe_current(spec, agent_root, heavy=heavy)
         headroom: int | None = None
-        if current is not None:
+        if isinstance(current, int):
             m = re.match(r"^(\d+)", frozen)
             if m:
                 frozen_n = int(m.group(1))
@@ -311,11 +358,12 @@ def collect_budgets(agent_root: Path) -> list[dict]:
     return out
 
 
-def audit(agent_root: Path, ci_text: str | None = None) -> dict:
+def audit(agent_root: Path, ci_text: str | None = None, heavy: bool = False) -> dict:
     """扫描一棵仓树, 返回治理门登记快照.
 
     ``ci_text`` 显式给定时不读盘 (供合成树测试); 为 None 时读
     ``<root>/../.github/workflows/ci.yml`` (真实仓: agent_root=/repo/agent).
+    ``heavy=True`` 才在预算台账里跑重型探针 (见 ``collect_budgets``).
     """
     if ci_text is None:
         ci_path = agent_root.parent / ".github" / "workflows" / "ci.yml"
@@ -364,13 +412,21 @@ def audit(agent_root: Path, ci_text: str | None = None) -> dict:
         "gates": gates,
         "orphans": sorted(orphans),
         "dangling": dangling,
-        "budgets": collect_budgets(agent_root),
+        "budgets": collect_budgets(agent_root, heavy=heavy),
     }
 
 
 def build_gate_registry() -> dict:
-    """真实仓快照 (agent_root = 本文件所在包根)."""
+    """真实仓快照 (agent_root = 本文件所在包根); 只跑 weightless 探针, 门禁轻量."""
     return audit(AGENT_ROOT)
+
+
+def _render_current(current: int | tuple[int, ...] | list[int] | None) -> str:
+    if current is None:
+        return "—"
+    if isinstance(current, (tuple, list)):
+        return "/".join(str(v) for v in current)
+    return str(current)
 
 
 def render_markdown(reg: dict) -> str:
@@ -402,13 +458,14 @@ def render_markdown(reg: dict) -> str:
     lines.append(
         "治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). "
         "**权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, "
-        "台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen)."
+        "台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); "
+        "重型探针 (如镜像漂移实测) 需 `--probe`。"
     )
     lines.append("")
     lines.append("| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |")
     lines.append("|---|---|---|---|---|---|---|")
     for b in reg["budgets"]:
-        cur = "—" if b["current"] is None else str(b["current"])
+        cur = _render_current(b["current"])
         head = "—" if b["headroom"] is None else str(b["headroom"])
         lines.append(
             f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {b['owner_gate']} |"
@@ -433,9 +490,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="低熵治理台账 (governance_audit)")
     parser.add_argument("--out", default="", help="写 markdown 到文件 (缺省打印到 stdout)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
+    parser.add_argument(
+        "--probe", action="store_true", help="额外跑重型探针 (遍历全仓, 较慢; 不入快速失败门)"
+    )
     args = parser.parse_args(argv)
 
-    reg = build_gate_registry()
+    reg = audit(AGENT_ROOT, heavy=args.probe)
     if args.json:
         import json
 
