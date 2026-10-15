@@ -24,8 +24,11 @@ step + 两处棘轮基线, 渲染成 `docs/governance-state.md`.
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # huginn/cli/governance_audit.py -> parents[2] == agent/ (tests/ 与 docs/ 的宿主).
 AGENT_ROOT = Path(__file__).resolve().parents[2]
@@ -70,8 +73,8 @@ def _parse_guard_steps(text: str) -> list[tuple[str, str]]:
                         out.append((step.get("name") or "", m.group(0)))
         if out:
             return out
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
+        logger.debug("yaml 解析 ci.yml 失败, 退化为行扫描", exc_info=True)
     # 行扫描退化: 记住最近的 `- name:`, 命中含 pytest + tests/*.py 的 run 行.
     out = []
     name = ""
