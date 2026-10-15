@@ -41,7 +41,7 @@
 | `jev_guardrail` | False | 工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory) | — | — |
 | `jev_tool_router` | False | 未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory) | — | — |
 | `json_logs` | True | JSON 结构化日志 (HUGINN_JSON_LOGS) | HUGINN_JSON_LOGS | utils/json_logging.py:122 |
-| `loop_detector` | True | 对话循环检测 | — | agent/streaming.py:1964 |
+| `loop_detector` | True | 对话循环检测 | — | agent/streaming.py:1967 |
 | `memory_typing` | True | 记忆类型标注 (HUGINN_USE_MEMORY_TYPING) | HUGINN_USE_MEMORY_TYPING | memory/typing.py:52 |
 | `persistent_terminal` | False | 持久化终端 (HUGINN_PERSISTENT_TERMINAL) | HUGINN_PERSISTENT_TERMINAL | tools/persistent_terminal.py:316, tools/persistent_terminal.py:573 |
 | `personalization` | True | 学习用户通信风格 | — | personalization/user_style.py:152, personalization/user_style.py:349 |

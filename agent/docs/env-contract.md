@@ -8,7 +8,7 @@
 | `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:77 | — | external |
 | `HUGINN_ADMIN_API_KEY` | '' | security/auth.py:116 | — | external |
 | `HUGINN_AGENTS` | '' | config.py:900 | routes/config.py:317 | code-set |
-| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:2146 | — | external |
+| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:2149 | — | external |
 | `HUGINN_ALERT_WEBHOOK_URL` | '' | diagnostics/system_health.py:391 | — | external |
 | `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:3215 | — | external |
 | `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:791, security/execution.py:22 | routes/agents.py:85, tools/__init__.py:200, cli/rcb_runner.py:57 | code-set |
@@ -132,7 +132,7 @@
 | `HUGINN_JEPA_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-mpnet-base-v2 | autoloop/engine_reflect.py:2543 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:81 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:555 | — | external |
-| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:1137, agent/streaming.py:1830, agent/streaming.py:1873 | cli/rcb_runner.py:85 | code-set |
+| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:1137, agent/streaming.py:1833, agent/streaming.py:1876 | cli/rcb_runner.py:85 | code-set |
 | `HUGINN_KG_DEPTH` | 1 | config.py:788 | — | external |
 | `HUGINN_KG_ENABLED` | '' | config.py:787 | — | external |
 | `HUGINN_KG_TOP_K` | 10 | config.py:789 | — | external |
@@ -223,7 +223,7 @@
 | `HUGINN_PRIVACY_REDACT_SECRETS` | true | config.py:797 | — | external |
 | `HUGINN_PRM_MODEL` | '' | runtime/step_verifier.py:300 | — | external |
 | `HUGINN_PRM_PROVIDER` | '' | runtime/step_verifier.py:299 | — | external |
-| `HUGINN_PRM_VERIFIER` | 0 | agents/factory.py:306 | — | external |
+| `HUGINN_PRM_VERIFIER` | 0 | agents/factory.py:311 | — | external |
 | `HUGINN_PROFILE_MODEL` | '' | tools/personalization_tool.py:158 | — | external |
 | `HUGINN_PROFILE_PROVIDER` | deepseek | tools/personalization_tool.py:157 | — | external |
 | `HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING` | 1 | autoloop/engine_control.py:618 | — | external |
@@ -232,7 +232,7 @@
 | `HUGINN_PROMPT_CACHE_CONTROL` | true | config.py:821 | — | external |
 | `HUGINN_PROVENANCE_ENABLED` | 1 | provenance/registry.py:370 | — | external |
 | `HUGINN_PROVIDER` | default | config.py:659, config.py:1290 | — | external |
-| `HUGINN_PRT_LEVEL1` | 0 | agents/factory.py:299 | — | external |
+| `HUGINN_PRT_LEVEL1` | 0 | agents/factory.py:304 | — | external |
 | `HUGINN_RAG_ENABLED` | '' | config.py:786 | — | external |
 | `HUGINN_RATE_LIMIT_ENABLED` | 1 | security/rate_limiter.py:491 | cli/rcb_runner.py:54 | code-set |
 | `HUGINN_RATE_LIMIT_PER_MINUTE` | 0 | server.py:114 | — | external |
