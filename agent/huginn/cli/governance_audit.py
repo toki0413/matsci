@@ -124,6 +124,9 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "const",
         "key": "RAW_READ_BASELINE",
         "owner_gate": "env surface governance",
+        "probe": "env_raw_read_live",
+        "heavy": True,
+        "direction": "cap",
     },
     {
         "id": "gateway_imports",
@@ -287,30 +290,47 @@ def _probe_current(
         return len(discover_arch_tests(agent_root))
     if probe == "mirror_drift_live" and heavy:
         return _probe_mirror_drift(agent_root)
+    if probe == "env_raw_read_live" and heavy:
+        return _probe_env_raw_read(agent_root)
     return None
 
 
-def _probe_mirror_drift(agent_root: Path) -> tuple[int, int, int] | None:
-    """实测镜像漂移 (missing/extra/differing 合计).
+def _load_module_by_path(name: str, path: Path):
+    """按文件路径加载模块并登记进 ``sys.modules`` (兼容 @dataclass). 失败返回 None.
 
-    复用 ``scripts/mcpb_vendor`` 的既有口径 (非重复实现), 失败返回 None (探针不拖垮台账).
-    重型: 需遍历两套镜像 + 源树, 故只在 ``--probe`` 下跑.
+    ``sys.modules`` 登记是必需的: ``@dataclass`` 处理时会 ``sys.modules.get(cls.__module__)``,
+    未登记则 ``None.__dict__`` → 崩 (曾让镜像探针静默失效).
     """
     try:
         import importlib.util
         import sys
 
-        script = agent_root.parent / "scripts" / "mcpb_vendor.py"
-        if not script.is_file():
+        if not path.is_file():
             return None
-        mod_spec = importlib.util.spec_from_file_location("mcpb_vendor_probe", script)
-        if mod_spec is None or mod_spec.loader is None:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
             return None
-        mod = importlib.util.module_from_spec(mod_spec)
-        # 必须先登记进 sys.modules: mcpb_vendor 用了 @dataclass, 而 dataclass 处理
-        # 时会 `sys.modules.get(cls.__module__)`, 未登记则 None.__dict__ → 崩.
-        sys.modules["mcpb_vendor_probe"] = mod
-        mod_spec.loader.exec_module(mod)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:  # noqa: BLE001 — 加载失败不拖垮台账
+        logger.debug("按路径加载 %s 失败", path, exc_info=True)
+        return None
+
+
+def _probe_mirror_drift(agent_root: Path) -> tuple[int, int, int] | None:
+    """实测镜像漂移 (missing/extra/differing 合计).
+
+    复用 ``scripts/mcpb_vendor`` 的既有口径 (非重复实现), 失败返回 None.
+    重型: 遍历两套镜像 + 源树, 故只在 ``--probe`` 下跑.
+    """
+    mod = _load_module_by_path(
+        "mcpb_vendor_probe", agent_root.parent / "scripts" / "mcpb_vendor.py"
+    )
+    if mod is None:
+        return None
+    try:
         missing = extra = differing = 0
         for bundle in mod.BUNDLES:
             rep = mod.drift_report(bundle)
@@ -320,6 +340,28 @@ def _probe_mirror_drift(agent_root: Path) -> tuple[int, int, int] | None:
         return (missing, extra, differing)
     except Exception:  # noqa: BLE001 — 探针失败不影响台账
         logger.debug("mirror drift 探针失败", exc_info=True)
+        return None
+
+
+def _probe_env_raw_read(agent_root: Path) -> int | None:
+    """实测裸 ``HUGINN_*`` 读点数 (不含经 env_access 的规范读点).
+
+    复用 ``config_audit.build_inventory`` 的既有口径 (其模块级仅 stdlib, 可按文件路径轻量
+    加载), 与 ``test_env_surface_governance`` 的棘轮**同源** —— 不重复实现, 无口径分叉.
+    重型: 全仓 regex 扫 (约 1s), 故只在 ``--probe`` 下跑.
+    """
+    mod = _load_module_by_path(
+        "config_audit_probe", agent_root / "huginn" / "cli" / "config_audit.py"
+    )
+    if mod is None:
+        return None
+    try:
+        inv = mod.build_inventory(agent_root / "huginn")
+        return sum(
+            1 for item in inv.values() for r in item["reads"] if not r.get("canonical")
+        )
+    except Exception:  # noqa: BLE001 — 探针失败不影响台账
+        logger.debug("env 裸读探针失败", exc_info=True)
         return None
 
 

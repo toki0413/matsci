@@ -185,8 +185,11 @@ def test_authoritative_budgets_not_redeclared():
 
 
 def test_heavy_probes_disabled_by_default():
-    """门禁路径不跑重型探针 (保持 weightless): mirror_drift 实测应为 None."""
+    """门禁路径不跑重型探针 (保持 weightless): 凡标 heavy 的项实测应为 None."""
     by = {b["id"]: b for b in ga.collect_budgets(_AGENT)}
-    assert by["mirror_drift"]["current"] is None, (
-        "默认路径不应跑镜像重型探针 (会拖慢快速失败门); 该探针只在 CLI --probe 下跑."
-    )
+    heavy = [s["id"] for s in ga.BUDGET_SPECS if s.get("heavy")]
+    assert heavy, "应至少有一个重型探针项"
+    for bid in heavy:
+        assert by[bid]["current"] is None, (
+            f"默认路径不应跑重型探针 `{bid}` (会拖慢快速失败门); 该探针只在 CLI --probe 下跑."
+        )

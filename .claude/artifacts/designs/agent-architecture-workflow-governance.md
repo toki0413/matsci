@@ -62,7 +62,8 @@ MCP 接线白名单 / arch 门数下限 / 字段审计 golden。weightless（reg
 数值型棘轮（`mirror_drift`、`arch_gate_floor`）的值在台账声明、消费者门 `budget_value()`
 只读；名单型棘轮与 `env_schema.RAW_READ_BASELINE` 按设计保留原位（内容即契约 / 层级原因），
 台账以「引用」登记。**实测探针**分两档：weightless 常驻（arch 门数，入文档，门禁仍 0.5s）与
-重型 `--probe`（镜像漂移实测，复用 `scripts/mcpb_vendor` 口径，不入快速失败门）。
+重型 `--probe`（镜像漂移 + 环境裸读实测，分别复用 `scripts/mcpb_vendor` / `config_audit`
+口径，不入快速失败门）。
 
 ## Edge cases & risks
 

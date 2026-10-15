@@ -215,15 +215,19 @@
 ### 探针（weightless 常驻 + 重型 `--probe`）
 
 - **常驻**（入台账文档，保证门禁轻量）：`arch_gate_count`（arch 门数下限，实测 17 / 余量 0）。
-- **重型**（仅 `--probe`，遍历全仓，不入快速失败门）：`mirror_drift_live` —— 复用
-  `scripts/mcpb_vendor.drift_report` 的既有口径（非重复实现），实测 missing/extra/differing
-  合计；失败 fail-soft 返回 None。新增元门禁 `test_heavy_probes_disabled_by_default` 钉死
-  「默认路径不跑重型探针」（门禁 0.5s 仍 weightless）。
-- 实现踩坑：按文件路径 import `mcpb_vendor` 时，其 `@dataclass` 需要模块先进 `sys.modules`
-  （否则 `dataclass` 内部 `sys.modules.get(cls.__module__)` 取到 None → 崩），已在探针里登记。
+- **重型**（仅 `--probe`，遍历全仓，不入快速失败门，fail-soft 返回 None）：
+  - `mirror_drift_live` —— 复用 `scripts/mcpb_vendor.drift_report` 口径，实测合计 0/0/0。
+  - `env_raw_read_live` —— 复用 `config_audit.build_inventory` 口径（与 env 棘轮**同源**，
+    不重复实现、无口径分叉），实测裸读点 467（正好顶基线，余量 0）。
+- 新增元门禁 `test_heavy_probes_disabled_by_default`：凡标 `heavy` 的项默认实测必须为 None
+  （门禁 0.5s 仍 weightless）。
+- 复用前提：`config_audit` / `mcpb_vendor` 的**模块级仅 stdlib**（重依赖都在函数内），
+  故按文件路径加载不拉 rich/pydantic；`config_audit` 若 `import huginn.cli` 会被包
+  `__init__` 拉 rich —— 所以必须按文件路径加载。
+- 实现踩坑：按文件路径加载模块须先登记进 `sys.modules` —— `@dataclass` 会
+  `sys.modules.get(cls.__module__)`，未登记取到 None → 崩（曾让镜像探针静默失效）。
+  已抽成 `_load_module_by_path` 供两个重型探针共用。
 
 ### 未落（后续）
 
-- `env_raw_read`（467）实测需 `huginn.cli.config_audit.build_inventory()`（拉重依赖），暂不做；
-  若要做，用一个 weightless 的 AST 复算，并防与门的口径分叉。
 - 若要把名单型棘轮也纳入权威读取，需先把「内容」与「大小」职责拆开（当前不建议）。
