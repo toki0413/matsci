@@ -39,8 +39,28 @@ def test_check_returns_zero_when_everything_runnable(monkeypatch, capsys):
     assert cr.main(["--json", "--check"]) == 0
 
 
+def test_check_returns_one_when_degraded(monkeypatch, capsys):
+    from huginn.capabilities import runtime_probe as rp
+
+    monkeypatch.setattr(
+        cr,
+        "probe_runtime",
+        lambda *a, **k: [
+            rp.ProbeResult(name="X", kind="tool", status=rp.STATUS_MISSING, missing_deps=["x"])
+        ],
+    )
+    assert cr.main(["--json", "--check"]) == 1
+
+
 def test_out_writes_file(tmp_path, capsys):
     out = tmp_path / "state.json"
     rc = cr.main(["--json", "--out", str(out)])
     assert rc == 0
     assert json.loads(out.read_text(encoding="utf-8"))["l0"] is not None
+
+
+def test_out_creates_missing_parent_dirs(tmp_path, capsys):
+    out = tmp_path / "nested" / "deeper" / "state.json"
+    rc = cr.main(["--json", "--out", str(out)])
+    assert rc == 0
+    assert out.is_file()
