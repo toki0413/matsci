@@ -6,7 +6,11 @@ from huginn.capabilities import smoke_specs as ss
 
 
 def test_run_smoke_passes():
-    specs = (ss.SmokeSpec(name="ok", capability="m", runner=lambda: 42, expect=lambda v: v == 42),)
+    specs = (
+        ss.SmokeSpec(
+            name="ok", capability="m", runner=lambda: 42, expect=lambda v: v == 42
+        ),
+    )
     res = ss.run_smoke(specs)
     assert [r.status for r in res] == ["passed"]
 
@@ -22,9 +26,14 @@ def test_run_smoke_fails_on_exception():
 
 
 def test_run_smoke_fails_on_expect_reject():
-    specs = (ss.SmokeSpec(name="bad", capability="m", runner=lambda: 1, expect=lambda v: v == 999),)
+    specs = (
+        ss.SmokeSpec(
+            name="bad", capability="m", runner=lambda: 1, expect=lambda v: v == 999
+        ),
+    )
     res = ss.run_smoke(specs)
     assert res[0].status == "failed"
+    assert "expect() rejected" in res[0].detail
 
 
 def test_run_smoke_skips_when_requires_missing():
@@ -52,3 +61,41 @@ def test_smoke_results_ordered_deterministically():
         ss.SmokeSpec(name="a", capability="m", runner=lambda: 1),
     )
     assert [r.name for r in ss.run_smoke(specs)] == ["a", "z"]
+
+
+def test_run_smoke_without_expect_passes():
+    specs = (ss.SmokeSpec(name="noexpect", capability="m", runner=lambda: 1),)
+    assert [r.status for r in ss.run_smoke(specs)] == ["passed"]
+
+
+def test_run_smoke_handles_empty_specs():
+    assert ss.run_smoke(()) == []
+
+
+def test_run_smoke_multiple_missing_requires_in_detail():
+    specs = (
+        ss.SmokeSpec(
+            name="need2",
+            capability="m",
+            requires=("definitely_absent_pkg_xyz", "also_absent_pkg_abc"),
+            runner=lambda: 1,
+        ),
+    )
+    res = ss.run_smoke(specs)
+    assert res[0].status == "skipped"
+    assert "definitely_absent_pkg_xyz" in res[0].detail
+    assert "also_absent_pkg_abc" in res[0].detail
+
+
+def test_run_smoke_dotted_missing_require_does_not_raise():
+    """点分名(父包缺失)不得让 run_smoke 抛出 —— 应收敛为 skipped."""
+    specs = (
+        ss.SmokeSpec(
+            name="dotted",
+            capability="m",
+            requires=("definitely_absent_parent_xyz.sub",),
+            runner=lambda: 1,
+        ),
+    )
+    res = ss.run_smoke(specs)
+    assert res[0].status == "skipped"

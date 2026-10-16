@@ -7,13 +7,10 @@ L0 (runtime_probe) 只证「依赖可加载」; L1 证「最小任务能产出�
 from __future__ import annotations
 
 import importlib.util
-import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,10 +41,18 @@ class SmokeResult:
 
 
 def _missing_requires(requires: tuple[str, ...]) -> list[str]:
-    return [m for m in requires if importlib.util.find_spec(m) is None]
+    missing: list[str] = []
+    for name in requires:
+        try:
+            if importlib.util.find_spec(name) is None:
+                missing.append(name)
+        except Exception:  # 点分名父包缺失等 → 视为缺失, 绝不向上抛
+            missing.append(name)
+    return missing
 
 
 # ── 最小真跑 runners (只碰 requires 里声明过的库) ──────────────────────────
+
 
 def _run_stdlib_smoke() -> dict:
     """机制自检: 纯 stdlib, 永远可跑, 保证 smoke 机制本身可测."""
@@ -137,7 +142,9 @@ def run_smoke(specs: tuple[SmokeSpec, ...] | None = None) -> list[SmokeResult]:
         miss = _missing_requires(spec.requires)
         if miss:
             out.append(
-                SmokeResult(spec.name, spec.capability, "skipped", f"missing: {', '.join(miss)}")
+                SmokeResult(
+                    spec.name, spec.capability, "skipped", f"missing: {', '.join(miss)}"
+                )
             )
             continue
         t0 = time.monotonic()
@@ -149,6 +156,8 @@ def run_smoke(specs: tuple[SmokeSpec, ...] | None = None) -> list[SmokeResult]:
         except Exception as exc:  # 真跑失败不得拖垮调用方
             status, detail = "failed", f"{type(exc).__name__}: {exc}"
         out.append(
-            SmokeResult(spec.name, spec.capability, status, detail, time.monotonic() - t0)
+            SmokeResult(
+                spec.name, spec.capability, status, detail, time.monotonic() - t0
+            )
         )
     return sorted(out, key=lambda r: r.name)
