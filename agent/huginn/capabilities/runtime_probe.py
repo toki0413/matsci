@@ -102,8 +102,28 @@ def classify(
     return STATUS_RUNNABLE
 
 
+# 少数 import 名与其 PyPI 分发名不一致 —— 直接拼 `pip install <import 名>` 会装错包
+# 或找不到包. 只登记本仓库工具集里确认的映射; 未登记的按 pip 的归一化规则
+# (下划线/连字符/点号等价) 原样输出.
+_IMPORT_TO_DIST: dict[str, str] = {
+    "PIL": "Pillow",
+    "sklearn": "scikit-learn",
+    "yaml": "PyYAML",
+    "mace": "mace-torch",
+    "fairchem": "fairchem-core",
+    "tavily": "tavily-python",
+    "z3": "z3-solver",
+}
+
+
+def _dist_name(import_name: str) -> str:
+    return _IMPORT_TO_DIST.get(import_name, import_name)
+
+
 def install_hint(missing: list[str]) -> str:
-    return f"pip install {' '.join(missing)}" if missing else ""
+    if not missing:
+        return ""
+    return f"pip install {' '.join(_dist_name(m) for m in missing)}"
 
 
 def _module_path(module: str) -> Path | None:
@@ -140,18 +160,24 @@ def probe_runtime(
                 ProbeResult(
                     name=spec.cls,
                     kind=spec.kind,
-                    status=classify(missing=missing, imported=imported, visible=visible),
+                    status=classify(
+                        missing=missing, imported=imported, visible=visible
+                    ),
                     missing_deps=missing,
                     install_hint=install_hint(missing),
                 )
             )
         except Exception:  # 探针自身绝不抛
             logger.debug("probe failed for %s", spec, exc_info=True)
-            out.append(ProbeResult(name=spec.cls, kind=spec.kind, status=STATUS_MISSING))
+            out.append(
+                ProbeResult(name=spec.cls, kind=spec.kind, status=STATUS_MISSING)
+            )
     return sorted(out, key=lambda r: (r.kind, r.name))
 
 
-def build_report(l0: list[ProbeResult] | None = None, l1: list | None = None) -> CapabilityRuntimeReport:
+def build_report(
+    l0: list[ProbeResult] | None = None, l1: list | None = None
+) -> CapabilityRuntimeReport:
     return CapabilityRuntimeReport(l0=list(l0 or []), l1=list(l1 or []))
 
 
@@ -165,7 +191,4 @@ def summary_line(report: CapabilityRuntimeReport) -> str:
     more = "" if len(bad) <= 8 else f" (+{len(bad) - 8})"
     hint = install_hint(deps)
     tail = f" Install with: {hint}." if hint else ""
-    return (
-        f"Tool capabilities degraded: {len(bad)} ({names}{more}); "
-        f"missing deps: {', '.join(deps) or 'unknown'}.{tail}"
-    )
+    return f"Tool capabilities degraded: {len(bad)} ({names}{more}).{tail}"

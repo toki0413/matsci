@@ -19,7 +19,9 @@ def test_classify_precedence():
 def test_probe_detects_missing_dep_on_synthetic_module(tmp_path: pathlib.Path):
     mod = tmp_path / "fake_heavy.py"
     mod.write_text("import definitely_absent_pkg_xyz\n", encoding="utf-8")
-    results = rp.probe_runtime([rp.ToolSpec(module="fake_heavy", cls="FakeHeavy", path=mod)])
+    results = rp.probe_runtime(
+        [rp.ToolSpec(module="fake_heavy", cls="FakeHeavy", path=mod)]
+    )
     assert results[0].status == rp.STATUS_MISSING
     assert results[0].missing_deps == ["definitely_absent_pkg_xyz"]
     assert results[0].install_hint == "pip install definitely_absent_pkg_xyz"
@@ -44,13 +46,19 @@ def test_probe_never_raises_on_missing_path():
 
 def test_probe_orders_deterministically():
     """相同输入 → 输出逐字一致 (确定性)."""
-    a = rp.probe_runtime([rp.ToolSpec(module="m", cls="B"), rp.ToolSpec(module="m", cls="A")])
-    b = rp.probe_runtime([rp.ToolSpec(module="m", cls="A"), rp.ToolSpec(module="m", cls="B")])
+    a = rp.probe_runtime(
+        [rp.ToolSpec(module="m", cls="B"), rp.ToolSpec(module="m", cls="A")]
+    )
+    b = rp.probe_runtime(
+        [rp.ToolSpec(module="m", cls="A"), rp.ToolSpec(module="m", cls="B")]
+    )
     assert [r.name for r in a] == [r.name for r in b] == ["A", "B"]
 
 
 def test_summary_line_all_ok():
-    rep = rp.build_report([rp.ProbeResult(name="A", kind="tool", status=rp.STATUS_RUNNABLE)])
+    rep = rp.build_report(
+        [rp.ProbeResult(name="A", kind="tool", status=rp.STATUS_RUNNABLE)]
+    )
     assert rp.summary_line(rep) == rp.ALL_OK_LINE
 
 
