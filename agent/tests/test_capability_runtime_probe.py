@@ -78,3 +78,13 @@ def test_summary_line_reports_degraded_with_hint():
     assert "degraded: 1" in line
     assert "rdkit" in line
     assert "pip install rdkit" in line
+
+
+def test_install_hint_maps_import_names_to_distributions():
+    """import 名与 PyPI 分发名不一致时须映射, 不能直接拼 pip 命令."""
+    assert (
+        rp.install_hint(["PIL", "sklearn", "yaml", "z3"])
+        == "pip install Pillow scikit-learn PyYAML z3-solver"
+    )
+    assert rp.install_hint(["rdkit"]) == "pip install rdkit"
+    assert rp.install_hint([]) == ""
