@@ -1487,6 +1487,20 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "probe": "loop_cap_live_count",
         "direction": "floor",
     },
+    {
+        "id": "runtime_probe_floor",
+        "name": "可运行性探针清单下限",
+        "path": "huginn/capabilities/smoke_specs.py",
+        "group": "runtime",
+        "kind": "collection-len",
+        "source": "inline",
+        "value": 4,
+        "var": "SMOKE_SPEC_NAMES",
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "runtime_probe_live_count",
+        "direction": "floor",
+    },
 )
 
 BUDGET_BY_ID: dict[str, dict] = {s["id"]: s for s in BUDGET_SPECS}
@@ -1655,6 +1669,11 @@ def _probe_current(
             and s.get("source") == "ceiling"
             and isinstance(_probe_current(s, agent_root, heavy=heavy), int)
         )
+    if probe == "runtime_probe_live_count":  # 可运行性探针清单条目数 (floor 棘轮)
+        path = agent_root / spec["path"]
+        if not path.is_file():
+            return None
+        return _extract_collection_len(path.read_text(encoding="utf-8"), spec["var"])
     if probe == "mirror_drift_live" and heavy:
         return _probe_mirror_drift(agent_root)
     if probe == "env_raw_read_live" and heavy:

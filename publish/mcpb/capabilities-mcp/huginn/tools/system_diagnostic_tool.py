@@ -23,10 +23,12 @@ class SystemDiagnosticInput(BaseModel):
         "diagnose",
         "recent_anomalies",
         "top_processes",
+        "capability_runtime",
     ] = Field(
         ...,
         description="snapshot: 当前资源快照; diagnose: 诊断异常+根因; "
-        "recent_anomalies: 最近记录的异常事件; top_processes: 吃资源最多的进程.",
+        "recent_anomalies: 最近记录的异常事件; top_processes: 吃资源最多的进程; "
+        "capability_runtime: 能力可运行性详单 (哪些工具因缺依赖降级、可 pip 装什么).",
     )
     top_n: int = Field(
         default=10,
@@ -118,6 +120,22 @@ class SystemDiagnosticTool(HuginnTool):
                     "by": input_data.by,
                     "count": len(procs),
                     "processes": procs,
+                },
+                success=True,
+            )
+
+        if input_data.action == "capability_runtime":
+            from huginn.capabilities.runtime_probe import (
+                build_report,
+                probe_runtime,
+                summary_line,
+            )
+
+            report = build_report(probe_runtime())
+            return ToolResult(
+                data={
+                    "summary": summary_line(report),
+                    "degraded": [r.to_dict() for r in report.degraded()],
                 },
                 success=True,
             )
