@@ -275,3 +275,134 @@
 - 实测 CLI 门 = 2（`huginn.cli.contract_audit` / `huginn.security.policy_engine`），
   yaml 主路径与 fallback 逐字一致（确定性回归确认）。
 - `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：本地门（pre-commit）纳入台账
+
+> 状态：已落（**重放**；工作区重置后重建）。补齐治理层第 5 种熵形态 —— **本地门漏登记/悬空**。
+
+`.pre-commit-config.yaml` 的本地门（G37 audit-regression）既不在 `ci.yml` 也不在台账。
+其 `entry` 引用的测试文件改名/删除后，hook 的 `files:` 过滤器会**静默不再匹配** ——
+门悄悄死掉，无任何信号，比悬空 CI 门更隐蔽。**重放时即命中一个真实悬空**：hook 仍引用
+已被合并改名的 `tests/test_audit14_p1_3_4_5.py`（实为 `test_sim_audit_regression.py`）。
+
+### 改动
+
+- `.pre-commit-config.yaml`：修复悬空引用 `test_audit14_p1_3_4_5` → `test_sim_audit_regression`
+  （`entry` 与 `files:` 各 1 处，共 4 处），3 个 selector（DemScriptSyntax/MSdUnwrap/
+  ScfConvergenceCriterion）在目标文件中均存在。
+- `huginn/cli/governance_audit.py`：
+  - 新增 `_read_precommit_text()` + `_parse_precommit_hooks()`（yaml 主路径与逐行 fallback
+    **共用判据**：只认 `entry` 里的 `tests/*.py`；`files:` 正则因 `(` 不在字符类内不被命中）。
+  - `audit()` 增 `precommit_text` 形参、`precommit_gates`（按 `(hook_id, test)` 去重）与
+    `dangling_precommit`。
+  - `BUDGET_SPECS` 增 `precommit_gate_floor`（inline 权威，值 5）；`_probe_current` 增
+    `precommit_gate_count`（weightless）。
+  - `render_markdown` 增「本地门 (pre-commit local gates)」表 + 缺口区「本地悬空门」；
+    头部说明补 `.pre-commit-config.yaml`。
+  - 模块 docstring 由「四种熵形态」改「五种」，补第 5 形态。
+- `tests/test_arch_gate_registry.py`：新增 `PRECOMMIT_GATE_FLOOR`（← `budget_value`）+
+  3 条元门禁（本地悬空检测、数量棘轮、合成树幽灵测试自检）；`_EXPECTED_BUDGET_IDS` 增
+  `precommit_gate_floor`；docstring 补本地门不变量。
+- `docs/governance-state.md`：重生成（含本地门表）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 每个本地门引用的测试文件存在（`dangling_precommit == []`）。
+- AC-3 本地门数只减不增（棘轮 ≥ `precommit_gate_floor`）。
+- AC-4 `files:` 正则不被误当 entry 引用（yaml/fallback 逐字一致）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **24 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测本地门 = 5（单 hook `audit-regression-7fixes`，去重后 5 个测试文件），
+  `dangling_precommit == []`，`precommit_gate_floor` frozen=5 / current=5 / headroom=0。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：`owner_gate` 口径统一 + 存在性门
+
+> 状态：已落（**重放**；工作区重置后重建）。消除治理层第 6 种熵形态 —— **幻影消费者门**。
+
+预算台账 `BUDGET_SPECS` 的 `owner_gate` 此前**混用两种语义**：既可能是 `ci.yml` 真实
+step 名（可校验存在性），也可能是「只靠全量套件兜底」的标签（根本不在 `ci.yml`）。二者
+不可区分，故 `ci.yml` 某 step 改名后，台账仍指向一个**不存在的门**（幻影门）而无声。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 12 项 `BUDGET_SPECS` 条目全部新增 `owner_kind ∈ {ci_step, full_suite}`，
+    使两种语义**显式可区分**；`collect_budgets()` 透传 `owner_kind`。
+  - `render_markdown` 预算表说明补口径区分；**消费者门**列对 `full_suite` 型追加
+    `· 全量` 标记（一眼分辨是否在 `ci.yml`）。
+- `tests/test_arch_gate_registry.py`：新增 `test_ci_step_owner_gates_reference_real_steps`
+  —— ①`owner_kind` 合法枚举；②`ci_step` 型 `owner_gate` 必须是 `ci.yml` 真实 step 名
+  （取 `gates ∪ cli_guards` 的 step 名集）。
+- `docs/governance-state.md`：重生成（消费者门列带 `· 全量` 标记）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 `owner_kind` 全部为合法枚举（`ci_step` / `full_suite`）。
+- AC-3 每个 `ci_step` 型 `owner_gate` 命中 `ci.yml` 真实 step 名（无幻影门）。
+- AC-4 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **25 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- `ci_step` 型 9 项消费者门 ∈ 真实 step 名集；`full_suite` 型 3 项
+  （`mirror_drift` / `env_raw_read` / `field_audit_golden`）在 `ci.yml` 中不存在，故标 `· 全量`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：本地门 `files:`/`entry` 一致性门
+
+> 状态：已落。补齐**前置 1** 只做了「entry 引用测试存在」之外的另一半熵 —— **entry 引用的
+> 测试未被 `files:` 过滤器覆盖**。
+
+本地门靠 `files:` 正则决定何时触发。`entry` 引用的测试若不在 `files:` 过滤范围内，改该
+测试**不会触发 hook**（pre-commit 判定无相关文件变更即跳过）—— 门静默失效，比悬空门更隐蔽
+（悬空至少指向不存在的文件，这里文件存在、hook 也在，只是永不触发）。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 新增 `_parse_precommit_files()`（hook_id → `files:` 正则；yaml 主路径与逐行 fallback 共用判据）。
+  - `_parse_precommit_hooks()` 的 fallback 改为**字段感知**：只从 `entry:` 字段（含多行续行）
+    抽 `tests/*.py`，显式跳过 `files:` 等字段行 —— 修掉「`files:` 写成裸路径时被误当 entry
+    引用」的潜在幻影（不再依赖 `(` 不在字符类内这一格式约定）。
+  - `audit()`：对每个本地门判 `files:` 是否覆盖其 entry 测试（匹配**仓根相对**与 `agent/` 前缀两种），
+    产 `uncovered_precommit`；本地门条目增 `covered` 字段。
+  - `render_markdown`：本地门表加「files 覆盖」列；缺口区加「本地门 files/entry 不一致」。
+  - 模块 docstring 第 5 形态补「漏匹配」。
+- `tests/test_arch_gate_registry.py`：新增 3 条 —— 不变量（`uncovered_precommit == []`）、
+  合成树正向（不一致被抓）、合成树无假阳（覆盖时不误报）；docstring 补该不变量。
+- `docs/governance-state.md`：重生成（本地门表带「files 覆盖」列 + 新缺口行）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 每个本地门 `entry` 测试被其 `files:` 覆盖（`uncovered_precommit == []`）。
+- AC-3 合成树：entry 未覆盖时被抓（正向非空转）；覆盖时不误报（无假阳）。
+- AC-4 fallback 字段感知（yaml/fallback 逐字一致，裸路径 `files:` 不再误登记）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **28 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 `uncovered_precommit == []`（5 个 entry 测试都被 `files:` 覆盖）、`dangling_precommit == []`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。

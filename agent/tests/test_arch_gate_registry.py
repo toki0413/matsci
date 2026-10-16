@@ -1,13 +1,16 @@
 """低熵治理台账 (governance_audit) 的门禁自检.
 
-治理层自身的熵: **门存在却未登记 / CI step 指向不存在的测试 / CLI 门指向已删模块**.
-本测试把 `tests/test_arch_*.py` 门族、`ci.yml` 的 pytest guard step 与
-`python -m huginn.<module>` CLI 门三者对齐成硬不变量:
+治理层自身的熵: **门存在却未登记 / CI step 指向不存在的测试 / CLI 门指向已删模块 /
+本地门 (.pre-commit) 指向已删测试**. 本测试把 `tests/test_arch_*.py` 门族、`ci.yml`
+的 pytest guard step、`python -m huginn.<module>` CLI 门与 `.pre-commit-config.yaml`
+本地门四者对齐成硬不变量:
 
 - 每个 `test_arch_*.py` 必须登记 (显式快速失败门, 或显式声明 full-suite-only);
   未登记者 = 孤儿门 → 红.
 - 每个 CI pytest guard step 指向的测试文件必须存在; 指向幽灵文件的悬空门 → 红.
 - 每个 CLI 门 (`python -m huginn.<module>`) 指向的模块必须存在; 指向已删模块 → 红.
+- 每个本地门 (`.pre-commit-config.yaml`) 引用的测试文件必须存在; 指向已删文件 → 红.
+- 每个本地门 `entry` 引用的测试必须被其 `files:` 过滤器覆盖; 否则改它不触发 hook → 红.
 - 门数只减不增 (棘轮); 删掉一个已登记门 → 红.
 - 生成文档 `docs/governance-state.md` 必须与当前扫描逐字一致 (确定性再生成).
 
@@ -35,6 +38,9 @@ ARCH_GATE_FLOOR = ga.budget_value("arch_gate_floor")
 
 # CLI 门 (`python -m huginn.<module>`) 数下限棘轮: 同上, 值由台账权威声明.
 CLI_GUARD_FLOOR = ga.budget_value("cli_guard_floor")
+
+# 本地门 (.pre-commit-config.yaml) 数下限棘轮: 同上, 值由台账权威声明.
+PRECOMMIT_GATE_FLOOR = ga.budget_value("precommit_gate_floor")
 
 
 def test_all_arch_tests_are_registered():
@@ -183,6 +189,93 @@ def test_cli_guard_ignores_comment_lines():
     assert "huginn.cli.fake" not in mods
 
 
+# ──────────────────── 本地门 (.pre-commit-config.yaml) ────────────────────
+
+
+def test_precommit_gates_reference_existing_tests():
+    """不变量: 每个本地门 (.pre-commit) 引用的测试文件必须存在.
+
+    本地门引用的测试改名/删除后, hook 的 `files:` 过滤器会静默不再匹配 —— 门悄悄死掉,
+    无任何信号 (与悬空 CI 门同源).
+    """
+    reg = ga.build_gate_registry()
+    assert reg["dangling_precommit"] == [], (
+        f"悬空本地门 (pre-commit hook 引用不存在的测试): {reg['dangling_precommit']} —— "
+        f"测试改名/删除后忘了同步 .pre-commit-config.yaml 的 entry 与 files:."
+    )
+
+
+def test_precommit_gate_count_ratchet_only_shrinks():
+    """棘轮: 本地门数只减不增."""
+    reg = ga.build_gate_registry()
+    assert len(reg["precommit_gates"]) >= PRECOMMIT_GATE_FLOOR, (
+        f"本地门数从 {PRECOMMIT_GATE_FLOOR} 降到 {len(reg['precommit_gates'])} —— 门被删了? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"precommit_gate_floor 的 value (可见的发布决策)."
+    )
+
+
+def test_precommit_dangling_detection_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证本地门指向幽灵测试能被抓到 (前向非空转)."""
+    (tmp_path / "tests").mkdir()
+    pc = (
+        "repos:\n  - repo: local\n    hooks:\n"
+        "      - id: demo\n        entry: bash -c 'pytest tests/test_ghost.py'\n"
+    )
+    reg = ga.audit(tmp_path, ci_text="", precommit_text=pc)
+    assert any(
+        d["hook"] == "demo" and d["test"] == "tests/test_ghost.py"
+        for d in reg["dangling_precommit"]
+    )
+
+
+def test_precommit_entry_tests_covered_by_files_filter():
+    """不变量: 每个本地门 `entry` 引用的测试都被其 `files:` 过滤器覆盖.
+
+    否则改这些测试不会触发 hook —— 门静默失效 (比悬空 CI 门更隐蔽).
+    """
+    reg = ga.build_gate_registry()
+    assert reg["uncovered_precommit"] == [], (
+        f"本地门 files:/entry 不一致: {reg['uncovered_precommit']} —— entry 引用的测试"
+        f"不在 files: 过滤范围内, 改它不会触发 hook. 同步 .pre-commit-config.yaml 的 files:."
+    )
+
+
+def test_precommit_files_mismatch_detection_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证 files:/entry 不一致能被抓到 (前向非空转)."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    pc = (
+        "repos:\n  - repo: local\n    hooks:\n"
+        "      - id: demo\n"
+        "        entry: bash -c 'pytest tests/test_a.py'\n"
+        "        files: ^agent/tests/test_b\\.py$\n"
+    )
+    reg = ga.audit(tmp_path, ci_text="", precommit_text=pc)
+    assert any(
+        d["hook"] == "demo" and d["test"] == "tests/test_a.py"
+        for d in reg["uncovered_precommit"]
+    )
+
+
+def test_precommit_files_covers_entry_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证: entry 测试被 files: 覆盖时不误报 (无假阳)."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    pc = (
+        "repos:\n  - repo: local\n    hooks:\n"
+        "      - id: demo\n"
+        "        entry: bash -c 'pytest tests/test_a.py'\n"
+        "        files: ^agent/tests/test_a\\.py$\n"
+    )
+    reg = ga.audit(tmp_path, ci_text="", precommit_text=pc)
+    assert reg["uncovered_precommit"] == []
+
+
 # ──────────────────── 预算台账 (BUDGET_SPECS) ────────────────────
 
 # 冻结覆盖集: 应被登记的治理棘轮预算. 新增/删除棘轮必须同步此集 (可见决策).
@@ -198,6 +291,7 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "mcp_wiring_allow",
         "arch_gate_floor",
         "cli_guard_floor",
+        "precommit_gate_floor",
         "field_audit_golden",
     }
 )
@@ -257,3 +351,26 @@ def test_heavy_probes_disabled_by_default():
         assert by[bid]["current"] is None, (
             f"默认路径不应跑重型探针 `{bid}` (会拖慢快速失败门); 该探针只在 CLI --probe 下跑."
         )
+
+
+def test_ci_step_owner_gates_reference_real_steps():
+    """预算 `owner_kind` 口径统一: 标 `ci_step` 的消费者门必须是 ci.yml 真实 step 名.
+
+    `owner_gate` 混用两种语义: `ci_step` (ci.yml 真实 step, 可校验存在性) 与 `full_suite`
+    (仅全量套件跑, 不在 ci.yml). 若不区分, step 改名后台账会指向**幻影门**而无声. 本门固化:
+    ①`owner_kind` 合法枚举; ②`ci_step` 型 `owner_gate` 命中 ci.yml 真实 step 名 (取
+    `gates ∪ cli_guards` 的 step 名集).
+    """
+    reg = ga.build_gate_registry()
+    real_steps = {g["ci_step"] for g in reg["gates"] if g["ci_step"]}
+    real_steps |= {c["ci_step"] for c in reg["cli_guards"] if c["ci_step"]}
+    for spec in ga.BUDGET_SPECS:
+        kind = spec["owner_kind"]
+        assert kind in {"ci_step", "full_suite"}, (
+            f"预算 `{spec['id']}` 的 owner_kind `{kind}` 非法 (须 ci_step / full_suite)."
+        )
+        if kind == "ci_step":
+            assert spec["owner_gate"] in real_steps, (
+                f"预算 `{spec['id']}` 标 `ci_step`, 但 owner_gate `{spec['owner_gate']}` 不是 "
+                f"ci.yml 真实 step 名 —— step 改名后台账指向幻影门? 同步 BUDGET_SPECS / ci.yml."
+            )

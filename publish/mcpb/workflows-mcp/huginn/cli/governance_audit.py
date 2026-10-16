@@ -1,6 +1,6 @@
 """低熵治理台账 (governance_audit): 治理门登记 + 孤儿门检测 + 确定性再生成.
 
-治理层**自身**的熵有四种典型形态, 本模块把它们变成可观察、可门禁的事实:
+治理层**自身**的熵有五种典型形态, 本模块把它们变成可观察、可门禁的事实:
 
 1. **孤儿门** —— `tests/test_arch_*.py` 存在, 却既未接入 `ci.yml` 快速失败门,
    也未显式声明「只靠全量套件兜底」(状态未知 = 熵).
@@ -10,10 +10,14 @@
    (CLI 自查 / 棘轮, 如 contract_audit 棘轮), 旧解析只认 pytest 会漏掉; 现单列.
 4. **基线漂移** —— 棘轮/预算冻结值散落在 `tests/golden/*`、`huginn/` 与各测试
    常量里, 没有单一台账可读; 现由 `BUDGET_SPECS` 收成一张表.
+5. **本地门漏登记/悬空/漏匹配** —— `.pre-commit-config.yaml` 的本地门 (如 G37
+   audit-regression) 既不在 `ci.yml` 也不在台账; 其 `entry` 引用的测试改名/删除即
+   **悬空**, 而 `entry` 引用的测试未被 `files:` 过滤器覆盖时, 改该测试不会触发 hook
+   —— 门静默失效, 无任何信号.
 
 扫描 `tests/test_arch_*.py` 门族 + `.github/workflows/ci.yml` 的两类 python guard
-step (pytest 与 `python -m huginn.<module>`), 并把散落的棘轮预算/基线收成单一
-台账, 渲染成 `docs/governance-state.md`.
+step (pytest 与 `python -m huginn.<module>`) + `.pre-commit-config.yaml` 的本地门, 并把
+散落的棘轮预算/基线收成单一台账, 渲染成 `docs/governance-state.md`.
 
 设计 (对齐 config_audit / contract_audit):
 - **纯 stdlib**: 不 import huginn.*, 不硬依赖 yaml (有则用, 无则退化行扫描),
@@ -152,6 +156,95 @@ def _parse_cli_guards(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def _read_precommit_text(agent_root: Path) -> str:
+    """读 `<root>/../.pre-commit-config.yaml`; 不存在则空串."""
+    path = agent_root.parent / ".pre-commit-config.yaml"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def _parse_precommit_hooks(text: str) -> list[tuple[str, str]]:
+    """抽出 `.pre-commit-config.yaml` 本地门引用的 `(hook_id, test_path)`.
+
+    本地门 (如 G37 audit-regression) 在 `entry` 里 pytest 若干测试. 其引用的测试文件
+    改名/删除后 hook 的 `files:` 过滤器静默不再匹配, 门悄悄死掉 —— 故须登记并判存在.
+    优先 yaml, 退化行扫描; 两路径共用同一判据 (只认 `entry` 里的 `tests/*.py`).
+    """
+    try:
+        import yaml  # 可选依赖: 有则精确, 无则退化
+
+        data = yaml.safe_load(text) or {}
+        out: list[tuple[str, str]] = []
+        for repo in data.get("repos") or []:
+            for hook in (repo or {}).get("hooks") or []:
+                hid = hook.get("id") or ""
+                for m in _TEST_PATH_RE.finditer(hook.get("entry") or ""):
+                    out.append((hid, m.group(0)))
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
+        logger.debug("yaml 解析 .pre-commit-config.yaml 失败, 退化为行扫描", exc_info=True)
+    # 行扫描退化: 记住最近的 `- id:`, 只从 `entry:` 字段 (含其多行续行) 抽 tests/*.py.
+    # **字段感知**: 显式跳过 `files:` 等其它字段行 —— 否则当 `files:` 写成裸路径
+    # (`^agent/tests/x\.py$`) 时会被误当 entry 引用, 与 yaml 主路径分叉 (幻影门).
+    out = []
+    hid = ""
+    in_entry = False
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("- id:"):
+            hid = s[len("- id:") :].strip()
+            in_entry = False
+            continue
+        field = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):", s)
+        if field:  # 字段起始行: entry 起算入口, 其它字段 (files/name/...) 关入口
+            in_entry = field.group(1) == "entry"
+            if in_entry:
+                for mp in _TEST_PATH_RE.finditer(s):
+                    out.append((hid, mp.group(0)))
+            continue
+        if in_entry:  # `entry:` 的多行续行 (如 bash -c '... \ 换行)
+            for mp in _TEST_PATH_RE.finditer(s):
+                out.append((hid, mp.group(0)))
+    return out
+
+
+def _parse_precommit_files(text: str) -> dict[str, str]:
+    """抽出 `.pre-commit-config.yaml` 每个本地 hook 的 `files:` 过滤器 (hook_id -> 正则).
+
+    本地门靠 `files:` 决定何时触发; 若 `entry` 引用的测试不在过滤范围内, 改该测试不会
+    触发 hook —— 门静默失效. 优先 yaml, 退化行扫描; 两路径共用判据 (字段起始 `files:`).
+    """
+    out: dict[str, str] = {}
+    try:
+        import yaml  # 可选依赖: 有则精确, 无则退化
+
+        data = yaml.safe_load(text) or {}
+        for repo in data.get("repos") or []:
+            for hook in (repo or {}).get("hooks") or []:
+                hid = hook.get("id") or ""
+                files = hook.get("files")
+                if hid and isinstance(files, str):
+                    out[hid] = files
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
+        logger.debug("yaml 解析 .pre-commit-config.yaml 失败, 退化为行扫描", exc_info=True)
+    hid = ""
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("- id:"):
+            hid = s[len("- id:") :].strip()
+            continue
+        m = re.match(r"^files:(.*)$", s)
+        if m and hid:
+            out[hid] = m.group(1).strip().strip("'\"")
+    return out
+
+
 # ── 预算登记 (单一机器可读来源) ──
 # 治理棘轮的冻结预算/基线此前散落在 tests/、huginn/、tests/golden/ 各处. 这里收成
 # **一张声明表**: 每项指明位置、抽取方式与消费者门, 供 governance-state.md 单点可读.
@@ -166,6 +259,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "path": "tests/golden/mece_findings_baseline.txt",
         "kind": "file-lines",
         "owner_gate": "MECE wiring-contract guard (ratchet)",
+        "owner_kind": "ci_step",
     },
     {
         "id": "mirror_drift",
@@ -176,6 +270,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "source": "inline",
         "value": (0, 0, 0),
         "owner_gate": "publish mirror drift (only-shrink)",
+        "owner_kind": "full_suite",
         "probe": "mirror_drift_live",
         "heavy": True,
     },
@@ -186,6 +281,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "const",
         "key": "RAW_READ_BASELINE",
         "owner_gate": "env surface governance",
+        "owner_kind": "full_suite",
         "probe": "env_raw_read_live",
         "heavy": True,
         "direction": "cap",
@@ -197,6 +293,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "collection-len",
         "var": "ALLOWED_EXTERNAL_IMPORTS",
         "owner_gate": "Architecture single-gateway guard",
+        "owner_kind": "ci_step",
     },
     {
         "id": "gateway_subcommands",
@@ -205,6 +302,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "collection-len",
         "var": "CLI_DELEGATED_SUBCOMMANDS",
         "owner_gate": "Architecture single-gateway guard",
+        "owner_kind": "ci_step",
     },
     {
         "id": "sanctioned_plugins",
@@ -213,6 +311,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "collection-len",
         "var": "SANCTIONED_PLUGINS",
         "owner_gate": "Plugin admission guard",
+        "owner_kind": "ci_step",
     },
     {
         "id": "hardcoded_allow",
@@ -221,6 +320,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "collection-len",
         "var": "ALLOWED_HARDCODED_MATCHES",
         "owner_gate": "No-hardcoded-machine-paths guard",
+        "owner_kind": "ci_step",
     },
     {
         "id": "mcp_wiring_allow",
@@ -229,6 +329,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "collection-len",
         "var": "_ALLOWED_WIRING_FILES",
         "owner_gate": "MCP single-gateway guard",
+        "owner_kind": "ci_step",
     },
     {
         "id": "arch_gate_floor",
@@ -239,6 +340,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "source": "inline",
         "value": 17,
         "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
         "probe": "arch_gate_count",
         "direction": "floor",
     },
@@ -251,7 +353,21 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "source": "inline",
         "value": 2,
         "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
         "probe": "cli_guard_count",
+        "direction": "floor",
+    },
+    {
+        "id": "precommit_gate_floor",
+        "name": "本地门数下限",
+        "path": "tests/test_arch_gate_registry.py",
+        "kind": "const",
+        "key": "PRECOMMIT_GATE_FLOOR",
+        "source": "inline",
+        "value": 5,
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "precommit_gate_count",
         "direction": "floor",
     },
     {
@@ -260,6 +376,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "path": "tests/golden/field_audit",
         "kind": "dir-file-count",
         "owner_gate": "MECE 字段级面",
+        "owner_kind": "full_suite",
     },
 )
 
@@ -364,6 +481,8 @@ def _probe_current(
         return len(discover_arch_tests(agent_root))
     if probe == "cli_guard_count":
         return len(_parse_cli_guards(_read_ci_text(agent_root)))
+    if probe == "precommit_gate_count":
+        return len(set(_parse_precommit_hooks(_read_precommit_text(agent_root))))
     if probe == "mirror_drift_live" and heavy:
         return _probe_mirror_drift(agent_root)
     if probe == "env_raw_read_live" and heavy:
@@ -471,20 +590,29 @@ def collect_budgets(agent_root: Path, heavy: bool = False) -> list[dict]:
                 "current": current,
                 "headroom": headroom,
                 "owner_gate": spec["owner_gate"],
+                "owner_kind": spec["owner_kind"],
             }
         )
     return out
 
 
-def audit(agent_root: Path, ci_text: str | None = None, heavy: bool = False) -> dict:
+def audit(
+    agent_root: Path,
+    ci_text: str | None = None,
+    precommit_text: str | None = None,
+    heavy: bool = False,
+) -> dict:
     """扫描一棵仓树, 返回治理门登记快照.
 
-    ``ci_text`` 显式给定时不读盘 (供合成树测试); 为 None 时读
-    ``<root>/../.github/workflows/ci.yml`` (真实仓: agent_root=/repo/agent).
+    ``ci_text`` / ``precommit_text`` 显式给定时不读盘 (供合成树测试); 为 None 时读
+    ``<root>/../.github/workflows/ci.yml`` 与 ``<root>/../.pre-commit-config.yaml``
+    (真实仓: agent_root=/repo/agent).
     ``heavy=True`` 才在预算台账里跑重型探针 (见 ``collect_budgets``).
     """
     if ci_text is None:
         ci_text = _read_ci_text(agent_root)
+    if precommit_text is None:
+        precommit_text = _read_precommit_text(agent_root)
 
     guard_by_test: dict[str, str] = {}
     for name, test in _parse_guard_steps(ci_text):
@@ -543,12 +671,54 @@ def audit(agent_root: Path, ci_text: str | None = None, heavy: bool = False) -> 
         for g in cli_guards
         if not g["exists"]
     ]
+
+    # 本地门 (.pre-commit-config.yaml): 既不在 ci.yml 也不在台账, 故单列.
+    # 按 (hook_id, test) 去重 (同名文件的多个 selector 算一门), 判引用测试是否存在.
+    precommit_gates: list[dict] = []
+    seen_hook_test: set[tuple[str, str]] = set()
+    for hook, test in _parse_precommit_hooks(precommit_text):
+        if (hook, test) in seen_hook_test:
+            continue
+        seen_hook_test.add((hook, test))
+        precommit_gates.append(
+            {"hook": hook, "test": test, "exists": (agent_root / test).exists()}
+        )
+    precommit_gates.sort(key=lambda g: (g["hook"], g["test"]))
+    dangling_precommit = [
+        {"hook": g["hook"], "test": g["test"]}
+        for g in precommit_gates
+        if not g["exists"]
+    ]
+    # files:/entry 一致性: hook 的 `files:` 过滤器必须覆盖其 `entry` 引用的测试, 否则改
+    # 这些测试不会触发 hook —— 门静默失效 (比悬空更隐蔽). 无 `files:` 则对全部路径生效.
+    files_by_hook = _parse_precommit_files(precommit_text)
+    for g in precommit_gates:
+        regex = files_by_hook.get(g["hook"])
+        if not regex:
+            g["covered"] = True
+            continue
+        try:
+            pat = re.compile(regex)
+        except re.error:
+            g["covered"] = False
+            continue
+        # files: 匹配 **仓根相对** 路径; entry 的测试路径可能相对仓根或 agent/
+        # (取决于 entry 是否 `cd agent`), 两种都认.
+        g["covered"] = bool(pat.search(g["test"]) or pat.search(f"agent/{g['test']}"))
+    uncovered_precommit = [
+        {"hook": g["hook"], "test": g["test"]}
+        for g in precommit_gates
+        if not g["covered"]
+    ]
     return {
         "gates": gates,
         "orphans": sorted(orphans),
         "dangling": dangling,
         "cli_guards": cli_guards,
         "dangling_cli": dangling_cli,
+        "precommit_gates": precommit_gates,
+        "dangling_precommit": dangling_precommit,
+        "uncovered_precommit": uncovered_precommit,
         "budgets": collect_budgets(agent_root, heavy=heavy),
     }
 
@@ -575,9 +745,10 @@ def render_markdown(reg: dict) -> str:
         "自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`."
     )
     lines.append(
-        "登记 `tests/test_arch_*.py` 门族与 `.github/workflows/ci.yml` 的 python guard step "
-        "的对齐面: **孤儿门** (存在却未登记) 与 **悬空门** (CI step 指向不存在的测试) "
-        "在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`."
+        "登记 `tests/test_arch_*.py` 门族、`.github/workflows/ci.yml` 的 python guard step "
+        "(pytest 与 `python -m huginn.<module>`) 与 `.pre-commit-config.yaml` 本地门的对齐面: "
+        "**孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块) 在此显形。"
+        "只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`."
     )
     lines.append("")
     lines.append("## 门 (gates)")
@@ -604,13 +775,30 @@ def render_markdown(reg: dict) -> str:
         mark = "是" if c["exists"] else "否 (悬空)"
         lines.append(f"| `{c['module']}` | {step} | {mark} |")
     lines.append("")
+    lines.append("## 本地门 (pre-commit local gates)")
+    lines.append("")
+    lines.append(
+        "`.pre-commit-config.yaml` 的本地门 (如 G37 audit-regression). 既不在 `ci.yml` "
+        "也不在别处登记, 故单列。**存在=否** 即悬空本地门 (引用的测试已改名/删除 —— "
+        "此时 hook 的 `files:` 过滤器会静默不再匹配, 门悄悄死掉). **files 覆盖=否** 即 "
+        "`entry` 引用的测试不在 `files:` 过滤范围内 —— 改它不会触发 hook, 门静默失效."
+    )
+    lines.append("")
+    lines.append("| 本地门 (hook id) | 引用测试 | 存在 | files 覆盖 |")
+    lines.append("|---|---|---|---|")
+    for g in reg["precommit_gates"]:
+        mark = "是" if g["exists"] else "否 (悬空)"
+        cov = "是" if g.get("covered") else "否 (漏匹配)"
+        lines.append(f"| `{g['hook']}` | `{g['test']}` | {mark} | {cov} |")
+    lines.append("")
     lines.append("## 预算 (budgets)")
     lines.append("")
     lines.append(
         "治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). "
         "**权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, "
         "台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); "
-        "重型探针 (如镜像漂移实测) 需 `--probe`。"
+        "重型探针 (如镜像漂移实测) 需 `--probe`。**消费者门**列: `ci_step` 型是 `ci.yml` 真实 step "
+        "(有存在性门); 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在 `ci.yml`)。"
     )
     lines.append("")
     lines.append("| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |")
@@ -618,8 +806,9 @@ def render_markdown(reg: dict) -> str:
     for b in reg["budgets"]:
         cur = _render_current(b["current"])
         head = "—" if b["headroom"] is None else str(b["headroom"])
+        owner = b["owner_gate"] + (" · 全量" if b["owner_kind"] == "full_suite" else "")
         lines.append(
-            f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {b['owner_gate']} |"
+            f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {owner} |"
         )
     lines.append("")
     lines.append("## 缺口 (gaps)")
@@ -638,6 +827,22 @@ def render_markdown(reg: dict) -> str:
         lines.append(f"- CLI 悬空门 ({len(reg['dangling_cli'])}): {items}")
     else:
         lines.append("- CLI 悬空门 (0): 无")
+    if reg["dangling_precommit"]:
+        items = ", ".join(
+            f"`{d['hook']}` → `{d['test']}`" for d in reg["dangling_precommit"]
+        )
+        lines.append(f"- 本地悬空门 ({len(reg['dangling_precommit'])}): {items}")
+    else:
+        lines.append("- 本地悬空门 (0): 无")
+    if reg["uncovered_precommit"]:
+        items = ", ".join(
+            f"`{d['hook']}` → `{d['test']}`" for d in reg["uncovered_precommit"]
+        )
+        lines.append(
+            f"- 本地门 files/entry 不一致 ({len(reg['uncovered_precommit'])}): {items}"
+        )
+    else:
+        lines.append("- 本地门 files/entry 不一致 (0): 无")
     lines.append("")
     return "\n".join(lines)
 

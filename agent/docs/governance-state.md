@@ -1,7 +1,7 @@
 # 低熵治理台账 (governance state)
 
 自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
-登记 `tests/test_arch_*.py` 门族与 `.github/workflows/ci.yml` 的 python guard step 的对齐面: **孤儿门** (存在却未登记) 与 **悬空门** (CI step 指向不存在的测试) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
+登记 `tests/test_arch_*.py` 门族、`.github/workflows/ci.yml` 的 python guard step (pytest 与 `python -m huginn.<module>`) 与 `.pre-commit-config.yaml` 本地门的对齐面: **孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
 
 ## 门 (gates)
 
@@ -39,15 +39,27 @@
 | `huginn.cli.contract_audit` | MECE wiring-contract guard (ratchet) | 是 |
 | `huginn.security.policy_engine` | Policy engine self-check | 是 |
 
+## 本地门 (pre-commit local gates)
+
+`.pre-commit-config.yaml` 的本地门 (如 G37 audit-regression). 既不在 `ci.yml` 也不在别处登记, 故单列。**存在=否** 即悬空本地门 (引用的测试已改名/删除 —— 此时 hook 的 `files:` 过滤器会静默不再匹配, 门悄悄死掉). **files 覆盖=否** 即 `entry` 引用的测试不在 `files:` 过滤范围内 —— 改它不会触发 hook, 门静默失效.
+
+| 本地门 (hook id) | 引用测试 | 存在 | files 覆盖 |
+|---|---|---|---|
+| `audit-regression-7fixes` | `tests/test_context_and_jwt.py` | 是 | 是 |
+| `audit-regression-7fixes` | `tests/test_eos_fit.py` | 是 | 是 |
+| `audit-regression-7fixes` | `tests/test_fts5_consistency.py` | 是 | 是 |
+| `audit-regression-7fixes` | `tests/test_mechanics.py` | 是 | 是 |
+| `audit-regression-7fixes` | `tests/test_sim_audit_regression.py` | 是 | 是 |
+
 ## 预算 (budgets)
 
-治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。
+治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。**消费者门**列: `ci_step` 型是 `ci.yml` 真实 step (有存在性门); 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在 `ci.yml`)。
 
 | 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |
 |---|---|---|---|---|---|---|
 | MECE 发现基线 | `tests/golden/mece_findings_baseline.txt` | 引用 | 47 项 | — | — | MECE wiring-contract guard (ratchet) |
-| 镜像漂移预算 | `tests/test_publish_mirror_drift.py` | 权威 | 0/0/0 | — | — | publish mirror drift (only-shrink) |
-| 环境裸读基线 | `huginn/env_schema.py` | 引用 | 467 | — | — | env surface governance |
+| 镜像漂移预算 | `tests/test_publish_mirror_drift.py` | 权威 | 0/0/0 | — | — | publish mirror drift (only-shrink) · 全量 |
+| 环境裸读基线 | `huginn/env_schema.py` | 引用 | 467 | — | — | env surface governance · 全量 |
 | 外部直连白名单 | `tests/test_arch_single_gateway.py` | 引用 | 19 项 | — | — | Architecture single-gateway guard |
 | 冻结委托子命令 | `tests/test_arch_single_gateway.py` | 引用 | 11 项 | — | — | Architecture single-gateway guard |
 | 插件准入清单 | `tests/test_arch_plugin_governance.py` | 引用 | 2 项 | — | — | Plugin admission guard |
@@ -55,10 +67,13 @@
 | MCP 接线白名单 | `tests/test_arch_mcp_governance.py` | 引用 | 7 项 | — | — | MCP single-gateway guard |
 | arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 17 | 0 | Governance gate registry guard |
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
-| 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 |
+| 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
+| 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 
 ## 缺口 (gaps)
 
 - 孤儿门 (0): 无
 - 悬空门 (0): 无
 - CLI 悬空门 (0): 无
+- 本地悬空门 (0): 无
+- 本地门 files/entry 不一致 (0): 无
