@@ -89,23 +89,25 @@ class ContextMixin:
             "Available phases: LITERATURE, HYPOTHESIS, PLANNING, "
             "EXECUTION, VALIDATION, REPORTING."
         )
-        # externalThinking: 开启时要求模型在动手前先用 deep_think 工具写分析.
-        # 逻辑已迁为 "thinking" 段插件 (prompt_builder 注册), 这里只渲染该段,
-        # 保持同一段逻辑单一来源、可被插件替换。默认关, 不改变默认行为;
-        # fail-open: flag 层异常不注入, 保证系统提示构建永不崩.
+        # 主路径按**段生效声明**渲染应生效段 (writing / multimodal / thinking +
+        # 对 main 有声明的第三方插件段). 旧实现只硬编码渲染 "thinking", 导致
+        # 反防御写作、多模态引导、插件段 (如 asd_ste100) 在主路径静默缺席 ——
+        # 与 s7 路径段集合不一致的"孤儿段". 声明面单一来源在
+        # prompt_segments._APPLIES_TO; 门禁 tests/test_prompt_contract.py 断言
+        # "声明 != 渲染" 即红. fail-open: 注册表/插件异常都不让系统提示构建崩.
         try:
             # 确保内置段已注册 (persona/mode/.../thinking 注册在 prompt_builder import 时).
             import huginn.agent.prompt_builder as _pb  # noqa: F401
-            from huginn.plugins.prompt_segments import render_prompt_segment
+            from huginn.plugins.prompt_segments import render_prompt_segments_for_path
 
-            _thinking = render_prompt_segment(
-                "thinking", getattr(self, "_mode", "chat"), "execute",
+            _declared = render_prompt_segments_for_path(
+                "main", getattr(self, "_mode", "chat"), "execute",
                 "s0_blank", self.system_prompt,
             )
-            if _thinking:
-                base += "\n\n" + _thinking
-        except Exception:  # 非致命: external_thinking 注入失败则跳过
-            logger.debug("external_thinking injection skipped", exc_info=True)
+            if _declared:
+                base += "\n\n" + _declared
+        except Exception:  # 非致命: 段注入失败则跳过
+            logger.debug("prompt segment injection skipped", exc_info=True)
         # Inject cached system context (date + git status) and project
         # context (.huginn.md / AGENTS.md). Computed once per session
         # to avoid repeated git calls.
