@@ -40,6 +40,11 @@
 | [governance-state.md](governance-state.md) | active | 低熵治理台账（治理门登记 + 孤儿门/悬空门 + 棘轮基线，可自动再生成：`python -m huginn.cli.governance_audit --out docs/governance-state.md`） |
 | [capability-runtime-surface-spec.md](capability-runtime-surface-spec.md) | active | 能力可运行性面（L0 依赖探针 + L1 精选 smoke + 运行时自愈 + 台账棘轮；CLI: `python -m huginn.cli.capability_runtime --json`） |
 | [prompt-output-surface-spec.md](prompt-output-surface-spec.md) | active | Prompt/输出面「声明 vs 生效」缺口系统修复（段生效声明 `applies_to` + 主路径按声明渲染 + 生效面门禁 `test_prompt_contract` + 台账棘轮 `prompt_segment_floor`，已落地） |
+| [capabilities-and-registration-spec.md](capabilities-and-registration-spec.md) | active | 能力增强与外部接入统一制度（写作引导 + 原生多模态引导 + 插件/MCP 注册制度，共享 prompt_segments + 注册表 + Catalog 底座，含逐项落地状态标注） |
+| [cspace-workspace-spec.md](cspace-workspace-spec.md) | active | C-Space 外部化全局工作区设计规格（对齐 J-Space/GWT：概念「在场」可读可控可证伪；载体 `huginn/research/cspace.py`） |
+| [deepthink-cspace-bridge-spec.md](deepthink-cspace-bridge-spec.md) | staging | deep_think → CSpace 桥设计（外部草稿只是「候选在场」，证据证实才 promote 为可引用在场；Design/待实现） |
+| [self-harness-report-spec.md](self-harness-report-spec.md) | active | Self-Harness 报告规范（Better Harness 五维方法论；evidence 三态 Observed/Unobserved/Missing，M1+M2 已落地） |
+| [hosted-deployment-and-gtm.md](hosted-deployment-and-gtm.md) | active | 托管部署落地方案 + 推广形态分析（SaaS 形态迁移：浏览器访问/服务器托管/自部署 LLM） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [layered-streaming-settlement-spec.md](layered-streaming-settlement-spec.md) | active | 分层流式结算规范（缺陷一/二三阶段 P-A/P-B/P-C：流式结算/层间重规划/提前终止，已落地） |
