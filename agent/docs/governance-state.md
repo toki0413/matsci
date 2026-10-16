@@ -108,7 +108,7 @@
 
 ## 能力锚点 (capability anchors)
 
-命名子系统 (RSI / PMK / 世界模型 …) 的生存锚点 (源: `CAPABILITY_SPECS`): **一枚开关 + 一组承载模块 + 一组不变量测试**. 门存在性判据看不见能力面 —— 开关还在但**默认翻转** (从开变关 = 能力悄悄关掉)、承载模块被删 (= 能力失去实现)、不变量测试被删(= 能力失去回归网) 都会让能力静默萎缩而门全绿. **默认一致=否** 即开关被删/默认翻转; 承载模块/不变量测试列**存在=否** 即锚点脱节. 数下限棘轮 `capability_floor` 兜底.
+命名子系统 (RSI / PMK / 世界模型 …) 的生存锚点 (源: `CAPABILITY_SPECS`): **一枚开关 + 一组承载模块 + 一组不变量测试**. 门存在性判据看不见能力面 —— 开关还在但**默认翻转** (从开变关 = 能力悄悄关掉)、承载模块被删 (= 能力失去实现)、不变量测试被删(= 能力失去回归网) 都会让能力静默萎缩而门全绿. **默认一致=否** 即开关被删/默认翻转; 承载模块/不变量测试列**存在=否** 即锚点脱节. 数下限棘轮 `capability_floor` 兜底. `always_on` 型 = 工具 action 面/机制面能力 (无开关可翻转, 硬凑开关 = 噪声), 锚点退化为双判据: 只判承载模块/不变量测试存在, 依赖面另由 L0 探针 (runtime_probe) 守.
 
 | 能力 | 开关 | 类型 | 期望默认 | 实际默认 | 默认一致 | 承载模块 | 不变量测试 |
 |---|---|---|---|---|---|---|---|
@@ -117,11 +117,14 @@
 | 计算路由策略 + 预算 (`compute_policy`) | `compute_policy` | feature_flag | false | false | 是 | `huginn/execution/compute_policy.py`, `huginn/execution/compute_router.py` | `tests/test_compute_router_audit.py` |
 | ARTEX 假设前沿 (frontier) (`frontier`) | `frontier_claim` | feature_flag | false | false | 是 | `huginn/autoloop/control_mechanisms.py`, `huginn/autoloop/cognitive_loop.py` | `tests/test_control_mechanism_governance.py` |
 | JEV 外部判断接入 (`jev`) | `jev_enabled` | feature_flag | false | false | 是 | `huginn/runtime/jev/_enabled.py`, `huginn/runtime/jev/client.py`, `huginn/runtime/jev/tool_router.py` | `tests/test_jev_wiring.py` |
+| 分子结构文件输入 (MOL/SDF/PDB) (`mol_structure_input`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/tools/sci/rdkit_tool.py` | `tests/test_rdkit_mol_file.py` |
 | 个性化 (风格/口味) (`personalization`) | `personalization` | feature_flag | true | true | 是 | `huginn/personalization/user_style.py`, `huginn/personalization/taste_profile.py`, `huginn/tools/personalization_tool.py` | `tests/test_taste_profile.py` |
 | Pi 极简内核模式 (`pi_mode`) | `pi_mode` | feature_flag | false | false | 是 | `huginn/modes/pi.py`, `huginn/tools/pi_mode_tool.py` | `tests/test_make_tool_pi_mode.py` |
 | PMK 一致性 (persona/memory/knowledge) (`pmk`) | `HUGINN_PMK_INJECT` | env | 0 | 0 | 是 | `huginn/autoloop/cognitive_guard.py`, `huginn/autoloop/engine_observe.py`, `huginn/runtime/task_lifecycle.py` | `tests/test_temporal_pmk.py` |
 | 计算 provenance 快照 (`provenance`) | `provenance` | feature_flag | true | true | 是 | `huginn/provenance/pipeline.py`, `huginn/provenance/registry.py`, `huginn/provenance/correction.py` | `tests/test_provenance.py`, `tests/test_argus_provenance.py` |
+| 复现重跑闭环 (reproduce) (`reproduce_closed_loop`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/autoloop/reproduce.py`, `huginn/cli/reproduce.py` | `tests/test_reproduce.py` |
 | 递归自我改进 (RSI) (`rsi`) | `harness_meta_improver` | feature_flag | false | false | 是 | `huginn/harness/meta_improver.py`, `huginn/self_improvement/core.py`, `huginn/evolution/engine.py` | `tests/test_meta_improver.py`, `tests/test_evolution_engine.py` |
+| NMR/质谱谱图解析 (JCAMP-DX/mzML) (`spectra_parse`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/tools/sci/spectra_parsers.py`, `huginn/tools/characterization_tool.py` | `tests/test_spectra_parsers.py` |
 | 投机执行 (speculator) (`speculator`) | `speculator` | feature_flag | true | true | 是 | `huginn/agents/speculator.py` | `tests/test_proactive_injection.py` |
 | 系统资源监控 (`system_health`) | `system_health_monitor` | feature_flag | true | true | 是 | `huginn/diagnostics/system_health.py` | `tests/test_system_health.py` |
 | 三舱反射模型 (`three_cabin`) | `three_cabin` | feature_flag | false | false | 是 | `huginn/metacog/three_cabin_reflector.py` | `tests/test_verify_4flags.py`, `tests/test_metacog_smoke.py` |
@@ -168,13 +171,13 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
 | 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 122 | 0 | Governance gate registry guard |
-| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 16 | 16 | 0 | Governance gate registry guard |
+| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
 | prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 9 | 9 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 覆盖率下限 | `pyproject.toml` | 下限 | 60 | 60 | 0 | Governance gate registry guard |
-| 可运行性探针清单下限 | `huginn/capabilities/smoke_specs.py` | 权威 | 4 | 4 | 0 | Governance gate registry guard |
+| 可运行性探针清单下限 | `huginn/capabilities/smoke_specs.py` | 权威 | 7 | 7 | 0 | Governance gate registry guard |
 
 ## 循环闸位 (loop caps)
 

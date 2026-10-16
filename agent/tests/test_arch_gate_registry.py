@@ -499,6 +499,24 @@ def test_capability_default_flip_detected_on_synthetic_tree(tmp_path: pathlib.Pa
     assert caps["pmk"]["flag_ok"] is True
 
 
+def test_capability_always_on_anchors_skip_flag_lookup_on_synthetic_tree(
+    tmp_path: pathlib.Path,
+):
+    """合成树验证: always_on 型锚点不做开关判据 (无开关可翻转, 硬凑开关=噪声).
+
+    合成树上 feature_flags.py / env_schema.py 双缺 (开关解析面为空) 时,
+    always_on 锚点仍 flag_ok=True —— 但承载模块/不变量测试缺失**照常显形**
+    (双判据不是假绿: G-A/G-B/G-C 三个新能力在合成树上必须红, 在真实树上必须绿).
+    """
+    (tmp_path / "huginn").mkdir()
+    caps = {c["id"]: c for c in ga._collect_capabilities(tmp_path)}
+    for cap_id in ("mol_structure_input", "spectra_parse", "reproduce_closed_loop"):
+        assert caps[cap_id]["flag_kind"] == "always_on"
+        assert caps[cap_id]["flag_ok"] is True
+        assert caps[cap_id]["missing_modules"], f"{cap_id} 承载模块缺失应显形"
+        assert caps[cap_id]["missing_tests"], f"{cap_id} 不变量测试缺失应显形"
+
+
 # ──────────────────── prompt 段生效面 (prompt segments) ────────────────────
 
 

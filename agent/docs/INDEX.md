@@ -45,7 +45,7 @@
 | [deepthink-cspace-bridge-spec.md](deepthink-cspace-bridge-spec.md) | staging | deep_think → CSpace 桥设计（外部草稿只是「候选在场」，证据证实才 promote 为可引用在场；Design/待实现） |
 | [self-harness-report-spec.md](self-harness-report-spec.md) | active | Self-Harness 报告规范（Better Harness 五维方法论；evidence 三态 Observed/Unobserved/Missing，M1+M2 已落地） |
 | [hosted-deployment-and-gtm.md](hosted-deployment-and-gtm.md) | active | 托管部署落地方案 + 推广形态分析（SaaS 形态迁移：浏览器访问/服务器托管/自部署 LLM） |
-| [science-capability-gap-spec.md](science-capability-gap-spec.md) | staging | 科学发现能力对标缺口补齐（分子结构文件输入 MOL/SDF/PDB + NMR·质谱解析 JCAMP-DX/mzML + 复现重跑闭环 reproduce；对标十项标准审计后仅补三缺口，待评审） |
+| [science-capability-gap-spec.md](science-capability-gap-spec.md) | active | 科学发现能力对标缺口补齐（分子结构文件输入 MOL/SDF/PDB + NMR·质谱解析 JCAMP-DX/mzML + 复现重跑闭环 reproduce；对标十项标准审计后仅补三缺口，P0 三条已落地：`mol_structure_input`/`spectra_parse`/`reproduce_closed_loop` 三 always_on 锚点入台账，棘轮 16→19 / smoke 4→7） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [layered-streaming-settlement-spec.md](layered-streaming-settlement-spec.md) | active | 分层流式结算规范（缺陷一/二三阶段 P-A/P-B/P-C：流式结算/层间重规划/提前终止，已落地） |

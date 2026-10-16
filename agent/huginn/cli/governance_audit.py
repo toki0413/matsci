@@ -728,6 +728,43 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
         ),
         "tests": ("tests/test_vista_recall_modes.py",),
     },
+    # ── 科学发现能力缺口补齐 (G-A/G-B/G-C): always_on 型锚点 ──
+    # 这三项是**工具 action 面 / 机制面**能力, 没有独立开关 —— 硬凑开关 = 噪声.
+    # 锚点退化为双判据: 承载模块存在 + 不变量测试存在 (无可翻转的开关, flag_ok 恒 True,
+    # 渲染为「常开」); L0 探针 (runtime_probe) 另守依赖面.
+    {
+        "id": "mol_structure_input",
+        "name": "分子结构文件输入 (MOL/SDF/PDB)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": ("huginn/tools/sci/rdkit_tool.py",),
+        "tests": ("tests/test_rdkit_mol_file.py",),
+    },
+    {
+        "id": "spectra_parse",
+        "name": "NMR/质谱谱图解析 (JCAMP-DX/mzML)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": (
+            "huginn/tools/sci/spectra_parsers.py",
+            "huginn/tools/characterization_tool.py",
+        ),
+        "tests": ("tests/test_spectra_parsers.py",),
+    },
+    {
+        "id": "reproduce_closed_loop",
+        "name": "复现重跑闭环 (reproduce)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": (
+            "huginn/autoloop/reproduce.py",
+            "huginn/cli/reproduce.py",
+        ),
+        "tests": ("tests/test_reproduce.py",),
+    },
 )
 
 # ── 能力面闭合分诊表 (feature flag 全部登记: 锚定 or 豁免) ──
@@ -878,18 +915,25 @@ def _collect_capabilities(agent_root: Path) -> list[dict]:
 
     三者任一脱节 = 该能力静默萎缩. 开关从 `FeatureFlags._DEFAULTS` / `env_schema.SCHEMA`
     读实际默认值 (ast, weightless); `flag_ok=False` 即默认翻转或开关被删.
+    `flag_kind="always_on"` 型 (工具 action 面/机制面能力, 无开关) 跳过 ①:
+    硬凑开关 = 噪声, 锚点退化为双判据 (模块/测试存在), flag_ok 恒 True.
     """
     flags = _feature_flag_defaults(agent_root)
     envs = _env_schema_defaults(agent_root)
     out: list[dict] = []
     for spec in CAPABILITY_SPECS:
-        if spec["flag_kind"] == "feature_flag":
+        if spec["flag_kind"] == "always_on":
+            actual = None
+            expected = None
+            flag_ok = True
+        elif spec["flag_kind"] == "feature_flag":
             actual = flags.get(spec["flag"], "__MISSING__")
             expected = spec["default"]
+            flag_ok = actual == expected
         else:
             actual = envs.get(spec["flag"], "__MISSING__")
             expected = str(spec["default"])
-        flag_ok = actual == expected
+            flag_ok = actual == expected
         missing_modules = [m for m in spec["modules"] if not (agent_root / m).exists()]
         missing_tests = [t for t in spec["tests"] if not (agent_root / t).exists()]
         out.append(
@@ -1262,7 +1306,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "path": "tests/test_arch_gate_registry.py",
         "kind": "const",
         "source": "inline",
-        "value": 16,
+        "value": 19,
         "owner_gate": "Governance gate registry guard",
         "owner_kind": "ci_step",
         "probe": "capability_count",
@@ -1599,7 +1643,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "group": "runtime",
         "kind": "collection-len",
         "source": "inline",
-        "value": 4,
+        "value": 7,
         "var": "SMOKE_SPEC_NAMES",
         "owner_gate": "Governance gate registry guard",
         "owner_kind": "ci_step",
@@ -2158,13 +2202,18 @@ def render_markdown(reg: dict) -> str:
         "**一枚开关 + 一组承载模块 + 一组不变量测试**. 门存在性判据看不见能力面 —— 开关还在"
         "但**默认翻转** (从开变关 = 能力悄悄关掉)、承载模块被删 (= 能力失去实现)、不变量测试被删"
         "(= 能力失去回归网) 都会让能力静默萎缩而门全绿. **默认一致=否** 即开关被删/默认翻转; "
-        "承载模块/不变量测试列**存在=否** 即锚点脱节. 数下限棘轮 `capability_floor` 兜底."
+        "承载模块/不变量测试列**存在=否** 即锚点脱节. 数下限棘轮 `capability_floor` 兜底. "
+        "`always_on` 型 = 工具 action 面/机制面能力 (无开关可翻转, 硬凑开关 = 噪声), "
+        "锚点退化为双判据: 只判承载模块/不变量测试存在, 依赖面另由 L0 探针 (runtime_probe) 守."
     )
     lines.append("")
     lines.append("| 能力 | 开关 | 类型 | 期望默认 | 实际默认 | 默认一致 | 承载模块 | 不变量测试 |")
     lines.append("|---|---|---|---|---|---|---|---|")
     for c in reg["capabilities"]:
-        kind = "feature_flag" if c["flag_kind"] == "feature_flag" else "env"
+        kind = {
+            "feature_flag": "feature_flag",
+            "always_on": "常开 (无开关)",
+        }.get(c["flag_kind"], "env")
         flag = "是" if c["flag_ok"] else "否 (翻转/缺失)"
         mods = ", ".join(
             f"`{m}`" + ("" if (m not in c["missing_modules"]) else " (缺)")

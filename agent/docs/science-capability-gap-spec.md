@@ -1,6 +1,6 @@
 # 科学发现能力对标缺口 — 补缺 Spec
 
-> Status: PROPOSED (staging)
+> Status: ACTIVE (as-built, 见 §7)
 > Source: 对标「自主科学发现闭环」十项标准的全仓实证审计 (2026-10-16)
 > Mode: 审计 → 缺口 → 定向补齐; 不动已实装能力
 
@@ -79,3 +79,27 @@
 - `reproduce` 只覆盖**确定性工具**; LLM 调用类步骤标记 `not_reproducible` 显式跳过
   (可见决策, 不混入 diff).
 - PDB 支持是"分子结构输入"级别, 不是"蛋白科学能力"——宣传口径须守住此边界.
+
+## 7. 落地记录 (as-built, 2026-10-16)
+
+三条 P0 缺口全部落地, 治理面同步收口:
+
+| 缺口 | 实现 | 不变量测试 | 治理锚点 |
+|---|---|---|---|
+| G-A | `rdkit_tool.mol_file_to_mol` (MOL/SDF/PDB; SDF 多记录逐条, 单条失败不拖垮整批; `.mdl`/`.ent` 别名; 未知后缀显式报错列支持集) | `tests/test_rdkit_mol_file.py` | `mol_structure_input` (always_on) |
+| G-B | `huginn/tools/sci/spectra_parsers.py` 纯 stdlib 解析器 (JCAMP-DX 峰表+SQZ/DIF/DUP 压缩轨迹; mzML 64/32-bit float+zlib), `characterization_tool` 薄适配 `jdx_parse`/`mzml_parse`; 不支持形态显式 ValueError, 不静默 | `tests/test_spectra_parsers.py` | `spectra_parse` (always_on) |
+| G-C | `huginn/autoloop/reproduce.py` 逐字段数值 diff (相对/绝对容差; bool≠int; hash 口径复用 provenance.capture) + LLM 步显式 `not_reproducible`; CLI `huginn/cli/reproduce.py` (--snapshot/--record/JSONL; 空文件防假绿; 退出码按全量 reproduced) | `tests/test_reproduce.py` | `reproduce_closed_loop` (always_on) |
+
+治理台账同步:
+- 能力锚点 `capability_floor` 棘轮 16→19 (三条 always_on 型: 无开关能力不硬凑
+  开关, 锚点退化为「承载模块存在 + 不变量测试存在」双判据, flag_ok 恒 True);
+- L1 精选 smoke `runtime_probe_floor` 棘轮 4→7 (`jdx_parse`/`mol_file_to_mol`/
+  `reproduce_diff` 三条端到端);
+- `governance-state.md` 确定性再生成; 镜像 (publish/mcpb) 同步漂移 0; ruff clean;
+  相关测试 129 passed.
+
+偏离 spec 的实现决策 (与 §4 对照):
+- 谱图解析落在新文件 `huginn/tools/sci/spectra_parsers.py` (spec 允许二选一),
+  `characterization_tool` 只做薄适配——判据单一来源, 测试/工具/CLI 共用一份解析器;
+- 探针清单实际落在 `huginn/capabilities/smoke_specs.py` (L1 精选 smoke, 权威
+  floor 所在), L0 依赖探针面由 rdkit 缺库时的既有 fail-open 机制另守.
