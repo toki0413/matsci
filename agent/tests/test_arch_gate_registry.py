@@ -1,18 +1,25 @@
 """低熵治理台账 (governance_audit) 的门禁自检.
 
 治理层自身的熵: **门存在却未登记 / CI step 指向不存在的测试 / CLI 门指向已删模块 /
-本地门 (.pre-commit) 指向已删测试**. 本测试把 `tests/test_arch_*.py` 门族、`ci.yml`
-的 pytest guard step、`python -m huginn.<module>` CLI 门与 `.pre-commit-config.yaml`
-本地门四者对齐成硬不变量:
+本地门 (.pre-commit) 指向已删测试 / 工程门 step 脱节 / 工作流整体消失**. 本测试把
+`tests/test_arch_*.py` 门族 + 显式治理元门 (`GOVERNANCE_META_TESTS`)、**全部**工作流的
+pytest guard step、`python -m huginn.<module>` CLI 门、`ENGINEER_GATE_SPECS` 工程门、
+仓根与 agent/ 两份 `.pre-commit-config.yaml` 本地门对齐成硬不变量:
 
-- 每个 `test_arch_*.py` 必须登记 (显式快速失败门, 或显式声明 full-suite-only);
+- 每个治理门 (arch 门族 + 治理元门) 必须登记 (显式快速失败门, 或显式声明 full-suite-only);
   未登记者 = 孤儿门 → 红.
 - 每个 CI pytest guard step 指向的测试文件必须存在; 指向幽灵文件的悬空门 → 红.
 - 每个 CLI 门 (`python -m huginn.<module>`) 指向的模块必须存在; 指向已删模块 → 红.
-- 每个本地门 (`.pre-commit-config.yaml`) 引用的测试文件必须存在; 指向已删文件 → 红.
+- 每个本地门 (两份 `.pre-commit-config.yaml`) 引用的测试文件必须存在; 指向已删文件 → 红.
 - 每个本地门 `entry` 引用的测试必须被其 `files:` 过滤器覆盖; 否则改它不触发 hook → 红.
-- 门数只减不增 (棘轮); 删掉一个已登记门 → 红.
+- 每个工程门 (`ENGINEER_GATE_SPECS`) 的 step 名仍在对应工作流; step 脱节 → 红.
+- 每个工作流的**触发器** (`on:`) 与 `WORKFLOW_TRIGGER_SPECS` 期望集一致; 触发器被删/收窄
+  (门永不运行) → 红; 未登记触发规格的工作流 / 规格未落地的工作流 → 红.
+- 全部工作流**命名 step 总数** ≥ 台账下限 (阻断步静默增删的反向兜底) → 红.
+- 门数/工程门数/本地门数/CLI 门数/工作流数只减不增 (棘轮); 删掉已登记项 → 红.
 - 每个循环闸位 (自主轮数/步数上限) 实测 ≤ 台账上限; 提高上限须显式改台账 → 红.
+- 每个豁免/白名单 (gitleaks 密钥豁免 / pip-audit 漏洞豁免 / dependabot 忽略项) 条数 ≤ 台账
+  上限; 覆盖率下限 `fail_under` ≥ 台账下限 —— 放宽豁免或下调覆盖率 = 静默削弱对应门 → 红.
 - 生成文档 `docs/governance-state.md` 必须与当前扫描逐字一致 (确定性再生成).
 
 重生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
@@ -23,6 +30,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import re
+import sys
 
 _AGENT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -42,6 +50,18 @@ CLI_GUARD_FLOOR = ga.budget_value("cli_guard_floor")
 
 # 本地门 (.pre-commit-config.yaml) 数下限棘轮: 同上, 值由台账权威声明.
 PRECOMMIT_GATE_FLOOR = ga.budget_value("precommit_gate_floor")
+
+# 工程门 (非 pytest 阻断门) 数下限棘轮: 同上, 值由台账权威声明.
+ENGINEER_GATE_FLOOR = ga.budget_value("engineer_gate_floor")
+
+# 工作流数下限棘轮: 同上, 值由台账权威声明.
+WORKFLOW_FLOOR = ga.budget_value("workflow_floor")
+
+# 快速失败门 (全部工作流 pytest guard step) 数下限棘轮: 同上.
+GUARD_STEP_FLOOR = ga.budget_value("guard_step_floor")
+
+# 工作流命名 step 总数下限棘轮 (阻断步静默增删的反向兜底): 同上.
+WORKFLOW_STEP_FLOOR = ga.budget_value("workflow_step_floor")
 
 # 循环闸位数下限棘轮: 同上, 值由台账权威声明.
 LOOP_CAP_FLOOR = ga.budget_value("loop_cap_floor")
@@ -280,6 +300,177 @@ def test_precommit_files_covers_entry_on_synthetic_tree(tmp_path: pathlib.Path):
     assert reg["uncovered_precommit"] == []
 
 
+# ──────────────────── 工程门 (非 pytest 阻断门) ────────────────────
+
+
+def test_engineer_gates_steps_exist():
+    """不变量: 每个工程门 (`ENGINEER_GATE_SPECS`) 的 step 名仍在对应工作流里.
+
+    工程门由工作流 step 承载 (非 pytest 测试文件), 旧台账完全看不见 —— step 删/改名即
+    静默缩小治理面, 无任何信号.
+    """
+    reg = ga.build_gate_registry()
+    assert reg["dangling_engineer"] == [], (
+        f"悬空工程门 (step 名与工作流脱节): {reg['dangling_engineer']} —— "
+        f"step 改名/删除后忘了同步 governance_audit.ENGINEER_GATE_SPECS."
+    )
+
+
+def test_engineer_gate_count_ratchet_only_shrinks():
+    """棘轮: 工程门数只减不增."""
+    reg = ga.build_gate_registry()
+    assert len(reg["engineer_gates"]) >= ENGINEER_GATE_FLOOR, (
+        f"工程门数从 {ENGINEER_GATE_FLOOR} 降到 {len(reg['engineer_gates'])} —— 门被删了? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"engineer_gate_floor 的 value (可见的发布决策)."
+    )
+
+
+def test_engineer_dangling_detection_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证工程门 step 名缺失能被抓到 (前向非空转)."""
+    (tmp_path / "tests").mkdir()
+    ci = (
+        "jobs:\n  g:\n    steps:\n      - name: Some other step\n        run: echo hi\n"
+    )
+    reg = ga.audit(tmp_path, ci_text=ci)
+    # 合成树里工作流只含一个无关 step, 故登记为 ci.yml 的工程门应全部判为不存在.
+    assert any(d["workflow"] == "ci.yml" for d in reg["dangling_engineer"])
+
+
+# ──────────────────── 工作流覆盖面 ────────────────────
+
+
+def test_workflow_count_ratchet_only_shrinks():
+    """棘轮: 被扫描工作流数只减不增 (整个工作流被删/改名 → 门集体消失, 无信号)."""
+    reg = ga.build_gate_registry()
+    assert len(reg["workflows"]) >= WORKFLOW_FLOOR, (
+        f"工作流数从 {WORKFLOW_FLOOR} 降到 {len(reg['workflows'])} —— 工作流被删了? "
+        f"若确为有意合并, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"workflow_floor 的 value (可见的发布决策)."
+    )
+
+
+def test_guard_step_count_ratchet_only_shrinks():
+    """棘轮: 全部工作流的 pytest guard step 数只减不增.
+
+    覆盖**非 arch** 的快速失败门 (如 testclient_hygiene / naturebench / security / stress):
+    它们既不在 arch_gate_floor, 也不在工程门口径内 —— 删掉其 guard step 会静默缩小快速失败面.
+    """
+    reg = ga.build_gate_registry()
+    guards = [g for g in reg["gates"] if g["status"] == "fast-fail-guard"]
+    assert len(guards) >= GUARD_STEP_FLOOR, (
+        f"快速失败门数从 {GUARD_STEP_FLOOR} 降到 {len(guards)} —— guard step 被删了? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"guard_step_floor 的 value (可见的发布决策)."
+    )
+
+
+def test_workflow_step_count_ratchet_only_shrinks():
+    """棘轮: 全部工作流命名 step 总数只减不增 (阻断步静默增删的反向兜底).
+
+    `ENGINEER_GATE_SPECS` 只挡「已登记工程门 → 被删」的**单向**; 未登记的阻断步被删/新增
+    无任何信号. 命名 step 总数是一张反向网: 任何 step 增删都会动它, 须显式改台账 (可见决策).
+    """
+    reg = ga.build_gate_registry()
+    total = sum(len(ga._parse_step_names(t)) for t in ga._read_workflow_texts(_AGENT).values())
+    assert total >= WORKFLOW_STEP_FLOOR, (
+        f"工作流命名 step 总数从 {WORKFLOW_STEP_FLOOR} 降到 {total} —— 有阻断步被删? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"workflow_step_floor 的 value (可见的发布决策)."
+    )
+
+
+# ──────────────────── 工作流触发器 (workflow triggers) ────────────────────
+
+
+def test_workflows_have_registered_trigger_specs():
+    """不变量: 每个工作流都有触发规格, 且每个规格都落在真实工作流上.
+
+    `WORKFLOW_TRIGGER_SPECS` 是可见决策表: 新增工作流不登记触发规格 (无法判其是否被收窄)
+    → 红; 规格登记但工作流文件被删/改名 → 红.
+    """
+    reg = ga.build_gate_registry()
+    assert reg["unregistered_workflows"] == [], (
+        f"未登记触发规格的工作流: {reg['unregistered_workflows']} —— "
+        f"在 governance_audit.WORKFLOW_TRIGGER_SPECS 显式登记其期望触发集 (可见决策)."
+    )
+    assert reg["unchecked_workflows"] == [], (
+        f"触发规格未落地的工作流: {reg['unchecked_workflows']} —— "
+        f"规格登记但工作流文件缺失 (被删/改名)? 同步 WORKFLOW_TRIGGER_SPECS / 工作流."
+    )
+
+
+def test_workflow_triggers_match_spec():
+    """不变量: 每个工作流的实际触发器与期望集一致 (门存在却永不运行的假绿).
+
+    门 step 存在 ≠ 门会运行: 删 `on: schedule` 或收窄 `push`/`pull_request` 的 `paths` 会让门
+    永不执行, 而 step 仍在文件里. 触发规格把「运行面」也纳入登记, 使收窄成为可见决策.
+    """
+    reg = ga.build_gate_registry()
+    assert reg["trigger_drift"] == [], (
+        f"触发器漂移 (实际触发集 ≠ 期望集): {reg['trigger_drift']} —— "
+        f"工作流触发器被删/收窄(门永不运行)或新增(未登记). 同步 WORKFLOW_TRIGGER_SPECS / 工作流."
+    )
+
+
+def test_trigger_parsing_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证触发器抽取与漂移判定 (前向非空转).
+
+    单值 `on: push`、行内列表 `on: [push, pull_request]`、块状 `on:` 三种写法都要被正确识别;
+    期望集里缺 `schedule` 时须判为漂移.
+    """
+    # 块状写法: 缺 schedule (期望含 schedule) → 漂移
+    block = "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n"
+    assert ga._parse_triggers(block) == ["push", "workflow_dispatch"]
+    # 行内列表写法
+    assert ga._parse_triggers("on: [push, pull_request]\n") == ["pull_request", "push"]
+    # 单值写法
+    assert ga._parse_triggers("on: push\n") == ["push"]
+    # 漂移判定: 一个期望 schedule 的工作流只声明 push
+    wf = {"audit-regression.yml": "on:\n  push:\n"}
+    got = ga._collect_workflow_triggers(wf)
+    assert got["trigger_drift"] and got["trigger_drift"][0]["missing"] == [
+        "schedule",
+        "workflow_dispatch",
+    ]
+
+
+# ──────────────────── 跨环境解析确定性 ────────────────────
+
+
+def test_yaml_and_fallback_parsing_agree(tmp_path: pathlib.Path, monkeypatch):
+    """不变量: 装了 / 没装 PyYAML 两条解析路径给出**逐字一致**的登记快照.
+
+    台账对工作流/pre-commit 的解析都走「有 PyYAML 用主路径, 无则退化行扫描」。若两路径
+    判据不一致, 同一份文件在 CI (装了 PyYAML) 与本地 (没装) 会给出不同门集 —— 幻影门或漏门,
+    且再生成文档随环境漂移。合成树里在步骤之间放一条 job 级注释 (同时含 `pytest` 与
+    `tests/*.py` 字样): 只有**按缩进收边**的退化解析才不会把它并进上一个 step 块。
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    ci = (
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "      - name: Ruff only\n"
+        "        run: |\n"
+        "          ruff check .\n"
+        "  test:\n"
+        "    # 单一测试 job: pytest 自动发现整个 tests/ (含 tests/test_a.py 护栏)\n"
+        "    steps:\n"
+        "      - name: Real guard\n"
+        "        run: python -m pytest tests/test_a.py -q\n"
+    )
+    with_yaml = ga.audit(tmp_path, ci_text=ci, precommit_text="")
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    without_yaml = ga.audit(tmp_path, ci_text=ci, precommit_text="")
+    assert without_yaml == with_yaml, (
+        "yaml 主路径与无-PyYAML 退化路径解析结果不一致 —— 环境相关的幻影门/漏门。"
+    )
+
+
 # ──────────────────── 预算台账 (BUDGET_SPECS) ────────────────────
 
 # 冻结覆盖集: 应被登记的治理棘轮预算. 新增/删除棘轮必须同步此集 (可见决策).
@@ -296,7 +487,16 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "arch_gate_floor",
         "cli_guard_floor",
         "precommit_gate_floor",
+        "engineer_gate_floor",
+        "workflow_floor",
+        "guard_step_floor",
+        "workflow_step_floor",
         "field_audit_golden",
+        "skill_audit_baseline",
+        "gitleaks_allowlist",
+        "pip_audit_ignore",
+        "dependabot_ignore",
+        "coverage_fail_under",
         "loop_autoloop_cli",
         "loop_autoloop_engine",
         "loop_recursion_limit",
@@ -368,25 +568,35 @@ def test_heavy_probes_disabled_by_default():
 
 
 def test_ci_step_owner_gates_reference_real_steps():
-    """预算 `owner_kind` 口径统一: 标 `ci_step` 的消费者门必须是 ci.yml 真实 step 名.
+    """预算 `owner_kind` 口径统一: `ci_step` / `workflow_step` 的消费者门必须是真实 step 名.
 
-    `owner_gate` 混用两种语义: `ci_step` (ci.yml 真实 step, 可校验存在性) 与 `full_suite`
-    (仅全量套件跑, 不在 ci.yml). 若不区分, step 改名后台账会指向**幻影门**而无声. 本门固化:
-    ①`owner_kind` 合法枚举; ②`ci_step` 型 `owner_gate` 命中 ci.yml 真实 step 名 (取
-    `gates ∪ cli_guards` 的 step 名集).
+    `owner_gate` 混用三种语义: `ci_step` (工作流 pytest/CLI guard step)、`workflow_step`
+    (非 pytest 工程门 step)、`full_suite` (仅全量套件跑, 不在工作流). 若不区分, step 改名后
+    台账会指向**幻影门**而无声. 本门固化: ①`owner_kind` 合法枚举; ②`ci_step` 型 `owner_gate`
+    命中工作流真实 pytest/CLI guard step 名; ③`workflow_step` 型命中 ENGINEER_GATE_SPECS 的
+    step 名 (取 `engineer_gates` 的 step 集).
     """
     reg = ga.build_gate_registry()
-    real_steps = {g["ci_step"] for g in reg["gates"] if g["ci_step"]}
-    real_steps |= {c["ci_step"] for c in reg["cli_guards"] if c["ci_step"]}
+    ci_steps = {g["ci_step"] for g in reg["gates"] if g["ci_step"]}
+    ci_steps |= {c["ci_step"] for c in reg["cli_guards"] if c["ci_step"]}
+    workflow_steps = {e["step"] for e in reg["engineer_gates"] if e["exists"]}
     for spec in ga.BUDGET_SPECS:
         kind = spec["owner_kind"]
-        assert kind in {"ci_step", "full_suite"}, (
-            f"预算 `{spec['id']}` 的 owner_kind `{kind}` 非法 (须 ci_step / full_suite)."
+        assert kind in {"ci_step", "workflow_step", "full_suite"}, (
+            f"预算 `{spec['id']}` 的 owner_kind `{kind}` 非法 "
+            f"(须 ci_step / workflow_step / full_suite)."
         )
         if kind == "ci_step":
-            assert spec["owner_gate"] in real_steps, (
+            assert spec["owner_gate"] in ci_steps, (
                 f"预算 `{spec['id']}` 标 `ci_step`, 但 owner_gate `{spec['owner_gate']}` 不是 "
-                f"ci.yml 真实 step 名 —— step 改名后台账指向幻影门? 同步 BUDGET_SPECS / ci.yml."
+                f"工作流真实 pytest/CLI guard step 名 —— step 改名后台账指向幻影门? "
+                f"同步 BUDGET_SPECS / 工作流."
+            )
+        if kind == "workflow_step":
+            assert spec["owner_gate"] in workflow_steps, (
+                f"预算 `{spec['id']}` 标 `workflow_step`, 但 owner_gate `{spec['owner_gate']}` "
+                f"不是 ENGINEER_GATE_SPECS 的真实工程门 step 名 —— step 改名后台账指向幻影门? "
+                f"同步 BUDGET_SPECS / ENGINEER_GATE_SPECS."
             )
 
 
@@ -398,7 +608,11 @@ def test_loop_caps_live_within_ceiling():
 
     循环闸位是自主轮数/步数上限; 提高上限 = 扩大自主面, 必须走台账 (可见决策).
     """
-    caps = [s for s in ga.BUDGET_SPECS if s.get("source") == "ceiling"]
+    caps = [
+        s
+        for s in ga.BUDGET_SPECS
+        if s.get("source") == "ceiling" and s.get("group") == "loop"
+    ]
     assert len(caps) >= LOOP_CAP_FLOOR, (
         f"循环闸位数从 {LOOP_CAP_FLOOR} 降到 {len(caps)} —— 闸位被删了? "
         f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 loop_cap_floor 的 value."
@@ -411,4 +625,44 @@ def test_loop_caps_live_within_ceiling():
         assert live <= spec["value"], (
             f"循环闸位 `{spec['id']}` 活值 {live} > 台账上限 {spec['value']} —— "
             f"扩大自主面须显式更新 BUDGET_SPECS 的 value (可见决策)."
+        )
+
+
+# ──────────────────── 豁免/白名单面 + 配置级门 ────────────────────
+
+# 豁免/白名单 (放宽即静默削弱对应门) 与配置级门 (覆盖率下限) 的冻结 id. 增删须同步此集.
+_EXEMPTION_CEILING_IDS = ("gitleaks_allowlist", "pip_audit_ignore", "dependabot_ignore")
+_CONFIG_FLOOR_IDS = ("coverage_fail_under",)
+
+
+def test_exemption_whitelists_not_relaxed():
+    """不变量: 每个豁免/白名单条数 ≤ 台账上限 (放宽豁免 = 静默削弱对应门).
+
+    gitleaks 密钥豁免 / pip-audit 漏洞豁免 / dependabot 忽略项都是「把某个门对某条免除」——
+    往里加一条即扩大免检面. 台账持有当前条数作 ceiling; 加一条即越界 → 红 (须显式抬高 value).
+    """
+    by = {b["id"]: b for b in ga.collect_budgets(_AGENT)}
+    for bid in _EXEMPTION_CEILING_IDS:
+        b = by[bid]
+        assert b["current"] is not None, (
+            f"豁免项 `{bid}` 实测读不到 —— 源文件位置/写法变了? 同步 BUDGET_SPECS."
+        )
+        assert b["current"] <= b["headroom"] + b["current"], f"`{bid}` 余量为负"
+        assert int(b["frozen"]) >= b["current"], (
+            f"豁免项 `{bid}` 实测 {b['current']} > 台账上限 {b['frozen']} —— "
+            f"往豁免名单加条 = 静默放宽免检面. 显式抬高 BUDGET_SPECS 的 value (可见决策)."
+        )
+
+
+def test_config_coverage_floor_not_lowered():
+    """不变量: 覆盖率下限 `fail_under` ≥ 台账下限 (下调 = 静默削弱覆盖率门)."""
+    by = {b["id"]: b for b in ga.collect_budgets(_AGENT)}
+    for bid in _CONFIG_FLOOR_IDS:
+        b = by[bid]
+        assert b["current"] is not None, (
+            f"配置级门 `{bid}` 实测读不到 —— 源文件位置/写法变了? 同步 BUDGET_SPECS."
+        )
+        assert b["current"] >= int(b["frozen"]), (
+            f"配置级门 `{bid}` 实测 {b['current']} < 台账下限 {b['frozen']} —— "
+            f"下调覆盖率下限 = 静默削弱覆盖率门. 显式下调 BUDGET_SPECS 的 value (可见决策)."
         )

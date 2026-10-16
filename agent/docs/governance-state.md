@@ -1,7 +1,26 @@
 # 低熵治理台账 (governance state)
 
 自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
-登记 `tests/test_arch_*.py` 门族、`.github/workflows/ci.yml` 的 python guard step (pytest 与 `python -m huginn.<module>`) 与 `.pre-commit-config.yaml` 本地门的对齐面: **孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
+登记 `tests/test_arch_*.py` 门族 + 显式治理元门 (`GOVERNANCE_META_TESTS`)、`.github/workflows/*.yml` **全部工作流**的 python guard step (pytest 与 `python -m huginn.<module>`)、非 pytest 工程门 (`ENGINEER_GATE_SPECS`) 与仓根 + `agent/` 两份 `.pre-commit-config.yaml` 本地门的对齐面: **孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块/step) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
+
+## 工作流 (workflows) — 6
+
+被扫描的**全部**工作流文件 (门可能因整个工作流被删/改名而集体消失; 数下限棘轮 `workflow_floor` 兜底).
+
+`audit-regression.yml`, `ci.yml`, `desktop.yml`, `release.yml`, `skill-audit.yml`, `stress-test.yml`
+
+## 工作流触发器 (workflow triggers)
+
+每个工作流的**期望触发集**与**实际触发集**比对 (源: `governance_audit.WORKFLOW_TRIGGER_SPECS`). 门 step 存在 ≠ 门会运行 —— 删 `on: schedule` 或收窄 `push`/`pull_request` 的 `paths` 会让门永不执行, 而 step 仍在文件里 (存在性判据判「在」= 假绿). **状态=漂移** 即触发器缺失/多出; 未登记触发规格的工作流 (文件在、规格缺) 与规格未落地的工作流 (规格在、文件缺) 单列于缺口区.
+
+| 工作流 | 期望触发 | 实际触发 | 状态 |
+|---|---|---|---|
+| `audit-regression.yml` | `schedule`, `workflow_dispatch` | `schedule`, `workflow_dispatch` | 一致 |
+| `ci.yml` | `pull_request`, `push` | `pull_request`, `push` | 一致 |
+| `desktop.yml` | `pull_request`, `push`, `workflow_dispatch` | `pull_request`, `push`, `workflow_dispatch` | 一致 |
+| `release.yml` | `push` | `push` | 一致 |
+| `skill-audit.yml` | `pull_request`, `push`, `schedule`, `workflow_dispatch` | `pull_request`, `push`, `schedule`, `workflow_dispatch` | 一致 |
+| `stress-test.yml` | `pull_request`, `schedule`, `workflow_dispatch` | `pull_request`, `schedule`, `workflow_dispatch` | 一致 |
 
 ## 门 (gates)
 
@@ -10,6 +29,7 @@
 | `tests/security/fuzz_api.py` | 否 | `fast-fail-guard` | Run API fuzz tests |
 | `tests/security/pentest_api_security.py` | 否 | `fast-fail-guard` | Run API security PoC tests |
 | `tests/security/pentest_archive_safety.py` | 否 | `fast-fail-guard` | Run archive security PoC tests |
+| `tests/stress/test_http_stress.py` | 否 | `fast-fail-guard` | Run pytest stress tests (fallback) |
 | `tests/test_arch_cleanliness.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_config_migration.py` | 是 | `fast-fail-guard` | Config migration guard |
 | `tests/test_arch_credential_gateway.py` | 是 | `fast-fail-guard` | Credential gateway guard |
@@ -27,33 +47,67 @@
 | `tests/test_arch_single_gateway.py` | 是 | `fast-fail-guard` | Architecture single-gateway guard |
 | `tests/test_arch_skill_pool_bridge.py` | 是 | `fast-fail-guard` | Skill pool bridge guard |
 | `tests/test_arch_tools_direction.py` | 是 | `full-suite-only` | — |
+| `tests/test_config_contracts.py` | 否 | `full-suite-only` | — |
+| `tests/test_contract_audit.py` | 否 | `full-suite-only` | — |
+| `tests/test_env_surface_governance.py` | 否 | `full-suite-only` | — |
+| `tests/test_mechanics.py` | 否 | `fast-fail-guard` | Run 7 historical-fix regression tests |
 | `tests/test_naturebench.py` | 否 | `fast-fail-guard` | NatureBench repro gate |
+| `tests/test_ponytail_debt_registry.py` | 否 | `full-suite-only` | — |
+| `tests/test_publish_mirror_drift.py` | 否 | `full-suite-only` | — |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
 ## CLI 门 (cli gates)
 
-`ci.yml` 里 `python -m huginn.<module>` 形态的治理门 (CLI 自查 / 棘轮, 非 pytest). 旧解析只认 pytest 会漏掉; 现单列。**存在=否** 即悬空 CLI 门 (指向已删/改名的模块).
+**全部工作流**里 `python -m huginn.<module>` 形态的治理门 (CLI 自查 / 棘轮, 非 pytest). 旧解析只认 pytest 会漏掉; 现单列。**存在=否** 即悬空 CLI 门 (指向已删/改名的模块).
 
-| 模块 | CI step | 存在 |
-|---|---|---|
-| `huginn.cli.contract_audit` | MECE wiring-contract guard (ratchet) | 是 |
-| `huginn.security.policy_engine` | Policy engine self-check | 是 |
+| 模块 | 工作流 | CI step | 存在 |
+|---|---|---|---|
+| `huginn.cli.contract_audit` | `ci.yml` | MECE wiring-contract guard (ratchet) | 是 |
+| `huginn.security.policy_engine` | `ci.yml` | Policy engine self-check | 是 |
 
 ## 本地门 (pre-commit local gates)
 
-`.pre-commit-config.yaml` 的本地门 (如 G37 audit-regression). 既不在 `ci.yml` 也不在别处登记, 故单列。**存在=否** 即悬空本地门 (引用的测试已改名/删除 —— 此时 hook 的 `files:` 过滤器会静默不再匹配, 门悄悄死掉). **files 覆盖=否** 即 `entry` 引用的测试不在 `files:` 过滤范围内 —— 改它不会触发 hook, 门静默失效.
+仓根与 `agent/` 两份 `.pre-commit-config.yaml` 的本地门 (如 G37 audit-regression). 既不在工作流也不在别处登记, 故单列。**存在=否** 即悬空本地门 (引用的测试已改名/删除 —— 此时 hook 的 `files:` 过滤器会静默不再匹配, 门悄悄死掉). **files 覆盖=否** 即 `entry` 引用的测试不在 `files:` 过滤范围内 —— 改它不会触发 hook, 门静默失效.
 
-| 本地门 (hook id) | 引用测试 | 存在 | files 覆盖 |
-|---|---|---|---|
-| `audit-regression-7fixes` | `tests/test_context_and_jwt.py` | 是 | 是 |
-| `audit-regression-7fixes` | `tests/test_eos_fit.py` | 是 | 是 |
-| `audit-regression-7fixes` | `tests/test_fts5_consistency.py` | 是 | 是 |
-| `audit-regression-7fixes` | `tests/test_mechanics.py` | 是 | 是 |
-| `audit-regression-7fixes` | `tests/test_sim_audit_regression.py` | 是 | 是 |
+| 来源 | 本地门 (hook id) | 引用测试 | 存在 | files 覆盖 |
+|---|---|---|---|---|
+| `.pre-commit-config.yaml` | `audit-regression-7fixes` | `tests/test_context_and_jwt.py` | 是 | 是 |
+| `.pre-commit-config.yaml` | `audit-regression-7fixes` | `tests/test_eos_fit.py` | 是 | 是 |
+| `.pre-commit-config.yaml` | `audit-regression-7fixes` | `tests/test_fts5_consistency.py` | 是 | 是 |
+| `.pre-commit-config.yaml` | `audit-regression-7fixes` | `tests/test_mechanics.py` | 是 | 是 |
+| `.pre-commit-config.yaml` | `audit-regression-7fixes` | `tests/test_sim_audit_regression.py` | 是 | 是 |
+
+## 工程门 (engineer gates)
+
+非 pytest 的**阻断门** (ruff lint / pip-audit / npm audit / bandit SAST / cargo audit / gitleaks / lock 漂移 / 前端构建·单测·E2E / 技能库审计 / ultra-long benchmark / quickstart smoke). 由工作流 step 承载, 旧台账完全看不见 —— step 删/改名即静默缩小治理面. 现由 `ENGINEER_GATE_SPECS` 登记并判存在。**存在=否** 即悬空工程门 (step 名与工作流脱节).
+
+| 门 (id) | 工作流 | 类别 | CI step | 存在 |
+|---|---|---|---|---|
+| `bandit_sast` | `ci.yml` | sast | SAST scan with bandit | 是 |
+| `cargo_audit` | `ci.yml` | supply-chain | Cargo dependency vulnerability scan | 是 |
+| `cargo_check` | `ci.yml` | build | Cargo check | 是 |
+| `cargo_test` | `ci.yml` | test | Cargo test | 是 |
+| `desktop_frontend_typecheck` | `desktop.yml` | build | Type-check frontend | 是 |
+| `desktop_rust_build` | `desktop.yml` | build | Build Rust CLI + sidecar | 是 |
+| `desktop_tauri_build` | `desktop.yml` | build | Build Tauri desktop app | 是 |
+| `frontend_build` | `ci.yml` | build | Install and build | 是 |
+| `frontend_e2e` | `ci.yml` | test | Run frontend E2E (chromium) | 是 |
+| `frontend_unit` | `ci.yml` | test | Run vitest unit tests | 是 |
+| `gitleaks` | `ci.yml` | secret | Secret scan with gitleaks | 是 |
+| `lint_ruff` | `ci.yml` | lint | Run ruff check (gating) | 是 |
+| `lock_drift` | `ci.yml` | supply-chain | Dependency lock drift guard | 是 |
+| `npm_audit` | `ci.yml` | supply-chain | npm dependency vulnerability scan | 是 |
+| `pip_audit` | `ci.yml` | supply-chain | Dependency vulnerability scan | 是 |
+| `quickstart_smoke` | `audit-regression.yml` | smoke | Quickstart smoke test (G38) | 是 |
+| `release_frontend_typecheck` | `release.yml` | build | Type-check frontend | 是 |
+| `release_rust_build` | `release.yml` | build | Build Rust CLI + sidecar | 是 |
+| `release_tauri_build` | `release.yml` | build | Build Tauri desktop app | 是 |
+| `skill_audit` | `skill-audit.yml` | ratchet | Run skill library audit (gate) | 是 |
+| `ultra_long_bench` | `stress-test.yml` | benchmark | Run ultra-long benchmark (gating) | 是 |
 
 ## 预算 (budgets)
 
-治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。**消费者门**列: `ci_step` 型是 `ci.yml` 真实 step (有存在性门); 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在 `ci.yml`)。
+治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。**消费者门**列: `ci_step` 型是工作流里 pytest/CLI guard step (有存在性门); `workflow_step` 型是非 pytest 工程门 step; 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在工作流 step 里)。
 
 | 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |
 |---|---|---|---|---|---|---|
@@ -68,7 +122,16 @@
 | arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 17 | 0 | Governance gate registry guard |
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
+| 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |
+| 工作流数下限 | `tests/test_arch_gate_registry.py` | 权威 | 6 | 6 | 0 | Governance gate registry guard |
+| 快速失败门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
+| 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
+| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 122 | 0 | Governance gate registry guard |
+| gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
+| pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
+| dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
+| 覆盖率下限 | `pyproject.toml` | 下限 | 60 | 60 | 0 | Governance gate registry guard |
 
 ## 循环闸位 (loop caps)
 
@@ -94,3 +157,7 @@
 - CLI 悬空门 (0): 无
 - 本地悬空门 (0): 无
 - 本地门 files/entry 不一致 (0): 无
+- 悬空工程门 (0): 无
+- 触发器漂移 (0): 无
+- 未登记触发规格的工作流 (0): 无
+- 触发规格未落地的工作流 (0): 无

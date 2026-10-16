@@ -446,3 +446,127 @@ step 名（可校验存在性），也可能是「只靠全量套件兜底」的
 - `ruff check`（两文件）→ All checks passed。
 - 实测 9 项活值 = 20/50/500/15/5/15/50/40/12，逐项 `live == ceiling`；`loop_cap_live_count == 9`。
 - `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：治理台账全方位覆盖（七形态 + 工作流数/工程门/快速失败门棘轮）
+
+> 状态：已落。按「全方位覆盖无死角」补齐台账此前**看不见**的 6 类治理面。
+
+此前台账的可见面会**静默萎缩**的 6 条路径：(1) 治理元门游离在孤儿检测之外（只看
+`test_arch_*.py`）；(2) 只读 `ci.yml`，其余工作流的门不可见；(3) 只读仓根一份 pre-commit，
+`agent/` 那份不可见；(4) 非 pytest 工程门（lint/SAST/依赖扫描/前端构建/技能库审计/基准）
+完全无登记；(5) 技能库审计基线未纳入；(6) 整个工作流被删/改名无任何信号；另 (7) 非 arch 的
+快速失败门（testclient_hygiene / naturebench / security / stress）无任何数量锚，删 guard step 无信号。
+本轮把七形态全部收进台账 + 元门禁。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 模块 docstring 由「五种熵形态」扩为「七种」，新增**工程门漏登记**、**工作流覆盖面萎缩**两形态。
+  - `discover_governance_tests()`：孤儿检测并入 `GOVERNANCE_META_TESTS`（治理元门族）。
+  - `_read_workflow_texts()`：扫 `.github/workflows/*.yml(|.yaml)` **全部**工作流，替代只读 `ci.yml`。
+  - `_read_precommit_texts()`：读仓根 + `agent/` 两份 `.pre-commit-config.yaml`。
+  - `_parse_step_names()`：抽工作流全部 step 名（工程门存在性判据，yaml/fallback 共用判据）。
+  - `ENGINEER_GATE_SPECS`(15) + `_collect_engineer_gates()`：登记非 pytest 阻断门并判 step 存在。
+  - `_collect_cli_guards()` / `_collect_precommit_gates()`：跨全部工作流 / 双份配置收集；`audit()` 改用之。
+  - `audit()` 返回扩 `engineer_gates` / `dangling_engineer` / `workflows`；`cli_guards` 增 `workflow`、
+    `precommit_gates` 增 `source` 字段。
+  - `BUDGET_SPECS` 增 4 项权威下限：`engineer_gate_floor`(15)、`workflow_floor`(6)、
+    `guard_step_floor`(18)，与引用项 `skill_audit_baseline`(json-scalars)；`_probe_current` 增
+    `engineer_gate_count` / `workflow_count` / `guard_step_count`；`_frozen_value` 支持 `json-scalars` + `root: repo`。
+  - `render_markdown`：新增「工作流」「工程门」两节；CLI/本地门表加「工作流」「来源」列；缺口区加「悬空工程门」。
+- `tests/test_arch_gate_registry.py`：`ENGINEER_GATE_FLOOR` / `WORKFLOW_FLOOR` / `GUARD_STEP_FLOOR`
+  （← `budget_value`）；新增 5 条元门禁（工程门 step 存在、工程门数棘轮、工作流数棘轮、快速失败门数棘轮、
+  合成树工程门悬空正向自检）；`test_ci_step_owner_gates_reference_real_steps` 扩为三口径
+  （`ci_step`/`workflow_step`/`full_suite`）；`_EXPECTED_BUDGET_IDS` +4；docstring 扩。
+- `docs/governance-state.md`：重生成（新增工作流/工程门节，预算表 +4 行）。
+- `publish/mcpb/{capabilities-mcp,workflows-mcp}/cli/governance_audit.py`：`mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 治理元门不再游离：`GOVERNANCE_META_TESTS` 并入孤儿判据（`orphans == []`）。
+- AC-3 全部工作流被扫：`workflows` 数 ≥ `workflow_floor`(6)；整个工作流消失即红。
+- AC-4 双份 pre-commit 均可见（`source` 列）。
+- AC-5 每个工程门 step 名在工作流中存在（`dangling_engineer == []`）；工程门数 ≥ 15。
+- AC-6 非 arch 快速失败门不再无锚：`fast-fail-guard` 门数 ≥ `guard_step_floor`(18)。
+- AC-7 技能库审计基线纳入台账（`skill_audit_baseline` 冻结 56/38）。
+- AC-8 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **34 passed**（本环境无 PyYAML，走 fallback）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测：workflows=6 / engineer_gates=15 / fast-fail-guard=18 / cli_guards=2 / precommit_gates=5，
+  各 floor frozen==current、headroom=0；`orphans == []`，`dangling_* == []`，`uncovered_precommit == []`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：九形态全覆盖（触发器/工程门补登/豁免棘轮/配置级门/阻断步兜底）
+
+> 状态：已落。补齐用户选定的四类未覆盖治理面，并修掉一处跨环境非确定性。
+
+台账此前仍有四类**看不见**的治理面，会随工作流演化静默萎缩：
+
+1. **触发器/运行面漂移**：门 step 存在 ≠ 门会运行 —— 删 `on: schedule` 或收窄 `push`/`pull_request`
+   的 `paths`，门永不执行而存在性判据仍判「在」（假绿）。
+2. **工程门漏登记**：`desktop.yml` / `release.yml` 的构建阻断门（Rust CLI+sidecar / 前端类型检查 /
+   Tauri 打包）此前完全不在 `ENGINEER_GATE_SPECS`。
+3. **豁免/白名单棘轮缺口**：gitleaks allowlist、pip-audit `--ignore-vuln`、dependabot ignore
+   放宽（加一条 = 静默扩大免检面）此前无门可见。
+4. **配置级门无棘轮**：`pyproject.toml` 覆盖率下限 `fail_under` 下调无信号。
+5. **阻断步单向兜底**：`ENGINEER_GATE_SPECS` 只挡「已登记工程门 → 被删」；未登记的阻断步增删无信号，
+   需一张**工作流命名 step 总数**反向网。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 模块 docstring 由「七形态」扩为「九形态」（新增**触发器漂移**、**阻断步漏登记**）。
+  - 新增 `WORKFLOW_TRIGGER_SPECS`（各工作流期望触发集）+ `_parse_triggers()`（纯行扫描，
+    单值/行内列表/块状三种写法）+ `_collect_workflow_triggers()`（暴露 `trigger_drift` /
+    `unregistered_workflows` / `unchecked_workflows`）。
+  - `ENGINEER_GATE_SPECS` +6（desktop/release 构建门）；`engineer_gate_floor` 15→21。
+  - `BUDGET_SPECS` +5：`workflow_step_floor`(122)、`gitleaks_allowlist`(4)、`pip_audit_ignore`(24)、
+    `dependabot_ignore`(5)、`coverage_fail_under`(60)；`guard_step_floor` 18→19。
+  - `_probe_current` 新增 `workflow_step_total` / `toml_list_len` / `regex_match_count` 探针；
+    `_frozen_value` / `collect_budgets` 支持 `floor` 源类型与对应模式列。
+  - `audit()` 返回扩 `workflow_triggers` / `unregistered_workflows` / `unchecked_workflows` /
+    `trigger_drift`；`render_markdown` 增「工作流触发器」节 + 缺口区触发器条目。
+  - **确定性修复**：`_parse_guard_steps()` 退化路径由「任意 `- ` 起块、无条件吞后续行」改为
+    **按缩进收边**（缩进 ≤ 破折号缩进即收尾）。旧写法会把 job 级注释（同时含 `pytest` 与
+    `tests/*.py` 字样，如 ci.yml L43–47）并进上一个 step 块，造出 yaml 主路径没有的幻影门
+    `Run ruff check (gating) → tests/test_testclient_hygiene.py`。
+- `tests/test_arch_gate_registry.py`：
+  - 新增 `WORKFLOW_STEP_FLOOR`；`_EXPECTED_BUDGET_IDS` +7。
+  - 新增 6 条元门禁：阻断步总数棘轮、工作流触发器规格登记/落地、触发器一致、触发器合成树正向、
+    豁免白名单放宽即红、覆盖率下限下调即红。
+  - 新增 `test_yaml_and_fallback_parsing_agree`：合成树里 job 级注释夹在两 step 之间，
+    断言**装/不装 PyYAML 两条解析路径给出逐字一致的快照**（锁住上面的确定性修复）。
+  - `test_loop_caps_live_within_ceiling` 修正为只统计 `group=loop` 的 ceiling 项。
+- `docs/governance-state.md`：重生成（新增「工作流触发器」节、预算表 +5 行）。
+- `publish/mcpb/{capabilities-mcp,workflows-mcp}/cli/governance_audit.py`：`mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用；且 yaml / 无-yaml 双路径输出逐字一致）。
+- AC-2 每个工作流都有触发规格且规格落地（`unregistered_workflows == []`、`unchecked_workflows == []`）。
+- AC-3 每个工作流实际触发器 == 期望集（`trigger_drift == []`）。
+- AC-4 每个工程门 step 仍存在（`dangling_engineer == []`）；工程门数 ≥ 21。
+- AC-5 全部工作流命名 step 总数 ≥ 122（阻断步静默增删的反向兜底）。
+- AC-6 豁免/白名单条数 ≤ 台账上限；覆盖率下限 ≥ 台账下限（放宽豁免/下调覆盖 = 红）。
+- AC-7 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **41 passed**（本环境 PyYAML 6.0.3 可用，主路径；另用 `sys.modules["yaml"]=None` 单独验证退化路径逐字一致）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测：workflows=6 / engineer_gates=21 / guard steps=19 / workflow steps=122 / cli_guards=2 /
+  precommit_gates=5；各 floor frozen==current、headroom=0；`orphans == []`，`dangling_* == []`，
+  `trigger_drift == []`，`uncovered_precommit == []`。
+- 双路径一致性：逐工作流比对 `_parse_guard_steps` / `_parse_step_names` / `_parse_cli_guards` →
+  6/6 一致；`render_markdown` yaml==noyaml==已提交文档。
+- `scripts/mcpb_vendor.py --check` → 0 漂移。
