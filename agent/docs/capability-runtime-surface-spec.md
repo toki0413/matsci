@@ -1,6 +1,6 @@
 # 能力可运行性面 (Capability Runtime Surface) — Design
 
-> Status: DRAFT (待用户评审)
+> Status: APPROVED
 > Source: brainstorming 会话 (superpowers)
 > Date: 2026-10-16
 > Scope: 单 spec; 落地由 writing-plans 承接
