@@ -34,6 +34,11 @@
     + 一组不变量测试」立起来, 三者任一被删/改名/**默认翻转** (开关还在但默认从开变关 =
     能力悄悄关掉) 即静默萎缩, 而门存在性判据全绿. 现由 `CAPABILITY_SPECS` 登记每个能力的
     锚点并逐条判在否.
+11. **prompt 段面静默萎缩** —— 输出规范的执行单元是 prompt 段; 段注册了却不在任何生产路径
+    生效 (孤儿段), 或段清单被删/改名而无人登记, 都让输出面无声萎缩, 而门存在性判据全绿.
+    现由 `PROMPT_SPECS` 登记期望段名清单 + 按文件路径 ast 读源文件 `_APPLIES_TO` (段名 ->
+    必须生效的生产路径) 逐段判在否; 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判,
+    段数下限棘轮 `prompt_segment_floor` 兜底.
 
 同时把**豁免/白名单面** (gitleaks 密钥豁免条数、`ci.yml` 里 pip-audit `--ignore-vuln` 串、
 `dependabot.yml` 的 `ignore:` 项数) 与**配置级门** (pyproject 覆盖率下限 `fail_under`) 一并
@@ -42,8 +47,9 @@
 扫描 `tests/test_arch_*.py` 门族 + 声明式治理元门 + `.github/workflows/*.yml` **全部**工作流的
 两类 python guard step (pytest 与 `python -m huginn.<module>`) + 非 pytest 工程门 +
 `.pre-commit-config.yaml` 本地门 + 各工作流触发器 + 命名子系统的能力锚点
-(`CAPABILITY_SPECS`: 开关默认值 / 承载模块 / 不变量测试), 并把散落的棘轮预算/基线收成
-单一台账, 渲染成 `docs/governance-state.md`.
+(`CAPABILITY_SPECS`: 开关默认值 / 承载模块 / 不变量测试) + prompt 段的生效面声明
+(`PROMPT_SPECS` 清单 + 源文件 `_APPLIES_TO`: 段名 -> 必须生效的生产路径), 并把散落的
+棘轮预算/基线收成单一台账, 渲染成 `docs/governance-state.md`.
 
 设计 (对齐 config_audit / contract_audit):
 - **纯 stdlib**: 不 import huginn.*, 不硬依赖 yaml (有则用, 无则退化行扫描),
@@ -83,6 +89,10 @@ FULL_SUITE_ONLY = frozenset(
         "tests/test_env_surface_governance.py",
         "tests/test_ponytail_debt_registry.py",
         "tests/test_publish_mirror_drift.py",
+        # prompt「声明↔生效」一致性门 (本 spec 落地): weightless, 全量套件兜底.
+        # 注: 钩子事件面「声明↔触发↔注册」已有 tests/test_contract_audit.py 全量覆盖
+        # (build_hook_contract 逐事件判 wired/trigger-only), 不再新建重复门 —— 单一来源.
+        "tests/test_prompt_contract.py",
     }
 )
 
@@ -96,6 +106,7 @@ GOVERNANCE_META_TESTS = frozenset(
         "tests/test_env_surface_governance.py",
         "tests/test_ponytail_debt_registry.py",
         "tests/test_publish_mirror_drift.py",
+        "tests/test_prompt_contract.py",
     }
 )
 
@@ -110,6 +121,27 @@ WORKFLOW_TRIGGER_SPECS: dict[str, tuple[str, ...]] = {
     "skill-audit.yml": ("schedule", "workflow_dispatch", "push", "pull_request"),
     "stress-test.yml": ("pull_request", "schedule", "workflow_dispatch"),
 }
+
+# ── prompt 段生效面登记 (weightless: 只登记段名, 不 import prompt_segments 重栈) ──
+# prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 → 必须生效的生产路径
+# {main,s7,autoloop}) 与**生效面** (各路径实际渲染点) 的一致性, 由
+# `tests/test_prompt_contract.py` 硬判定. 这里登记**期望段名清单**作可见决策表: 段被删
+# (清单有、源里无) 或新增未登记 (源里有、清单无) → 台账缺口可见, 段名下限棘轮兜底.
+# 逐段的生效路径**不在此复制** —— 台账按文件路径 ast 读源文件 `_APPLIES_TO`, 无镜像漂移.
+PROMPT_SPECS: tuple[str, ...] = (
+    "persona",
+    "mode",
+    "phase",
+    "metacog",
+    "tools",
+    "multimodal",
+    "writing",
+    "thinking",
+    "safety",
+)
+
+# prompt 段声明面源文件 (相对 agent/): ast 解析其 `_APPLIES_TO` 字面量 (不 import 重栈).
+_PROMPT_SEGMENTS_MODULE = "huginn/plugins/prompt_segments.py"
 
 _ARCH_GLOB = "test_arch_*.py"
 _TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./-]+\.py")
@@ -966,6 +998,63 @@ def _collect_engineer_gates(workflows: dict[str, str]) -> list[dict]:
     return out
 
 
+# ── prompt 段生效面 (声明面清单 vs 源文件 `_APPLIES_TO`) ──
+def _read_prompt_applies_to(agent_root: Path) -> dict[str, tuple[str, ...]]:
+    """ast 读 prompt_segments 的 `_APPLIES_TO` 字面量 (weightless, 不 import 重栈).
+
+    这是 prompt 段**声明面**的单一事实来源 (段名 -> 必须生效的生产路径). 读源文件而非
+    import, 以免门禁拉 langchain/pydantic 等重栈, 也无镜像漂移.
+    """
+    path = agent_root / _PROMPT_SEGMENTS_MODULE
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        logger.debug("prompt_segments 解析失败: %s", path, exc_info=True)
+        return {}
+    for node in ast.walk(tree):
+        target: str | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target, value = node.targets[0].id, node.value
+        if target != "_APPLIES_TO" or value is None:
+            continue
+        try:
+            data = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {str(k): tuple(v) for k, v in data.items()}
+    return {}
+
+
+def _collect_prompt_segments(agent_root: Path) -> dict:
+    """prompt 段生效面: 台账声明清单 (PROMPT_SPECS) vs 源文件 `_APPLIES_TO` 对齐.
+
+    **清单漂移**单列: 清单有、源里无 (段被删) / 源里有、清单无 (新增未登记); 逐段的
+    生效路径**不在此复制**, 直接 ast 读源文件, 无镜像漂移. 「声明 == 渲染」由
+    `tests/test_prompt_contract.py` 硬判定.
+    """
+    source = _read_prompt_applies_to(agent_root)
+    declared = list(PROMPT_SPECS)
+    declared_set = set(declared)
+    return {
+        "declared": declared,
+        "source": sorted(source),
+        "segments": [{"name": n, "paths": list(source.get(n, ()))} for n in declared],
+        "missing_in_source": [n for n in declared if n not in source],
+        "unregistered": sorted(n for n in source if n not in declared_set),
+    }
+
+
 # ── 预算登记 (单一机器可读来源) ──
 # 治理棘轮的冻结预算/基线此前散落在 tests/、huginn/、tests/golden/ 各处. 这里收成
 # **一张声明表**: 每项指明位置、抽取方式与消费者门, 供 governance-state.md 单点可读.
@@ -1177,6 +1266,22 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "owner_gate": "Governance gate registry guard",
         "owner_kind": "ci_step",
         "probe": "capability_count",
+        "direction": "floor",
+    },
+    # ── prompt 段生效面 (声明清单只减不增) ──
+    # prompt 段声明清单 (PROMPT_SPECS: 段名 -> 必须生效的生产路径) 的下限: 删掉一个段 =
+    # 输出规范的一段静默消失, 须显式下调 (可见决策). 与能力锚点棘轮同构.
+    {
+        "id": "prompt_segment_floor",
+        "name": "prompt 段数下限",
+        "path": "tests/test_arch_gate_registry.py",
+        "kind": "const",
+        "key": "PROMPT_SEGMENT_FLOOR",
+        "source": "inline",
+        "value": 9,
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "prompt_segment_count",
         "direction": "floor",
     },
     # ── 豁免/白名单面 (放宽即静默削弱对应门) ──
@@ -1631,6 +1736,8 @@ def _probe_current(
         return len(_collect_precommit_gates(agent_root, _read_precommit_texts(agent_root)))
     if probe == "capability_count":
         return len(_collect_capabilities(agent_root))
+    if probe == "prompt_segment_count":  # prompt 段声明清单条目数 (floor 棘轮)
+        return len(_read_prompt_applies_to(agent_root))
     if probe == "regex_int_live":  # 循环闸位/覆盖率下限: 从源码按 spec["pattern"] 抽活值 (第 1 捕获组)
         path = agent_root / spec["path"]
         if not path.is_file():
@@ -1903,6 +2010,10 @@ def audit(
         if not c["flag_ok"] or c["missing_modules"] or c["missing_tests"]
     ]
 
+    # prompt 段生效面 (声明清单 vs 源文件 `_APPLIES_TO`): 段是输出规范的执行单元, 一个段
+    # 静默消失即规范萎缩. 门存在性/能力锚点判据都看不见 prompt 面.
+    prompt_segments = _collect_prompt_segments(agent_root)
+
     return {
         "gates": gates,
         "orphans": sorted(orphans),
@@ -1921,6 +2032,7 @@ def audit(
         "trigger_drift": triggers["trigger_drift"],
         "capabilities": capabilities,
         "capability_gaps": capability_gaps,
+        "prompt_segments": prompt_segments,
         "budgets": collect_budgets(agent_root, heavy=heavy),
     }
 
@@ -2067,6 +2179,24 @@ def render_markdown(reg: dict) -> str:
             f"{c['expected_default']} | {c['actual_default']} | {flag} | {mods} | {tsts} |"
         )
     lines.append("")
+    lines.append("## prompt 段生效面 (prompt segments)")
+    lines.append("")
+    lines.append(
+        "prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生效的生产路径 "
+        "{main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: "
+        "`governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_APPLIES_TO`). "
+        "逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 "
+        "`tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** "
+        "(清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. "
+        "段数下限棘轮 `prompt_segment_floor` 兜底."
+    )
+    lines.append("")
+    lines.append("| 段 | 声明生效路径 |")
+    lines.append("|---|---|")
+    for seg in reg["prompt_segments"]["segments"]:
+        paths = ", ".join(f"`{p}`" for p in seg["paths"]) or "—"
+        lines.append(f"| `{seg['name']}` | {paths} |")
+    lines.append("")
     def _budget_rows(rows_budgets: list[dict]) -> list[str]:
         out_rows = [
             "| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |",
@@ -2173,6 +2303,21 @@ def render_markdown(reg: dict) -> str:
         lines.append(f"- 能力锚点脱节 ({len(reg['capability_gaps'])}): {items}")
     else:
         lines.append("- 能力锚点脱节 (0): 无")
+    ps = reg["prompt_segments"]
+    if ps["missing_in_source"]:
+        items = ", ".join(f"`{n}`" for n in ps["missing_in_source"])
+        lines.append(
+            f"- prompt 段清单有、源里无 ({len(ps['missing_in_source'])}): {items}"
+        )
+    else:
+        lines.append("- prompt 段清单有、源里无 (0): 无")
+    if ps["unregistered"]:
+        items = ", ".join(f"`{n}`" for n in ps["unregistered"])
+        lines.append(
+            f"- prompt 段源里有、清单无 ({len(ps['unregistered'])}): {items}"
+        )
+    else:
+        lines.append("- prompt 段源里有、清单无 (0): 无")
     lines.append("")
     return "\n".join(lines)
 

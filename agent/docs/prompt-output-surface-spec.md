@@ -1,6 +1,6 @@
 # Prompt / 输出面「声明 vs 生效」缺口 — 系统修复 Spec
 
-> Status: PROPOSED (staging)
+> Status: ACTIVE (as-built, 详见 §14)
 > Source: 对话审计 (输出规范梳理 + 「声明面↔生效面」一致性排查)
 > Date: 2026-10-16
 > Scope: 单 spec; 落地由 writing-plans 承接
@@ -70,11 +70,11 @@
 | 单元 | 类型 | 职责 |
 |---|---|---|
 | `huginn/plugins/prompt_segments.py` | 改 | 段元数据携带 `applies_to` 声明；提供 `segment_applicability()` 查询 |
-| `huginn/agent/output_contract.py`（或注册 `output` 段） | 新增 | 单一来源：收拢 §7 格式 + 引用/不确定度 + 诚实 + 降级呈现；各 mode 仅加性差异 |
+| `huginn/agent/output_contract.py`（或注册 `output` 段） | ~~新增~~ | **未落地**：输出规范单一来源复用既有段 (`writing`/`safety`/`multimodal`)，不新建独立模块 (YAGNI，见 §14) |
 | `huginn/agent/context.py` | 改 | 主路径按 `applies_to` 渲染应生效的段（不再只渲染 `thinking`） |
 | `huginn/cli/governance_audit.py` | 改 | 新增 `PROMPT_SPECS` + `prompt_segment_floor`（weightless：只登记段名与数量） |
 | `tests/test_prompt_contract.py` | 新增 | 生效面门禁：声明齐全 + 声明=渲染 + 必需段 floor + 重复文本检测 |
-| `tests/test_hook_event_coverage.py` | 新增 | 钩子事件：`ALL_EVENTS` 每项须有触发点或显式豁免登记 |
+| `tests/test_hook_event_coverage.py` | ~~新增~~ | **未落地**：钩子事件面已由 `tests/test_contract_audit.py` 的 `build_hook_contract` 全量覆盖 (单一来源，避免重复门，见 §14) |
 | 重复源统一 | 改 | safety / mode 规范收成单一来源，或加同步门（照 MATH_DEPTH 范式） |
 
 ## 6. 关键接口
@@ -152,3 +152,33 @@ def output_contract(mode: str) -> str:
 - 在声明稳定后，评估是否**统一三路径的段集合**（若仍觉分裂）。
 - 把"生效面"审计扩展到 tools / feature-flag 面（与
   `docs/capabilities-and-registration-spec.md` 对齐）。
+
+## 14. 落地结果 (as-built, 2026-10-16)
+
+已落地 (对应 AC)：
+
+- **AC-1/AC-2/AC-3** — `prompt_segments._APPLIES_TO` 段生效声明 + `segment_applicability()`
+  查询；`render_prompt_segments_for_path(path, …)` 按声明过滤渲染；`context.py` 主路径改用
+  它 (不再硬编码只渲染 `thinking`) → `writing` / `multimodal` / `thinking` 在主路径**按声明生效**。
+  门禁 `tests/test_prompt_contract.py` 逐路径断言「声明 == 实际渲染集合」。
+- **AC-4** — 第三方插件段 (`asd_ste100`) 在 `register_prompt_segment` 显式声明
+  `applies_to=("main","s7","autoloop")`；门禁扫描全仓 `register_prompt_segment` 调用，
+  非内置段缺 `applies_to` → 红。
+- **AC-5** — safety 规范两份来源 (`prompts.py` §8 ↔ `prompt_builder.safety_segment`)
+  由**同步门**守住共同语义锚点 (照 MATH_DEPTH 范式，非逐字相等)。
+- **AC-6** — 钩子事件面沿用既有 `tests/test_contract_audit.py` 的 `build_hook_contract`
+  (逐事件判 wired / trigger-only / dead)，**未**新建重复门 (单一来源)。
+- **AC-7** — `docs/governance-state.md` 新增「prompt 段生效面」节 (由 `render_markdown`
+  生成，逐字一致)。
+- **AC-8** — 台账 `PROMPT_SPECS` + `BUDGET_SPECS["prompt_segment_floor"]` (下限 9)；
+  `tests/test_arch_gate_registry.py` 的段数棘轮 + 清单↔源一致门兜底。
+
+与初版设计的**偏离** (诚实记录，均为减配而非缩水)：
+
+- **未新建 `huginn/agent/output_contract.py` / `output` 段**：本仓输出规范已分段承载
+  (`writing` / `safety` / `multimodal`)，另立 §7 单一来源模块会与其重复，违反本 spec
+  自身的"单一来源"目标。关键段 floor 覆盖 `writing`/`safety`/`multimodal`/`thinking`。
+- **未新建 `tests/test_hook_event_coverage.py`**：钩子面「声明↔触发↔注册」已由
+  `test_contract_audit` 的 `build_hook_contract` 全量覆盖，重复门只增维护面。
+- **未强制统一三路径段集合**：按 §3 非目标，先让失效可见、按声明生效，统一留待 §13。
+

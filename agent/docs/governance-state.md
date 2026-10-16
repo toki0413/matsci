@@ -53,6 +53,7 @@
 | `tests/test_mechanics.py` | 否 | `fast-fail-guard` | Run 7 historical-fix regression tests |
 | `tests/test_naturebench.py` | 否 | `fast-fail-guard` | NatureBench repro gate |
 | `tests/test_ponytail_debt_registry.py` | 否 | `full-suite-only` | — |
+| `tests/test_prompt_contract.py` | 否 | `full-suite-only` | — |
 | `tests/test_publish_mirror_drift.py` | 否 | `full-suite-only` | — |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
@@ -128,6 +129,22 @@
 | VISTA 无损帧记忆 (`visual_frame_memory`) | `visual_frame_memory` | feature_flag | false | false | 是 | `huginn/autoloop/frame_store.py`, `huginn/autoloop/recall_modes.py` | `tests/test_vista_recall_modes.py` |
 | 世界模型 (`world_model`) | `world_model` | feature_flag | true | true | 是 | `huginn/capabilities/world_model.py`, `huginn/security/world_model.py`, `huginn/research/law_model.py` | `tests/test_world_model.py`, `tests/test_research_planning_team.py` |
 
+## prompt 段生效面 (prompt segments)
+
+prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生效的生产路径 {main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: `governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_APPLIES_TO`). 逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** (清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. 段数下限棘轮 `prompt_segment_floor` 兜底.
+
+| 段 | 声明生效路径 |
+|---|---|
+| `persona` | `s7` |
+| `mode` | `s7` |
+| `phase` | `s7` |
+| `metacog` | `s7` |
+| `tools` | `s7` |
+| `multimodal` | `main`, `s7` |
+| `writing` | `main`, `s7` |
+| `thinking` | `main`, `s7` |
+| `safety` | `s7` |
+
 ## 预算 (budgets)
 
 治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。**消费者门**列: `ci_step` 型是工作流里 pytest/CLI guard step (有存在性门); `workflow_step` 型是非 pytest 工程门 step; 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在工作流 step 里)。
@@ -152,6 +169,7 @@
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
 | 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 122 | 0 | Governance gate registry guard |
 | 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 16 | 16 | 0 | Governance gate registry guard |
+| prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 9 | 9 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
@@ -196,3 +214,5 @@
 - 未登记触发规格的工作流 (0): 无
 - 触发规格未落地的工作流 (0): 无
 - 能力锚点脱节 (0): 无
+- prompt 段清单有、源里无 (0): 无
+- prompt 段源里有、清单无 (0): 无

@@ -307,7 +307,15 @@ class AsdSte100Star(Star):
         self._comms_tool: CommsLintTool | None = None
 
     async def on_load(self) -> None:
-        register_prompt_segment(SEGMENT_NAME, ste_prompt_segment, priority=SEGMENT_PRIORITY)
+        # 显式声明段生效面: 受控语言 (STE100) 纪律面向 agent 的**全部**输出路径,
+        # 故 main/s7/autoloop 全声明. 不声明则会被 tests/test_prompt_contract.py
+        # 判为孤儿段 (红) —— 此前它只在 s7/autoloop 生效, 主路径静默缺席.
+        register_prompt_segment(
+            SEGMENT_NAME,
+            ste_prompt_segment,
+            priority=SEGMENT_PRIORITY,
+            applies_to=("main", "s7", "autoloop"),
+        )
         self._tool = SteLintTool()
         ToolRegistry.register(self._tool)
         self._comms_tool = CommsLintTool()

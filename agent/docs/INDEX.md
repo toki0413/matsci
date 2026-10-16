@@ -39,7 +39,7 @@
 | [mece-audit.md](mece-audit.md) | active | MECE 契约审计（奖励/授权/工作流/模式/词汇/工具/钩子/事件/SSE 消费/WS 消费/HTTP API 消费/请求负载/响应结构/WS 请求负载/SSE 事件负载/WS 事件负载/HTTP 请求字段十七面的"宣称 vs 接线"缺口 + 同轴惩罚/跨模块同名/词表漂移/允许表死项/触发无人接/监听挂错通道/帧名挂错端点/HTTP 404·405 死链/前端漏发后端必填负载/前端声明白读后端不返字段/handler 读未声明 WS 字段/前端发未声明 WS 负载字段/前端读的 SSE 帧 payload 顶层字段后端从不发/前端读的 WS 帧 payload 顶层字段后端从不发/HTTP handler 读请求体模型未声明字段/前端发请求体未声明键/body-dict 下标读键而前端从不发 **+ 字段级六面（请求负载/响应结构/WS 请求负载/SSE 事件负载/WS 事件负载/HTTP 请求字段）按角色关系 R1–R4 汇总，一次人工确认**），可自动再生成） |
 | [governance-state.md](governance-state.md) | active | 低熵治理台账（治理门登记 + 孤儿门/悬空门 + 棘轮基线，可自动再生成：`python -m huginn.cli.governance_audit --out docs/governance-state.md`） |
 | [capability-runtime-surface-spec.md](capability-runtime-surface-spec.md) | active | 能力可运行性面（L0 依赖探针 + L1 精选 smoke + 运行时自愈 + 台账棘轮；CLI: `python -m huginn.cli.capability_runtime --json`） |
-| [prompt-output-surface-spec.md](prompt-output-surface-spec.md) | staging | Prompt/输出面「声明 vs 生效」缺口系统修复（段生效声明 + 输出规范单一来源 + 生效面门禁；待评审） |
+| [prompt-output-surface-spec.md](prompt-output-surface-spec.md) | active | Prompt/输出面「声明 vs 生效」缺口系统修复（段生效声明 `applies_to` + 主路径按声明渲染 + 生效面门禁 `test_prompt_contract` + 台账棘轮 `prompt_segment_floor`，已落地） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [layered-streaming-settlement-spec.md](layered-streaming-settlement-spec.md) | active | 分层流式结算规范（缺陷一/二三阶段 P-A/P-B/P-C：流式结算/层间重规划/提前终止，已落地） |

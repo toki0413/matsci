@@ -21,6 +21,9 @@ pytest guard step、`python -m huginn.<module>` CLI 门、`ENGINEER_GATE_SPECS` 
 - 每个 feature flag (`FeatureFlags._DEFAULTS`) 都被「锚定 (CAPABILITY_SPECS) or 豁免
   (SUBSYSTEM_EXEMPT_FLAGS)」**恰好**分诊一次 (并集 = 全集且不相交); 新增开关未分诊 → 红
   (能力面闭合, 消除"新加开关又出现静默缺口").
+- 每个 prompt 段 (`prompt_segments._APPLIES_TO`) 的**生效面**与声明一致 (「声明 == 渲染」
+  由 `tests/test_prompt_contract.py` 硬判); 段清单 (`PROMPT_SPECS`) 与源对齐且只减不增 → 红
+  (prompt 段面静默萎缩).
 - 门数/工程门数/本地门数/CLI 门数/工作流数只减不增 (棘轮); 删掉已登记项 → 红.
 - 每个循环闸位 (自主轮数/步数上限) 实测 ≤ 台账上限; 提高上限须显式改台账 → 红.
 - 每个豁免/白名单 (gitleaks 密钥豁免 / pip-audit 漏洞豁免 / dependabot 忽略项) 条数 ≤ 台账
@@ -73,6 +76,9 @@ CAPABILITY_FLOOR = ga.budget_value("capability_floor")
 
 # 循环闸位数下限棘轮: 同上, 值由台账权威声明.
 LOOP_CAP_FLOOR = ga.budget_value("loop_cap_floor")
+
+# prompt 段数下限棘轮 (prompt 段声明清单只减不增): 同上, 值由台账权威声明.
+PROMPT_SEGMENT_FLOOR = ga.budget_value("prompt_segment_floor")
 
 
 def test_all_arch_tests_are_registered():
@@ -493,6 +499,40 @@ def test_capability_default_flip_detected_on_synthetic_tree(tmp_path: pathlib.Pa
     assert caps["pmk"]["flag_ok"] is True
 
 
+# ──────────────────── prompt 段生效面 (prompt segments) ────────────────────
+
+
+def test_prompt_segment_count_ratchet_only_shrinks():
+    """棘轮: prompt 段声明清单只减不增 (段静默消失 = 输出规范萎缩).
+
+    prompt 面此前无门禁: 段被删/改名后主路径(or s7)静默少渲染一段, 无任何信号. 段数下限
+    棘轮把"段清单萎缩"变成红灯 —— 删段必须显式改台账 `prompt_segment_floor` (可见决策).
+    """
+    spec = next(s for s in ga.BUDGET_SPECS if s["id"] == "prompt_segment_floor")
+    live = ga._probe_current(spec, _AGENT, heavy=False)
+    assert live is not None, "prompt 段声明活值读不到 —— 源文件/变量名失效, 棘轮静默失效."
+    assert live >= PROMPT_SEGMENT_FLOOR, (
+        f"prompt 段数从 {PROMPT_SEGMENT_FLOOR} 降到 {live} —— 段被删了? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"prompt_segment_floor 的 value (可见决策)."
+    )
+
+
+def test_prompt_specs_match_source():
+    """不变量: 台账 `PROMPT_SPECS` 清单与源文件 `_APPLIES_TO` 段名一致 (声明面不分叉).
+
+    清单有、源里无 = 段被删; 源里有、清单无 = 新增段未登记. 二者任一即段面漂移 → 红.
+    """
+    reg = ga.build_gate_registry()
+    ps = reg["prompt_segments"]
+    assert ps["missing_in_source"] == [], (
+        f"台账 PROMPT_SPECS 有而源里无: {ps['missing_in_source']} —— 段被删? 同步清单."
+    )
+    assert ps["unregistered"] == [], (
+        f"源里有而台账 PROMPT_SPECS 无: {ps['unregistered']} —— 新增段未登记? 同步清单."
+    )
+
+
 # ──────────────────── 工作流触发器 (workflow triggers) ────────────────────
 
 
@@ -605,6 +645,7 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "guard_step_floor",
         "workflow_step_floor",
         "capability_floor",
+        "prompt_segment_floor",
         "field_audit_golden",
         "skill_audit_baseline",
         "gitleaks_allowlist",
