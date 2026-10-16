@@ -638,3 +638,56 @@ step 名（可校验存在性），也可能是「只靠全量套件兜底」的
 - 锚点只登记**三者齐备**的命名子系统；无专属回归测试的开关诚实归 `SUBSYSTEM_EXEMPT_FLAGS`
   （待补测试后可升级为锚点，从豁免集移出）。豁免集里少数是「**确为子系统、但当前尚无**专属
   回归测试」（如 `bandit_mdp` / `use_cognitive_map` / `use_atomworld`），已注明，不硬凑。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：循环闸位扩容 9 → 18（自主面全量入账）
+
+> 状态：已落。上一轮 loop caps 只收了「最显眼」的 9 项（autoloop CLI/引擎、recursion_limit、
+> tool-calls、CodeAct、coder、exploration、deep_research）；全量复核发现**还有 9 个自主轮闸
+> 散落未登记**，会让「提高上限 = 扩大自主面」这条决策在这些门上**不被看见**。
+
+### 为什么要扩
+
+「huginn 能自主循环多少轮」的答案不止一个数，而是多层闸；只要有一层不在台账，扩张自主面就能
+绕过可见决策。复核（全仓 `_MAX*`/`max_iterations`/`max_turns` 扫描 + 逐处读源码确认）后补 9 项：
+
+- **RCB Step-2 执行循环** `HUGINN_RCB_EXEC_ITERS`（默认 2 / extreme 20）—— 我们自己在跑的 RCB 工作流主步数。
+- **harness phase** `max_iterations`(5)；**技能 step** `loop_max_iterations`(20)；**技能优化** 预设 `default`(10)。
+- **CodeAct sandbox** 第二个 `_MAX_TURNS`(15)；**WS 每 turn 自动续跑** `_MAX_AUTO_CONTINUES`(3)。
+- **per-agent profile** `max_steps`(10)；**causal_runner** `max_tool_calls`(40)；**deli_research** `max_iterations`(5)。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：`BUDGET_SPECS` 的 `loop` 组 **+9** ceiling 项；`loop_cap_floor` **9 → 18**。
+  每项沿用既有范式（`source="ceiling"` + `probe="regex_int_live"` + `pattern` 第 1 捕获组），
+  扩自主面须显式改台账 `value`。
+- `tests/test_arch_gate_registry.py`：`_EXPECTED_BUDGET_IDS` 同步 **+9**（32 → 41）；
+  `test_loop_caps_live_within_ceiling` 自动覆盖到 18 项（数量棘轮 + 活值 ≤ 上限）。
+- `docs/governance-state.md`：重生成（「循环闸位」节 10 → 19 行）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 18 项循环闸位全部可读（活值非 None），且活值 ≤ 台账 ceiling。
+- AC-3 `loop_cap_live_count ≥ loop_cap_floor`(18)；删一项即红。
+- AC-4 `_EXPECTED_BUDGET_IDS` 与 `BUDGET_SPECS` 一致（只许显式增删）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **47 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 18 项活值逐项 `live == ceiling`：20/50/500/15/5/15/50/40/12 + 20/5/20/10/15/3/10/40/5；
+  `loop_cap_live_count == 18`，`loop_cap_floor == 18`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+### 诚实边界（有意未入账）
+
+- **autoloop watch 模式**：外层 `while True` **无界 tick**（每 tick 起一轮 run_cognitive），
+  没有数值上限可作 ceiling —— 归「常驻 daemon」，不入 loop 组。
+- **extreme 停机阈值**（连续失败/refine/pivot/darwin 停滞 50/50/20/15）与 **wall_clock 预算**：
+  是**停机阈值/时长**而非轮数上限，口径不同，另立一类；本轮不混入。
+- **数值迭代**（DFT/NEB/openmm 等）与**重试/重连**（llm_retry、mcp）属另一层，不入自主轮台账。

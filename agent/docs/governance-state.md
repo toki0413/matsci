@@ -172,7 +172,16 @@
 | coder 路由迭代上限 | `huginn/env_schema.py` | 上限 | 50 | 50 | 0 | Governance gate registry guard |
 | 探索编排迭代上限 | `huginn/exploration/orchestrator.py` | 上限 | 40 | 40 | 0 | Governance gate registry guard |
 | deep_research 迭代上限 | `huginn/routes/deep_research.py` | 上限 | 12 | 12 | 0 | Governance gate registry guard |
-| 循环闸位数下限 | `tests/test_arch_gate_registry.py` | 权威 | 9 | 9 | 0 | Governance gate registry guard |
+| RCB Step-2 执行迭代上限 | `huginn/cli/rcb_step2.py` | 上限 | 20 | 20 | 0 | Governance gate registry guard |
+| harness phase 迭代上限 | `huginn/harness/phase_spec.py` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
+| 技能 step 循环上限 | `huginn/skills/base.py` | 上限 | 20 | 20 | 0 | Governance gate registry guard |
+| 技能优化迭代上限 | `huginn/skills/presets.py` | 上限 | 10 | 10 | 0 | Governance gate registry guard |
+| CodeAct sandbox 轮数上限 | `huginn/security/code_act_sandbox.py` | 上限 | 15 | 15 | 0 | Governance gate registry guard |
+| WS 每 turn 自动续跑上限 | `huginn/routes/ws_helpers.py` | 上限 | 3 | 3 | 0 | Governance gate registry guard |
+| per-agent 步数上限 | `huginn/config.py` | 上限 | 10 | 10 | 0 | Governance gate registry guard |
+| causal_runner tool-call 上限 | `huginn/cli/causal_runner.py` | 上限 | 40 | 40 | 0 | Governance gate registry guard |
+| deli_research 迭代上限 | `huginn/academic/deli_research.py` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
+| 循环闸位数下限 | `tests/test_arch_gate_registry.py` | 权威 | 18 | 18 | 0 | Governance gate registry guard |
 
 ## 缺口 (gaps)
 

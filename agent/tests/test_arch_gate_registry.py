@@ -620,6 +620,15 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "loop_coder_iter",
         "loop_exploration",
         "loop_deep_research",
+        "loop_rcb_step2_iters",
+        "loop_harness_phase_iter",
+        "loop_skill_step",
+        "loop_skill_preset",
+        "loop_codeact_sandbox_turns",
+        "loop_ws_auto_continue",
+        "loop_agent_profile_steps",
+        "loop_causal_runner_tool_calls",
+        "loop_deli_research",
         "loop_cap_floor",
     }
 )
