@@ -1,7 +1,7 @@
 # 低熵治理台账 (governance state)
 
 自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
-登记 `tests/test_arch_*.py` 门族 + 显式治理元门 (`GOVERNANCE_META_TESTS`)、`.github/workflows/*.yml` **全部工作流**的 python guard step (pytest 与 `python -m huginn.<module>`)、非 pytest 工程门 (`ENGINEER_GATE_SPECS`) 与仓根 + `agent/` 两份 `.pre-commit-config.yaml` 本地门的对齐面: **孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块/step) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
+登记 `tests/test_arch_*.py` 门族 + 显式治理元门 (`GOVERNANCE_META_TESTS`)、`.github/workflows/*.yml` **全部工作流**的 python guard step (pytest 与 `python -m huginn.<module>`)、非 pytest 工程门 (`ENGINEER_GATE_SPECS`)、仓根 + `agent/` 两份 `.pre-commit-config.yaml` 本地门, 以及命名子系统的**能力锚点** (`CAPABILITY_SPECS`: 开关默认值/承载模块/不变量测试) 的对齐面: **孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块/step)、**能力锚点脱节** (开关默认翻转/承载模块或回归测试缺失) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
 
 ## 工作流 (workflows) — 6
 
@@ -105,6 +105,29 @@
 | `skill_audit` | `skill-audit.yml` | ratchet | Run skill library audit (gate) | 是 |
 | `ultra_long_bench` | `stress-test.yml` | benchmark | Run ultra-long benchmark (gating) | 是 |
 
+## 能力锚点 (capability anchors)
+
+命名子系统 (RSI / PMK / 世界模型 …) 的生存锚点 (源: `CAPABILITY_SPECS`): **一枚开关 + 一组承载模块 + 一组不变量测试**. 门存在性判据看不见能力面 —— 开关还在但**默认翻转** (从开变关 = 能力悄悄关掉)、承载模块被删 (= 能力失去实现)、不变量测试被删(= 能力失去回归网) 都会让能力静默萎缩而门全绿. **默认一致=否** 即开关被删/默认翻转; 承载模块/不变量测试列**存在=否** 即锚点脱节. 数下限棘轮 `capability_floor` 兜底.
+
+| 能力 | 开关 | 类型 | 期望默认 | 实际默认 | 默认一致 | 承载模块 | 不变量测试 |
+|---|---|---|---|---|---|---|---|
+| ASD-STE100 受控语言纪律 (`asd_ste100`) | `asd_ste100` | feature_flag | true | true | 是 | `huginn/plugins/asd_ste100/main.py` | `tests/test_asd_ste100_plugin.py` |
+| 主动提问 (clarification) (`clarification`) | `clarification` | feature_flag | true | true | 是 | `huginn/tools/clarification_tool.py`, `huginn/interaction/clarification.py` | `tests/test_clarification_tool.py` |
+| 计算路由策略 + 预算 (`compute_policy`) | `compute_policy` | feature_flag | false | false | 是 | `huginn/execution/compute_policy.py`, `huginn/execution/compute_router.py` | `tests/test_compute_router_audit.py` |
+| ARTEX 假设前沿 (frontier) (`frontier`) | `frontier_claim` | feature_flag | false | false | 是 | `huginn/autoloop/control_mechanisms.py`, `huginn/autoloop/cognitive_loop.py` | `tests/test_control_mechanism_governance.py` |
+| JEV 外部判断接入 (`jev`) | `jev_enabled` | feature_flag | false | false | 是 | `huginn/runtime/jev/_enabled.py`, `huginn/runtime/jev/client.py`, `huginn/runtime/jev/tool_router.py` | `tests/test_jev_wiring.py` |
+| 个性化 (风格/口味) (`personalization`) | `personalization` | feature_flag | true | true | 是 | `huginn/personalization/user_style.py`, `huginn/personalization/taste_profile.py`, `huginn/tools/personalization_tool.py` | `tests/test_taste_profile.py` |
+| Pi 极简内核模式 (`pi_mode`) | `pi_mode` | feature_flag | false | false | 是 | `huginn/modes/pi.py`, `huginn/tools/pi_mode_tool.py` | `tests/test_make_tool_pi_mode.py` |
+| PMK 一致性 (persona/memory/knowledge) (`pmk`) | `HUGINN_PMK_INJECT` | env | 0 | 0 | 是 | `huginn/autoloop/cognitive_guard.py`, `huginn/autoloop/engine_observe.py`, `huginn/runtime/task_lifecycle.py` | `tests/test_temporal_pmk.py` |
+| 计算 provenance 快照 (`provenance`) | `provenance` | feature_flag | true | true | 是 | `huginn/provenance/pipeline.py`, `huginn/provenance/registry.py`, `huginn/provenance/correction.py` | `tests/test_provenance.py`, `tests/test_argus_provenance.py` |
+| 递归自我改进 (RSI) (`rsi`) | `harness_meta_improver` | feature_flag | false | false | 是 | `huginn/harness/meta_improver.py`, `huginn/self_improvement/core.py`, `huginn/evolution/engine.py` | `tests/test_meta_improver.py`, `tests/test_evolution_engine.py` |
+| 投机执行 (speculator) (`speculator`) | `speculator` | feature_flag | true | true | 是 | `huginn/agents/speculator.py` | `tests/test_proactive_injection.py` |
+| 系统资源监控 (`system_health`) | `system_health_monitor` | feature_flag | true | true | 是 | `huginn/diagnostics/system_health.py` | `tests/test_system_health.py` |
+| 三舱反射模型 (`three_cabin`) | `three_cabin` | feature_flag | false | false | 是 | `huginn/metacog/three_cabin_reflector.py` | `tests/test_verify_4flags.py`, `tests/test_metacog_smoke.py` |
+| VISTA 过程级 trace 检索 (`trace_inspect`) | `trace_inspect` | feature_flag | false | false | 是 | `huginn/autoloop/recall_modes.py`, `huginn/autoloop/plan_check.py` | `tests/test_vista_recall_modes.py` |
+| VISTA 无损帧记忆 (`visual_frame_memory`) | `visual_frame_memory` | feature_flag | false | false | 是 | `huginn/autoloop/frame_store.py`, `huginn/autoloop/recall_modes.py` | `tests/test_vista_recall_modes.py` |
+| 世界模型 (`world_model`) | `world_model` | feature_flag | true | true | 是 | `huginn/capabilities/world_model.py`, `huginn/security/world_model.py`, `huginn/research/law_model.py` | `tests/test_world_model.py`, `tests/test_research_planning_team.py` |
+
 ## 预算 (budgets)
 
 治理棘轮的冻结预算/基线单一台账 (源: `governance_audit.BUDGET_SPECS`). **权威** = 值在台账声明、消费者门 `budget_value()` 只读; **引用** = 值仍在其自然归属, 台账只登记。实测/余量仅对 weightless 可测项给出; 其余由各自消费者门校验 (current ≤ frozen); 重型探针 (如镜像漂移实测) 需 `--probe`。**消费者门**列: `ci_step` 型是工作流里 pytest/CLI guard step (有存在性门); `workflow_step` 型是非 pytest 工程门 step; 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在工作流 step 里)。
@@ -128,6 +151,7 @@
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
 | 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 122 | 0 | Governance gate registry guard |
+| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 16 | 16 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
@@ -161,3 +185,4 @@
 - 触发器漂移 (0): 无
 - 未登记触发规格的工作流 (0): 无
 - 触发规格未落地的工作流 (0): 无
+- 能力锚点脱节 (0): 无

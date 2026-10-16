@@ -1,6 +1,6 @@
 """低熵治理台账 (governance_audit): 治理门登记 + 孤儿门检测 + 确定性再生成.
 
-治理层**自身**的熵有九种典型形态, 本模块把它们变成可观察、可门禁的事实:
+治理层**自身**的熵有十种典型形态, 本模块把它们变成可观察、可门禁的事实:
 
 1. **孤儿门** —— `tests/test_arch_*.py` 门族与显式声明的治理元门
    (`GOVERNANCE_META_TESTS`) 存在, 却既未接入**任工作流**的 guard step, 也未显式声明
@@ -29,6 +29,11 @@
 9. **阻断步漏登记 / 静默增删** —— 非 pytest 阻断门可能整步被删或新增却无人登记;
    `ENGINEER_GATE_SPECS` 只做「已登记→判存在」单向, 故补反向 `workflow_step_floor`
    (全部工作流命名 step 总数下限) —— 任何未登记的步骤增删都抬不动/降不下即红 (可见决策).
+10. **能力面静默萎缩** —— 前面九形态管的都是治理的**执行面** (门在不在跑、棘轮有没有被放宽),
+    却看不见**能力面**: 一个命名子系统 (RSI / PMK / 世界模型 …) 靠「一枚开关 + 一组承载模块
+    + 一组不变量测试」立起来, 三者任一被删/改名/**默认翻转** (开关还在但默认从开变关 =
+    能力悄悄关掉) 即静默萎缩, 而门存在性判据全绿. 现由 `CAPABILITY_SPECS` 登记每个能力的
+    锚点并逐条判在否.
 
 同时把**豁免/白名单面** (gitleaks 密钥豁免条数、`ci.yml` 里 pip-audit `--ignore-vuln` 串、
 `dependabot.yml` 的 `ignore:` 项数) 与**配置级门** (pyproject 覆盖率下限 `fail_under`) 一并
@@ -36,8 +41,9 @@
 
 扫描 `tests/test_arch_*.py` 门族 + 声明式治理元门 + `.github/workflows/*.yml` **全部**工作流的
 两类 python guard step (pytest 与 `python -m huginn.<module>`) + 非 pytest 工程门 +
-`.pre-commit-config.yaml` 本地门 + 各工作流触发器, 并把散落的棘轮预算/基线收成单一台账,
-渲染成 `docs/governance-state.md`.
+`.pre-commit-config.yaml` 本地门 + 各工作流触发器 + 命名子系统的能力锚点
+(`CAPABILITY_SPECS`: 开关默认值 / 承载模块 / 不变量测试), 并把散落的棘轮预算/基线收成
+单一台账, 渲染成 `docs/governance-state.md`.
 
 设计 (对齐 config_audit / contract_audit):
 - **纯 stdlib**: 不 import huginn.*, 不硬依赖 yaml (有则用, 无则退化行扫描),
@@ -490,6 +496,400 @@ ENGINEER_GATE_SPECS: tuple[dict, ...] = (
 )
 
 
+# ── 能力锚点登记 (子系统级: 开关 + 承载模块 + 不变量测试) ──
+# 工作流/门/预算登记管的是**治理的执行面** (门是否在跑、棘轮是否被放宽); 它们看不见
+# **能力面** —— 一个命名子系统 (如 RSI / PMK / 世界模型) 是靠「一枚开关 + 一组承载模块
+# + 一组不变量测试」立起来的. 三者任一被删/改名/默认翻转, 该能力就静默萎缩: 开关还在
+# 但默认从开变关 = 能力悄悄关掉; 承载模块被删 = 能力失去实现; 不变量测试被删 = 能力失去
+# 回归网. 旧台账对这三点全盲. 这里把每个能力登记为一张**可见决策表**: 任一锚点脱节即红.
+#
+# `flag_kind`: "feature_flag" (开关在 FeatureFlags._DEFAULTS, 值 bool) 或 "env"
+# (开关在 env_schema.SCHEMA 的 HUGINN_*, 值 str). `default` = 期望默认值 (翻转即红).
+CAPABILITY_SPECS: tuple[dict, ...] = (
+    {
+        "id": "world_model",
+        "name": "世界模型",
+        "flag_kind": "feature_flag",
+        "flag": "world_model",
+        "default": True,
+        "modules": (
+            "huginn/capabilities/world_model.py",
+            "huginn/security/world_model.py",
+            "huginn/research/law_model.py",
+        ),
+        "tests": ("tests/test_world_model.py", "tests/test_research_planning_team.py"),
+    },
+    {
+        "id": "rsi",
+        "name": "递归自我改进 (RSI)",
+        "flag_kind": "feature_flag",
+        "flag": "harness_meta_improver",
+        "default": False,
+        "modules": (
+            "huginn/harness/meta_improver.py",
+            "huginn/self_improvement/core.py",
+            "huginn/evolution/engine.py",
+        ),
+        "tests": ("tests/test_meta_improver.py", "tests/test_evolution_engine.py"),
+    },
+    {
+        "id": "pmk",
+        "name": "PMK 一致性 (persona/memory/knowledge)",
+        "flag_kind": "env",
+        "flag": "HUGINN_PMK_INJECT",
+        "default": "0",
+        "modules": (
+            "huginn/autoloop/cognitive_guard.py",
+            "huginn/autoloop/engine_observe.py",
+            "huginn/runtime/task_lifecycle.py",
+        ),
+        "tests": ("tests/test_temporal_pmk.py",),
+    },
+    # ── 其余命名子系统 (第二轮扩展: 补齐"诸如此类"的能力面) ──
+    # 判据: 一枚开关 (feature_flag/env) + 一组承载模块 + 一张不变量回归测试.
+    # 只登记**三者齐备**的命名子系统; 无独立回归测试的开关归 SUBSYSTEM_EXEMPT_FLAGS
+    # (见下), 不硬凑锚点 —— 诚实边界: 锚点的 test 必须真实存在.
+    {
+        "id": "asd_ste100",
+        "name": "ASD-STE100 受控语言纪律",
+        "flag_kind": "feature_flag",
+        "flag": "asd_ste100",
+        "default": True,
+        "modules": ("huginn/plugins/asd_ste100/main.py",),
+        "tests": ("tests/test_asd_ste100_plugin.py",),
+    },
+    {
+        "id": "clarification",
+        "name": "主动提问 (clarification)",
+        "flag_kind": "feature_flag",
+        "flag": "clarification",
+        "default": True,
+        "modules": (
+            "huginn/tools/clarification_tool.py",
+            "huginn/interaction/clarification.py",
+        ),
+        "tests": ("tests/test_clarification_tool.py",),
+    },
+    {
+        "id": "compute_policy",
+        "name": "计算路由策略 + 预算",
+        "flag_kind": "feature_flag",
+        "flag": "compute_policy",
+        "default": False,
+        "modules": (
+            "huginn/execution/compute_policy.py",
+            "huginn/execution/compute_router.py",
+        ),
+        "tests": ("tests/test_compute_router_audit.py",),
+    },
+    {
+        "id": "frontier",
+        "name": "ARTEX 假设前沿 (frontier)",
+        "flag_kind": "feature_flag",
+        "flag": "frontier_claim",
+        "default": False,
+        "modules": (
+            "huginn/autoloop/control_mechanisms.py",
+            "huginn/autoloop/cognitive_loop.py",
+        ),
+        "tests": ("tests/test_control_mechanism_governance.py",),
+    },
+    {
+        "id": "jev",
+        "name": "JEV 外部判断接入",
+        "flag_kind": "feature_flag",
+        "flag": "jev_enabled",
+        "default": False,
+        "modules": (
+            "huginn/runtime/jev/_enabled.py",
+            "huginn/runtime/jev/client.py",
+            "huginn/runtime/jev/tool_router.py",
+        ),
+        "tests": ("tests/test_jev_wiring.py",),
+    },
+    {
+        "id": "personalization",
+        "name": "个性化 (风格/口味)",
+        "flag_kind": "feature_flag",
+        "flag": "personalization",
+        "default": True,
+        "modules": (
+            "huginn/personalization/user_style.py",
+            "huginn/personalization/taste_profile.py",
+            "huginn/tools/personalization_tool.py",
+        ),
+        "tests": ("tests/test_taste_profile.py",),
+    },
+    {
+        "id": "pi_mode",
+        "name": "Pi 极简内核模式",
+        "flag_kind": "feature_flag",
+        "flag": "pi_mode",
+        "default": False,
+        "modules": (
+            "huginn/modes/pi.py",
+            "huginn/tools/pi_mode_tool.py",
+        ),
+        "tests": ("tests/test_make_tool_pi_mode.py",),
+    },
+    {
+        "id": "provenance",
+        "name": "计算 provenance 快照",
+        "flag_kind": "feature_flag",
+        "flag": "provenance",
+        "default": True,
+        "modules": (
+            "huginn/provenance/pipeline.py",
+            "huginn/provenance/registry.py",
+            "huginn/provenance/correction.py",
+        ),
+        "tests": ("tests/test_provenance.py", "tests/test_argus_provenance.py"),
+    },
+    {
+        "id": "speculator",
+        "name": "投机执行 (speculator)",
+        "flag_kind": "feature_flag",
+        "flag": "speculator",
+        "default": True,
+        "modules": ("huginn/agents/speculator.py",),
+        "tests": ("tests/test_proactive_injection.py",),
+    },
+    {
+        "id": "system_health",
+        "name": "系统资源监控",
+        "flag_kind": "feature_flag",
+        "flag": "system_health_monitor",
+        "default": True,
+        "modules": ("huginn/diagnostics/system_health.py",),
+        "tests": ("tests/test_system_health.py",),
+    },
+    {
+        "id": "three_cabin",
+        "name": "三舱反射模型",
+        "flag_kind": "feature_flag",
+        "flag": "three_cabin",
+        "default": False,
+        "modules": ("huginn/metacog/three_cabin_reflector.py",),
+        "tests": ("tests/test_verify_4flags.py", "tests/test_metacog_smoke.py"),
+    },
+    {
+        "id": "trace_inspect",
+        "name": "VISTA 过程级 trace 检索",
+        "flag_kind": "feature_flag",
+        "flag": "trace_inspect",
+        "default": False,
+        "modules": (
+            "huginn/autoloop/recall_modes.py",
+            "huginn/autoloop/plan_check.py",
+        ),
+        "tests": ("tests/test_vista_recall_modes.py",),
+    },
+    {
+        "id": "visual_frame_memory",
+        "name": "VISTA 无损帧记忆",
+        "flag_kind": "feature_flag",
+        "flag": "visual_frame_memory",
+        "default": False,
+        "modules": (
+            "huginn/autoloop/frame_store.py",
+            "huginn/autoloop/recall_modes.py",
+        ),
+        "tests": ("tests/test_vista_recall_modes.py",),
+    },
+)
+
+# ── 能力面闭合分诊表 (feature flag 全部登记: 锚定 or 豁免) ──
+# 光靠 `CAPABILITY_SPECS` 逐条加锚点仍是**点修**: 新加一枚功能开关时, 若无人把它
+# 登记为锚点或豁免, 能力面又会出现静默缺口. 本表把「feature flag 全集」收成**闭合面**:
+# `FeatureFlags._DEFAULTS` 的每个键必须**恰好**落在「CAPABILITY_SPECS 锚定」或本豁免集
+# 之一 —— 二者并集 = 全集且不相交 (`tests/test_arch_gate_registry.py` 的
+# `test_capability_flags_all_triaged` 硬断言). 新增开关未分诊 → 红 (可见决策).
+#
+# 豁免语义: 该开关是**调参/实验栅栏/格式开关/隐私档位/微特性**, 不是一个"靠开关+承载模块+
+# 回归测试"立起来的命名子系统 (无独立不变量回归测试); 或虽是子系统但当前**尚无**专属回归
+# 测试 (诚实登记, 待补测试后升级为锚点, 从本表移出). 分组仅注释, 集合本身平铺.
+SUBSYSTEM_EXEMPT_FLAGS: frozenset[str] = frozenset(
+    {
+        # 微路由 / 单点 toggle (有模块, 无专属回归测试 —— 待补测试可升级为锚点)
+        "tool_call_router",       # agents/tool_call_router.py 重型工具 sanity check
+        "loop_detector",          # agents/loop_detector.py 对话循环检测
+        "context_router",         # runtime/context_router.py 信息路径稀疏化
+        "task_tool_router",       # runtime/task_tool_router.py task→工具子集路由
+        "bandit_mdp",             # autoloop/bandit.py + agent/bandit_controller.py
+        # 实验栅栏 (harness 家族, 默认关; 由 harness_evolution_spec 承载)
+        "harness_workflow_evolution",
+        "harness_ood_holdout",
+        "harness_significance_gate",
+        "harness_adoption_gate",
+        "harness_joint_optimizer",
+        "harness_phase_evolve",
+        "harness_prompt_patch",
+        # 奖励口径开关 (validation/scope_authority.py, 默认关)
+        "anti_hacking_reward",
+        "intent_scope_reward",
+        # 沙箱硬化 (security/sandbox.py) —— 安全基线 toggle, 非能力子系统
+        "sandbox_net_isolation",
+        # 格式 / 日志 / 遥测
+        "json_logs",
+        "prompt_cache_control",
+        "telemetry",
+        # 认知微特性 (单点 toggle)
+        "belief_update",
+        "belief_darwin",
+        "belief_mode_switch",
+        "memory_typing",
+        "crdt_merge",
+        "crdt_branch_merge",
+        "ising_rerank",
+        "ising_frontier",
+        "hils_attention",
+        "fts_auto_rebuild",
+        "curiosity_hint",
+        "hypothesis_llm_semantic",
+        "comms_contract",
+        "extreme_dispatch",
+        "use_cognitive_map",
+        "use_atomworld",
+        "persistent_terminal",
+        "system_health_auto_fix",   # system_health 的熔断子档 (子系统见锚点 system_health)
+        # 隐私档位 (PrivacyGuard 互斥三档 + 细粒度开关)
+        "privacy_off",
+        "privacy_redact",
+        "privacy_local_only",
+        "privacy_redact_secrets",
+        "privacy_block_on_secrets",
+        # 命名子系统的**子开关** (总闸已锚定; 子开关无独立回归测试)
+        "jev_tool_router",
+        "jev_guardrail",
+        "frontier_single_writer_strict",
+        "frontier_empty_stop",
+        # 外部草稿纸 (deep_think; 有 doc + flag, 无专属回归测试)
+        "external_thinking",
+    }
+)
+
+
+def _feature_flag_defaults(agent_root: Path) -> dict[str, object]:
+    """从 `FeatureFlags._DEFAULTS` 读 ``flag -> 默认值`` (ast, 不 import 模块).
+
+    weightless: 只 parse 源文件, 不拉 huginn 包 (后者拖重依赖). 找不到/解析失败返回空表.
+    """
+    path = agent_root / "huginn" / "feature_flags.py"
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+    for node in ast.walk(tree):
+        target: str | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target, value = node.targets[0].id, node.value
+        if target != "_DEFAULTS" or not isinstance(value, ast.Dict):
+            continue
+        out: dict[str, object] = {}
+        for k, v in zip(value.keys, value.values):
+            try:
+                out[ast.literal_eval(k)] = ast.literal_eval(v)
+            except (ValueError, SyntaxError):
+                continue
+        return out
+    return {}
+
+
+def _env_schema_defaults(agent_root: Path) -> dict[str, str]:
+    """从 `env_schema.SCHEMA` 读 ``HUGINN_* -> 默认值`` (ast, 不 import 模块)."""
+    path = agent_root / "huginn" / "env_schema.py"
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+    for node in ast.walk(tree):
+        target: str | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target, value = node.targets[0].id, node.value
+        if target != "SCHEMA" or not isinstance(value, ast.Dict):
+            continue
+        out: dict[str, str] = {}
+        for k, v in zip(value.keys, value.values):
+            try:
+                name = ast.literal_eval(k)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(v, ast.Call) and len(v.args) >= 2:
+                try:
+                    out[name] = str(ast.literal_eval(v.args[1]))
+                except (ValueError, SyntaxError):
+                    continue
+        return out
+    return {}
+
+
+def _collect_capabilities(agent_root: Path) -> list[dict]:
+    """收集能力锚点, 判 ①开关默认值未翻转; ②每个承载模块存在; ③每个不变量测试存在.
+
+    三者任一脱节 = 该能力静默萎缩. 开关从 `FeatureFlags._DEFAULTS` / `env_schema.SCHEMA`
+    读实际默认值 (ast, weightless); `flag_ok=False` 即默认翻转或开关被删.
+    """
+    flags = _feature_flag_defaults(agent_root)
+    envs = _env_schema_defaults(agent_root)
+    out: list[dict] = []
+    for spec in CAPABILITY_SPECS:
+        if spec["flag_kind"] == "feature_flag":
+            actual = flags.get(spec["flag"], "__MISSING__")
+            expected = spec["default"]
+        else:
+            actual = envs.get(spec["flag"], "__MISSING__")
+            expected = str(spec["default"])
+        flag_ok = actual == expected
+        missing_modules = [m for m in spec["modules"] if not (agent_root / m).exists()]
+        missing_tests = [t for t in spec["tests"] if not (agent_root / t).exists()]
+        out.append(
+            {
+                "id": spec["id"],
+                "name": spec["name"],
+                "flag": spec["flag"],
+                "flag_kind": spec["flag_kind"],
+                "expected_default": _render_default(expected),
+                "actual_default": _render_default(actual),
+                "flag_ok": flag_ok,
+                "modules": list(spec["modules"]),
+                "tests": list(spec["tests"]),
+                "missing_modules": missing_modules,
+                "missing_tests": missing_tests,
+            }
+        )
+    out.sort(key=lambda c: c["id"])
+    return out
+
+
+def _render_default(value: object) -> str:
+    """能力开关默认值的可读渲染 (bool 小写, 缺失显形)."""
+    if value == "__MISSING__":
+        return "缺失"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "—"
+    return str(value)
+
+
 def _collect_cli_guards(agent_root: Path, workflows: dict[str, str]) -> list[dict]:
     """跨全部工作流收集 CLI 门 (`python -m huginn.<module>`), 按模块去重, 判模块存在.
 
@@ -762,6 +1162,21 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "owner_gate": "Governance gate registry guard",
         "owner_kind": "ci_step",
         "probe": "workflow_step_total",
+        "direction": "floor",
+    },
+    # ── 能力面 (子系统锚点数下限) ──
+    # 命名子系统 (RSI / PMK / 世界模型 …) 的锚点数下限: 删掉一个 `CAPABILITY_SPECS` 条目
+    # = 该能力脱离治理面, 须显式下调 (可见决策). 与门数棘轮同构.
+    {
+        "id": "capability_floor",
+        "name": "能力锚点数下限",
+        "path": "tests/test_arch_gate_registry.py",
+        "kind": "const",
+        "source": "inline",
+        "value": 16,
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "capability_count",
         "direction": "floor",
     },
     # ── 豁免/白名单面 (放宽即静默削弱对应门) ──
@@ -1083,6 +1498,8 @@ def _probe_current(
         return len(tests)
     if probe == "precommit_gate_count":
         return len(_collect_precommit_gates(agent_root, _read_precommit_texts(agent_root)))
+    if probe == "capability_count":
+        return len(_collect_capabilities(agent_root))
     if probe == "regex_int_live":  # 循环闸位/覆盖率下限: 从源码按 spec["pattern"] 抽活值 (第 1 捕获组)
         path = agent_root / spec["path"]
         if not path.is_file():
@@ -1335,6 +1752,21 @@ def audit(
     # ②暴露未登记工作流 (须显式登记触发规格) 与未落地规格 (工作流文件被删/改名).
     triggers = _collect_workflow_triggers(workflows)
 
+    # 能力锚点 (子系统级): 开关默认值未翻转 + 承载模块存在 + 不变量测试存在. 三者任一脱节
+    # = 该能力静默萎缩 (前面九形态的门存在性判据全绿也看不出).
+    capabilities = _collect_capabilities(agent_root)
+    capability_gaps = [
+        {
+            "id": c["id"],
+            "name": c["name"],
+            "flag_ok": c["flag_ok"],
+            "missing_modules": c["missing_modules"],
+            "missing_tests": c["missing_tests"],
+        }
+        for c in capabilities
+        if not c["flag_ok"] or c["missing_modules"] or c["missing_tests"]
+    ]
+
     return {
         "gates": gates,
         "orphans": sorted(orphans),
@@ -1351,6 +1783,8 @@ def audit(
         "unregistered_workflows": triggers["unregistered_workflows"],
         "unchecked_workflows": triggers["unchecked_workflows"],
         "trigger_drift": triggers["trigger_drift"],
+        "capabilities": capabilities,
+        "capability_gaps": capability_gaps,
         "budgets": collect_budgets(agent_root, heavy=heavy),
     }
 
@@ -1379,9 +1813,11 @@ def render_markdown(reg: dict) -> str:
     lines.append(
         "登记 `tests/test_arch_*.py` 门族 + 显式治理元门 (`GOVERNANCE_META_TESTS`)、"
         "`.github/workflows/*.yml` **全部工作流**的 python guard step "
-        "(pytest 与 `python -m huginn.<module>`)、非 pytest 工程门 (`ENGINEER_GATE_SPECS`) "
-        "与仓根 + `agent/` 两份 `.pre-commit-config.yaml` 本地门的对齐面: "
-        "**孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块/step) 在此显形。"
+        "(pytest 与 `python -m huginn.<module>`)、非 pytest 工程门 (`ENGINEER_GATE_SPECS`)、"
+        "仓根 + `agent/` 两份 `.pre-commit-config.yaml` 本地门, 以及命名子系统的**能力锚点** "
+        "(`CAPABILITY_SPECS`: 开关默认值/承载模块/不变量测试) 的对齐面: "
+        "**孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块/step)、**能力锚点脱节** "
+        "(开关默认翻转/承载模块或回归测试缺失) 在此显形。"
         "只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`."
     )
     lines.append("")
@@ -1466,6 +1902,34 @@ def render_markdown(reg: dict) -> str:
     for e in reg["engineer_gates"]:
         mark = "是" if e["exists"] else "否 (悬空)"
         lines.append(f"| `{e['id']}` | `{e['workflow']}` | {e['kind']} | {e['step']} | {mark} |")
+    lines.append("")
+    lines.append("## 能力锚点 (capability anchors)")
+    lines.append("")
+    lines.append(
+        "命名子系统 (RSI / PMK / 世界模型 …) 的生存锚点 (源: `CAPABILITY_SPECS`): "
+        "**一枚开关 + 一组承载模块 + 一组不变量测试**. 门存在性判据看不见能力面 —— 开关还在"
+        "但**默认翻转** (从开变关 = 能力悄悄关掉)、承载模块被删 (= 能力失去实现)、不变量测试被删"
+        "(= 能力失去回归网) 都会让能力静默萎缩而门全绿. **默认一致=否** 即开关被删/默认翻转; "
+        "承载模块/不变量测试列**存在=否** 即锚点脱节. 数下限棘轮 `capability_floor` 兜底."
+    )
+    lines.append("")
+    lines.append("| 能力 | 开关 | 类型 | 期望默认 | 实际默认 | 默认一致 | 承载模块 | 不变量测试 |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for c in reg["capabilities"]:
+        kind = "feature_flag" if c["flag_kind"] == "feature_flag" else "env"
+        flag = "是" if c["flag_ok"] else "否 (翻转/缺失)"
+        mods = ", ".join(
+            f"`{m}`" + ("" if (m not in c["missing_modules"]) else " (缺)")
+            for m in c["modules"]
+        )
+        tsts = ", ".join(
+            f"`{t}`" + ("" if (t not in c["missing_tests"]) else " (缺)")
+            for t in c["tests"]
+        )
+        lines.append(
+            f"| {c['name']} (`{c['id']}`) | `{c['flag']}` | {kind} | "
+            f"{c['expected_default']} | {c['actual_default']} | {flag} | {mods} | {tsts} |"
+        )
     lines.append("")
     def _budget_rows(rows_budgets: list[dict]) -> list[str]:
         out_rows = [
@@ -1568,8 +2032,25 @@ def render_markdown(reg: dict) -> str:
         )
     else:
         lines.append("- 触发规格未落地的工作流 (0): 无")
+    if reg["capability_gaps"]:
+        items = ", ".join(_capability_gap_desc(g) for g in reg["capability_gaps"])
+        lines.append(f"- 能力锚点脱节 ({len(reg['capability_gaps'])}): {items}")
+    else:
+        lines.append("- 能力锚点脱节 (0): 无")
     lines.append("")
     return "\n".join(lines)
+
+
+def _capability_gap_desc(gap: dict) -> str:
+    """单项能力锚点脱节的缺口描述 (开关默认翻转 / 承载模块缺 / 不变量测试缺)."""
+    parts: list[str] = []
+    if not gap["flag_ok"]:
+        parts.append("开关默认翻转/缺失")
+    if gap["missing_modules"]:
+        parts.append("缺模块 " + "、".join(f"`{m}`" for m in gap["missing_modules"]))
+    if gap["missing_tests"]:
+        parts.append("缺测试 " + "、".join(f"`{t}`" for t in gap["missing_tests"]))
+    return f"`{gap['name']}` ({'; '.join(parts)})"
 
 
 def main(argv: list[str] | None = None) -> int:

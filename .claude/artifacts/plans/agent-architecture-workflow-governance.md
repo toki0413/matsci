@@ -570,3 +570,71 @@ step 名（可校验存在性），也可能是「只靠全量套件兜底」的
 - 双路径一致性：逐工作流比对 `_parse_guard_steps` / `_parse_step_names` / `_parse_cli_guards` →
   6/6 一致；`render_markdown` yaml==noyaml==已提交文档。
 - `scripts/mcpb_vendor.py --check` → 0 漂移。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：能力面静默萎缩（十形态）+ 能力锚点闭合分诊
+
+> 状态：已落。补齐治理层第 10 种熵形态 —— **能力面静默萎缩**（用户点名 RSI / PMK / 世界模型
+> 「此类」命名子系统此前不在治理面）。
+
+前九形态管的都是治理的**执行面**（门在不在跑、棘轮有没有被放宽），却对**能力面**全盲：一个命名
+子系统（RSI / PMK / 世界模型 …）靠「**一枚开关 + 一组承载模块 + 一组不变量测试**」立起来，
+三者任一被删 / 改名 / **默认翻转**（开关还在但默认从开变关 = 能力悄悄关掉）即静默萎缩，而旧台账
+的门存在性判据全绿。故新增第 10 形态并用**能力锚点**将其显形。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 模块 docstring 由「九形态」扩为「十形态」（新增**能力面静默萎缩**）。
+  - 新增 `CAPABILITY_SPECS`（命名子系统锚点登记表）：**3 → 16** 条 —— 原 `world_model` /
+    `rsi` / `pmk` 三条，扩为再补 `asd_ste100` / `clarification` / `compute_policy` / `frontier` /
+    `jev` / `personalization` / `pi_mode` / `provenance` / `speculator` / `system_health` /
+    `three_cabin` / `trace_inspect` / `visual_frame_memory`。每条登记「`flag`（feature_flag 型取自
+    `FeatureFlags._DEFAULTS`，env 型取自 `env_schema.SCHEMA` 的 `HUGINN_*`）+ 期望默认值 +
+    承载模块 + 不变量测试」。
+  - 新增 `SUBSYSTEM_EXEMPT_FLAGS` **闭合分诊表**（46 枚）：把 `FeatureFlags._DEFAULTS` 全集收成
+    「**锚定（15 枚 feature_flag） ∪ 豁免（46 枚） = 全集 61，且不相交**」。豁免语义诚实登记
+    微路由 / 实验栅栏 / 奖励口径 / 沙箱基线 / 格式日志遥测 / 认知微特性 / 隐私档位 / 命名子系统
+    子开关 / 外部草稿纸；**不硬凑锚点**（诚实边界：锚点的 test 必须真实存在）。
+  - 新增 `_feature_flag_defaults()` / `_env_schema_defaults()`：**纯 ast** 从源码读开关默认值，
+    不 import huginn 包、不拉重依赖（保持门禁 weightless）。
+  - 新增 `_collect_capabilities()`：逐锚点判 ①开关默认值未翻转 ②承载模块存在 ③不变量测试存在，
+    三者任一脱节入 `capability_gaps`。
+  - `capability_floor` 预算项 **3 → 16**（锚点数只减不增，须显式下调 = 可见决策）；
+    `_probe_current` 的 `capability_count` 探针保持。
+  - `audit()` 返回扩 `capabilities` / `capability_gaps`；`render_markdown` 增「能力锚点
+    (capability anchors)」表（能力/开关/类型/期望默认/实际默认/默认一致/承载模块/不变量测试）
+    + 缺口区「能力锚点脱节」条目（`_capability_gap_desc`）。
+- `tests/test_arch_gate_registry.py`：
+  - `CAPABILITY_FLOOR` ← `budget_value("capability_floor")`。
+  - 新增 `test_capability_flags_all_triaged`：断言 `FeatureFlags._DEFAULTS` 键集 = 「锚定 ∪ 豁免」，
+    且不相交、无 stale（新增开关未分诊 → 红；每枚 flag **恰好**分诊一次）。docstring 补该不变量。
+  - 既有 5 条能力锚点门禁（`test_capability_anchors_intact` / 数量棘轮 / 默认值解析合成树 /
+    默认翻转合成树 / env 解析合成树）继续覆盖 `CAPABILITY_SPECS`。
+- `docs/governance-state.md`：重生成（新增「能力锚点」节 16 行）。
+- `publish/mcpb/{capabilities-mcp,workflows-mcp}/huginn/cli/governance_audit.py`：
+  `scripts/mcpb_vendor.py --write` 同步镜像（内容不同 1 → 0）。
+
+### AC
+
+- AC-1 逐字再生成（`docs/governance-state.md == render_markdown(build_gate_registry())`）。
+- AC-2 每个能力锚点都不脱节（`capability_gaps == []`）：开关默认值未翻转、承载模块存在、
+  不变量测试存在。
+- AC-3 每个 feature flag **恰好**分诊一次（锚定 ∪ 豁免 = `FeatureFlags._DEFAULTS` 全集且不相交）。
+- AC-4 能力锚点数 ≥ 16（`capability_floor`；删条目须显式下调 = 可见决策）。
+- AC-5 镜像漂移门仍绿（0 漂移）。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **47 passed**。
+- 实测：`capabilities=16` / `capability_gaps=[]`；`anchored=15` + `exempt=46` = `flags=61`
+  （`untriaged==[]`、`overlap==[]`、`stale==[]`）。
+- `scripts/mcpb_vendor.py --check` → 0 漂移。
+
+### 诚实边界
+
+- 锚点只登记**三者齐备**的命名子系统；无专属回归测试的开关诚实归 `SUBSYSTEM_EXEMPT_FLAGS`
+  （待补测试后可升级为锚点，从豁免集移出）。豁免集里少数是「**确为子系统、但当前尚无**专属
+  回归测试」（如 `bandit_mdp` / `use_cognitive_map` / `use_atomworld`），已注明，不硬凑。

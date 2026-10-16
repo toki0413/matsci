@@ -16,6 +16,11 @@ pytest guard step、`python -m huginn.<module>` CLI 门、`ENGINEER_GATE_SPECS` 
 - 每个工作流的**触发器** (`on:`) 与 `WORKFLOW_TRIGGER_SPECS` 期望集一致; 触发器被删/收窄
   (门永不运行) → 红; 未登记触发规格的工作流 / 规格未落地的工作流 → 红.
 - 全部工作流**命名 step 总数** ≥ 台账下限 (阻断步静默增删的反向兜底) → 红.
+- 每个命名子系统 (`CAPABILITY_SPECS`) 的锚点 (开关默认值未翻转 + 承载模块存在 + 不变量测试
+  存在) 都不脱节; 能力锚点数只减不增 → 红 (能力面静默萎缩).
+- 每个 feature flag (`FeatureFlags._DEFAULTS`) 都被「锚定 (CAPABILITY_SPECS) or 豁免
+  (SUBSYSTEM_EXEMPT_FLAGS)」**恰好**分诊一次 (并集 = 全集且不相交); 新增开关未分诊 → 红
+  (能力面闭合, 消除"新加开关又出现静默缺口").
 - 门数/工程门数/本地门数/CLI 门数/工作流数只减不增 (棘轮); 删掉已登记项 → 红.
 - 每个循环闸位 (自主轮数/步数上限) 实测 ≤ 台账上限; 提高上限须显式改台账 → 红.
 - 每个豁免/白名单 (gitleaks 密钥豁免 / pip-audit 漏洞豁免 / dependabot 忽略项) 条数 ≤ 台账
@@ -62,6 +67,9 @@ GUARD_STEP_FLOOR = ga.budget_value("guard_step_floor")
 
 # 工作流命名 step 总数下限棘轮 (阻断步静默增删的反向兜底): 同上.
 WORKFLOW_STEP_FLOOR = ga.budget_value("workflow_step_floor")
+
+# 能力锚点数下限棘轮 (命名子系统脱离治理面): 同上, 值由台账权威声明.
+CAPABILITY_FLOOR = ga.budget_value("capability_floor")
 
 # 循环闸位数下限棘轮: 同上, 值由台账权威声明.
 LOOP_CAP_FLOOR = ga.budget_value("loop_cap_floor")
@@ -380,6 +388,111 @@ def test_workflow_step_count_ratchet_only_shrinks():
     )
 
 
+# ──────────────────── 能力锚点 (capability anchors) ────────────────────
+
+
+def test_capability_anchors_intact():
+    """不变量: 每个命名子系统的锚点 (开关默认值 + 承载模块 + 不变量测试) 都不脱节.
+
+    门存在性判据看不见能力面: 开关还在但**默认翻转** (从开变关 = 能力悄悄关掉)、承载模块
+    被删 (= 能力失去实现)、不变量测试被删 (= 能力失去回归网) 都会让能力静默萎缩而门全绿.
+    """
+    reg = ga.build_gate_registry()
+    assert reg["capability_gaps"] == [], (
+        f"能力锚点脱节: {reg['capability_gaps']} —— "
+        f"开关默认翻转/承载模块或回归测试被删/改名后忘了同步 CAPABILITY_SPECS 或补齐锚点."
+    )
+
+
+def test_capability_count_ratchet_only_shrinks():
+    """棘轮: 能力锚点数只减不增 (删掉一个条目 = 该能力脱离治理面)."""
+    reg = ga.build_gate_registry()
+    assert len(reg["capabilities"]) >= CAPABILITY_FLOOR, (
+        f"能力锚点数从 {CAPABILITY_FLOOR} 降到 {len(reg['capabilities'])} —— 能力被移出登记? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 capability_floor 的 value."
+    )
+
+
+def test_capability_flags_all_triaged():
+    """不变量: 每个 feature flag 都已被「锚定 or 豁免」分诊 (能力面闭合, 无静默缺口).
+
+    `CAPABILITY_SPECS` 逐条加锚点仍是**点修** —— 新加一枚功能开关时若无人登记, 能力面又
+    出现静默缺口. 本门把 `FeatureFlags._DEFAULTS` 全集收成**闭合面**: 每个 flag 键必须
+    **恰好**落在「`CAPABILITY_SPECS` 锚定 (feature_flag 型)」或 `SUBSYSTEM_EXEMPT_FLAGS`
+    之一, 二者并集 = 全集且不相交. 新增开关未分诊 → 红 (须显式决定它是锚点还是豁免).
+    """
+    anchored = {
+        s["flag"] for s in ga.CAPABILITY_SPECS if s["flag_kind"] == "feature_flag"
+    }
+    exempt = set(ga.SUBSYSTEM_EXEMPT_FLAGS)
+    all_flags = set(ga._feature_flag_defaults(_AGENT))
+
+    overlap = sorted(anchored & exempt)
+    assert not overlap, (
+        f"以下 flag 同时被锚定与豁免 (分诊表必须不相交): {overlap} —— "
+        f"从 SUBSYSTEM_EXEMPT_FLAGS 移除 (既已锚定)."
+    )
+    untriaged = sorted(all_flags - anchored - exempt)
+    assert not untriaged, (
+        f"以下 feature flag 未分诊 (新增开关未登记为锚点或豁免): {untriaged} —— "
+        f"要么在 governance_audit.CAPABILITY_SPECS 补锚点 (开关+承载模块+不变量测试三者"
+        f"齐备), 要么在 SUBSYSTEM_EXEMPT_FLAGS 诚实登记豁免 (可见决策)."
+    )
+    stale = sorted((anchored | exempt) - all_flags)
+    assert not stale, (
+        f"以下 flag 已登记但不在 FeatureFlags._DEFAULTS (开关被删?): {stale} —— "
+        f"同步 CAPABILITY_SPECS / SUBSYSTEM_EXEMPT_FLAGS."
+    )
+
+
+def test_capability_flag_default_parsing_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证: 开关默认值能从 FeatureFlags._DEFAULTS 读出 (前向非空转)."""
+    (tmp_path / "huginn").mkdir()
+    (tmp_path / "huginn" / "feature_flags.py").write_text(
+        "class F:\n"
+        "    _DEFAULTS: dict[str, bool] = {\"world_model\": True, \"x\": False}\n",
+        encoding="utf-8",
+    )
+    assert ga._feature_flag_defaults(tmp_path) == {"world_model": True, "x": False}
+
+
+def test_capability_env_default_parsing_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证: env 开关默认值能从 env_schema.SCHEMA 的 EnvSpec 读出 (前向非空转)."""
+    (tmp_path / "huginn").mkdir()
+    (tmp_path / "huginn" / "env_schema.py").write_text(
+        "SCHEMA: dict[str, object] = {\n"
+        "    \"HUGINN_PMK_INJECT\": EnvSpec(\"int\", \"0\", \"tuning\"),\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    assert ga._env_schema_defaults(tmp_path) == {"HUGINN_PMK_INJECT": "0"}
+
+
+def test_capability_default_flip_detected_on_synthetic_tree(tmp_path: pathlib.Path):
+    """合成树验证: 开关默认翻转能被判为锚点脱节 (前向非空转).
+
+    `world_model` 期望默认 True, 合成树里写成 False → flag_ok=False (翻转被抓);
+    `rsi` 期望 False 且实际 False, `pmk` env 默认一致 → 均 flag_ok=True (无假阳).
+    承载模块/测试在合成树里天然缺失, 故只断言 flag_ok 维度 (与缺模块/缺测试正交).
+    """
+    (tmp_path / "huginn").mkdir()
+    (tmp_path / "huginn" / "feature_flags.py").write_text(
+        "class F:\n"
+        "    _DEFAULTS: dict[str, bool] = {\"world_model\": False, \"harness_meta_improver\": False}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "huginn" / "env_schema.py").write_text(
+        "SCHEMA: dict[str, object] = {\n"
+        "    \"HUGINN_PMK_INJECT\": EnvSpec(\"int\", \"0\", \"tuning\"),\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    caps = {c["id"]: c for c in ga._collect_capabilities(tmp_path)}
+    assert caps["world_model"]["flag_ok"] is False
+    assert caps["rsi"]["flag_ok"] is True
+    assert caps["pmk"]["flag_ok"] is True
+
+
 # ──────────────────── 工作流触发器 (workflow triggers) ────────────────────
 
 
@@ -491,6 +604,7 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "workflow_floor",
         "guard_step_floor",
         "workflow_step_floor",
+        "capability_floor",
         "field_audit_golden",
         "skill_audit_baseline",
         "gitleaks_allowlist",
