@@ -12,6 +12,7 @@
 - 每个本地门 (`.pre-commit-config.yaml`) 引用的测试文件必须存在; 指向已删文件 → 红.
 - 每个本地门 `entry` 引用的测试必须被其 `files:` 过滤器覆盖; 否则改它不触发 hook → 红.
 - 门数只减不增 (棘轮); 删掉一个已登记门 → 红.
+- 每个循环闸位 (自主轮数/步数上限) 实测 ≤ 台账上限; 提高上限须显式改台账 → 红.
 - 生成文档 `docs/governance-state.md` 必须与当前扫描逐字一致 (确定性再生成).
 
 重生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
@@ -41,6 +42,9 @@ CLI_GUARD_FLOOR = ga.budget_value("cli_guard_floor")
 
 # 本地门 (.pre-commit-config.yaml) 数下限棘轮: 同上, 值由台账权威声明.
 PRECOMMIT_GATE_FLOOR = ga.budget_value("precommit_gate_floor")
+
+# 循环闸位数下限棘轮: 同上, 值由台账权威声明.
+LOOP_CAP_FLOOR = ga.budget_value("loop_cap_floor")
 
 
 def test_all_arch_tests_are_registered():
@@ -293,6 +297,16 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "cli_guard_floor",
         "precommit_gate_floor",
         "field_audit_golden",
+        "loop_autoloop_cli",
+        "loop_autoloop_engine",
+        "loop_recursion_limit",
+        "loop_tool_calls",
+        "loop_tool_calls_per_tool",
+        "loop_codeact_turns",
+        "loop_coder_iter",
+        "loop_exploration",
+        "loop_deep_research",
+        "loop_cap_floor",
     }
 )
 
@@ -374,3 +388,27 @@ def test_ci_step_owner_gates_reference_real_steps():
                 f"预算 `{spec['id']}` 标 `ci_step`, 但 owner_gate `{spec['owner_gate']}` 不是 "
                 f"ci.yml 真实 step 名 —— step 改名后台账指向幻影门? 同步 BUDGET_SPECS / ci.yml."
             )
+
+
+# ──────────────────── 循环闸位 (loop caps) ────────────────────
+
+
+def test_loop_caps_live_within_ceiling():
+    """不变量: 每个循环闸位仍能读到活值, 且活值 ≤ 台账上限 (只增不减的反向棘轮).
+
+    循环闸位是自主轮数/步数上限; 提高上限 = 扩大自主面, 必须走台账 (可见决策).
+    """
+    caps = [s for s in ga.BUDGET_SPECS if s.get("source") == "ceiling"]
+    assert len(caps) >= LOOP_CAP_FLOOR, (
+        f"循环闸位数从 {LOOP_CAP_FLOOR} 降到 {len(caps)} —— 闸位被删了? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 loop_cap_floor 的 value."
+    )
+    for spec in caps:
+        live = ga._probe_current(spec, _AGENT, heavy=False)
+        assert live is not None, (
+            f"循环闸位 `{spec['id']}` 活值读不到 —— pattern 或源文件位置失效, 闸位静默失效."
+        )
+        assert live <= spec["value"], (
+            f"循环闸位 `{spec['id']}` 活值 {live} > 台账上限 {spec['value']} —— "
+            f"扩大自主面须显式更新 BUDGET_SPECS 的 value (可见决策)."
+        )

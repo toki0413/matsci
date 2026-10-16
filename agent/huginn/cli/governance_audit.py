@@ -9,7 +9,8 @@
 3. **CLI 门漏登记** —— `ci.yml` 里 `python -m huginn.<module>` 形态的治理门
    (CLI 自查 / 棘轮, 如 contract_audit 棘轮), 旧解析只认 pytest 会漏掉; 现单列.
 4. **基线漂移** —— 棘轮/预算冻结值散落在 `tests/golden/*`、`huginn/` 与各测试
-   常量里, 没有单一台账可读; 现由 `BUDGET_SPECS` 收成一张表.
+   常量里, 没有单一台账可读; 现由 `BUDGET_SPECS` 收成一张表 (含自主循环的轮数/步数
+   **上限** —— 散在 `env_schema` 与各引擎/路由默认里, 作 ceiling 棘轮单列).
 5. **本地门漏登记/悬空/漏匹配** —— `.pre-commit-config.yaml` 的本地门 (如 G37
    audit-regression) 既不在 `ci.yml` 也不在台账; 其 `entry` 引用的测试改名/删除即
    **悬空**, 而 `entry` 引用的测试未被 `files:` 过滤器覆盖时, 改该测试不会触发 hook
@@ -378,6 +379,140 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "owner_gate": "MECE 字段级面",
         "owner_kind": "full_suite",
     },
+    # ── 循环闸位 (loop caps): 自主轮数/步数上限 ──
+    # 这些值此前散在 env_schema 与各引擎/路由的硬编码默认里, 无单一上限可读. 记在此处作
+    # **上限(ceiling)**: 代码持有实测值, 台账持有允许的最大值; 棘轮 = 实测 ≤ 上限, 提高上限
+    # (扩大自主面) 必须显式改台账 value (可见决策). 实测由 weightless regex 探针从源码读出.
+    {
+        "id": "loop_autoloop_cli",
+        "name": "autoloop CLI 迭代上限",
+        "path": "huginn/cli/commands/autoloop.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 20,
+        "pattern": r'"--iterations",\s*"-i",\s*default=(\d+)',
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_autoloop_engine",
+        "name": "autoloop 引擎迭代上限",
+        "path": "huginn/autoloop/cognitive_loop.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 50,
+        "pattern": r"def run_cognitive\([\s\S]*?max_iterations:\s*int\s*=\s*(\d+)",
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_recursion_limit",
+        "name": "长程 recursion_limit 上限",
+        "path": "huginn/agent/core.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 500,
+        "pattern": r"_LONG_HORIZON_MODES:\s*return (\d+)",
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_tool_calls",
+        "name": "单轮 tool-call 上限",
+        "path": "huginn/env_schema.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 15,
+        "pattern": r'"HUGINN_MAX_TOOL_CALLS":\s*EnvSpec\("int",\s*"(\d+)"',
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_tool_calls_per_tool",
+        "name": "单轮单工具调用上限",
+        "path": "huginn/env_schema.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 5,
+        "pattern": r'"HUGINN_MAX_TOOL_CALLS_PER_TOOL":\s*EnvSpec\("int",\s*"(\d+)"',
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_codeact_turns",
+        "name": "CodeAct 轮数上限",
+        "path": "huginn/agent/code_act_loop.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 15,
+        "pattern": r"^_MAX_TURNS\s*=\s*(\d+)",
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_coder_iter",
+        "name": "coder 路由迭代上限",
+        "path": "huginn/env_schema.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 50,
+        "pattern": r'"HUGINN_CODER_MAX_ITER":\s*EnvSpec\("int",\s*"(\d+)"',
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_exploration",
+        "name": "探索编排迭代上限",
+        "path": "huginn/exploration/orchestrator.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 40,
+        "pattern": r"async def explore\([\s\S]*?max_iterations:\s*int\s*=\s*(\d+)",
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_deep_research",
+        "name": "deep_research 迭代上限",
+        "path": "huginn/routes/deep_research.py",
+        "group": "loop",
+        "source": "ceiling",
+        "value": 12,
+        "pattern": r'opts\.setdefault\("max_iterations",\s*(\d+)\)',
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "regex_int_live",
+        "direction": "cap",
+    },
+    {
+        "id": "loop_cap_floor",
+        "name": "循环闸位数下限",
+        "path": "tests/test_arch_gate_registry.py",
+        "group": "loop",
+        "kind": "const",
+        "source": "inline",
+        "value": 9,
+        "owner_gate": "Governance gate registry guard",
+        "owner_kind": "ci_step",
+        "probe": "loop_cap_live_count",
+        "direction": "floor",
+    },
 )
 
 BUDGET_BY_ID: dict[str, dict] = {s["id"]: s for s in BUDGET_SPECS}
@@ -438,8 +573,8 @@ def _extract_collection_len(module_text: str, var: str) -> int | None:
 
 
 def _frozen_value(spec: dict, agent_root: Path) -> str:
-    """取某预算项的冻结值 (weightless): inline 权威项读台账声明, 其余从原位抽取."""
-    if spec.get("source") == "inline":
+    """取某预算项的冻结值 (weightless): 台账声明项 (inline/ceiling) 读声明, 其余从原位抽取."""
+    if spec.get("source") in ("inline", "ceiling"):
         value = spec["value"]
         if isinstance(value, tuple):
             return "/".join(str(v) for v in value)
@@ -483,6 +618,19 @@ def _probe_current(
         return len(_parse_cli_guards(_read_ci_text(agent_root)))
     if probe == "precommit_gate_count":
         return len(set(_parse_precommit_hooks(_read_precommit_text(agent_root))))
+    if probe == "regex_int_live":  # 循环闸位: 从源码按 spec["pattern"] 抽活值 (第 1 捕获组)
+        path = agent_root / spec["path"]
+        if not path.is_file():
+            return None
+        m = re.search(spec["pattern"], path.read_text(encoding="utf-8"), re.M)
+        return int(m.group(1)) if m else None
+    if probe == "loop_cap_live_count":  # 循环闸位数下限: 可读到的 ceiling 项数 (棘轮)
+        return sum(
+            1
+            for s in BUDGET_SPECS
+            if s.get("source") == "ceiling"
+            and isinstance(_probe_current(s, agent_root, heavy=heavy), int)
+        )
     if probe == "mirror_drift_live" and heavy:
         return _probe_mirror_drift(agent_root)
     if probe == "env_raw_read_live" and heavy:
@@ -585,7 +733,10 @@ def collect_budgets(agent_root: Path, heavy: bool = False) -> list[dict]:
                 "id": spec["id"],
                 "name": spec["name"],
                 "path": spec["path"],
-                "mode": "权威" if spec.get("source") == "inline" else "引用",
+                "mode": {"inline": "权威", "ceiling": "上限"}.get(
+                    spec.get("source"), "引用"
+                ),
+                "group": spec.get("group", "budget"),
                 "frozen": frozen,
                 "current": current,
                 "headroom": headroom,
@@ -791,6 +942,20 @@ def render_markdown(reg: dict) -> str:
         cov = "是" if g.get("covered") else "否 (漏匹配)"
         lines.append(f"| `{g['hook']}` | `{g['test']}` | {mark} | {cov} |")
     lines.append("")
+    def _budget_rows(rows_budgets: list[dict]) -> list[str]:
+        out_rows = [
+            "| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for b in rows_budgets:
+            cur = _render_current(b["current"])
+            head = "—" if b["headroom"] is None else str(b["headroom"])
+            owner = b["owner_gate"] + (" · 全量" if b["owner_kind"] == "full_suite" else "")
+            out_rows.append(
+                f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {owner} |"
+            )
+        return out_rows
+
     lines.append("## 预算 (budgets)")
     lines.append("")
     lines.append(
@@ -801,15 +966,19 @@ def render_markdown(reg: dict) -> str:
         "(有存在性门); 带 `· 全量` 标记的是 `full_suite` 型 (仅全量套件跑, 不在 `ci.yml`)。"
     )
     lines.append("")
-    lines.append("| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |")
-    lines.append("|---|---|---|---|---|---|---|")
-    for b in reg["budgets"]:
-        cur = _render_current(b["current"])
-        head = "—" if b["headroom"] is None else str(b["headroom"])
-        owner = b["owner_gate"] + (" · 全量" if b["owner_kind"] == "full_suite" else "")
-        lines.append(
-            f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {owner} |"
-        )
+    lines.extend(_budget_rows([b for b in reg["budgets"] if b.get("group") != "loop"]))
+    lines.append("")
+    lines.append("## 循环闸位 (loop caps)")
+    lines.append("")
+    lines.append(
+        "自主循环的轮数/步数**上限** (源: `governance_audit.BUDGET_SPECS` 中 `group=loop` 项). "
+        "这些值此前散在 `env_schema` 与各引擎/路由的硬编码默认里, 无单一上限可读。**模式=上限** "
+        "(ceiling): 代码持有实测值 (weightless regex 探针从源码读出), 台账持有允许的最大值; "
+        "棘轮 = 实测 ≤ 上限 —— 提高上限 (扩大自主面) 必须显式改台账 `value` (可见决策)。"
+        "**模式=权威** 一行为闸位**数下限** (只减不增)。"
+    )
+    lines.append("")
+    lines.extend(_budget_rows([b for b in reg["budgets"] if b.get("group") == "loop"]))
     lines.append("")
     lines.append("## 缺口 (gaps)")
     lines.append("")

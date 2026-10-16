@@ -406,3 +406,43 @@ step 名（可校验存在性），也可能是「只靠全量套件兜底」的
 - `ruff check`（两文件）→ All checks passed。
 - 实测 `uncovered_precommit == []`（5 个 entry 测试都被 `files:` 覆盖）、`dangling_precommit == []`。
 - `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：自主循环闸位 (loop caps) 纳入台账
+
+> 状态：已落。把「自主循环轮数/步数上限」这张表纳入 `BUDGET_SPECS`，做**只增不增**（提高须可见）的 ceiling 棘轮。
+
+自主循环的上限此前**散在** `env_schema` 与各引擎/路由的硬编码默认里，无单一可读来源 ——
+提高 `max_iterations`/`recursion_limit`（即扩大自主面）不会被任何门看见。现把它们收成台账单列节。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - `BUDGET_SPECS` 新增 `group: "loop"` 9 项循环闸位 + 1 项 `loop_cap_floor`（闸位数下限）。
+  - 新增第三种承载口径 `source: "ceiling"`（模式 **上限**）：代码持有实测值、台账持有允许的最大值。
+  - 新增 weightless 探针 `regex_int_live`（按 `spec["pattern"]` 从源码第 1 捕获组读活值，不 import）
+    与 `loop_cap_live_count`（数可读到的 ceiling 项数，作棘轮）。
+  - `_frozen_value` 支持 `ceiling`；`collect_budgets` 透传 `group` 并区分模式（权威/引用/上限）。
+  - `render_markdown`：预算表拆出 `_budget_rows` helper，新增「## 循环闸位 (loop caps)」节。
+- `tests/test_arch_gate_registry.py`：新增 `LOOP_CAP_FLOOR`（← `budget_value`）与
+  `test_loop_caps_live_within_ceiling`（①闸位数 ≥ 下限；②每项活值可读；③活值 ≤ 台账上限）；
+  `_EXPECTED_BUDGET_IDS` 覆盖到 22 项；docstring 补该不变量。
+- `docs/governance-state.md`：重生成（新增「循环闸位」节，10 行）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 9 项循环闸位全部可读（pattern 命中，活值非 None）。
+- AC-3 每项活值 ≤ 台账 ceiling；提高上限须显式改台账 `value`（可见决策）。
+- AC-4 闸位数棘轮：`loop_cap_live_count ≥ loop_cap_floor`（9），删一项即红。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **29 passed**（本环境无 PyYAML，走 fallback）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 9 项活值 = 20/50/500/15/5/15/50/40/12，逐项 `live == ceiling`；`loop_cap_live_count == 9`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。

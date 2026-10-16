@@ -70,6 +70,23 @@
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 
+## 循环闸位 (loop caps)
+
+自主循环的轮数/步数**上限** (源: `governance_audit.BUDGET_SPECS` 中 `group=loop` 项). 这些值此前散在 `env_schema` 与各引擎/路由的硬编码默认里, 无单一上限可读。**模式=上限** (ceiling): 代码持有实测值 (weightless regex 探针从源码读出), 台账持有允许的最大值; 棘轮 = 实测 ≤ 上限 —— 提高上限 (扩大自主面) 必须显式改台账 `value` (可见决策)。**模式=权威** 一行为闸位**数下限** (只减不增)。
+
+| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |
+|---|---|---|---|---|---|---|
+| autoloop CLI 迭代上限 | `huginn/cli/commands/autoloop.py` | 上限 | 20 | 20 | 0 | Governance gate registry guard |
+| autoloop 引擎迭代上限 | `huginn/autoloop/cognitive_loop.py` | 上限 | 50 | 50 | 0 | Governance gate registry guard |
+| 长程 recursion_limit 上限 | `huginn/agent/core.py` | 上限 | 500 | 500 | 0 | Governance gate registry guard |
+| 单轮 tool-call 上限 | `huginn/env_schema.py` | 上限 | 15 | 15 | 0 | Governance gate registry guard |
+| 单轮单工具调用上限 | `huginn/env_schema.py` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
+| CodeAct 轮数上限 | `huginn/agent/code_act_loop.py` | 上限 | 15 | 15 | 0 | Governance gate registry guard |
+| coder 路由迭代上限 | `huginn/env_schema.py` | 上限 | 50 | 50 | 0 | Governance gate registry guard |
+| 探索编排迭代上限 | `huginn/exploration/orchestrator.py` | 上限 | 40 | 40 | 0 | Governance gate registry guard |
+| deep_research 迭代上限 | `huginn/routes/deep_research.py` | 上限 | 12 | 12 | 0 | Governance gate registry guard |
+| 循环闸位数下限 | `tests/test_arch_gate_registry.py` | 权威 | 9 | 9 | 0 | Governance gate registry guard |
+
 ## 缺口 (gaps)
 
 - 孤儿门 (0): 无
