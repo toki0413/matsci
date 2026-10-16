@@ -630,6 +630,7 @@ _EXPECTED_BUDGET_IDS = frozenset(
         "loop_causal_runner_tool_calls",
         "loop_deli_research",
         "loop_cap_floor",
+        "runtime_probe_floor",
     }
 )
 
@@ -749,6 +750,26 @@ def test_loop_caps_live_within_ceiling():
             f"循环闸位 `{spec['id']}` 活值 {live} > 台账上限 {spec['value']} —— "
             f"扩大自主面须显式更新 BUDGET_SPECS 的 value (可见决策)."
         )
+
+
+# ──────────────────── 能力可运行性探针 (runtime probe) ────────────────────
+
+
+def test_runtime_probe_floor_ratchet_only_shrinks():
+    """可运行性探针清单只增不减: SMOKE_SPECS 条目数 ≥ 台账下限.
+
+    L0/L1 能力可运行性面的探针清单 (SMOKE_SPECS) 若被悄悄删除, 「哪些能力因缺依赖
+    跑不了」的观察面就无声萎缩 —— 与门全绿同时发生. 本棘轮兜底: 条目数下降即红.
+    """
+    floor = ga.budget_value("runtime_probe_floor")
+    spec = next(s for s in ga.BUDGET_SPECS if s["id"] == "runtime_probe_floor")
+    live = ga._probe_current(spec, _AGENT, heavy=False)
+    assert live is not None, "探针清单活值读不到 —— path/变量名失效, 棘轮静默失效."
+    assert live >= floor, (
+        f"可运行性探针清单从 {floor} 降到 {live} —— 探针被删了? "
+        f"若确为有意删除, 显式下调 governance_audit.BUDGET_SPECS 里 "
+        f"runtime_probe_floor 的 value."
+    )
 
 
 # ──────────────────── 豁免/白名单面 + 配置级门 ────────────────────

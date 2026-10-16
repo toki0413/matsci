@@ -156,6 +156,7 @@
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 覆盖率下限 | `pyproject.toml` | 下限 | 60 | 60 | 0 | Governance gate registry guard |
+| 可运行性探针清单下限 | `huginn/capabilities/smoke_specs.py` | 权威 | 4 | 4 | 0 | Governance gate registry guard |
 
 ## 循环闸位 (loop caps)
 
