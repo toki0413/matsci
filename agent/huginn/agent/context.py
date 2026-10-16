@@ -13,6 +13,21 @@ from huginn.utils.prompt_cache import PromptCacheBuilder
 logger = logging.getLogger(__name__)
 
 
+def _capability_note() -> str:
+    """能力面汇总块: 逻辑单一来源在 runtime_probe.capability_note, 此处只做导入隔离.
+
+    诚实边界: 只陈述「哪些能力因缺依赖不可用、可 pip 装什么」, 不暗示能力已可用.
+    非致命: 能力盘点不可用 (或导入失败) 时回落空串 (不注入), 保证 prompt 构建永不崩.
+    """
+    try:
+        from huginn.capabilities.runtime_probe import capability_note
+
+        return capability_note()
+    except Exception:  # 非致命: 能力盘点不可用时回落不注入
+        logger.debug("capability runtime note unavailable", exc_info=True)
+        return ""
+
+
 class ContextMixin:
     """Methods that assemble the prompt context and manage tool visibility."""
 
@@ -150,6 +165,10 @@ class ContextMixin:
                 f"\n\nNote: {', '.join(_missing)} not installed locally. "
                 "Answer parameter questions from knowledge."
             )
+
+        # 能力面汇总 — 每次构建重算(不缓存), 保证装完依赖后不注入陈旧状态 (AC-4).
+        # L0 为纯静态扫描 (不 import 工具模块、无网络), 开销可控.
+        base += _capability_note()
 
         # STABLE_PRINCIPLES: S7 自修改回流进来的 persona 原则. 闭合
         # persona→behavior→memory→knowledge→persona 回路 (G8 加法).

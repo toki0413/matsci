@@ -192,3 +192,20 @@ def summary_line(report: CapabilityRuntimeReport) -> str:
     hint = install_hint(deps)
     tail = f" Install with: {hint}." if hint else ""
     return f"Tool capabilities degraded: {len(bad)} ({names}{more}).{tail}"
+
+
+def capability_note() -> str:
+    """能力面汇总块 (供注入 system prompt): 有降级能力时返回一段, 否则空串.
+
+    每次调用重算 (不缓存), 保证装完依赖后不注入陈旧状态 (AC-4)。
+    绝不抛 —— 探测失败回落空串 (不注入), 保证调用方永不崩 (fail-open)。
+    诚实边界: 只陈述「哪些能力因缺依赖不可用、可 pip 装什么」, 不暗示能力已可用。
+    """
+    try:
+        line = summary_line(build_report(probe_runtime()))
+    except Exception:  # 非致命: 能力盘点失败则不注入
+        logger.debug("capability runtime probe failed", exc_info=True)
+        return ""
+    if line == ALL_OK_LINE:
+        return ""  # 全就绪不注入, 省 token
+    return f"\n\n# Tool Capabilities\n{line}"
