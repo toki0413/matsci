@@ -16,12 +16,12 @@ class CheckpointerBackend(ABC):
     @abstractmethod
     def get(self) -> Any:
         """Return a LangGraph-compatible checkpointer instance."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def close(self) -> None:
         """Release any resources held by the backend."""
-        raise NotImplementedError
+        ...
 
 
 class SQLiteCheckpointerBackend(CheckpointerBackend):

@@ -11,6 +11,7 @@ The implementation is split across:
   middlewares.py — FixDanglingToolCallsMiddleware, RateLimitMiddleware
 """
 
+from huginn.agent.agent_session import AgentSession
 from huginn.agent.core import Agent, HuginnAgent
 
-__all__ = ["HuginnAgent", "Agent"]
+__all__ = ["HuginnAgent", "Agent", "AgentSession"]

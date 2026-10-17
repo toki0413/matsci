@@ -100,7 +100,7 @@ def build_multimodal_content(message: str, image_path: str | Path | bytes) -> li
     """
     blocks: list[dict] = [{"type": "text", "text": message}]
 
-    if isinstance(image_path, (bytes, bytearray)):
+    if isinstance(image_path, bytes | bytearray):
         b64 = base64.b64encode(image_path).decode("ascii")
         blocks.append({
             "type": "image_url",
@@ -129,7 +129,7 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
     vision LLM quantitative hints alongside the raw image. Falls back
     gracefully if the image can't be loaded or numpy is unavailable.
     """
-    if isinstance(image_path, (bytes, bytearray)):
+    if isinstance(image_path, bytes | bytearray):
         return "[CV pre-analysis skipped: raw bytes, no path]"
 
     p = Path(image_path)
@@ -204,7 +204,7 @@ def _cv_qa_diagnostic(image_path: str | Path | bytes) -> str:
     判断"这张图是否值得解读、哪里需要重渲染". best-effort: 非图片/读取失败
     返回空串, 不阻塞主链路.
     """
-    if isinstance(image_path, (bytes, bytearray)):
+    if isinstance(image_path, bytes | bytearray):
         return ""
     p = Path(image_path)
     if not p.is_file() or p.suffix.lower() not in _IMAGE_EXTS:
@@ -246,7 +246,7 @@ def _microscopy_quant_summary(image_path: str | Path | bytes, image_type: str) -
     best-effort: 非显微图 / 调用失败时返回空串, 不阻塞主链路.
     """
     action = _MICROSCOPY_ACTIONS.get(image_type)
-    if action is None or isinstance(image_path, (bytes, bytearray)):
+    if action is None or isinstance(image_path, bytes | bytearray):
         return ""
     p = Path(image_path)
     if not p.is_file():
@@ -373,7 +373,7 @@ def build_cv_context(
             parts.append("Visual encoder unavailable — image_analysis_tool recommended.")
 
     # ── always: tell the LLM an image was attached ──
-    label = "<bytes>" if isinstance(image_path, (bytes, bytearray)) else str(image_path)
+    label = "<bytes>" if isinstance(image_path, bytes | bytearray) else str(image_path)
     parts.append(
         f"User attached an image ({label}). "
         "If you need structured analysis (SEM/TEM/XRD), call image_analysis_tool."

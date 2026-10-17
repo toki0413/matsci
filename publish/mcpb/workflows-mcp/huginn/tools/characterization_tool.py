@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.sci.spectra_parsers import parse_jdx, parse_mzml
 
 
 class CharacterizationInput(BaseModel):
@@ -26,6 +27,8 @@ class CharacterizationInput(BaseModel):
         "pdf_fit",
         "tem_image_analysis",
         "xps_peak_fit",
+        "jdx_parse",
+        "mzml_parse",
     ] = Field(...)
     data_path: str = Field(..., description="Path to CSV/JSON data file")
     output_path: str | None = Field(
@@ -38,14 +41,15 @@ class CharacterizationInput(BaseModel):
 
 
 class CharacterizationTool(HuginnTool):
-    """Analyze XRD, spectroscopy, PDF, microscopy, and XPS data."""
+    """Analyze XRD, spectroscopy, PDF, microscopy, XPS, NMR, and MS data."""
 
     name = "characterization_tool"
     category = "cv"
     profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
-        "Detect peaks in XRD/spectroscopy data, fit PDFs, and analyze "
-        "microscopy / XPS data."
+        "Detect peaks in XRD/spectroscopy data, fit PDFs, analyze "
+        "microscopy / XPS data, and parse NMR (JCAMP-DX .jdx) / mass-spec "
+        "(mzML) files into structured peak tables."
     )
     input_schema = CharacterizationInput
     read_only = True
@@ -74,6 +78,10 @@ class CharacterizationTool(HuginnTool):
                 return self._tem_image_analysis(args)
             if args.action == "xps_peak_fit":
                 return self._xps_peak_fit(args)
+            if args.action == "jdx_parse":
+                return self._jdx_parse(args)
+            if args.action == "mzml_parse":
+                return self._mzml_parse(args)
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
 
@@ -342,6 +350,43 @@ class CharacterizationTool(HuginnTool):
             "n_peaks": len(fit_peaks),
             "background": float(popt[-1]),
         }
+        self._maybe_save(args.output_path, data)
+        return ToolResult(data=data)
+
+    # ── 谱图文件解析 (G-B): 薄适配层, 判据单一来源在 spectra_parsers ──
+
+    def _jdx_parse(self, args: CharacterizationInput) -> ToolResult:
+        """JCAMP-DX (.jdx, 常见 NMR 变体) → 结构化峰表/轨迹.
+
+        解析器 (huginn.tools.sci.spectra_parsers.parse_jdx) 是纯 stdlib 唯一判据:
+        不支持的 DATA FORM 显式 ValueError 点名形态, 此处原样上抛为
+        success=False —— 不静默返回空结果.
+        """
+        text = Path(args.data_path).read_text(encoding="utf-8", errors="replace")
+        try:
+            data = parse_jdx(text)
+        except ValueError as exc:
+            return ToolResult(data=None, success=False, error=str(exc))
+        data["source_file"] = str(args.data_path)
+        self._maybe_save(args.output_path, data)
+        return ToolResult(data=data)
+
+    def _mzml_parse(self, args: CharacterizationInput) -> ToolResult:
+        """mzML (质谱) → 结构化峰表 (mz / intensity).
+
+        max_spectra / max_peaks 由 parameters 透传 (防巨文件爆输出),
+        默认与 parse_mzml 一致.
+        """
+        raw = Path(args.data_path).read_bytes()
+        try:
+            data = parse_mzml(
+                raw,
+                max_spectra=int(args.parameters.get("max_spectra", 5)),
+                max_peaks=int(args.parameters.get("max_peaks", 100)),
+            )
+        except ValueError as exc:
+            return ToolResult(data=None, success=False, error=str(exc))
+        data["source_file"] = str(args.data_path)
         self._maybe_save(args.output_path, data)
         return ToolResult(data=data)
 

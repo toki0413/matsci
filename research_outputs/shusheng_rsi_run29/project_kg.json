@@ -1,0 +1,282 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: structure] The non‑linear transcendental constraint family offers the best",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:33:42.291168",
+      "last_seen": "2026-09-27T18:33:42.291168",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (linear constraints), N_c(w) should remain approximately constant (flat) as w increases, reflecting the low-dimensional solution space. For the fat family (sinusoidal constraints)",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The non‑linear transcendental constraint family offers the best"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:33:42.291213",
+      "last_seen": "2026-09-27T18:33:42.291213",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:33:42.291226",
+      "last_seen": "2026-09-27T18:33:42.291226",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T18:33:42.291237",
+      "last_seen": "2026-09-27T18:33:42.291237",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The non‑linear transcendental constraint family offers the best",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_d85bd61c"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:33:42.291377",
+      "last_seen": "2026-09-27T18:33:42.291377",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "da573ffe935726d9",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "** [DIM: structure] The rigid family (linear constraints) defines a solution spa",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:35:57.039069",
+      "last_seen": "2026-09-27T18:35:57.039069",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (linear constraints) will produce a flat N_c(w) trend (non-increasing) as w increases, with the minimum required width N_c remaining approximately constant (e.g., N_c ≈ 2-4 for y=x) a",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] The rigid family (linear constraints) defines a solution spa"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:35:57.039109",
+      "last_seen": "2026-09-27T18:35:57.039109",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:35:57.039119",
+      "last_seen": "2026-09-27T18:35:57.039119",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T18:35:57.039129",
+      "last_seen": "2026-09-27T18:35:57.039129",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] The rigid family (linear constraints) defines a solution spa",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_6289cdf0"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:35:57.039216",
+      "last_seen": "2026-09-27T18:35:57.039216",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "09ccf03659f46961",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:37:22.031056",
+      "last_seen": "2026-09-27T18:37:22.031056",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The previous assumption that the linear constraint family yields flat N_c(w) is likely wrong. I expect to find that either the \"rigid\" family shows increasing N_c(w) (indicating it is actually fat), o",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure]"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:37:22.031094",
+      "last_seen": "2026-09-27T18:37:22.031094",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:37:22.031106",
+      "last_seen": "2026-09-27T18:37:22.031106",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T18:37:22.031115",
+      "last_seen": "2026-09-27T18:37:22.031115",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure]",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_438d706b"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:37:22.031194",
+      "last_seen": "2026-09-27T18:37:22.031194",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "98023aeef2a9cac9",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The non‑linear transcendental constraint family offers the best",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:33:42.291237",
+      "last_seen": "2026-09-27T18:33:42.291237",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d85bd61c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:33:42.291237",
+      "last_seen": "2026-09-27T18:33:42.291237",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d85bd61c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:33:42.291237",
+      "last_seen": "2026-09-27T18:33:42.291237",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d85bd61c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] The rigid family (linear constraints) defines a solution spa",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:35:57.039129",
+      "last_seen": "2026-09-27T18:35:57.039129",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6289cdf0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:35:57.039129",
+      "last_seen": "2026-09-27T18:35:57.039129",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6289cdf0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:35:57.039129",
+      "last_seen": "2026-09-27T18:35:57.039129",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6289cdf0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure]",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:37:22.031115",
+      "last_seen": "2026-09-27T18:37:22.031115",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_438d706b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:37:22.031115",
+      "last_seen": "2026-09-27T18:37:22.031115",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_438d706b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:37:22.031115",
+      "last_seen": "2026-09-27T18:37:22.031115",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_438d706b"
+    }
+  ]
+}

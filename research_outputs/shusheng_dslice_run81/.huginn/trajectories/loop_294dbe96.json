@@ -1,0 +1,171 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-10-06T04:35:54",
+  "metadata": {
+    "run_id": "loop_294dbe96",
+    "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 ",
+    "phases": [
+      "hypothesize",
+      "report"
+    ],
+    "total_time": 441.3602101802826
+  },
+  "spans": [
+    {
+      "name": "phase:hypothesize",
+      "span_id": "6857ef8d3e4c",
+      "start_time": 1791260966.0262396,
+      "end_time": 1791261342.3722847,
+      "duration_ms": 376346.05,
+      "memory_start_mb": 304.4921875,
+      "memory_end_mb": 413.5390625,
+      "memory_peak_mb": 413.5390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": [
+        {
+          "name": "control_trace",
+          "span_id": "b110b71c0292",
+          "start_time": 1791261342.3572898,
+          "end_time": 1791261342.358013,
+          "duration_ms": 0.72,
+          "memory_start_mb": 413.5390625,
+          "memory_end_mb": 413.5390625,
+          "memory_peak_mb": 413.5390625,
+          "metadata": {
+            "name": "branch_slice_skip",
+            "iteration": 1,
+            "evidence": "slice=layer1_value: budget<372s",
+            "action": "skip"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "11371740abe9",
+          "start_time": 1791261342.358267,
+          "end_time": 1791261342.3583908,
+          "duration_ms": 0.12,
+          "memory_start_mb": 413.5390625,
+          "memory_end_mb": 413.5390625,
+          "memory_peak_mb": 413.5390625,
+          "metadata": {
+            "name": "branch_slice_skip",
+            "iteration": 1,
+            "evidence": "slice=layer2 (return layer1): budget<372s",
+            "action": "skip"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "2bff3589be30",
+          "start_time": 1791261342.3585773,
+          "end_time": 1791261342.3586426,
+          "duration_ms": 0.07,
+          "memory_start_mb": 413.5390625,
+          "memory_end_mb": 413.5390625,
+          "memory_peak_mb": 413.5390625,
+          "metadata": {
+            "name": "collab_branch_incubator",
+            "iteration": 1,
+            "evidence": "use: branches=3 ok=3 valued=0 winner_value=None winner_tokens=8939 depth=2",
+            "action": "use"
+          },
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "phase:report",
+      "span_id": "0d72eb6063a5",
+      "start_time": 1791261344.618218,
+      "end_time": 1791261354.6430764,
+      "duration_ms": 10024.86,
+      "memory_start_mb": 413.5390625,
+      "memory_end_mb": 413.5390625,
+      "memory_peak_mb": 413.5390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": [
+        {
+          "name": "control_trace",
+          "span_id": "298e5a3b499c",
+          "start_time": 1791261354.638962,
+          "end_time": 1791261354.640667,
+          "duration_ms": 1.7,
+          "memory_start_mb": 413.5390625,
+          "memory_end_mb": 413.5390625,
+          "memory_peak_mb": 413.5390625,
+          "metadata": {
+            "name": "report_citation",
+            "iteration": 1,
+            "evidence": "untraceable=6/6",
+            "action": "annotate"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "9d10323e20d2",
+          "start_time": 1791261354.6413312,
+          "end_time": 1791261354.6414094,
+          "duration_ms": 0.08,
+          "memory_start_mb": 413.5390625,
+          "memory_end_mb": 413.5390625,
+          "memory_peak_mb": 413.5390625,
+          "metadata": {
+            "name": "report_discrimination",
+            "iteration": 1,
+            "evidence": "contrast=False values=6",
+            "action": "annotate"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "900d74065542",
+          "start_time": 1791261354.6426363,
+          "end_time": 1791261354.6427052,
+          "duration_ms": 0.07,
+          "memory_start_mb": 413.5390625,
+          "memory_end_mb": 413.5390625,
+          "memory_peak_mb": 413.5390625,
+          "metadata": {
+            "name": "report_decisive",
+            "iteration": 1,
+            "evidence": "binary=False hedge=True",
+            "action": "annotate"
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "tool_calls": [],
+  "summary": {
+    "total_spans": 8,
+    "by_name": {
+      "phase:hypothesize": {
+        "count": 1,
+        "duration_ms": 376346.05,
+        "avg_memory_delta_mb": 109.047,
+        "max_memory_peak_mb": 413.539
+      },
+      "control_trace": {
+        "count": 6,
+        "duration_ms": 2.76,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 413.539
+      },
+      "phase:report": {
+        "count": 1,
+        "duration_ms": 10024.86,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 413.539
+      }
+    }
+  }
+}

@@ -36,6 +36,16 @@
 | [modes-contract.md](modes-contract.md) | active | Mode/Phase 契约（prompt 面，可自动再生成） |
 | [model-tier-contract.md](model-tier-contract.md) | active | 模型档位契约（ModelTier 极简模式聚合面，可自动再生成） |
 | [permission-contract.md](permission-contract.md) | active | 权限契约（PermissionMode + RiskLevel 五档 + PermissionConfig 细粒度面，可自动再生成） |
+| [mece-audit.md](mece-audit.md) | active | MECE 契约审计（奖励/授权/工作流/模式/词汇/工具/钩子/事件/SSE 消费/WS 消费/HTTP API 消费/请求负载/响应结构/WS 请求负载/SSE 事件负载/WS 事件负载/HTTP 请求字段十七面的"宣称 vs 接线"缺口 + 同轴惩罚/跨模块同名/词表漂移/允许表死项/触发无人接/监听挂错通道/帧名挂错端点/HTTP 404·405 死链/前端漏发后端必填负载/前端声明白读后端不返字段/handler 读未声明 WS 字段/前端发未声明 WS 负载字段/前端读的 SSE 帧 payload 顶层字段后端从不发/前端读的 WS 帧 payload 顶层字段后端从不发/HTTP handler 读请求体模型未声明字段/前端发请求体未声明键/body-dict 下标读键而前端从不发 **+ 字段级六面（请求负载/响应结构/WS 请求负载/SSE 事件负载/WS 事件负载/HTTP 请求字段）按角色关系 R1–R4 汇总，一次人工确认**），可自动再生成） |
+| [governance-state.md](governance-state.md) | active | 低熵治理台账（治理门登记 + 孤儿门/悬空门 + 棘轮基线，可自动再生成：`python -m huginn.cli.governance_audit --out docs/governance-state.md`） |
+| [capability-runtime-surface-spec.md](capability-runtime-surface-spec.md) | active | 能力可运行性面（L0 依赖探针 + L1 精选 smoke + 运行时自愈 + 台账棘轮；CLI: `python -m huginn.cli.capability_runtime --json`） |
+| [prompt-output-surface-spec.md](prompt-output-surface-spec.md) | active | Prompt/输出面「声明 vs 生效」缺口系统修复（段生效声明 `applies_to` + 主路径按声明渲染 + 生效面门禁 `test_prompt_contract` + 台账棘轮 `prompt_segment_floor`，已落地） |
+| [capabilities-and-registration-spec.md](capabilities-and-registration-spec.md) | active | 能力增强与外部接入统一制度（写作引导 + 原生多模态引导 + 插件/MCP 注册制度，共享 prompt_segments + 注册表 + Catalog 底座，含逐项落地状态标注） |
+| [cspace-workspace-spec.md](cspace-workspace-spec.md) | active | C-Space 外部化全局工作区设计规格（对齐 J-Space/GWT：概念「在场」可读可控可证伪；载体 `huginn/research/cspace.py`） |
+| [deepthink-cspace-bridge-spec.md](deepthink-cspace-bridge-spec.md) | staging | deep_think → CSpace 桥设计（外部草稿只是「候选在场」，证据证实才 promote 为可引用在场；Design/待实现） |
+| [self-harness-report-spec.md](self-harness-report-spec.md) | active | Self-Harness 报告规范（Better Harness 五维方法论；evidence 三态 Observed/Unobserved/Missing，M1+M2 已落地） |
+| [hosted-deployment-and-gtm.md](hosted-deployment-and-gtm.md) | active | 托管部署落地方案 + 推广形态分析（SaaS 形态迁移：浏览器访问/服务器托管/自部署 LLM） |
+| [science-capability-gap-spec.md](science-capability-gap-spec.md) | active | 科学发现能力对标缺口补齐（分子结构文件输入 MOL/SDF/PDB + NMR·质谱解析 JCAMP-DX/mzML + 复现重跑闭环 reproduce；对标十项标准审计后仅补三缺口，P0 三条已落地：`mol_structure_input`/`spectra_parse`/`reproduce_closed_loop` 三 always_on 锚点入台账，棘轮 16→19 / smoke 4→7） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [layered-streaming-settlement-spec.md](layered-streaming-settlement-spec.md) | active | 分层流式结算规范（缺陷一/二三阶段 P-A/P-B/P-C：流式结算/层间重规划/提前终止，已落地） |
@@ -47,6 +57,7 @@
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
 | [cost-participation-contract.md](cost-participation-contract.md) | active | 成本-剪枝参与感契约（决策点对话 + 成本叙事，已实现） |
 | [INDUSTRIAL_ACCEPTANCE_CHECKLIST.md](INDUSTRIAL_ACCEPTANCE_CHECKLIST.md) | active | 产业级验收清单（可复现门禁：环境/收集/规范/计算链路/执行层证据） |
+| [TECHNICAL_DEBT_PONYTAIL.md](TECHNICAL_DEBT_PONYTAIL.md) | active | `ponytail:` 临时捷径登记（S1/S2 安全·边界级逐条登记 + 防漂移测试） |
 | [SPEC_openworker_adoption](../huginn/SPEC_openworker_adoption.md) | active | OpenWorker 采纳规范 |
 | [SPEC_visual_kb_loop](../huginn/metacog/SPEC_visual_kb_loop.md) | active | 视觉知识库闭环规范 |
 

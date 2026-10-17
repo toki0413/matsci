@@ -231,7 +231,7 @@ def _walk_json_numbers(obj: Any, out: list[float], cap: int) -> None:
         return
     if isinstance(obj, bool):
         return
-    if isinstance(obj, (int, float)):
+    if isinstance(obj, int | float):
         out.append(float(obj))
     elif isinstance(obj, list):
         for x in obj:

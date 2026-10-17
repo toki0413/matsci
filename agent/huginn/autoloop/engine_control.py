@@ -28,14 +28,16 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 # 控制阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.api.event import EventType, WorkflowStageEvent
-from huginn.autoloop.budget import BudgetExhausted
+from huginn.autoloop.budget import BudgetExhausted, IterationBudget
 from huginn.autoloop.phase_gate import PhaseGate, get_shared_phase_gate_state
+from huginn.env_access import env_bool, env_float
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -482,7 +484,7 @@ class EngineControl:
         """
         if self._budget is None or self._budget_degraded:
             return True
-        tier = self._budget.for_iteration(iteration)
+        tier = self._resolve_budget_tier(iteration)
         mode = plan.get("mode")
         if tier.allows(mode):
             # 这轮通过了就清掉该档位的拒绝计数, 下次重新数
@@ -520,6 +522,120 @@ class EngineControl:
         )
         return False
 
+    # ── D1: 统一 deadline 原语 ──────────────────────────────────────
+    # 资源判据下沉为**单一接口**: 所有可能长阻塞的动作 (DFT/MD、code_lab 修复循环、
+    # streaming 降级、BranchIncubator 多路多轮、dynamic_workflow 并行子任务) 在
+    # **启动前**查一次 `_budget_exhausted()`, 不启动一个必然超时的动作. 时间口径
+    # 只有一处实现 (GoalStore.wall_clock_remaining), 这里不重算.
+    # 回滚: HUGINN_BUDGET_DEADLINE_UNIFIED=0 恢复"各写各的"旧行为.
+    def _budget_remaining_s(self) -> float | None:
+        """挂钟剩余秒数; 无挂钟限制 (非长程 / 无 goal) 返回 None.
+
+        语义对齐 `_long_horizon_keep_going` 的"本 run goal 优先"防串台逻辑:
+        先取 `self._run_goal_id` 对应的 goal, 取不到才退回全局 active, 避免跨 run
+        残留旧 goal 的挂钟压过当日 goal.
+        """
+        if os.environ.get("HUGINN_BUDGET_DEADLINE_UNIFIED", "1") != "1":
+            return None  # 回滚开关: 旧行为各写各的
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+
+            _gs = get_goal_store()
+            _run_gid = getattr(self, "_run_goal_id", None)
+            _goal = _gs.get_goal(_run_gid) if _run_gid else None
+            if _goal is None:
+                _goal = _gs.get_active()
+            return _gs.wall_clock_remaining(_goal.id) if _goal else None
+        except Exception:  # 防御: 预算查询失败 fail-open, 不误判耗尽
+            logger.debug("budget_remaining_s failed", exc_info=True)
+            return None
+
+    def _budget_exhausted(self) -> bool:
+        """单一判据: 长程模式且挂钟耗尽 → True; 否则 False.
+
+        纯时间边界, 不做科学判断; fail-open (拿不到预算视为未耗尽).
+        非长程模式恒 False —— 保持非长程路径行为零变化.
+        """
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return False
+        remaining = self._budget_remaining_s()
+        return remaining is not None and remaining <= 0
+
+    # ── D6: code_lab 修复循环细粒度切片 (execute 侧补 D-slice) ────────
+    # D1 的 `_budget_exhausted()` 是**硬 0 门**: 只在剩余 ≤0 时才拦. 但 code_lab
+    # 一次尝试 = 书生写码 (LLM) + 沙箱真跑 (最长 `HUGINN_CODELAB_TIMEOUT_S`), 若
+    # 剩余 30s 而单次尝试要 200s, 仍会启动并烧穿挂钟 (run79 实测 execute 857.5s,
+    # 该轮 `HUGINN_CODELAB_TIMEOUT_S=60` → 超支主要来自作者 LLM 调用 × 修复轮数).
+    # D-slice 同款思路, 但 execute 的"尝试"是**产出证据的唯一路径 (核心 slice)**,
+    # 不能像 BranchIncubator 那样整片跳过; 故分两层:
+    #   ① 每次尝试的沙箱超时**封顶到剩余预算** → 单片不可能越界 (核心 slice 自限);
+    #   ② **修复重写**是可选 slice, 启动前查可负担性, 门槛**自校准** = max(固定下限,
+    #      上一片实测挂钟).
+    # 回滚: HUGINN_CODELAB_SLICE=0; 非长程/无 goal 时 `_budget_remaining_s()` 为
+    # None → 两函数均 fail-open, 行为 100% 不变.
+    def _codelab_slice_budget(self) -> float | None:
+        """本 run 剩余挂钟; 关开关 / 非长程 → None (D6 fail-open)."""
+        if not env_bool("HUGINN_CODELAB_SLICE"):
+            return None
+        return self._budget_remaining_s()
+
+    def _codelab_attempt_timeout(self) -> float | None:
+        """D6①: 把单次 code_lab 沙箱超时封顶到剩余预算 (留收尾余量).
+
+        返回 None = 不封顶, 用 env 默认 `HUGINN_CODELAB_TIMEOUT_S` (非长程行为不变).
+        """
+        rem = self._codelab_slice_budget()
+        if rem is None:
+            return None
+        base = env_float("HUGINN_CODELAB_TIMEOUT_S")
+        reserve = env_float("HUGINN_CODELAB_TAIL_RESERVE_S")
+        return max(1.0, min(base, rem - reserve))
+
+    def _codelab_repair_affordable(self, est_cost_s: float) -> bool:
+        """D6②: 可选 slice (修复重写) 启动前查可负担性.
+
+        est_cost_s 是上一片 (上一次尝试: 沙箱 + 其后的作者 LLM) 的**实测挂钟**,
+        作下一片的成本估计. 门槛 `max(固定下限, 实测)` —— 自校准, 不拍脑袋定硬阈值.
+        非长程/关开关 → True (照跑, 行为不变).
+        """
+        rem = self._codelab_slice_budget()
+        if rem is None:
+            return True
+        min_s = env_float("HUGINN_CODELAB_SLICE_MIN_S")
+        return rem >= max(min_s, est_cost_s)
+
+    # ── D2: 档位预算改按剩余预算 ────────────────────────────────────
+    def _resolve_budget_tier(self, iteration: int) -> IterationBudget:
+        """按**剩余挂钟预算比例**取档, 与迭代序号档取严 (iteration 仍作上界兜底).
+
+        无挂钟预算 (非长程 / 无 goal) → 完全回退 ``for_iteration``, 非长程路径
+        零变化. 回滚: ``HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING=0``.
+        """
+        by_iter = self._budget.for_iteration(iteration)
+        # 只在长程模式启用 —— 非长程路径零变化; 且避免全局残留 goal 误触发.
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return by_iter
+        if os.environ.get("HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING", "1") != "1":
+            return by_iter
+        try:
+            from huginn.autoloop.budget import stricter_tier
+            from huginn.autoloop.goal_store import get_goal_store
+
+            _gs = get_goal_store()
+            _run_gid = getattr(self, "_run_goal_id", None)
+            _goal = _gs.get_goal(_run_gid) if _run_gid else None
+            if _goal is None:
+                _goal = _gs.get_active()
+            if _goal is None or _goal.wall_clock_budget_seconds <= 0:
+                return by_iter
+            _rem = self._budget_remaining_s()
+            if _rem is None:
+                return by_iter
+            _frac = _rem / _goal.wall_clock_budget_seconds
+            return stricter_tier(by_iter, self._budget.for_remaining(_frac))
+        except Exception:  # 防御: 比例取档失败回退按迭代序号
+            logger.debug("resolve budget tier by remaining failed", exc_info=True)
+            return by_iter
 
     async def _drain_side_questions(self) -> int:
         """轮空时把 pending 侧边问题答掉. 返回答了几个.

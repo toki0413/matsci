@@ -1,0 +1,115 @@
+[
+  {
+    "skill_id": "skill_reward_autoloop_huginn_1790935745311",
+    "name": "Autoloop High-Reward Workflow (huginn)",
+    "description": "Auto-refreshed from R_phys>=0.7 executions, avg reward 1.00",
+    "trigger_keywords": [
+      "autoloop",
+      "huginn",
+      "error",
+      "label",
+      "plan",
+      "value",
+      "processing",
+      "prompt",
+      "hypothesis",
+      "input"
+    ],
+    "workflow_steps": [
+      {
+        "tool": "explore",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "workflow",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "workflow",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      }
+    ],
+    "required_tools": [
+      "workflow",
+      "explore"
+    ],
+    "source_session": "loop_5",
+    "extraction_confidence": 0.9,
+    "usage_count": 0,
+    "success_count": 0,
+    "created_at": "2026-10-02T10:09:05.311900"
+  },
+  {
+    "skill_id": "skill_reward_autoloop_huginn_1790936207540",
+    "name": "Autoloop High-Reward Workflow (huginn)",
+    "description": "Auto-extracted from R_phys>=0.7 executions, avg reward 1.00",
+    "trigger_keywords": [
+      "autoloop",
+      "huginn",
+      "error",
+      "plan",
+      "label",
+      "value",
+      "processing",
+      "prompt",
+      "width",
+      "prediction"
+    ],
+    "workflow_steps": [
+      {
+        "tool": "explore",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "workflow",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "workflow",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "coder",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      }
+    ],
+    "required_tools": [
+      "workflow",
+      "coder",
+      "explore"
+    ],
+    "source_session": "loop_5",
+    "extraction_confidence": 0.9,
+    "usage_count": 0,
+    "success_count": 0,
+    "created_at": "2026-10-02T10:16:47.540493"
+  }
+]

@@ -382,11 +382,7 @@ class ReflectionMixin:
                     if new_state == CognitiveState.S7_SELF_MODIFY:
                         self._needs_compaction = False
                         try:
-                            from huginn.utils.async_bridge import run_async
-
-                            run_async(
-                                self._handle_s7_self_modify(reflection, self._csm)
-                            )
+                            self._schedule_s7_self_modify(reflection, self._csm)
                         except Exception:  # 防御: S7自改处理失败仅告警
                             logger.warning(
                                 "S7 self-modify handler failed", exc_info=True
@@ -594,6 +590,33 @@ class ReflectionMixin:
         """
         sp = getattr(self, "system_prompt", "") or ""
         return sp[:500]
+
+    def _schedule_s7_self_modify(self, reflection_result: Any, csm: Any) -> None:
+        """把 S7 meta-critique 调度到 agent 主事件循环上跑.
+
+        不用 run_async: 它在独立线程开新 loop, 而 meta critique 复用
+        self.model, 其 httpx AsyncClient 绑定在创建它的主 loop 上 —— 换 loop
+        必报 "Event ... is bound to a different event loop", S7 退化成全 reject.
+        有 running loop 时 create_task 挂主循环 (fire-and-forget; S7 副作用是
+        写 stable_principle / rejection 日志并回 S1, 不阻塞本轮反思); 纯 sync
+        CLI (无 running loop) 才退回 asyncio.run.
+        """
+        import asyncio
+
+        coro = self._handle_s7_self_modify(reflection_result, csm)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
+        task = loop.create_task(coro)
+        # 持强引用: asyncio 只保弱引用, 否则 task 可能被 GC 取消.
+        tasks = getattr(self, "_s7_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._s7_tasks = tasks
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     async def _handle_s7_self_modify(self, reflection_result: Any, csm: Any) -> None:
         """S7 状态: 把 gap 总结成 proposal, 调 meta critique 评估,

@@ -774,7 +774,7 @@ class SmartIngester:
         """Python 值 -> 类型名, 给摘要用."""
         if isinstance(val, bool):
             return "bool"
-        if isinstance(val, (int, float)):
+        if isinstance(val, int | float):
             return "number"
         if isinstance(val, str):
             return "string"

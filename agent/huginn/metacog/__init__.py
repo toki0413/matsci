@@ -24,41 +24,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def recall_context(category: str, query: str = "", top_k: int = 3) -> list[dict]:
-    """通用 context recall — 从 long-term memory 按类别捞外置化上下文 (G19).
-
-    支持的 category: autoloop_summary / benchmark_run_summary / skill_invocation /
-    knowledge_seed / stable_principles / hypothesis / failure / subgoal 等.
-
-    Args:
-        category: memory.longterm 的 category 字段
-        query: 可选, 用于 FTS 过滤
-        top_k: 最多返回多少条
-
-    返回 list[dict], 每条至少含 {"content": str, "category": str, ...}
-    失败返回空 list — 调用方不应因 memory 不可用而崩溃.
-    """
-    try:
-        from huginn.memory.longterm import LongTermMemory
-        # ponytail: 每次新建实例, 不缓存. 当前 metacog 没有持有 memory_manager 的入口,
-        # 临时实例化开销可接受 (SQLite 即开即关). 升级路径: 让 engine 注入 memory_manager, 复用连接池.
-        mem = LongTermMemory()
-        # semantic=False: 确定性 + 不依赖 vector_store 配置, audit/recall 一致
-        results = mem.retrieve(
-            query=query, category=category, top_k=top_k, semantic=False
-        )
-        return results if results else []
-    except Exception as e:
-        logger.debug(f"recall_context({category}) failed: {e}")
-        return []
-
-
-def recall_audit_context(category: str, query: str = "", limit: int = 20) -> list[dict]:
-    """向后兼容 wrapper — 老的 audit 入口, 委托给通用 recall_context.
-
-    签名不变 (limit 参数保留), 内部把 limit 映射到 top_k.
-    """
-    return recall_context(category=category, query=query, top_k=limit)
+# recall 工具已下沉到叶子模块 audit_context —— 子模块引用它不再反向依赖本包
+# __init__, 从而断开 metacog 导入环. 这里 re-export 保持对外的既有 API 不变.
+from huginn.metacog.audit_context import recall_audit_context, recall_context  # noqa: E402
 
 
 # === G43: recall 策略学习 — v4 预留接口第 2 项 ===

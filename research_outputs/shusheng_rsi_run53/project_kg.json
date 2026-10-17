@@ -1,0 +1,1738 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[GEOMETRY]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:59:10.243085",
+      "last_seen": "2026-09-30T10:59:10.243085",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain small (≤16) and roughly constant or sublinear in w across tested range, indicating solution space rigidity; if N_c grows rapidly or saturates at high width, hypothesis may be falsif",
+      "persona": "reviewer",
+      "id": "experiment:[GEOMETRY]"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243129",
+      "last_seen": "2026-09-30T10:59:10.243129",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243143",
+      "last_seen": "2026-09-30T10:59:10.243143",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "members": [
+        "experiment:[GEOMETRY]",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:59:10.243227",
+      "last_seen": "2026-09-30T10:59:10.243227",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6862bc8d085063e7",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:03:41.346071",
+      "last_seen": "2026-09-30T11:03:41.346071",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will reveal a critical constraint density w_c below which N_c(w) remains constant (rigid regime, e.g., N_c ≈ 8-16) and above which N_c(w) grows rapidly (fat regime). The transition will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti"
+    },
+    {
+      "label": "plan_coder_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346112",
+      "last_seen": "2026-09-30T11:03:41.346112",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346121",
+      "last_seen": "2026-09-30T11:03:41.346121",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti",
+        "Method:plan_coder_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:03:41.346203",
+      "last_seen": "2026-09-30T11:03:41.346203",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ef8f7d30045a7ffb",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: Optimization] The learning dynamics induce a phase transition in solution ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:05:39.567200",
+      "last_seen": "2026-09-30T11:05:39.567200",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For w < w_c, N_c(w) will saturate at a finite value (e.g., N_c ≈ 16-32) independent of w, indicating a rigid solution phase. For w > w_c, N_c(w) will increase sharply or remain unbounded, indicating a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Optimization] The learning dynamics induce a phase transition in solution"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567241",
+      "last_seen": "2026-09-30T11:05:39.567241",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567250",
+      "last_seen": "2026-09-30T11:05:39.567250",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Optimization] The learning dynamics induce a phase transition in solution",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:05:39.567329",
+      "last_seen": "2026-09-30T11:05:39.567329",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "52b85e39dce6ed50",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:07:53.972816",
+      "last_seen": "2026-09-30T11:07:53.972816",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For polynomial target functions, $N_c(w)$ will remain small and bounded ($N_c < 32$) across all tested $w$, indicating the solution space is rigid and networks efficiently capture the underlying struc",
+      "persona": "reviewer",
+      "id": "experiment:**"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:07:53.972858",
+      "last_seen": "2026-09-30T11:07:53.972858",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:07:53.972867",
+      "last_seen": "2026-09-30T11:07:53.972867",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:07:53.972876",
+      "last_seen": "2026-09-30T11:07:53.972876",
+      "mentions": 1,
+      "members": [
+        "experiment:**",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_4b6d8700"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:07:53.972956",
+      "last_seen": "2026-09-30T11:07:53.972956",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "93e94ae69815c08b",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[STRUCTURE] The minimal network capacity N_c(w) is determined by the rank of the",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:12:51.029731",
+      "last_seen": "2026-09-30T11:12:51.029731",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at a small constant value (e.g., N_c ≈ 8-16) independent of w for w above a threshold (~10-20), confirming the hypothesis that minimal capacity is determined by the intrinsic dime",
+      "persona": "reviewer",
+      "id": "experiment:[STRUCTURE] The minimal network capacity N_c(w) is determined by the rank of the"
+    },
+    {
+      "label": "plan_workflow_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:12:51.029770",
+      "last_seen": "2026-09-30T11:12:51.029770",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:12:51.029782",
+      "last_seen": "2026-09-30T11:12:51.029782",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:12:51.029791",
+      "last_seen": "2026-09-30T11:12:51.029791",
+      "mentions": 1,
+      "members": [
+        "experiment:[STRUCTURE] The minimal network capacity N_c(w) is determined by the rank of the",
+        "Method:plan_workflow_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_cb0aee0e"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:12:51.029860",
+      "last_seen": "2026-09-30T11:12:51.029860",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b69c58c8620118ab",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:14:06.016572",
+      "last_seen": "2026-09-30T11:14:06.016572",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For constraints drawn from a d-dimensional subspace (e.g., polynomials of degree d), N_c(w) will remain approximately constant (saturation plateau) for w ≤ d, then exhibit a sharp step increase when w",
+      "persona": "reviewer",
+      "id": "experiment:[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016609",
+      "last_seen": "2026-09-30T11:14:06.016609",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016618",
+      "last_seen": "2026-09-30T11:14:06.016618",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "members": [
+        "experiment:[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:14:06.016724",
+      "last_seen": "2026-09-30T11:14:06.016724",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7a3c9555481cf2de",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "[DIM: geometry] The solution space of constraints sampled from a smooth manifold",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:16:51.342819",
+      "last_seen": "2026-09-30T11:16:51.342819",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The estimated intrinsic dimension $d_{est}$ will converge to the true $d$ as sampling density increases, and the solution set will show low variance under perturbations (indicating rigidity), independ",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space of constraints sampled from a smooth manifold"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:16:51.342856",
+      "last_seen": "2026-09-30T11:16:51.342856",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:16:51.342865",
+      "last_seen": "2026-09-30T11:16:51.342865",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:16:51.342874",
+      "last_seen": "2026-09-30T11:16:51.342874",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space of constraints sampled from a smooth manifold",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_bba6c239"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:16:51.342944",
+      "last_seen": "2026-09-30T11:16:51.342944",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d2a8f2e338543f24",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The minimal network capacity $N_c(w)$ is determined by the rank",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:18:02.809354",
+      "last_seen": "2026-09-30T11:18:02.809354",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family (dependent constraints), N_c(w) will saturate at a constant value w_s (rank of maximal independent subset) for w > w_s. For fat family (independent constraints), N_c(w) will grow line",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimal network capacity $N_c(w)$ is determined by the rank"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:18:02.809392",
+      "last_seen": "2026-09-30T11:18:02.809392",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:18:02.809402",
+      "last_seen": "2026-09-30T11:18:02.809402",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:18:02.809412",
+      "last_seen": "2026-09-30T11:18:02.809412",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal network capacity $N_c(w)$ is determined by the rank",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_1e790923"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:18:02.809487",
+      "last_seen": "2026-09-30T11:18:02.809487",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5fbbcdedcaca89b4",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:19:14.386984",
+      "last_seen": "2026-09-30T11:19:14.386984",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will remain approximately constant (scaling with $d$) for $w \\lesssim \\text{covering number}$, then exhibit a sharp increase (jump to fat regime) when $w$ exceeds the covering number, confirm",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387022",
+      "last_seen": "2026-09-30T11:19:14.387022",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387031",
+      "last_seen": "2026-09-30T11:19:14.387031",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:19:14.387117",
+      "last_seen": "2026-09-30T11:19:14.387117",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4f5b1566f694eae4",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
+    },
+    {
+      "label": "[DIM: STRUCTURE] The minimal network capacity $N_c(w)$ is determined by the rank",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:35:41.675693",
+      "last_seen": "2026-09-30T11:35:41.675693",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will remain small (≤32) and roughly constant or sublinear in $w$ across the tested range, demonstrating that the minimal network capacity saturates at a value related to the constraint matrix",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: STRUCTURE] The minimal network capacity $N_c(w)$ is determined by the rank"
+    },
+    {
+      "label": "plan_coder_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:35:41.675731",
+      "last_seen": "2026-09-30T11:35:41.675731",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:35:41.675741",
+      "last_seen": "2026-09-30T11:35:41.675741",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:35:41.675750",
+      "last_seen": "2026-09-30T11:35:41.675750",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: STRUCTURE] The minimal network capacity $N_c(w)$ is determined by the rank",
+        "Method:plan_coder_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_301d38df"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:35:41.675820",
+      "last_seen": "2026-09-30T11:35:41.675820",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ba8a9b4d2fe1a434",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:40:27.784547",
+      "last_seen": "2026-09-30T11:40:27.784547",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will initially grow approximately linearly with w (slope ~0.5) for small w, then saturate at some N_max (e.g., ~64–128) as network capacity becomes sufficient to represent the constraint manifo",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o"
+    },
+    {
+      "label": "plan_workflow_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784585",
+      "last_seen": "2026-09-30T11:40:27.784585",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784595",
+      "last_seen": "2026-09-30T11:40:27.784595",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o",
+        "Method:plan_workflow_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:40:27.784693",
+      "last_seen": "2026-09-30T11:40:27.784693",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b3168672fec80694",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: OPTIMIZATION]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:42:33.670180",
+      "last_seen": "2026-09-30T11:42:33.670180",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe a sharp phase transition at a critical constraint density $w_c$: for $w < w_c$, $N_c(w)$ remains small and finite (rigid regime); for $w > w_c$, $N_c(w)$ grows rapidly or becomes",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: OPTIMIZATION]"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670216",
+      "last_seen": "2026-09-30T11:42:33.670216",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670225",
+      "last_seen": "2026-09-30T11:42:33.670225",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: OPTIMIZATION]",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:42:33.670307",
+      "last_seen": "2026-09-30T11:42:33.670307",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c134bf1ff6f491a5",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "** [DIM: OPTIMIZATION] | The minimal width $N_c(w)$ required to achieve zero vio",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:43:40.667650",
+      "last_seen": "2026-09-30T11:43:40.667650",
+      "mentions": 1,
+      "iteration": 100,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the solution space is rigid, N_c(w) will remain approximately constant (e.g., N_c ≈ 8-16) across w ∈ [4, 32]. If the solution space is fat, N_c(w) will increase significantly (e.g., doubling or mor",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: OPTIMIZATION] | The minimal width $N_c(w)$ required to achieve zero vio"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:43:40.667689",
+      "last_seen": "2026-09-30T11:43:40.667689",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:43:40.667698",
+      "last_seen": "2026-09-30T11:43:40.667698",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:43:40.667707",
+      "last_seen": "2026-09-30T11:43:40.667707",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: OPTIMIZATION] | The minimal width $N_c(w)$ required to achieve zero vio",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_5c0dd8c1"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:43:40.667783",
+      "last_seen": "2026-09-30T11:43:40.667783",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5d901024a717d033",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:44:40.184037",
+      "last_seen": "2026-09-30T11:44:40.184037",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will generate a plot of $N_c(w)$ vs $w$. If the solution space is rigid (as suggested by the previous high surprise on constant scaling), we expect $N_c(w)$ to plateau at a small finite val",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184076",
+      "last_seen": "2026-09-30T11:44:40.184076",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184085",
+      "last_seen": "2026-09-30T11:44:40.184085",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:44:40.184166",
+      "last_seen": "2026-09-30T11:44:40.184166",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e54ffbaf3831c42e",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:45:35.607527",
+      "last_seen": "2026-09-30T11:45:35.607527",
+      "mentions": 1,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The scan will produce a curve of N_c(w) vs w. If the solution space is rigid, N_c(w) will plateau at a small finite value (e.g., N_c ≈ 10-20) as w increases, with training error ≤ 1e-3 and hold-out er",
+      "persona": "reviewer",
+      "id": "experiment:** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607565",
+      "last_seen": "2026-09-30T11:45:35.607565",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607575",
+      "last_seen": "2026-09-30T11:45:35.607575",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "members": [
+        "experiment:** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:45:35.607653",
+      "last_seen": "2026-09-30T11:45:35.607653",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3ff124b97d8aacb4",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "'. ... State the mathematics explicitly ... before proposing numerical experimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:47:50.432793",
+      "last_seen": "2026-09-30T11:47:50.432793",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Explicitly define the mathematical structure of bootstrap solution space rigidity: for a function class F, define the solution space S_w = {f ∈ F : |f(x_i) - y_i| ≤ ε, i=1..w} for w analytical constra",
+      "persona": "reviewer",
+      "id": "experiment:'. ... State the mathematics explicitly ... before proposing numerical experimen"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432834",
+      "last_seen": "2026-09-30T11:47:50.432834",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432844",
+      "last_seen": "2026-09-30T11:47:50.432844",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "members": [
+        "experiment:'. ... State the mathematics explicitly ... before proposing numerical experimen",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:47:50.432933",
+      "last_seen": "2026-09-30T11:47:50.432933",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0ba67ae47221921a",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
+    },
+    {
+      "label": "**[GEOMETRY: Manifold Constraint]** - This hypothesis is the most novel because ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:50:31.823538",
+      "last_seen": "2026-09-30T11:50:31.823538",
+      "mentions": 1,
+      "iteration": 120,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will plateau at a finite value near d (e.g., d=2 for circle, d=3 for sphere) as w increases, indicating geometric rigidity; if N_c grows with w or remains unbounded within scan range, hypothesi",
+      "persona": "reviewer",
+      "id": "experiment:**[GEOMETRY: Manifold Constraint]** - This hypothesis is the most novel because"
+    },
+    {
+      "label": "plan_explore_iter120",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:50:31.823580",
+      "last_seen": "2026-09-30T11:50:31.823580",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter120"
+    },
+    {
+      "label": "pass_iter120",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:50:31.823590",
+      "last_seen": "2026-09-30T11:50:31.823590",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter120"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:50:31.823600",
+      "last_seen": "2026-09-30T11:50:31.823600",
+      "mentions": 1,
+      "members": [
+        "experiment:**[GEOMETRY: Manifold Constraint]** - This hypothesis is the most novel because",
+        "Method:plan_explore_iter120",
+        "Fact:pass_iter120"
+      ],
+      "iteration": 120,
+      "id": "he_experiment_pipeline_b44e0c73"
+    },
+    {
+      "label": "reviewer_iter120",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:50:31.823678",
+      "last_seen": "2026-09-30T11:50:31.823678",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "32d1d3a3c5a09067",
+      "r_phys": 1.0,
+      "iteration": 120,
+      "id": "persona_use:reviewer_iter120"
+    },
+    {
+      "label": "[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:52:17.714563",
+      "last_seen": "2026-09-30T11:52:17.714563",
+      "mentions": 1,
+      "iteration": 125,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will plateau at a finite value (N_c ≈ 2 for circle constraints) independent of w, demonstrating the algebraic variety rank saturation effect. The Jacobian rank will be computed numerically and",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func"
+    },
+    {
+      "label": "plan_explore_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714610",
+      "last_seen": "2026-09-30T11:52:17.714610",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714620",
+      "last_seen": "2026-09-30T11:52:17.714620",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func",
+        "Method:plan_explore_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:52:17.714707",
+      "last_seen": "2026-09-30T11:52:17.714707",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ff1148db341abd0f",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:53:24.024382",
+      "last_seen": "2026-09-30T11:53:24.024382",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For linear constraints, $N_c$ will remain constant (rigid behavior). For the algebraic variety (circle), $N_c$ will increase with width $w$, exhibiting a trend consistent with $w / \\log(w)$ rather tha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024421",
+      "last_seen": "2026-09-30T11:53:24.024421",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024430",
+      "last_seen": "2026-09-30T11:53:24.024430",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_703d4c8d"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:53:24.024510",
+      "last_seen": "2026-09-30T11:53:24.024510",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "773136ed825804b3",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[GEOMETRY]",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Optimization] The learning dynamics induce a phase transition in solution",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:07:53.972876",
+      "last_seen": "2026-09-30T11:07:53.972876",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6d8700"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:07:53.972876",
+      "last_seen": "2026-09-30T11:07:53.972876",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6d8700"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:07:53.972876",
+      "last_seen": "2026-09-30T11:07:53.972876",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6d8700"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[STRUCTURE] The minimal network capacity N_c(w) is determined by the rank of the",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:12:51.029791",
+      "last_seen": "2026-09-30T11:12:51.029791",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cb0aee0e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:12:51.029791",
+      "last_seen": "2026-09-30T11:12:51.029791",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cb0aee0e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:12:51.029791",
+      "last_seen": "2026-09-30T11:12:51.029791",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cb0aee0e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space of constraints sampled from a smooth manifold",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:16:51.342874",
+      "last_seen": "2026-09-30T11:16:51.342874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bba6c239"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:16:51.342874",
+      "last_seen": "2026-09-30T11:16:51.342874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bba6c239"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:16:51.342874",
+      "last_seen": "2026-09-30T11:16:51.342874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bba6c239"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal network capacity $N_c(w)$ is determined by the rank",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:18:02.809412",
+      "last_seen": "2026-09-30T11:18:02.809412",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1e790923"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:18:02.809412",
+      "last_seen": "2026-09-30T11:18:02.809412",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1e790923"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:18:02.809412",
+      "last_seen": "2026-09-30T11:18:02.809412",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1e790923"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: STRUCTURE] The minimal network capacity $N_c(w)$ is determined by the rank",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:35:41.675750",
+      "last_seen": "2026-09-30T11:35:41.675750",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_301d38df"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:35:41.675750",
+      "last_seen": "2026-09-30T11:35:41.675750",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_301d38df"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:35:41.675750",
+      "last_seen": "2026-09-30T11:35:41.675750",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_301d38df"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: OPTIMIZATION]",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: OPTIMIZATION] | The minimal width $N_c(w)$ required to achieve zero vio",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:43:40.667707",
+      "last_seen": "2026-09-30T11:43:40.667707",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c0dd8c1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:43:40.667707",
+      "last_seen": "2026-09-30T11:43:40.667707",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c0dd8c1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:43:40.667707",
+      "last_seen": "2026-09-30T11:43:40.667707",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c0dd8c1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'. ... State the mathematics explicitly ... before proposing numerical experimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[GEOMETRY: Manifold Constraint]** - This hypothesis is the most novel because",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:50:31.823600",
+      "last_seen": "2026-09-30T11:50:31.823600",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b44e0c73"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:50:31.823600",
+      "last_seen": "2026-09-30T11:50:31.823600",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b44e0c73"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:50:31.823600",
+      "last_seen": "2026-09-30T11:50:31.823600",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b44e0c73"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_703d4c8d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_703d4c8d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_703d4c8d"
+    }
+  ]
+}

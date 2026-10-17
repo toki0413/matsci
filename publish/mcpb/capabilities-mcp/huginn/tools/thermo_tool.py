@@ -226,6 +226,8 @@ class ThermoToolOutput(BaseModel):
     # 查询条件回显
     conditions: dict[str, Any] | None = None
     warnings: list[str] = []
+    # 热力学关系量纲自检(契约层, 非学习) — 每条 {name, expr, inferred, expected, ok, error}
+    dimensional_checks: list[dict[str, Any]] | None = None
 
 
 class ThermoTool(HuginnTool):
@@ -278,7 +280,9 @@ class ThermoTool(HuginnTool):
 
         # md_thermo 只用 numpy 涨落公式, 也不依赖 thermo 库
         if args.action == "md_thermo":
-            return await self._md_thermo(args, context)
+            return self._attach_thermo_checks(
+                await self._md_thermo(args, context)
+            )
 
         if not _thermo_available():
             return ToolResult(
@@ -307,7 +311,7 @@ class ThermoTool(HuginnTool):
             "mixture": self._handle_mixture,
         }
         handler = handlers[args.action]
-        return await handler(args, Chemical, Mixture)
+        return self._attach_thermo_checks(await handler(args, Chemical, Mixture))
 
     # ── action handlers ──────────────────────────────────────────────
 
@@ -725,6 +729,84 @@ class ThermoTool(HuginnTool):
         return ToolResult(data=output.model_dump(), success=True)
 
     # ── helpers ──────────────────────────────────────────────────────
+
+    def _attach_thermo_checks(self, result: ToolResult) -> ToolResult:
+        """把热力学关系量纲自检结果附着到输出(契约层, 非学习, 不阻断查询).
+
+        这些是固定物理定律(G=H−T·S / F=E−T·S / Cv 涨落 / dG=−S·dT+V·dP), 量纲本
+        就自洽; 自检的价值是在实现出现公式笔误/单位指针漂移时第一时间如实暴露, 而
+        不是静默产出错误数值. 查询本身仍继续, 只是输出里多了可复核的量纲自证.
+        """
+        if not result.success or not isinstance(result.data, dict):
+            return result
+        _ok, checks = self._thermo_dimensional_precheck()
+        result.data["dimensional_checks"] = checks
+        return result
+
+    @staticmethod
+    def _thermo_dimensional_precheck() -> tuple[bool, list[dict[str, Any]]]:
+        """核心热力学关系的量纲自检(契约层, 非学习) — 公式回归守卫.
+
+        与 structural_analytical 的 ``_structural_dimensional_precheck`` 同一套路:
+        把公式当字符串交给 ``external_validator.check_expression_dimensions`` (sympy +
+        契约层 UnitRegistry) 推断量纲并与声明量纲对账. ``ok=False`` 且 error 为空表示
+        真量的量纲不匹配(公式/单位声明笔误); error 非空表示量纲引擎不可用(如实报).
+        """
+        from huginn.research.external_validator import check_expression_dimensions
+
+        # 符号单位表: 均可用契约层 UnitRegistry 解析. var_e 是能量方差, 量纲为 J²/mol².
+        checks: list[dict[str, Any]] = []
+
+        # G = H − T·S → [J/mol] (Gibbs 自由能 = 焓 − 温度×熵)
+        checks.append({
+            "name": "gibbs_identity",
+            "expr": "H - T*S",
+            **check_expression_dimensions(
+                "H - T*S",
+                {"H": "J/mol", "T": "K", "S": "J/(mol·K)"},
+                "J/mol",
+            ),
+        })
+
+        # F = E − T·S → [J/mol] (Helmholtz 自由能, md_thermo 用到)
+        checks.append({
+            "name": "helmholtz_free_energy",
+            "expr": "E - T*S",
+            **check_expression_dimensions(
+                "E - T*S",
+                {"E": "J/mol", "T": "K", "S": "J/(mol·K)"},
+                "J/mol",
+            ),
+        })
+
+        # Cv = Var(E)/(k_B·T²·N) → [J/(mol·K)] (能量涨落公式)
+        checks.append({
+            "name": "cv_fluctuation",
+            "expr": "var_e/(kb*T**2*N)",
+            **check_expression_dimensions(
+                "var_e/(kb*T**2*N)",
+                {"var_e": "J2/mol2", "kb": "J/(mol·K)", "T": "K", "N": "1"},
+                "J/(mol·K)",
+            ),
+        })
+
+        # dG = −S·dT + V·dP → [J/mol] (热力学基本方程)
+        checks.append({
+            "name": "fundamental_relation",
+            "expr": "-S*dT + V*dP",
+            **check_expression_dimensions(
+                "-S*dT + V*dP",
+                {"S": "J/(mol·K)", "dT": "K", "V": "m3/mol", "dP": "Pa"},
+                "J/mol",
+            ),
+        })
+
+        # 只有"真量的量纲不匹配"(error 为空)才算公式回归; 引擎不可用(如 sympy 缺失)
+        # 时 err 非空, 如实带出但不阻断工具 —— 避免离线环境里热力学查询整体失效.
+        hard_fail = any(
+            c.get("ok") is False and not c.get("error") for c in checks
+        )
+        return (not hard_fail, checks)
 
     @staticmethod
     def _collect_pure_properties(

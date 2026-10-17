@@ -546,7 +546,7 @@ def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]
                 )
 
         # ZeroDivisionError 嫌疑：除以字面量 0
-        if error_type == "ZeroDivisionError" and isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+        if error_type == "ZeroDivisionError" and isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div | ast.FloorDiv | ast.Mod):
                 right = node.right
                 if isinstance(right, ast.Constant) and right.value == 0:
                     suspicious.append(

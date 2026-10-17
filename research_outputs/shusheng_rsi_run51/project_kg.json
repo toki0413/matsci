@@ -1,0 +1,540 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:59:57.542823",
+      "last_seen": "2026-09-29T12:59:57.542823",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For a fixed constraint set size w, the minimal width N_c(w) will be finite and bounded (indicating solution space rigidity). Specifically, N_c(w) will remain small (e.g., < 50) as w increases, and the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542872",
+      "last_seen": "2026-09-29T12:59:57.542872",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542887",
+      "last_seen": "2026-09-29T12:59:57.542887",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:59:57.542977",
+      "last_seen": "2026-09-29T12:59:57.542977",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d3806257fb711130",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T13:00:56.298008",
+      "last_seen": "2026-09-29T13:04:57.501260",
+      "mentions": 2,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will show that $N_c(w)$ is approximately equal to or slightly larger than $\\text{rank}(A)$ for small $w$, and will remain bounded as $w$ increases (indicating \"rigid\" solution space), confi",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:00:56.298048",
+      "last_seen": "2026-09-29T13:00:56.298048",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:00:56.298058",
+      "last_seen": "2026-09-29T13:00:56.298058",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:00:56.298067",
+      "last_seen": "2026-09-29T13:00:56.298067",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_447b0414"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:00:56.298143",
+      "last_seen": "2026-09-29T13:00:56.298143",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b42d192ed04a9c16",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: optimization] The zero-violation condition defines a non-convex feasibilit",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:02:22.864745",
+      "last_seen": "2026-09-29T13:02:22.864745",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will exhibit a sharp transition from unbounded (fatness) to bounded (rigidity) as w increases beyond a critical threshold, reflecting the non-convex feasibility geometry of the zero-violation m",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The zero-violation condition defines a non-convex feasibilit"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:02:22.864790",
+      "last_seen": "2026-09-29T13:02:22.864790",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:02:22.864803",
+      "last_seen": "2026-09-29T13:02:22.864803",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:02:22.864811",
+      "last_seen": "2026-09-29T13:02:22.864811",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The zero-violation condition defines a non-convex feasibilit",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_fa298d23"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:02:22.864894",
+      "last_seen": "2026-09-29T13:02:22.864894",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "64cc65c0a4535dda",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: geometry] The function space of solutions to w constraints forms a manifol",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:03:17.440484",
+      "last_seen": "2026-09-29T13:03:17.440484",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe a sharp transition in the zero-violation status as width increases: for widths below $N_c(w)$, validation error > 1e-3; for widths $\\ge N_c(w)$, validation error $\\le 1e-3$. We ex",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The function space of solutions to w constraints forms a manifol"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:03:17.440522",
+      "last_seen": "2026-09-29T13:03:17.440522",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:03:17.440532",
+      "last_seen": "2026-09-29T13:03:17.440532",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:03:17.440540",
+      "last_seen": "2026-09-29T13:03:17.440540",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The function space of solutions to w constraints forms a manifol",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_b4484101"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:03:17.440615",
+      "last_seen": "2026-09-29T13:03:17.440615",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "38fef82f588dfbea",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:04:19.795756",
+      "last_seen": "2026-09-29T13:04:19.795756",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "A monotonic increasing relationship will be observed between $N_c(w)$ and the Hessian condition number $\\kappa$, with the scaling exponent $\\alpha$ consistent with theoretical bounds for ill-condition",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795796",
+      "last_seen": "2026-09-29T13:04:19.795796",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795807",
+      "last_seen": "2026-09-29T13:04:19.795807",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:04:19.795885",
+      "last_seen": "2026-09-29T13:04:19.795885",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f74618150c04bb93",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501291",
+      "last_seen": "2026-09-29T13:04:57.501291",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501311",
+      "last_seen": "2026-09-29T13:04:57.501311",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_e23dc62c"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:04:57.501394",
+      "last_seen": "2026-09-29T13:04:57.501394",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e31bdca5b8d7e489",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:00:56.298067",
+      "last_seen": "2026-09-29T13:00:56.298067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_447b0414"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23dc62c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:00:56.298067",
+      "last_seen": "2026-09-29T13:00:56.298067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_447b0414"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:00:56.298067",
+      "last_seen": "2026-09-29T13:00:56.298067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_447b0414"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The zero-violation condition defines a non-convex feasibilit",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:02:22.864811",
+      "last_seen": "2026-09-29T13:02:22.864811",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fa298d23"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:02:22.864811",
+      "last_seen": "2026-09-29T13:02:22.864811",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fa298d23"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:02:22.864811",
+      "last_seen": "2026-09-29T13:02:22.864811",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fa298d23"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The function space of solutions to w constraints forms a manifol",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:03:17.440540",
+      "last_seen": "2026-09-29T13:03:17.440540",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b4484101"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:03:17.440540",
+      "last_seen": "2026-09-29T13:03:17.440540",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b4484101"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:03:17.440540",
+      "last_seen": "2026-09-29T13:03:17.440540",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b4484101"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23dc62c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23dc62c"
+    }
+  ]
+}

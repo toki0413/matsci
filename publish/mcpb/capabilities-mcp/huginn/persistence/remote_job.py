@@ -14,27 +14,27 @@ class RemoteJobBackend(ABC):
     @abstractmethod
     def load(self) -> list[RemoteJobRecord]:
         """Load all stored job records."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def save(self, records: list[RemoteJobRecord]) -> None:
         """Persist all job records."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def add_or_update(self, record: RemoteJobRecord) -> None:
         """Insert or update a single record."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def get(self, local_id: str) -> RemoteJobRecord | None:
         """Return a record by local ID."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def list_jobs(self) -> list[RemoteJobRecord]:
         """Return all records, newest first."""
-        raise NotImplementedError
+        ...
 
 
 class NullRemoteJobBackend(RemoteJobBackend):

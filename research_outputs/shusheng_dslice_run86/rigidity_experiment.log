@@ -1,0 +1,56 @@
+================================================================================
+RIGIDITY PROBE EXPERIMENT
+================================================================================
+Device: cpu
+w values: [5, 10, 20, 50, 100, 200]
+Width range: [4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124]
+Zero violation threshold: 1e-3
+================================================================================
+
+============================================================
+Experiment: RIGID solution space
+============================================================
+
+Testing w=5, constraint_type=rigid
+  N_c(5) = UNATTAINABLE (no width achieved zero violation)
+
+Testing w=10, constraint_type=rigid
+  N_c(10) = UNATTAINABLE (no width achieved zero violation)
+
+Testing w=20, constraint_type=rigid
+  N_c(20) = UNATTAINABLE (no width achieved zero violation)
+
+Testing w=50, constraint_type=rigid
+  N_c(50) = UNATTAINABLE (no width achieved zero violation)
+
+Testing w=100, constraint_type=rigid
+Traceback (most recent call last):
+  File "/workspace/research_outputs/shusheng_dslice_run86/rigidity_experiment.py", line 312, in <module>
+    main()
+    ~~~~^^
+  File "/workspace/research_outputs/shusheng_dslice_run86/rigidity_experiment.py", line 211, in main
+    results = run_experiment(constraint_type, w_values, width_range, device=device)
+  File "/workspace/research_outputs/shusheng_dslice_run86/rigidity_experiment.py", line 170, in run_experiment
+    N_c, detailed_results = find_N_c(x_train, y_train, x_test, y_test,
+                            ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                     width_range, device=device)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/research_outputs/shusheng_dslice_run86/rigidity_experiment.py", line 138, in find_N_c
+    max_error, train_error, converged = train_network(
+                                        ~~~~~~~~~~~~~^
+        model, x_train, y_train, x_test, x_test,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        width, epochs=2000, lr=1e-3, device=device
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/research_outputs/shusheng_dslice_run86/rigidity_experiment.py", line 121, in train_network
+    max_error = float(np.max(test_errors))
+                      ~~~~~~^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/site-packages/numpy/_core/fromnumeric.py", line 3161, in max
+    return _wrapreduction(a, np.maximum, 'max', axis, None, out,
+                          keepdims=keepdims, initial=initial, where=where)
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/site-packages/numpy/_core/fromnumeric.py", line 83, in _wrapreduction
+    return ufunc.reduce(obj, axis, dtype, out, **passkwargs)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: zero-size array to reduction operation maximum which has no identity

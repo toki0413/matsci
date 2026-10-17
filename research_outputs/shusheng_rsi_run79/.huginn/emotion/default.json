@@ -1,0 +1,74 @@
+{
+  "valence": 0.019559373055814632,
+  "arousal": 0.1,
+  "trust": 0.5,
+  "affection": 0.22484251965566504,
+  "fatigue": 0.019181795105330388,
+  "loneliness": 0.0,
+  "interest": 0.5987854690243715,
+  "timestamp": "2026-10-04T02:12:16.500846+00:00",
+  "events": [
+    {
+      "timestamp": "2026-10-04T01:47:18.312449+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "interest": 0.01,
+        "affection": 0.005
+      },
+      "note": "neutral"
+    },
+    {
+      "timestamp": "2026-10-04T01:51:39.184674+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "interest": 0.01,
+        "affection": 0.005
+      },
+      "note": "neutral"
+    },
+    {
+      "timestamp": "2026-10-04T01:55:34.005787+00:00",
+      "source": "user",
+      "type": "task_success",
+      "deltas": {
+        "valence": 0.01999999999999999,
+        "trust": 0.0,
+        "fatigue": 0.02,
+        "interest": 0.05
+      },
+      "note": "negative user message; task succeeded"
+    },
+    {
+      "timestamp": "2026-10-04T01:57:27.549752+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "interest": 0.01,
+        "affection": 0.005
+      },
+      "note": "neutral"
+    },
+    {
+      "timestamp": "2026-10-04T02:09:22.345658+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "interest": 0.01,
+        "affection": 0.005
+      },
+      "note": "neutral"
+    },
+    {
+      "timestamp": "2026-10-04T02:12:16.500834+00:00",
+      "source": "user",
+      "type": "message",
+      "deltas": {
+        "interest": 0.01,
+        "affection": 0.005
+      },
+      "note": "neutral"
+    }
+  ]
+}

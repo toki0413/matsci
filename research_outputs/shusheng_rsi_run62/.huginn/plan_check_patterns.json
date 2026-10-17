@@ -1,0 +1,40 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "30dcf4da9238",
+    "reason": "Plan is fundamentally invalid because it attempts to test the Algebraic Independence Hypothesis—which concerns algebraic independence of functions in function spaces—by using numerical approximation error of a neural network on a smooth analytic function. This conflates approximation capability with algebraic independence. The hypothesis is about whether certain functions satisfy any nontrivial polynomial relation with coefficients in a field (e.g., ℚ or ℝ), not about how well a network can approximate a function. The described experiment measures approximation capacity, not algebraic independence. Thus, even if the numerical results show bounded N_c(w), they do not support or refute the hypothesis.",
+    "missing_steps": [
+      "Reframe the hypothesis in terms of algebraic independence: e.g., test whether {1, x, x², ..., sin(2πx)} are algebraically independent over ℚ by checking if a nontrivial polynomial P such that P(1, x, x², ..., sin(2πx)) ≡ 0 exists.",
+      "Use symbolic algebra tools (e.g., sympy, Mathematica, or Lean) to verify algebraic independence via polynomial identity testing or Gröbner basis methods.",
+      "If numerical evidence is desired, design an experiment that tests whether a polynomial fit to sample points of the functions yields zero residual for all samples only when the polynomial is trivial—this would be a proxy for algebraic independence.",
+      "Avoid conflating approximation error (numerical) with algebraic relations (symbolic/combinatorial)."
+    ],
+    "mode": "workflow",
+    "description": "Implement a numerical experiment to test the Algebraic Independence Hypothesis by scanning hidden layer width N against constraint count w for a single-hidden-layer network. Generate w constraint samp"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "30dcf4da9238",
+    "reason": "The plan conflates approximation capacity (neural network generalization on a smooth function) with algebraic independence (existence of polynomial relations between functions). The hypothesis is about whether {1, x, x², sin(2πx)} satisfy any non-trivial polynomial identity over ℚ, which is a symbolic/combinatorial property of function spaces, not a numerical approximation problem. The previous failure explicitly warned against this conflation. The plan describes testing via neural network training and 'zero violation' on held-out points, which measures approximation error—not algebraic dependence. A valid approach would use symbolic algebra tools (SymPy, Lean) to perform polynomial identity testing or Gröbner basis elimination.",
+    "missing_steps": [
+      "Reframe hypothesis as symbolic polynomial identity testing: check if ideal ⟨y₁−1, y₂−x, y₃−x², y₄−sin(2πx)⟩ in ℚ(x)[y₁,…,y₄] contains non-zero polynomial in y alone.",
+      "Use symbolic tools (e.g., SymPy's groebner or Lean's algebraic independence tactics) to verify if P(1, x, x², sin(2πx)) ≡ 0 implies P ≡ 0.",
+      "If symbolic tools are insufficient, use random evaluation testing: sample x values, evaluate functions, test if random polynomial coefficients yield near-zero residual only when coefficients are zero.",
+      "Avoid numerical approximation metrics (e.g., network width N_c, held-out error) as proxies for algebraic independence—they are unrelated concepts."
+    ],
+    "mode": "workflow",
+    "description": "Reframe the Algebraic Independence Hypothesis as a symbolic polynomial identity testing problem. Given a set of functions $F = \\{f_1, \\dots, f_m\\}$ (e.g., $\\{1, x, x^2, \\sin(2\\pi x)\\}$), determine if "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "56c8bb402523",
+    "reason": "The plan incorrectly sets the network width range (1 to 50) which is insufficient to test the hypothesis. The hypothesis predicts a rigid regime with N_c(w) ~ 30 for w > w_crit. However, for w=100 (a constraint count in the plan), the minimum width needed to achieve zero violation would likely exceed 50, making it impossible to determine if N_c(w) remains constant or becomes unbounded. The plan should scan widths up to at least w (e.g., up to 100 or higher) to properly characterize the fat regime where N_c(w) might grow super-linearly or become infinite.",
+    "missing_steps": [
+      "Expand the network width scan range to at least the maximum constraint count (w=100) or higher to properly capture potential fat regime behavior",
+      "Add a convergence criterion check to ensure zero violation is truly achieved before recording N_c(w)",
+      "Include additional validation that the observed N_c(w) values are stable across multiple random seeds"
+    ],
+    "mode": "explore",
+    "description": "We need to test the hypothesis that a phase transition exists in the loss landscape at a critical width $w_c$, separating a fat regime (where $N_c(w)$ grows super-linearly or is infinite) from a rigid"
+  }
+]

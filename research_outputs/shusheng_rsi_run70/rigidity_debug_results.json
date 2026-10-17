@@ -1,0 +1,59 @@
+{
+  "10": {
+    "4": {
+      "0": {
+        "max_error": 0.023416668176651,
+        "train_max_err": 0.03924897313117981,
+        "zero_violation": false,
+        "train_loss_final": 0.0004649517359212041
+      },
+      "best_zero": false
+    },
+    "8": {
+      "0": {
+        "max_error": 0.007197067141532898,
+        "train_max_err": 0.0035101771354675293,
+        "zero_violation": false,
+        "train_loss_final": 4.915311819786439e-06
+      },
+      "best_zero": false
+    },
+    "16": {
+      "0": {
+        "max_error": 0.014265790581703186,
+        "train_max_err": 0.01195274293422699,
+        "zero_violation": false,
+        "train_loss_final": 2.6875533876591362e-05
+      },
+      "best_zero": false
+    },
+    "32": {
+      "0": {
+        "max_error": 0.004816174507141113,
+        "train_max_err": 0.004437565803527832,
+        "zero_violation": false,
+        "train_loss_final": 1.2006704309897032e-05
+      },
+      "best_zero": false
+    },
+    "64": {
+      "0": {
+        "max_error": 0.005108818411827087,
+        "train_max_err": 0.0021704435348510742,
+        "zero_violation": false,
+        "train_loss_final": 1.0301589554728707e-06
+      },
+      "best_zero": false
+    },
+    "128": {
+      "0": {
+        "max_error": 0.003172852098941803,
+        "train_max_err": 0.0036246739327907562,
+        "zero_violation": false,
+        "train_loss_final": 3.735154450623668e-06
+      },
+      "best_zero": false
+    },
+    "N_c": null
+  }
+}

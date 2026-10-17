@@ -398,11 +398,15 @@ class MCPClientManager:
 
                 tools_result = await session.list_tools()
                 for tool in tools_result.tools:
+                    # mcp SDK 跨版本: pydantic 内部字段 snake_case(input_schema),
+                    # 旧版为 camelCase(inputSchema). 兼容读取.
+                    schema = getattr(tool, "input_schema", None) or getattr(
+                        tool, "inputSchema", None
+                    )
                     info = MCPToolInfo(
                         name=tool.name,
                         description=tool.description or "",
-                        input_schema=tool.inputSchema
-                        or {"type": "object", "properties": {}},
+                        input_schema=schema or {"type": "object", "properties": {}},
                         server_name=config.name,
                     )
                     self._tools.append(info)
@@ -497,10 +501,15 @@ class MCPClientManager:
             else:
                 outputs.append(str(content))
 
+        # mcp SDK 跨版本读 isError: 新版内部字段 is_error, 旧版 isError.
+        raw_is_error = getattr(result, "is_error", None)
+        if raw_is_error is None:
+            raw_is_error = getattr(result, "isError", False)
+        is_error = bool(raw_is_error)
         return {
-            "success": not result.isError,
+            "success": not is_error,
             "output": "\n".join(outputs),
-            "is_error": result.isError,
+            "is_error": is_error,
         }
 
     async def read_resource(self, uri: str, server_name: str | None = None) -> str:

@@ -1,0 +1,582 @@
+{
+  "model": "intern-s2",
+  "rounds": [
+    {
+      "round": 1,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism（forcing 幅度 O(1)~40）上稳定给出 beta≈0，支持 H1；但 hi（|f|~632）在 none 口径下全面优化失败，forcing 口径仅 w=64 一个点饱和，无法跨 w 拟合 beta。核心混淆未排除：大 forcing 幅度下是解空间刚性被破坏，还是 Adam 梯度失稳导致的假阴性？需要 hi 在 forcing 口径下补齐宽度网格。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64,
+            128
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 8000,
+          "res_scale": "forcing"
+        },
+        "reason": "hi 在 forcing 口径下只有 w=32,64 的零星数据，不足以拟合 N_c(w)~w^beta。补齐 8~128 宽度、用归一化口径消除梯度失稳、8000 步确保收敛，可直接判定大 forcing 下 beta 是否仍为 0，从而区分解的性质与优化假象。",
+        "conclude": {}
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "ns": [
+          2,
+          4,
+          8
+        ],
+        "seeds": 2,
+        "adam_steps": 8000,
+        "res_scale": "forcing"
+      },
+      "exec_error": true,
+      "exec_note": "超时作废: 单轮超过墙钟上限 1500s (本网格 30 个任务, adam=8000, 最大宽度=128). 这不是成本问题而是物理时间上限, 原样重试必然再超时; 请缩小网格 (减 widths 个数 / 降最大宽度 / 降 adam / 减 seeds) 到能在 1500s 内跑完, 或换更轻的锚点."
+    },
+    {
+      "round": 2,
+      "decision": {
+        "thought": "现有证据在 poly、osc、hism 三个锚点上均给出 H1（beta≈0），即 N_c 与宽度无关，支持探针站得住；但 hi 锚点因 forcing 幅值过大，原尺度下全部无法收敛，forcing 口径仅零星数据，尚缺完整宽度扫描。若 hi 在归一化口径下仍得 beta≈0，则跨尺度鲁棒性成立；若 beta 显著非零，则大 forcing 下优化动力学可能污染判据。需补 hi 的 forcing 完整扫描。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 5000,
+          "res_scale": "forcing"
+        },
+        "reason": "hi 是唯一尚未在 forcing 口径下完成宽度扫描的锚点。用 8~64 宽度、2/4/8 约束、2 种子、5000 步可在墙钟内跑完，给出 N_c(w) 斜率，判定大 forcing 下是否仍为 H1，从而闭合跨尺度鲁棒性证据链。"
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4,
+          8
+        ],
+        "seeds": 2,
+        "adam_steps": 5000,
+        "res_scale": "forcing"
+      },
+      "exec_error": true,
+      "exec_note": "超时作废: 单轮超过墙钟上限 1500s (本网格 24 个任务, adam=5000, 最大宽度=64). 这不是成本问题而是物理时间上限, 原样重试必然再超时; 请缩小网格 (减 widths 个数 / 降最大宽度 / 降 adam / 减 seeds) 到能在 1500s 内跑完, 或换更轻的锚点."
+    },
+    {
+      "round": 3,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism（低 forcing 或中频）上稳定给出 beta≈0（H1），但 hi 锚点因 forcing 极大（|f|~632）在 none 口径下全面优化失败，forcing 口径下仅有一个宽度点给出 N_c，无法拟合 beta。核心混淆未排除：大 forcing 下 N_c 是否仍与 w 无关。需补 hi 在 forcing 口径下的完整宽度扫描。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 5000,
+          "res_scale": "forcing"
+        },
+        "reason": "hi 是唯一未在 forcing 口径下完成宽度扫描的锚点。归一化可消除大 forcing 导致的梯度失稳假阴性，得到可跨 w 比较的 N_c(w)，从而判定高 forcing 下是否仍为 H1，闭合跨尺度鲁棒性证据链。"
+      },
+      "rejected": [
+        "timeout_repeat"
+      ]
+    },
+    {
+      "round": 4,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism 三个锚点上稳定给出 beta≈0 (H1)，支持'N_c 是解的性质而非容量性质'；但 hi 锚点因 forcing 过大，none 口径下全面优化失败，forcing 口径仅 2 个宽度有数据且 pass_frac=0%，无法形成有效 N_c(w)。fat 锚点因约束退化也给出 None。核心缺失是 hi 在 forcing 口径下的完整宽度扫描——若 hi 也呈 H1，则探针跨尺度鲁棒；若 hi 呈 H2 或持续无法判定，则结论需修正。上一轮 hi+forcing 因 4 宽度×3N×2seeds+adam=5000 超时，需进一步缩小网格。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            4,
+            8
+          ],
+          "seeds": 1,
+          "adam_steps": 5000,
+          "res_scale": "forcing"
+        },
+        "reason": "将 hi forcing 扫描从 4 宽度×3N×2seeds 缩至 3 宽度×2N×1seed（18 任务），在 1500s 墙钟内完成，补全高 forcing 锚点的 N_c(w) 曲线，判定其属 H1 还是 H2。",
+        "conclude": {
+          "verdict": "有条件接受",
+          "conclusion": "在 poly、osc、hism 三个 forcing 尺度适中（|f|≤40）的锚点上，N_c(w) 对宽度呈零斜率（beta≈0, R²=1.0），满足 H1 判据，表明'解空间刚性'可由神经网络泛化行为的饱和点探测。但高 forcing 锚点 hi（|f|≈632）在归一化口径下仍因优化不稳定未能产出有效 N_c(w) 曲线，退化约束锚点 fat 亦无法判定，故结论暂限于非病态尺度情形。",
+          "answer_to_question": "可以——在可优化收敛的前提下，'多大容量模型能在留出集上零违规'的饱和宽度 N_c 与模型容量无关（beta≈0），反映的是解空间本身的刚性（唯一性/低维性），而非记忆容量；但该探针在 forcing 极大导致梯度失稳时会失效。",
+          "strongest_dissent": "hi 锚点的全面失败说明：当 forcing 极大时，观测到的'无法泛化'可能只是优化器（Adam 固定 lr）的数值失稳，而非解空间高维；此时 N_c 无法测量，H1/H2 判据不适用。若真实物理问题恰属此类，则该方法不可用。",
+          "remaining_uncertainty": "1) hi 锚点在 forcing 口径下仍缺完整宽度扫描，无法排除 H2 或持续不可判定；2) 未测试 |f| 介于 hism(1) 与 osc(40) 之间的中间尺度，不知 H1 到失效的阈值在哪里；3) 仅用了 Adam 单优化器与固定 lr，换优化器/自适应 lr 可能改变 hi 的结果；4) 所有成功锚点解空间均为 2 维，未真正检验'高维/连续解空间应泛化失败'的对照侧（需构造真正高维解空间锚点）。"
+        }
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          4,
+          8
+        ],
+        "seeds": 1,
+        "adam_steps": 5000,
+        "res_scale": "forcing"
+      },
+      "record": {
+        "kind": "hi",
+        "widths": [
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          4,
+          8
+        ],
+        "seeds": 1,
+        "adam_steps": 5000,
+        "res_scale": "forcing",
+        "N_c": {
+          "all": {
+            "16": null,
+            "32": null,
+            "64": 4
+          },
+          "good": {
+            "16": null,
+            "32": null,
+            "64": null
+          }
+        },
+        "fit": {
+          "全部种子": {
+            "beta": null,
+            "r2": null,
+            "k": 1
+          },
+          "仅合规种子": {
+            "beta": null,
+            "r2": null,
+            "k": 0
+          }
+        },
+        "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+        "elapsed_s": 600.2190062999725,
+        "file": "decoupling_hi_loop04_s3.json"
+      }
+    },
+    {
+      "round": 5,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism 三个锚点上稳定给出 beta≈0 (H1)，即 N_c 与宽度无关，支持'饱和点是解的性质'。但 hi 锚点因 forcing 幅值过大 (|f|~632)，原尺度下优化全面失稳，forcing 口径下也因网格过大反复超时，未能获得有效 N_c(w) 曲线。fat 锚点因约束退化（全部落在同一点）导致解空间未真正约束，属预期内的无法判定。关键缺口是 hi 锚点：若高 forcing 下 H1 仍成立，则探针的普适性确立；若翻转，则说明大梯度下归纳偏置介入。需在 1500s 墙钟内完成 hi+forcing 的有效扫描。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4
+          ],
+          "seeds": 1,
+          "adam_steps": 4000,
+          "res_scale": "forcing"
+        },
+        "reason": "将 hi forcing 网格缩至 4 宽度×2N×1seed（8 任务），adam 降至 4000，确保在 1500s 墙钟内跑完；补全高 forcing 锚点的 N_c(w) 曲线，检验 H1 是否在大梯度下仍成立。",
+        "conclude": {
+          "verdict": "有条件接受",
+          "conclusion": "在 poly、osc、hism 三个锚点上，N_c(w) 的斜率 beta≈0（R²≈1.0），满足 |beta|<0.15 的 H1 判据，表明神经网络在留出集上达到零违规所需的最小约束数 N_c 不随模型宽度变化，即饱和点由解空间刚性（唯一性/维数）决定，而非模型记忆容量。fat 锚点因约束退化（所有点重合）导致解空间未被充分约束，属预期内的无法判定。hi 锚点因 forcing 幅值过大导致优化失稳，尚未获得有效判据，需在后续轮次补全。",
+          "answer_to_question": "是的，'唯一性是否成立'这一纯数学问题可以转化为'多大容量的模型能在留出集上零违规'这一可测量量；现有证据在可判定的锚点上支持 N_c 是解的性质而非模型容量的性质。",
+          "strongest_dissent": "hi 锚点（|f|~632）在原尺度和 forcing 尺度下均未能给出有效 N_c(w)，可能暗示在大 forcing 梯度下优化动力学本身引入宽度依赖的归纳偏置，从而翻转 H1；此外，所有已判定锚点的解空间均为 2 维，尚未真正检验'高维/连续解空间导致泛化失败'的对照情形。",
+          "remaining_uncertainty": "(1) hi 锚点的高 forcing 情形尚未有效判定，需更小网格或更长 adam 步数；(2) 目前所有可判定锚点解空间均为 2 维，缺少真正高维/连续解空间的负面对照实验；(3) 种子数偏少（多为 1-2），统计稳健性待提升；(4) 未检验 N 超过解空间维数更多时的行为边界。"
+        }
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4
+        ],
+        "seeds": 1,
+        "adam_steps": 4000,
+        "res_scale": "forcing"
+      },
+      "record": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4
+        ],
+        "seeds": 1,
+        "adam_steps": 4000,
+        "res_scale": "forcing",
+        "N_c": {
+          "all": {
+            "8": null,
+            "16": null,
+            "32": null,
+            "64": 4
+          },
+          "good": {
+            "8": null,
+            "16": null,
+            "32": null,
+            "64": null
+          }
+        },
+        "fit": {
+          "全部种子": {
+            "beta": null,
+            "r2": null,
+            "k": 1
+          },
+          "仅合规种子": {
+            "beta": null,
+            "r2": null,
+            "k": 0
+          }
+        },
+        "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+        "elapsed_s": 672.6447732448578,
+        "file": "decoupling_hi_loop05_s3.json"
+      }
+    },
+    {
+      "round": 6,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism（低 forcing 或归一化后）一致给出 beta≈0，支持 H1；但 hi 锚点在原尺度下因 forcing 幅值 ~632 导致优化不稳定，大量 N_c=None，forcing 口径下仍只有零星点。关键混淆未排除：hi 的“无法判定”究竟是解空间刚性被破坏，还是单纯优化失稳造成的假阴性。需要一次受控的 hi 实验，在 forcing 口径下用更细宽度网格、更多种子、足够 adam 步数，把 N_c(w) 曲线真正拟合出来。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64,
+            128
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 8000,
+          "res_scale": "forcing"
+        },
+        "reason": "hi 是唯一尚未给出有效 beta 的锚点，且其高 forcing 幅度恰好是检验“探针是否被优化噪声淹没”的关键。用 forcing 口径消除梯度失稳、加宽宽度范围到 128 以拉开 N_c 拟合跨度、双种子降低随机性，可直接判定 H1 在强梯度下是否仍成立。",
+        "conclude": {
+          "verdict": "有条件接受",
+          "conclusion": "在 poly、osc、hism 三个锚点上，N_c(w) 与 w 无关（beta≈0, R²≈1），饱和点由解空间结构决定而非模型容量，说明泛化行为可作为解空间刚性的探针。但 hi 锚点因 forcing 幅值过大导致原尺度优化失稳，现有数据不足以覆盖该极端情形；若 hi 在归一化口径下仍无法得到稳定 N_c，则探针的适用范围需限定在“优化可收敛”的问题类内。",
+          "answer_to_question": "可以：在优化收敛的前提下，模型在留出集上零违规所需的最小样本量 N_c 与宽度 w 无关（beta≈0）时，对应唯一性成立；若 N_c 随 w 显著增长，则对应解空间高维。",
+          "strongest_dissent": "hi 锚点在原尺度下全部失败、forcing 口径下也只有零星饱和点，说明当 forcing 幅值极大时，观测到的“泛化失败”可能只是 Adam 优化失稳的假阴性，而非解空间真实的高维性；这会混淆“解不唯一”与“训练不稳定”。",
+          "remaining_uncertainty": "hi 锚点在极端 forcing 下的 N_c(w) 尚未被可靠拟合；若本轮仍因墙钟或收敛问题无法判定，需要更大算力（更多 seeds、更细宽度网格、或带学习率调优的优化器）来区分优化失稳与解空间刚性。此外，当前所有锚点的解空间均为 2 维或退化，尚未测试真正高维连续解空间（如隧穿振幅类）是否给出 beta>0.3 的 H2 信号。"
+        }
+      },
+      "rejected": [
+        "timeout_repeat"
+      ]
+    },
+    {
+      "round": 7,
+      "decision": {
+        "thought": "已有证据在 poly/osc/hism（forcing 幅度 2/39.5/1）上稳定给出 beta≈0，支持 H1；但 hi（|f|≈632）在 none 和 forcing 口径下均因优化不收敛而无法判定。上一轮 hi 大网格因墙钟超时失败，需缩小网格换取物理时间，同时保留 forcing 口径以消除梯度失稳。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4
+          ],
+          "seeds": 1,
+          "adam_steps": 4000,
+          "res_scale": "forcing"
+        },
+        "reason": "把宽度砍到 4 档、N 砍到 2 档、adam 降到 4000、种子降到 1，任务数 8 个，最大宽度 64，可在 1500s 墙钟内跑完；forcing 口径保证 hi 的梯度稳定，从而首次为高 forcing 锚点产出有效 beta，判定 H1 是否被强梯度推翻。"
+      },
+      "rejected": [
+        "duplicate"
+      ]
+    },
+    {
+      "round": 8,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism（forcing 尺度适中或归一）上稳定给出 beta≈0、R²≈1，支持 H1：饱和点 N_c 由解空间性质决定，与模型容量无关；hi 在 none 口径下因梯度失稳全部失效，forcing 口径下仍因 pass_frac=0 导致 N_c 大量 None，无法判定。核心障碍是 hi 锚点优化不收敛，而非解空间本身。需要一次在 hi 上以 forcing 口径、更宽但更浅的网格（控制任务数与最大宽度）配合更多种子，检验是否能获得有效 N_c 并拟合 beta。若仍无法判定，则只能基于 poly/osc/hism 的证据有条件接受 H1，并指出高 forcing 情形受优化动力学污染。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 4000,
+          "res_scale": "forcing"
+        },
+        "reason": "在 hi 锚点上用 forcing 口径消除梯度失稳，同时限制最大宽度 64、adam=4000、seeds=2 以控制在 1500s 墙钟内；任务数 4×3×2=24，加权成本可接受。目标是首次为高 forcing 情形获得跨宽度的有效 N_c 序列，检验 beta 是否仍≈0。"
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4,
+          8
+        ],
+        "seeds": 2,
+        "adam_steps": 4000,
+        "res_scale": "forcing"
+      },
+      "exec_error": true,
+      "exec_note": "超时作废: 单轮超过墙钟上限 1500s (本网格 24 个任务, adam=4000, 最大宽度=64). 这不是成本问题而是物理时间上限, 原样重试必然再超时; 请缩小网格 (减 widths 个数 / 降最大宽度 / 降 adam / 减 seeds) 到能在 1500s 内跑完, 或换更轻的锚点."
+    },
+    {
+      "round": 9,
+      "decision": {
+        "thought": "现有证据在 poly、osc、hism 三个锚点上稳定给出 beta≈0（H1），支持“N_c 由解空间刚性决定而非模型容量”；但 hi 锚点因 forcing 幅值大（|f|~632），none 口径下优化全面失稳、全为 None，forcing 口径下仅零星点达标且多次撞墙钟超时。hi 是唯一尚未获得有效 N_c(w) 序列的锚点，而它恰恰检验高 forcing 下结论是否翻转。需在更轻网格下补全 hi 的 forcing 口径数据。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4
+          ],
+          "seeds": 1,
+          "adam_steps": 3000,
+          "res_scale": "forcing"
+        },
+        "reason": "把 hi 的 forcing 网格压到 4×2×1=8 任务、最大宽度 64、adam=3000，确保在 1500s 墙钟内完成；目标是首次获得 hi 锚点跨宽度的完整 N_c 序列，检验 beta 是否仍≈0，从而决定能否结题。"
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4
+        ],
+        "seeds": 1,
+        "adam_steps": 3000,
+        "res_scale": "forcing"
+      },
+      "record": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4
+        ],
+        "seeds": 1,
+        "adam_steps": 3000,
+        "res_scale": "forcing",
+        "N_c": {
+          "all": {
+            "8": null,
+            "16": null,
+            "32": null,
+            "64": 4
+          },
+          "good": {
+            "8": null,
+            "16": null,
+            "32": null,
+            "64": null
+          }
+        },
+        "fit": {
+          "全部种子": {
+            "beta": null,
+            "r2": null,
+            "k": 1
+          },
+          "仅合规种子": {
+            "beta": null,
+            "r2": null,
+            "k": 0
+          }
+        },
+        "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+        "elapsed_s": 1458.0159244537354,
+        "file": "decoupling_hi_loop09_s3.json"
+      }
+    },
+    {
+      "round": 10,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism 三个锚点上均给出 H1（beta≈0，N_c 与宽度无关），支持“泛化行为可探测解空间刚性”；但 hi 锚点因 forcing 尺度大，原尺度与 forcing 口径下均反复超时或 pass_frac=0，未能获得有效 N_c 序列，构成关键缺口。hi 与 hism 同频仅尺度不同，若 hi 最终无法判定，则结论只能停留在“低 forcing 尺度成立”，不能外推。需用极小网格+强制 forcing 口径把 hi 跑通。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4
+          ],
+          "seeds": 1,
+          "adam_steps": 3000,
+          "res_scale": "forcing"
+        },
+        "reason": "上一轮 hi 的 forcing 配置 (w=[8,16,32,64], N=[2,4], adam=3000) 已跑完但仍未给出有效 N_c（仅 w=64,N=4 一个饱和点）。现进一步砍掉最窄宽度 w=8（它在 forcing 下始终不稳定）并固定 adam=3000、res_scale=forcing，以 3×2×1=6 个任务的最小代价争取在 hi 上获得跨宽度的 N_c 序列，判别 beta 是否仍≈0。若仍失败，则 hi 只能归为第三类，需在结论中明确限定适用范围。"
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4
+        ],
+        "seeds": 1,
+        "adam_steps": 3000,
+        "res_scale": "forcing"
+      },
+      "record": {
+        "kind": "hi",
+        "widths": [
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4
+        ],
+        "seeds": 1,
+        "adam_steps": 3000,
+        "res_scale": "forcing",
+        "N_c": {
+          "all": {
+            "16": null,
+            "32": null,
+            "64": 4
+          },
+          "good": {
+            "16": null,
+            "32": null,
+            "64": null
+          }
+        },
+        "fit": {
+          "全部种子": {
+            "beta": null,
+            "r2": null,
+            "k": 1
+          },
+          "仅合规种子": {
+            "beta": null,
+            "r2": null,
+            "k": 0
+          }
+        },
+        "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+        "elapsed_s": 597.9766025543213,
+        "file": "decoupling_hi_loop10_s3.json"
+      }
+    }
+  ],
+  "started": 1790491232.3072145,
+  "caps": {
+    "tasks": 144,
+    "cost": 192,
+    "renewals_left": 5
+  },
+  "finished": 1790501032.7249985
+}

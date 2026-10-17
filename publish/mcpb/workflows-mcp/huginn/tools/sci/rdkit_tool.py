@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class RDKitInput(BaseModel):
     action: Literal[
         "smiles_to_mol",
+        "mol_file_to_mol",
         "descriptors",
         "fingerprint",
         "similarity",
@@ -32,6 +33,10 @@ class RDKitInput(BaseModel):
         "conformers",
         "smiles_to_sdf",
     ] = Field(...)
+    mol_file: str | None = Field(
+        default=None,
+        description="Path to a MOL/SDF/PDB structure file (for mol_file_to_mol)",
+    )
     smiles: str | None = Field(default=None, description="SMILES string")
     smiles_list: list[str] | None = Field(
         default=None, description="Multiple SMILES for batch operations"
@@ -68,9 +73,10 @@ class RDKitTool(HuginnTool):
         phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.PLANNING}),
     )
     description = (
-        "Cheminformatics: parse SMILES, compute molecular descriptors (MW, "
-        "LogP, TPSA, HBD/HBA), generate fingerprints, compute Tanimoto "
-        "similarity, substructure search, 2D depiction, and 3D conformers."
+        "Cheminformatics: parse SMILES, load MOL/SDF/PDB structure files, "
+        "compute molecular descriptors (MW, LogP, TPSA, HBD/HBA), generate "
+        "fingerprints, compute Tanimoto similarity, substructure search, "
+        "2D depiction, and 3D conformers."
     )
     input_schema = RDKitInput
     read_only = True
@@ -82,6 +88,8 @@ class RDKitTool(HuginnTool):
         try:
             if args.action == "smiles_to_mol":
                 return self._smiles_to_mol(args)
+            if args.action == "mol_file_to_mol":
+                return self._mol_file_to_mol(args)
             if args.action == "descriptors":
                 return self._descriptors(args)
             if args.action == "fingerprint":
@@ -125,6 +133,7 @@ class RDKitTool(HuginnTool):
 
     def _smiles_to_mol(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
+        from rdkit.Chem import rdMolDescriptors
 
         smiles = args.smiles
         if not smiles:
@@ -137,14 +146,135 @@ class RDKitTool(HuginnTool):
         info = {
             "smiles": smiles,
             "canonical_smiles": Chem.MolToSmiles(mol),
-            "formula": Chem.rdMolDescriptors.CalcMolFormula(mol),
+            "formula": rdMolDescriptors.CalcMolFormula(mol),
             "num_atoms": mol.GetNumAtoms(),
             "num_heavy_atoms": mol.GetNumHeavyAtoms(),
-            "num_rings": Chem.rdMolDescriptors.CalcNumRings(mol),
-            "num_aromatic_rings": Chem.rdMolDescriptors.CalcNumAromaticRings(mol),
-            "num_rotatable_bonds": Chem.rdMolDescriptors.CalcNumRotatableBonds(mol),
+            "num_rings": rdMolDescriptors.CalcNumRings(mol),
+            "num_aromatic_rings": rdMolDescriptors.CalcNumAromaticRings(mol),
+            "num_rotatable_bonds": rdMolDescriptors.CalcNumRotatableBonds(mol),
         }
         return ToolResult(data=info)
+
+    def _mol_file_to_mol(self, args: RDKitInput) -> ToolResult:
+        """MOL/SDF/PDB 文件 → 分子信息 (输入方向; 与 smiles_to_sdf 输出方向互补).
+
+        诚实边界:
+        - PDB 仅到 ``MolFromPDBBlock`` 级别的结构输入, 不做蛋白组学;
+        - 不认识的扩展名显式报错并列出支持集, 不静默猜格式;
+        - SDF 多记录逐条解析, 单条失败不拖垮整批 (errors 带记录号可定位);
+          全部失败才 success=False.
+        """
+        from rdkit import Chem
+
+        path_str = args.mol_file
+        if not path_str:
+            return ToolResult(
+                data=None, success=False, error="mol_file is required"
+            )
+        path = Path(path_str)
+        if not path.is_file():
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Structure file not found: {path_str}",
+            )
+
+        suffix = path.suffix.lower()
+        # .mdl 与 .ent 分别是 MOL / PDB 的常见别名
+        if suffix in (".mol", ".mdl"):
+            fmt = "mol"
+        elif suffix == ".sdf":
+            fmt = "sdf"
+        elif suffix in (".pdb", ".ent"):
+            fmt = "pdb"
+        else:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    f"Unsupported structure file format: {suffix or '(no suffix)'} "
+                    f"({path_str}). Supported: .mol/.mdl, .sdf, .pdb/.ent"
+                ),
+            )
+
+        molecules: list[dict] = []
+        errors: list[dict] = []
+        try:
+            if fmt == "sdf":
+                # SDMolSupplier 按文件名惰性读, 逐记录解析
+                supplier = Chem.SDMolSupplier(str(path))
+                for i, mol in enumerate(supplier):
+                    if mol is None:
+                        errors.append(
+                            {
+                                "record_index": i,
+                                "error": "MolFromMolBlock returned None (malformed record)",
+                            }
+                        )
+                        continue
+                    molecules.append(self._mol_info(mol, record_index=i))
+            else:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                mol = (
+                    Chem.MolFromMolBlock(text, removeHs=False)
+                    if fmt == "mol"
+                    else Chem.MolFromPDBBlock(text)
+                )
+                if mol is None:
+                    raise ValueError(f"RDKit parser returned None for {fmt} block")
+                molecules.append(self._mol_info(mol, record_index=0))
+        except OSError as exc:
+            return ToolResult(
+                data=None, success=False, error=f"Cannot read {path_str}: {exc}"
+            )
+        except Exception as exc:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to parse {fmt} file {path_str}: {exc}",
+            )
+
+        if not molecules:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    f"No parseable molecule records in {path_str} (format={fmt}): "
+                    f"{len(errors)} record(s) failed"
+                ),
+                metadata={"format": fmt, "errors": errors},
+            )
+
+        return ToolResult(
+            data={
+                "mol_file": str(path),
+                "format": fmt,
+                "n_records": len(molecules) + len(errors),
+                "n_parsed": len(molecules),
+                "molecules": molecules,
+                "errors": errors,
+            }
+        )
+
+    @staticmethod
+    def _mol_info(mol, record_index: int) -> dict:
+        """Molecule summary mirroring _smiles_to_mol's field set (+ record_index)."""
+        from rdkit import Chem
+        from rdkit.Chem import rdMolDescriptors
+
+        info = {
+            "record_index": record_index,
+            "smiles": Chem.MolToSmiles(mol),
+            "formula": rdMolDescriptors.CalcMolFormula(mol),
+            "num_atoms": mol.GetNumAtoms(),
+            "num_heavy_atoms": mol.GetNumHeavyAtoms(),
+            "num_rings": rdMolDescriptors.CalcNumRings(mol),
+            "num_aromatic_rings": rdMolDescriptors.CalcNumAromaticRings(mol),
+            "num_rotatable_bonds": rdMolDescriptors.CalcNumRotatableBonds(mol),
+        }
+        if mol.HasProp("_Name"):
+            info["name"] = mol.GetProp("_Name")
+        return info
 
     def _descriptors(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
@@ -314,7 +444,7 @@ class RDKitTool(HuginnTool):
 
     def _conformers(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
-        from rdkit.Chem import AllChem
+        from rdkit.Chem import AllChem, rdMolAlign
 
         smiles = args.smiles
         if not smiles:
@@ -344,7 +474,7 @@ class RDKitTool(HuginnTool):
         rmsds = []
         if len(conf_ids) > 1:
             for cid in conf_ids[1:]:
-                rmsd = Chem.rdMolAlign.AlignMol(mol, mol, prbCid=cid, refCid=conf_ids[0])
+                rmsd = rdMolAlign.AlignMol(mol, mol, prbCid=cid, refCid=conf_ids[0])
                 rmsds.append(round(rmsd, 3))
 
         return ToolResult(data={

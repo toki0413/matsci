@@ -15,6 +15,9 @@ from huginn.autoloop.hypothesis_loop import (
     HypothesisGraph,
     HypothesisGraphError,
     HypothesisNode,
+    frontier_write_phase,
+    reset_frontier_writer_phase,
+    set_frontier_writer_phase,
 )
 
 # ── 节点基本操作 ─────────────────────────────────────────────────────────────
@@ -715,3 +718,157 @@ class TestTopologyPromptInjection:
 
         prompt = obj._build_hypothesis_prompt({})
         assert "### Topology Insights" not in prompt
+
+
+# ── ARTEX 借鉴: 可执行前沿 / 空即停 / 单写者领用 ────────────────────────────
+
+
+class TestActionableFrontier:
+    """可执行前沿: 只有前置证据满足 (parent 已 resolve) 的 untested 才算可派."""
+
+    def test_root_is_actionable(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("根方向无前置")
+        assert [n.id for n in g.actionable_frontier()] == [h]
+
+    def test_child_of_untested_parent_is_blocked(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("父方向")
+        h2 = g.add_hypothesis("子方向", parent_id=h1)
+        assert [n.id for n in g.blocked_frontier()] == [h2]
+        assert [n.id for n in g.actionable_frontier()] == [h1]
+
+    def test_child_becomes_actionable_after_parent_resolved(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("父方向")
+        h2 = g.add_hypothesis("子方向", parent_id=h1)
+        g.support(h1, evidence={})
+        assert [n.id for n in g.actionable_frontier()] == [h2]
+        assert g.blocked_frontier() == []
+
+    def test_orphan_parent_does_not_block(self):
+        """诚实边界: parent 缺失 → 不判阻塞 (放行防死锁)."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("子方向", parent_id=g.add_hypothesis("父方向"))
+        del g._nodes[g.get(h).parent_id]
+        assert g._prereq_satisfied(g.get(h)) is True
+        assert h in [n.id for n in g.actionable_frontier()]
+
+
+class TestFrontierExhausted:
+    """空即停判据: 图非空但无可执行方向 → True; 空图 → False."""
+
+    def test_empty_graph_is_not_exhausted(self):
+        assert HypothesisGraph().frontier_exhausted() is False
+
+    def test_all_resolved_is_exhausted(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("方向一")
+        h2 = g.add_hypothesis("方向二")
+        g.support(h1, evidence={})
+        g.refute(h2, evidence={})
+        assert g.frontier_exhausted() is True
+
+    def test_blocked_only_frontier_is_exhausted(self):
+        """无根可派 (如前置成环) → 全 blocked, 前沿耗尽 (区别于"空图")."""
+        g = HypothesisGraph()
+        a = g.add_hypothesis("方向 A")
+        b = g.add_hypothesis("方向 B", parent_id=a)
+        # 人为构造环: A 的前置是 B, B 的前置是 A — 两者皆无 actionable
+        g.get(a).parent_id = b
+        assert g.actionable_frontier() == []
+        assert len(g.blocked_frontier()) == 2
+        assert g.frontier_exhausted() is True
+
+    def test_actionable_present_not_exhausted(self):
+        g = HypothesisGraph()
+        g.add_hypothesis("唯一方向")
+        assert g.frontier_exhausted() is False
+
+    def test_report_fields(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("父方向")
+        g.add_hypothesis("子方向", parent_id=h1)
+        rep = g.frontier_report()
+        assert rep == {
+            "nodes": 2, "untested": 2, "actionable": 1,
+            "blocked": 1, "unclaimed": 1, "exhausted": False,
+        }
+
+
+class TestFrontierClaim:
+    """单写者领用: 同一可执行方向不被重复领走, 领用不改 status."""
+
+    def test_claim_marks_and_excludes_second_claim(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("唯一可领方向")
+        first = g.claim_next_actionable(claimer="iter1")
+        assert first is not None and first.id == h
+        assert first.claimed_by == "iter1"
+        assert first.claimed_at != ""
+        # status 未被改动 (领用与验证解耦)
+        assert g.get(h).status == "untested"
+        # 已领用 → 第二次领不到
+        assert g.claim_next_actionable(claimer="iter2") is None
+
+    def test_release_claim_allows_reclaim(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("可领方向")
+        assert g.claim_next_actionable(claimer="iter1").id == h
+        assert g.release_claim(h) is True
+        assert g.get(h).claimed_by == ""
+        assert g.claim_next_actionable(claimer="iter2").id == h
+
+    def test_release_unknown_or_unclaimed_returns_false(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("未领方向")
+        assert g.release_claim(h) is False
+        assert g.release_claim("h_nope") is False
+
+    def test_claim_specific_node_respects_prereq_and_status(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("父方向")
+        h2 = g.add_hypothesis("子方向", parent_id=h1)
+        # 子方向前置未满足 → 指定 id 也领不到
+        assert g.claim_next_actionable(claimer="x", node_id=h2) is None
+        # 满足后可指定领用
+        g.support(h1, evidence={})
+        got = g.claim_next_actionable(claimer="x", node_id=h2)
+        assert got is not None and got.id == h2
+        # 已 supported 的节点不再可领
+        assert g.claim_next_actionable(claimer="y", node_id=h1) is None
+
+    def test_claim_records_event(self):
+        g = HypothesisGraph()
+        g.add_hypothesis("可领方向")
+        g.claim_next_actionable(claimer="iter9")
+        claims = [e for e in g.events() if e["event"] == "claim"]
+        assert len(claims) == 1
+        assert claims[0]["claimer"] == "iter9"
+
+
+class TestFrontierSingleWriter:
+    """单写者纪律: 非写者阶段追加 → 默认只观测 (fail-open), 不丢节点."""
+
+    def test_out_of_phase_write_is_counted_but_kept(self):
+        g = HypothesisGraph()
+        tok = set_frontier_writer_phase("execute")
+        try:
+            hid = g.add_hypothesis("execute 阶段越权追加的方向")
+            assert hid is not None  # 默认 fail-open: 只计数不拒绝
+            assert g._out_of_phase_writes == 1
+        finally:
+            reset_frontier_writer_phase(tok)
+        assert g._out_of_phase_writes == 1
+
+    def test_writer_phase_write_not_counted(self):
+        g = HypothesisGraph()
+        with frontier_write_phase("hypothesize"):
+            assert g.add_hypothesis("写者阶段追加的方向") is not None
+        assert g._out_of_phase_writes == 0
+
+    def test_unmarked_phase_skips_check(self):
+        """阶段未标注 → 不检查 (向后兼容旧路径/测试)."""
+        g = HypothesisGraph()
+        assert g.add_hypothesis("未标注阶段追加的方向") is not None
+        assert g._out_of_phase_writes == 0

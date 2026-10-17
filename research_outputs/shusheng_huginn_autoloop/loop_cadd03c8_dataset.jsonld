@@ -1,0 +1,77 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_cadd03c8",
+  "description": "独立复核架构容量外推解耦结论: 神经网络在留出集零违规所需的最小约束数 N_c 是否随模型宽度 w 增长. 用 numpy/scipy 在本地真实编写并运行实验, 扫 w in {8,16,32} x N in {1,2,4,8}, 每个(w,N)训练小网络至训练误差达标, 统计留出集违规, 求 N_c(w), 拟合 beta=slope(log N_c, log w). 判据: |beta|<0.15 支持 H1(饱和点由解空间性质决定); beta>0.3 且 R2>0.85 支持 H2(归纳偏置假象).",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-09-26T15:17:26.073158+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "workflow"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Create and execute a Python experiment to test the neural network capacity scaling hypothesis. Build feedforward networks with widths w∈{8,16,32}, vary constraint count N∈{1,2,4,8}, train to target training error, count validation violations, determine N_c(w), and fit log-log scaling β. Include convergence safeguards for small widths and validate against the criteria |β|<0.15 (H1) or β>0.3,R²>0.85 (H2)."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "skill",
+      "value": "None (custom numpy/scipy experiment)"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "The experiment will produce N_c values for each width. Based on the hypothesis that capacity saturation is determined by solution space geometry rather than parameter count, we expect β≈0 (|β|<0.15), supporting H1. The log-log plot should show approximately horizontal trend with R²<0.85 due to limited data points and potential convergence issues at w=8."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "target_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_2c73087a"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_cadd03c8",
+    "description": "独立复核架构容量外推解耦结论: 神经网络在留出集零违规所需的最小约束数 N_c 是否随模型宽度 w 增长. 用 numpy/scipy 在本地真实编写并运行实验, 扫 w in {8,16,32} x N in {1,2,4,8}, 每个(w,N)训练小网络至训练误差达标, 统计留出集违规, 求 N_c(w), 拟合 beta=slope(log N_c, log w). 判据: |beta|<0.15 支持 H1(饱和点由解空间性质决定); beta>0.3 且 R2>0.85 支持 H2(归纳偏置假象).",
+    "instrument": "/workspace/research_outputs/shusheng_huginn_autoloop/.huginn/trajectories/loop_cadd03c8.json",
+    "object": "/workspace/research_outputs/shusheng_huginn_autoloop/.huginn/provenance.jsonl",
+    "startTime": "2026-09-26T15:09:07.247818",
+    "endTime": "2026-09-26T15:17:26.068594"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_huginn_autoloop/huginn_autoloop_report_loop_f0d37dbe.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_huginn_autoloop/.huginn/trajectories/loop_cadd03c8.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

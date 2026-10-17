@@ -266,7 +266,7 @@ def _no_nan_values(data: dict[str, Any]) -> ConstraintResult:
     """Safety rule: numerical results must not contain NaN/Inf."""
     import math
 
-    values = [v for v in data.values() if isinstance(v, (int, float))]
+    values = [v for v in data.values() if isinstance(v, int | float)]
     bad = [v for v in values if not math.isfinite(v)]
     passed = len(bad) == 0
     return _result(

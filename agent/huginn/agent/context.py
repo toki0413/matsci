@@ -13,6 +13,21 @@ from huginn.utils.prompt_cache import PromptCacheBuilder
 logger = logging.getLogger(__name__)
 
 
+def _capability_note() -> str:
+    """能力面汇总块: 逻辑单一来源在 runtime_probe.capability_note, 此处只做导入隔离.
+
+    诚实边界: 只陈述「哪些能力因缺依赖不可用、可 pip 装什么」, 不暗示能力已可用.
+    非致命: 能力盘点不可用 (或导入失败) 时回落空串 (不注入), 保证 prompt 构建永不崩.
+    """
+    try:
+        from huginn.capabilities.runtime_probe import capability_note
+
+        return capability_note()
+    except Exception:  # 非致命: 能力盘点不可用时回落不注入
+        logger.debug("capability runtime note unavailable", exc_info=True)
+        return ""
+
+
 class ContextMixin:
     """Methods that assemble the prompt context and manage tool visibility."""
 
@@ -22,9 +37,11 @@ class ContextMixin:
     }
 
     # Tools that stay visible regardless of query relevance.
+    # 用**注册名**: 早期写的 `memory_tool`/`search_tool`/`knowledge_search` 与注册表
+    # 对不上, 检索时这几个"常驻"工具其实没常驻 (MECE 审计记的允许表死项).
     _ALWAYS_ON_TOOLS: set[str] = {
-        "memory_tool", "knowledge_search", "structure_tool",
-        "periodic_table_tool", "search_tool",
+        "remember", "recall", "rag_tool",
+        "structure_tool", "web_search_tool",
     }
 
     # Above this tool count, switch to query-aware retrieval.
@@ -72,23 +89,25 @@ class ContextMixin:
             "Available phases: LITERATURE, HYPOTHESIS, PLANNING, "
             "EXECUTION, VALIDATION, REPORTING."
         )
-        # externalThinking: 开启时要求模型在动手前先用 deep_think 工具写分析.
-        # 逻辑已迁为 "thinking" 段插件 (prompt_builder 注册), 这里只渲染该段,
-        # 保持同一段逻辑单一来源、可被插件替换。默认关, 不改变默认行为;
-        # fail-open: flag 层异常不注入, 保证系统提示构建永不崩.
+        # 主路径按**段生效声明**渲染应生效段 (writing / multimodal / thinking +
+        # 对 main 有声明的第三方插件段). 旧实现只硬编码渲染 "thinking", 导致
+        # 反防御写作、多模态引导、插件段 (如 asd_ste100) 在主路径静默缺席 ——
+        # 与 s7 路径段集合不一致的"孤儿段". 声明面单一来源在
+        # prompt_segments._APPLIES_TO; 门禁 tests/test_prompt_contract.py 断言
+        # "声明 != 渲染" 即红. fail-open: 注册表/插件异常都不让系统提示构建崩.
         try:
             # 确保内置段已注册 (persona/mode/.../thinking 注册在 prompt_builder import 时).
             import huginn.agent.prompt_builder as _pb  # noqa: F401
-            from huginn.plugins.prompt_segments import render_prompt_segment
+            from huginn.plugins.prompt_segments import render_prompt_segments_for_path
 
-            _thinking = render_prompt_segment(
-                "thinking", getattr(self, "_mode", "chat"), "execute",
+            _declared = render_prompt_segments_for_path(
+                "main", getattr(self, "_mode", "chat"), "execute",
                 "s0_blank", self.system_prompt,
             )
-            if _thinking:
-                base += "\n\n" + _thinking
-        except Exception:  # 非致命: external_thinking 注入失败则跳过
-            logger.debug("external_thinking injection skipped", exc_info=True)
+            if _declared:
+                base += "\n\n" + _declared
+        except Exception:  # 非致命: 段注入失败则跳过
+            logger.debug("prompt segment injection skipped", exc_info=True)
         # Inject cached system context (date + git status) and project
         # context (.huginn.md / AGENTS.md). Computed once per session
         # to avoid repeated git calls.
@@ -148,6 +167,10 @@ class ContextMixin:
                 f"\n\nNote: {', '.join(_missing)} not installed locally. "
                 "Answer parameter questions from knowledge."
             )
+
+        # 能力面汇总 — 每次构建重算(不缓存), 保证装完依赖后不注入陈旧状态 (AC-4).
+        # L0 为纯静态扫描 (不 import 工具模块、无网络), 开销可控.
+        base += _capability_note()
 
         # STABLE_PRINCIPLES: S7 自修改回流进来的 persona 原则. 闭合
         # persona→behavior→memory→knowledge→persona 回路 (G8 加法).

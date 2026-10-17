@@ -23,6 +23,7 @@ import pytest
 
 from huginn.autoloop.budget import IterationBudget, ProgressiveBudget
 from huginn.autoloop.engine import AutoloopEngine
+from huginn.utils.common import now_iso
 
 # ── shared fixtures ──────────────────────────────────────────────────────────
 
@@ -143,6 +144,31 @@ class TestProgressiveBudgetTiers:
         tier = b.for_iteration(5)
         assert tier.allowed_modes is None
         assert tier.max_calls is None
+
+
+class TestForRemaining:
+    """D2: 按剩余预算比例取档 (>0.6 open / 0.3–0.6 medium / <0.3 light)."""
+
+    def test_boundaries(self):
+        b = ProgressiveBudget.default()
+        assert b.for_remaining(0.61).label == "open"
+        assert b.for_remaining(0.6).label == "medium"
+        assert b.for_remaining(0.3).label == "medium"
+        assert b.for_remaining(0.29).label == "light"
+
+    def test_clamps_out_of_range(self):
+        b = ProgressiveBudget.default()
+        assert b.for_remaining(-1.0).label == "light"
+        assert b.for_remaining(2.0).label == "open"
+
+    def test_stricter_tier_picks_more_restrictive(self):
+        from huginn.autoloop.budget import stricter_tier
+
+        light = IterationBudget(("coder",), 20, "light")
+        open_ = IterationBudget(None, None, "open")
+        assert stricter_tier(open_, light) is light
+        assert stricter_tier(light, open_) is light
+        assert stricter_tier(open_, open_) is open_
 
 
 class TestIterationBudgetAllows:
@@ -416,3 +442,265 @@ class TestBuildPmTextGate:
         # 长程任务即使无 extreme 也进入 try 块 (门控放行), 无 history 返回空串
         res = engine._build_pm_text()
         assert res == ""
+
+
+# ── D1: 统一 deadline 原语 (_budget_remaining_s / _budget_exhausted) ─────────
+
+
+class TestUnifiedDeadlinePrimitive:
+    """P1/D1: 资源判据下沉为单一接口. 只在长程模式 + 挂钟耗尽时返回 True;
+    非长程路径零变化; 拿不到预算 fail-open; 回滚开关恢复旧行为.
+    """
+
+    @pytest.fixture
+    def store(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from huginn.autoloop.goal_store import GoalStore
+
+        s = GoalStore(path=tmp_path / "goals.json")
+        # engine_control 在方法内 `from ... import get_goal_store`, patch 模块属性即可.
+        monkeypatch.setattr("huginn.autoloop.goal_store.get_goal_store", lambda: s)
+        return s
+
+    def test_no_goal_returns_none_and_not_exhausted(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        assert engine._budget_remaining_s() is None
+        assert engine._budget_exhausted() is False
+
+    def test_non_long_horizon_never_exhausted(self, engine, store, monkeypatch):
+        monkeypatch.delenv("HUGINN_PERSISTENT_GOAL_MODE", raising=False)
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id,
+            wall_clock_budget_seconds=1.0,
+            started_at="2000-01-01T00:00:00+00:00",
+        )
+        engine._run_goal_id = g.id
+        assert engine._budget_exhausted() is False
+
+    def test_long_horizon_not_exhausted(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id, wall_clock_budget_seconds=100000.0, started_at=now_iso(),
+        )
+        engine._run_goal_id = g.id
+        assert engine._budget_remaining_s() > 0
+        assert engine._budget_exhausted() is False
+
+    def test_long_horizon_exhausted(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id,
+            wall_clock_budget_seconds=1.0,
+            started_at="2000-01-01T00:00:00+00:00",
+        )
+        engine._run_goal_id = g.id
+        assert engine._budget_remaining_s() < 0
+        assert engine._budget_exhausted() is True
+
+    def test_run_goal_id_wins_over_stale_global_active(self, engine, store, monkeypatch):
+        """跨 run 残留旧 goal 挂钟已耗尽, 但本 run 的 goal 健康 → 不误判耗尽."""
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        stale = store.create_goal("stale")
+        store.update_goal(
+            stale.id,
+            wall_clock_budget_seconds=1.0,
+            started_at="2000-01-01T00:00:00+00:00",
+        )
+        cur = store.create_goal("cur")
+        store.update_goal(
+            cur.id, wall_clock_budget_seconds=100000.0, started_at=now_iso(),
+        )
+        engine._run_goal_id = cur.id
+        assert engine._budget_exhausted() is False
+
+    def test_rollback_switch_restores_old_behaviour(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_BUDGET_DEADLINE_UNIFIED", "0")
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id,
+            wall_clock_budget_seconds=1.0,
+            started_at="2000-01-01T00:00:00+00:00",
+        )
+        engine._run_goal_id = g.id
+        assert engine._budget_remaining_s() is None
+        assert engine._budget_exhausted() is False
+
+
+# ── D2: 档位预算改按剩余预算 (_resolve_budget_tier) ─────────────────────────
+
+
+class TestResolveBudgetTier:
+    @pytest.fixture
+    def store(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from huginn.autoloop.goal_store import GoalStore
+
+        s = GoalStore(path=tmp_path / "goals.json")
+        monkeypatch.setattr("huginn.autoloop.goal_store.get_goal_store", lambda: s)
+        return s
+
+    def test_non_long_horizon_uses_iteration(self, engine, store, monkeypatch):
+        engine._budget = ProgressiveBudget.default()
+        monkeypatch.setenv("HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING", "1")
+        # 长程模式关 (默认), 即使有耗尽 goal 也按迭代序号
+        monkeypatch.delenv("HUGINN_PERSISTENT_GOAL_MODE", raising=False)
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id,
+            wall_clock_budget_seconds=1.0,
+            started_at="2000-01-01T00:00:00+00:00",
+        )
+        engine._run_goal_id = g.id
+        assert engine._engine_controller._resolve_budget_tier(40).label == "light"  # by_iter(40)=light
+
+    def test_flag_off_uses_iteration(self, engine, monkeypatch):
+        engine._budget = ProgressiveBudget.default()
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING", "0")
+        assert engine._engine_controller._resolve_budget_tier(5).label == "open"
+
+    def test_no_goal_uses_iteration(self, engine, store, monkeypatch):
+        engine._budget = ProgressiveBudget.default()
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING", "1")
+        assert engine._engine_controller._resolve_budget_tier(5).label == "open"
+
+    def test_low_remaining_tightens_early_iteration(self, engine, store, monkeypatch):
+        from datetime import UTC, datetime, timedelta
+
+        engine._budget = ProgressiveBudget.default()
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        g = store.create_goal("o")
+        # 100s 预算, 95s 前开始 → 剩余 ~5s → 比例 ~0.05 → light
+        started = (datetime.now(UTC) - timedelta(seconds=95)).isoformat()
+        store.update_goal(
+            g.id, wall_clock_budget_seconds=100.0, started_at=started,
+        )
+        engine._run_goal_id = g.id
+        # iteration 5 本身是 open, 但剩余不足 → 取严 light
+        assert engine._engine_controller._resolve_budget_tier(5).label == "light"
+
+    def test_high_remaining_does_not_widen_late_iteration(self, engine, store, monkeypatch):
+        engine._budget = ProgressiveBudget.default()
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id, wall_clock_budget_seconds=100000.0, started_at=now_iso(),
+        )
+        engine._run_goal_id = g.id
+        # iteration 40 本身是 light, 剩余充裕 → 仍取严 light (迭代序号上界兜底)
+        assert engine._engine_controller._resolve_budget_tier(40).label == "light"
+
+
+# ── D4: 耗尽语义分离 (expire ≠ complete) ────────────────────────────────────
+
+
+class TestGoalExpireSemantics:
+    def test_expire_sets_status_and_reason(self, tmp_path: Path):
+        from huginn.autoloop.goal_store import GoalStore
+
+        s = GoalStore(path=tmp_path / "goals.json")
+        g = s.create_goal("o")
+        out = s.expire(g.id, reason="wall_clock")
+        assert out.status == "expired"
+        assert out.metadata["expired_reason"] == "wall_clock"
+        # 落盘可回读
+        reloaded = GoalStore(path=tmp_path / "goals.json").get_goal(g.id)
+        assert reloaded.status == "expired"
+
+    def test_expire_does_not_mark_completed(self, tmp_path: Path):
+        from huginn.autoloop.goal_store import GoalStore
+
+        s = GoalStore(path=tmp_path / "goals.json")
+        g = s.create_goal("o")
+        assert s.complete(g.id).status == "completed"
+        assert s.expire(g.id).status == "expired"
+
+
+# ── D3: 长程停滞 → 动作选择器 (_long_horizon_stall_action) ──────────────────
+
+
+class TestLongHorizonStallAction:
+    """D3: 无进展 + 有预算 → 强制转向动作 (pivot), 而非静默空转/终止."""
+
+    @pytest.fixture
+    def store(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from huginn.autoloop.goal_store import GoalStore
+
+        s = GoalStore(path=tmp_path / "goals.json")
+        monkeypatch.setattr("huginn.autoloop.goal_store.get_goal_store", lambda: s)
+        return s
+
+    def _long_horizon_goal(self, store):
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id, wall_clock_budget_seconds=100000.0, started_at=now_iso(),
+        )
+        return g
+
+    @staticmethod
+    def _stall(engine) -> str | None:
+        # D3 方法定义在 CognitiveRunner 协作对象上 (属性写转发回引擎).
+        return engine._cognitive_runner._long_horizon_stall_action()
+
+    @pytest.fixture(autouse=True)
+    def _schedule_off(self, monkeypatch: pytest.MonkeyPatch):
+        # 固定 base 阈值, 不依赖假设强度信号.
+        monkeypatch.setenv("HUGINN_STRENGTH_SCHEDULE", "0")
+        monkeypatch.setenv("HUGINN_DARWIN_STAGNATION_LIMIT", "5")
+
+    def test_flag_off_returns_none(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_STALL_AS_ACTION", "0")
+        engine._run_goal_id = self._long_horizon_goal(store).id
+        engine._darwin_stagnation = 99
+        engine._iteration = 10
+        assert self._stall(engine) is None
+
+    def test_no_goal_returns_none(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_STALL_AS_ACTION", "1")
+        engine._darwin_stagnation = 99
+        engine._iteration = 10
+        assert self._stall(engine) is None
+
+    def test_below_threshold_returns_none(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_STALL_AS_ACTION", "1")
+        engine._run_goal_id = self._long_horizon_goal(store).id
+        engine._darwin_stagnation = 2  # < base 5
+        engine._iteration = 10
+        assert self._stall(engine) is None
+
+    def test_early_iteration_returns_none(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_STALL_AS_ACTION", "1")
+        engine._run_goal_id = self._long_horizon_goal(store).id
+        engine._darwin_stagnation = 9
+        engine._iteration = 2  # <= 2 不触发
+        assert self._stall(engine) is None
+
+    def test_trigger_returns_pivot(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_STALL_AS_ACTION", "1")
+        engine._run_goal_id = self._long_horizon_goal(store).id
+        engine._darwin_stagnation = 5
+        engine._iteration = 10
+        assert self._stall(engine) == "pivot"
+
+    def test_budget_exhausted_returns_none(self, engine, store, monkeypatch):
+        monkeypatch.setenv("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        monkeypatch.setenv("HUGINN_STALL_AS_ACTION", "1")
+        g = store.create_goal("o")
+        store.update_goal(
+            g.id,
+            wall_clock_budget_seconds=1.0,
+            started_at="2000-01-01T00:00:00+00:00",
+        )
+        engine._run_goal_id = g.id
+        engine._darwin_stagnation = 99
+        engine._iteration = 10
+        # 预算耗尽 → 让位给挂钟出口, 不再强制转向
+        assert self._stall(engine) is None

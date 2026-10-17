@@ -52,7 +52,7 @@ class AgentFactory:
             try:
                 from pathlib import Path
                 self.persona_manager.sync_skills(Path(config.persona_sync_dir))
-            except Exception:
+            except Exception:  # 防御: 人格技能同步失败则忽略
                 logger.debug("persona auto-sync failed (non-fatal)", exc_info=True)
         self._profiles: dict[str, AgentProfileConfig] = {
             a.id: a for a in config.agents if a.enabled
@@ -78,6 +78,11 @@ class AgentFactory:
         anomaly_db = self._anomaly_db_path()
         self._anomaly_store = AnomalyLogStore(anomaly_db)
 
+        # ISC 反渗透: 跨轮会话安全风险追踪. 生命周期跟 factory 一致, 所有 agent
+        # 共用一份 — agent 按请求新建, 状态挂钩子实例上会跨轮丢失.
+        from huginn.hooks.safety_collapse_hook import SafetyCollapseTracker
+        self._safety_tracker = SafetyCollapseTracker()
+
         # 共享工具调度器 — 同一 factory 下所有 agent (含 orchestrator/team/swarm
         # 派生的子 agent) 共用同一份 heavy/light 信号量 + 资源预算, 父子 agent
         # 提交重作业时由它仲裁并发. 持久后端用 SqliteCampaignStore (jobs 表),
@@ -93,7 +98,7 @@ class AgentFactory:
             self._audit_unsub = install_audit_subscriber()
             # campaign.* / quality.check 业务订阅: 之前 emit→audit→dead, 现在至少 log 可见.
             install_campaign_subscriber()
-        except Exception:
+        except Exception:  # 防御: 审计订阅安装失败则忽略
             logger.debug("audit subscriber install failed (non-fatal)", exc_info=True)
             self._audit_unsub = None
 
@@ -106,7 +111,7 @@ class AgentFactory:
 
         try:
             store = SqliteCampaignStore(self._campaign_db_path())
-        except Exception:
+        except Exception:  # 防御: 持久存储不可用则退空实现
             store = NullCampaignStore()
         try:
             scheduler = ToolScheduler(
@@ -119,7 +124,7 @@ class AgentFactory:
             with contextlib.suppress(Exception):
                 scheduler.recover()
             return scheduler
-        except Exception:
+        except Exception:  # 防御: 调度器构造失败则禁用
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -243,7 +248,7 @@ class AgentFactory:
                 ctx = load_project_context(self.config.workspace)
                 if ctx.strip():
                     prompt = f"{prompt}\n\n# Project Context\n\n{ctx}"
-            except Exception:
+            except Exception:  # 防御: 项目上下文载入失败则跳过
                 logger.debug("load project context failed", exc_info=True)
 
             # 反跑题任务锚: 明确本轮目标并锁死, 防止 agent 被中间输出
@@ -330,6 +335,11 @@ class AgentFactory:
         # 让 agent 明确告知用户该工具不存在, 别默默调 ls/web_search 探索.
         from huginn.hooks.tool_name_validation_hook import ToolNameValidationHook
         agent.register_hook(USER_PROMPT_SUBMIT, ToolNameValidationHook())
+
+        # ISC 反渗透: TVD 结构检测 (USER_PROMPT_SUBMIT) + SafeRedirect 引导 +
+        # 跨轮风险追踪 (STOP). 共享 tracker 保证 multi-turn 连续性.
+        from huginn.hooks.safety_collapse_hook import register_safety_collapse_hooks
+        register_safety_collapse_hooks(agent.hook_manager, self._safety_tracker)
 
         # Design Plan gate: 调用 vasp/lammps 等执行类工具前,
         # 建议先有用户确认的 plan. Chat 模式下 advisory (不硬阻塞),

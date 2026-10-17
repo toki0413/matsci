@@ -1,0 +1,343 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: composition] The rigid family is defined by the linear PDE $f'(x) = 0$ (co",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:43:25.473543",
+      "last_seen": "2026-09-28T11:43:25.473543",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (2-8) and flat/decreasing across w values, with zero violation achieved at low widths. For the fat family, N_c will be unreachable (trend='unreachable') even",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: composition] The rigid family is defined by the linear PDE $f'(x) = 0$ (co"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:43:25.473589",
+      "last_seen": "2026-09-28T11:43:25.473589",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:43:25.473603",
+      "last_seen": "2026-09-28T11:43:25.473603",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:43:25.473613",
+      "last_seen": "2026-09-28T11:43:25.473613",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: composition] The rigid family is defined by the linear PDE $f'(x) = 0$ (co",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_cf0feca5"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:43:25.473744",
+      "last_seen": "2026-09-28T11:43:25.473744",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fd1a65fcb83e981d",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T11:44:22.937103",
+      "last_seen": "2026-09-28T11:46:26.416062",
+      "mentions": 3,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The exponential family (λ=1) will show finite N_c(w) in the range h=2~8 with flat/decreasing trend across w, satisfying the rigidity signature. The holdout error will be ≤1e-3 at those widths, while t",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:44:22.937143",
+      "last_seen": "2026-09-28T11:44:22.937143",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:44:22.937153",
+      "last_seen": "2026-09-28T11:44:22.937153",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:44:22.937163",
+      "last_seen": "2026-09-28T11:44:22.937163",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_a1436e6d"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:44:22.937248",
+      "last_seen": "2026-09-28T11:44:22.937248",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "20d25ca90d1782df",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595859",
+      "last_seen": "2026-09-28T11:45:22.595859",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595881",
+      "last_seen": "2026-09-28T11:45:22.595881",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:45:22.595971",
+      "last_seen": "2026-09-28T11:45:22.595971",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d837493ea1593d67",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:46:26.416091",
+      "last_seen": "2026-09-28T11:46:26.416091",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:46:26.416111",
+      "last_seen": "2026-09-28T11:46:26.416111",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:46:26.416121",
+      "last_seen": "2026-09-28T11:46:26.416121",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_dc97fc42"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:46:26.416201",
+      "last_seen": "2026-09-28T11:46:26.416201",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2373de355a50c49e",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: composition] The rigid family is defined by the linear PDE $f'(x) = 0$ (co",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:43:25.473613",
+      "last_seen": "2026-09-28T11:43:25.473613",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cf0feca5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:43:25.473613",
+      "last_seen": "2026-09-28T11:43:25.473613",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cf0feca5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:43:25.473613",
+      "last_seen": "2026-09-28T11:43:25.473613",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cf0feca5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:44:22.937163",
+      "last_seen": "2026-09-28T11:44:22.937163",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1436e6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:46:26.416121",
+      "last_seen": "2026-09-28T11:46:26.416121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc97fc42"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:44:22.937163",
+      "last_seen": "2026-09-28T11:44:22.937163",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1436e6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:44:22.937163",
+      "last_seen": "2026-09-28T11:44:22.937163",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1436e6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:46:26.416121",
+      "last_seen": "2026-09-28T11:46:26.416121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc97fc42"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:46:26.416121",
+      "last_seen": "2026-09-28T11:46:26.416121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc97fc42"
+    }
+  ]
+}

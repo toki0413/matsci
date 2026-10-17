@@ -24,6 +24,7 @@ description: 书生科研智能体的域科学计算技能 —— 通过 Huginn 
 | probe_direction_curve | 扫约束位置 vs 预言 1/(1+t_i²) | 曲线 err |
 | probe_direction_g | 高阶核(3)+导数约束(derivative)泛化分解 | dir_weights/null_dim |
 | probe_optimizer | 真实 PINN 训练预算下的留出误差 vho | vho |
+| probe_nc_decoupling | 架构容量外推解耦: 扫容量 w×约束数 N 测饱和点 N_c(w) | N_c, beta, r2, verdict |
 
 ## 使用规约
 1. 引用数值前先说明量纲语义与取值边界(judgment_guardrail strictness>=1);

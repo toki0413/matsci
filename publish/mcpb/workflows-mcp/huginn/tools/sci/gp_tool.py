@@ -904,10 +904,7 @@ class GPTool(HuginnTool):
         maximize: bool = False,
     ) -> np.ndarray:
         sigma = np.where(sigma < 1e-12, 1e-12, sigma)
-        if maximize:
-            z = (mu - incumbent) / sigma
-        else:
-            z = (incumbent - mu) / sigma
+        z = (mu - incumbent) / sigma if maximize else (incumbent - mu) / sigma
         return _phi_cdf(z)
 
     @staticmethod
@@ -1038,10 +1035,7 @@ def hypervolume(pareto_y: np.ndarray, ref: np.ndarray) -> float:
     pts = pts[order]
     hv = 0.0
     for i in range(len(pts)):
-        if i == 0:
-            delta = ref[-1] - pts[i, -1]
-        else:
-            delta = pts[i, -1] - pts[i - 1, -1]
+        delta = ref[-1] - pts[i, -1] if i == 0 else pts[i, -1] - pts[i - 1, -1]
         if delta <= 0:
             continue
         # slice: 去掉最后一个目标, 递归算子空间 hypervolume

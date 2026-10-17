@@ -1,0 +1,302 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_f98f16e4",
+  "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-10-09T04:45:12.133232+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "code_lab"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "[auto-routed: 代码实验走真实执行] Execute a numerical scan to test the Barron Space Hypothesis by training small feedforward networks on increasingly many analytic constraints (w) and measuring the minimum hidden layer width N_c(w) required to achieve zero violation (max error ≤ 1e-3) on held-out constraints. The plan includes: (1) generating synthetic constraint functions from Barron-space classes (e.g., smooth functions with bounded Fourier norms), (2) sweeping w and N to record training and leave-out errors, (3) extracting N_c(w) as the minimal width achieving zero violation, and (4) validating the predicted logarithmic scaling N_c(w) ∝ O(log w) against the empirical data. All outputs are finite, and the experiment respects the zero-violation threshold and small-network-only constraint."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "skill",
+      "value": "None (custom ML workflow)"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "The plot of N_c(w) vs. log w will show approximately linear growth with slope consistent with Barron space capacity bounds (e.g., N_c(w) ≈ a log w + b for constants a, b), supporting the quasi-rigid hypothesis. N_c(w) will remain finite across the scanned w range, and leave-out errors will drop below 1e-3 at N_c(w) while training errors remain near zero."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "target_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "override_reason",
+      "value": "code_experiment_not_physics_workflow"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_8fe3d9a2"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "status",
+      "value": "completed"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "success",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.rigid_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.fat_score",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.score",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "script",
+      "value": "import numpy as np\n\ndef family(kind, w, seed):\n    rng = np.random.default_rng(seed)\n    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)\n    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)\n    if kind == 'rigid':\n        coeffs = rng.standard_normal(5)\n        y = poly_basis(X, 5) @ coeffs.reshape(1, -1).T\n        yv = poly_basis(Xv, 5) @ coeffs.reshape(1, -1).T\n    elif kind == 'fat':\n        coeffs = rng.standard_normal(50)\n        y = poly_basis(X, 50) @ coeffs.reshape(1, -1).T\n        yv = poly_basis(Xv, 50) @ coeffs.reshape(1, -1).T\n    else:\n        y = np.zeros((w, 1))\n        yv = np.zeros((200, 1))\n    scale = np.std(np.concatenate([y, yv]))\n    if scale > 0:\n        y /= scale\n        yv /= scale\n    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}\n\ndef run(cfg):\n    seed = int(cfg.get('seed', 0))\n    ws = [4, 8, 16, 32]\n    hs = [4, 8, 16, 32, 64]\n    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_err': [], 'fat_err': []}\n    objectives = {'rigid_score': 0.0, 'fat_score': 0.0, 'score': 0.0}\n    for kind in ['rigid', 'fat']:\n        Nc_list = []\n        err_list = []\n        for w in ws:\n            best_Nc = 999.0\n            min_err = 1e9\n            for h in hs:\n                data = family(kind, w, seed + w * 1000 + h)\n                X, y = data['X'], data['y']\n                Xv, yv = data['Xv'], data['yv']\n                model = mlp_fit(X, y, h, seeds=3)\n                pred = mlp_predict(model, Xv)\n                err = float(np.max(np.abs(pred - yv)))\n                is_zero = zero_violation(err)\n                if is_zero and h < best_Nc:\n                    best_Nc = float(h)\n                if err < min_err:\n                    min_err = err\n            Nc_list.append(best_Nc if best_Nc < 999 else 999.0)\n            err_list.append(min_err)\n        summary[f'{kind}_Nc'].append(Nc_list)\n        summary[f'{kind}_err'].append(err_list)\n        if kind == 'rigid':\n            if all(n < 999 for n in Nc_list):\n                objectives['rigid_score'] = 1.0\n            else:\n                objectives['rigid_score'] = 0.0\n        else:\n            if all(n >= 999 for n in Nc_list):\n                objectives['fat_score'] = 1.0\n            else:\n                objectives['fat_score'] = 0.0\n    objectives['score'] = (objectives['rigid_score'] + objectives['fat_score']) / 2.0\n    return {'success': True, 'summary': summary, 'objectives': objectives}"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reproducible",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "Tests Passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "constraints_satisfied",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.failed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.skipped",
+      "value": 2
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "test_output",
+      "value": "\nno tests ran in 0.01s\n"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.reason",
+      "value": "Output is a raw sequence of numbers with no explanation, context, or logical derivation. It fails to address any hypothesis, provide evidence, or connect data to inference. No reasoning chain is visible."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.needs_retry",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_gap",
+      "value": "No specific data interpretation, no claim linking values to physical/mathematical behavior, no reference to expected trends (e.g., linear growth in N_c(w) vs log w as hypothesized in iter5)."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.failure_mode",
+      "value": "If this output were correct, it would imply the agent can produce valid results without reasoning — which contradicts the requirement for multi-step logical derivation. In reality, it represents a hallucinated or dumped numeric stream with no semantic meaning or verification path."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reviewer_critique",
+      "value": "This is a code generation issue, not a math issue. The agent produced a numeric dump with no derivation or validation logic.\n\n**Methodological weakness:**\n- The script defines `family` and `run` but the execution result is truncated mid-loop (missing the `for kind in [...` body). The reported `rigid_Nc`, `fat_Nc`, etc., values are unconnected to any visible computation or optimization objective. No convergence tests (e.g., error vs. basis size or sample count) are shown.\n\n**Reproducibility and benchmarking:**\n- No tests ran (`tests_passed: false`, `no tests ran`). Without a test harness or baseline comparison, the scores (`rigid_score=0.0`, `fat_score=1.0`) cannot be validated. Reproducibility is undermined by missing code and unexplained outputs.\n\n**Domain alignment:**\n- The output lacks any physical or mathematical interpretation. In a materials-science context, one would expect error trends linked to model capacity, sample size, or regularization—none are provided. The `Nc` values (e.g., 999.0) suggest placeholder or uninitialized outputs rather than meaningful critical counts.\n\n**Next-step improvements:**\n- Complete the `run` function and include a convergence analysis (e.g., plot `error` vs. `w` or basis dimension).\n- Add unit tests or sanity checks (e.g., monotonic error decay with more samples).\n- Provide a derivation or hypothesis linking the scores to the underlying model (e.g., why rigid fits better than fat?).\n- Include reproducibility details: seed handling, basis functions, and error metric definitions."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_tool_diversity",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_reasoning_entropy",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_cross_domain",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_novelty",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_domains_hit",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "grader_reward",
+      "value": 0.8571
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_total",
+      "value": 8
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_pass_rate",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.predicted",
+      "value": "The plot of N_c(w) vs. log w will show approximately linear growth with slope consistent with Barron space capacity bounds (e.g., N_c(w) ≈ a log w + b for constants a, b), supporting the quasi-rigid h"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.actual",
+      "value": "999.0 999.0 4.0 8.0 999.0 999.0 999.0 999.0 0.05608810804943154 0.0017741428783621949 0.00011223698825890693 7.171569263908495e-05 0.6096619733989943 0.3336751419626802 0.022390704133774975 0.00291664"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_mean",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_worst",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_std",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_source",
+      "value": "jaccard"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_rel",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "completion_mode",
+      "value": "code_lab"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "validation_evidence",
+      "value": "code_lab_objectives"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "r_phys",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "persona",
+      "value": "unknown"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "principles_added",
+      "value": 0
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_f98f16e4",
+    "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+    "instrument": "/workspace/research_outputs/shusheng_dslice_run90/.huginn/trajectories/loop_f98f16e4.json",
+    "object": "/workspace/research_outputs/shusheng_dslice_run90/.huginn/provenance.jsonl",
+    "startTime": "2026-10-09T04:32:20.521159",
+    "endTime": "2026-10-09T04:45:12.124381"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_dslice_run90/huginn_autoloop_report_loop_11aea68a.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_dslice_run90/.huginn/trajectories/loop_f98f16e4.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

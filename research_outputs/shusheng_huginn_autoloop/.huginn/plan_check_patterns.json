@@ -1,0 +1,13 @@
+[
+  {
+    "scene_tag": "workflow",
+    "reason": "假设明确要求通过 PCA 估计权重流形内禀维度以验证几何机制，并使用流形维度恒定性作为证伪标准。该计划仅测量经验容量缩放（$N_c$ vs $w$），未计算权重空间内禀维度，因此未能解决假设的核心几何主张。",
+    "missing_steps": [
+      "对每个宽度执行权重矩阵 PCA 以估计内禀维度",
+      "评估内禀维度随宽度的缩放以满足证伪标准",
+      "比较参数数量缩放基准以解耦容量"
+    ],
+    "mode": "workflow",
+    "description": "Create and execute a Python experiment to test the neural network capacity scaling hypothesis. Build feedforward networks with widths w∈{8,16,32}, vary constraint count N∈{1,2,4,8}, train to target tr"
+  }
+]

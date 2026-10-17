@@ -455,13 +455,13 @@ def _selfcheck() -> None:
         for node, eq in scm.equations.items():
             val = eq({"T": 1500, "t": 5, "c": 1.0, "p": 1e5,
                       "particle_size": 200}, 0.0)
-            assert isinstance(val, (int, float)), f"{scm.name}.{node} 返非数: {val}"
+            assert isinstance(val, int | float), f"{scm.name}.{node} 返非数: {val}"
 
     # 10. 噪声 sampler 可调
     for scm in [scm_sint, scm_ostw, scm_diff, scm_phtr]:
         for _node, sampler in scm.noise.items():
             val = sampler()
-            assert isinstance(val, (int, float))
+            assert isinstance(val, int | float)
 
     # 11. sintering 颗粒大小随 T 升而升 (Arrhenius 单调)
     r_low = scm_sint.equations["particle_size"]({"T": 1200, "t": 5}, 0.0)

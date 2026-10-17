@@ -1,0 +1,63 @@
+[
+  {
+    "scene_tag": "auto_networks",
+    "hyp_key": "7bff7bcccf79",
+    "reason": "The plan fails because the hypothesis concerns 'constraints induce a rank-deficient linear system in the network parameters near initialization', which is a property of the *initial parameter space* and the *Jacobian of the network output w.r.t. parameters*. The described plan trains the network to minimize error on constraint points, which is a non-linear optimization problem that does not measure the initial linear regime properties. Training allows the network to escape the initial linear regime and learn non-linear representations, making the measured N_c(w) irrelevant to the hypothesis about rank deficiency near initialization. The plan should instead analyze the initial Jacobian matrix of the network (output w.r.t. parameters) for the given constraint inputs and compute its rank as a function of width N.",
+    "missing_steps": [
+      "Define the network architecture and initialize parameters (e.g., Xavier/He initialization)",
+      "For each constraint sample, compute the gradient of the network output with respect to all parameters at initialization",
+      "Construct the Jacobian matrix J where rows correspond to constraints and columns correspond to parameters",
+      "Compute the rank of J (or its effective rank via SVD) as a function of width N for fixed w",
+      "Determine N_c(w) as the minimum width where the rank deficiency (or nullity) matches the expected O(w) scaling",
+      "Compare the observed scaling of N_c(w) with the hypothesis prediction"
+    ],
+    "mode": "coder",
+    "description": "Create a Python script to test the hypothesis about neural network capacity scaling. The script will: (1) Define an analytical constraint function family (e.g., low-degree polynomials or trigonometric"
+  },
+  {
+    "scene_tag": "auto_networks",
+    "hyp_key": "7bff7bcccf79",
+    "reason": "The plan attempts to test a hypothesis about rank deficiency in the initial linear regime via Jacobian rank, but the provided hypothesis and its formal constraints (zero-violation, rigidity vs. fat) are not aligned with the Jacobian approach. The hypothesis specifically defines N_c(w) as the minimum width achieving zero-violation on held-out constraint points (a training/optimization result), while the plan computes the Jacobian rank at initialization (a static linear algebra property). The plan fails to address the 'rigidity' vs. 'fat' criterion defined in the hard constraints, which requires observing whether N_c remains bounded or fails to converge as w increases. Additionally, the plan does not specify how to handle non-linear activation functions (ReLU) which may bypass linear dependencies, contradicting the con in the hypothesis. The plan also lacks explicit training procedures, loss functions, and optimization details necessary to compute the 'zero-violation' metric.",
+    "missing_steps": [
+      "Define the constraint satisfaction problem and optimization setup (loss function, optimizer, training procedure)",
+      "Implement the zero-violation metric on held-out constraint points as defined in hard constraints",
+      "Execute training for varying widths N and constraint counts w to measure N_c(w) empirically",
+      "Implement rigidity/fatness detection based on whether N_c remains bounded or fails to converge within scan range",
+      "Address potential non-linear effects of activation functions (e.g., ReLU) that may invalidate the linear regime assumption",
+      "Include convergence checks and ensure all reported N_c values are finite numbers"
+    ],
+    "mode": "coder",
+    "description": "Create a Python script to analyze the initial linear regime of a neural network under constraints. The script will: (1) Define a network architecture (e.g., fully-connected with ReLU) and initialize p"
+  },
+  {
+    "scene_tag": "auto_networks",
+    "hyp_key": "514faf5a71b4",
+    "reason": "The plan describes an 'explore' mode but fundamentally requires a 'coder' mode execution to generate the numerical data needed to test the hypothesis. Without actual code execution, the hypothesis cannot be validated. Additionally, the plan lacks specific details on target function definition, constraint generation methodology, network architecture specifics (depth, activation), optimization strategy, and stopping criteria, making it impossible to reproduce or verify the results as required by the 'rigid vs fat' binary classification criteria.",
+    "missing_steps": [
+      "Define specific target function f(x) with analytic constraints",
+      "Specify constraint sampling methodology (w values, distribution)",
+      "Define network architecture (depth, width, activation)",
+      "Specify training procedure (optimizer, loss, epochs, convergence criteria)",
+      "Implement the actual numerical scan code",
+      "Execute the numerical experiments to generate data",
+      "Analyze results to determine N_c(w) trend"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical scan to test if small ReLU networks exhibit \"rigid\" behavior by measuring N_c(w) — the minimal hidden width achieving zero violation (max abs error ≤ 1e-3) on held-out c"
+  },
+  {
+    "scene_tag": "auto_networks",
+    "hyp_key": "514faf5a71b4",
+    "reason": "Plan is in 'explore' mode but requires 'coder' mode execution to generate numerical data. The description lacks specific implementation details (target function, constraint sampling, architecture specs, training procedure) that were identified as the exact cause of previous failures in this scenario. It essentially repeats the same high-level plan that was previously criticized for lacking concrete implementation details.",
+    "missing_steps": [
+      "Define specific target function f(x) with analytic constraints",
+      "Specify constraint sampling methodology (w values, distribution)",
+      "Define network architecture specifics (depth, width, activation)",
+      "Specify training procedure (optimizer, loss, epochs, convergence criteria)",
+      "Implement the actual numerical scan code",
+      "Execute the numerical experiments to generate data"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Generate and execute a numerical scan to test if small ReLU networks exhibit \"rigid\" behavior by measuring N_c(w) — the minimal hidden width achieving zero violation (max "
+  }
+]

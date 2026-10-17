@@ -125,7 +125,7 @@ def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
                 continue
             # 只取数值字段, 跳过非数值
             numeric = {k: float(v) for k, v in d.items()
-                       if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                       if isinstance(v, int | float) and not isinstance(v, bool)}
             if not numeric:
                 continue
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -160,7 +160,7 @@ def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
                     if not isinstance(obj, dict):
                         continue
                     numeric = {k: float(v) for k, v in obj.items()
-                               if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                               if isinstance(v, int | float) and not isinstance(v, bool)}
                     if not numeric:
                         continue
                     fig, ax = plt.subplots(figsize=(10, 6))

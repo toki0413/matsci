@@ -1,0 +1,199 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-09-27T12:04:27",
+  "metadata": {
+    "run_id": "loop_19ddf54d",
+    "objective": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针",
+    "phases": [
+      "hypothesize",
+      "plan",
+      "execute",
+      "validate",
+      "hypothesize",
+      "plan",
+      "execute",
+      "validate",
+      "hypothesize",
+      "report"
+    ],
+    "total_time": 198.23855423927307
+  },
+  "spans": [
+    {
+      "name": "phase:hypothesize",
+      "span_id": "ebbc5cf682f9",
+      "start_time": 1790510526.6069698,
+      "end_time": 1790510585.9409704,
+      "duration_ms": 59334.0,
+      "memory_start_mb": 749.2265625,
+      "memory_end_mb": 768.8203125,
+      "memory_peak_mb": 768.8203125,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:plan",
+      "span_id": "eafefd0acc13",
+      "start_time": 1790510585.9549782,
+      "end_time": 1790510589.528102,
+      "duration_ms": 3573.12,
+      "memory_start_mb": 769.546875,
+      "memory_end_mb": 769.671875,
+      "memory_peak_mb": 769.671875,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:execute",
+      "span_id": "7124b4d91c43",
+      "start_time": 1790510590.1897664,
+      "end_time": 1790510592.8983052,
+      "duration_ms": 2708.54,
+      "memory_start_mb": 769.671875,
+      "memory_end_mb": 770.265625,
+      "memory_peak_mb": 770.265625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:validate",
+      "span_id": "3364971371a2",
+      "start_time": 1790510593.1187098,
+      "end_time": 1790510602.311236,
+      "duration_ms": 9192.53,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:hypothesize",
+      "span_id": "677f5b36f5c0",
+      "start_time": 1790510612.2199516,
+      "end_time": 1790510627.3342335,
+      "duration_ms": 15114.28,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:plan",
+      "span_id": "52d93c3efd23",
+      "start_time": 1790510627.3402987,
+      "end_time": 1790510629.7907467,
+      "duration_ms": 2450.45,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:execute",
+      "span_id": "da371b25a4f1",
+      "start_time": 1790510629.7942045,
+      "end_time": 1790510632.9374561,
+      "duration_ms": 3143.25,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:validate",
+      "span_id": "19cdb9a97f12",
+      "start_time": 1790510634.3066757,
+      "end_time": 1790510639.6774573,
+      "duration_ms": 5370.78,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:hypothesize",
+      "span_id": "9fea384ecf98",
+      "start_time": 1790510648.3613842,
+      "end_time": 1790510657.6507494,
+      "duration_ms": 9289.37,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:report",
+      "span_id": "bbf73f474086",
+      "start_time": 1790510660.940473,
+      "end_time": 1790510667.1999896,
+      "duration_ms": 6259.52,
+      "memory_start_mb": 770.390625,
+      "memory_end_mb": 770.390625,
+      "memory_peak_mb": 770.390625,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    }
+  ],
+  "tool_calls": [],
+  "summary": {
+    "total_spans": 10,
+    "by_name": {
+      "phase:hypothesize": {
+        "count": 3,
+        "duration_ms": 83737.65,
+        "avg_memory_delta_mb": 6.531,
+        "max_memory_peak_mb": 770.391
+      },
+      "phase:plan": {
+        "count": 2,
+        "duration_ms": 6023.57,
+        "avg_memory_delta_mb": 0.062,
+        "max_memory_peak_mb": 770.391
+      },
+      "phase:execute": {
+        "count": 2,
+        "duration_ms": 5851.79,
+        "avg_memory_delta_mb": 0.297,
+        "max_memory_peak_mb": 770.391
+      },
+      "phase:validate": {
+        "count": 2,
+        "duration_ms": 14563.310000000001,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 770.391
+      },
+      "phase:report": {
+        "count": 1,
+        "duration_ms": 6259.52,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 770.391
+      }
+    }
+  }
+}

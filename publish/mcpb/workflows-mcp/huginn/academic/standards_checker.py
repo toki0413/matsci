@@ -215,10 +215,7 @@ class StandardsChecker:
                 "请确认期刊名称",
             )
 
-        if section == "methods":
-            limit = spec.methods_max_words
-        else:
-            limit = spec.body_max_words
+        limit = spec.methods_max_words if section == "methods" else spec.body_max_words
 
         if limit is None:
             return CheckResult(

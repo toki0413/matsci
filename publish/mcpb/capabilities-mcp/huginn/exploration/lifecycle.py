@@ -33,6 +33,7 @@ class BranchLifecycleManager:
         hypothesis: str,
         parent: str | None = None,
         decisions: list[Decision] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Branch:
         """Create a new branch in the exploration space."""
         branch_id = f"branch_{len(space.branches):04d}_{uuid.uuid4().hex[:6]}"
@@ -42,6 +43,7 @@ class BranchLifecycleManager:
             hypothesis=hypothesis,
             decisions=decisions or [],
             parent_branch=parent,
+            metadata=metadata or {},
         )
         space.add_branch(branch)
         space.active_branches.add(branch_id)

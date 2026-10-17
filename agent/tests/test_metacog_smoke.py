@@ -318,6 +318,35 @@ def test_equivalence_auditor_basic():
     assert verdict.verdict == "novel"
 
 
+def test_equivalence_auditor_graph_baseline():
+    """v12: 假设层冗余应对**假设图**判, 不对 objective 判.
+
+    机制不同 (代数秩 vs 流形维数) 不得被判换名 —— 否则换名债务虚高, 过早终止,
+    掐死"LLM 自主有效探索"; 只有真换名重提 (同一预测改述) 才判 equivalent_renaming.
+    """
+    from huginn.metacog.equivalence_auditor import EquivalenceAuditor
+
+    auditor = EquivalenceAuditor()
+    # 机制不同 → 不判换名 (有效探索不被误杀)
+    v = auditor.audit_hypothesis_against_graph(
+        candidate_hypothesis="刚性由约束矩阵的代数秩决定 (秩亏 ⇒ 软模数发散)",
+        graph_statements=["刚性由构型流形的维数决定 (维数低于 DoF 阈值 ⇒ 软化)"],
+    )
+    assert not v.is_equivalent_renaming, v.verdict
+    # 真换名重提 (仅参数不同) → 判换名
+    v2 = auditor.audit_hypothesis_against_graph(
+        candidate_hypothesis="刚性由平均配位数越过临界值 z_c=4 决定",
+        graph_statements=["刚性由平均配位数越过临界值 z_c=6 决定"],
+    )
+    assert v2.is_equivalent_renaming, v2.verdict
+    # 自身 / 同一假设的截断形态不得自比 → 不判换名
+    v3 = auditor.audit_hypothesis_against_graph(
+        candidate_hypothesis="刚性由代数秩决定",
+        graph_statements=["刚性由代数秩决定 (完整版陈述)"],
+    )
+    assert not v3.is_equivalent_renaming, v3.verdict
+
+
 # ── 19. failure_modes ──────────────────────────────────────────
 
 

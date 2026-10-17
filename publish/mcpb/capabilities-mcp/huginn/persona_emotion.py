@@ -405,10 +405,7 @@ class EmotionTracker:
         elif s.interest < 0.2:
             parts.append("bored")
 
-        if not parts:
-            mood = "balanced"
-        else:
-            mood = ", ".join(parts)
+        mood = "balanced" if not parts else ", ".join(parts)
 
         return (
             f"[Current inner state] You feel {mood}. "

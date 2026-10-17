@@ -90,20 +90,20 @@ class CampaignStoreBackend(ABC):
     @abstractmethod
     def upsert_job(self, record: JobRecord) -> None:
         """Insert or update a job row by job_id."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def get_job(self, job_id: str) -> JobRecord | None:
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def list_jobs_by_status(self, status: str) -> list[JobRecord]:
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def list_queued_jobs(self) -> list[JobRecord]:
         """Queued jobs ordered by queue_position ascending (FIFO)."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def claim_next_queued(self) -> JobRecord | None:
@@ -112,12 +112,12 @@ class CampaignStoreBackend(ABC):
         Returns the claimed record (now to be marked running by the caller) or
         None if the queue is empty.
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def next_queue_position(self) -> int:
         """Return the next queue_position value (monotonic within the queue)."""
-        raise NotImplementedError
+        ...
 
 
 class NullCampaignStore(CampaignStoreBackend):

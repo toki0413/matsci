@@ -1,0 +1,693 @@
+# Agent 架构 / 工作流 / 低熵治理 完善 Implementation Plan
+
+> Status: APPROVED
+> Source: `.claude/artifacts/designs/agent-architecture-workflow-governance.md`
+> Mode: (default)
+> Iterations: 1 / 3
+> Author: user
+> Last updated: 2026-10-15
+
+## Requirements summary
+
+落实 spec 的**低熵治理面**：把散落的治理门登记为单一机器可读来源，并补上治理层
+自身的熵缺口 —— 「门存在却永不运行 / CI step 指向不存在的测试」。范围限定为
+**只读扫描 + 新门禁**，不动任何生产行为。
+
+## Acceptance criteria
+
+- AC-1 `python -m huginn.cli.governance_audit --out docs/governance-state.md`
+  产出与已提交文件**逐字符相等**（确定性再生成）。
+- AC-2 `tests/test_arch_gate_registry.py` 断言：每个 `tests/test_arch_*.py` 与每个
+  `ci.yml` 里的 python guard step 都在登记表中出现；未登记 → 红。
+- AC-3 CI guard step 指向不存在的测试文件（dangling guard）→ 红。
+- AC-4 门数棘轮只减不增：删掉一个已登记门 → 红。
+- AC-5 未登记治理门时给出可执行的修复提示（含需改的文件路径）。
+
+## RALPLAN-DR
+
+### Principles
+
+- 最小代码：不引入新依赖（复用 stdlib + 已有 PyYAML 若已可用）。
+- 外科手术式改动：只新增 1 个 CLI + 1 个测试 + 1 个生成文档 + 1 处 CI step + INDEX 登记。
+- 与既有约定同构：对齐 `config_audit` / `contract_audit` 的 `--out` / `--check` / 确定性再生成范式。
+- 失败可定位：门禁报错必须点名文件路径与修复动作，不报「有漂移」这种空话。
+- 不新增不可逆面：纯静态扫描，无网络、无写副作用（`--out` 除外）。
+
+### Decision drivers
+
+1. **一致性**：仓库已有 11 篇自动再生成契约文档 + `test_config_contracts` 漂移门；
+   治理状态文档跟随同一范式，读者不必学两套。
+2. **可观察性**：单一 `docs/governance-state.md` 让「有几个门 / 预算多少 / 当前值」
+   一眼可见，替代散读 `ci.yml` + 各 golden。
+3. **维护成本**：门散落且无登记时，新增门易漏接线；登记 + 孤儿检测把这类漏接
+   从「上线后才发现」提前到 PR。
+
+### Viable options
+
+**Option A：CI-only bash 门（无 CLI、无文档）**
+- 实现思路：在 `ci.yml` 加一个 inline `python -c` 扫描，发现即 exit 1。
+- 改动文件：`.github/workflows/ci.yml`。
+- Pros：改动最小，零新文件。
+- Cons：**违背 spec G-1/G-3**（无登记来源、无可观察工件）；inline bash 难测试、
+  难复用；逻辑藏在 YAML 里可维护性差。
+
+**Option B：CLI 模块 + 元测试 + 生成文档（spec 主张）**
+- 实现思路：新增 `huginn/cli/governance_audit.py`（argparse，仿 `config_audit`），
+  扫描 `tests/test_arch_*.py` + `ci.yml` guard steps + `tests/golden/*` 基线 +
+  `test_publish_mirror_drift.py` 预算，产出 `docs/governance-state.md`；新增
+  `tests/test_arch_gate_registry.py` 承载 AC-2/3/4/5；`ci.yml` 里以 weightless
+  快速失败门接入。
+- 改动文件：`huginn/cli/governance_audit.py`(新)、`tests/test_arch_gate_registry.py`(新)、
+  `docs/governance-state.md`(新)、`.github/workflows/ci.yml`、`agent/docs/INDEX.md`。
+- Pros：直接满足 G-1/G-2/G-3；CLI 可本地跑、可测；与既有契约文档范式同构。
+- Cons：新增一个需同步的生成文档（一处 golden 熵）；需解析 YAML。
+
+**Option C：纯 pytest 元测试（登记表硬编码在测试里）**
+- 实现思路：不写 CLI，登记表作为常量放在 `test_arch_gate_registry.py`。
+- 改动文件：`tests/test_arch_gate_registry.py`(新)、`.github/workflows/ci.yml`。
+- Pros：最少文件；无 YAML 解析。
+- Cons：**无 G-1 单一来源**（登记表在测试里不可被人读/被其他工具消费）；
+  **无 G-3 可观察工件**；门数增长时要改测试常量，反而不如生成。
+
+**被砍选项的 invalidation rationale**：A 与 C 都只满足 spec 三个子目标中的 1–2 个，
+不满足「单一机器可读登记 + 可观察工件」的核心诉求，故不选。
+
+**Favored：Option B**（与 spec 一致），并采纳 Architect/Critic 的收敛（见下）。
+
+### Implementation steps（基于 Option B）
+
+1. 新增 `huginn/cli/governance_audit.py`：
+   - `main(argv)` argparse，含 `--out`（默认 `""`）、`--json`、`--check`
+     （配 `--baseline` 棘轮）、`--update-baseline`，对齐
+     [contract_audit.py](file:///workspace/agent/huginn/cli/contract_audit.py#L7591-L7623)。
+   - `build_gate_registry()` 扫描：
+     a) `git ls-files tests/test_arch_*.py`（或 `Path.glob`）→ 全部 arch 测试族；
+     b) 解析 [.github/workflows/ci.yml](file:///workspace/.github/workflows/ci.yml#L89-L165)
+        的 python guard step（`name` + `run` 里的 `tests/...py` 路径）；
+     c) `tests/golden/mece_findings_baseline.txt` 行数
+        （[mece_findings_baseline.txt](file:///workspace/agent/tests/golden/mece_findings_baseline.txt)）；
+     d) `tests/test_publish_mirror_drift.py` 的 `MAX_MISSING/MAX_EXTRA/MAX_DIFFERING`
+        常量（[test_publish_mirror_drift.py](file:///workspace/agent/tests/test_publish_mirror_drift.py)）。
+   - `render_markdown(registry)` 确定性输出（固定列序、字典序），风格对齐
+     [config_audit.py](file:///workspace/agent/huginn/cli/config_audit.py)。
+2. 生成并提交 `agent/docs/governance-state.md`。
+3. 在 [INDEX.md](file:///workspace/agent/docs/INDEX.md#L29-L53) 第 2 节登记该文档
+   （`test_config_contracts` 的 `test_contract_docs_referenced_in_index` 要求 INDEX 覆盖）。
+4. 新增 `tests/test_arch_gate_registry.py`（不依赖 CLI 的纯静态断言，weightless）：
+   - 覆盖不变量：`{test_arch_*.py} ⊆ registry`；`{ci.yml python guard 的 tests/*.py} ⊆ 存在文件`；
+     门数 ≥ 冻结基线（棘轮）。
+   - 合成树自检：临时造 `test_arch_demo.py` 不入登记 → 断言红（防门禁自己失效）。
+5. 在 [ci.yml](file:///workspace/.github/workflows/ci.yml#L154-L156) 的 Credential gateway
+   guard 之后、MECE ratchet（L163）之前，插入 weightless guard step：
+   `python -m pytest tests/test_arch_gate_registry.py -q -o addopts=""`。
+6. 重跑 `python -m huginn.cli.governance_audit --out docs/governance-state.md`
+   固化文档；若与提交不一致则失败（AC-1）。
+
+### Workspace setup
+
+- 实施前运行 `git status --short` 与 `git branch --show-current`。
+- 实测当前：分支 `fix/mece-hook-audit`（非 main/master），working tree 仅
+  `.claude/artifacts/**` 两文件待提交（属本轮产物）。
+- 结论：**无需新 worktree** —— 已在特性分支、tree 干净；本 plan 的改动与
+  待提交 spec/plan 同源，不混入他人改动。
+
+## Risks & mitigations
+
+| Risk | Mitigation |
+|---|---|
+| YAML 解析依赖不确定（PyYAML 未必是运行依赖） | 优先 `import yaml`；不可用时退化为行扫描（匹配 `run:` 行里 `tests/.*\.py`），并在文档标注所用模式。 |
+| 行扫描漏抓新写法（`run: \|` 多行 / matrix） | 合成树自检 + 断言「ci.yml 里每个 `python -m pytest tests/...` 都进登记」双向覆盖。 |
+| 新增 golden 文档 = 新增一处同步点 | 与既有 11 篇契约文档同范式；漂移由 CI 门自动抓，非人肉；不引入第二个 manual 同步点。 |
+| 「未登记 arch 测试」强制决策可能引起 churn | 登记表允许显式状态 `fast-fail-guard` / `full-suite-only`；后者是合法登记（当前 5 个未显式 guard 的 arch 测试归此类），不强迫加 CI step。 |
+| `docs/governance-state.md` 内容随门数量变化而漂 | 由 `--check --baseline` 棘轮 + 逐字漂移测试共同锁；稳定后可作为「治理台账」长期读。 |
+
+## Verification steps
+
+- AC-1: `cd agent && python -m huginn.cli.governance_audit --out docs/governance-state.md && git -C /workspace diff --exit-code agent/docs/governance-state.md`
+- AC-2/AC-5: `cd agent && python -m pytest tests/test_arch_gate_registry.py -q -o addopts=""`
+- AC-3: 在测试内合成一棵临时树，写一个指向不存在文件的 CI step，断言红。
+- AC-4: 测试内把登记表删一项、断言棘轮红。
+- 回归: `cd agent && python -m pytest tests/test_config_contracts.py tests/test_contract_audit.py -q -o addopts=""`（确保 INDEX/契约文档未漂）。
+- 门禁本身: CI 对应 step 必须与本地同名同命令（weightless，先于重型套件）。
+
+## ADR
+
+- **Decision**：新增 `huginn/cli/governance_audit.py` 管治门登记与 `docs/governance-state.md`
+  确定性再生成，并以 `tests/test_arch_gate_registry.py` + CI weightless guard 锁死
+  「登记覆盖 / 孤儿门 / 门数棘轮」三条不变量。
+- **Drivers**：一致性（对齐既有契约文档范式）> 可观察性（单一台账）> 维护成本（漏接提前到 PR）。
+- **Alternatives considered**：
+  - Option A（CI-only bash）→ rejected：无单一来源、无可观察工件、不可测。
+  - Option C（纯 pytest 常量登记）→ rejected：登记表不可被人读/被工具消费，无 G-3。
+  - Option B → **chosen**。
+- **Why chosen**：唯一同时满足 spec G-1/G-2/G-3 且与仓库既有治理范式同构。
+- **Consequences**：
+  - 正：治理门可枚举、可观察，新增门漏接在 PR 阶段即红。
+  - 负：多一个生成文档与一处 CI step；`docs/governance-state.md` 随门数变化需重生成。
+  - 约束：后续新增任何治理门必须同步登记表，否则 CI 红（这正是期望的熵约束）。
+- **Follow-ups**（应做未做，交回用户/backlog）：
+  - 是否把 `docs/governance-state.md` 的确定性门纳入 CI 门（本轮已按 OQ-3 改判为「是」，
+    因与 11 篇契约文档同侪——**spec drift，已报**）。
+  - 治理门的时间序列（趋势）本 plan 不做。
+
+## Review trail
+
+- Planner draft v1：Option A/B/C，favored B（CLI + 元测试 + 生成文档）。
+- Architect challenge v1：最强反驳 —— 「生成文档本身就是新增 golden，反而增加熵；
+  纯 pytest 元测试（Option C）已足够，文档可由 `--json` 输出按需生成，不必提交」。
+  发现 tradeoff tension：**一致性 vs 零新增同步点**；以及真实细节矛盾 —— ci.yml 只显式
+  guard 了 16 个 arch 测试中的 11 个，其余 5 个靠全量套件兜底，因此「未入 ci.yml 即孤儿」
+  的原始 AC-2 是**假不变量**，必须改为「未登记（含 full-suite-only 状态）才算孤儿」。
+  Synthesis：保留 Option B，但把登记表扩展为带 `status` 字段；文档提交但漂移由门自动抓。
+- Critic verdict v1：**APPROVED**，采纳三处改进：①AC-2 加 `status` 语义；②补 INDEX
+  登记步骤；③补合成树自检防门禁自失效。
+- Final iterations: 1 / 3
+
+---
+
+## 增量 (2026-10-15, M1′)：统一预算台账
+
+> 状态：已落（M1 部分）；权威读取（phase 2）未落。
+
+原 plan 的 `_collect_baselines` 只登记 2 项（MECE + 镜像）。按用户「先落预算台账」，
+把 `governance_audit` 的预算面补成单一 `BUDGET_SPECS` 台账。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：新增 `BUDGET_SPECS`（10 项棘轮）+ `collect_budgets()`；
+  weightless 抽取（`file-lines` / `const` / `const-triple` / `collection-len`(ast) /
+  `dir-file-count`）；可测项探针（当前仅 `arch_gate_floor`，floor 型余量）；
+  `render_markdown` 的「棘轮基线」节改为「预算 (budgets)」表。
+- `tests/test_arch_gate_registry.py`：新增 3 条元门禁 —— 预算 id 唯一且覆盖集与
+  `_EXPECTED_BUDGET_IDS` 一致（只许显式增删）、冻结值抽取无 `?`、探针余量非负。
+- `docs/governance-state.md`：重生成（含预算表）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像（改动的 `governance_audit.py`）。
+
+### AC
+
+- AC-1 `python -m huginn.cli.governance_audit --out docs/governance-state.md` 与提交文件逐字相等（沿用）。
+- AC-2 每个预算项冻结值抽取成功（无 `?`）；新增/删除棘轮必须同步 `_EXPECTED_BUDGET_IDS`。
+- AC-3 有探针的预算项余量非负。
+- AC-4 镜像漂移门仍绿（`test_publish_mirror_drift.py`）。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py -o addopts=""` → 14 passed（0.5s，weightless）。
+- `ruff check`（三文件）→ All checks passed。
+- `pytest tests/test_publish_mirror_drift.py` → 2 passed（同步后 0 漂移）。
+- 契约门（`test_config_contracts` / `test_contract_audit`）本地因缺 dev 依赖（rich/pydantic/
+  langchain_core…）未能跑；基线无 `governance_audit` 引用，预期不漂 → 由 CI 兜底。
+
+### phase 2（权威读取）— 已落（数值型）
+
+把**数值型**棘轮的值收敛到 `BUDGET_SPECS` 单一入口，消费者门只读：
+
+- `BUDGET_SPECS` 新增 `source: "inline"` + `value`（`mirror_drift` = (0,0,0)、
+  `arch_gate_floor` = 17）；新增 `budget_value(id)` 供各门 import。
+- `tests/test_publish_mirror_drift.py`：`MAX_MISSING/MAX_EXTRA/MAX_DIFFERING` ← `budget_value("mirror_drift")`。
+- `tests/test_arch_gate_registry.py`：`ARCH_GATE_FLOOR` ← `budget_value("arch_gate_floor")`；
+  新增元门禁 `test_authoritative_budgets_not_redeclared`（inline 值不得在消费者门重新硬编码）。
+- `governance-state.md` 预算表新增「模式」列（权威 / 引用）。
+
+**按设计保留原位（引用）**：`env_schema.RAW_READ_BASELINE`（层级原因）、以及各名单/清单型
+棘轮（`ALLOWED_EXTERNAL_IMPORTS` 等 —— 其**内容即契约**，大小只是登记面）。
+
+### 探针（weightless 常驻 + 重型 `--probe`）
+
+- **常驻**（入台账文档，保证门禁轻量）：`arch_gate_count`（arch 门数下限，实测 17 / 余量 0）。
+- **重型**（仅 `--probe`，遍历全仓，不入快速失败门，fail-soft 返回 None）：
+  - `mirror_drift_live` —— 复用 `scripts/mcpb_vendor.drift_report` 口径，实测合计 0/0/0。
+  - `env_raw_read_live` —— 复用 `config_audit.build_inventory` 口径（与 env 棘轮**同源**，
+    不重复实现、无口径分叉），实测裸读点 467（正好顶基线，余量 0）。
+- 新增元门禁 `test_heavy_probes_disabled_by_default`：凡标 `heavy` 的项默认实测必须为 None
+  （门禁 0.5s 仍 weightless）。
+- 复用前提：`config_audit` / `mcpb_vendor` 的**模块级仅 stdlib**（重依赖都在函数内），
+  故按文件路径加载不拉 rich/pydantic；`config_audit` 若 `import huginn.cli` 会被包
+  `__init__` 拉 rich —— 所以必须按文件路径加载。
+- 实现踩坑：按文件路径加载模块须先登记进 `sys.modules` —— `@dataclass` 会
+  `sys.modules.get(cls.__module__)`，未登记取到 None → 崩（曾让镜像探针静默失效）。
+  已抽成 `_load_module_by_path` 供两个重型探针共用。
+
+### 未落（后续）
+
+- 若要把名单型棘轮也纳入权威读取，需先把「内容」与「大小」职责拆开（当前不建议）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：CLI 门（非 pytest 形态）纳入台账
+
+> 状态：已落。补齐治理层第 3 种熵形态 —— **CLI 门漏登记/悬空**。
+
+原台账只认 `ci.yml` 里 `python -m pytest tests/...` 形态的 guard step，
+`python -m huginn.<module>` 形态的治理门（`contract_audit` 棘轮、`policy_engine`
+自查）被漏掉；其指向的模块改名/删除会形成「永远绿灯的悬空门」。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 新增 `_CLI_GUARD_RE` + `_cli_guard_in_line()`（**单一判据**，yaml 主路径与逐行
+    fallback 共用）+ `_read_ci_text()` + `_parse_cli_guards()`。
+  - `audit()` 增 `cli_guards`（按模块去重、映射到仓内 `.py`/包目录判存在）与
+    `dangling_cli`。
+  - `BUDGET_SPECS` 增 `cli_guard_floor`（inline 权威，值 2）；`_probe_current` 增
+    `cli_guard_count`（weightless，读 `ci.yml` 文本）。
+  - `render_markdown` 增「CLI 门 (cli gates)」表 + 缺口区「CLI 悬空门」。
+- `tests/test_arch_gate_registry.py`：新增 5 条元门禁 —— CLI 悬空检测、去重、
+  数量棘轮（`CLI_GUARD_FLOOR` ← `budget_value`）、合成树幽灵模块自检、
+  **注释行不算门**（yaml/fallback 共用判据的确定性锚点）；`_EXPECTED_BUDGET_IDS`
+  同步增 `cli_guard_floor`。
+- `docs/governance-state.md`：重生成（含 CLI 门表）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 每个 CLI 门指向的模块存在（`dangling_cli == []`）。
+- AC-3 CLI 门数只减不增（棘轮 ≥ `cli_guard_floor`）。
+- AC-4 注释行里的 `python -m huginn.<module>` 不计为门（消除环境相关幻影门）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **21 passed**（with/without PyYAML 各一次）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 CLI 门 = 2（`huginn.cli.contract_audit` / `huginn.security.policy_engine`），
+  yaml 主路径与 fallback 逐字一致（确定性回归确认）。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：本地门（pre-commit）纳入台账
+
+> 状态：已落（**重放**；工作区重置后重建）。补齐治理层第 5 种熵形态 —— **本地门漏登记/悬空**。
+
+`.pre-commit-config.yaml` 的本地门（G37 audit-regression）既不在 `ci.yml` 也不在台账。
+其 `entry` 引用的测试文件改名/删除后，hook 的 `files:` 过滤器会**静默不再匹配** ——
+门悄悄死掉，无任何信号，比悬空 CI 门更隐蔽。**重放时即命中一个真实悬空**：hook 仍引用
+已被合并改名的 `tests/test_audit14_p1_3_4_5.py`（实为 `test_sim_audit_regression.py`）。
+
+### 改动
+
+- `.pre-commit-config.yaml`：修复悬空引用 `test_audit14_p1_3_4_5` → `test_sim_audit_regression`
+  （`entry` 与 `files:` 各 1 处，共 4 处），3 个 selector（DemScriptSyntax/MSdUnwrap/
+  ScfConvergenceCriterion）在目标文件中均存在。
+- `huginn/cli/governance_audit.py`：
+  - 新增 `_read_precommit_text()` + `_parse_precommit_hooks()`（yaml 主路径与逐行 fallback
+    **共用判据**：只认 `entry` 里的 `tests/*.py`；`files:` 正则因 `(` 不在字符类内不被命中）。
+  - `audit()` 增 `precommit_text` 形参、`precommit_gates`（按 `(hook_id, test)` 去重）与
+    `dangling_precommit`。
+  - `BUDGET_SPECS` 增 `precommit_gate_floor`（inline 权威，值 5）；`_probe_current` 增
+    `precommit_gate_count`（weightless）。
+  - `render_markdown` 增「本地门 (pre-commit local gates)」表 + 缺口区「本地悬空门」；
+    头部说明补 `.pre-commit-config.yaml`。
+  - 模块 docstring 由「四种熵形态」改「五种」，补第 5 形态。
+- `tests/test_arch_gate_registry.py`：新增 `PRECOMMIT_GATE_FLOOR`（← `budget_value`）+
+  3 条元门禁（本地悬空检测、数量棘轮、合成树幽灵测试自检）；`_EXPECTED_BUDGET_IDS` 增
+  `precommit_gate_floor`；docstring 补本地门不变量。
+- `docs/governance-state.md`：重生成（含本地门表）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 每个本地门引用的测试文件存在（`dangling_precommit == []`）。
+- AC-3 本地门数只减不增（棘轮 ≥ `precommit_gate_floor`）。
+- AC-4 `files:` 正则不被误当 entry 引用（yaml/fallback 逐字一致）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **24 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测本地门 = 5（单 hook `audit-regression-7fixes`，去重后 5 个测试文件），
+  `dangling_precommit == []`，`precommit_gate_floor` frozen=5 / current=5 / headroom=0。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：`owner_gate` 口径统一 + 存在性门
+
+> 状态：已落（**重放**；工作区重置后重建）。消除治理层第 6 种熵形态 —— **幻影消费者门**。
+
+预算台账 `BUDGET_SPECS` 的 `owner_gate` 此前**混用两种语义**：既可能是 `ci.yml` 真实
+step 名（可校验存在性），也可能是「只靠全量套件兜底」的标签（根本不在 `ci.yml`）。二者
+不可区分，故 `ci.yml` 某 step 改名后，台账仍指向一个**不存在的门**（幻影门）而无声。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 12 项 `BUDGET_SPECS` 条目全部新增 `owner_kind ∈ {ci_step, full_suite}`，
+    使两种语义**显式可区分**；`collect_budgets()` 透传 `owner_kind`。
+  - `render_markdown` 预算表说明补口径区分；**消费者门**列对 `full_suite` 型追加
+    `· 全量` 标记（一眼分辨是否在 `ci.yml`）。
+- `tests/test_arch_gate_registry.py`：新增 `test_ci_step_owner_gates_reference_real_steps`
+  —— ①`owner_kind` 合法枚举；②`ci_step` 型 `owner_gate` 必须是 `ci.yml` 真实 step 名
+  （取 `gates ∪ cli_guards` 的 step 名集）。
+- `docs/governance-state.md`：重生成（消费者门列带 `· 全量` 标记）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 `owner_kind` 全部为合法枚举（`ci_step` / `full_suite`）。
+- AC-3 每个 `ci_step` 型 `owner_gate` 命中 `ci.yml` 真实 step 名（无幻影门）。
+- AC-4 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **25 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- `ci_step` 型 9 项消费者门 ∈ 真实 step 名集；`full_suite` 型 3 项
+  （`mirror_drift` / `env_raw_read` / `field_audit_golden`）在 `ci.yml` 中不存在，故标 `· 全量`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：本地门 `files:`/`entry` 一致性门
+
+> 状态：已落。补齐**前置 1** 只做了「entry 引用测试存在」之外的另一半熵 —— **entry 引用的
+> 测试未被 `files:` 过滤器覆盖**。
+
+本地门靠 `files:` 正则决定何时触发。`entry` 引用的测试若不在 `files:` 过滤范围内，改该
+测试**不会触发 hook**（pre-commit 判定无相关文件变更即跳过）—— 门静默失效，比悬空门更隐蔽
+（悬空至少指向不存在的文件，这里文件存在、hook 也在，只是永不触发）。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 新增 `_parse_precommit_files()`（hook_id → `files:` 正则；yaml 主路径与逐行 fallback 共用判据）。
+  - `_parse_precommit_hooks()` 的 fallback 改为**字段感知**：只从 `entry:` 字段（含多行续行）
+    抽 `tests/*.py`，显式跳过 `files:` 等字段行 —— 修掉「`files:` 写成裸路径时被误当 entry
+    引用」的潜在幻影（不再依赖 `(` 不在字符类内这一格式约定）。
+  - `audit()`：对每个本地门判 `files:` 是否覆盖其 entry 测试（匹配**仓根相对**与 `agent/` 前缀两种），
+    产 `uncovered_precommit`；本地门条目增 `covered` 字段。
+  - `render_markdown`：本地门表加「files 覆盖」列；缺口区加「本地门 files/entry 不一致」。
+  - 模块 docstring 第 5 形态补「漏匹配」。
+- `tests/test_arch_gate_registry.py`：新增 3 条 —— 不变量（`uncovered_precommit == []`）、
+  合成树正向（不一致被抓）、合成树无假阳（覆盖时不误报）；docstring 补该不变量。
+- `docs/governance-state.md`：重生成（本地门表带「files 覆盖」列 + 新缺口行）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 每个本地门 `entry` 测试被其 `files:` 覆盖（`uncovered_precommit == []`）。
+- AC-3 合成树：entry 未覆盖时被抓（正向非空转）；覆盖时不误报（无假阳）。
+- AC-4 fallback 字段感知（yaml/fallback 逐字一致，裸路径 `files:` 不再误登记）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **28 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 `uncovered_precommit == []`（5 个 entry 测试都被 `files:` 覆盖）、`dangling_precommit == []`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：自主循环闸位 (loop caps) 纳入台账
+
+> 状态：已落。把「自主循环轮数/步数上限」这张表纳入 `BUDGET_SPECS`，做**只增不增**（提高须可见）的 ceiling 棘轮。
+
+自主循环的上限此前**散在** `env_schema` 与各引擎/路由的硬编码默认里，无单一可读来源 ——
+提高 `max_iterations`/`recursion_limit`（即扩大自主面）不会被任何门看见。现把它们收成台账单列节。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - `BUDGET_SPECS` 新增 `group: "loop"` 9 项循环闸位 + 1 项 `loop_cap_floor`（闸位数下限）。
+  - 新增第三种承载口径 `source: "ceiling"`（模式 **上限**）：代码持有实测值、台账持有允许的最大值。
+  - 新增 weightless 探针 `regex_int_live`（按 `spec["pattern"]` 从源码第 1 捕获组读活值，不 import）
+    与 `loop_cap_live_count`（数可读到的 ceiling 项数，作棘轮）。
+  - `_frozen_value` 支持 `ceiling`；`collect_budgets` 透传 `group` 并区分模式（权威/引用/上限）。
+  - `render_markdown`：预算表拆出 `_budget_rows` helper，新增「## 循环闸位 (loop caps)」节。
+- `tests/test_arch_gate_registry.py`：新增 `LOOP_CAP_FLOOR`（← `budget_value`）与
+  `test_loop_caps_live_within_ceiling`（①闸位数 ≥ 下限；②每项活值可读；③活值 ≤ 台账上限）；
+  `_EXPECTED_BUDGET_IDS` 覆盖到 22 项；docstring 补该不变量。
+- `docs/governance-state.md`：重生成（新增「循环闸位」节，10 行）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 9 项循环闸位全部可读（pattern 命中，活值非 None）。
+- AC-3 每项活值 ≤ 台账 ceiling；提高上限须显式改台账 `value`（可见决策）。
+- AC-4 闸位数棘轮：`loop_cap_live_count ≥ loop_cap_floor`（9），删一项即红。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **29 passed**（本环境无 PyYAML，走 fallback）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 9 项活值 = 20/50/500/15/5/15/50/40/12，逐项 `live == ceiling`；`loop_cap_live_count == 9`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：治理台账全方位覆盖（七形态 + 工作流数/工程门/快速失败门棘轮）
+
+> 状态：已落。按「全方位覆盖无死角」补齐台账此前**看不见**的 6 类治理面。
+
+此前台账的可见面会**静默萎缩**的 6 条路径：(1) 治理元门游离在孤儿检测之外（只看
+`test_arch_*.py`）；(2) 只读 `ci.yml`，其余工作流的门不可见；(3) 只读仓根一份 pre-commit，
+`agent/` 那份不可见；(4) 非 pytest 工程门（lint/SAST/依赖扫描/前端构建/技能库审计/基准）
+完全无登记；(5) 技能库审计基线未纳入；(6) 整个工作流被删/改名无任何信号；另 (7) 非 arch 的
+快速失败门（testclient_hygiene / naturebench / security / stress）无任何数量锚，删 guard step 无信号。
+本轮把七形态全部收进台账 + 元门禁。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 模块 docstring 由「五种熵形态」扩为「七种」，新增**工程门漏登记**、**工作流覆盖面萎缩**两形态。
+  - `discover_governance_tests()`：孤儿检测并入 `GOVERNANCE_META_TESTS`（治理元门族）。
+  - `_read_workflow_texts()`：扫 `.github/workflows/*.yml(|.yaml)` **全部**工作流，替代只读 `ci.yml`。
+  - `_read_precommit_texts()`：读仓根 + `agent/` 两份 `.pre-commit-config.yaml`。
+  - `_parse_step_names()`：抽工作流全部 step 名（工程门存在性判据，yaml/fallback 共用判据）。
+  - `ENGINEER_GATE_SPECS`(15) + `_collect_engineer_gates()`：登记非 pytest 阻断门并判 step 存在。
+  - `_collect_cli_guards()` / `_collect_precommit_gates()`：跨全部工作流 / 双份配置收集；`audit()` 改用之。
+  - `audit()` 返回扩 `engineer_gates` / `dangling_engineer` / `workflows`；`cli_guards` 增 `workflow`、
+    `precommit_gates` 增 `source` 字段。
+  - `BUDGET_SPECS` 增 4 项权威下限：`engineer_gate_floor`(15)、`workflow_floor`(6)、
+    `guard_step_floor`(18)，与引用项 `skill_audit_baseline`(json-scalars)；`_probe_current` 增
+    `engineer_gate_count` / `workflow_count` / `guard_step_count`；`_frozen_value` 支持 `json-scalars` + `root: repo`。
+  - `render_markdown`：新增「工作流」「工程门」两节；CLI/本地门表加「工作流」「来源」列；缺口区加「悬空工程门」。
+- `tests/test_arch_gate_registry.py`：`ENGINEER_GATE_FLOOR` / `WORKFLOW_FLOOR` / `GUARD_STEP_FLOOR`
+  （← `budget_value`）；新增 5 条元门禁（工程门 step 存在、工程门数棘轮、工作流数棘轮、快速失败门数棘轮、
+  合成树工程门悬空正向自检）；`test_ci_step_owner_gates_reference_real_steps` 扩为三口径
+  （`ci_step`/`workflow_step`/`full_suite`）；`_EXPECTED_BUDGET_IDS` +4；docstring 扩。
+- `docs/governance-state.md`：重生成（新增工作流/工程门节，预算表 +4 行）。
+- `publish/mcpb/{capabilities-mcp,workflows-mcp}/cli/governance_audit.py`：`mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 治理元门不再游离：`GOVERNANCE_META_TESTS` 并入孤儿判据（`orphans == []`）。
+- AC-3 全部工作流被扫：`workflows` 数 ≥ `workflow_floor`(6)；整个工作流消失即红。
+- AC-4 双份 pre-commit 均可见（`source` 列）。
+- AC-5 每个工程门 step 名在工作流中存在（`dangling_engineer == []`）；工程门数 ≥ 15。
+- AC-6 非 arch 快速失败门不再无锚：`fast-fail-guard` 门数 ≥ `guard_step_floor`(18)。
+- AC-7 技能库审计基线纳入台账（`skill_audit_baseline` 冻结 56/38）。
+- AC-8 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **34 passed**（本环境无 PyYAML，走 fallback）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测：workflows=6 / engineer_gates=15 / fast-fail-guard=18 / cli_guards=2 / precommit_gates=5，
+  各 floor frozen==current、headroom=0；`orphans == []`，`dangling_* == []`，`uncovered_precommit == []`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：九形态全覆盖（触发器/工程门补登/豁免棘轮/配置级门/阻断步兜底）
+
+> 状态：已落。补齐用户选定的四类未覆盖治理面，并修掉一处跨环境非确定性。
+
+台账此前仍有四类**看不见**的治理面，会随工作流演化静默萎缩：
+
+1. **触发器/运行面漂移**：门 step 存在 ≠ 门会运行 —— 删 `on: schedule` 或收窄 `push`/`pull_request`
+   的 `paths`，门永不执行而存在性判据仍判「在」（假绿）。
+2. **工程门漏登记**：`desktop.yml` / `release.yml` 的构建阻断门（Rust CLI+sidecar / 前端类型检查 /
+   Tauri 打包）此前完全不在 `ENGINEER_GATE_SPECS`。
+3. **豁免/白名单棘轮缺口**：gitleaks allowlist、pip-audit `--ignore-vuln`、dependabot ignore
+   放宽（加一条 = 静默扩大免检面）此前无门可见。
+4. **配置级门无棘轮**：`pyproject.toml` 覆盖率下限 `fail_under` 下调无信号。
+5. **阻断步单向兜底**：`ENGINEER_GATE_SPECS` 只挡「已登记工程门 → 被删」；未登记的阻断步增删无信号，
+   需一张**工作流命名 step 总数**反向网。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 模块 docstring 由「七形态」扩为「九形态」（新增**触发器漂移**、**阻断步漏登记**）。
+  - 新增 `WORKFLOW_TRIGGER_SPECS`（各工作流期望触发集）+ `_parse_triggers()`（纯行扫描，
+    单值/行内列表/块状三种写法）+ `_collect_workflow_triggers()`（暴露 `trigger_drift` /
+    `unregistered_workflows` / `unchecked_workflows`）。
+  - `ENGINEER_GATE_SPECS` +6（desktop/release 构建门）；`engineer_gate_floor` 15→21。
+  - `BUDGET_SPECS` +5：`workflow_step_floor`(122)、`gitleaks_allowlist`(4)、`pip_audit_ignore`(24)、
+    `dependabot_ignore`(5)、`coverage_fail_under`(60)；`guard_step_floor` 18→19。
+  - `_probe_current` 新增 `workflow_step_total` / `toml_list_len` / `regex_match_count` 探针；
+    `_frozen_value` / `collect_budgets` 支持 `floor` 源类型与对应模式列。
+  - `audit()` 返回扩 `workflow_triggers` / `unregistered_workflows` / `unchecked_workflows` /
+    `trigger_drift`；`render_markdown` 增「工作流触发器」节 + 缺口区触发器条目。
+  - **确定性修复**：`_parse_guard_steps()` 退化路径由「任意 `- ` 起块、无条件吞后续行」改为
+    **按缩进收边**（缩进 ≤ 破折号缩进即收尾）。旧写法会把 job 级注释（同时含 `pytest` 与
+    `tests/*.py` 字样，如 ci.yml L43–47）并进上一个 step 块，造出 yaml 主路径没有的幻影门
+    `Run ruff check (gating) → tests/test_testclient_hygiene.py`。
+- `tests/test_arch_gate_registry.py`：
+  - 新增 `WORKFLOW_STEP_FLOOR`；`_EXPECTED_BUDGET_IDS` +7。
+  - 新增 6 条元门禁：阻断步总数棘轮、工作流触发器规格登记/落地、触发器一致、触发器合成树正向、
+    豁免白名单放宽即红、覆盖率下限下调即红。
+  - 新增 `test_yaml_and_fallback_parsing_agree`：合成树里 job 级注释夹在两 step 之间，
+    断言**装/不装 PyYAML 两条解析路径给出逐字一致的快照**（锁住上面的确定性修复）。
+  - `test_loop_caps_live_within_ceiling` 修正为只统计 `group=loop` 的 ceiling 项。
+- `docs/governance-state.md`：重生成（新增「工作流触发器」节、预算表 +5 行）。
+- `publish/mcpb/{capabilities-mcp,workflows-mcp}/cli/governance_audit.py`：`mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用；且 yaml / 无-yaml 双路径输出逐字一致）。
+- AC-2 每个工作流都有触发规格且规格落地（`unregistered_workflows == []`、`unchecked_workflows == []`）。
+- AC-3 每个工作流实际触发器 == 期望集（`trigger_drift == []`）。
+- AC-4 每个工程门 step 仍存在（`dangling_engineer == []`）；工程门数 ≥ 21。
+- AC-5 全部工作流命名 step 总数 ≥ 122（阻断步静默增删的反向兜底）。
+- AC-6 豁免/白名单条数 ≤ 台账上限；覆盖率下限 ≥ 台账下限（放宽豁免/下调覆盖 = 红）。
+- AC-7 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **41 passed**（本环境 PyYAML 6.0.3 可用，主路径；另用 `sys.modules["yaml"]=None` 单独验证退化路径逐字一致）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测：workflows=6 / engineer_gates=21 / guard steps=19 / workflow steps=122 / cli_guards=2 /
+  precommit_gates=5；各 floor frozen==current、headroom=0；`orphans == []`，`dangling_* == []`，
+  `trigger_drift == []`，`uncovered_precommit == []`。
+- 双路径一致性：逐工作流比对 `_parse_guard_steps` / `_parse_step_names` / `_parse_cli_guards` →
+  6/6 一致；`render_markdown` yaml==noyaml==已提交文档。
+- `scripts/mcpb_vendor.py --check` → 0 漂移。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：能力面静默萎缩（十形态）+ 能力锚点闭合分诊
+
+> 状态：已落。补齐治理层第 10 种熵形态 —— **能力面静默萎缩**（用户点名 RSI / PMK / 世界模型
+> 「此类」命名子系统此前不在治理面）。
+
+前九形态管的都是治理的**执行面**（门在不在跑、棘轮有没有被放宽），却对**能力面**全盲：一个命名
+子系统（RSI / PMK / 世界模型 …）靠「**一枚开关 + 一组承载模块 + 一组不变量测试**」立起来，
+三者任一被删 / 改名 / **默认翻转**（开关还在但默认从开变关 = 能力悄悄关掉）即静默萎缩，而旧台账
+的门存在性判据全绿。故新增第 10 形态并用**能力锚点**将其显形。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：
+  - 模块 docstring 由「九形态」扩为「十形态」（新增**能力面静默萎缩**）。
+  - 新增 `CAPABILITY_SPECS`（命名子系统锚点登记表）：**3 → 16** 条 —— 原 `world_model` /
+    `rsi` / `pmk` 三条，扩为再补 `asd_ste100` / `clarification` / `compute_policy` / `frontier` /
+    `jev` / `personalization` / `pi_mode` / `provenance` / `speculator` / `system_health` /
+    `three_cabin` / `trace_inspect` / `visual_frame_memory`。每条登记「`flag`（feature_flag 型取自
+    `FeatureFlags._DEFAULTS`，env 型取自 `env_schema.SCHEMA` 的 `HUGINN_*`）+ 期望默认值 +
+    承载模块 + 不变量测试」。
+  - 新增 `SUBSYSTEM_EXEMPT_FLAGS` **闭合分诊表**（46 枚）：把 `FeatureFlags._DEFAULTS` 全集收成
+    「**锚定（15 枚 feature_flag） ∪ 豁免（46 枚） = 全集 61，且不相交**」。豁免语义诚实登记
+    微路由 / 实验栅栏 / 奖励口径 / 沙箱基线 / 格式日志遥测 / 认知微特性 / 隐私档位 / 命名子系统
+    子开关 / 外部草稿纸；**不硬凑锚点**（诚实边界：锚点的 test 必须真实存在）。
+  - 新增 `_feature_flag_defaults()` / `_env_schema_defaults()`：**纯 ast** 从源码读开关默认值，
+    不 import huginn 包、不拉重依赖（保持门禁 weightless）。
+  - 新增 `_collect_capabilities()`：逐锚点判 ①开关默认值未翻转 ②承载模块存在 ③不变量测试存在，
+    三者任一脱节入 `capability_gaps`。
+  - `capability_floor` 预算项 **3 → 16**（锚点数只减不增，须显式下调 = 可见决策）；
+    `_probe_current` 的 `capability_count` 探针保持。
+  - `audit()` 返回扩 `capabilities` / `capability_gaps`；`render_markdown` 增「能力锚点
+    (capability anchors)」表（能力/开关/类型/期望默认/实际默认/默认一致/承载模块/不变量测试）
+    + 缺口区「能力锚点脱节」条目（`_capability_gap_desc`）。
+- `tests/test_arch_gate_registry.py`：
+  - `CAPABILITY_FLOOR` ← `budget_value("capability_floor")`。
+  - 新增 `test_capability_flags_all_triaged`：断言 `FeatureFlags._DEFAULTS` 键集 = 「锚定 ∪ 豁免」，
+    且不相交、无 stale（新增开关未分诊 → 红；每枚 flag **恰好**分诊一次）。docstring 补该不变量。
+  - 既有 5 条能力锚点门禁（`test_capability_anchors_intact` / 数量棘轮 / 默认值解析合成树 /
+    默认翻转合成树 / env 解析合成树）继续覆盖 `CAPABILITY_SPECS`。
+- `docs/governance-state.md`：重生成（新增「能力锚点」节 16 行）。
+- `publish/mcpb/{capabilities-mcp,workflows-mcp}/huginn/cli/governance_audit.py`：
+  `scripts/mcpb_vendor.py --write` 同步镜像（内容不同 1 → 0）。
+
+### AC
+
+- AC-1 逐字再生成（`docs/governance-state.md == render_markdown(build_gate_registry())`）。
+- AC-2 每个能力锚点都不脱节（`capability_gaps == []`）：开关默认值未翻转、承载模块存在、
+  不变量测试存在。
+- AC-3 每个 feature flag **恰好**分诊一次（锚定 ∪ 豁免 = `FeatureFlags._DEFAULTS` 全集且不相交）。
+- AC-4 能力锚点数 ≥ 16（`capability_floor`；删条目须显式下调 = 可见决策）。
+- AC-5 镜像漂移门仍绿（0 漂移）。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **47 passed**。
+- 实测：`capabilities=16` / `capability_gaps=[]`；`anchored=15` + `exempt=46` = `flags=61`
+  （`untriaged==[]`、`overlap==[]`、`stale==[]`）。
+- `scripts/mcpb_vendor.py --check` → 0 漂移。
+
+### 诚实边界
+
+- 锚点只登记**三者齐备**的命名子系统；无专属回归测试的开关诚实归 `SUBSYSTEM_EXEMPT_FLAGS`
+  （待补测试后可升级为锚点，从豁免集移出）。豁免集里少数是「**确为子系统、但当前尚无**专属
+  回归测试」（如 `bandit_mdp` / `use_cognitive_map` / `use_atomworld`），已注明，不硬凑。
+
+---
+
+## 增量 (2026-10-16, M1′ 续)：循环闸位扩容 9 → 18（自主面全量入账）
+
+> 状态：已落。上一轮 loop caps 只收了「最显眼」的 9 项（autoloop CLI/引擎、recursion_limit、
+> tool-calls、CodeAct、coder、exploration、deep_research）；全量复核发现**还有 9 个自主轮闸
+> 散落未登记**，会让「提高上限 = 扩大自主面」这条决策在这些门上**不被看见**。
+
+### 为什么要扩
+
+「huginn 能自主循环多少轮」的答案不止一个数，而是多层闸；只要有一层不在台账，扩张自主面就能
+绕过可见决策。复核（全仓 `_MAX*`/`max_iterations`/`max_turns` 扫描 + 逐处读源码确认）后补 9 项：
+
+- **RCB Step-2 执行循环** `HUGINN_RCB_EXEC_ITERS`（默认 2 / extreme 20）—— 我们自己在跑的 RCB 工作流主步数。
+- **harness phase** `max_iterations`(5)；**技能 step** `loop_max_iterations`(20)；**技能优化** 预设 `default`(10)。
+- **CodeAct sandbox** 第二个 `_MAX_TURNS`(15)；**WS 每 turn 自动续跑** `_MAX_AUTO_CONTINUES`(3)。
+- **per-agent profile** `max_steps`(10)；**causal_runner** `max_tool_calls`(40)；**deli_research** `max_iterations`(5)。
+
+### 改动
+
+- `huginn/cli/governance_audit.py`：`BUDGET_SPECS` 的 `loop` 组 **+9** ceiling 项；`loop_cap_floor` **9 → 18**。
+  每项沿用既有范式（`source="ceiling"` + `probe="regex_int_live"` + `pattern` 第 1 捕获组），
+  扩自主面须显式改台账 `value`。
+- `tests/test_arch_gate_registry.py`：`_EXPECTED_BUDGET_IDS` 同步 **+9**（32 → 41）；
+  `test_loop_caps_live_within_ceiling` 自动覆盖到 18 项（数量棘轮 + 活值 ≤ 上限）。
+- `docs/governance-state.md`：重生成（「循环闸位」节 10 → 19 行）。
+- `publish/mcpb/*`：`scripts/mcpb_vendor.py --write` 同步镜像。
+
+### AC
+
+- AC-1 逐字再生成（沿用）。
+- AC-2 18 项循环闸位全部可读（活值非 None），且活值 ≤ 台账 ceiling。
+- AC-3 `loop_cap_live_count ≥ loop_cap_floor`(18)；删一项即红。
+- AC-4 `_EXPECTED_BUDGET_IDS` 与 `BUDGET_SPECS` 一致（只许显式增删）。
+- AC-5 镜像漂移门仍绿。
+
+### 验证（本地）
+
+- `pytest tests/test_arch_gate_registry.py tests/test_publish_mirror_drift.py -o addopts=""`
+  → **47 passed**（本环境无 PyYAML，走 fallback 路径）。
+- `ruff check`（两文件）→ All checks passed。
+- 实测 18 项活值逐项 `live == ceiling`：20/50/500/15/5/15/50/40/12 + 20/5/20/10/15/3/10/40/5；
+  `loop_cap_live_count == 18`，`loop_cap_floor == 18`。
+- `scripts/mcpb_vendor.py --check` → 0 漂移（同步后）。
+
+### 诚实边界（有意未入账）
+
+- **autoloop watch 模式**：外层 `while True` **无界 tick**（每 tick 起一轮 run_cognitive），
+  没有数值上限可作 ceiling —— 归「常驻 daemon」，不入 loop 组。
+- **extreme 停机阈值**（连续失败/refine/pivot/darwin 停滞 50/50/20/15）与 **wall_clock 预算**：
+  是**停机阈值/时长**而非轮数上限，口径不同，另立一类；本轮不混入。
+- **数值迭代**（DFT/NEB/openmm 等）与**重试/重连**（llm_retry、mcp）属另一层，不入自主轮台账。

@@ -1,0 +1,215 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "bd8862e4d2b5",
+    "reason": "The plan is fundamentally invalid due to a critical scope violation. The hypothesis is defined under [DIM: geometry], yet the proposed experiment tests 'ReLU networks on analytical constraints' (polynomial interpolation/PDE residuals), which is a machine learning / functional approximation problem, not a geometric one. This constitutes 'substituting or renaming the proposition to a physical system' (or in this case, an ML system), which is explicitly forbidden by the '唯一硬性口径' section. Furthermore, the plan lacks specific geometric constraints (e.g., manifold constraints, geometric PDEs, or geometric loss functions) required to test solution space rigidity in a geometric context.",
+    "missing_steps": [
+      "Reformulate the hypothesis to align with the [DIM: geometry] domain (e.g., test rigidity on geometric constraints like point-set registration, manifold embedding, or geometric PDEs rather than generic polynomial/PDE residuals).",
+      "Define explicit geometric analytical constraints (e.g., interpolation on a sphere, residual of Laplace-Beltrami operator, etc.) instead of generic analytical constraints.",
+      "Specify the geometric metric for 'zero violation' if different from standard L2 error (e.g., geodesic error, angular error, etc.)."
+    ],
+    "mode": "explore",
+    "description": "Design and run a numerical experiment to test the hypothesis that small feedforward networks exhibit solution space rigidity (bounded N_c) on analytical constraints. Construct analytical constraint se"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "bd8862e4d2b5",
+    "reason": "The plan fundamentally violates the '唯一硬性口径' (hard constraint) which explicitly forbids substituting or renaming the proposition to a physical/ML system. The hypothesis is defined under [DIM: geometry] (solution space rigidity in geometry), but the proposed experiment tests 'ReLU networks on analytical constraints' (polynomial interpolation/PDE residuals), which is a machine learning / functional approximation problem, not a geometric one. This matches the exact '同场景历史失败' pattern described in the context. The plan lacks explicit geometric constraints and uses ML methods to approximate them rather than testing geometric solution space rigidity directly.",
+    "missing_steps": [
+      "Reformulate the hypothesis to align with the [DIM: geometry] domain by testing rigidity on geometric constraints directly (e.g., manifold constraints, geometric PDEs, or geometric loss functions) rather than using ML networks to approximate analytical constraints",
+      "Define explicit geometric analytical constraints (e.g., interpolation on a sphere, residual of Laplace-Beltrami operator, conformal mapping) as the test objects themselves, not as ML approximation targets",
+      "Specify the geometric metric for 'zero violation' that is appropriate for geometric constraints (e.g., geodesic error, angular error) rather than standard L2 error of function approximation",
+      "Ensure the experiment tests solution space rigidity of geometric objects directly, not the capacity of neural networks to approximate geometric functions"
+    ],
+    "mode": "explore",
+    "description": "Reformulate the solution space rigidity hypothesis within [DIM: geometry] by testing geometric constraints on manifolds. Construct three geometric constraint sets: (1) point-set registration on S^2 (i"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "Plan is invalid because it fails to specify the analytical constraints (e.g., polynomial or PDE residuals) to be used, making the experiment impossible to execute as described. Without these constraints, the definition of 'rigidity' and 'N_c(w)' is ill-defined and the prediction cannot be tested. Additionally, the plan lacks specific details on the numerical methods (e.g., optimization algorithm, loss function, network architecture details) required to conduct the experiment.",
+    "missing_steps": [
+      "Specify the exact analytical constraints (e.g., polynomial interpolation targets, PDE residual equations) to be used in the experiment.",
+      "Define the specific neural network architecture (e.g., number of hidden layers, activation functions beyond ReLU, initialization scheme).",
+      "Specify the training procedure (e.g., optimizer, learning rate schedule, loss function, stopping criterion).",
+      "Define the method for computing N_c(w) (e.g., how to determine the minimum width that achieves zero violation)."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to measure the solution space rigidity of small ReLU feedforward networks. Define \"rigidity\" as the existence of a finite, bounded minimum network width N_c(w"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "Plan fails to specify the exact analytical constraints (polynomial degree/PDE form), neural network architecture (depth/initialization), and training procedure (optimizer/loss/stopping criterion). Without these, the experiment is impossible to execute and N_c(w) cannot be computed. It repeats the historical failure mode of ill-defined experimental parameters.",
+    "missing_steps": [
+      "Specify analytical constraints: define polynomial interpolation targets (e.g., degree d) or PDE residual equations (e.g., form of PDE, boundary conditions)",
+      "Define neural network architecture: specify number of hidden layers, weight initialization scheme, and activation function details",
+      "Define training procedure: specify optimizer (e.g., Adam), learning rate, loss function (L2/L1), stopping criterion, and training duration",
+      "Define N_c(w) computation method: specify how to determine minimum width from validation error curves and handle statistical significance across 5 repeats"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to measure the solution space rigidity of small ReLU feedforward networks. Define \"rigidity\" as the existence of a finite, bounded minimum network width N_c(w"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "48489fad4057",
+    "reason": "The plan does not align with the hypothesis because it tests the wrong variable. The hypothesis explicitly concerns the scaling of capacity with the *number of samples* (log w), but the plan's prediction and description focus on testing the effect of hidden layer width (w_h) on error, while treating sample count (w) as a secondary grouping factor. To test the hypothesis, the experiment must fix the network width (capacity) and vary the sample count (w) to observe if N_c grows logarithmically, or fix the target error and measure the required capacity as a function of w. The current design measures error vs width, which is a standard capacity test but does not isolate the sample-complexity scaling (log w vs linear) required by the hypothesis.",
+    "missing_steps": [
+      "Redesign the experiment to vary sample count (w) as the primary independent variable while measuring the minimum required network width (N_c) to achieve the error threshold.",
+      "Ensure the hypothesis's specific scaling law (log w) is explicitly tested by plotting N_c against w on a log-linear or log-log scale.",
+      "Validate that the 'rigidity' condition (N_c remaining small and constant as w increases) is directly addressed by the proposed sweep, rather than just measuring error for fixed widths."
+    ],
+    "mode": "coder",
+    "description": "Implement a numerical experiment to test the rigidity of the solution space for small feedforward networks. The script will define the target function $f(x) = \\sin(\\pi x)$ on $[0,1]$ with added Gaussi"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "48489fad4057",
+    "reason": "The plan correctly identifies the hypothesis and prediction but fails to address the core issue of 'rigidity' as defined in the constraints. The description focuses on varying sample count $w$ and measuring minimum width $N_c$, but does not explicitly define or test for the rigid regime (where $N_c$ remains small and constant as $w$ increases) versus the fat regime (where $N_c$ is unbounded). Additionally, the plan does not include a systematic check for whether $N_c$ actually saturates or grows logarithmically, which is critical to distinguishing between the predicted logarithmic scaling and the constant behavior of rigidity. The historical failure also highlights that the plan may be testing the wrong variable relationship without isolating the sample-complexity scaling.",
+    "missing_steps": [
+      "Define explicit criteria for 'rigidity' (e.g., $N_c < \\text{threshold}$ for all $w$ in range).",
+      "Include a baseline constant-width experiment to verify if $N_c$ saturates as $w$ increases.",
+      "Add a comparison to linear scaling hypothesis (e.g., fit log-linear and linear trends to $N_c$ vs. $w$).",
+      "Ensure the error threshold ($10^{-3}$) is consistently applied across all runs and that early stopping does not bias $N_c$ estimates."
+    ],
+    "mode": "coder",
+    "description": "Implement a numerical experiment to test the hypothesis that the minimum network width $N_c$ required to achieve a target error threshold scales logarithmically with the number of samples $w$. Fix the"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "f83a7bab35f5",
+    "reason": "该plan未包含任何计算或实验步骤来实际测量N_c(w)（网络容量随约束样本数w的变化）。DESCRIPTION仅描述了改变训练超参数（噪声、激活函数、优化器）以降低训练损失，但完全没有提及如何执行核心实验：即扫描隐藏层宽度w，在留出约束点上验证零违规条件（最大绝对误差≤1e-3），并计算满足条件的最小N_c。因此无法验证hypothesis中关于N_c(w)是否保持常数的预测。",
+    "missing_steps": [
+      "定义目标函数流形及其约束条件",
+      "设计扫描流程：固定约束样本数w，逐步增加隐藏层宽度直至达到零违规",
+      "在留出约束集上验证零违规条件（最大绝对误差≤1e-3）",
+      "记录每个w对应的最小网络容量N_c(w)",
+      "绘制N_c(w) vs w曲线并分析其渐近行为"
+    ],
+    "mode": "explore",
+    "description": "Perform a targeted hyperparameter scan to investigate why the initial experiment yielded high surprise (0.67). Vary the noise level, activation function (ReLU vs. tanh), and optimization schedule (Ada"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "678df592562a",
+    "reason": "The plan is invalid because it lacks concrete implementation details (e.g., network architecture, optimization algorithm, training protocol, and evaluation metric definitions) required to execute a reproducible numerical experiment. Without specifying the exact model architecture (depth, activation functions, initialization), training procedure (optimizer, learning rate, epochs, loss function), and evaluation criteria (how N_c(w) is measured), the plan cannot be executed or validated. Additionally, the prediction that N_c(w) will remain constant between 8 and 32 is arbitrary without theoretical justification or prior empirical evidence.",
+    "missing_steps": [
+      "Specify network architecture (depth, activation functions, weight initialization)",
+      "Define training protocol (optimizer, learning rate schedule, loss function, convergence criteria)",
+      "Define evaluation methodology for N_c(w) (how zero-violation is measured across different widths)",
+      "Include validation of the low-dimensional target function's intrinsic dimensionality",
+      "Add baseline comparison with higher-dimensional target functions for contrast",
+      "Define statistical significance testing for observed trends"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis on solution space rigidity. Construct a low-dimensional target function (sin(πx) on [0,1]) with w constraint points (10 to 200), train "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "678df592562a",
+    "reason": "The plan is exploratory but lacks concrete implementation details required for reproducibility. It fails to specify network architecture (depth, activation functions, initialization), training protocol (optimizer, learning rate, epochs, loss function), and evaluation methodology for N_c(w). The prediction of constant N_c(w) between 8-32 is arbitrary without theoretical justification or empirical evidence. The plan repeats the same pitfalls identified in the historical failure section.",
+    "missing_steps": [
+      "Specify exact network architecture (depth, activation functions, weight initialization)",
+      "Define training procedure (optimizer, learning rate schedule, loss function, convergence criteria)",
+      "Define evaluation methodology for N_c(w) (how zero-violation is measured across different widths)",
+      "Include validation of low-dimensional target function's intrinsic dimensionality",
+      "Add baseline comparison with higher-dimensional target functions for contrast",
+      "Define statistical significance testing for observed trends"
+    ],
+    "mode": "explore",
+    "description": "Design a reproducible numerical experiment to test the hypothesis on solution space rigidity. Construct a low-dimensional target function (sin(πx) on [0,1]) with w constraint points (10 to 200), train"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "69c2330df8b4",
+    "reason": "The plan attempts to test a hypothesis about the rigidity of the solution space for ReLU networks under algebraic invariance. However, it lacks a clear definition of 'algebraic invariance' and the specific constraints being tested. The description is vague about the exact mathematical structure being probed, making it difficult to validate the hypothesis rigorously. Additionally, the plan does not address the previous failure mode related to blind_holds mismatch, which could lead to similar issues.",
+    "missing_steps": [
+      "Define the specific algebraic invariance property being tested",
+      "Specify the exact constraints and how they are generated",
+      "Address the previous failure mode related to blind_holds mismatch",
+      "Clarify the training and evaluation protocol to ensure reproducibility"
+    ],
+    "mode": "workflow",
+    "description": "Execute a computational scan to test the hypothesis that the solution space is rigid due to algebraic invariance of the ReLU basis. The plan involves: (1) generating a family of analytic constraints ("
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "69c2330df8b4",
+    "reason": "The plan has critical gaps. First, it does not specify the dimensionality of the input space (1D vs multi-D), which fundamentally changes the ReLU basis properties and rigidity. Second, the hypothesis involves w ∈ [10, 200], but the plan does not explicitly define how w varies (e.g., as the number of interpolation points) or how the polynomial degree d relates to w. Third, the plan mentions 'varying hidden widths N ∈ [8, 256]' but does not specify the training procedure, optimization algorithm, or convergence criteria for the ReLU networks, which are critical for measuring N_c(w) accurately. Finally, the plan lacks a clear method for determining the 'rigid' vs 'fat' outcome based on the measured N_c(w) values.",
+    "missing_steps": [
+      "Specify input space dimensionality (1D or multi-D)",
+      "Define relationship between w (number of constraints) and polynomial degree d",
+      "Detail training procedure (optimizer, loss function, convergence criteria)",
+      "Define explicit criteria for determining 'rigid' vs 'fat' outcome from N_c(w) data",
+      "Specify how w will be varied across the range [10, 200]"
+    ],
+    "mode": "workflow",
+    "description": "Define the specific algebraic invariance property for ReLU basis under linear interpolation: for any two solutions f_1, f_2 satisfying the constraint set C_w, their convex combination f = αf_1 + (1-α)"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "87ce252851b4",
+    "reason": "The plan contains a critical design flaw that makes it impossible to validate the hypothesis. The hypothesis concerns 'linear constraint interpolation' (specifically the basis invariance under such interpolation), but the plan tests 'point-wise function interpolation' (fitting sin(πx) at w points). These are fundamentally different mathematical structures: constraint interpolation requires the network to satisfy linear algebraic constraints on the output, whereas point-wise interpolation only requires matching values at discrete points. The proposed experiment measures generalization error on held-out points, which tests approximation capacity, not the algebraic invariance property described in the hypothesis. This mismatch means the experiment cannot produce evidence for or against the N_c(w) = min(16, ⌈w/10⌉) prediction.",
+    "missing_steps": [
+      "Replace point-wise function interpolation with a constraint interpolation setup where the network must satisfy explicit linear constraints (e.g., f(x_i) = c_i with linear relationships among the c_i)",
+      "Define N_c(w) based on the minimum width that satisfies the linear constraints exactly (zero violation in the constraint sense, not point-wise error)",
+      "Implement a method to measure the effective rank or dimensionality of the ReLU basis under constraint interpolation (e.g., via SVD of the basis functions evaluated at constraint points)",
+      "Ensure the constraint interpolation problem is well-posed and that the hypothesis's 'algebraic invariance' property is properly encoded in the experimental setup"
+    ],
+    "mode": "workflow",
+    "description": "Conduct a systematic numerical experiment to test the hypothesis on ReLU basis algebraic invariance under linear constraint interpolation. Construct a 1D function interpolation task using f(x) = sin(π"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "87ce252851b4",
+    "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis concerns 'linear constraint interpolation' where the network must satisfy explicit linear algebraic relationships among outputs (e.g., ∑α_i f(x_i) = 0), but the plan describes point-wise function interpolation (fitting sin(πx) at discrete points). These are different mathematical structures: constraint interpolation requires satisfying linear constraints on outputs, while point-wise interpolation only requires matching values. The plan measures generalization error on held-out points rather than constraint satisfaction, making it impossible to validate the algebraic invariance property or the N_c(w) prediction about rank saturation under linear constraints.",
+    "missing_steps": [
+      "Replace point-wise interpolation with constraint interpolation setup where network must satisfy explicit linear constraints (e.g., ∑α_i f(x_i) = 0)",
+      "Define N_c(w) based on minimum width that satisfies linear constraints exactly (zero violation in constraint sense)",
+      "Implement method to measure effective rank/dimensionality of ReLU basis under constraint interpolation (via SVD of basis functions at constraint points)",
+      "Ensure constraint interpolation problem is well-posed with proper linear constraint structure matching hypothesis",
+      "Verify algebraic invariance property is properly encoded in experimental design"
+    ],
+    "mode": "workflow",
+    "description": "Conduct a systematic numerical experiment to test the ReLU basis algebraic invariance under linear constraint interpolation. Construct a linear constraint interpolation task where a ReLU network must "
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "36ac1b155377",
+    "reason": "The plan contains a critical ambiguity in the variable mapping that invalidates the hypothesis test. It uses 'w' to represent both the number of constraint samples (step 2) and the network width (step 3), creating a logical contradiction in the prediction N_c(w). The hypothesis requires N_c to be a function of sample count (width being the dependent variable), but the plan treats width as the independent variable in the scan. This structural flaw means the experiment cannot test whether N_c(w) remains bounded as w (samples) increases, because the width is being varied independently rather than measured as the minimal capacity needed for a given sample size.",
+    "missing_steps": [
+      "Clarify variable definitions: distinguish between sample count (N_samples) and network width (width_h)",
+      "Rewrite the experiment to fix sample count and sweep width to find minimal width achieving zero violation",
+      "Define N_c(N_samples) as the minimal width required for zero violation at each sample count",
+      "Verify that the prediction tests boundedness of N_c(N_samples) as N_samples increases, not boundedness of width as width varies"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the \"solution space rigidity\" hypothesis for small feedforward networks. The experiment will: (1) construct an analytical constraint function (e.g., f"
+  },
+  {
+    "scene_tag": "auto_relu",
+    "hyp_key": "a62ea45763c5",
+    "reason": "The hypothesis specifically predicts a step function with a jump at w=64, but the plan's experimental design only tests w ∈ {10,20,50,100,200}, completely missing the critical w=64 point where the prediction is made. Without testing w=64, the experiment cannot verify or refute the core prediction. Additionally, the hypothesis predicts N_c(w) remains constant at 8 for w ≤ 32, but the plan's w values (10, 20, 50) don't adequately cover this range to confirm constancy.",
+    "missing_steps": [
+      "Add w=64 to the constraint count scan range to test the critical jump point predicted by the hypothesis",
+      "Include w values in the range [1, 32] to properly test whether N_c(w) remains constant at 8 for w ≤ 32 as predicted",
+      "Ensure the scan includes sufficient resolution around the predicted transition points"
+    ],
+    "mode": "explore",
+    "description": "Design and run a numerical experiment to test the hypothesis on solution space rigidity by measuring N_c(w) (minimum hidden layer width achieving zero violation on held-out constraints) as a function "
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "62fba7cd0a6a",
+    "reason": "The plan is invalid because it fails to address the core hypothesis which is about the algebraic rigidity of the solution space due to the ReLU basis' piecewise linear structure. The current plan is just a generic width-scan experiment that doesn't specifically test the theoretical prediction that N_c(w) = ⌈w/2⌉. It uses w values (10,20,50,100,200) that are much larger than the hypothesis range [4,64], and the experimental design doesn't properly isolate the ReLU basis algebra effects. The hypothesis is about minimal width needed to encode w linear constraints through active ReLU regions, but the plan uses sin(πx) with noise which doesn't directly relate to the linear constraint formulation in the hypothesis.",
+    "missing_steps": [
+      "Refine the hypothesis testing to match the specific range w ∈ [4,64] mentioned in the hypothesis",
+      "Design experiments that specifically test the ReLU basis algebra and piecewise linear structure",
+      "Include theoretical analysis of the ReLU basis degrees of freedom per neuron",
+      "Create constraints that directly relate to the active ReLU regions formulation",
+      "Add analysis of constraint correlation structure which is mentioned as a concern in the hypothesis"
+    ],
+    "mode": "workflow",
+    "description": "Implement a systematic width-scan experiment to test the hypothesis that the minimum network width N_c(w) required to satisfy w ReLU constraints grows linearly as ⌈w/2⌉. Construct a 1D ReLU network (1"
+  }
+]

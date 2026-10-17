@@ -51,6 +51,7 @@ ProviderLiteral = Literal[
     "doubao",
     "hunyuan",
     "spark",
+    "internlm",
     "openai-compatible",
 ]
 

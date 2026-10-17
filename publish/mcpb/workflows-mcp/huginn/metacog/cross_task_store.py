@@ -68,7 +68,7 @@ class CrossTaskStore:
         evidence 可能是 list/dict, 序列化成 JSON 文本存.
         """
         ev = entry.get("evidence")
-        if isinstance(ev, (list, dict)):
+        if isinstance(ev, list | dict):
             ev_str = json.dumps(ev, ensure_ascii=False, default=str)
         else:
             ev_str = "" if ev is None else str(ev)

@@ -107,7 +107,7 @@ class BoxPrimitivesView:
         Returns:
             set of box label strings (中心在 radius 内的 boxes)
         """
-        if not isinstance(x, (tuple, list)) or len(x) < 2:
+        if not isinstance(x, tuple | list) or len(x) < 2:
             return set()
         cx, cy = float(x[0]), float(x[1])
         max_dist = float(radius) if radius is not None else 200.0

@@ -133,6 +133,10 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
         "reason": "第一方深研(code_lab 沙箱 + planning + run_program 组合, 进程内)",
         "migrate_to": "需补 code_lab 沙箱端点, 保持登记",
     },
+    "examples/huginn_codelab_research.py": {
+        "reason": "第一方深研(命题无关 code_lab 沙箱 + planning + run_program 组合, 进程内)",
+        "migrate_to": "需补 code_lab 沙箱端点, 保持登记",
+    },
     "examples/shusheng_quantum_critical.py": {
         "reason": "第一方深研(code_lab/coldstart_guards/tool_surface, 进程内)",
         "migrate_to": "需补 code_lab 端点, 保持登记",

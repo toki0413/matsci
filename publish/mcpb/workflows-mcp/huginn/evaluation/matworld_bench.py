@@ -191,8 +191,8 @@ class MatWorldBench:
                 continue
 
             tol = task.tolerance.get(key)
-            if tol is not None and isinstance(expected, (int, float)) \
-                    and isinstance(got, (int, float)):
+            if tol is not None and isinstance(expected, int | float) \
+                    and isinstance(got, int | float):
                 ok = _is_close(float(got), float(expected), tol)
             else:
                 # 非数值或没给容差 -> 严格相等

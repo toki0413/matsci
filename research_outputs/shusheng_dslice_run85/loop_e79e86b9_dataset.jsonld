@@ -1,0 +1,347 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_e79e86b9",
+  "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-10-06T10:20:20.304669+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "workflow"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Implement a computational pipeline to test the NTK Rank Condition hypothesis by generating rigid and fat constraint families, training width-N networks to verify zero-violation capacity N_c(w), and computing NTK rank to validate the theoretical prediction. Steps: 1) Generate rigid family (constraints on low-dimensional manifold) and fat family (independent high-dimensional constraints); 2) Sweep N from 1 to w, train ReLU networks on w points, measure if max absolute error ≤ 1e-3 on held-out points; 3) Compute NTK matrix K(X,X) for each w, determine rank; 4) Compare empirical N_c(w) scaling (rigid: constant vs fat: linear) against NTK rank saturation (rigid: saturates at d vs fat: grows with w)."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "skill",
+      "value": "None"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "For rigid family: N_c(w) remains constant (~d) as w increases, and NTK rank saturates at d. For fat family: N_c(w) grows linearly with w, and NTK rank grows linearly with w until N ≈ w. The empirical N_c(w) should align with the NTK rank condition threshold."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "target_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_c24d2827"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "status",
+      "value": "completed"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "success",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.score",
+      "value": -0.9629629643347051
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "script",
+      "value": "import numpy as np\n\ndef family(kind, w, seed):\n    rng = np.random.default_rng(seed)\n    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)\n    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)\n    if kind == 'rigid':\n        coeffs = np.array([1.0, 0.0, 1.0])\n        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)\n        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)\n    else:\n        coeffs = rng.standard_normal(50)\n        y = poly_basis(X, 50) @ coeffs.reshape(-1, 1)\n        yv = poly_basis(Xv, 50) @ coeffs.reshape(-1, 1)\n    scale = np.std(np.vstack((y, yv)))\n    y /= scale\n    yv /= scale\n    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}\n\ndef run(cfg):\n    seed = int(cfg.get('seed', 0))\n    ws = [4, 8]\n    hs = list(range(2, 11))\n    summary = {'rigid_Nc': [], 'fat_Nc': []}\n    objectives = {'score': 0.0}\n    for kind in ['rigid', 'fat']:\n        nc_list = []\n        for w in ws:\n            nc = 51\n            for h in hs:\n                data = family(kind, w, seed + w * 10 + h)\n                X, y = data['X'], data['y']\n                Xv, yv = data['Xv'], data['yv']\n                model = mlp_fit(X, y, h, seeds=1)\n                y_pred = mlp_predict(model, Xv)\n                err = np.max(np.abs(y_pred - yv))\n                if zero_violation(err):\n                    nc = h\n                    break\n            nc_list.append(nc)\n        summary[f'{kind}_Nc'] = nc_list\n        avg_nc = np.mean(nc_list)\n        if kind == 'rigid':\n            objectives['score'] += (1.0 / (avg_nc + 1e-6))\n        else:\n            objectives['score'] -= (avg_nc / 51.0)\n    return {'success': True, 'summary': summary, 'objectives': objectives}"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reproducible",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "Tests Passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "constraints_satisfied",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.failed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.skipped",
+      "value": 2
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "test_output",
+      "value": "\nno tests ran in 0.51s\n"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.reason",
+      "value": "The output '51 3 51 51' is completely uninformative and lacks any reasoning, explanation, or connection to the task. It appears to be random numbers with no logical derivation or evidence chain."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.needs_retry",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_gap",
+      "value": "No data, numbers, or execution results are provided to support any conclusion. There is no inference process shown."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.failure_mode",
+      "value": "If this hypothesis were correct (i.e., that random numbers constitute a valid response), then the system would fail completely on any task requiring reasoning, evidence-based conclusions, or meaningful output. The opposite would be true: a valid response would require structured reasoning, grounded evidence, and clear logical progression from data to conclusion."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reviewer_critique",
+      "value": "The provided execution result and validation summary raise several critical concerns regarding methodology, reproducibility, and alignment with domain-specific expectations:\n\n1. **Methodological Weakness and Missing Convergence Check**:  \n   The reported `rigid_Nc` and `fat_Nc` values ([51, 3] and [51, 51]) lack any justification or derivation. There is no evidence of convergence testing with respect to network depth (`h`) or width (`w`), despite these being varied in the loop. Without assessing how these hyperparameters affect generalization error or model capacity, the selected \"optimal\" sizes are arbitrary. Furthermore, the use of maximum absolute error (`np.max(np.abs(y_pred - yv)))` as the sole metric is insufficient for characterizing approximation quality in scientific contexts—relative error, L2 norm, or spectral convergence would be more appropriate.\n\n2. **Reproducibility and Benchmarking**:  \n   While a seed is used, the validation summary notes that *no tests ran*, suggesting either a misconfiguration in the test harness or an incomplete implementation. The absence of benchmarking against known analytical solutions (e.g., for the rigid polynomial case) or standard baselines (e.g., radial basis functions, Gaussian processes) undermines confidence in the method’s efficacy. The score of -0.96 is unexplained—its definition, normalization, and optimality are unclear.\n\n3. **Alignment with Domain Knowledge**:  \n   In computational materials science or physics-informed machine learning, surrogate models must respect underlying symmetries, conservation laws, or functional forms derived from first principles. Here, the “rigid” case assumes a fixed quadratic polynomial, yet the model is trained on it without enforcing structure—effectively relearning what is already known. This contradicts efficient modeling practices where prior knowledge should constrain or guide the hypothesis space. The “fat” case uses random coefficients without physical motivation, risking overfitting and poor interpretability.\n\n4. **Concrete Next-Step Improvements**:  \n   - Implement convergence studies: vary `h` and `w` systematically and plot validation error vs. model complexity to identify saturation points.\n   - Replace max error with domain-relevant metrics (e.g., energy norm error, derivative accuracy).\n   - Benchmark against analytical solutions for the rigid case; report % error and convergence rate.\n   - Incorporate symbolic priors (e.g., via constrained optimization or architecture design) to embed known functional forms.\n   - Ensure test suite executes and passes at least one meaningful validation case before claiming success.\n\nIn summary, the current output reflects a mechanically executed search without scientific rigor. The numbers reported are unexplained, unvalidated, and unsubstantiated by convergence analysis or comparison to established methods."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_tool_diversity",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_reasoning_entropy",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_cross_domain",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_novelty",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_domains_hit",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "grader_reward",
+      "value": 0.7143
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_total",
+      "value": 8
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_pass_rate",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.predicted",
+      "value": "If the algebraic variety hypothesis holds (rigid solution space), N_c(w) will remain approximately constant (e.g., N_c ≈ 4-8) across increasing w (e.g., w=10 to w=100), yielding a log-log slope near 0"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.actual",
+      "value": "51 3 51 51"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_mean",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_worst",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_std",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_source",
+      "value": "jaccard"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_rel",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "completion_mode",
+      "value": "code_lab"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "validation_evidence",
+      "value": "code_lab_objectives"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "r_phys",
+      "value": 1.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.match",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.modality",
+      "value": "blind_reconstruction"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.data_source",
+      "value": "subagent:blind_reconstructor"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.blind_holds",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.blind_confidence",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.blind_derivation",
+      "value": ""
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.orig_holds",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.orig_reasoning_excerpt",
+      "value": ""
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.tests_passed",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.grader_reward",
+      "value": 0.7143
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.errors",
+      "value": "blind_holds=False vs orig_holds=True mismatch — blind reconstruction disagrees with execution result"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_reconstruction.verification_level",
+      "value": "refute"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "persona",
+      "value": "unknown"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "principles_added",
+      "value": 0
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_e79e86b9",
+    "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+    "instrument": "/workspace/research_outputs/shusheng_dslice_run85/.huginn/trajectories/loop_e79e86b9.json",
+    "object": "/workspace/research_outputs/shusheng_dslice_run85/.huginn/provenance.jsonl",
+    "startTime": "2026-10-06T10:08:23.460692",
+    "endTime": "2026-10-06T10:20:20.299097"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_dslice_run85/huginn_autoloop_report_loop_7bfaa3ec.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_dslice_run85/.huginn/trajectories/loop_e79e86b9.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

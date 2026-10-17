@@ -56,7 +56,7 @@ def should_visualize(tool_name: str, output: dict[str, Any]) -> bool:
             return True
 
     for key in ("energies", "bands", "dos", "frequencies", "stress", "strain", "scores"):
-        if key in result and isinstance(result[key], (list, dict)):
+        if key in result and isinstance(result[key], list | dict):
             return True
 
     # F1: code_tool / bash_tool 输出也触发 — RCB 跑分路径里 agent 用 code_tool
@@ -161,7 +161,7 @@ def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
             ax.bar(labels[:20], energies[:20])
             ax.set_ylabel("Energy (eV)")
             plotted = True
-        elif isinstance(energies, (int, float)):
+        elif isinstance(energies, int | float):
             ax.text(0.5, 0.5, f"E = {energies:.4f} eV", ha="center", va="center", fontsize=16)
             plotted = True
 
@@ -249,7 +249,7 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
             sub_lines = []
             for bi, band in enumerate(data[:5]):
                 try:
-                    nums = [float(v) for v in band if isinstance(v, (int, float))]
+                    nums = [float(v) for v in band if isinstance(v, int | float)]
                 except (ValueError, TypeError):
                     logger.debug("best-effort op failed", exc_info=True)
                     continue
@@ -265,7 +265,7 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
                 lines.append(f"[{key}] {len(data)} bands:\n" + "\n".join(sub_lines))
             continue
         try:
-            nums = [float(v) for v in data if isinstance(v, (int, float))]
+            nums = [float(v) for v in data if isinstance(v, int | float)]
         except (ValueError, TypeError):
             logger.debug("best-effort op failed", exc_info=True)
             continue
@@ -444,7 +444,7 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
             out.append(f"[phase_field] volume_fractions: {', '.join(parts)}")
 
         interface = measurements.get("interface_pixel_fraction")
-        if isinstance(interface, (int, float)):
+        if isinstance(interface, int | float):
             iy = int(float(interface) * 999)
             out.append(f"  interface_fraction=<point>[{iy}]</point>={float(interface) * 100:.2f}%")
 
@@ -573,8 +573,8 @@ def extract_comparative_primitives(
         if isinstance(bl_data[0] if bl_data else 0, list):
             continue  # 跳过嵌套, 只比 1D
         try:
-            bl_nums = [float(v) for v in bl_data if isinstance(v, (int, float))]
-            cr_nums = [float(v) for v in cr_data if isinstance(v, (int, float))]
+            bl_nums = [float(v) for v in bl_data if isinstance(v, int | float)]
+            cr_nums = [float(v) for v in cr_data if isinstance(v, int | float)]
         except (ValueError, TypeError):
             logger.debug("best-effort op failed", exc_info=True)
             continue
@@ -698,7 +698,7 @@ def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, A
                 continue
         bl_iface = bl_meas.get("interface_pixel_fraction") if isinstance(bl_meas, dict) else None
         cr_iface = cr_meas.get("interface_pixel_fraction") if isinstance(cr_meas, dict) else None
-        if isinstance(bl_iface, (int, float)) and isinstance(cr_iface, (int, float)) and abs(float(cr_iface) - float(bl_iface)) > 1e-4:
+        if isinstance(bl_iface, int | float) and isinstance(cr_iface, int | float) and abs(float(cr_iface) - float(bl_iface)) > 1e-4:
                 parts.append(
                     f"  interface: {float(bl_iface) * 100:.2f}% → "
                     f"{float(cr_iface) * 100:.2f}% "
@@ -778,7 +778,7 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
         if isinstance(data[0], list):
             continue  # 嵌套不估
         try:
-            nums = [float(v) for v in data if isinstance(v, (int, float))]
+            nums = [float(v) for v in data if isinstance(v, int | float)]
         except (ValueError, TypeError):
             logger.debug("best-effort op failed", exc_info=True)
             continue

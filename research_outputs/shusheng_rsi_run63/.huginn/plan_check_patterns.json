@@ -1,0 +1,209 @@
+[
+  {
+    "scene_tag": "dft",
+    "hyp_key": "309ad2c755d7",
+    "reason": "The plan fails to match the required MODE (coder). The task requires generating executable code for a numerical experiment, but the provided plan is a high-level experimental description (workflow/explore mode) without any code specification or implementation details. Additionally, the plan lacks specific details on how to measure Gaussian curvature at interpolation points, which is critical for the hypothesis.",
+    "missing_steps": [
+      "Specify MODE as 'coder' instead of 'explore'",
+      "Provide actual Python code implementation for the numerical experiment",
+      "Define specific target functions with known Gaussian curvature properties",
+      "Detail the method for calculating Gaussian curvature at interpolation points",
+      "Specify exact network architecture parameters and training procedures"
+    ],
+    "mode": "explore",
+    "description": "We will systematically investigate the hypothesis that minimal network capacity N_c(w) scales linearly with constraint count w when the target function has non-zero Gaussian curvature at interpolation"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "309ad2c755d7",
+    "reason": "The plan uses MODE: explore, but the task requires MODE: coder (executable Python code). The DESCRIPTION is a high-level workflow without actual code implementation, which matches the exact failure pattern listed in '同场景历史失败'. Missing critical details: no Python code provided, no specific target functions defined, no Gaussian curvature calculation method specified, no network architecture/training parameters defined.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder'",
+      "Provide actual executable Python code implementation",
+      "Define specific target functions with analytically computable Gaussian curvature (e.g., paraboloids)",
+      "Detail method for calculating Gaussian curvature at interpolation points using symbolic differentiation",
+      "Specify exact network architecture parameters (hidden layers, activation functions, etc.)",
+      "Define training procedures (optimization, loss function, convergence criteria)",
+      "Specify how to measure zero violation (max absolute error ≤ 1e-3 on held-out points)",
+      "Define the scan range for network widths and constraint counts"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Generate executable Python code to numerically test the hypothesis that minimal network capacity $N_c(w)$ scales linearly with constraint count $w$ for target functions wi"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make the hypothesis untestable in its current form. First, the variable 'w' is overloaded: it is defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the relationship between the number of constraints and the network input dimension is undefined—without specifying how constraints map to inputs, the grid search cannot be implemented. Third, the training data generation (function to approximate, sampling method) is unspecified, which is essential for defining the constraints and errors.",
+    "missing_steps": [
+      "Clarify the definition of 'w' (constraint count vs. width) and ensure consistent notation",
+      "Specify the mapping from constraint count to network input dimension",
+      "Define the target function and sampling strategy for generating constraints and training data",
+      "Detail the constraint violation metric and validation set construction"
+    ],
+    "mode": "explore",
+    "description": "Conduct a grid search over hidden layer widths (w_samples = [4, 8, 12, 16, 20, 24]) and constraint counts (w = [2, 4, 6, 8, 10]) to measure N_c(w) — the minimum width achieving zero violation (max abs"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make it untestable. First, variable 'w' is overloaded: defined as 'hidden layer width' in the plan but used as 'constraint counts' in the prediction N_c(w). Second, the mapping from constraint count to network input dimension is undefined — it's unclear whether input dimension equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These issues match the exact failure modes previously documented for this scenario.",
+    "missing_steps": [
+      "Clarify variable notation: distinguish between hidden width (w) and constraint count (c) consistently throughout",
+      "Define how constraint count maps to network input dimension (e.g., input_dim = c?)",
+      "Specify target function generation method (random Fourier features details)",
+      "Define constraint sampling strategy on [-1, d] domain",
+      "Define constraint violation metric and validation set construction procedure",
+      "Specify training data generation process (sample size, distribution)"
+    ],
+    "mode": "explore",
+    "description": "Conduct a grid search to measure N_c(w) — the minimum hidden width achieving zero constraint violation (max abs error ≤ 1e-3) on held-out constraints — by varying hidden layer widths w_samples = [4, 8"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "584c6720e9bd",
+    "reason": "The plan contains a critical logical contradiction between the hypothesis and the experimental definition. The hypothesis posits that for w≤2 the solution manifold is high-dimensional (fat), implying infinite capacity N_c(w) > 999. However, the plan defines N_c(w) as the minimum width achieving zero violation. If N_c(w) > 999 for w=1,2, this means even a width of 1000 fails to achieve zero violation, which directly contradicts the hypothesis that these widths should have infinite capacity (i.e., should easily satisfy constraints). The experimental design reverses the expected relationship between manifold dimension and capacity.",
+    "missing_steps": [
+      "Reconcile the definition of N_c(w) with the hypothesis: if w≤2 has infinite capacity, N_c(w) should be small (easily achievable), not large. The current definition measures difficulty of satisfying constraints, which is inversely related to manifold dimension.",
+      "Clarify whether w represents hidden layer width or number of constraints (ambiguous in description).",
+      "Add validation that the constraint set is well-posed and the function space is appropriate for testing the topological transition.",
+      "Include baseline comparison with known theoretical results for function space capacity."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and execute a numerical experiment to test the topological transition hypothesis in network function space. The plan involves: (1) constructing a set of analytical "
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "584c6720e9bd",
+    "reason": "The plan contains a critical definition mismatch between the hypothesis and the hard constraint. The hypothesis defines N_c(w) as the dimension of the solution manifold (a geometric property), but the hard constraint defines N_c(w) as the minimal network capacity (hidden width) required to achieve zero violation on holdout points (a training capacity property). These are fundamentally different quantities. The plan attempts to validate a geometric manifold transition using a metric defined by training capacity, which cannot directly prove the topological transition claim. Additionally, the plan describes using symbolic algebra to determine manifold dimension for 'small widths w' without specifying which widths or providing the mathematical framework for this analysis, leaving the core validation method undefined.",
+    "missing_steps": [
+      "Clarify whether N_c(w) refers to manifold dimension (hypothesis) or minimal network capacity (hard constraint) — these must be aligned",
+      "Define the specific network architecture (activation functions, depth, etc.) for the numerical experiment",
+      "Specify the target function and constraint generation method for the interpolation problems",
+      "Detail the procedure for estimating N_c(w) as minimal capacity required for zero violation",
+      "Define what constitutes 'zero violation' on holdout points (currently only defined as max abs error <= 1e-3, but need to specify how holdout points are chosen)",
+      "Provide the symbolic algebra approach for determining manifold dimension (currently too vague)"
+    ],
+    "mode": "explore",
+    "description": "We will design a controlled numerical experiment to test the topological transition hypothesis in network function space. We will (1) construct w interpolation constraints on a smooth target function;"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make the hypothesis untestable. First, 'w' is overloaded: defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the mapping from constraint count to network input dimension is undefined—unclear whether input_dim equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These match exactly the documented failure modes for this scenario.",
+    "missing_steps": [
+      "Clarify variable notation: distinguish between hidden width (N) and constraint count (w) consistently throughout",
+      "Define how constraint count maps to network input dimension (e.g., input_dim = c?)",
+      "Specify target function generation method (random Fourier features details)",
+      "Define constraint sampling strategy on [-1, d] domain",
+      "Define constraint violation metric and validation set construction procedure",
+      "Specify training data generation process (sample size, distribution)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the \"rigidity\" hypothesis: for a given set of analytical constraints (e.g., a smooth target function), vary the number of constraints $w$ and scan the hidden laye"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan contains critical ambiguities that make the hypothesis untestable. First, 'w' is overloaded: defined as 'constraint counts' in the description but used as 'hidden layer width' in the prediction (N_c(w) vs w). Second, the mapping from constraint count to network input dimension is undefined—unclear whether input_dim equals constraint count or something else. Third, the target function generation strategy and constraint sampling methodology are unspecified, making the validation error metric undefined. These match exactly the documented failure modes previously listed for this scenario.",
+    "missing_steps": [
+      "Clarify variable notation: distinguish between hidden width (N) and constraint count (w) consistently throughout",
+      "Define how constraint count maps to network input dimension (e.g., input_dim = c?)",
+      "Specify target function generation method (random Fourier features details)",
+      "Define constraint sampling strategy on [-1, d] domain",
+      "Define constraint violation metric and validation set construction procedure",
+      "Specify training data generation process (sample size, distribution)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the \"rigidity\" hypothesis: for a given set of $w$ linearly independent analytic constraints (e.g., monomials or trigonometric basis functions), define input dimen"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7a9c11a4d19e",
+    "reason": "The plan contains a fundamental variable definition error: it defines w as the number of constraint samples, but the hypothesis and prediction explicitly require w to be the network width (hidden layer size) over the range [5, 50]. N_c(w) is defined as the minimum network width needed, so w cannot simultaneously be the independent variable (width) and the number of constraints. This makes the proposed experiment logically incoherent as described.",
+    "missing_steps": [
+      "Correct the definition of w to represent network width, not constraint sample count",
+      "Clarify the relationship between constraint system size and network width",
+      "Define how constraint generation scales with network width if w is width"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the hypothesis test for algebraic redundancy in constraint sets by constructing rigid (redundant) and floppy (underdetermined) families of linear constraints, tr"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "7a9c11a4d19e",
+    "reason": "The plan defines w ambiguously: it states w is 'hidden layer size' (network width) but then says 'w = constraint sample number' in the known failure note, and the DESCRIPTION says 'varying hidden widths w' while the hypothesis requires N_c(w) to be measured as a function of w. This variable definition conflict makes the experiment logically incoherent. Additionally, the plan does not specify how the constraint systems are generated or how the network is trained/evaluated, which are critical for verifying the hypothesis.",
+    "missing_steps": [
+      "Clarify the definition of w: it must be network width (hidden layer size), not constraint sample count",
+      "Specify how the rigid and floppy constraint families are constructed (mathematical formulation)",
+      "Define the network architecture and training procedure (loss function, optimizer, etc.)",
+      "Specify how N_c(w) is computed (search method for minimum width achieving violation ≤ 1e-3)",
+      "Ensure the constraint system size is fixed and independent of w"
+    ],
+    "mode": "explore",
+    "description": "Test the algebraic redundancy hypothesis by constructing two families of linear constraint systems: (1) Rigid family with fixed, highly redundant constraints (e.g., 100 constraints with only O(1) inde"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "edcbc563ba7d",
+    "reason": "The plan uses MODE: explore which is inappropriate for this task requiring a concrete numerical experiment with specific metrics (N_c(w)). The DESCRIPTION fails to define critical parameters: w range, N range, network architecture details, and most importantly, the specific mechanism for computing the Hessian spectrum at minima. The PREDICTION is qualitative rather than quantitative. The plan also lacks the necessary implementation details required to reproduce results, and doesn't address how to handle the 'rigid vs floppy' classification boundary rigorously.",
+    "missing_steps": [
+      "Define explicit w and N ranges for scanning",
+      "Specify network architecture (layers, activation functions)",
+      "Detail the method for computing Hessian spectrum at minima",
+      "Define the threshold for 'large eigenvalues' in the spectrum",
+      "Specify training procedure (optimizer, epochs, convergence criteria)",
+      "Define how N_c(w) is computed from the data",
+      "Include error bars and statistical significance analysis"
+    ],
+    "mode": "explore",
+    "description": "We will design and execute a numerical experiment to test the phase transition hypothesis in the loss landscape curvature of small feedforward networks. Specifically, we will vary the number of constr"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "edcbc563ba7d",
+    "reason": "The plan uses MODE: explore which is inappropriate for this task requiring a concrete numerical experiment with specific metrics (N_c(w)). The DESCRIPTION fails to define critical parameters: w range, N range, network architecture details, and most importantly, the specific mechanism for computing the Hessian spectrum at minima. The PREDICTION is qualitative rather than quantitative. The plan also lacks the necessary implementation details required to reproduce results, and doesn't address how to handle the 'rigid vs floppy' classification boundary rigorously. This matches the exact failure pattern documented in the scene history.",
+    "missing_steps": [
+      "Define explicit w and N ranges for scanning",
+      "Specify network architecture (layers, activation functions)",
+      "Detail the method for computing Hessian spectrum at minima",
+      "Define the threshold for 'large eigenvalues' in the spectrum",
+      "Specify training procedure (optimizer, epochs, convergence criteria)",
+      "Define how N_c(w) is computed from the data",
+      "Include error bars and statistical significance analysis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] We will implement a concrete numerical experiment to test the phase transition hypothesis in the loss landscape curvature of small feedforward networks. The implementation"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "3c01e6b09a19",
+    "reason": "The plan's MODE is 'explore' (探索), but the task requires a rigorous numerical experiment with specific validation criteria ('coder 写代码' or workflow execution). The description lacks concrete implementation details (e.g., architecture, loss function, optimization settings) necessary to verify the Double Descent Interpolation Hypothesis. Additionally, it does not address the 'rigid' vs 'fat' classification criteria explicitly required by the hard constraints.",
+    "missing_steps": [
+      "Define specific network architecture (layers, activation functions)",
+      "Specify optimization algorithm and hyperparameters (learning rate, epochs)",
+      "Detail synthetic constraint generation method (linear/nonlinear)",
+      "Implement validation metric for 'zero violation' (max abs error ≤ 1e-3)",
+      "Define scanning range for network widths N",
+      "Include convergence criteria for training",
+      "Address how to handle cases where N_c(w) is not reachable"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the Double Descent Interpolation Hypothesis experiment: design a numerical study measuring the minimal network width N_c(w) achieving zero violation (max abs err"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "3c01e6b09a19",
+    "reason": "The plan's MODE is 'explore' but the task requires a rigorous numerical experiment with concrete implementation details (coder 写代码 / workflow 跑流程). The DESCRIPTION lacks essential implementation specifics: it doesn't define the exact network architecture (number of hidden units, layer sizes), loss function formulation for constraints, synthetic constraint generation method (distribution, dimensionality), or how to handle cases where N_c(w) is not reachable (fat regime). It also doesn't address the critical need for code generation and execution rather than just experimental design. This matches the historical failure mode where the plan was too vague and lacked concrete implementation details necessary to verify the Double Descent Interpolation Hypothesis.",
+    "missing_steps": [
+      "Define specific network architecture (exact layer dimensions, activation functions, output layer)",
+      "Specify loss function formulation for handling linear and nonlinear manifold constraints",
+      "Detail synthetic constraint generation method (sample distribution, dimensionality, constraint types)",
+      "Implement code to generate and execute the numerical experiment",
+      "Define handling for fat regime cases where N_c(w) is not reachable",
+      "Specify convergence criteria beyond loss < 1e-6 (e.g., gradient norms, stability checks)",
+      "Include validation metric implementation for 'zero violation' (max abs error ≤ 1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement Double Descent Interpolation Hypothesis experiment: (1) Define ReLU network architecture (width N, depth 2, linear output), (2) Generate synthetic constraint fam"
+  }
+]

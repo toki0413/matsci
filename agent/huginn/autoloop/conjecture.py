@@ -583,7 +583,7 @@ class ConjectureGenerator:
             context_block = f"\nKnown domain context from KG:\n{domain_context}\n"
         messages = [
             SystemMessage(content=(
-                "You are a materials science pattern extractor. "
+                "You are a structural pattern extractor. "
                 "Given a known problem or result, extract the abstract structural "
                 "pattern by generalizing the specific action and property. "
                 "Output ONLY a JSON object with keys: "
@@ -678,7 +678,7 @@ class ConjectureGenerator:
             f"composition or material type."
             if shared else ""
         )
-        return f"""You are a materials science cross-domain transfer specialist.
+        return f"""You are a cross-domain transfer specialist.
 
 Given an abstract pattern and a target domain, instantiate the pattern in the target domain using domain-appropriate terminology.
 
@@ -763,7 +763,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
         if prompt_level == 0:
             # 纯自由生成
             system = (
-                "You are a materials science conjecture generator. "
+                "You are a conjecture generator. "
                 "Given a transferred pattern, formulate a testable conjecture. "
                 + output_spec
             )
@@ -773,7 +773,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
             # 领域知识表提示
             domain_info = _lookup_domain(target_domain)
             system = (
-                "You are a materials science conjecture generator. "
+                "You are a conjecture generator. "
                 "Use the provided domain knowledge to ground your conjecture "
                 "in domain-appropriate terminology and mechanisms. "
                 + output_spec
@@ -797,7 +797,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
             )
 
         system = (
-            "You are a materials science conjecture generator using "
+            "You are a conjecture generator using "
             "first-principles reasoning. Follow the step-by-step instructions. "
             "Ignore any known solutions provided and derive a genuinely novel conjecture. "
             + output_spec
@@ -1644,7 +1644,7 @@ def _llm_reframe_abstract_lift(problem: str, model: Any) -> dict[str, Any]:
         messages = [
             SystemMessage(content=(
                 "You are a mathematical abstraction specialist. "
-                "Given a concrete materials science problem, reframe it at a "
+                "Given a concrete research problem, reframe it at a "
                 "higher level of mathematical structure (e.g. group theory, "
                 "topology, functional analysis). Output ONLY a JSON object with "
                 "keys: reframed_problem, rationale, mapping (object with "

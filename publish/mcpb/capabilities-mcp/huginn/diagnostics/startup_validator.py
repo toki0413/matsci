@@ -157,7 +157,7 @@ def scan_dead_code(root: str | Path | None = None) -> list[dict[str, Any]]:
             if not isinstance(node, ast.Try):
                 continue
             # 只有在 try 体全是 import 的前提下才有「包导入」语义
-            if not all(isinstance(s, (ast.Import, ast.ImportFrom)) for s in node.body):
+            if not all(isinstance(s, ast.Import | ast.ImportFrom) for s in node.body):
                 continue
             imports: list[str] = []
             for s in node.body:

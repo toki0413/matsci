@@ -236,9 +236,9 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
     if not trace_path.exists():
         return ""
     try:
-        with trace_path.open("r", encoding="utf-8") as f:
+        with trace_path.open("r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         logger.debug("best-effort op failed", exc_info=True)
         return ""
     if not lines:

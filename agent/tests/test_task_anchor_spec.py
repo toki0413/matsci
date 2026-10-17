@@ -11,6 +11,7 @@ import asyncio
 import unittest.mock as mock
 
 from huginn.agents.factory import _TASK_ANCHOR, AgentFactory
+from huginn.hooks.safety_collapse_hook import SafetyCollapseTracker
 
 
 class _FakePersona:
@@ -53,6 +54,7 @@ def _min_factory() -> AgentFactory:
     factory._shared_checkpointer = mock.Mock()
     factory._shared_scheduler = None
     factory._anomaly_store = mock.Mock()
+    factory._safety_tracker = SafetyCollapseTracker()
     return factory
 
 

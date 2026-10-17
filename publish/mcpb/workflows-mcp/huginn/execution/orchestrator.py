@@ -13,6 +13,7 @@ Key capabilities:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -539,7 +540,7 @@ class ExecutionOrchestrator:
             return getattr(result, "data", result)
 
         # dict-callable 分支 (老行为)
-        if asyncio.iscoroutinefunction(tool):
+        if inspect.iscoroutinefunction(tool):
             return await tool(action=action, **params)
         return tool(action=action, **params)
 

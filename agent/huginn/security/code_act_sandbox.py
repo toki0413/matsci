@@ -21,20 +21,22 @@ import tracemalloc
 from typing import Any
 
 # 不注入 CodeAct 沙箱的工具集.
-# - hpc_client / bash_tool / shell_tool / container_exec: 外部副作用,
-#   绕过 CodeAct 设的审计轨迹. 留在 tool_call 轨道让 langgraph 追.
+# - bash_tool: 外部副作用 (任意 shell), 绕过 CodeAct 设的审计轨迹. 留在 tool_call
+#   轨道让 langgraph 追.
 # - code_tool: 让 LLM 在 code_act 内嵌套生成沙箱, 递归 footgun.
-_BLOCKED_TOOLS = frozenset(
-    {"hpc_client", "bash_tool", "shell_tool", "container_exec", "code_tool"}
-)
+# 注: 早期还列了 `hpc_client`/`shell_tool`/`container_exec`, 这三个都没有对应注册
+# 工具, 表项永不命中已被 MECE 审计记为死项, 故删 (真要有这类工具再加回来).
+_BLOCKED_TOOLS = frozenset({"bash_tool", "code_tool"})
 
-# import 白名单. 科研计算常用栈, 不含 os/sys/subprocess/socket 等危险模块.
+# import 白名单 (唯一权威定义: security/script_runner.py 直接引用本常量, 不再各留副本).
+# 科研计算常用栈, 不含 os/sys/subprocess/socket 等危险模块; time 无 IO/网络/子进程副作用.
 _ALLOWED_IMPORTS = frozenset(
     {
         "math",
         "statistics",
         "json",
         "re",
+        "time",
         "numpy",
         "pandas",
         "sympy",
@@ -189,22 +191,19 @@ if __name__ == "__main__":
     # Self-check: 验证关键安全机制生效, 失败就 assert 失败.
     # 不引入测试框架, ponytail: 最小可运行检查.
 
-    # 1. _BLOCKED_TOOLS 过滤生效 (工具名 list)
-    names_in = [
-        "hpc_client", "math_tool", "bash_tool",
-        "rag_tool", "code_tool", "shell_tool", "container_exec",
-    ]
+    # 1. _BLOCKED_TOOLS 过滤生效 (工具名 list). 期望值从 _BLOCKED_TOOLS 派生,
+    #    避免表项增删后自检悄悄变成陈旧断言.
+    blocked = sorted(_BLOCKED_TOOLS)
+    names_in = ["hpc_client", "math_tool", "rag_tool", *blocked]
     filtered = filter_tools_for_code_act(names_in)
-    assert filtered == ["math_tool", "rag_tool"], f"filter names failed: {filtered}"
+    assert filtered == ["hpc_client", "math_tool", "rag_tool"], f"filter names failed: {filtered}"
 
     # 二元组 list 也能吃
-    tuples_in = [
-        ("hpc_client", object()),
-        ("math_tool", object()),
-        ("code_tool", object()),
+    tuples_in = [("hpc_client", object()), ("math_tool", object())] + [
+        (b, object()) for b in blocked
     ]
     tuples_out = filter_tools_for_code_act(tuples_in)
-    assert len(tuples_out) == 1 and tuples_out[0][0] == "math_tool"
+    assert [t[0] for t in tuples_out] == ["hpc_client", "math_tool"]
 
     # 2. 危险 builtins 被移除 (含 globals/locals, 防止 namespace 逃逸)
     sb = make_safe_builtins()

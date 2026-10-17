@@ -17,7 +17,7 @@ import contextlib
 import json
 import logging
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -94,6 +94,11 @@ class EventBus:
         self._sse_queues: list[asyncio.Queue[AgentEvent | None]] = []
         self._history: deque[AgentEvent] = deque(maxlen=history_size)
         self._history_size = history_size
+        # 通信契约审计 (advisory, 见 huginn/comms/contract.py): 按 rule 累积
+        # 违规计数, 供 /events/stats 之类观测面读取; 每种 hard rule 只告警一次,
+        # 避免高频事件刷屏. 开关: FeatureFlags "comms_contract".
+        self.contract_violations: Counter[str] = Counter()
+        self._contract_warned: set[str] = set()
 
     async def publish(self, event: AgentEvent) -> None:
         """Publish an event to all subscribers + SSE queues.
@@ -112,6 +117,9 @@ class EventBus:
 
         # History first — even if a subscriber blows up, the event is recorded.
         self._history.append(event)
+
+        # 通信契约审计: 在 fan-out 之前, 只观测不改事件 (fail-open, 见方法注释).
+        self._audit_contract(event)
 
         # Fan out to typed subscribers + wildcard subscribers.
         callbacks = self._subscribers.get(event.type, []) + self._subscribers.get(ALL, [])
@@ -162,6 +170,33 @@ class EventBus:
                 with contextlib.suppress(asyncio.QueueFull):
                     # 通知也满了就算了, best-effort
                     q.put_nowait(drop_event)
+
+    def _audit_contract(self, event: AgentEvent) -> None:
+        """通信契约审计 (advisory)。
+
+        把 ASD-STE100 的"一词一义/信封完备/载荷契约"纪律扩到事件层: 每次
+        publish 检查一次, 违规**按 rule 累积计数** (供观测面) 并给每类 hard
+        违规**只告警一次**。契约审计绝不能拦事件 —— 这是 fail-open 的观测,
+        不是数据闸, 与仓库"observability should never block the agent"一致。
+        """
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            if not FeatureFlags.shared().is_enabled("comms_contract"):
+                return
+            from huginn.comms.contract import audit_agent_event
+
+            for v in audit_agent_event(event):
+                self.contract_violations[v.rule] += 1
+                if v.severity == "hard" and v.rule not in self._contract_warned:
+                    self._contract_warned.add(v.rule)
+                    logger.warning("comms contract: %s [type=%s]", v.message, event.type)
+        except Exception:  # — 原因: 契约审计是 advisory, 绝不能拖垮事件主路径
+            logger.debug("comms contract audit failed", exc_info=True)
+
+    def contract_stats(self) -> dict[str, int]:
+        """按 rule 返回通信契约违规计数 (观测面: 巡检/前端可读)。"""
+        return dict(self.contract_violations)
 
     def subscribe(self, event_type: str, callback: Callable) -> Callable:
         """Subscribe to events of a specific type (or "*" for all).

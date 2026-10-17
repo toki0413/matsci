@@ -1,0 +1,1071 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: computation] The hypothesis that small two-layer tanh networks can bootstr",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:10:12.054377",
+      "last_seen": "2026-09-29T07:10:12.054377",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite number (e.g., h=2~8) that is flat or decreasing as w increases. For the fat family, N_c(w) will be unreachable (infinity) for all w values tested, a",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: computation] The hypothesis that small two-layer tanh networks can bootstr"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:10:12.054425",
+      "last_seen": "2026-09-29T07:10:12.054425",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:10:12.054439",
+      "last_seen": "2026-09-29T07:10:12.054439",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:10:12.054449",
+      "last_seen": "2026-09-29T07:10:12.054449",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The hypothesis that small two-layer tanh networks can bootstr",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_6302a8a9"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:10:12.054582",
+      "last_seen": "2026-09-29T07:10:12.054582",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "50fc509b1da0327c",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "[DIM: geometry] The solution space of functions satisfying w linear constraints ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:11:08.693797",
+      "last_seen": "2026-09-29T07:11:08.693797",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The family function will produce correctly shaped (N,1) arrays for X, y, Xv, yv with normalized targets (std ≲ 10), enabling the capacity_scan to properly evaluate zero-violation conditions. The rigid",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space of functions satisfying w linear constraints"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:11:08.693834",
+      "last_seen": "2026-09-29T07:11:08.693834",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:11:08.693844",
+      "last_seen": "2026-09-29T07:11:08.693844",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:11:08.693853",
+      "last_seen": "2026-09-29T07:11:08.693853",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space of functions satisfying w linear constraints",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_b4e6d96b"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:11:08.693940",
+      "last_seen": "2026-09-29T07:11:08.693940",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "06e03c1fd8360385",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: measure]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:12:12.688522",
+      "last_seen": "2026-09-29T07:12:12.688522",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, expect to find finite N_c (e.g., h=2-8) with val_err ≤1e-3 and train_err ≤1e-4 at small w (e.g., w=5,10). For the fat family, expect all widths h≤64 to yield val_err >1e-3 (unrea",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure]"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:12:12.688557",
+      "last_seen": "2026-09-29T07:12:12.688557",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:12:12.688567",
+      "last_seen": "2026-09-29T07:12:12.688567",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:12:12.688575",
+      "last_seen": "2026-09-29T07:12:12.688575",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure]",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_fda5a551"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:12:12.688641",
+      "last_seen": "2026-09-29T07:12:12.688641",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9936277bf411f909",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:13:15.839099",
+      "last_seen": "2026-09-29T07:13:15.839099",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (linear function) should achieve zero validation error (≤1e-3) with small network widths (h=2-8) across different sample sizes w, demonstrating finite N_c(w). The fat family (high-fre",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure]**"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:13:15.839135",
+      "last_seen": "2026-09-29T07:13:15.839135",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:13:15.839145",
+      "last_seen": "2026-09-29T07:13:15.839145",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:13:15.839153",
+      "last_seen": "2026-09-29T07:13:15.839153",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure]**",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_53151852"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:13:15.839376",
+      "last_seen": "2026-09-29T07:13:15.839376",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0eee85c03c27fd93",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T07:14:13.213795",
+      "last_seen": "2026-09-29T07:15:23.835997",
+      "mentions": 2,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) should be finite and small (h=2~8) with flat or decreasing trend as w increases. For the fat family, N_c(w) should be unreachable (no h≤64 achieves zero violation) across",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213829",
+      "last_seen": "2026-09-29T07:14:13.213829",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213840",
+      "last_seen": "2026-09-29T07:14:13.213840",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:14:13.213932",
+      "last_seen": "2026-09-29T07:14:13.213932",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "24f94740e2ec036f",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836022",
+      "last_seen": "2026-09-29T07:15:23.836022",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836039",
+      "last_seen": "2026-09-29T07:15:23.836039",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:15:23.836119",
+      "last_seen": "2026-09-29T07:15:23.836119",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "724b073e3e6fe860",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T07:15:57.509261",
+      "last_seen": "2026-09-29T07:17:26.180448",
+      "mentions": 2,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show finite `N_c(w)` (e.g., h=2~4) that remains flat or decreasing as `w` increases, satisfying the zero-violation criterion (val_err <= 1e-3). Fat family will show `N_c(w)` = unreac",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509301",
+      "last_seen": "2026-09-29T07:15:57.509301",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509312",
+      "last_seen": "2026-09-29T07:15:57.509312",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:15:57.509401",
+      "last_seen": "2026-09-29T07:15:57.509401",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1190d5976039ba56",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180484",
+      "last_seen": "2026-09-29T07:17:26.180484",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180508",
+      "last_seen": "2026-09-29T07:17:26.180508",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:17:26.180598",
+      "last_seen": "2026-09-29T07:17:26.180598",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d05fab0c1cc8f78c",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: structure] The rigid family's solution space, defined by w linear constrai",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:02.466168",
+      "last_seen": "2026-09-29T07:18:02.466168",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (e.g., affine functions), N_c(w) will be a small finite number (h=2~8) that remains flat or decreases as w increases, with validation error ≤1e-3 and training error ≤1e-4. For the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family's solution space, defined by w linear constrai"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466205",
+      "last_seen": "2026-09-29T07:18:02.466205",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466215",
+      "last_seen": "2026-09-29T07:18:02.466215",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space, defined by w linear constrai",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:02.466297",
+      "last_seen": "2026-09-29T07:18:02.466297",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "30c0ce4fdbb6d9dc",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:43.940521",
+      "last_seen": "2026-09-29T07:18:43.940521",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero-violation at small h (e.g., h=2-4) for w≥2, with N_c(w) flat or decreasing; Fat family will remain unreachable (val_err >>1e-3) across all h≤64 for all w, confirming hea",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940556",
+      "last_seen": "2026-09-29T07:18:43.940556",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940565",
+      "last_seen": "2026-09-29T07:18:43.940565",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:43.940665",
+      "last_seen": "2026-09-29T07:18:43.940665",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3a415443bb285a18",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "** [DIM: computation] The minimum network width $N_c(w)$ required for zero viola",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:19:46.485118",
+      "last_seen": "2026-09-29T07:19:46.485118",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show N_c(w) ∈ [2, 4] flat across w=5,10,20,50 with val_err ≤ 1e-3 and train_err ≤ 1e-4. Fat family will show all unreachable (no h≤64 achieves zero violation) with val_err > 1e-3 acr",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: computation] The minimum network width $N_c(w)$ required for zero viola"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:19:46.485152",
+      "last_seen": "2026-09-29T07:19:46.485152",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:19:46.485162",
+      "last_seen": "2026-09-29T07:19:46.485162",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:19:46.485172",
+      "last_seen": "2026-09-29T07:19:46.485172",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: computation] The minimum network width $N_c(w)$ required for zero viola",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_57ca89d8"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:19:46.485243",
+      "last_seen": "2026-09-29T07:19:46.485243",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1c8c5199919544d9",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The minimum network width $N_c(w)$ required for zero violation ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:20:46.137726",
+      "last_seen": "2026-09-29T07:20:46.137726",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The family function will return properly shaped and normalized data for both families. For the rigid family, a two-layer tanh network with width h=2~8 should achieve zero violation on held-out points",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimum network width $N_c(w)$ required for zero violation"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137761",
+      "last_seen": "2026-09-29T07:20:46.137761",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137771",
+      "last_seen": "2026-09-29T07:20:46.137771",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimum network width $N_c(w)$ required for zero violation",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_ea06f628"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:20:46.137848",
+      "last_seen": "2026-09-29T07:20:46.137848",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cc3417bfccc05b4c",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The hypothesis that small two-layer tanh networks can bootstr",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:10:12.054449",
+      "last_seen": "2026-09-29T07:10:12.054449",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6302a8a9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:10:12.054449",
+      "last_seen": "2026-09-29T07:10:12.054449",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6302a8a9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:10:12.054449",
+      "last_seen": "2026-09-29T07:10:12.054449",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6302a8a9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space of functions satisfying w linear constraints",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:11:08.693853",
+      "last_seen": "2026-09-29T07:11:08.693853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b4e6d96b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:11:08.693853",
+      "last_seen": "2026-09-29T07:11:08.693853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b4e6d96b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:11:08.693853",
+      "last_seen": "2026-09-29T07:11:08.693853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b4e6d96b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:12:12.688575",
+      "last_seen": "2026-09-29T07:12:12.688575",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fda5a551"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:12:12.688575",
+      "last_seen": "2026-09-29T07:12:12.688575",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fda5a551"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:12:12.688575",
+      "last_seen": "2026-09-29T07:12:12.688575",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fda5a551"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:13:15.839153",
+      "last_seen": "2026-09-29T07:13:15.839153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_53151852"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:13:15.839153",
+      "last_seen": "2026-09-29T07:13:15.839153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_53151852"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:13:15.839153",
+      "last_seen": "2026-09-29T07:13:15.839153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_53151852"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space, defined by w linear constrai",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: computation] The minimum network width $N_c(w)$ required for zero viola",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:19:46.485172",
+      "last_seen": "2026-09-29T07:19:46.485172",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_57ca89d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:19:46.485172",
+      "last_seen": "2026-09-29T07:19:46.485172",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_57ca89d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:19:46.485172",
+      "last_seen": "2026-09-29T07:19:46.485172",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_57ca89d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimum network width $N_c(w)$ required for zero violation",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea06f628"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea06f628"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea06f628"
+    }
+  ]
+}

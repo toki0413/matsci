@@ -84,8 +84,9 @@ huginn-agent share import huginn-bundle.json
 
 - **通用科研 Agent**：研究项目编排、多智能体 team（`/team`）、知识蒸馏闭环、
   自进化（`evolve`）、自主科研闭环（`autoloop`）、知识图谱、远程/HPC 调度
-- **6 阶段形式化数学**：张量代数 → FEM 弱形式 → 数值线性代数 → DFT → 热力学 →
-  概率，全程 Lean 4 形式化证明；SymPy 表达式自动翻译为 Lean `Float` 定义并类型检查
+- **形式化数学（符号 → Lean 编译链）**：SymPy 表达式自动翻译为 Lean 4 `Float`
+  定义，经外部 `lake` 做编译与类型检查；`agent/lean/project/` 是 Lean 工程**骨架**
+  （类声明 + 示例实例）。完整定理库 / 多阶段形式化**尚未兑现**，不对外宣称
 - **多 Provider LLM**：OpenAI、Anthropic、DeepSeek、Google GenAI、OpenRouter、
   NVIDIA、Ollama、vLLM、LM Studio，以及任意 OpenAI 兼容本地端点
 - **两条正交控制轴**（本项目的核心心智模型，见下）：

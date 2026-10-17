@@ -235,7 +235,7 @@ async def structure_sanity_hook(ctx: HookContext) -> HookContext | None:
         return None
 
     positions = data.get("positions") or data.get("frac_positions")
-    if not positions or not isinstance(positions, (list, tuple)) or len(positions) < 2:
+    if not positions or not isinstance(positions, list | tuple) or len(positions) < 2:
         return None
 
     import math
@@ -243,7 +243,7 @@ async def structure_sanity_hook(ctx: HookContext) -> HookContext | None:
     for i in range(len(positions)):
         for j in range(i + 1, min(i + 5, len(positions))):
             p1, p2 = positions[i], positions[j]
-            if not (isinstance(p1, (list, tuple)) and len(p1) >= 3):
+            if not (isinstance(p1, list | tuple) and len(p1) >= 3):
                 continue
             dx = float(p1[0]) - float(p2[0])
             dy = float(p1[1]) - float(p2[1])
@@ -286,7 +286,7 @@ async def mechanical_property_hook(ctx: HookContext) -> HookContext | None:
     matrix = None
     for key in _ELASTIC_KEYS:
         val = data.get(key)
-        if isinstance(val, (list, tuple)) and val and isinstance(val[0], (list, tuple)):
+        if isinstance(val, list | tuple) and val and isinstance(val[0], list | tuple):
             matrix = val
             break
 
@@ -295,7 +295,7 @@ async def mechanical_property_hook(ctx: HookContext) -> HookContext | None:
 
     # 检查对角元素是否全正
     for i, row in enumerate(matrix):
-        if not isinstance(row, (list, tuple)) or i >= len(row):
+        if not isinstance(row, list | tuple) or i >= len(row):
             continue
         try:
             diag = float(row[i])
@@ -327,14 +327,14 @@ def _scan_energy_fields(data: Any, found: dict) -> None:
             kl = key.lower()
             if isinstance(val, bool):
                 continue
-            if isinstance(val, (int, float)):
+            if isinstance(val, int | float):
                 if "energy" in kl and "per_atom" in kl:
                     found["per_atom"].append(float(val))
                 elif "energy" in kl:
                     found["total"].append(float(val))
                 elif kl in _ATOM_COUNT_KEYS:
                     found["n_atoms"] = float(val)
-            elif isinstance(val, (dict, list)):
+            elif isinstance(val, dict | list):
                 _scan_energy_fields(val, found)
     elif isinstance(data, list):
         for item in data:
@@ -407,7 +407,7 @@ def _extract_output_paths(data: Any) -> list[str]:
                     paths.extend(
                         v for v in val if isinstance(v, str) and os.path.isabs(v)
                     )
-            elif isinstance(val, (dict, list)):
+            elif isinstance(val, dict | list):
                 paths.extend(_extract_output_paths(val))
     elif isinstance(data, list):
         for item in data:
@@ -656,7 +656,7 @@ async def consensus_scoring_hook(ctx: HookContext) -> HookContext | None:
 
     # 排名一致性 (Kendall W 太低说明各模型分歧大)
     w = data.get("kendall_w")
-    if w is not None and isinstance(w, (int, float)) and w < 0.3:
+    if w is not None and isinstance(w, int | float) and w < 0.3:
         _warn(ctx, f"Kendall W = {w:.3f} 偏低, 各打分模型分歧较大, 共识排名可靠性有限.")
 
     return None
@@ -677,7 +677,7 @@ async def rdkit_validation_hook(ctx: HookContext) -> HookContext | None:
 
     # 分子描述符异常
     mw = data.get("molecular_weight")
-    if mw is not None and isinstance(mw, (int, float)):
+    if mw is not None and isinstance(mw, int | float):
         if mw > 900:
             _warn(ctx, f"分子量 {mw:.1f} Da 超过 900, 可能不适合类药物性 (Lipinski 规则).")
         if mw < 30:
@@ -701,7 +701,7 @@ async def neb_convergence_hook(ctx: HookContext) -> HookContext | None:
 
     # 能垒为负说明起点比终点高, 可能路径方向反了
     barrier = data.get("barrier_ev")
-    if barrier is not None and isinstance(barrier, (int, float)) and barrier < 0:
+    if barrier is not None and isinstance(barrier, int | float) and barrier < 0:
         _warn(ctx, f"NEB 能垒 {barrier:.4f} eV 为负值, 检查初末态方向是否正确.")
 
     return None
@@ -718,12 +718,12 @@ async def gp_model_hook(ctx: HookContext) -> HookContext | None:
 
     # R² 过低说明模型拟合差
     r2 = data.get("r2_score")
-    if r2 is not None and isinstance(r2, (int, float)) and r2 < 0.5:
+    if r2 is not None and isinstance(r2, int | float) and r2 < 0.5:
         _warn(ctx, f"GP 模型 R² = {r2:.4f} 偏低, 考虑增加核函数复杂度或训练数据.", "major")
 
     # 超参数异常 (length_scale 过大说明模型没学到任何结构)
     ls = data.get("length_scale")
-    if ls is not None and isinstance(ls, (int, float)) and ls > 100:
+    if ls is not None and isinstance(ls, int | float) and ls > 100:
         _warn(ctx, f"GP length_scale = {ls:.2f} 过大, 模型可能退化为常数预测.", "major")
 
     return None

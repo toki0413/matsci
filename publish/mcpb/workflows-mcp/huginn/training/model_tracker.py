@@ -55,19 +55,19 @@ class ModelVersionTracker:
         for version, entries in by_version.items():
             darwin_scores = [
                 e.get("darwin_score", 0.0) for e in entries
-                if isinstance(e.get("darwin_score"), (int, float))
+                if isinstance(e.get("darwin_score"), int | float)
             ]
             supported_ratios = [
                 e.get("supported_ratio", 0.0) for e in entries
-                if isinstance(e.get("supported_ratio"), (int, float))
+                if isinstance(e.get("supported_ratio"), int | float)
             ]
             betti_0_list = [
                 e.get("beta_0", 1) for e in entries
-                if isinstance(e.get("beta_0"), (int, float))
+                if isinstance(e.get("beta_0"), int | float)
             ]
             betti_1_list = [
                 e.get("beta_1", 0) for e in entries
-                if isinstance(e.get("beta_1"), (int, float))
+                if isinstance(e.get("beta_1"), int | float)
             ]
 
             report["per_version"][version] = {

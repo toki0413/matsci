@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "Here is the concise summary of the research output.\n\n### Summary of Research Out",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-06T04:47:32.682765",
+      "last_seen": "2026-10-06T04:47:32.682765",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will produce a table of N_c(w) values across increasing w. If the Structure (Approximation Theory) hypothesis holds, N_c will plateau at a small O(1) value (e.g., N_c ∈ [5, 15]) for all",
+      "persona": "unknown",
+      "id": "experiment:Here is the concise summary of the research output.\n\n### Summary of Research Out"
+    },
+    {
+      "label": "plan_workflow_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-06T04:47:32.682816",
+      "last_seen": "2026-10-06T04:47:32.682816",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-06T04:47:32.682830",
+      "last_seen": "2026-10-06T04:47:32.682830",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-06T04:47:32.682842",
+      "last_seen": "2026-10-06T04:47:32.682842",
+      "mentions": 1,
+      "members": [
+        "experiment:Here is the concise summary of the research output.\n\n### Summary of Research Out",
+        "Method:plan_workflow_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_7e83160c"
+    },
+    {
+      "label": "unknown_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-06T04:47:32.682924",
+      "last_seen": "2026-10-06T04:47:32.682924",
+      "mentions": 1,
+      "persona": "unknown",
+      "context_hash": "44136fa355b3678a",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:unknown_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:Here is the concise summary of the research output.\n\n### Summary of Research Out",
+      "confidence": 0.5,
+      "created_at": "2026-10-06T04:47:32.682842",
+      "last_seen": "2026-10-06T04:47:32.682842",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7e83160c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-06T04:47:32.682842",
+      "last_seen": "2026-10-06T04:47:32.682842",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7e83160c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-06T04:47:32.682842",
+      "last_seen": "2026-10-06T04:47:32.682842",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7e83160c"
+    }
+  ]
+}

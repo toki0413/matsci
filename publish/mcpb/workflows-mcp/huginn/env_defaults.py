@@ -489,7 +489,10 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "category": EnvCategory.AGENT,
         "type": "bool",
         "default": False,
-        "description": "HarnessDev 结论④ 接线开关: on 时 evolution 把真实 outcome 喂进 OOD holdout 门控.",
+        "description": "HarnessDev 结论④ 接线开关: on 时 evolution 把真实 outcome 喂进 OOD holdout 门控. "
+                       "启用: 需在进程启动前设 env HUGINN_HARNESS_GATES=1（写端）并配读端 "
+                       "HUGINN_FEATURE_HARNESS_OOD_HOLDOUT=true(+ HUGINN_FEATURE_HARNESS_SIGNIFICANCE_GATE=true). "
+                       "FeatureFlags 单例只在构造时读一次 env, 运行时设不生效. 机制已验证安全: advisory 永不拦截.",
         "consumer": "huginn.evolution.manager._record_harness_gates_enabled",
     },
     "HUGINN_BUDGET_MAX_RENEWALS": {

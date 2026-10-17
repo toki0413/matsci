@@ -170,6 +170,38 @@ def test_invalid_plan_refines_once_then_gives_up():
     assert "[dft]" in eng._plan_check_warnings[-1]
 
 
+def test_failed_check_with_zero_refine_budget_still_rebuilds_once():
+    """自适应把 max_refines 压到 0 时, 失败也必须重建一次, 不得原样放行.
+
+    复现路径: bucket 多数通过 -> ewma_success>=0.8 -> baseline-1=0. 旧实现
+    `for attempt in range(0+1)` 只校验一次, 首败即 `return plan` → 明知达不成
+    hypothesis 的 plan 被执行 (run46 实测: max_refines=0, 零次 rebuild).
+    """
+    eng = _make_engine()
+    eng._plan_checker._plan_check_max_refines = MagicMock(return_value=0)
+    eng._plan_checker._plan_check = AsyncMock(
+        return_value={
+            "is_valid": False,
+            "confidence": 0.1,
+            "reason": "misaligned with hypothesis",
+            "missing_steps": [],
+            "risks": [],
+        }
+    )
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={
+            "mode": "coder",
+            "description": "rebuilt plan serving the hypothesis",
+        }
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    plan = {"mode": "coder", "description": "run band calculation directly"}
+    asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
+    # 首次失败强制给一次重建预算: refine 1 次, _plan_check 共 2 次
+    assert eng._plan_checker._refine_plan.call_count == 1
+    assert eng._plan_checker._plan_check.call_count == 2
+
+
 def test_llm_failure_returns_plan():
     """_plan_check 抛异常 -> 直接返回原 plan, 状态没更新."""
     eng = _make_engine()
@@ -196,7 +228,11 @@ def test_open_tier_skips_check():
 
 
 def test_medium_tier_light_check_no_refine():
-    """iter 20 (medium tier) 只校验不 refine, 失败直接记 warning."""
+    """iter 20 (medium tier) 失败时也强制重建一次 (不再只校验就放行).
+
+    medium baseline=0 + 新逻辑: 首次失败给一次重建预算 -> refine 1 次,
+    共 2 次 _plan_check, 之后放行.
+    """
     eng = _make_engine(iteration=20)
     eng._plan_checker._plan_check = AsyncMock(
         return_value={
@@ -206,11 +242,17 @@ def test_medium_tier_light_check_no_refine():
             "risks": [],
         }
     )
-    eng._plan_checker._refine_plan = AsyncMock()  # medium baseline=0, 不应该被调
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={
+            "mode": "workflow",
+            "description": "SCF then band",
+        }
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_checker._plan_check.call_count == 1
-    eng._plan_checker._refine_plan.assert_not_called()
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert eng._plan_checker._refine_plan.call_count == 1
     assert eng._plan_check_last_result["is_valid"] is False
 
 
@@ -358,9 +400,10 @@ def test_scene_tag_workflow_skill_other():
 
 
 def test_adaptive_loosen_after_high_success():
-    """light tier + 最近 5 次同场景全成功 -> max_refines 放宽到 0, 不 refine.
+    """light tier + 最近 5 次同场景全成功 -> max_refines 放宽到 0.
 
-    baseline=1, success_rate=1.0>=0.8 -> max(0, 1-1)=0.
+    放宽到 0 后**首次失败**仍重建一次: 明知达不成 hypothesis 的 plan 不得
+    原样放行 (run46: max_refines=0 + 零次 rebuild 的复现场景).
     """
     eng = _make_engine(iteration=35)
     eng._plan_check_history = [{"is_valid": True, "scene_tag": "dft"} for _ in range(5)]
@@ -372,11 +415,18 @@ def test_adaptive_loosen_after_high_success():
             "risks": [],
         }
     )
-    eng._plan_checker._refine_plan = AsyncMock()  # 放宽后不应该被调
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={
+            "mode": "workflow",
+            "description": "SCF then band",
+        }
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_checker._plan_check.call_count == 1  # 只校验一次
-    eng._plan_checker._refine_plan.assert_not_called()
+    # 首次失败强制重建一次: _plan_check 2 次, refine 1 次
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert eng._plan_checker._refine_plan.call_count == 1
 
 
 def test_adaptive_tighten_after_low_success():
@@ -539,19 +589,47 @@ def test_patterns_persisted_to_workspace_json(tmp_path: Path):
 
 
 def test_prompt_injects_similar_history_failures():
-    """_build_plan_check_prompt 注入同场景历史失败模式."""
+    """_build_plan_check_prompt 注入同假设历史失败模式."""
     eng = _make_engine()
+    hk = eng._plan_checker._hyp_key("calc band gap")
     eng._plan_check_patterns = [
-        {"scene_tag": "dft", "reason": "missing SCF", "missing_steps": ["SCF"]},
+        {
+            "scene_tag": "dft",
+            "hyp_key": hk,
+            "reason": "missing SCF",
+            "missing_steps": ["SCF"],
+        },
         {"scene_tag": "md", "reason": "no minimize", "missing_steps": ["minimize"]},
     ]
     plan = {"mode": "coder", "description": "run VASP band calculation"}
     prompt = eng._build_plan_check_prompt(plan, "calc band gap", {})
-    # DFT 场景, 注入 missing SCF
+    # DFT 场景 + 同假设, 注入 missing SCF
     assert "missing SCF" in prompt
     assert "SCF" in prompt
     # MD 场景不注入
     assert "no minimize" not in prompt
+
+
+def test_prompt_does_not_inject_other_hypothesis_failures():
+    """不同假设的历史失败不注入 — 断掉 self-contamination 死循环.
+
+    scene_tag 是万能桶 ("other" 装 capacity scan/拓扑/上同调), 旧版只按 scene
+    过滤会让 checker 复读自己上一轮对**另一个假设**的判定, 锁死结论.
+    """
+    eng = _make_engine()
+    other_hk = eng._plan_checker._hyp_key("一条已经废弃的假设")
+    eng._plan_check_patterns = [
+        {
+            "scene_tag": "other",
+            "hyp_key": other_hk,
+            "reason": "hypothesis requires Čech cohomology",
+            "missing_steps": ["sheaf cohomology"],
+        },
+    ]
+    plan = {"mode": "explore", "description": "run a numerical capacity scan"}
+    prompt = eng._build_plan_check_prompt(plan, "一条全新的假设", {})
+    assert "Čech cohomology" not in prompt
+    assert "sheaf cohomology" not in prompt
 
 
 # ── 连续失败触发主动澄清 ─────────────────────────────────────
@@ -892,12 +970,14 @@ def test_low_confidence_pass_forces_refine():
     assert eng._plan_checker._plan_check.call_count == 2  # 第一次 + refine 后第二次
 
 
-def test_low_confidence_failure_skips_refine():
-    """is_valid=False 且 confidence < 0.3 -> 跳过 refine, 直接 warning.
+def test_low_confidence_failure_still_refines():
+    """is_valid=False 且 confidence < 0.3 -> 仍必须 refine (不再直接放行).
 
-    LLM 都没把握判断, refine 可能也是瞎改, 直接 warning + 澄清更靠谱.
+    旧行为: conf<0.3 直接 `return plan`, 把 checker 明确判"不达标"的 plan
+    原样放行 → misalign 永不纠正 (run45: 45/45 plan_check 全失败, 零次
+    refine). 现行为: 低置信只降级记 warning, 但仍走 refine 直到 attempt 用尽.
     """
-    eng = _make_engine(iteration=35)
+    eng = _make_engine(iteration=35)  # light tier, baseline max_refines=1
     eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
@@ -907,12 +987,16 @@ def test_low_confidence_failure_skips_refine():
             "risks": [],
         }
     )
-    eng._plan_checker._refine_plan = AsyncMock()  # 不应该被调
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={"mode": "coder", "description": "retry band calculation"}
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    eng._plan_checker._refine_plan.assert_not_called()
-    assert eng._plan_checker._plan_check.call_count == 1  # 只校验一次, 直接 warning
-    assert "low_conf=0.20" in eng._plan_check_warnings[-1]
+    # 低置信失败也重建: attempt0 失败 -> refine 一次 -> attempt1 失败 -> 放行
+    assert eng._plan_checker._refine_plan.call_count == 1
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert "low_conf=0.20" in eng._plan_check_warnings[0]
 
 
 def test_high_confidence_pass_no_refine():

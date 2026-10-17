@@ -178,11 +178,9 @@ def shard_iter_range(
 
     for p in paths:
         try:
-            def opener(pp=p):
-                return (gzip.open(pp, "rt", encoding="utf-8")
-                            if pp.suffix == ".gz"
-                            else open(pp, encoding="utf-8"))
-            with opener() as f:
+            with (gzip.open(p, "rt", encoding="utf-8")
+                      if p.suffix == ".gz"
+                      else open(p, encoding="utf-8")) as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -247,7 +245,7 @@ def _truncate(text: str, limit: int = 500) -> str:
 def _summarize(value: Any) -> Any:
     if isinstance(value, str):
         return _truncate(value)
-    if isinstance(value, (int, float, bool)) or value is None:
+    if isinstance(value, int | float | bool) or value is None:
         return value
     if isinstance(value, list):
         return [_summarize(v) for v in value[:10]]

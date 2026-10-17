@@ -120,7 +120,26 @@ async def dispatch_tool(
             error=f"Tool '{name}' not allowed in phase '{phase}' (tool_whitelist)",
         )
 
-    return await tool.call(args, ctx)
+    result = await tool.call(args, ctx)
+
+    # SoL-Pi Action Fusion 接线(①, opt-in): 变更工具成功后、总开关开且存在契约时,
+    # 在**同一调用**里执行跟随验证, 折叠到 result.metadata["_verification"]。
+    # 失败/无契约 → 不改变原结果 (fused_verify 返回 None 或只标 verified=False)。
+    if getattr(result, "success", False):
+        try:
+            from huginn.tools.action_fusion import (
+                fused_verify,
+                is_action_fusion_enabled,
+            )
+
+            if is_action_fusion_enabled():
+                fused = await fused_verify(name, args, result, ctx)
+                if fused is not None and hasattr(result, "metadata"):
+                    result.metadata["_verification"] = fused
+        except Exception:  # noqa: BLE001 — 融合是 opt-in, 失败不拖垮原工具结果
+            logger.debug("action_fusion post-dispatch failed (non-fatal)", exc_info=True)
+
+    return result
 
 
 def _selfcheck() -> None:

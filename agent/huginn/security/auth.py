@@ -43,6 +43,11 @@ _BEARER_PREFIX = "Bearer "
 # Paths that are intentionally public (health checks, OpenAPI docs, auth,
 # Prometheus scrape). Interactive docs are dropped in production so the
 # API surface isn't exposed — see _hide_docs below.
+#
+# NOTE: /diagnostics* is deliberately NOT public. It leaks process internals
+# (tool registry, circuit-breaker state, telemetry spans, plugins, PID) and is
+# a fingerprinting aid. It now requires the same auth as any other API route;
+# same-machine dev-mode (loopback) callers are still exempt via _dev_mode_exempt.
 _hide_docs = (
     os.environ.get("HUGINN_ENV", "").lower() == "production"
     or os.environ.get("HUGINN_HIDE_DOCS", "").lower() in ("1", "true", "yes")
@@ -56,10 +61,6 @@ _PUBLIC_PATHS: set[str] = {
     "/health/rust",
     "/health/guidance",
     "/metrics",
-    "/diagnostics",
-    "/diagnostics/tools",
-    "/diagnostics/circuit",
-    "/diagnostics/trace",
     "/auth/token",
     "/auth/login",
     "/auth/me",

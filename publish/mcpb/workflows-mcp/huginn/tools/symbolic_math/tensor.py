@@ -72,7 +72,7 @@ def tensor_calculus(args: SymbolicMathInput) -> ToolResult:
         )
 
     if len(voigt) == 6:
-        s11, s22, s33, s23, s13, s12 = [float(v) for v in voigt]
+        s11, s22, s33, s23, s13, s12 = (float(v) for v in voigt)
         sigma = sp.Matrix(
             [
                 [s11, s12, s13],

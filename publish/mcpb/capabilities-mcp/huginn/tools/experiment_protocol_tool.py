@@ -81,10 +81,7 @@ class ExperimentProtocolTool(HuginnTool):
         from huginn.security.workspace import MockExecutor, SimExecutor
         from huginn.security.world_model import NaiveWorldModel
 
-        if args.executor_backend == "sim":
-            executor = SimExecutor()
-        else:
-            executor = MockExecutor()
+        executor = SimExecutor() if args.executor_backend == "sim" else MockExecutor()
         rv = getattr(context, "revertible", None)
         # sim + learn_surrogate: 建学代理 + 内置连续体积 schema, 真实(sim)执行的
         # 观测对会在 workspace 的 WorldStateTracker.observe 里喂进代理 (P2 快预演积累).

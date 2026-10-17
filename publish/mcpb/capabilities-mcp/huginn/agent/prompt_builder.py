@@ -27,8 +27,9 @@ def persona_segment(system_prompt: str | None = None) -> str:
         return f"## PERSONA\n{system_prompt}"
     return (
         "## PERSONA\n"
-        "You are a materials-science research companion. Help the user design, "
-        "run, and interpret simulations and experiments with rigor."
+        "You are a mathematics-first research companion. The base unit of every "
+        "discipline is mathematics — help the user reduce their problem to its "
+        "mathematical skeleton, then design, run, and interpret experiments with rigor."
     )
 
 
@@ -151,8 +152,7 @@ def metacog_segment(metacog_state: str) -> str:
         if principles:
             parts.append("### STABLE_PRINCIPLES")
             parts.extend(f"- {p}" for p in principles)
-    except Exception:
-        # 文件缺失/损坏/import 失败都不应让 build_prompt 抛异常
+    except Exception:  # 稳定性: 文件缺失/损坏/import 失败都不让 build_prompt 抛
         logger.debug("stable_principles load skipped in prompt_builder", exc_info=True)
     return "\n".join(parts)
 
@@ -217,6 +217,65 @@ def writing_segment() -> str:
     )
 
 
+def multi_agent_protocol_segment() -> str:
+    """多智能体协作协议 —— 补齐 base prompt 缺失的协作纪律.
+
+    多智能体已实装 (orchestrator/team/swarm + subagent 角色), 但此前只有各子 agent
+    各自的内联 system_prompt, 没有一份**共享的协作纪律** (分工/交接/冲突/汇总).
+    本段把它固化为可声明、可 gate 的框架段: 与 personas 无关, 纯行为规范.
+    """
+    return (
+        "## MULTI-AGENT PROTOCOL\n"
+        "- Division of labor: map a task to explicit roles before fanning out — a "
+        "planner decomposes, specialists (per domain/tool) execute, a critic/adversary "
+        "refutes, a synthesizer merges. Never spawn an agent without a named role and "
+        "deliverable.\n"
+        "- Delegation criteria: delegate only when a sub-task is (a) independent, "
+        "(b) needs a different tool or domain expertise, or (c) benefits from an "
+        "adversarial second opinion. Keep tightly-coupled reasoning single-agent; do "
+        "not fan out as a default.\n"
+        "- Handoff contract: every handoff passes an explicit brief — objective, "
+        "inputs with paths/hashes, constraints, success criterion, and expected output "
+        "schema. Never rely on shared implicit context between agents.\n"
+        "- Conflict arbitration: when two agents disagree, do NOT average them. "
+        "Surface the disagreement, name the evidence each side used, and resolve by "
+        "evidence strength or a decisive check; if unresolvable, report both with the "
+        "experiment that would decide.\n"
+        "- Aggregation: merge results with per-claim provenance (which agent, tool, "
+        "inputs) and a confidence per claim; the synthesizer owns the final "
+        "reconciliation and must not silently drop a dissenting result.\n"
+        "- No silent degradation: if a delegated agent fails or a role is "
+        "unavailable, say so explicitly and re-plan; never let a missing role become "
+        "an unstated gap."
+    )
+
+
+def _discipline_section(key: str) -> str:
+    """取 §3/§4/§7 拆出的段文本.
+
+    单一事实来源: huginn.prompts.PROMPT_SECTIONS (由 HUGINN_SYSTEM_PROMPT 确定性切分).
+    段函数只做读取, 不复制文本 —— 三节只定义一次, 主/s7/autoloop 三路统一生效.
+    """
+    from huginn.prompts import PROMPT_SECTIONS
+
+    return PROMPT_SECTIONS.get(key, "")
+
+
+def core_principles_segment() -> str:
+    """§3 Core Principles 段 (从 persona 串剥离, 改由段供给)."""
+    return _discipline_section("core_principles")
+
+
+def behavioral_discipline_segment() -> str:
+    """§4 Behavioral Discipline 段 (工具调用纪律 / 证据强度 / 重试 / 基准对齐等)."""
+    return _discipline_section("behavioral_discipline")
+
+
+def response_format_segment() -> str:
+    """§7 Response Format 段 (收敛态输出 / 探索 Pareto 前沿)."""
+    return _discipline_section("response_format")
+
+
 def build_prompt(
     mode: str,
     phase: str,
@@ -241,11 +300,15 @@ def build_prompt(
     # 回退: 注册表空时保持旧硬编码行为 (向后兼容).
     segments = [
         persona_segment(system_prompt),
+        core_principles_segment(),
+        behavioral_discipline_segment(),
+        response_format_segment(),
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog_state),
         tools_segment(mode, phase, metacog_state),
         writing_segment(),
+        multi_agent_protocol_segment(),
         safety_segment(),
     ]
     return "\n\n".join(s for s in segments if s)
@@ -284,6 +347,22 @@ def _writing_plugin(mode, phase, metacog_state, system_prompt):
     return writing_segment()
 
 
+def _multi_agent_protocol_plugin(mode, phase, metacog_state, system_prompt):
+    return multi_agent_protocol_segment()
+
+
+def _core_principles_plugin(mode, phase, metacog_state, system_prompt):
+    return core_principles_segment()
+
+
+def _behavioral_discipline_plugin(mode, phase, metacog_state, system_prompt):
+    return behavioral_discipline_segment()
+
+
+def _response_format_plugin(mode, phase, metacog_state, system_prompt):
+    return response_format_segment()
+
+
 def _safety_plugin(mode, phase, metacog_state, system_prompt):
     return safety_segment()
 
@@ -299,7 +378,7 @@ def _thinking_plugin(mode, phase, metacog_state, system_prompt):
 
         if not FeatureFlags.shared().is_enabled("external_thinking"):
             return ""
-    except Exception:
+    except Exception:  # 防御: external_thinking 判定异常则视为关闭
         return ""
     return (
         "## External Thinking\n"
@@ -324,12 +403,17 @@ def _register_builtin_segments() -> None:
     from huginn.plugins.prompt_segments import register_prompt_segment
 
     register_prompt_segment("persona", _persona_plugin)
+    # §3/§4/§7 拆出的三节: 紧跟 persona 正文之后 (原为 persona 串内联), 早于 mode/phase.
+    register_prompt_segment("core_principles", _core_principles_plugin)
+    register_prompt_segment("behavioral_discipline", _behavioral_discipline_plugin)
+    register_prompt_segment("response_format", _response_format_plugin)
     register_prompt_segment("mode", _mode_plugin)
     register_prompt_segment("phase", _phase_plugin)
     register_prompt_segment("metacog", _metacog_plugin)
     register_prompt_segment("tools", _tools_plugin)
     register_prompt_segment("multimodal", _multimodal_plugin)
     register_prompt_segment("writing", _writing_plugin)
+    register_prompt_segment("multi_agent_protocol", _multi_agent_protocol_plugin)
     # thinking 段: priority 100, 位于 tools(50) 与 safety(200) 之间.
     register_prompt_segment("thinking", _thinking_plugin)
     register_prompt_segment("safety", _safety_plugin)

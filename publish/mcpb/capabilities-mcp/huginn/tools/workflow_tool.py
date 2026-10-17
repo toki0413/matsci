@@ -17,10 +17,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.autoloop.dynamic_workflow import (
-    WorkflowScript,
-    get_shared_workflow_registry,
-)
 from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool
@@ -98,6 +94,10 @@ class WorkflowTool(HuginnTool):
     def _submit_script(
         self, input_data: WorkflowToolInput, context: ToolContext | None
     ) -> ToolResult:
+        from huginn.autoloop.dynamic_workflow import (
+            WorkflowScript,
+            get_shared_workflow_registry,
+        )
         if not input_data.script:
             return ToolResult(
                 data=None, success=False,
@@ -129,6 +129,8 @@ class WorkflowTool(HuginnTool):
         )
 
     def _status(self, input_data: WorkflowToolInput) -> ToolResult:
+        from huginn.autoloop.dynamic_workflow import get_shared_workflow_registry
+
         if not input_data.workflow_id:
             return ToolResult(
                 data=None, success=False,
@@ -144,6 +146,8 @@ class WorkflowTool(HuginnTool):
         return ToolResult(data=result.summary(), success=True)
 
     def _cancel(self, input_data: WorkflowToolInput) -> ToolResult:
+        from huginn.autoloop.dynamic_workflow import get_shared_workflow_registry
+
         if not input_data.workflow_id:
             return ToolResult(
                 data=None, success=False,
@@ -165,6 +169,8 @@ class WorkflowTool(HuginnTool):
         )
 
     async def _collect(self, input_data: WorkflowToolInput) -> ToolResult:
+        from huginn.autoloop.dynamic_workflow import get_shared_workflow_registry
+
         if not input_data.workflow_id:
             return ToolResult(
                 data=None, success=False,

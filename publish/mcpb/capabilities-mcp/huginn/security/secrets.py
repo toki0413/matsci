@@ -29,12 +29,12 @@ class SecretBackend(ABC):
     @abstractmethod
     def get(self, name: str) -> str | None:
         """Return the secret value for ``name`` or None if not found."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def set(self, name: str, value: str) -> None:
         """Store ``value`` under ``name``."""
-        raise NotImplementedError
+        ...
 
     def delete(self, name: str) -> bool:
         """Delete a secret. Returns True on success."""

@@ -130,7 +130,7 @@ User Input
 ## 7. 下一步 Next Steps
 
 - **探索工作流**：`agent/huginn/workflows/templates.py` 含多个预设 pipeline
-- **添加 Lean 模块**：见 `agent/lean/project/`
+- **添加 Lean 定理**：见 `agent/lean/project/Huginn/`（当前为骨架，尚无定理库）
 - **运行测试**：`cd agent && pytest tests/ -x -q`
 - **阅读威胁模型**：`docs/threat_model.md`
 - **阅读文档导航**：`agent/docs/INDEX.md`
