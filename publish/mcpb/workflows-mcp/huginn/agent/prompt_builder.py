@@ -217,6 +217,39 @@ def writing_segment() -> str:
     )
 
 
+def multi_agent_protocol_segment() -> str:
+    """多智能体协作协议 —— 补齐 base prompt 缺失的协作纪律.
+
+    多智能体已实装 (orchestrator/team/swarm + subagent 角色), 但此前只有各子 agent
+    各自的内联 system_prompt, 没有一份**共享的协作纪律** (分工/交接/冲突/汇总).
+    本段把它固化为可声明、可 gate 的框架段: 与 personas 无关, 纯行为规范.
+    """
+    return (
+        "## MULTI-AGENT PROTOCOL\n"
+        "- Division of labor: map a task to explicit roles before fanning out — a "
+        "planner decomposes, specialists (per domain/tool) execute, a critic/adversary "
+        "refutes, a synthesizer merges. Never spawn an agent without a named role and "
+        "deliverable.\n"
+        "- Delegation criteria: delegate only when a sub-task is (a) independent, "
+        "(b) needs a different tool or domain expertise, or (c) benefits from an "
+        "adversarial second opinion. Keep tightly-coupled reasoning single-agent; do "
+        "not fan out as a default.\n"
+        "- Handoff contract: every handoff passes an explicit brief — objective, "
+        "inputs with paths/hashes, constraints, success criterion, and expected output "
+        "schema. Never rely on shared implicit context between agents.\n"
+        "- Conflict arbitration: when two agents disagree, do NOT average them. "
+        "Surface the disagreement, name the evidence each side used, and resolve by "
+        "evidence strength or a decisive check; if unresolvable, report both with the "
+        "experiment that would decide.\n"
+        "- Aggregation: merge results with per-claim provenance (which agent, tool, "
+        "inputs) and a confidence per claim; the synthesizer owns the final "
+        "reconciliation and must not silently drop a dissenting result.\n"
+        "- No silent degradation: if a delegated agent fails or a role is "
+        "unavailable, say so explicitly and re-plan; never let a missing role become "
+        "an unstated gap."
+    )
+
+
 def build_prompt(
     mode: str,
     phase: str,
@@ -246,6 +279,7 @@ def build_prompt(
         metacog_segment(metacog_state),
         tools_segment(mode, phase, metacog_state),
         writing_segment(),
+        multi_agent_protocol_segment(),
         safety_segment(),
     ]
     return "\n\n".join(s for s in segments if s)
@@ -282,6 +316,10 @@ def _multimodal_plugin(mode, phase, metacog_state, system_prompt):
 
 def _writing_plugin(mode, phase, metacog_state, system_prompt):
     return writing_segment()
+
+
+def _multi_agent_protocol_plugin(mode, phase, metacog_state, system_prompt):
+    return multi_agent_protocol_segment()
 
 
 def _safety_plugin(mode, phase, metacog_state, system_prompt):
@@ -330,6 +368,7 @@ def _register_builtin_segments() -> None:
     register_prompt_segment("tools", _tools_plugin)
     register_prompt_segment("multimodal", _multimodal_plugin)
     register_prompt_segment("writing", _writing_plugin)
+    register_prompt_segment("multi_agent_protocol", _multi_agent_protocol_plugin)
     # thinking 段: priority 100, 位于 tools(50) 与 safety(200) 之间.
     register_prompt_segment("thinking", _thinking_plugin)
     register_prompt_segment("safety", _safety_plugin)

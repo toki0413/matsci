@@ -63,11 +63,34 @@ _VALID_PATHS = frozenset({"main", "s7", "autoloop"})
 # 关键段 floor (不得从注册/声明中消失). 与治理台账 `PROMPT_SPECS` 同源 (下方交叉核对).
 _REQUIRED_SEGMENTS = (
     "persona", "mode", "phase", "metacog", "tools",
-    "multimodal", "writing", "thinking", "safety",
+    "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
 )
 
 # safety 规范两份来源必须共同覆盖的语义锚点 (允许措辞微差, 只锁语义集).
 _SAFETY_ANCHORS = ("Physics precheck", "Data integrity", "No fabrication")
+
+# base prompt (prompts.py) 中被 persona 单源承载、却**未被拆成独立段**的行为规范:
+# §3 Core Principles / §4 Behavioral Discipline / §7 Response Format. 这些维度目前
+# 寄生在 persona 段里, 契约门只能把 §4 当"persona 存在与否"整体守 —— 无法定位到
+# "工具调用纪律被删了"或"证据强度条款被悄悄改弱". 故用**声明式锚点门**锁定它们的关键
+# 子句 (镜像 `_SAFETY_ANCHORS` 范式): 删除/削弱任一锚点 = 红, 须显式改本表 (可见决策).
+_PRINCIPLES_ANCHORS = (
+    "Mathematical Rigor",
+    "Physical Validation",
+    "Epistemic Honesty",
+    "Adversarial Review",
+)
+_DISCIPLINE_ANCHORS = (
+    "Tool use & failure handling",
+    "Least-effort path",
+    "Retry discipline",
+    "Benchmark alignment",
+    "Literature discipline",
+)
+_FORMAT_ANCHORS = (
+    "Response Format",
+    "confidence assessment",
+)
 
 
 def _applicability() -> dict[str, tuple[str, ...]]:
@@ -192,6 +215,30 @@ def test_main_path_really_injects_writing_and_multimodal():
     out = ps.render_prompt_segments_for_path("main", "chat", "execute", "s0_blank")
     assert "## WRITING" in out, "主路径未注入反防御写作段 (G-2)."
     assert "## MULTIMODAL" in out, "主路径未注入多模态引导段 (G-1)."
+    assert "## MULTI-AGENT PROTOCOL" in out, "主路径未注入多智能体协作协议段."
+
+
+# ──────────── persona 单源承载的行为规范声明式锚点门 (§3/§4/§7) ────────────
+
+
+def test_base_prompt_spec_anchors_locked():
+    """AC-6: prompts.py 中 §3 Core Principles / §4 Behavioral Discipline / §7 Response
+    Format 的关键子句不得被静默删除或削弱.
+
+    这三节由 persona 段单源承载 (未拆成独立段), 因此契约门无法逐段守; 本门把它们的关键
+    子句锁成锚点 —— 任一锚点消失即红, 须显式改本表的锚点集 (可见决策). 镜像 safety 范式.
+    """
+    src = (_AGENT / "huginn" / "prompts.py").read_text(encoding="utf-8")
+    for section, anchors in (
+        ("§3 Core Principles", _PRINCIPLES_ANCHORS),
+        ("§4 Behavioral Discipline", _DISCIPLINE_ANCHORS),
+        ("§7 Response Format", _FORMAT_ANCHORS),
+    ):
+        for anchor in anchors:
+            assert anchor in src, (
+                f"prompts.py {section} 缺锚点 '{anchor}' —— 该行为规范被删除或削弱? "
+                f"若确为有意改写, 显式更新 test_prompt_contract 的锚点集 (可见决策)."
+            )
 
 
 # ──────────────────── 插件注册必须显式声明 ────────────────────

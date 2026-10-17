@@ -37,6 +37,7 @@ _PRIORITY = {
     "tools": 50,
     "multimodal": 55,  # 多模态引导: 紧挨 tools, 先于 writing
     "writing": 60,  # 写作引导: 夹在 tools 与 thinking 之间
+    "multi_agent_protocol": 65,  # 多智能体协作协议: 紧邻写作段之后、thinking 之前
     "thinking": 100,
     "safety": 200,
 }
@@ -46,7 +47,7 @@ _PRIORITY = {
 # 需据此排除骨架段, 否则会把 persona/phase 等重复注入.
 _FRAMEWORK_SEGMENTS = frozenset({
     "persona", "mode", "phase", "metacog", "tools",
-    "multimodal", "writing", "thinking", "safety",
+    "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
 })
 
 # 段生效面声明 (声明面**单一事实来源**): 段名 -> 该段**必须**在哪些生产路径生效.
@@ -67,6 +68,9 @@ _APPLIES_TO: dict[str, tuple[str, ...]] = {
     # 声明进 main 后由 render_prompt_segments_for_path("main") 真正注入.
     "multimodal": ("main", "s7"),
     "writing": ("main", "s7"),
+    # 多智能体协作协议: 主路径(编排 orchestrator/team/swarm 的会话)与 s7 全量组装都需要;
+    # 与 persona/writing 同属框架骨架段, 不进 autoloop 插件消费面.
+    "multi_agent_protocol": ("main", "s7"),
     "thinking": ("main", "s7"),
     # safety: 主路径的安全规范由 huginn/prompts.py §8 承载, 这里只声明 s7;
     # 两份重复文本由 test_prompt_contract 的**同步门**守住 (不得各自漂移, 对齐 MATH_DEPTH 范式).

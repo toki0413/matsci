@@ -136,6 +136,7 @@ PROMPT_SPECS: tuple[str, ...] = (
     "tools",
     "multimodal",
     "writing",
+    "multi_agent_protocol",
     "thinking",
     "safety",
 )
@@ -1322,7 +1323,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "const",
         "key": "PROMPT_SEGMENT_FLOOR",
         "source": "inline",
-        "value": 9,
+        "value": 10,
         "owner_gate": "Governance gate registry guard",
         "owner_kind": "ci_step",
         "probe": "prompt_segment_count",
