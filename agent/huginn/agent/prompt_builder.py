@@ -250,6 +250,32 @@ def multi_agent_protocol_segment() -> str:
     )
 
 
+def _discipline_section(key: str) -> str:
+    """取 §3/§4/§7 拆出的段文本.
+
+    单一事实来源: huginn.prompts.PROMPT_SECTIONS (由 HUGINN_SYSTEM_PROMPT 确定性切分).
+    段函数只做读取, 不复制文本 —— 三节只定义一次, 主/s7/autoloop 三路统一生效.
+    """
+    from huginn.prompts import PROMPT_SECTIONS
+
+    return PROMPT_SECTIONS.get(key, "")
+
+
+def core_principles_segment() -> str:
+    """§3 Core Principles 段 (从 persona 串剥离, 改由段供给)."""
+    return _discipline_section("core_principles")
+
+
+def behavioral_discipline_segment() -> str:
+    """§4 Behavioral Discipline 段 (工具调用纪律 / 证据强度 / 重试 / 基准对齐等)."""
+    return _discipline_section("behavioral_discipline")
+
+
+def response_format_segment() -> str:
+    """§7 Response Format 段 (收敛态输出 / 探索 Pareto 前沿)."""
+    return _discipline_section("response_format")
+
+
 def build_prompt(
     mode: str,
     phase: str,
@@ -274,6 +300,9 @@ def build_prompt(
     # 回退: 注册表空时保持旧硬编码行为 (向后兼容).
     segments = [
         persona_segment(system_prompt),
+        core_principles_segment(),
+        behavioral_discipline_segment(),
+        response_format_segment(),
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog_state),
@@ -322,6 +351,18 @@ def _multi_agent_protocol_plugin(mode, phase, metacog_state, system_prompt):
     return multi_agent_protocol_segment()
 
 
+def _core_principles_plugin(mode, phase, metacog_state, system_prompt):
+    return core_principles_segment()
+
+
+def _behavioral_discipline_plugin(mode, phase, metacog_state, system_prompt):
+    return behavioral_discipline_segment()
+
+
+def _response_format_plugin(mode, phase, metacog_state, system_prompt):
+    return response_format_segment()
+
+
 def _safety_plugin(mode, phase, metacog_state, system_prompt):
     return safety_segment()
 
@@ -362,6 +403,10 @@ def _register_builtin_segments() -> None:
     from huginn.plugins.prompt_segments import register_prompt_segment
 
     register_prompt_segment("persona", _persona_plugin)
+    # §3/§4/§7 拆出的三节: 紧跟 persona 正文之后 (原为 persona 串内联), 早于 mode/phase.
+    register_prompt_segment("core_principles", _core_principles_plugin)
+    register_prompt_segment("behavioral_discipline", _behavioral_discipline_plugin)
+    register_prompt_segment("response_format", _response_format_plugin)
     register_prompt_segment("mode", _mode_plugin)
     register_prompt_segment("phase", _phase_plugin)
     register_prompt_segment("metacog", _metacog_plugin)

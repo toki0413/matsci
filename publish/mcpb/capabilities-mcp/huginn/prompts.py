@@ -246,6 +246,68 @@ they are different tools for different situations. The researcher decides.
 HUGINN_SYSTEM_PROMPT = HUGINN_SYSTEM_PROMPT + MATH_DEPTH_GUIDE
 
 
+# ── §3/§4/§7 拆段面 ──────────────────────────────────────────────────────────
+# 把 Core Principles (§3) / Behavioral Discipline (§4) / Response Format (§7) 三节
+# 从 persona 串里**抽出**, 成为独立、可声明 (applies_to)、可 gate 的段 —— 由
+# huginn/plugins/prompt_segments 的 core_principles / behavioral_discipline /
+# response_format 三段在主路径 (main) / s7 自修改态 / 自主循环 (autoloop) 三条路径上
+# **统一供给**。一次定义、三路生效、零重复、可独立红。
+#
+# 兼容性: HUGINN_SYSTEM_PROMPT 仍保留**全量** (外部 import / 文档 / 单测拿到完整串);
+# HUGINN_BASE_PROMPT 是 persona 串基线 (去掉 §3/§4/§7), 默认 persona 与主 agent 回退
+# 用它; 段再把三节补齐, 故内容零丢失、零重复. 顺序由"内联"变为"段拼接" (三节出现在
+# persona 正文之后), 语义不变.
+_CORE_PRINCIPLES_HEADING = "## 3. Core Principles"
+_DISCIPLINE_HEADING = "## 4. Behavioral Discipline"
+_DOMAIN_HEADING = "## 5. Domain Knowledge"
+_FORMAT_HEADING = "## 7. Response Format"
+_SAFETY_HEADING = "## 8. Safety"
+
+
+def _between(prompt: str, start: str, end: str) -> str:
+    """取 prompt 中 [start, end) 区间的小节文本 (含 start 标题, 去尾部空行).
+
+    start/end 若不在 prompt 内即抛 ValueError (不静默, 拆分面写错立即显形).
+    """
+    i = prompt.index(start)
+    j = prompt.index(end, i + len(start))
+    return prompt[i:j].rstrip("\n")
+
+
+def _drop_between(prompt: str, spans: tuple[tuple[str, str], ...]) -> str:
+    """从 prompt 中删除若干 [start, end) 区间 (含其后的空行分隔符)."""
+    for start, end in spans:
+        i = prompt.index(start)
+        j = prompt.index(end, i + len(start))
+        prompt = prompt[:i] + prompt[j:]
+    return prompt
+
+
+# 拆出的三节文本 (单一事实来源, 供 prompt_segments 的对应段读取).
+PROMPT_SECTIONS: dict[str, str] = {
+    "core_principles": _between(
+        HUGINN_SYSTEM_PROMPT, _CORE_PRINCIPLES_HEADING, _DISCIPLINE_HEADING
+    ),
+    "behavioral_discipline": _between(
+        HUGINN_SYSTEM_PROMPT, _DISCIPLINE_HEADING, _DOMAIN_HEADING
+    ),
+    "response_format": _between(
+        HUGINN_SYSTEM_PROMPT, _FORMAT_HEADING, _SAFETY_HEADING
+    ),
+}
+
+# persona 串基线: 去掉 §3/§4/§7 三节 (改由段供给), 其余 (§1/§2/§5/§6/§8 + MATH_DEPTH)
+# 原样保留. 默认 persona 与 agent 主回退以此为准.
+HUGINN_BASE_PROMPT = _drop_between(
+    HUGINN_SYSTEM_PROMPT,
+    (
+        (_CORE_PRINCIPLES_HEADING, _DISCIPLINE_HEADING),
+        (_DISCIPLINE_HEADING, _DOMAIN_HEADING),
+        (_FORMAT_HEADING, _SAFETY_HEADING),
+    ),
+)
+
+
 # coder/loop.py 引用的独立 coder prompt (被 2e80536 误删, 调用方仍在, 恢复).
 # 与 HUGINN_SYSTEM_PROMPT 分开: coder runner 是纯软件工程会话, 不走科研 persona.
 CODER_SYSTEM_PROMPT = """# Huginn Coder Mode

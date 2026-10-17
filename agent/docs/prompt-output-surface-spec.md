@@ -170,7 +170,8 @@ def output_contract(mode: str) -> str:
   (逐事件判 wired / trigger-only / dead)，**未**新建重复门 (单一来源)。
 - **AC-7** — `docs/governance-state.md` 新增「prompt 段生效面」节 (由 `render_markdown`
   生成，逐字一致)。
-- **AC-8** — 台账 `PROMPT_SPECS` + `BUDGET_SPECS["prompt_segment_floor"]` (下限 9)；
+- **AC-8** — 台账 `PROMPT_SPECS` + `BUDGET_SPECS["prompt_segment_floor"]` (下限 13; 初版 9,
+  后随 §3/§4/§7 拆为独立段 `core_principles`/`behavioral_discipline`/`response_format` 上调)；
   `tests/test_arch_gate_registry.py` 的段数棘轮 + 清单↔源一致门兜底。
 
 与初版设计的**偏离** (诚实记录，均为减配而非缩水)：

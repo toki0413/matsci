@@ -31,6 +31,10 @@ PromptSegmentFn = Callable[[str, str, str, str | None], str]
 #   safety 固定最后.
 _PRIORITY = {
     "persona": 10,
+    # §3/§4/§7 拆出的三节: 紧跟 persona 正文之后 (原为内联), 早于 mode/phase.
+    "core_principles": 11,
+    "behavioral_discipline": 12,
+    "response_format": 13,
     "mode": 20,
     "phase": 30,
     "metacog": 40,
@@ -45,6 +49,9 @@ _PRIORITY = {
 # 框架骨架段名 (由 agent.build_prompt 注册). 它们不属于插件贡献: 非 build_prompt
 # 的主路径 (autoloop 的 _llm_chat 直接拼 persona system prompt) 只消费**插件段**,
 # 需据此排除骨架段, 否则会把 persona/phase 等重复注入.
+# 注意: core_principles/behavioral_discipline/response_format **不在**本集合 ——
+# 这三节已从 persona 串 (HUGINN_BASE_PROMPT) 剥离, 故 autoloop 必须从段补齐
+# (若误列入本集合, autoloop 将丢失 §3/§4/§7 → 契约门与 autoloop 段集合门会红).
 _FRAMEWORK_SEGMENTS = frozenset({
     "persona", "mode", "phase", "metacog", "tools",
     "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
@@ -60,6 +67,13 @@ _FRAMEWORK_SEGMENTS = frozenset({
 # 用**字面量 tuple** (非 frozenset 调用) 以便 weightless 门禁用 ast 直接解析.
 _APPLIES_TO: dict[str, tuple[str, ...]] = {
     "persona": ("s7",),
+    # §3/§4/§7 拆出的三节: 已从 persona 串剥离, 故三条路径都必须由段供给 ——
+    #   main     = 主会话 (render_prompt_segments_for_path) 需要;
+    #   s7       = build_prompt 全量组装需要;
+    #   autoloop = 自主循环直接拼 persona 串, 靠 assemble_plugin_prompt_segments 补齐.
+    "core_principles": ("main", "s7", "autoloop"),
+    "behavioral_discipline": ("main", "s7", "autoloop"),
+    "response_format": ("main", "s7", "autoloop"),
     "mode": ("s7",),
     "phase": ("s7",),
     "metacog": ("s7",),

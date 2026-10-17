@@ -139,6 +139,9 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 段 | 声明生效路径 |
 |---|---|
 | `persona` | `s7` |
+| `core_principles` | `main`, `s7`, `autoloop` |
+| `behavioral_discipline` | `main`, `s7`, `autoloop` |
+| `response_format` | `main`, `s7`, `autoloop` |
 | `mode` | `s7` |
 | `phase` | `s7` |
 | `metacog` | `s7` |
@@ -173,7 +176,7 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
 | 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 122 | 0 | Governance gate registry guard |
 | 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
-| prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 10 | 10 | 0 | Governance gate registry guard |
+| prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 13 | 13 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |

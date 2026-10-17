@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.prompts import HUGINN_SYSTEM_PROMPT, MATH_DEPTH_GUIDE
+from huginn.prompts import HUGINN_BASE_PROMPT, MATH_DEPTH_GUIDE
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,10 @@ class Persona:
 BUILT_IN_PERSONAS: list[Persona] = [
     Persona(
         name="default",
-        system_prompt=HUGINN_SYSTEM_PROMPT,
+        # 基线 persona 串 (去 §3/§4/§7). 三节改由 prompt_segments 的
+        # core_principles / behavioral_discipline / response_format 段在
+        # main/s7/autoloop 统一供给, 避免 persona 串与段重复注入.
+        system_prompt=HUGINN_BASE_PROMPT,
     ),
     Persona(
         name="dft_expert",

@@ -130,6 +130,10 @@ WORKFLOW_TRIGGER_SPECS: dict[str, tuple[str, ...]] = {
 # 逐段的生效路径**不在此复制** —— 台账按文件路径 ast 读源文件 `_APPLIES_TO`, 无镜像漂移.
 PROMPT_SPECS: tuple[str, ...] = (
     "persona",
+    # §3/§4/§7 从 persona 串剥离成的独立段 (单一事实来源 huginn.prompts.PROMPT_SECTIONS).
+    "core_principles",
+    "behavioral_discipline",
+    "response_format",
     "mode",
     "phase",
     "metacog",
@@ -1323,7 +1327,7 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "kind": "const",
         "key": "PROMPT_SEGMENT_FLOOR",
         "source": "inline",
-        "value": 10,
+        "value": 13,
         "owner_gate": "Governance gate registry guard",
         "owner_kind": "ci_step",
         "probe": "prompt_segment_count",

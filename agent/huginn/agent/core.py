@@ -31,7 +31,7 @@ from huginn.hooks import HookManager
 from huginn.models.router import ModelRouter
 from huginn.permissions import PermissionConfig
 from huginn.phases import PhaseManager, ResearchPhase
-from huginn.prompts import HUGINN_SYSTEM_PROMPT
+from huginn.prompts import HUGINN_BASE_PROMPT
 from huginn.telemetry import NullTelemetryCollector, TelemetryCollector
 from huginn.tools.adapter import ToolAdapter
 from huginn.tools.registry import ToolRegistry
@@ -236,7 +236,7 @@ class HuginnAgent(
         else:
             self.checkpointer = create_in_memory_checkpointer()
 
-        self.system_prompt = m.system_prompt or HUGINN_SYSTEM_PROMPT
+        self.system_prompt = m.system_prompt or HUGINN_BASE_PROMPT
         self.begin_dialogs = m.begin_dialogs or []
 
         from huginn.phases import ResearchPhase

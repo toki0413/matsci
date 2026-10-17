@@ -54,7 +54,7 @@ _ensure_namespace_pkg("huginn", _AGENT / "huginn")
 _ensure_namespace_pkg("huginn.plugins", _AGENT / "huginn" / "plugins")
 _ensure_namespace_pkg("huginn.agent", _AGENT / "huginn" / "agent")
 
-# 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 9 个内置段.
+# 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 13 个内置段.
 import huginn.agent.prompt_builder as pb  # noqa: E402
 import huginn.plugins.prompt_segments as ps  # noqa: E402
 
@@ -62,18 +62,20 @@ _VALID_PATHS = frozenset({"main", "s7", "autoloop"})
 
 # 关键段 floor (不得从注册/声明中消失). 与治理台账 `PROMPT_SPECS` 同源 (下方交叉核对).
 _REQUIRED_SEGMENTS = (
-    "persona", "mode", "phase", "metacog", "tools",
+    "persona", "core_principles", "behavioral_discipline", "response_format",
+    "mode", "phase", "metacog", "tools",
     "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
 )
 
 # safety 规范两份来源必须共同覆盖的语义锚点 (允许措辞微差, 只锁语义集).
 _SAFETY_ANCHORS = ("Physics precheck", "Data integrity", "No fabrication")
 
-# base prompt (prompts.py) 中被 persona 单源承载、却**未被拆成独立段**的行为规范:
-# §3 Core Principles / §4 Behavioral Discipline / §7 Response Format. 这些维度目前
-# 寄生在 persona 段里, 契约门只能把 §4 当"persona 存在与否"整体守 —— 无法定位到
-# "工具调用纪律被删了"或"证据强度条款被悄悄改弱". 故用**声明式锚点门**锁定它们的关键
-# 子句 (镜像 `_SAFETY_ANCHORS` 范式): 删除/削弱任一锚点 = 红, 须显式改本表 (可见决策).
+# base prompt (prompts.py) 中曾寄生在 persona 单源、现已**拆成独立段**的行为规范:
+# §3 Core Principles / §4 Behavioral Discipline / §7 Response Format. 三节作为段
+# (core_principles/behavioral_discipline/response_format) 在主/s7/autoloop 三路统一供给
+# (文本单一事实来源 `huginn.prompts.PROMPT_SECTIONS`). 段门虽保证"段存在且生效", 却仍
+# 无法定位到"工具调用纪律子句被删了"或"证据强度条款被悄悄改弱" —— 故另用**声明式锚点门**
+# 锁定关键子句 (镜像 `_SAFETY_ANCHORS` 范式): 删除/削弱任一锚点 = 红, 须显式改本表 (可见决策).
 _PRINCIPLES_ANCHORS = (
     "Mathematical Rigor",
     "Physical Validation",
@@ -211,34 +213,53 @@ def test_required_segments_declared_and_registered():
 
 
 def test_main_path_really_injects_writing_and_multimodal():
-    """AC-3 强断言: 主路径真实产出含写作/多模态引导 (非仅声明)."""
+    """AC-3 强断言: 主路径真实产出含写作/多模态/多智能体/拆段三节 (非仅声明)."""
     out = ps.render_prompt_segments_for_path("main", "chat", "execute", "s0_blank")
     assert "## WRITING" in out, "主路径未注入反防御写作段 (G-2)."
     assert "## MULTIMODAL" in out, "主路径未注入多模态引导段 (G-1)."
     assert "## MULTI-AGENT PROTOCOL" in out, "主路径未注入多智能体协作协议段."
+    # §3/§4/§7 拆出后, 主路径必须由段补齐这三节 (persona 基线已不含).
+    assert "## 3. Core Principles" in out, "主路径未注入 §3 Core Principles 段."
+    assert "## 4. Behavioral Discipline" in out, "主路径未注入 §4 Behavioral Discipline 段."
+    assert "## 7. Response Format" in out, "主路径未注入 §7 Response Format 段."
 
 
-# ──────────── persona 单源承载的行为规范声明式锚点门 (§3/§4/§7) ────────────
+# ──────── 拆段 (§3/§4/§7) 的声明式锚点门 + 段生效断言 ────────
 
 
 def test_base_prompt_spec_anchors_locked():
     """AC-6: prompts.py 中 §3 Core Principles / §4 Behavioral Discipline / §7 Response
-    Format 的关键子句不得被静默删除或削弱.
+    Format 的关键子句不得被静默删除或削弱, 且须经拆出的段真正生效.
 
-    这三节由 persona 段单源承载 (未拆成独立段), 因此契约门无法逐段守; 本门把它们的关键
-    子句锁成锚点 —— 任一锚点消失即红, 须显式改本表的锚点集 (可见决策). 镜像 safety 范式.
+    三节已从 persona 串剥离为独立段, 文本单一事实来源为 `PROMPT_SECTIONS` (由
+    `HUGINN_SYSTEM_PROMPT` 确定性切分). 本门: (1) 锁 prompts.py 源文本的关键子句锚点;
+    (2) 断言三段函数渲染出的文本仍含这些锚点 —— 切分漂移或段被清空即红; (3) 断言拆段后
+    `HUGINN_BASE_PROMPT` 里这些节确已移除 (不再与段重复注入). 任一失败即红, 须显式改本表/
+    切分或段实现 (可见决策). 镜像 safety 范式.
     """
+    import huginn.prompts as pr
+
     src = (_AGENT / "huginn" / "prompts.py").read_text(encoding="utf-8")
-    for section, anchors in (
-        ("§3 Core Principles", _PRINCIPLES_ANCHORS),
-        ("§4 Behavioral Discipline", _DISCIPLINE_ANCHORS),
-        ("§7 Response Format", _FORMAT_ANCHORS),
-    ):
+    section_segment = {
+        "§3 Core Principles": ("core_principles", _PRINCIPLES_ANCHORS),
+        "§4 Behavioral Discipline": ("behavioral_discipline", _DISCIPLINE_ANCHORS),
+        "§7 Response Format": ("response_format", _FORMAT_ANCHORS),
+    }
+    for section, (seg_key, anchors) in section_segment.items():
         for anchor in anchors:
             assert anchor in src, (
                 f"prompts.py {section} 缺锚点 '{anchor}' —— 该行为规范被删除或削弱? "
                 f"若确为有意改写, 显式更新 test_prompt_contract 的锚点集 (可见决策)."
             )
+            seg_text = pr.PROMPT_SECTIONS[seg_key]
+            assert anchor in seg_text, (
+                f"拆出的段 `{seg_key}` 缺锚点 '{anchor}' —— 切分漂移或段被清空?"
+            )
+    # 拆段后 persona 基线不得再内联这三节 (否则主/s7/autoloop 会重复注入).
+    for heading in ("## 3. Core Principles", "## 4. Behavioral Discipline", "## 7. Response Format"):
+        assert heading not in pr.HUGINN_BASE_PROMPT, (
+            f"HUGINN_BASE_PROMPT 仍含 '{heading}' —— 拆段未剥离干净, 会与段重复注入."
+        )
 
 
 # ──────────────────── 插件注册必须显式声明 ────────────────────
@@ -264,7 +285,7 @@ def _register_calls() -> list[tuple[pathlib.Path, ast.Call]]:
 def test_plugin_registrations_declare_applies_to():
     """AC-4: 非内置段名的 register 调用必须显式声明 applies_to (不得靠默认静默).
 
-    内置段 (prompt_builder 里以字面量段名注册的 9 段) 声明来自内置 `_APPLIES_TO`;
+    内置段 (prompt_builder 里以字面量段名注册的 13 段) 声明来自内置 `_APPLIES_TO`;
     其余调用 (第三方插件段) 段名非内置 → 必须显式给 `applies_to=`.
     """
     builtin = frozenset(_REQUIRED_SEGMENTS)
