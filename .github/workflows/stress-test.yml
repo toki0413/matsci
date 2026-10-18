@@ -73,13 +73,16 @@ jobs:
 
       - name: Wait for health check
         run: |
-          for i in $(seq 1 90); do
+          # 全新 runner 上首次启动要下载 chroma onnx 模型 + HF 权重 (~80MB+),
+          # 冷启动实测可达 2-3 分钟. 原 90s 窗口在下载慢时误报 (基础设施 flake,
+          # 与代码无关), 放宽到 240s.
+          for i in $(seq 1 240); do
             if curl -sf "$STRESS_TEST_URL/health/live" >/dev/null; then
               echo "backend is healthy"; exit 0
             fi
             sleep 1
           done
-          echo "::error::backend did not become healthy within 90s"
+          echo "::error::backend did not become healthy within 240s"
           cat /tmp/uvicorn.log
           exit 1
 
