@@ -109,7 +109,7 @@ def numeric_diff(
             if not (a_bool and b_bool) or a != b:
                 _add(path, recorded=a, rerun=b, reason="bool_mismatch")
             return
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        if isinstance(a, int | float) and isinstance(b, int | float):
             delta = abs(a - b)
             if delta <= atol or delta <= tolerance * max(abs(a), abs(b)):
                 return
@@ -127,7 +127,7 @@ def numeric_diff(
                 else:
                     _walk(a[key], b[key], f"{path}.{key}")
             return
-        if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        if isinstance(a, list | tuple) and isinstance(b, list | tuple):
             if len(a) != len(b):
                 _add(path, recorded_len=len(a), rerun_len=len(b),
                      reason="length_mismatch")

@@ -2094,7 +2094,7 @@ def build_gate_registry() -> dict:
 def _render_current(current: int | tuple[int, ...] | list[int] | None) -> str:
     if current is None:
         return "—"
-    if isinstance(current, (tuple, list)):
+    if isinstance(current, tuple | list):
         return "/".join(str(v) for v in current)
     return str(current)
 
