@@ -2,7 +2,7 @@ name: Stress Test
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master, main]
   schedule:
     # Nightly at 02:00 UTC
     - cron: "0 2 * * *"
@@ -107,7 +107,8 @@ jobs:
         run: |
           # 长程稳定性门禁: 内存泄漏/工具链重复/Registry/Memory 持续压测.
           # main() 在任一失败时 raise -> 非零退出 -> 此 job 失败.
-          python tests/ultra_long_benchmark.py 2>&1 | tee /tmp/ultra_long.log
+          # 注意: 脚本在 tests/stress/ 下 (不是 tests/ 根), 路径须完整, 否则 No such file.
+          python tests/stress/ultra_long_benchmark.py 2>&1 | tee /tmp/ultra_long.log
           exit ${PIPESTATUS[0]}
 
       - name: Upload logs

@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 276 站点, 按值域 Jaccard 重叠自动聚成 252 簇 (其中闭集簇 166). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 281 站点, 按值域 Jaccard 重叠自动聚成 256 簇 (其中闭集簇 167). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -147,7 +147,6 @@
 | `numpy` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/provenance/_legacy.py::_TRACKED_PACKAGES` |
 | `orca_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_QC_TOOLS` |
 | `password` | `huginn/events/audit_log.py::_SECRET_KEYS`, `huginn/rag/vector_store.py::SENSITIVE_META_FIELDS` |
-| `persona` | `huginn/plugins/prompt_segments.py::_FRAMEWORK_SEGMENTS`, `huginn/share.py::_KINDS` |
 | `pivot` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/hypothesis_loop.py::EdgeType` |
 | `plan` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/core_types.py::class PermissionMode`, `huginn/memory/reasoning.py::class ReasoningPhase`, `huginn/metacog/critique.py::_VALID_MODES`, `huginn/runtime/context_router.py::CONTEXT_SEGMENTS`, `huginn/session_state.py::class SessionPhase` |
 | `prompt` | `huginn/catalog/models.py::KINDS`, `huginn/cli/lazy_loader.py::CommandType` |
@@ -169,7 +168,6 @@
 | `structure_tool` | `huginn/agent/context.py::_ALWAYS_ON_TOOLS`, `huginn/hooks/__init__.py::_WATCHED_TOOLS`, `huginn/tools/tool_cache.py::PREFETCH_SAFE_TOOLS` |
 | `table` | `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/perception/doc_types.py::class ElementType` |
 | `text` | `huginn/events/audit_log.py::_BODY_KEYS`, `huginn/perception/doc_types.py::class ElementType` |
-| `thinking` | `huginn/pet/__init__.py::class PetMood`, `huginn/plugins/prompt_segments.py::_FRAMEWORK_SEGMENTS` |
 | `timeout` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/core_types.py::class ErrorKind` |
 | `tool` | `huginn/catalog/models.py::KINDS`, `huginn/comms/contract.py::_AGENT_ROLES`, `huginn/memory/anchor.py::ANCHOR_KINDS` |
 | `tool_error` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/autoloop/hypothesis_semantic.py::_FAILURE_LABELS` |
@@ -184,7 +182,7 @@
 ### 簇内分歧 (同簇成员值域不等)
 
 - 簇 huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES (并集 8 词):
-  - `huginn/agent/context.py:20` _EXPENSIVE_TOOL_NAMES 缺 `gaussian_tool`, `gromacs_tool`, `orca_tool`, `qe_tool`
+  - `huginn/agent/context.py:35` _EXPENSIVE_TOOL_NAMES 缺 `gaussian_tool`, `gromacs_tool`, `orca_tool`, `qe_tool`
   - `huginn/hooks/research_safety_hook.py:18` _EXPENSIVE_TOOLS
   - `huginn/research_budget.py:24` _EXPENSIVE_TOOLS
 - 簇 huginn/config.py::ThinkingIntensity (并集 6 词):
@@ -223,8 +221,8 @@
 
 | 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |
 |---|---|---|---|---|---|---|---|---|
-| `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:20` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
-| `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:27` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:35` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
+| `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:42` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
 | `_DFT_MD_TOOLS` | `huginn/execution/compute_router.py:15` | 8 | 4 | registry | `internal-only` | 0 | 0 | 4 |
 | `_QC_TOOLS` | `huginn/execution/compute_router.py:29` | 4 | 2 | registry | `internal-only` | 0 | 0 | 2 |
 | `CORE_BOOTSTRAP_TOOLS` | `huginn/harness/promotion.py:25` | 2 | 2 | registry | `internal-only` | 0 | 0 | 0 |

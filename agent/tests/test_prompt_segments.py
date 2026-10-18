@@ -8,11 +8,15 @@ from __future__ import annotations
 import pytest
 
 from huginn.agent.prompt_builder import (
+    behavioral_discipline_segment,
+    core_principles_segment,
     metacog_segment,
     mode_segment,
+    multi_agent_protocol_segment,
     multimodal_segment,
     persona_segment,
     phase_segment,
+    response_format_segment,
     safety_segment,
     tools_segment,
     writing_segment,
@@ -26,15 +30,23 @@ from huginn.plugins.prompt_segments import (
 
 
 def _hardcoded_reference(mode, phase, metacog, system_prompt=None):
-    """切换前 build_prompt 的硬编码拼接 (单段含 multimodal/writing, 不含 flag-gated thinking)."""
+    """切换前 build_prompt 的硬编码拼接 (不含 flag-gated thinking).
+
+    顺序与 prompt_segments._PRIORITY 升序一致: persona(10) → §3/§4/§7 三节(11-13)
+    → mode/phase/metacog/tools → multimodal/writing/multi_agent_protocol → safety(200).
+    """
     segments = [
         persona_segment(system_prompt),
+        core_principles_segment(),
+        behavioral_discipline_segment(),
+        response_format_segment(),
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog),
         tools_segment(mode, phase, metacog),
         multimodal_segment(),
         writing_segment(),
+        multi_agent_protocol_segment(),
         safety_segment(),
     ]
     return "\n\n".join(s for s in segments if s)
@@ -132,13 +144,30 @@ class TestPluginOnlyAssembly:
         assert "## SAFETY" not in got
         assert "## TOOLS" not in got
 
-    def test_empty_when_only_framework_segments(self):
-        from huginn.agent.prompt_builder import _register_builtin_segments
+    def test_plugin_assembly_is_exactly_discipline_sections(self):
+        # §3/§4/§7 三节已从 persona 串 (HUGINN_BASE_PROMPT) 剥离, 并有意登记为
+        # **非框架段** —— autoloop 直接拼 persona 串, 必须靠插件面补齐这三节.
+        # 故内置段注册后, 插件面恰为这三节; 框架骨架段仍被排除.
+        from huginn.agent.prompt_builder import (
+            _register_builtin_segments,
+            behavioral_discipline_segment,
+            core_principles_segment,
+            response_format_segment,
+        )
         from huginn.plugins.prompt_segments import assemble_plugin_prompt_segments
 
         clear_registry()
         _register_builtin_segments()
-        assert assemble_plugin_prompt_segments("chat", "execute", "s0_blank") == ""
+        got = assemble_plugin_prompt_segments("chat", "execute", "s0_blank")
+        want = "\n\n".join([
+            core_principles_segment(),
+            behavioral_discipline_segment(),
+            response_format_segment(),
+        ])
+        assert got == want
+        # 框架骨架段 (persona/mode/phase/tools/safety) 不属插件贡献, 被排除.
+        assert "## PERSONA" not in got
+        assert "## SAFETY" not in got
 
 
 class TestAutoloopConsumesPluginSegments:

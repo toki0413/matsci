@@ -18,7 +18,7 @@
 | `crdt_branch_merge` | True | CRDT 分支合并 (HUGINN_CRDT_BRANCH_MERGE) | HUGINN_CRDT_BRANCH_MERGE | utils/conversation_tree.py:345, utils/conversation_tree.py:37 |
 | `crdt_merge` | True | CRDT 合并 (HUGINN_CRDT_MERGE) | HUGINN_CRDT_MERGE | tools/subagent_tool.py:33 |
 | `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:407, cli/rcb_step2.py:868 |
-| `external_thinking` | False | 外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关) | — | agent/prompt_builder.py:300 |
+| `external_thinking` | False | 外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关) | — | agent/prompt_builder.py:379 |
 | `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2139 +1 处 |
 | `frontier_claim` | False | 假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_CLAIM | autoloop/cognitive_loop.py:3233 |
 | `frontier_empty_stop` | False | 可执行前沿空即停: 无'未执行且前置证据满足'的方向 → 主终止, 预算降为安全上限 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_EMPTY_STOP | autoloop/cognitive_loop.py:3214 |
