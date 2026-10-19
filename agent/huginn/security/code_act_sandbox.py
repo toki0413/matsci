@@ -21,12 +21,12 @@ import tracemalloc
 from typing import Any
 
 # 不注入 CodeAct 沙箱的工具集.
-# - hpc_client / bash_tool / shell_tool / container_exec: 外部副作用,
-#   绕过 CodeAct 设的审计轨迹. 留在 tool_call 轨道让 langgraph 追.
+# - bash_tool: 外部副作用 (任意 shell), 绕过 CodeAct 设的审计轨迹. 留在 tool_call
+#   轨道让 langgraph 追.
 # - code_tool: 让 LLM 在 code_act 内嵌套生成沙箱, 递归 footgun.
-_BLOCKED_TOOLS = frozenset(
-    {"hpc_client", "bash_tool", "shell_tool", "container_exec", "code_tool"}
-)
+# 注: 早期还列了 `hpc_client`/`shell_tool`/`container_exec`, 这三个都没有对应注册
+# 工具, 表项永不命中已被 MECE 审计记为死项, 故删 (真要有这类工具再加回来).
+_BLOCKED_TOOLS = frozenset({"bash_tool", "code_tool"})
 
 # import 白名单. 科研计算常用栈, 不含 os/sys/subprocess/socket 等危险模块.
 _ALLOWED_IMPORTS = frozenset(

@@ -36,6 +36,7 @@
 | [modes-contract.md](modes-contract.md) | active | Mode/Phase 契约（prompt 面，可自动再生成） |
 | [model-tier-contract.md](model-tier-contract.md) | active | 模型档位契约（ModelTier 极简模式聚合面，可自动再生成） |
 | [permission-contract.md](permission-contract.md) | active | 权限契约（PermissionMode + RiskLevel 五档 + PermissionConfig 细粒度面，可自动再生成） |
+| [mece-audit.md](mece-audit.md) | active | MECE 契约审计（奖励/授权/工作流/模式/词汇/工具六面的"宣称 vs 接线"缺口 + 同轴惩罚/跨模块同名/词表漂移/允许表死项，可自动再生成） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [layered-streaming-settlement-spec.md](layered-streaming-settlement-spec.md) | active | 分层流式结算规范（缺陷一/二三阶段 P-A/P-B/P-C：流式结算/层间重规划/提前终止，已落地） |

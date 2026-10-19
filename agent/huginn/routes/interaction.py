@@ -29,7 +29,12 @@ from huginn.interaction.interrupt import (
 )
 from huginn.interaction.progress import get_progress_tracker
 from huginn.interaction.streaming import StreamInterceptor
-from huginn.permissions import READ_ONLY_TOOLS, PermissionMode
+from huginn.permissions import (
+    READ_ONLY_TOOLS,
+    WRITE_EXEC_TOOLS,
+    PermissionMode,
+    is_read_only_tool,
+)
 from huginn.routes.schemas import ChatRequest
 from huginn.server_core import get_agent_factory
 
@@ -85,13 +90,20 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
                     thinking=req.thinking,
                     max_tokens=req.max_tokens,
                 )
-                # sidecar serve 模式: 不再全放行 ASK 工具.
-                # 只对只读工具 (read_file/grep/glob 等) auto_approve,
-                # 写/执行工具 (file_write/vasp_tool/lammps_tool 等) 仍走 ASK 确认.
+                # sidecar serve 模式: 只读工具直放, 写/执行工具强制 ASK.
+                # 名单与判定都取自 permissions.py 单一来源 (READ_ONLY_TOOLS /
+                # WRITE_EXEC_TOOLS / is_read_only_tool), 这里不各自硬编码工具名 ——
+                # 早期写的是 read_file/file_write 这类短名, 与注册表对不上,
+                # set_mode 永不命中, 只读工具实际仍走 ASK (MECE 审计记的"允许表死项").
                 # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
                 # 会被拦下要求确认, 不受 auto_approve 影响.
-                for _tool_name in READ_ONLY_TOOLS:
-                    agent._permission_config.set_mode(_tool_name, PermissionMode.AUTO)
+                for _tool_name in READ_ONLY_TOOLS | WRITE_EXEC_TOOLS:
+                    _mode = (
+                        PermissionMode.AUTO
+                        if is_read_only_tool(_tool_name)
+                        else PermissionMode.ASK
+                    )
+                    agent._permission_config.set_mode(_tool_name, _mode)
 
                 final_text = ""
                 try:

@@ -37,18 +37,20 @@ DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
 
 # Read-only tool names — SSE chat 路径用来区分“可 auto_approve”和“需 ASK”.
 # ponytail: frozenset 常量, O(1) 查找, 不引新依赖.
+# 必须用**注册名** (`file_read_tool`/`grep`/`glob`) —— 早期写成 `read_file`/`ls`/
+# `cat`/`search` 这类短名, 与注册表对不上, `set_mode()` 永不命中, 只读工具在
+# sidecar 路径实际仍走 ASK (MECE 审计记的"允许表死项").
 READ_ONLY_TOOLS: frozenset[str] = frozenset({
-    "read_file", "list_dir", "grep", "glob", "search",
-    "codebase_search", "search_codebase", "ls", "find",
-    "cat", "head", "tail",
+    "file_read_tool", "grep", "glob",
 })
 
 # Write / exec tool names — 显式标记, SSE 路径下不 auto_approve.
-# 未列在 READ_ONLY_TOOLS 里的工具默认就返回 False, 这个集合留着做可观测性 / 未来显式校验.
+# 与 READ_ONLY_TOOLS 一起被 `routes/interaction.py::chat_stream` 消费:
+# 对两张表的并集按 `is_read_only_tool` 分类 —— 只读放行, 其余强制 ASK.
 WRITE_EXEC_TOOLS: frozenset[str] = frozenset({
-    "file_write", "file_edit", "vasp_tool", "lammps_tool",
-    "code_act", "bash", "shell", "subprocess",
-    "git_commit", "git_push",
+    "file_write_tool", "file_edit_tool", "multi_edit_tool", "notebook_edit_tool",
+    "bash_tool", "code_tool",
+    "vasp_tool", "lammps_tool",
 })
 
 

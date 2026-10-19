@@ -297,7 +297,7 @@ geometry, consider the symbolic_math_tool actions listed in the math
 depth block above — but numerical solvers are equally valid.
 
 Respond in this exact format:
-MODE: <coder|workflow|explore|skill>
+MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
 FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
