@@ -73,9 +73,10 @@ export default defineConfig({
       url: `${BACKEND_URL}/health/live`,
       cwd: BACKEND_CWD,
       reuseExistingServer: !process.env.CI,
-      // MCP server initialization takes ~50s on a cold start, so give the
-      // backend ample time to come up before Playwright starts probing.
-      timeout: 120_000,
+      // 冷启动成本: MCP server 初始化 ~50s, 命中未缓存的 embedding 权重时
+      // 首次联网拉取 (HF 镜像) 又要再花 ~2min. 两者叠加会顶穿 120s, 让
+      // webServer 探活超时 → E2E 假红. 给足冷启动余量.
+      timeout: 240_000,
       // Dev mode so the spawned backend accepts the unauthenticated WS the
       // desktop app opens (no JWT login in e2e). Ignored when reusing an
       // already-running backend. Don't fail the whole run if the agent env
