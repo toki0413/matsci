@@ -104,10 +104,19 @@ def verify_conjecture(conj: Conjecture) -> tuple[bool, str]:
             top = (node.module or "").split(".")[0]
             if top not in _PROOF_ALLOWED_MODULES:
                 return (False, "none")
+        # dunder 属性访问 (.__class__ / .__bases__ / .__subclasses__ /
+        # .__globals__ / .__getattribute__ ...) 是绕过白名单取回危险能力的
+        # 主要路径 — 一律拒绝. 正常 sympy 证明不靠 dunder 属性.
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
+            return (False, "none")
+        # dunder 名称引用 (__builtins__ / __import__ ...) 同样拒绝.
+        if isinstance(node, ast.Name) and node.id.startswith("__") and node.id.endswith("__"):
+            return (False, "none")
         if isinstance(node, ast.Call):
             fn = node.func
             if isinstance(fn, ast.Name) and fn.id in {
                 "__import__", "eval", "exec", "compile", "getattr",
+                "setattr", "delattr", "globals", "locals",
             }:
                 return (False, "none")
 

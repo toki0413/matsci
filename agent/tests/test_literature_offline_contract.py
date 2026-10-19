@@ -4,10 +4,14 @@
 静默联网"的回归 —— 该缺陷曾让 CI 的 test job 因真实网络扇出而挂起.
 
 门禁落在唯一网络漏斗 `_OPENER.open`: 无论走 `_http_request` 还是各源函数里
-直接调用 (XML/atom/分页抓取), 都必须被拦. 全部本地可跑, 不打真实 API.
+直接调用 (XML/atom/分页抓取), 都必须被拦. MinerU 解析客户端此前用 `httpx`
+直连、不在该漏斗内, 现已收编到 `mineru_client._HTTPX` 同一守卫, 一并纳入.
+全部本地可跑, 不打真实 API.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -49,3 +53,22 @@ async def test_do_search_blocked_offline() -> None:
     )
     assert res.success is False
     assert res.error == _DISABLED_HINT
+
+
+def test_mineru_httpx_funnel_blocked_offline() -> None:
+    """MinerU 客户端此前用 httpx 直连、绕过 `_OPENER` 漏斗; 现 get/post/put 全被拦."""
+    from huginn.tools.literature import mineru_client as mc
+
+    for call in (mc._HTTPX.get, mc._HTTPX.post, mc._HTTPX.put):
+        with pytest.raises(HttpError):
+            call("https://mineru.net/api/v4/offline-probe")
+
+
+def test_mineru_submit_batch_blocked_offline() -> None:
+    """经高层 submit_batch (POST 申请上传链接) 同样在触网前被拦, 不进入真实请求."""
+    from huginn.tools.literature import mineru_client as mc
+
+    with pytest.raises(HttpError):
+        mc.submit_batch(
+            [mc.FileSpec(path=Path("probe.pdf"), data_id="probe")], api_keys=["k"]
+        )
