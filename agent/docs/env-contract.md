@@ -28,12 +28,12 @@
 | `HUGINN_BELIEF_ENTROPY_HIGH` | 0.7 | utils/belief_entropy.py:461 | — | external |
 | `HUGINN_BELIEF_ENTROPY_LOW` | 0.3 | utils/belief_entropy.py:458 | — | external |
 | `HUGINN_BENCHMARK_MODE_PROMPT` | '' | agent/core.py:899 | cli/rcb_runner.py:72 | code-set |
-| `HUGINN_BING_API_KEY` | '' | tools/web_search_tool.py:286, tools/web_search_tool.py:377 | — | external |
-| `HUGINN_BING_ENDPOINT` | https://api.bing.microsoft.com/v7.0/search | tools/web_search_tool.py:381 | — | external |
+| `HUGINN_BING_API_KEY` | '' | tools/web_search_tool.py:285, tools/web_search_tool.py:376 | — | external |
+| `HUGINN_BING_ENDPOINT` | https://api.bing.microsoft.com/v7.0/search | tools/web_search_tool.py:380 | — | external |
 | `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:521 | — | external |
 | `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:200 | — | external |
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 1 | autoloop/hypothesis_loop.py:1995 | — | external |
-| `HUGINN_BRAVE_API_KEY` | '' | tools/web_search_tool.py:288, tools/web_search_tool.py:419 | — | external |
+| `HUGINN_BRAVE_API_KEY` | '' | tools/web_search_tool.py:287, tools/web_search_tool.py:418 | — | external |
 | `HUGINN_BUDGET_APPROVAL` | off | budget_pause.py:168 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:192, cli/rcb_runner.py:60, +21 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +11 处, autoloop/variant_gen.py:310, tools/evidence_reducer.py:147, tools/observation_pack.py:273 | code-set |
@@ -69,7 +69,7 @@
 | `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:938 | cli/rcb_runner.py:346 | code-set |
 | `HUGINN_DEEPSEEK_OCR_PATH` | '' | tools/vision_describe_tool.py:67 | — | external |
 | `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:158, middleware/ws_governance.py:169, routes/agents.py:83, +2 处 | — | external |
-| `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:582, tools/literature/_http.py:40, tools/web_search_tool.py:61 | tools/web_search_tool.py:849, tools/web_search_tool.py:854 | code-set |
+| `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/_offline.py:22 | tools/web_search_tool.py:848, tools/web_search_tool.py:853 | code-set |
 | `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:775 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
 | `HUGINN_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | knowledge/store.py:36 | — | external |
@@ -122,7 +122,7 @@
 | `HUGINN_KG_ENABLED` | '' | config.py:787 | — | external |
 | `HUGINN_KG_TOP_K` | 10 | config.py:789 | — | external |
 | `HUGINN_LAZY_CLI` | '' | cli/main.py:137 | — | external |
-| `HUGINN_LITERATURE_TIMEOUT` | 20 | tools/literature/_http.py:29 | — | external |
+| `HUGINN_LITERATURE_TIMEOUT` | 20 | tools/literature/_http.py:31 | — | external |
 | `HUGINN_LLM_LIKELIHOOD` | 0 | metacog/llm_likelihood.py:42, metacog/llm_likelihood.py:270 | metacog/llm_likelihood.py:273, metacog/llm_likelihood.py:278, metacog/llm_likelihood.py:281 | code-set |
 | `HUGINN_LLM_LIKELIHOOD_INTERVAL` | 5 | metacog/llm_likelihood.py:52 | metacog/llm_likelihood.py:285, metacog/llm_likelihood.py:287 | code-set |
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:161 | — | external |
@@ -236,7 +236,7 @@
 | `HUGINN_SANDBOX_MAX_FILE_BYTES` | '' | security/sandbox.py:181 | — | external |
 | `HUGINN_SANDBOX_MAX_PROCESSES` | '' | security/sandbox.py:184 | — | external |
 | `HUGINN_SANDBOX_RELAX` | '' | security/sandbox.py:244 | — | external |
-| `HUGINN_SEARXNG_URL` | '' | tools/web_search_tool.py:290, tools/web_search_tool.py:461 | — | external |
+| `HUGINN_SEARXNG_URL` | '' | tools/web_search_tool.py:289, tools/web_search_tool.py:460 | — | external |
 | `HUGINN_SECRET_BACKEND` | env | security/secrets.py:439 | — | external |
 | `HUGINN_SELF_GOAL_SYNTHESIS` | 0 | autoloop/engine_reflect.py:922 | — | external |
 | `HUGINN_SELF_MODEL` | 0 | autoloop/engine_reflect.py:3014 | — | external |
@@ -291,7 +291,7 @@
 | `HUGINN_VISION_BASE_URL` | '' | vision/local_decoder.py:119 | — | external |
 | `HUGINN_VISION_MODEL` | '' | vision/local_decoder.py:118 | — | external |
 | `HUGINN_VISION_PROVIDER` | '' | vision/local_decoder.py:109 | — | external |
-| `HUGINN_WEB_SEARCH_TIMEOUT` | 15 | tools/web_search_tool.py:50 | — | external |
+| `HUGINN_WEB_SEARCH_TIMEOUT` | 15 | tools/web_search_tool.py:51 | — | external |
 | `HUGINN_WECOM_TOKEN` | '' | routes/bot.py:285, routes/bot.py:303 | — | external |
 | `HUGINN_WETLAB_ENDPOINT` | '' | tools/wetlab_rpc_tool.py:426 | — | external |
 | `HUGINN_WM_SUMMARIZE` | rule | config.py:847, memory/session.py:234 | memory/session.py:407, memory/session.py:424, memory/session.py:434, +1 处, memory/session.py:378, memory/session.py:468 | code-set |

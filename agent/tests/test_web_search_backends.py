@@ -160,3 +160,28 @@ class TestNewBackendsParsing:
     def test_searxng_without_url_returns_none(self):
         tool = WebSearchTool()
         assert tool._search_searxng("q", 5) is None
+
+
+class TestOfflineShortCircuit:
+    """HUGINN_DISABLE_WEB_SEARCH=1 时 search / fetch 两个入口都短路, 不发真实网络.
+
+    锁定"离线即真离线"契约: 两个入口都必须拦, 且不得触网.
+    """
+
+    @staticmethod
+    def _no_network(*a, **k):
+        raise AssertionError("offline 模式不应发起真实网络请求")
+
+    def test_search_entry_short_circuits(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_DISABLE_WEB_SEARCH", "1")
+        monkeypatch.setattr("urllib.request.urlopen", self._no_network)
+        res = WebSearchTool().execute({"action": "search", "query": "li2o band gap"}, None)
+        assert res.success is False
+        assert res.data["search_engine"] == "disabled"
+
+    def test_fetch_entry_short_circuits(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_DISABLE_WEB_SEARCH", "1")
+        monkeypatch.setattr("urllib.request.urlopen", self._no_network)
+        res = WebSearchTool().execute({"action": "fetch", "url": "https://example.com"}, None)
+        assert res.success is False
+        assert res.data["chunks"] == []
