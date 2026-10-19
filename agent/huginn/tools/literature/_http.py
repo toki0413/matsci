@@ -75,7 +75,28 @@ def _build_opener() -> urllib.request.OpenerDirector:
 
 
 # 模块级 opener, 进程内复用连接
-_OPENER = _build_opener()
+#
+# 离线门禁收在这个唯一漏斗上: literature 层所有真实网络打开 (search / enrich /
+# pdf / crawl) 最终都经 `_OPENER.open` —— 一部分走 `_http_request` -> `_fetch_sync`,
+# 另一部分 (各源的 XML/atom/分页抓取) 直接调用. 之前只在少数调用点 (如
+# `call()` / `_do_search`) 设守卫, 内部路径可绕过它静默联网 (正是 CI 挂起的根因).
+# 在此统一拦截后, 任何调用路径 —— 含未来新增 —— 都不会在被声明离线时发真实请求.
+class _GuardedOpener:
+    """`_OPENER` 的离线守卫代理, 只转发 `.open`."""
+
+    __slots__ = ("_opener",)
+
+    def __init__(self, opener: urllib.request.OpenerDirector) -> None:
+        self._opener = opener
+
+    def open(self, fullurl: Any, *args: Any, **kwargs: Any) -> Any:
+        if _disabled():
+            url = getattr(fullurl, "full_url", None) or str(fullurl)
+            raise HttpError(0, _DISABLED_HINT, url)
+        return self._opener.open(fullurl, *args, **kwargs)
+
+
+_OPENER = _GuardedOpener(_build_opener())
 
 
 # ---- 限速 / 重试 配置 ----
