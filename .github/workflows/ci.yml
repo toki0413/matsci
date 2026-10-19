@@ -118,6 +118,13 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_config_migration.py -q -o addopts=""
 
+      # 论文复现评测门禁 (NatureBench-mini)：把"核心科研路径的 eval"接进 CI 闭环。
+      # 覆盖 10 题 Nature 系复现的题集结构、三段容差 SOTA 判分、best_score 跟踪，
+      # 以及 suite 注册未漂移。纯数值/纯逻辑，无网络/无 key，快速 fail。
+      - name: NatureBench repro gate
+        working-directory: agent
+        run: python -m pytest tests/test_naturebench.py -q -o addopts=""
+
       # 技能池弥合门禁：evolution SkillTemplate ⇄ 声明式 SkillRegistry 的同步契约
       # （转换可注册、不覆盖 presets、统计 round-trip 供元技能闭环）。
       - name: Skill pool bridge guard
@@ -147,6 +154,22 @@ jobs:
       - name: Credential gateway guard
         working-directory: agent
         run: python -m pytest tests/test_arch_credential_gateway.py -q -o addopts=""
+
+      # 低熵治理门禁：治理门自身的熵 —— `test_arch_*.py` 存在却未登记 (孤儿门)、
+      # ci.yml guard step 指向不存在的测试 (悬空门)、门数萎缩。weightless
+      # (stdlib + 可选 yaml, 不 import huginn.*)，先于重型套件快速 fail。
+      - name: Governance gate registry guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_gate_registry.py -q -o addopts=""
+
+      # 接线契约回归门 (棘轮): contract_audit 的既有发现多为「候选登记」
+      # (同轴惩罚/跨模块同名/词表漂移 — 工具自述"只提示不判死", 测试断言其存在),
+      # 故「零发现」门不可行。按基线冻结当前 47 项, 只拦**基线外的新发现** ——
+      # 新面/新字段漏接线在 PR 阶段即红; 修好旧项无需改基线 (多余条目被忽略)。
+      # 重生成基线: python -m huginn.cli.contract_audit --update-baseline
+      - name: MECE wiring-contract guard (ratchet)
+        working-directory: agent
+        run: python -m huginn.cli.contract_audit --check --baseline tests/golden/mece_findings_baseline.txt
 
       - name: Run full test suite
         env:

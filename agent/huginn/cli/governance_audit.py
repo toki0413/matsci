@@ -116,6 +116,7 @@ GOVERNANCE_META_TESTS = frozenset(
 WORKFLOW_TRIGGER_SPECS: dict[str, tuple[str, ...]] = {
     "audit-regression.yml": ("schedule", "workflow_dispatch"),
     "ci.yml": ("push", "pull_request"),
+    "coverage-matrix.yml": ("pull_request", "push", "schedule", "workflow_dispatch"),
     "desktop.yml": ("push", "pull_request", "workflow_dispatch"),
     "release.yml": ("push",),
     "skill-audit.yml": ("schedule", "workflow_dispatch", "push", "pull_request"),

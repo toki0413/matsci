@@ -3,11 +3,11 @@
 自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
 登记 `tests/test_arch_*.py` 门族 + 显式治理元门 (`GOVERNANCE_META_TESTS`)、`.github/workflows/*.yml` **全部工作流**的 python guard step (pytest 与 `python -m huginn.<module>`)、非 pytest 工程门 (`ENGINEER_GATE_SPECS`)、仓根 + `agent/` 两份 `.pre-commit-config.yaml` 本地门, 以及命名子系统的**能力锚点** (`CAPABILITY_SPECS`: 开关默认值/承载模块/不变量测试) 的对齐面: **孤儿门** (存在却未登记)、**悬空门** (指向不存在的测试/模块/step)、**能力锚点脱节** (开关默认翻转/承载模块或回归测试缺失) 在此显形。只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`.
 
-## 工作流 (workflows) — 6
+## 工作流 (workflows) — 7
 
 被扫描的**全部**工作流文件 (门可能因整个工作流被删/改名而集体消失; 数下限棘轮 `workflow_floor` 兜底).
 
-`audit-regression.yml`, `ci.yml`, `desktop.yml`, `release.yml`, `skill-audit.yml`, `stress-test.yml`
+`audit-regression.yml`, `ci.yml`, `coverage-matrix.yml`, `desktop.yml`, `release.yml`, `skill-audit.yml`, `stress-test.yml`
 
 ## 工作流触发器 (workflow triggers)
 
@@ -17,6 +17,7 @@
 |---|---|---|---|
 | `audit-regression.yml` | `schedule`, `workflow_dispatch` | `schedule`, `workflow_dispatch` | 一致 |
 | `ci.yml` | `pull_request`, `push` | `pull_request`, `push` | 一致 |
+| `coverage-matrix.yml` | `pull_request`, `push`, `schedule`, `workflow_dispatch` | `pull_request`, `push`, `schedule`, `workflow_dispatch` | 一致 |
 | `desktop.yml` | `pull_request`, `push`, `workflow_dispatch` | `pull_request`, `push`, `workflow_dispatch` | 一致 |
 | `release.yml` | `push` | `push` | 一致 |
 | `skill-audit.yml` | `pull_request`, `push`, `schedule`, `workflow_dispatch` | `pull_request`, `push`, `schedule`, `workflow_dispatch` | 一致 |
@@ -170,11 +171,11 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |
-| 工作流数下限 | `tests/test_arch_gate_registry.py` | 权威 | 6 | 6 | 0 | Governance gate registry guard |
+| 工作流数下限 | `tests/test_arch_gate_registry.py` | 权威 | 6 | 7 | 1 | Governance gate registry guard |
 | 快速失败门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
-| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 122 | 0 | Governance gate registry guard |
+| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 126 | 4 | Governance gate registry guard |
 | 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
 | prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 13 | 13 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
