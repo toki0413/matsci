@@ -43,8 +43,8 @@
 
 | 开关 | 已注册 | 默认 | 消费点 |
 |---|---|---|---|
-| `anti_hacking_reward` | False | `None` | huginn/autoloop/engine_reflect.py:2967 |
-| `intent_scope_reward` | False | `None` | huginn/autoloop/engine_reflect.py:2968 |
+| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2967 |
+| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2968 |
 
 ## 工作流面: 执行 mode 分发 vs planner 提示面
 
@@ -67,15 +67,16 @@
 
 | 来源 | 集合 |
 |---|---|
+| prompt_builder._MODE_INSTRUCTIONS | `chat`, `code`, `extreme`, `fusion`, `research` |
 | session 恢复白名单 | `chat`, `extreme`, `plan`, `research` |
 | critique._VALID_MODES | `chat`, `plan`, `research` |
 | core._LONG_HORIZON_MODES | `extreme`, `research` |
 | task_state 注释 | `chat`, `plan`, `research` |
 | set_mode() 运行时实参 | `chat`, `plan`, `research` |
 
-- 词表并集: `chat`, `extreme`, `plan`, `research`
-- 有 prompt 段却无 `set_mode()` 生产者 (死提示词候选): — 无
-- 被 `set_mode()` 却无 prompt 段 (无提示词的模式): `chat`, `plan`, `research`
+- 词表并集: `chat`, `code`, `extreme`, `fusion`, `plan`, `research`
+- 有 prompt 段却无 `set_mode()` 生产者 (死提示词候选): `code`, `extreme`, `fusion`
+- 被 `set_mode()` 却无 prompt 段 (无提示词的模式): `plan`
 - 各词表互相一致: ⚠️ 否
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
@@ -1304,9 +1305,10 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 工作流 mode 未在 planner 提示暴露: dynamic_workflow
 - 工作流 mode 未在 planner 提示暴露: frame_inspect
 - 工作流 mode 未在 planner 提示暴露: trace_inspect
-- 模式被 set_mode 却无 prompt 段: chat
+- 模式有 prompt 段却无 set_mode 生产者: code
+- 模式有 prompt 段却无 set_mode 生产者: extreme
+- 模式有 prompt 段却无 set_mode 生产者: fusion
 - 模式被 set_mode 却无 prompt 段: plan
-- 模式被 set_mode 却无 prompt 段: research
 - 模式: 各来源词表互相不一致
 - 词汇: 同名跨模块定义值域不一致: KINDS @ huginn/catalog/models.py:20, huginn/evolution/semantic_distiller.py:39, huginn/research/cspace.py:32
 - 词汇: 同名跨模块定义值域不一致: Severity @ huginn/execution/physics_auditor.py:24, huginn/metacog/failure_modes.py:27
