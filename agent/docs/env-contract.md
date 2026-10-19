@@ -108,7 +108,7 @@
 | `HUGINN_HILS_ATTENTION` | 1 | memory/longterm.py:729 | memory/longterm.py:2232, memory/longterm.py:2234 | code-set |
 | `HUGINN_HINT_COORDINATOR` | 1 | cli/rcb_step2.py:194 | — | external |
 | `HUGINN_HPC_HOST` | '' | cli/availability.py:53 | — | external |
-| `HUGINN_HTTP_QPS` | 5 | tools/literature/_http.py:85 | — | external |
+| `HUGINN_HTTP_QPS` | 5 | tools/literature/_http.py:106 | — | external |
 | `HUGINN_HUMAN_CHECKPOINT_PHASES` | '' | autoloop/phase_gate.py:31 | — | external |
 | `HUGINN_INHERIT_STABLE_PRINCIPLES` | 1 | memory/longterm.py:1903 | — | external |
 | `HUGINN_ISING_RERANK` | 1 | memory/longterm.py:620 | memory/longterm.py:2177, memory/longterm.py:2179 | code-set |

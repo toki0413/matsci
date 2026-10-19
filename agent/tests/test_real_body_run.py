@@ -16,8 +16,22 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from huginn.experimental.body_swap_discrimination import _synthetic_papers
 from huginn.experimental.real_body_run import run_real_body
+
+
+@pytest.fixture(autouse=True)
+def _offline_literature(monkeypatch: pytest.MonkeyPatch) -> None:
+    """强制本模块离线: 与 web_search_tool 共用 HUGINN_DISABLE_WEB_SEARCH 开关.
+
+    本文件宣称"不碰网络", 但 benchmark_lookup 的缺度补全检索
+    (_do_complement_retrieval) 缺省会对 15 个学术源发起真实网络请求 —— 既违背
+    文件自身的离线契约, 也会在 CI 上因单个源挂起而超时. 全局禁用后该步降级为
+    "未执行", 主生产路径 (抽取/取证/一致性/共识) 仍完整跑通.
+    """
+    monkeypatch.setenv("HUGINN_DISABLE_WEB_SEARCH", "1")
 
 
 def _subset(system: str = "Li2O", property_: str = "band_gap", seed: int = 5):
