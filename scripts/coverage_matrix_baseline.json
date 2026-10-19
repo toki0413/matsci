@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "surfaces": {
+    "LLM output → Tool calls": {
+      "level": "Critical",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 2,
+      "blue": 2
+    },
+    "LLM output → Lean code gen": {
+      "level": "Critical",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 1,
+      "blue": 3
+    },
+    "`/sandbox/execute` endpoint": {
+      "level": "Critical",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 3,
+      "blue": 3
+    },
+    "HPC SSH client": {
+      "level": "High",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 1,
+      "blue": 4
+    },
+    "Config files (API keys)": {
+      "level": "Medium",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 1,
+      "blue": 4
+    },
+    "RAG document store": {
+      "level": "Medium",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 2,
+      "blue": 3
+    },
+    "Lean package supply chain": {
+      "level": "Medium",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 1,
+      "blue": 1
+    },
+    "MCP server subprocesses": {
+      "level": "Medium",
+      "coverage": "dual",
+      "rank": 2,
+      "red": 1,
+      "blue": 3
+    }
+  }
+}

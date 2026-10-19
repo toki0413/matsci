@@ -25,6 +25,10 @@ from typing import Any
 
 import httpx
 
+from huginn.tools._offline import web_search_disabled
+
+from ._http import HttpError
+
 logger = logging.getLogger(__name__)
 
 MINERU_BASE = "https://mineru.net/api/v4"
@@ -38,6 +42,44 @@ _DEFAULT_TIMEOUT = 60 * 60 * 6  # 6 小时
 
 # 终态集合
 _TERMINAL = {"done", "failed"}
+
+_MINERU_DISABLED_HINT = (
+    "mineru parse client disabled by HUGINN_DISABLE_WEB_SEARCH (offline); "
+    "no real network issued."
+)
+
+
+class _GuardedHTTPX:
+    """MinerU 网络唯一漏斗 —— 离线时在出口拦住所有 httpx 调用.
+
+    与 literature/_http.py 的 `_GuardedOpener` 是同一套设计: 守卫只落在网络出口,
+    因此 submit_batch 的 POST/PUT、query_batch / download_and_extract 的 GET,
+    以及未来新增的调用点, 都无法在被声明离线时真实联网. 此前 MinerU 直接用
+    `httpx.*`, 不在 `_OPENER` 漏斗之内, 声明 `HUGINN_DISABLE_WEB_SEARCH=1` 时
+    仍可能真实请求 —— 与 literature 层"离线即真离线"的不变量相矛盾.
+    """
+
+    __slots__ = ()
+
+    @staticmethod
+    def _check(url: Any) -> None:
+        if web_search_disabled():
+            raise HttpError(0, _MINERU_DISABLED_HINT, str(url))
+
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        self._check(url)
+        return httpx.get(url, **kwargs)
+
+    def post(self, url: str, **kwargs: Any) -> httpx.Response:
+        self._check(url)
+        return httpx.post(url, **kwargs)
+
+    def put(self, url: str, **kwargs: Any) -> httpx.Response:
+        self._check(url)
+        return httpx.put(url, **kwargs)
+
+
+_HTTPX = _GuardedHTTPX()
 
 
 def _resolve_keys(api_keys: list[str] | None) -> list[str]:
@@ -128,7 +170,7 @@ def submit_batch(
     if extra_formats:
         payload["extra_formats"] = extra_formats
 
-    r = httpx.post(
+    r = _HTTPX.post(
         f"{MINERU_BASE}/file-urls/batch",
         headers=_headers(token),
         json=payload,
@@ -152,7 +194,7 @@ def submit_batch(
         try:
             with open(spec.path, "rb") as fp:
                 # 文档明确说: 上传时无须设置 Content-Type
-                up = httpx.put(url, content=fp, timeout=300)
+                up = _HTTPX.put(url, content=fp, timeout=300)
             if up.status_code == 200:
                 info["uploaded"] = True
             else:
@@ -174,7 +216,7 @@ def query_batch(
         raise RuntimeError("MinerU API key 未配置")
     token = keys[0] if len(keys) == 1 else keys[int(time.time()) % len(keys)]
 
-    r = httpx.get(
+    r = _HTTPX.get(
         f"{MINERU_BASE}/extract-results/batch/{batch_id}",
         headers=_headers(token),
         timeout=60,
@@ -220,7 +262,7 @@ def download_and_extract(
 ) -> Path:
     """下载 zip 并解压到 target_dir/, 返回 target_dir."""
     target_dir.mkdir(parents=True, exist_ok=True)
-    r = httpx.get(zip_url, timeout=300)
+    r = _HTTPX.get(zip_url, timeout=300)
     r.raise_for_status()
     data = r.content
     if keep_zip:

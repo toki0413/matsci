@@ -612,6 +612,7 @@ class AutoloopEngine:
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
         # 在 validate→learn 做 adversarial 审查, 有 high 发现则阻断.
+        from huginn.autoloop.blue_team import BlueTeamReviewer
         from huginn.autoloop.phase_gate import MathEvidenceChecker
         from huginn.autoloop.red_team import RedTeamReviewer
 
@@ -622,6 +623,9 @@ class AutoloopEngine:
                 # 未配置 verification 槽时退化为同模型审查, 行为不变.
                 critic_model=self.verification_model,
             ),
+            # 红/蓝对偶: 红队找反驳, 蓝队断言被声明的控制真正在位 (来源信任 /
+            # 冗余校验 / 守卫完整性). 确定性规则, 无 LLM 依赖.
+            blue_reviewer_fn=BlueTeamReviewer(),
             math_checker=MathEvidenceChecker(graph=self.hypothesis_graph),
         )
         # 元认知层: 信息隔离 / 方法族注册 / 等价性审计 / 阻塞-重启协议.

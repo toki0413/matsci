@@ -129,3 +129,52 @@
 | Phase 3 | Containerized tool execution (Docker / gVisor) | Low |
 | Phase 3 | Encrypted audit logs with HSM-backed signing | Low |
 | Phase 3 | Formal verification of sandbox policy in Lean | Research |
+
+---
+
+## 6. Red / Blue Coverage Matrix
+
+> 概念框架借鉴 *Awesome Cyber Security University* 的分级红/蓝双轨路径:
+> **红队 = 进攻探针**(主动尝试突破边界, 验证"攻击被阻止"),
+> **蓝队 = 防守校验**(断言控制按预期生效, 验证"控制不静默失效").
+> 二者必须成对 —— 只有单边覆盖的攻击面是治理盲区。
+>
+> 下表把 §1 的每个攻击面按两轴归位到**现有测试资产**(文件级), 并显式标出缺口。
+> 这是诊断视图, 不重复行为验证; 归类依据各测试模块的定位。
+
+| 攻击面 (§1) | 层级 | 红队探针 (进攻) | 蓝队校验 (防守) | 缺口 |
+|---|---|---|---|---|
+| LLM output → Tool calls | Critical | `test_prompt_security.py`, `test_math_prompt_injection.py` | `test_tool_base_permissions.py`, `test_permissions_granularity.py` | — |
+| LLM output → Lean code gen | Critical | `tests/security/pentest_lean_supply_chain.py` (不健全证明标记) | `test_lean.py`, `test_lean_e2e.py`, `test_lean_pipeline.py` | — |
+| `/sandbox/execute` endpoint | Critical | `tests/security/fuzz_api.py`, `tests/security/pentest_api_security.py`, `test_security_penetration.py` | `test_code_act_sandbox.py`, `test_container_executor.py`, `test_bash_rust_sandbox.py` | — |
+| HPC SSH client | High | `tests/security/pentest_hpc_injection.py` | `test_hpc_privilege_patterns.py`, `test_hpc_host_keys.py`, `test_hpc_job_management.py`, `test_hpc_client.py` | — |
+| Config files (API keys) | Medium | `tests/security/pentest_config_secrets.py` | `test_credential_store.py`, `test_credential_bridge.py`, `test_config_encryption.py`, `test_privacy.py` | — |
+| RAG document store | Medium | `tests/security/pentest_api_security.py` (SSRF/ingest), `tests/security/fuzz_api.py` | `test_vector_store_crud.py`, `test_vector_store_search.py`, `test_crypto.py` | — |
+| Lean package supply chain | Medium | `tests/security/pentest_lean_supply_chain.py` | `tests/security/pentest_lean_supply_chain.py` (真实项目完整性回归) | — |
+| MCP server subprocesses | Medium | `tests/security/pentest_mcp_subprocess.py` | `test_mcp_command_validation.py`, `test_mcp_resilience.py`, `test_arch_mcp_governance.py` | — |
+
+**读法**: 中间两列是文件级归位; "缺口"列即后续补测方向, 优先级按 §1 的风险等级。
+本轮把 HPC / Config / MCP 三个红队缺口与 Lean 供应链的红/蓝双缺口一并补齐, 表内
+8 个攻击面现全部双轨覆盖 (dual)。新增资产是 `tests/security/pentest_*` 探针族:
+
+- `pentest_hpc_injection.py` — HPC 五个注入入口 (job-name / path / command 等);
+- `pentest_config_secrets.py` — 配置密钥泄漏面 (明文落盘 / 日志 / 进程列表);
+- `pentest_mcp_subprocess.py` — MCP 子进程命令白名单 + 配置脱敏;
+- `pentest_lean_supply_chain.py` — Lean 不健全证明标记 + 未固定依赖 (红/蓝同源:
+  同文件既做进攻探针, 又对真实项目做完整性回归)。
+
+这张表由 `scripts/coverage_matrix_audit.py` 只读扫描, 断链引用与覆盖回退在 CI 里
+直接变红 (见 `.github/workflows/coverage-matrix.yml`)。补测原则不变: 给缺口面加
+**进攻探针**, 而非只堆防守断言。
+
+### 6.1 评审层对偶 (Red / Blue Reviewer)
+
+§6 主表按 §1 攻击面归位, 而"红/蓝双轨"同样落在 **autoloop 阶段门** 的评审层:
+
+- 红队 `RedTeamReviewer` (`huginn/autoloop/red_team.py`) — 对抗性反驳 (方法学 / 混杂 /
+  可证伪性);
+- 蓝队 `BlueTeamReviewer` (`huginn/autoloop/blue_team.py`) — 断言被声明的控制真正
+  在位且不静默失效 (来源信任 / 冗余控制 / 守卫完整性)。
+
+两者独立注入 `PhaseGateHook` 的 `reviewer_fn` 与 `blue_reviewer_fn`, 任一拒绝即
+`rejected`; `tests/test_red_team.py` 与 `tests/test_blue_team.py` 成对锁定两侧行为。

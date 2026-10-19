@@ -187,8 +187,8 @@ run_tests_isolated.sh
 test_failed.txt
 test_results.jsonl
 test_skipped_env.txt
-# demo_comprehensive.py 是 audit-regression.yml (G38) 的 quickstart fixture,
-# 必须 tracked —— 误忽略会让该 CI 步骤恒失败. 故不在此忽略.
+# 注意: demo_comprehensive.py 是 audit-regression.yml (G38) 的 quickstart fixture,
+# 必须保持 tracked —— 不要在此忽略它 (曾因被忽略导致该 cron 步骤恒失败).
 conversation_history/
 lammps_dem_lammps_out/
 

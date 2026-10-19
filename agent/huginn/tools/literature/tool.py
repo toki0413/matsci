@@ -575,6 +575,16 @@ class LiteratureTool(HuginnTool):
     # ── search ──────────────────────────────────────────────
 
     async def _do_search(self, args: LiteratureInput, context: ToolContext | None = None) -> ToolResult:
+        # 离线/CI 环境下不得发起真实网络检索. `call()` 已在入口拦一次, 但本函数
+        # 也被 _do_summarize / benchmark_lookup 的缺度补全 (_do_complement_retrieval)
+        # 等内部路径直接调用 (experimental 的 run_real_body 便绕过 `call()`),
+        # 故在 15 源扇出前再判一次, 杜绝"声明离线却静默联网".
+        if _disabled():
+            return ToolResult(
+                data={"error": "literature_tool disabled", "hint": _DISABLED_HINT},
+                success=False,
+                error=_DISABLED_HINT,
+            )
         query = (args.query or "").strip()
         if not query:
             return ToolResult(

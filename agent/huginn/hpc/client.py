@@ -105,11 +105,21 @@ def _validate_module_name(module: str) -> None:
 
 
 def _validate_env_var(key: str, value: str) -> None:
-    """Env var keys must be valid identifiers; values must not inject newlines."""
+    """Env var keys must be valid identifiers; values must be shell-inert.
+
+    Env values are rendered unquoted as ``export KEY=<value>`` in the job
+    script, so a value carrying ``$(...)`` / backticks / ``;`` would execute
+    on the compute node — the same shell-injection surface ``_validate_command``
+    guards for the job command. Reject the same sequences here so the two
+    entry points stay consistent.
+    """
     if not key or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
         raise ValueError(f"Invalid env var name: {key!r}")
-    if any(c in value for c in ("\n", "\r", "\0")):
-        raise ValueError(f"Env var {key!r} value contains forbidden characters")
+    for seq in (*_COMMAND_FORBIDDEN, ";"):
+        if seq in value:
+            raise ValueError(
+                f"Env var {key!r} value contains forbidden sequence {seq!r}"
+            )
 
 
 # 优先级到数值的映射; SLURM priority 范围 0-10000, 这里取经验值
