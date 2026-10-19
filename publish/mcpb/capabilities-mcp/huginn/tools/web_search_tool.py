@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.tools._offline import web_search_disabled
 from huginn.tools.base import HuginnTool, ToolProfile
 
 logger = logging.getLogger(__name__)
@@ -58,9 +59,7 @@ def _search_timeout() -> float:
 
 def _web_search_disabled() -> bool:
     """离线 / CI 环境里直接禁用 web_search, 避免 15s × N 次兜底 timeout 累计."""
-    return os.environ.get("HUGINN_DISABLE_WEB_SEARCH", "").lower() in (
-        "1", "true", "yes", "on",
-    )
+    return web_search_disabled()
 
 
 def _is_ssrf_blocked(url: str) -> tuple[bool, str]:

@@ -481,6 +481,8 @@ class PhaseGateHook:
     gate 而不补证据. 人工 checkpoint 仍硬阻断 — 由 human_checkpoint_phases
     显式配置或从 shared state 懒查.
     可选注入 reviewer_fn 做主观审查 (LLM 调用), 不传就只做硬性检查.
+    可选注入 blue_reviewer_fn 做对称的防守校验 (红/蓝对偶): 红队找反驳, 蓝队
+    断言被声明的控制真正在位. 两者独立, 任一拒绝即 rejected.
     可选注入 math_checker 做论文级 Dempster-Shafer 证据合成, 在硬性证据
     齐全后评估数学证据是否足够支撑阶段推进.
     """
@@ -489,11 +491,13 @@ class PhaseGateHook:
         self,
         config: PhaseGateConfig | None = None,
         reviewer_fn: ReviewerFn | None = None,
+        blue_reviewer_fn: ReviewerFn | None = None,
         math_checker: MathCheckerFn | None = None,
         human_checkpoint_phases: set[tuple[str, str]] | None = None,
     ):
         self.config = config or PhaseGateConfig()
         self._reviewer_fn = reviewer_fn
+        self._blue_reviewer_fn = blue_reviewer_fn
         self._math_checker = math_checker
         # None = 评估时懒查 shared state; 显式传 set 时以调用方为准 (测试用)
         self._human_checkpoint_phases = human_checkpoint_phases
@@ -624,6 +628,23 @@ class PhaseGateHook:
                     )
             except Exception:  # 防御: 评审器异常则跳过
                 logger.debug("reviewer fn failed", exc_info=True)
+
+        # 蓝队防守校验 (可选, 与红队对偶). 红队找反驳, 蓝队断言控制在位且有效.
+        # 独立于红队; 挂了不阻断 (降级放行).
+        if self._blue_reviewer_fn is not None:
+            try:
+                approved, reason = self._blue_reviewer_fn(from_phase, to_phase, evidence)
+                if not approved:
+                    return PhaseGate(
+                        from_phase=from_phase,
+                        to_phase=to_phase,
+                        status="rejected",
+                        required_evidence=required,
+                        feedback=f"Blue-team 拒绝: {reason}",
+                        reviewer="blue_reviewer",
+                    )
+            except Exception:  # 防御: 防守校验器异常则跳过
+                logger.debug("blue reviewer fn failed", exc_info=True)
 
         return PhaseGate(
             from_phase=from_phase,

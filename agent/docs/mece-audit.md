@@ -43,8 +43,8 @@
 
 | 开关 | 已注册 | 默认 | 消费点 |
 |---|---|---|---|
-| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2967 |
-| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2968 |
+| `anti_hacking_reward` | False | `None` | huginn/autoloop/engine_reflect.py:2967 |
+| `intent_scope_reward` | False | `None` | huginn/autoloop/engine_reflect.py:2968 |
 
 ## 工作流面: 执行 mode 分发 vs planner 提示面
 
@@ -67,21 +67,20 @@
 
 | 来源 | 集合 |
 |---|---|
-| prompt_builder._MODE_INSTRUCTIONS | `chat`, `code`, `extreme`, `fusion`, `research` |
 | session 恢复白名单 | `chat`, `extreme`, `plan`, `research` |
 | critique._VALID_MODES | `chat`, `plan`, `research` |
 | core._LONG_HORIZON_MODES | `extreme`, `research` |
 | task_state 注释 | `chat`, `plan`, `research` |
 | set_mode() 运行时实参 | `chat`, `plan`, `research` |
 
-- 词表并集: `chat`, `code`, `extreme`, `fusion`, `plan`, `research`
-- 有 prompt 段却无 `set_mode()` 生产者 (死提示词候选): `code`, `extreme`, `fusion`
-- 被 `set_mode()` 却无 prompt 段 (无提示词的模式): `plan`
+- 词表并集: `chat`, `extreme`, `plan`, `research`
+- 有 prompt 段却无 `set_mode()` 生产者 (死提示词候选): — 无
+- 被 `set_mode()` 却无 prompt 段 (无提示词的模式): `chat`, `plan`, `research`
 - 各词表互相一致: ⚠️ 否
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 281 站点, 按值域 Jaccard 重叠自动聚成 256 簇 (其中闭集簇 167). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 283 站点, 按值域 Jaccard 重叠自动聚成 258 簇 (其中闭集簇 169). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -89,7 +88,7 @@
 |---|---|---|
 | `KINDS` | ⚠️ 异 | `huginn/catalog/models.py:20`(7), `huginn/evolution/semantic_distiller.py:39`(4), `huginn/research/cspace.py:32`(3) |
 | `Severity` | ⚠️ 异 | `huginn/execution/physics_auditor.py:24`(3), `huginn/metacog/failure_modes.py:27`(3) |
-| `_DEFAULT_MCP_ALLOWED_COMMANDS` | ✅ 同 | `huginn/config.py:316`(5), `huginn/mcp_client.py:67`(5) |
+| `_DEFAULT_MCP_ALLOWED_COMMANDS` | ✅ 同 | `huginn/config.py:317`(5), `huginn/mcp_client.py:67`(5) |
 | `_EXPENSIVE_TOOLS` | ✅ 同 | `huginn/hooks/research_safety_hook.py:18`(8), `huginn/research_budget.py:24`(8) |
 | `_KINDS` | ⚠️ 异 | `huginn/share.py:21`(5), `huginn/workflows/registry.py:25`(4) |
 | `_NEGATIVE_WORDS` | ⚠️ 异 | `huginn/persona_emotion.py:147`(22), `huginn/tools/design/gap_analysis_tool.py:30`(31) |
@@ -136,6 +135,7 @@
 | `lammps_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
 | `learn` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/ontology/actions.py::class ActionCategory` |
 | `local` | `huginn/cli/lazy_loader.py::CommandType`, `huginn/models/router.py::TaskT`, `huginn/routes/tunnels.py::TunnelType` |
+| `main` | `huginn/lean/supply_chain.py::_FLOATING_REFS`, `huginn/plugins/prompt_segments.py::_APPLICABLE_PATHS` |
 | `math` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/cli/rcb_utils.py::_DOMAIN_KNOWN` |
 | `measure` | `huginn/autoloop/hypothesis_semantic.py::_DIMENSION_LABELS`, `huginn/memory/anchor.py::ANCHOR_KINDS` |
 | `memory` | `huginn/export_share.py::ALL_COMPONENTS`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES`, `huginn/runtime/context_router.py::CONTEXT_SEGMENTS` |
@@ -1304,10 +1304,9 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 工作流 mode 未在 planner 提示暴露: dynamic_workflow
 - 工作流 mode 未在 planner 提示暴露: frame_inspect
 - 工作流 mode 未在 planner 提示暴露: trace_inspect
-- 模式有 prompt 段却无 set_mode 生产者: code
-- 模式有 prompt 段却无 set_mode 生产者: extreme
-- 模式有 prompt 段却无 set_mode 生产者: fusion
+- 模式被 set_mode 却无 prompt 段: chat
 - 模式被 set_mode 却无 prompt 段: plan
+- 模式被 set_mode 却无 prompt 段: research
 - 模式: 各来源词表互相不一致
 - 词汇: 同名跨模块定义值域不一致: KINDS @ huginn/catalog/models.py:20, huginn/evolution/semantic_distiller.py:39, huginn/research/cspace.py:32
 - 词汇: 同名跨模块定义值域不一致: Severity @ huginn/execution/physics_auditor.py:24, huginn/metacog/failure_modes.py:27

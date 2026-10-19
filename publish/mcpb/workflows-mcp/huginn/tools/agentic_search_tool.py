@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
+from huginn.tools._offline import web_search_disabled
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
 
@@ -579,9 +580,7 @@ class AgenticSearchTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = AgenticSearchInput(**args)  # schema 错误冒泡, 不吞
-        if os.environ.get("HUGINN_DISABLE_WEB_SEARCH", "").lower() in (
-            "1", "true", "yes", "on",
-        ):
+        if web_search_disabled():
             return ToolResult(
                 data={"question": input_data.question, "findings": [], "answer": ""},
                 success=False,
