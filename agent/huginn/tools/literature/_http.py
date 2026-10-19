@@ -19,6 +19,8 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
+from huginn.tools._offline import web_search_disabled
+
 logger = logging.getLogger(__name__)
 
 _USER_AGENT = "HuginnAgent/1.0 (materials-science-research; mailto:user@example.com)"
@@ -36,10 +38,8 @@ def _timeout() -> float:
 
 
 def _disabled() -> bool:
-    """离线/CI 环境直接禁用, 跟 web_search_tool 用同一个开关."""
-    return os.environ.get("HUGINN_DISABLE_WEB_SEARCH", "").lower() in (
-        "1", "true", "yes", "on",
-    )
+    """离线/CI 环境直接禁用, 跟 web_search_tool 用同一个开关 (单一解析点)."""
+    return web_search_disabled()
 
 
 _DISABLED_HINT = (
