@@ -1337,13 +1337,19 @@ BUDGET_SPECS: tuple[dict, ...] = (
     # ── 豁免/白名单面 (放宽即静默削弱对应门) ──
     # 值取**当前条数** (上限): 往豁免名单里加一条 = 扩大免检面, 必须显式抬高台账 value
     # (可见决策). 探针 weightless (tomllib / regex), 不 import 被测模块.
+    #
+    # 显式决策 (2026-10-20, PR #56): 4 → 7. PR #49 把本地脚手架 _scratch/ 一并带入
+    # master, 其中硬编码了真实的 InternLM key (已在 .gitleaks.toml 按前缀指纹豁免, 待
+    # 后台吊销轮换); research_outputs 里的两枚假设指纹 hex 被 generic-api-key 熵判据
+    # 误报, 亦按具体值豁免. 这 3 条均为按值豁免 (非按目录路径整体放宽), 且 _scratch/
+    # 已加入 .gitignore 不再入库, 属已核实的一次性收敛而非持续放宽.
     {
         "id": "gitleaks_allowlist",
         "name": "gitleaks 密钥豁免数",
         "path": ".gitleaks.toml",
         "root": "repo",
         "source": "ceiling",
-        "value": 4,
+        "value": 7,
         "probe": "toml_list_len",
         "key_path": ("allowlist", "regexes"),
         "owner_gate": "Governance gate registry guard",
