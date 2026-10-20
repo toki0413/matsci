@@ -11,18 +11,22 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import json
 import pkgutil
 
 import pytest
 
 from huginn import protocols
-from huginn.protocols.ir import ChatRequest, Message, PartKind
+from huginn.protocols.anthropic_messages import AnthropicMessagesRequest
+from huginn.protocols.chat_completions import ChatCompletionsRequest
+from huginn.protocols.ir import ChatRequest, Message, PartKind, Role, ToolCall
 from huginn.protocols.openai_responses import ResponsesRequest
 from huginn.protocols.primitives import flatten_namespace, unflatten_namespace
 from huginn.protocols.stream import (
     ChunkKind,
     Marker,
     MarkerKind,
+    OutputChunk,
     OutputParser,
     ProtocolRequest,
     Token,
@@ -47,12 +51,12 @@ def _protocol_request_classes() -> list[type]:
 
 
 def _unpaired(classes: list[type]) -> list[tuple[str, tuple[str, ...]]]:
-    """偏半个协议的类: 缺 convert 或 chunk_generator (含仍为抽象方法的情形)."""
+    """偏半个协议的类: 缺 convert / chunk_generator / output_parser 任一."""
     bad: list[tuple[str, tuple[str, ...]]] = []
     for cls in classes:
         missing = [
             name
-            for name in ("convert", "chunk_generator")
+            for name in ("convert", "chunk_generator", "output_parser")
             if getattr(cls, name, None) is None
             or getattr(getattr(cls, name), "__isabstractmethod__", False)
             or name in getattr(cls, "__abstractmethods__", frozenset())
@@ -92,6 +96,135 @@ def test_output_chunk_seq_is_monotonic():
     assert chunks[-1] is finishes[0], "FINISH 不居尾"
 
 
+# ──────────────────── 三协议归一 (共享 IR) ────────────────────
+
+
+def _requests_by_protocol() -> list[ProtocolRequest]:
+    """三协议同一诉求 (带工具调用) 的等价请求, 各自 convert()."""
+    return [
+        ResponsesRequest(
+            {
+                "input": [
+                    {"type": "message", "role": "user", "content": "hi"},
+                    {
+                        "type": "function_call",
+                        "name": "lookup",
+                        "arguments": "{}",
+                        "call_id": "c1",
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "c1",
+                        "output": "42",
+                    },
+                ],
+                "max_output_tokens": 16,
+            }
+        ),
+        ChatCompletionsRequest(
+            {
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    {"role": "tool", "tool_call_id": "c1", "content": "42"},
+                ],
+                "max_completion_tokens": 16,
+            }
+        ),
+        AnthropicMessagesRequest(
+            {
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": "c1", "name": "lookup", "input": {}}
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "c1", "content": "42"}
+                        ],
+                    },
+                ],
+                "max_tokens": 16,
+            }
+        ),
+    ]
+
+
+def _canonical_records(request: ProtocolRequest) -> list[tuple[str, tuple, tuple]]:
+    """把 convert() 结果投影成协议无关的归一形态 (角色 / 文本 / 工具调用名)."""
+    ir = request.convert()
+    return [
+        (
+            str(message.role),
+            tuple(part.text for part in message.parts),
+            tuple(call.name for call in message.tool_calls),
+        )
+        for message in ir.messages
+    ]
+
+
+def test_all_three_protocols_normalize_to_same_ir():
+    """Responses / Chat Completions / Anthropic 三协议归一出**同一份** IR 投影."""
+    records = [_canonical_records(r) for r in _requests_by_protocol()]
+    assert records[0] == records[1] == records[2], records
+    # 投影确含 user 文本 + 工具调用 + 工具输出 (非空转).
+    assert records[0] == [
+        (Role.USER, ("hi",), ()),
+        (Role.ASSISTANT, (), ("lookup",)),
+        (Role.TOOL, ("42",), ()),
+    ]
+
+
+def test_all_three_protocols_share_one_ir_type():
+    """每个协议的 convert() 产出同一 ``ChatRequest`` 类型 (IR 唯一性硬判)."""
+    irs = [r.convert() for r in _requests_by_protocol()]
+    assert all(type(ir) is ChatRequest for ir in irs)
+
+
+# ──────────────────── 流式/非流式同口径 (每协议) ────────────────────
+
+
+def _sample_chunks() -> list[OutputChunk]:
+    """一段可被三协议共同消费的有序 chunk 流 (文本 + 工具调用 + FINISH)."""
+    call = _tool_call_kwargs()
+    return [
+        OutputChunk(ChunkKind.TEXT, seq=0, text="hel"),
+        OutputChunk(ChunkKind.TEXT, seq=1, text="lo"),
+        OutputChunk(ChunkKind.TOOL_CALL_DONE, seq=2, tool_call=call),
+        OutputChunk(ChunkKind.FINISH, seq=3, finish_reason="tool_calls"),
+    ]
+
+
+def _tool_call_kwargs() -> ToolCall:
+    return ToolCall(call_id="c1", name="lookup", arguments='{"q": 1}')
+
+
+def test_every_protocol_pairs_stream_and_final():
+    """每协议: 流式事件非空 + 非流式终态为 dict (成对两口径都存在)."""
+    for request in _requests_by_protocol():
+        generator = request.chunk_generator()
+        events = list(generator.generate(_sample_chunks()))
+        final = request.final_payload(_sample_chunks())
+        assert events, f"{type(request).__name__} 未产出任何流式事件"
+        assert isinstance(final, dict) and final, f"{type(request).__name__} 终态载荷为空"
+        # 两种口径必须都反映同一段文本 (同源映射, 不是各写一套).
+        assert "hello" in json.dumps(final, ensure_ascii=False)
+
+
 # IR 里不得出现的协议名 / 供应商专属 / tokenizer 概念 (镜像 SPEC §3.1 不变量).
 _FORBIDDEN_IR_TOKENS = (
     "responses",
@@ -113,7 +246,7 @@ def _walk_keys(node: object) -> list[str]:
         for key, value in node.items():
             keys.append(str(key))
             keys.extend(_walk_keys(value))
-    elif isinstance(node, (list, tuple)):
+    elif isinstance(node, list | tuple):
         for item in node:
             keys.extend(_walk_keys(item))
     return keys
@@ -206,20 +339,98 @@ def test_generic_token_cannot_forge_marker():
     ), "特殊 token 未触发标记 —— 解析器标记匹配本身失效"
 
 
-def test_half_tool_turn_is_rejected():
-    """只给工具调用不给输出: convert() 拒绝, 而非产出半截 tool 轮次."""
-    payload = {
-        "input": [
+@pytest.mark.parametrize(
+    "protocol_req",
+    [
+        ResponsesRequest(
             {
-                "type": "function_call",
-                "name": "lookup",
-                "arguments": "{}",
-                "call_id": "c1",
+                "input": [
+                    {
+                        "type": "function_call",
+                        "name": "lookup",
+                        "arguments": "{}",
+                        "call_id": "c1",
+                    }
+                ]
             }
-        ]
+        ),
+        ChatCompletionsRequest(
+            {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        AnthropicMessagesRequest(
+            {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "c1",
+                                "name": "lookup",
+                                "input": {},
+                            }
+                        ],
+                    }
+                ],
+                "max_tokens": 16,
+            }
+        ),
+    ],
+    ids=["responses", "chat_completions", "anthropic"],
+)
+def test_half_tool_turn_is_rejected(protocol_req: ProtocolRequest):
+    """只给工具调用不给输出: 三协议 convert() 一律拒绝, 不产出半截 tool 轮次."""
+    with pytest.raises(ValueError):
+        protocol_req.convert()
+
+
+def test_anthropic_orphan_tool_result_is_rejected():
+    """Anthropic 红队: 无对应 tool_use 的 tool_result 不得静默进 IR."""
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "ghost", "content": "x"}
+                ],
+            }
+        ],
+        "max_tokens": 16,
     }
     with pytest.raises(ValueError):
-        ResponsesRequest(payload).convert()
+        AnthropicMessagesRequest(payload).convert()
+
+
+def test_sse_framing_is_protocol_owned():
+    """SSE 线格式由协议自持: OpenAI 系 ``data:``, Anthropic 带 ``event:`` 名."""
+    from huginn.protocols.stream import ProtocolEvent
+
+    openai_frame = ChatCompletionsRequest({"messages": []}).sse_frame(
+        ProtocolEvent("chat.completion.chunk", {"x": 1})
+    )
+    assert openai_frame.startswith("data: ") and openai_frame.endswith("\n\n")
+    assert ChatCompletionsRequest({"messages": []}).sse_terminator() == "data: [DONE]\n\n"
+
+    anthropic_frame = AnthropicMessagesRequest({"messages": []}).sse_frame(
+        ProtocolEvent("message_start", {"type": "message_start"})
+    )
+    assert anthropic_frame.startswith("event: message_start\ndata: ")
+    assert anthropic_frame.endswith("\n\n")
+    assert AnthropicMessagesRequest({"messages": []}).sse_terminator() == ""
 
 
 def test_orphan_protocol_class_is_caught():
@@ -230,10 +441,14 @@ def test_orphan_protocol_class_is_caught():
             return ChatRequest(messages=())
 
     # 只实现 convert → 抽象方法仍在 → 不可实例化 (编译期成对保证).
-    assert HalfRequest.__abstractmethods__ == frozenset({"chunk_generator"})
+    assert HalfRequest.__abstractmethods__ == frozenset(
+        {"chunk_generator", "output_parser"}
+    )
     with pytest.raises(TypeError):
         HalfRequest()  # type: ignore[abstract]
 
-    assert _unpaired([HalfRequest]) == [("HalfRequest", ("chunk_generator",))]
+    assert _unpaired([HalfRequest]) == [
+        ("HalfRequest", ("chunk_generator", "output_parser"))
+    ]
     # 真实子类不受影响 (无假阳).
-    assert _unpaired([ResponsesRequest]) == []
+    assert _unpaired(_protocol_request_classes()) == []

@@ -57,12 +57,21 @@ _ENV_HELPER = re.compile(
     r'(?:,\s*(["\']?[^"\')]*["\']?))?'
 )
 
+# ``env_defaults`` 的第二读端访问器. 函数名不含 "env", 躲过了 ``_ENV_HELPER``,
+# 曾形成扫描盲区 (变量只在 ENV_REGISTRY 登记、不进 SCHEMA 也没人发现). 这里单列
+# 一条兜住, 全部按**裸读**计数 (它们绕过了 SCHEMA 的类型与默认值).
+_ENV_DEFAULTS_HELPER = re.compile(
+    r'\b(get_str|get_bool|get_int|get_float|get_path|registry_default)\(\s*'
+    r'["\'](HUGINN_[A-Z0-9_]+)["\']\s*'
+    r'(?:,\s*(?:default\s*=\s*)?(["\']?[^"\')]*["\']?))?'
+)
+
 # env_access 的规范访问器 —— 配置面读端的**目标态** (见 :mod:`huginn.env_access`).
 # 它们虽也以字符串传变量名 (被 ``_ENV_HELPER`` 命中), 但**不是裸读**: 治理棘轮
 # 只惩罚不经 env_access 的读点. 不排除它们的话, "把读点迁到 env_access" 反而会
 # 推高计数, 与 env_schema 中"迁移后应下调基线"的约定直接矛盾.
 _CANONICAL_ACCESSORS = frozenset(
-    {"env_str", "env_int", "env_float", "env_bool", "env_json", "env_is_set"}
+    {"env_str", "env_int", "env_float", "env_bool", "env_json", "env_is_set", "env_resolve"}
 )
 
 
@@ -117,6 +126,18 @@ def _scan_file(path: Path, ops: dict):
             text[: m.start()].count("\n") + 1,
             fn in _CANONICAL_ACCESSORS,
         )
+
+    # env_defaults 的第二读端访问器: 绕过 SCHEMA, 一律按裸读计. 定义模块自身的
+    # docstring 示例不是真实读点, 跳过该文件.
+    if path.name != "env_defaults.py":
+        for m in _ENV_DEFAULTS_HELPER.finditer(text):
+            _record(
+                m.group(2),
+                "read",
+                _clean(m.group(3)) if m.group(3) is not None else "",
+                text[: m.start()].count("\n") + 1,
+                False,
+            )
 
 
 def build_inventory(root: Path | None = None) -> dict[str, dict]:

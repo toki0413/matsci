@@ -4603,8 +4603,19 @@ def _payload_required_fields(cls: ast.ClassDef) -> set[str]:
     return req
 
 
-def _payload_models(root: Path) -> dict[str, set[str]]:
-    """全仓 Pydantic 模型名 → 必填字段集 (继承链 fixpoint 解析)."""
+def _class_base_names(cls: ast.ClassDef) -> set[str]:
+    """类定义的直接基名集合 (剥掉泛型参数)."""
+    return {ast.unparse(b).split("[")[0].strip() for b in cls.bases}
+
+
+def _collect_payload_classes(root: Path) -> dict[str, ast.ClassDef]:
+    """全仓类名 → 类定义, 同名时**优先保留 Pydantic 模型**.
+
+    仓内允许同名类 (如 `protocols/ir.py` 的 IR dataclass 与 `routes/schemas.py`
+    的请求模型都叫 `ChatRequest`); 裸 `setdefault` 会让先扫到的非模型类遮蔽模型,
+    使该模型静默退出字段审计. 故同名时以「直接基类是 BaseModel/BaseSettings」
+    的一方为准, 双方同级则保留先到者.
+    """
     classes: dict[str, ast.ClassDef] = {}
     for py in _iter_py(root):
         if "/tests/" in py.as_posix():
@@ -4613,8 +4624,20 @@ def _payload_models(root: Path) -> dict[str, set[str]]:
         if tree is None:
             continue
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                classes.setdefault(node.name, node)
+            if not isinstance(node, ast.ClassDef):
+                continue
+            prev = classes.get(node.name)
+            if prev is None or (
+                not (_class_base_names(prev) & _PAYLOAD_MODEL_BASES)
+                and (_class_base_names(node) & _PAYLOAD_MODEL_BASES)
+            ):
+                classes[node.name] = node
+    return classes
+
+
+def _payload_models(root: Path) -> dict[str, set[str]]:
+    """全仓 Pydantic 模型名 → 必填字段集 (继承链 fixpoint 解析)."""
+    classes = _collect_payload_classes(root)
     models: dict[str, set[str]] = {}
     changed = True
     while changed:
@@ -6657,16 +6680,7 @@ def _http_field_models(root: Path) -> tuple[dict[str, set[str]], set[str]]:
     与请求负载面的 `_payload_models` (只取**必填**字段) 不同: 本面核「读/发未声明」,
     需要模型的完整字段面, 故单列。`extra=allow` 的模型收到未知键不会丢, 其发送面开放。
     """
-    classes: dict[str, ast.ClassDef] = {}
-    for py in _iter_py(root):
-        if "/tests/" in py.as_posix():
-            continue
-        tree = _parse(py)
-        if tree is None:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                classes.setdefault(node.name, node)
+    classes = _collect_payload_classes(root)
     models: dict[str, set[str]] = {}
     changed = True
     while changed:
@@ -6674,7 +6688,7 @@ def _http_field_models(root: Path) -> tuple[dict[str, set[str]], set[str]]:
         for name, cls in classes.items():
             if name in models:
                 continue
-            bases = {ast.unparse(b).split("[")[0].strip() for b in cls.bases}
+            bases = _class_base_names(cls)
             if not (bases & _PAYLOAD_MODEL_BASES) and not (bases & set(models)):
                 continue
             fields = _http_field_own_fields(cls)

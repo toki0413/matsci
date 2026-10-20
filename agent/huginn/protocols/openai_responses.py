@@ -26,8 +26,10 @@ from huginn.protocols.ir import (
     ToolResult,
 )
 from huginn.protocols.primitives import (
+    CONTROL_MARKERS,
     flatten_namespace,
     normalize_image,
+    parse_tool_call_interval,
     resolve_tool_call_id,
     unflatten_namespace,
     validate_json_schema,
@@ -36,7 +38,6 @@ from huginn.protocols.stream import (
     ChunkGenerator,
     ChunkKind,
     Marker,
-    MarkerKind,
     OutputChunk,
     OutputParser,
     ProtocolEvent,
@@ -48,16 +49,10 @@ __all__ = [
     "RESPONSES_MARKERS",
     "ResponsesChunkGenerator",
     "ResponsesRequest",
-    "default_tool_call_parser",
 ]
 
-# huginn 自定义的响应控制标记 (非 DeepSeek DSML). 适配器可整体覆盖.
-RESPONSES_MARKERS: tuple[Marker, ...] = (
-    Marker("<|reasoning|>", MarkerKind.REASONING_OPEN),
-    Marker("<|/reasoning|>", MarkerKind.REASONING_CLOSE),
-    Marker("<|tool_calls|>", MarkerKind.TOOL_CALLS_OPEN),
-    Marker("<|/tool_calls|>", MarkerKind.TOOL_CALLS_CLOSE),
-)
+# huginn 自定义的响应控制标记 (非 DeepSeek DSML), 三协议共用同一份定义.
+RESPONSES_MARKERS: tuple[Marker, ...] = CONTROL_MARKERS
 
 # apply_patch 型自定义工具硬编码为内置函数形状 (对齐 convert.rs 的硬编码语义).
 APPLY_PATCH_SCHEMA: dict = {
@@ -75,27 +70,6 @@ _ROLE_MAP: dict[str, Role] = {
 }
 
 
-def default_tool_call_parser(raw: str) -> ToolCall:
-    """工具调用区间文本 -> ToolCall.
-
-    区间语法 (本适配器约定): JSON 对象 ``{"name": .., "arguments": <obj|str>,
-    "call_id": ..?, "namespace": ..?}``.
-    """
-    payload = json.loads(raw) if raw.strip() else {}
-    if not isinstance(payload, dict):
-        raise ValueError("tool call 区间必须是 JSON 对象")
-    arguments = payload.get("arguments", "")
-    if not isinstance(arguments, str):
-        arguments = json.dumps(arguments, ensure_ascii=False)
-    seed = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return ToolCall(
-        call_id=resolve_tool_call_id(payload.get("call_id"), seed=seed),
-        name=flatten_namespace(payload.get("namespace"), str(payload.get("name", ""))),
-        arguments=arguments,
-        namespace=payload.get("namespace"),
-    )
-
-
 class ResponsesRequest(ProtocolRequest):
     """``/v1/responses`` 请求: convert() + chunk_generator() 成对绑定."""
 
@@ -105,7 +79,7 @@ class ResponsesRequest(ProtocolRequest):
         *,
         markers: tuple[Marker, ...] = RESPONSES_MARKERS,
         allow_web_search: bool = False,
-        tool_call_parser: ToolCallParser = default_tool_call_parser,
+        tool_call_parser: ToolCallParser = parse_tool_call_interval,
     ) -> None:
         if not isinstance(payload, dict):
             raise ValueError("Responses 请求体必须是 JSON 对象")
@@ -192,11 +166,15 @@ class ResponsesRequest(ProtocolRequest):
     def _items(self) -> list[dict]:
         raw = self._payload.get("input")
         if raw is None:
-            return []
+            raise ValueError("input 必须提供")
         if isinstance(raw, str):
+            if not raw.strip():
+                raise ValueError("input 不能为空字符串")
             return [{"type": "message", "role": "user", "content": raw}]
         if not isinstance(raw, list):
             raise ValueError("input 必须是字符串或 input 项列表")
+        if not raw:
+            raise ValueError("input 必须是非空列表")
         for item in raw:
             if not isinstance(item, dict):
                 raise ValueError("每个 input 项必须是 JSON 对象")
@@ -363,6 +341,13 @@ class ResponsesChunkGenerator(ChunkGenerator):
         )
         for chunk in chunks:
             yield from self._map(chunk, state)
+
+    def final_payload(self, chunks: Iterable[OutputChunk]) -> dict:
+        """非流式: 终端事件 (``response.completed``) 的 data 即完整响应体."""
+        last: ProtocolEvent | None = None
+        for event in self.generate(chunks):
+            last = event
+        return last.data if last is not None else {}
 
     # ── 内部 ────────────────────────────────────────────────────────
 

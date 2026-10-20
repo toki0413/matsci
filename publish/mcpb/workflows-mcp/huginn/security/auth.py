@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import HTTPException, Request, Security, WebSocket, status
 from fastapi.security import APIKeyHeader
 
+from huginn.env_access import env_resolve
 from huginn.security.rbac import (
     Role,
     SessionManager,
@@ -78,7 +79,9 @@ _singleton_lock = threading.Lock()
 
 
 def _jwt_secret() -> str | None:
-    return os.environ.get("HUGINN_JWT_SECRET") or os.environ.get("HUGINN_API_KEY") or None
+    # 派生链 (HUGINN_JWT_SECRET ← HUGINN_API_KEY) 在 env_schema 声明, env_resolve 解析;
+    # 未设置时回落 API key, 二者皆空则 None.
+    return env_resolve("HUGINN_JWT_SECRET") or None
 
 
 def get_user_store():

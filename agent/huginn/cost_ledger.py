@@ -26,15 +26,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-try:
-    from huginn.env_defaults import get_bool, get_float
-except ImportError:  # pragma: no cover - env_defaults 始终存在
-    def get_float(*a, **k):  # type: ignore
-        return float(k.get("default", 0.0))
-
-    def get_bool(*a, **k):  # type: ignore
-        return bool(k.get("default", False))
-
+from huginn.env_access import env_float
 
 __all__ = [
     "CostDimension",
@@ -114,10 +106,10 @@ class CostLedger:
     def from_env(cls) -> CostLedger:
         """从 HUGINN_COST_* env 读取换算率构建."""
         return cls(
-            usd_per_1k_tokens=get_float("HUGINN_COST_USD_PER_1K_TOKENS", default=0.0),
-            usd_per_cpu_hour=get_float("HUGINN_COST_USD_PER_CPU_HOUR", default=0.0),
-            usd_per_gpu_hour=get_float("HUGINN_COST_USD_PER_GPU_HOUR", default=0.0),
-            usd_per_call=get_float("HUGINN_COST_USD_PER_CALL", default=0.0),
+            usd_per_1k_tokens=env_float("HUGINN_COST_USD_PER_1K_TOKENS"),
+            usd_per_cpu_hour=env_float("HUGINN_COST_USD_PER_CPU_HOUR"),
+            usd_per_gpu_hour=env_float("HUGINN_COST_USD_PER_GPU_HOUR"),
+            usd_per_call=env_float("HUGINN_COST_USD_PER_CALL"),
         )
 
     # ── 记账 ─────────────────────────────────────────────────────

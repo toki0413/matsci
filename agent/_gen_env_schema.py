@@ -1,11 +1,15 @@
 """One-off generator for huginn/env_schema.py (scratch; deleted after use)."""
 from __future__ import annotations
 
+import difflib
 import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/workspace/agent")
+_AGENT_ROOT = Path(__file__).resolve().parent
+_TARGET = _AGENT_ROOT / "huginn" / "env_schema.py"
+
+sys.path.insert(0, str(_AGENT_ROOT))
 
 from huginn.cli import config_audit as ca  # noqa: E402
 from huginn.feature_flags import FeatureFlags as FF  # noqa: E402
@@ -95,6 +99,42 @@ raw_read_sites = sum(
 
 _SCOPE_ORDER = ["deployment", "feature", "tuning", "internal", "legacy"]
 
+# 值域约束 (人工审定, 不可由扫描推导): name -> {"choices": (...)} 或
+# {"range": (lo, hi)}. 与 huginn/env_schema.py 中手改的约束保持一致 —— 生成器
+# 忠实重放约束, 避免再生成时静默丢失. 只对语义确定者标注, 不臆测.
+CONSTRAINTS: dict[str, dict] = {
+    "HUGINN_CONTAINER_RUNTIME": {"choices": ("none", "docker", "podman", "apptainer", "singularity")},
+    "HUGINN_GOVERNANCE_DEFAULT_DECISION": {"choices": ("allow", "deny")},
+    "HUGINN_COMPACT_KIND": {"choices": ("local", "remote", "remote_v2")},
+    "HUGINN_WM_SUMMARIZE": {"choices": ("rule", "ngram", "llm", "hybrid")},
+    "HUGINN_TORCH_DEVICE": {"choices": ("cpu", "cuda", "mps")},
+    "HUGINN_MODEL_TIER": {"choices": ("full", "balanced", "minimal")},
+    "HUGINN_BELIEF_ENTROPY_HIGH": {"range": (0.0, 1.0)},
+    "HUGINN_BELIEF_ENTROPY_LOW": {"range": (0.0, 1.0)},
+    "HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD": {"range": (0.0, 1.0)},
+    "HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD": {"range": (0.0, 1.0)},
+    "HUGINN_PM_C_MIN": {"range": (0.0, 1.0)},
+    "HUGINN_RATE_LIMIT_WARNING_THRESHOLD": {"range": (0.0, 1.0)},
+    "HUGINN_RECALL_NOISE_FLOOR": {"range": (0.0, 1.0)},
+    "HUGINN_VALIDATE_FAIL_THRESHOLD": {"range": (0.0, 1.0)},
+    "HUGINN_SESSION_TTL_HOURS": {"range": (1.0, None)},
+    "HUGINN_THREAD_POOL_SIZE": {"range": (1.0, None)},
+}
+
+
+def _constraint_repr(name: str) -> str:
+    """渲染 name 的约束 kwargs 片段 (无约束返回空串)."""
+    c = CONSTRAINTS.get(name)
+    if not c:
+        return ""
+    parts: list[str] = []
+    if "choices" in c:
+        parts.append("choices=(" + ", ".join(f'"{v}"' for v in c["choices"]) + ")")
+    if "range" in c:
+        lo, hi = c["range"]
+        parts.append(f"range=({lo!r}, {hi!r})")
+    return ", " + ", ".join(parts)
+
 L: list[str] = []
 A = L.append
 A('"""HUGINN_* 环境变量的单一权威声明 (配置面的声明层).')
@@ -118,6 +158,12 @@ A("    default: 权威默认值 (字符串形式; 空串 = 无默认)")
 A("    scope:   deployment(部署相关: 凭证/路径/模型) | feature(开关)")
 A("             | tuning(数值调参) | internal(内部常量) | legacy(迁移残余)")
 A("    status:  live | deprecated(旧变量名, 仅为向后兼容保留)")
+A("    choices: 值域闭集合 (可选); None = 不约束. str 型按大小写不敏感比较.")
+A("    range:   数值闭区间 (lo, hi) (可选); 端点 None = 该侧开放; 仅 int/float 型.")
+A("")
+A("值域约束 (choices / range) 与默认值同为声明面的一部分: 约束声明的默认值必须")
+A("自身满足约束 (tests/test_env_surface_governance.py 硬判). 只对语义确定的变量标注,")
+A("不臆测 (无依据的约束比无约束更坏).")
 A("")
 A("改本文件后跑 `python -m huginn.cli.config_audit` 复核; 新增变量必须先登记,")
 A("再在代码里经 env_access 读取 —— 不允许再出现未经声明的裸读.")
@@ -136,6 +182,9 @@ A("    type: str")
 A("    default: str")
 A("    scope: str")
 A('    status: str = "live"')
+A("    # 值域约束 (可选): 与环境取值比较, 违反时读端回落 default (见 huginn.env_access).")
+A("    choices: tuple[str, ...] | None = None")
+A("    range: tuple[float | None, float | None] | None = None")
 A("")
 A("")
 A("# 单一权威声明表 (按作用域分组, 组内按名排序).")
@@ -148,7 +197,8 @@ for scope in _SCOPE_ORDER:
     for name in members:
         typ, default, _s, status = entries[name]
         suffix = "" if status == "live" else f', status="{status}"'
-        A(f'    "{name}": EnvSpec("{typ}", "{default}", "{scope}"{suffix}),')
+        crepr = _constraint_repr(name)
+        A(f'    "{name}": EnvSpec("{typ}", "{default}", "{scope}"{suffix}{crepr}),')
 A("}")
 A("")
 A("")
@@ -166,11 +216,30 @@ for name in sorted(dispersion):
 A("}")
 A("")
 
-Path("/workspace/agent/huginn/env_schema.py").write_text("\n".join(L), encoding="utf-8")
+content = "\n".join(L)
+# 安全阀: 本生成器从**扫描代码**推断 type/scope; 读点迁移到 env_access 后扫描会
+# 丢失默认值, 直接覆盖会把已收敛的人工审定声明**降级** (type/scope 漂移). 故默认
+# 只打 diff, 显式 `--write` 才落盘 —— 防止再次静默损坏单一权威源.
+if "--write" in sys.argv:
+    _TARGET.write_text(content, encoding="utf-8")
+    print(f"wrote {_TARGET}")
+else:
+    old = _TARGET.read_text(encoding="utf-8") if _TARGET.exists() else ""
+    diff = list(
+        difflib.unified_diff(
+            old.splitlines(),
+            content.splitlines(),
+            "current",
+            "regenerated",
+            lineterm="",
+        )
+    )
+    print("DRY-RUN (pass --write to apply). diff vs current env_schema.py:")
+    print("\n".join(diff) if diff else "  (identical)")
 
 from collections import Counter  # noqa: E402
 
-print("wrote", len(entries), "entries; raw_read_sites =", raw_read_sites)
+print("generated", len(entries), "entries; raw_read_sites =", raw_read_sites)
 print("by scope:", dict(Counter(v[2] for v in entries.values())))
 print("by type:", dict(Counter(v[0] for v in entries.values())))
 print("dispersion:", dispersion)

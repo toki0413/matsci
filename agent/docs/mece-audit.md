@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 283 站点, 按值域 Jaccard 重叠自动聚成 258 簇 (其中闭集簇 169). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 288 站点, 按值域 Jaccard 重叠自动聚成 262 簇 (其中闭集簇 173). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -153,6 +153,7 @@
 | `prompt` | `huginn/catalog/models.py::KINDS`, `huginn/cli/lazy_loader.py::CommandType` |
 | `provenance` | `huginn/routes/knowledge.py::ALLOWED_SOURCES`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES` |
 | `qe_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
+| `reasoning` | `huginn/models/router.py::TaskT`, `huginn/protocols/ir.py::class PartKind`, `huginn/protocols/stream.py::class ChunkKind`, `huginn/protocols/stream.py::class _Mode` |
 | `reflect` | `huginn/memory/reasoning.py::class ReasoningPhase`, `huginn/session_state.py::class SessionPhase` |
 | `relax` | `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
 | `report` | `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/session_state.py::class SessionPhase` |
@@ -168,7 +169,7 @@
 | `structure` | `huginn/autoloop/hypothesis_semantic.py::_DIMENSION_LABELS`, `huginn/evaluation/matworld_bench.py::CATEGORIES`, `huginn/memory/longterm.py::MATERIAL_CATEGORIES`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
 | `structure_tool` | `huginn/agent/context.py::_ALWAYS_ON_TOOLS`, `huginn/hooks/__init__.py::_WATCHED_TOOLS`, `huginn/tools/tool_cache.py::PREFETCH_SAFE_TOOLS` |
 | `table` | `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/perception/doc_types.py::class ElementType` |
-| `text` | `huginn/events/audit_log.py::_BODY_KEYS`, `huginn/perception/doc_types.py::class ElementType` |
+| `text` | `huginn/events/audit_log.py::_BODY_KEYS`, `huginn/perception/doc_types.py::class ElementType`, `huginn/protocols/ir.py::class PartKind`, `huginn/protocols/stream.py::class ChunkKind`, `huginn/protocols/stream.py::class _Mode` |
 | `timeout` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/core_types.py::class ErrorKind` |
 | `tool` | `huginn/catalog/models.py::KINDS`, `huginn/comms/contract.py::_AGENT_ROLES`, `huginn/memory/anchor.py::ANCHOR_KINDS` |
 | `tool_error` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/autoloop/hypothesis_semantic.py::_FAILURE_LABELS` |
@@ -611,7 +612,7 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 状态: `wired`=前端调用的方法与路径后端已注册; `method-mismatch`=路径已注册但无此方法 (405, 调用必失败); `no-source`=后端无此路径 (404 死链); `external`=绝对 URL / 非后端路径, 不计入
 
-端点: 后端注册 **365** 个 (实存 **365** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **146** 个; 前端调用点 **171** 处.
+端点: 后端注册 **368** 个 (实存 **368** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **146** 个; 前端调用点 **171** 处.
 
 ### 前端调用点 (按状态)
 
@@ -799,12 +800,12 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 ### 路由挂载面 (ALL_ROUTERS ↔ 各模块 APIRouter)
 
-- 已挂载: 58 个 router 变量
+- 已挂载: 59 个 router 变量
 - 未挂载: 无 —— 每个定义路由的模块都被 `ALL_ROUTERS` 挂上.
 
 ### 桌面零调用的路由模块 (候选, 只算已挂载模块)
 
-以下 23 个模块的端点**全部**无桌面调用 —— HTTP API 面向外部客户端 / CLI / 测试, 零调用是**结构性常态**, 非缺陷; 列此仅供「哪些面桌面根本没接」参考:
+以下 24 个模块的端点**全部**无桌面调用 —— HTTP API 面向外部客户端 / CLI / 测试, 零调用是**结构性常态**, 非缺陷; 列此仅供「哪些面桌面根本没接」参考:
 
 | 模块 | 端点数 |
 |---|---|
@@ -826,6 +827,7 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `huginn/routes/live_script.py` | 2 |
 | `huginn/routes/parameters.py` | 5 |
 | `huginn/routes/planner.py` | 6 |
+| `huginn/routes/protocols_api.py` | 3 |
 | `huginn/routes/search.py` | 1 |
 | `huginn/routes/system.py` | 1 |
 | `huginn/routes/tunnels.py` | 6 |
@@ -1125,7 +1127,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 
 违例类型: `handler-undeclared`=body-model 端点 handler 读 `body.<字段>` 而模型未声明 ⇒ AttributeError (死端点); `fe-undeclared`=body-model 端点前端发的 body 键模型未声明 ⇒ Pydantic 静默丢弃 (前端以为传了); `dict-key-unsent`=body-dict 端点 handler 下标读 `body["键"]` 而该端点前端调用从不发此键 ⇒ KeyError
 
-请求体端点: **135** 处; 违例: **0** 条.
+请求体端点: **138** 处; 违例: **0** 条.
 
 ### body-model 端点: 声明字段 vs handler 读取 vs 前端发送
 
@@ -1177,6 +1179,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 | `/bot/config` | `PUT` | — | — | 开放(无前端调用) |
 | `/bot/wechat/config` | `PUT` | — | — | 开放(无前端调用) |
 | `/catalog/{entry_id}` | `PATCH` | — | — | 开放(无前端调用) |
+| `/chat/completions` | `POST` | — | — | 开放(无前端调用) |
 | `/checkpoints` | `POST` | — | `path` | 封闭 |
 | `/clarifications/{question_id}/resolve` | `POST` | — | — | 开放(无前端调用) |
 | `/codebase/search` | `POST` | — | `query`, `top_k` | 封闭 |
@@ -1225,6 +1228,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 | `/memory/search` | `POST` | — | `category`, `query`, `tier`, `top_k` | 封闭 |
 | `/memory/typed` | `POST` | `content`, `memory_type`, `topic` | — | 开放(无前端调用) |
 | `/memory/{memory_id}` | `PATCH` | — | — | 开放(调用含展开) |
+| `/messages` | `POST` | — | — | 开放(无前端调用) |
 | `/onebot/v11/event` | `POST` | — | — | 开放(无前端调用) |
 | `/orchestrate` | `POST` | — | — | 开放(无前端调用) |
 | `/personalization/style/feedback` | `POST` | — | — | 开放(无前端调用) |
@@ -1243,6 +1247,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 | `/project-context` | `POST` | — | `content` | 封闭 |
 | `/research/grounding` | `POST` | — | — | 开放(无前端调用) |
 | `/research/run_program` | `POST` | — | — | 开放(无前端调用) |
+| `/responses` | `POST` | — | — | 开放(无前端调用) |
 | `/sandbox/execute` | `POST` | — | `code` | 封闭 |
 | `/side` | `POST` | — | `answer`, `id`, `question` | 封闭 |
 | `/skills/execute` | `POST` | — | `args`, `skill` | 封闭 |
@@ -1294,7 +1299,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 |---|---|---|
 | body-model handler 读取 | 26 | 0 |
 | body-model 前端发送 | 12 | 0 |
-| body-dict 下标读键 | 34 | 75 |
+| body-dict 下标读键 | 34 | 78 |
 
 诚实边界: 请求体类型静态解析不到 (跨模块 / 别名) 的端点跳过 (下界, 可能漏报); `extra=allow` 的模型发送面开放、跳过; body-dict 端点须有 ≥1 个**唯一命中**且 body 静态可辨的前端调用才核 (外部客户端 / 动态段并列命中 / 调用含展开均跳过); `body.get("k")` 的缺省 None 是**有意**可选语义, 不计入下标读; handler 经别名或 `**body` / 迭代读取 (如 `for k in body`) 无法逐字段归因, 跳过 (漏报); 反向(handler 读了前端从不发 / 模型声明无人接管) 不是违例, 只列候选.
 

@@ -7,7 +7,8 @@
 - ``ir``: 扁平共享 IR (唯一对话中间表示);
 - ``primitives``: 跨协议共享校验原语;
 - ``stream``: ``OutputChunk`` 顺序契约 + 两个成对 ABC + ``OutputParser`` KMP 状态机;
-- ``openai_responses``: Responses 协议适配器 (convert + chunk_generator 成对).
+- ``openai_responses`` / ``chat_completions`` / ``anthropic_messages``:
+  三协议适配器 (convert + chunk_generator 成对, 共享 IR / parser / 标记集).
 
 契约由 ``tests/test_protocol_contract.py`` 红蓝双轨硬判.
 """
@@ -15,6 +16,14 @@
 from __future__ import annotations
 
 from huginn.protocols import ir, primitives, stream
+from huginn.protocols.anthropic_messages import (
+    AnthropicMessagesChunkGenerator,
+    AnthropicMessagesRequest,
+)
+from huginn.protocols.chat_completions import (
+    ChatCompletionsChunkGenerator,
+    ChatCompletionsRequest,
+)
 from huginn.protocols.ir import (
     ChatRequest,
     ContentPart,
@@ -46,6 +55,10 @@ from huginn.protocols.stream import (
 
 __all__ = [
     "RESPONSES_MARKERS",
+    "AnthropicMessagesChunkGenerator",
+    "AnthropicMessagesRequest",
+    "ChatCompletionsChunkGenerator",
+    "ChatCompletionsRequest",
     "ChatRequest",
     "ChunkGenerator",
     "ChunkKind",

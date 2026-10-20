@@ -111,14 +111,14 @@ class TestValueBudget:
         assert "explore" in allowed and "converge" in allowed
         assert "verify" not in allowed
 
-    def test_default_budget_from_registry(self, monkeypatch):
-        """默认上限来自 env_defaults 注册表单一权威, 不内联硬编码."""
-        from huginn.env_defaults import registry_default
+    def test_default_budget_from_schema(self, monkeypatch):
+        """默认上限来自 env_schema 单一权威, 不内联硬编码."""
+        from huginn.env_access import env_default
 
         monkeypatch.delenv("HUGINN_VALUE_BUDGET_USD", raising=False)
         monkeypatch.delenv("HUGINN_VALUE_MIN_ROI", raising=False)
-        assert ValueBudget().base_budget_usd == registry_default("HUGINN_VALUE_BUDGET_USD")
-        assert ValueBudget().min_roi == registry_default("HUGINN_VALUE_MIN_ROI")
+        assert ValueBudget().base_budget_usd == env_default("HUGINN_VALUE_BUDGET_USD")
+        assert ValueBudget().min_roi == env_default("HUGINN_VALUE_MIN_ROI")
 
     def test_value_budget_env_override(self, monkeypatch):
         """HUGINN_VALUE_* env 覆盖注册表默认值."""
@@ -133,18 +133,18 @@ class TestValueBudget:
 
 
 class TestTokenBudgetDefaults:
-    def test_hard_limit_defaults_from_registry(self, monkeypatch):
-        """HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 默认值来自注册表."""
+    def test_hard_limit_defaults_from_schema(self, monkeypatch):
+        """HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 默认值来自 env_schema."""
         from huginn.autoloop.budget import TokenBudget
-        from huginn.env_defaults import registry_default
+        from huginn.env_access import env_default
 
         monkeypatch.delenv("HUGINN_TOKEN_BUDGET", raising=False)
         monkeypatch.delenv("HUGINN_COST_BUDGET", raising=False)
         monkeypatch.delenv("HUGINN_BUDGET_MAX_RENEWALS", raising=False)
         b = TokenBudget()
-        assert b.hard_limit_tokens == registry_default("HUGINN_TOKEN_BUDGET")
-        assert b.hard_limit_cost == registry_default("HUGINN_COST_BUDGET")
-        assert b.max_renewals == registry_default("HUGINN_BUDGET_MAX_RENEWALS")
+        assert b.hard_limit_tokens == env_default("HUGINN_TOKEN_BUDGET")
+        assert b.hard_limit_cost == env_default("HUGINN_COST_BUDGET")
+        assert b.max_renewals == env_default("HUGINN_BUDGET_MAX_RENEWALS")
 
     def test_hard_limit_env_override(self, monkeypatch):
         """env 覆盖能改变硬上限 (成本上限不再写死)."""

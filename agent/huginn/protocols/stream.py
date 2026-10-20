@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -109,10 +110,19 @@ ToolCallParser = Callable[[str], ToolCall]
 
 
 class ChunkGenerator(ABC):
-    """每协议唯一实现点: 只做 ``OutputChunk`` -> 协议事件 映射, 不做解析."""
+    """每协议唯一实现点: 只做 ``OutputChunk`` -> 协议事件 映射, 不做解析.
+
+    除流式事件序列 (``generate``) 外, 同类型须给出**非流式终态载荷**
+    (``final_payload``): 两者是同一 chunk 流的两种消费口径, 共用同一映射实现,
+    故成对绑定在同一类型上 (与 ``ProtocolRequest`` 的请求/响应成对同理).
+    """
 
     @abstractmethod
     def generate(self, chunks: Iterable[OutputChunk]) -> Iterator[ProtocolEvent]: ...
+
+    @abstractmethod
+    def final_payload(self, chunks: Iterable[OutputChunk]) -> dict:
+        """``OutputChunk`` 流 -> 非流式终态响应体 (协议原生 JSON 形状)."""
 
 
 class ProtocolRequest(ABC):
@@ -123,6 +133,23 @@ class ProtocolRequest(ABC):
 
     @abstractmethod
     def chunk_generator(self) -> ChunkGenerator: ...
+
+    @abstractmethod
+    def output_parser(self) -> OutputParser:
+        """本协议的解析器 (标记集 + 工具调用区间语法)."""
+
+    def final_payload(self, chunks: Sequence[OutputChunk]) -> dict:
+        """非流式响应体: 委托生成器的同口径实现 (流式/非流式共用同一映射)."""
+        return self.chunk_generator().final_payload(chunks)
+
+    def sse_frame(self, event: ProtocolEvent) -> str:
+        """SSE 线格式: 默认只发 ``data:`` 行 (OpenAI 系协议形状)."""
+        data = json.dumps(event.data, ensure_ascii=False)
+        return f"data: {data}\n\n"
+
+    def sse_terminator(self) -> str:
+        """流终止帧 (无则空串); OpenAI Chat Completions 用 ``data: [DONE]``."""
+        return ""
 
 
 class _MarkerAutomaton:

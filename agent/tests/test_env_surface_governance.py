@@ -166,3 +166,124 @@ def test_env_access_enforces_declaration_and_types():
     for name, spec in es.SCHEMA.items():
         ea.parse_value(spec.type, spec.default) if spec.default != "" else None
         assert ea.is_declared(name)
+
+
+# ── 缺口②: 值域约束 (choices / range) 自洽门 ──────────────────────────
+
+
+def test_declared_constraints_are_self_consistent():
+    """不变量 5: 约束声明的默认值必须自身满足该约束.
+
+    ``choices`` / ``range`` 与默认值同为声明面; 声明一个默认值即越界的约束, 等于
+    读端一启动就恒回落并刷告警. 本门把"约束 ↔ 默认值"钉死: 新增/改动约束后若默认
+    值越界 → 红.
+    """
+    bad: list[tuple[str, str]] = []
+    for name, spec in es.SCHEMA.items():
+        if spec.choices is None and spec.range is None:
+            continue
+        default = ea.parse_value(spec.type, spec.default)
+        reason = ea.constraint_violation(spec, default)
+        if reason is not None:
+            bad.append((name, reason))
+    assert not bad, "以下变量的约束与其权威默认值不自洽 (默认值即越界): " + "; ".join(
+        f"{n}: {r}" for n, r in bad
+    )
+
+
+def test_choice_candidates_parse_under_declared_type():
+    """不变量 5b: choices 非空, 且每个候选都能按声明类型解析 (无坏候选)."""
+    for name, spec in es.SCHEMA.items():
+        if spec.choices is None:
+            continue
+        assert spec.choices, f"{name} 的 choices 为空元组 (无意义约束)"
+        for cand in spec.choices:
+            try:
+                ea.parse_value(spec.type, cand)
+            except (ValueError, TypeError) as exc:  # pragma: no cover - 断言路径
+                raise AssertionError(
+                    f"{name} 的 choices 候选 {cand!r} 无法按 {spec.type!r} 解析: {exc}"
+                ) from exc
+
+
+def test_range_declared_only_on_numeric_types():
+    """不变量 5c: range 仅用于 int/float 型 (非数值型的区间约束无法比较)."""
+    bad = sorted(
+        name
+        for name, spec in es.SCHEMA.items()
+        if spec.range is not None and spec.type not in ("int", "float")
+    )
+    assert not bad, f"以下变量声明了 range 但类型非数值 (int/float): {bad}"
+
+
+def test_strict_validate_rejects_out_of_domain_value():
+    """严格校验出口: ``env_access.validate`` 对越界取值抛错、对合法取值放行.
+
+    读端走 fail-open (告警 + 回落), 写端/审计用 ``validate`` **显式拒绝** —— 这是
+    缺口② 的"显式报错"路径; 本门确保它真会红, 且约束面非空 (门不空转).
+    """
+    import pytest
+
+    constrained = [
+        n for n, s in es.SCHEMA.items() if s.choices is not None or s.range is not None
+    ]
+    assert constrained, "无任何变量声明值域约束 —— 缺口② 的约束面为空 (前向非空转)"
+
+    name = "HUGINN_MODEL_TIER"
+    assert ea.validate(name, "full") == "full"
+    with pytest.raises(ea.EnvConstraintError):
+        ea.validate(name, "definitely-not-a-tier")
+
+
+# ── 缺口②: 跨变量派生 (derived_from) 自洽门 ────────────────────────────
+
+
+def test_derived_from_sources_are_declared_and_sane():
+    """不变量 6: derived_from 来源必须已声明, 且无自引用 / 无重复来源.
+
+    派生来源是一个**变量名**, 若未在 ``SCHEMA`` 登记则运行期读不到 (静默失效);
+    自引用与重复来源是声明笔误. 本门把这三类钉死.
+    """
+    bad: list[str] = []
+    for name, spec in es.SCHEMA.items():
+        if not spec.derived_from:
+            continue
+        for src in spec.derived_from:
+            if src not in es.SCHEMA:
+                bad.append(f"{name} ← {src} (来源未登记)")
+        if name in spec.derived_from:
+            bad.append(f"{name} 自引用自身")
+        if len(set(spec.derived_from)) != len(spec.derived_from):
+            bad.append(f"{name} 派生链含重复来源")
+    assert not bad, "derived_from 声明不自洽: " + "; ".join(bad)
+
+
+def test_derived_from_chain_is_acyclic():
+    """不变量 6b: 派生图无环 (resolve 不会沿链死循环)."""
+    def walk(node: str, stack: list[str]) -> None:
+        for src in es.SCHEMA[node].derived_from or ():
+            if src in stack:
+                raise AssertionError("派生环: " + " -> ".join([*stack, src]))
+            walk(src, [*stack, src])
+
+    for name in es.SCHEMA:
+        walk(name, [name])
+
+
+def test_env_resolve_prefers_own_value_then_source_then_default(monkeypatch):
+    """resolve 行为门: 自身设置 > 派生来源 > 权威默认; 且派生面非空 (门不空转)."""
+    derived = [n for n, s in es.SCHEMA.items() if s.derived_from]
+    assert derived, "无任何变量声明 derived_from —— 缺口② 的派生面为空 (前向非空转)"
+
+    name = "HUGINN_JWT_SECRET"
+    src = es.SCHEMA[name].derived_from[0]
+
+    monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(src, raising=False)
+    assert ea.env_resolve(name) == ea.env_default(name)
+
+    monkeypatch.setenv(src, "from-source")
+    assert ea.env_resolve(name) == "from-source"
+
+    monkeypatch.setenv(name, "own-value")
+    assert ea.env_resolve(name) == "own-value"

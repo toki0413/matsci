@@ -19,6 +19,16 @@
     scope:   deployment(部署相关: 凭证/路径/模型) | feature(开关)
              | tuning(数值调参) | internal(内部常量) | legacy(迁移残余)
     status:  live | deprecated(旧变量名, 仅为向后兼容保留)
+    choices: 值域闭集合 (可选); None = 不约束. str 型按大小写不敏感比较.
+    range:   数值闭区间 (lo, hi) (可选); 端点 None = 该侧开放; 仅 int/float 型.
+    derived_from: 跨变量派生来源 (可选, 有序); None = 不派生. 语义: 本变量**未显式
+             设置**时, 取链中第一个**已设置**的来源值 (按本变量声明类型解析); 全未设
+             则回落权威默认. 用 :func:`huginn.env_access.env_resolve` 读取生效值.
+
+值域约束 (choices / range) 与默认值同为声明面的一部分: 约束声明的默认值必须
+自身满足约束 (tests/test_env_surface_governance.py 硬判). 只对语义确定的变量标注,
+不臆测 (无依据的约束比无约束更坏). derived_from 同理: 只对代码里**已有依据**的
+派生关系标注 (来源必须已声明, 无自引用, 无环).
 
 改本文件后跑 `python -m huginn.cli.config_audit` 复核; 新增变量必须先登记,
 再在代码里经 env_access 读取 —— 不允许再出现未经声明的裸读.
@@ -37,6 +47,11 @@ class EnvSpec:
     default: str
     scope: str
     status: str = "live"
+    # 值域约束 (可选): 与环境取值比较, 违反时读端回落 default (见 huginn.env_access).
+    choices: tuple[str, ...] | None = None
+    range: tuple[float | None, float | None] | None = None
+    # 跨变量派生来源 (可选, 有序): 本变量未显式设置时取链中第一个已设置来源的值.
+    derived_from: tuple[str, ...] | None = None
 
 
 # 单一权威声明表 (按作用域分组, 组内按名排序).
@@ -71,7 +86,10 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_HF_ENDPOINT": EnvSpec("str", "", "deployment"),
     "HUGINN_HPC_HOST": EnvSpec("str", "", "deployment"),
     "HUGINN_JEPA_EMBED_MODEL": EnvSpec("str", "", "deployment"),
-    "HUGINN_JWT_SECRET": EnvSpec("str", "", "deployment"),
+    # 未显式设置时复用 API key 作签名密钥 (huginn.security.auth 既有行为).
+    "HUGINN_JWT_SECRET": EnvSpec(
+        "str", "", "deployment", derived_from=("HUGINN_API_KEY",)
+    ),
     "HUGINN_KB_CHUNKS_PATH": EnvSpec("str", "", "deployment"),
     "HUGINN_LOCAL_VISION_MODEL": EnvSpec("str", "", "deployment"),
     "HUGINN_MAX_CONTEXT_TOKENS": EnvSpec("str", "", "deployment"),
@@ -81,7 +99,9 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_MEMORY_DIR": EnvSpec("str", "", "deployment"),
     "HUGINN_MODEL": EnvSpec("str", "", "deployment"),
     "HUGINN_MODELS": EnvSpec("str", "", "deployment"),
-    "HUGINN_MODEL_TIER": EnvSpec("str", "full", "deployment"),
+    "HUGINN_MODEL_TIER": EnvSpec(
+        "str", "full", "deployment", choices=("full", "balanced", "minimal")
+    ),
     "HUGINN_MP_API_KEY": EnvSpec("str", "", "deployment"),
     "HUGINN_OAUTH_TOKEN": EnvSpec("str", "", "deployment"),
     "HUGINN_OTEL_ENDPOINT": EnvSpec("str", "", "deployment"),
@@ -182,7 +202,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_FEATURE_VISUAL_FRAME_MEMORY": EnvSpec("bool", "false", "feature"),
     "HUGINN_FEATURE_WORLD_MODEL": EnvSpec("bool", "true", "feature"),
     "HUGINN_PERSONA_AUTO_ROUTE": EnvSpec("bool", "true", "feature"),
-    # ---- tuning (136) ------------------------------------------------
+    # ---- tuning (145) ------------------------------------------------
     "HUGINN_ACTION_HIST_MAX": EnvSpec("int", "1000", "tuning"),
     "HUGINN_ALIGNMENT_SURPRISE_TRIGGER": EnvSpec("int", "0", "tuning"),
     "HUGINN_AUTOLOOP_HUMAN_PAUSE": EnvSpec("int", "0", "tuning"),
@@ -190,14 +210,15 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_AUTOLOOP_STREAMING": EnvSpec("int", "1", "tuning"),
     "HUGINN_AUTO_WAKE": EnvSpec("int", "1", "tuning"),
     "HUGINN_BELIEF_ENTROPY_FACT_CHECK": EnvSpec("int", "0", "tuning"),
-    "HUGINN_BELIEF_ENTROPY_HIGH": EnvSpec("float", "0.7", "tuning"),
-    "HUGINN_BELIEF_ENTROPY_LOW": EnvSpec("float", "0.3", "tuning"),
+    "HUGINN_BELIEF_ENTROPY_HIGH": EnvSpec("float", "0.7", "tuning", range=(0.0, 1.0)),
+    "HUGINN_BELIEF_ENTROPY_LOW": EnvSpec("float", "0.3", "tuning", range=(0.0, 1.0)),
     "HUGINN_BLIND_RECONSTRUCTION": EnvSpec("int", "0", "tuning"),
     "HUGINN_BRANCH_INCUBATOR_DEPTH": EnvSpec("int", "2", "tuning"),
     "HUGINN_BRANCH_SLICE_MIN_S": EnvSpec("float", "60", "tuning"),
     "HUGINN_BRANCH_VALUE_PRM": EnvSpec("int", "1", "tuning"),
     "HUGINN_BUDGET_DEADLINE_UNIFIED": EnvSpec("int", "1", "tuning"),
     "HUGINN_BUDGET_EXPIRE_SEMANTICS": EnvSpec("int", "1", "tuning"),
+    "HUGINN_BUDGET_MAX_RENEWALS": EnvSpec("int", "3", "tuning", range=(0.0, None)),
     "HUGINN_BUDGET_MIN_SLICE_S": EnvSpec("float", "1.0", "tuning"),
     "HUGINN_BUDGET_RESERVE_S": EnvSpec("float", "5.0", "tuning"),
     "HUGINN_CHECKPOINTER_MAX_MESSAGES": EnvSpec("int", "120", "tuning"),
@@ -213,6 +234,11 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_COMPLETION_CHECK_INTERVAL": EnvSpec("int", "10", "tuning"),
     "HUGINN_CONTEXT_MAX_MESSAGES": EnvSpec("int", "60", "tuning"),
     "HUGINN_CORE_SUPPORT_PROTOCOL": EnvSpec("int", "1", "tuning"),
+    "HUGINN_COST_BUDGET": EnvSpec("float", "50.0", "tuning", range=(0.0, None)),
+    "HUGINN_COST_USD_PER_1K_TOKENS": EnvSpec("float", "0.0", "tuning", range=(0.0, None)),
+    "HUGINN_COST_USD_PER_CALL": EnvSpec("float", "0.0", "tuning", range=(0.0, None)),
+    "HUGINN_COST_USD_PER_CPU_HOUR": EnvSpec("float", "0.0", "tuning", range=(0.0, None)),
+    "HUGINN_COST_USD_PER_GPU_HOUR": EnvSpec("float", "0.0", "tuning", range=(0.0, None)),
     "HUGINN_DARWIN_LLM_EVAL": EnvSpec("int", "0", "tuning"),
     "HUGINN_DARWIN_LLM_INTERVAL": EnvSpec("int", "5", "tuning"),
     "HUGINN_DARWIN_STAGNATION_LIMIT": EnvSpec("int", "5", "tuning"),
@@ -269,18 +295,18 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_MCMC_T_HIGH": EnvSpec("int", "10", "tuning"),
     "HUGINN_MEMORY_CLUSTER": EnvSpec("int", "0", "tuning"),
     "HUGINN_MEMORY_DECAY_INTERVAL_TURNS": EnvSpec("int", "0", "tuning"),
-    "HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD": EnvSpec("float", "0.15", "tuning"),
+    "HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD": EnvSpec("float", "0.15", "tuning", range=(0.0, 1.0)),
     "HUGINN_MULTI_AGENT": EnvSpec("int", "0", "tuning"),
     "HUGINN_NOVELTY_EVAL": EnvSpec("int", "0", "tuning"),
     "HUGINN_OTEL_BATCH_SIZE": EnvSpec("int", "32", "tuning"),
     "HUGINN_OTEL_INTERVAL": EnvSpec("int", "5", "tuning"),
     "HUGINN_PASTE_OFFLOAD": EnvSpec("int", "1", "tuning"),
     "HUGINN_PERSISTENT_GOAL_MODE": EnvSpec("int", "0", "tuning"),
-    "HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD": EnvSpec("float", "0.3", "tuning"),
+    "HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD": EnvSpec("float", "0.3", "tuning", range=(0.0, 1.0)),
     "HUGINN_PER_HYP_BUDGET": EnvSpec("int", "0", "tuning"),
     "HUGINN_PLAN_AUTO_CONFIRM": EnvSpec("int", "0", "tuning"),
     "HUGINN_PMK_INJECT": EnvSpec("int", "0", "tuning"),
-    "HUGINN_PM_C_MIN": EnvSpec("float", "0.2", "tuning"),
+    "HUGINN_PM_C_MIN": EnvSpec("float", "0.2", "tuning", range=(0.0, 1.0)),
     "HUGINN_PRM_VERIFIER": EnvSpec("int", "0", "tuning"),
     "HUGINN_PROGRESSIVE_BUDGET_BY_REMAINING": EnvSpec("int", "1", "tuning"),
     "HUGINN_PROGRESS_INVARIANT": EnvSpec("int", "1", "tuning"),
@@ -290,19 +316,19 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_RATE_LIMIT_ENABLED": EnvSpec("int", "1", "tuning"),
     "HUGINN_RATE_LIMIT_PER_MINUTE": EnvSpec("int", "0", "tuning"),
     "HUGINN_RATE_LIMIT_TOTAL_COST_USD": EnvSpec("float", "10.0", "tuning"),
-    "HUGINN_RATE_LIMIT_WARNING_THRESHOLD": EnvSpec("float", "0.8", "tuning"),
+    "HUGINN_RATE_LIMIT_WARNING_THRESHOLD": EnvSpec("float", "0.8", "tuning", range=(0.0, 1.0)),
     "HUGINN_RCB_CROSS_TASK": EnvSpec("int", "1", "tuning"),
     "HUGINN_RCB_EXEC_ITERS": EnvSpec("int", "20", "tuning"),
     "HUGINN_RCB_FORK_ENABLED": EnvSpec("int", "1", "tuning"),
     "HUGINN_RCB_FORK_K_MAX": EnvSpec("int", "3", "tuning"),
     "HUGINN_RCB_MAX_COMPLETE_REJECTIONS": EnvSpec("int", "3", "tuning"),
     "HUGINN_RCB_TIMEOUT": EnvSpec("int", "7200", "tuning"),
-    "HUGINN_RECALL_NOISE_FLOOR": EnvSpec("float", "0.35", "tuning"),
+    "HUGINN_RECALL_NOISE_FLOOR": EnvSpec("float", "0.35", "tuning", range=(0.0, 1.0)),
     "HUGINN_RENAME_DEBT_LIMIT": EnvSpec("int", "8", "tuning"),
     "HUGINN_REPEAT_EXEC_HARD_STREAK": EnvSpec("int", "2", "tuning"),
     "HUGINN_RESTRICTED_PYTHON": EnvSpec("int", "1", "tuning"),
     "HUGINN_SELF_GOAL_SYNTHESIS": EnvSpec("int", "0", "tuning"),
-    "HUGINN_SESSION_TTL_HOURS": EnvSpec("int", "24", "tuning"),
+    "HUGINN_SESSION_TTL_HOURS": EnvSpec("int", "24", "tuning", range=(1.0, None)),
     "HUGINN_SKILL_ABSTRACTION": EnvSpec("int", "0", "tuning"),
     "HUGINN_SKILL_CONTEXT": EnvSpec("int", "0", "tuning"),
     "HUGINN_SKIP_SMOKE": EnvSpec("int", "0", "tuning"),
@@ -311,7 +337,8 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_STREAM_IDLE_TIMEOUT": EnvSpec("int", "60", "tuning"),
     "HUGINN_STRENGTH_SCHEDULE": EnvSpec("int", "1", "tuning"),
     "HUGINN_SURPRISE_HIST_CAP": EnvSpec("int", "200", "tuning"),
-    "HUGINN_THREAD_POOL_SIZE": EnvSpec("int", "64", "tuning"),
+    "HUGINN_THREAD_POOL_SIZE": EnvSpec("int", "64", "tuning", range=(1.0, None)),
+    "HUGINN_TOKEN_BUDGET": EnvSpec("int", "10000000", "tuning", range=(0.0, None)),
     "HUGINN_TOOLUNIVERSE_ENABLED": EnvSpec("int", "0", "tuning"),
     "HUGINN_TRAJECTORY_PATTERN": EnvSpec("int", "0", "tuning"),
     "HUGINN_USE_COMPLETION_GATE": EnvSpec("int", "0", "tuning"),
@@ -321,8 +348,10 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_USE_MENTAL_IMAGERY": EnvSpec("int", "0", "tuning"),
     "HUGINN_USE_MISI": EnvSpec("int", "0", "tuning"),
     "HUGINN_USE_UNIFIED_DECISION": EnvSpec("int", "0", "tuning"),
-    "HUGINN_VALIDATE_FAIL_THRESHOLD": EnvSpec("float", "0.8", "tuning"),
+    "HUGINN_VALIDATE_FAIL_THRESHOLD": EnvSpec("float", "0.8", "tuning", range=(0.0, 1.0)),
     "HUGINN_VALIDATE_WINDOW": EnvSpec("int", "100", "tuning"),
+    "HUGINN_VALUE_BUDGET_USD": EnvSpec("float", "10.0", "tuning", range=(0.0, None)),
+    "HUGINN_VALUE_MIN_ROI": EnvSpec("float", "0.0", "tuning", range=(0.0, None)),
     "HUGINN_WEB_SEARCH_TIMEOUT": EnvSpec("int", "15", "tuning"),
     "HUGINN_WM_SUMMARIZE_EVERY_N": EnvSpec("int", "5", "tuning"),
     "HUGINN_WS_MAX_CONNECTIONS": EnvSpec("int", "50", "tuning"),
@@ -339,12 +368,15 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_CI": EnvSpec("str", "", "internal"),
     "HUGINN_CODELAB_SCAFFOLD": EnvSpec("str", "", "internal"),
     "HUGINN_CODER_DONE_MARKER": EnvSpec("str", "", "internal"),
-    "HUGINN_COMPACT_KIND": EnvSpec("str", "remote", "internal"),
+    "HUGINN_COMPACT_KIND": EnvSpec("str", "remote", "internal", choices=("local", "remote", "remote_v2")),
     "HUGINN_COMPACT_STRATEGY": EnvSpec("str", "", "internal"),
     "HUGINN_COMPACT_THRESHOLD": EnvSpec("str", "", "internal"),
     "HUGINN_CONFIG_FILE": EnvSpec("str", "huginn.toml", "internal"),
     "HUGINN_CONTAINER_IMAGE": EnvSpec("str", "", "internal"),
-    "HUGINN_CONTAINER_RUNTIME": EnvSpec("str", "none", "internal"),
+    "HUGINN_CONTAINER_RUNTIME": EnvSpec(
+        "str", "none", "internal",
+        choices=("none", "docker", "podman", "apptainer", "singularity"),
+    ),
     "HUGINN_CORS_ORIGINS": EnvSpec("str", "", "internal"),
     "HUGINN_CPU_HOUR_BUDGET": EnvSpec("str", "", "internal"),
     "HUGINN_CSM_SUBSET_MODE": EnvSpec("str", "", "internal"),
@@ -363,7 +395,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_FILE_READ_MAX_SIZE_BYTES": EnvSpec("str", "", "internal"),
     "HUGINN_FP_DB": EnvSpec("str", "_DEFAULT_DB", "internal"),
     "HUGINN_FS_READ_MAX_SIZE_BYTES": EnvSpec("str", "", "internal"),
-    "HUGINN_GOVERNANCE_DEFAULT_DECISION": EnvSpec("str", "deny", "internal"),
+    "HUGINN_GOVERNANCE_DEFAULT_DECISION": EnvSpec("str", "deny", "internal", choices=("allow", "deny")),
     "HUGINN_GPU_HOUR_BUDGET": EnvSpec("str", "", "internal"),
     "HUGINN_HARD_CHECKPOINT_PHASES": EnvSpec("str", "", "internal"),
     "HUGINN_HIDE_DOCS": EnvSpec("str", "", "internal"),
@@ -412,13 +444,13 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_TEAM_MODE": EnvSpec("str", "", "internal"),
     "HUGINN_THINKING": EnvSpec("str", "high", "internal"),
     "HUGINN_TOOL_TIMEOUT": EnvSpec("str", "", "internal"),
-    "HUGINN_TORCH_DEVICE": EnvSpec("str", "cpu", "internal"),
+    "HUGINN_TORCH_DEVICE": EnvSpec("str", "cpu", "internal", choices=("cpu", "cuda", "mps")),
     "HUGINN_TRACE_SHARD_INTERVAL": EnvSpec("str", "", "internal"),
     "HUGINN_UNPAYWALL_EMAIL": EnvSpec("str", "", "internal"),
     "HUGINN_USE_DOCKER": EnvSpec("str", "", "internal"),
     "HUGINN_USE_RUST_SANDBOX": EnvSpec("str", "", "internal"),
     "HUGINN_VAULT_ADDR": EnvSpec("str", "", "internal"),
-    "HUGINN_WM_SUMMARIZE": EnvSpec("str", "rule", "internal"),
+    "HUGINN_WM_SUMMARIZE": EnvSpec("str", "rule", "internal", choices=("rule", "ngram", "llm", "hybrid")),
     # ---- legacy (30) ------------------------------------------------
     "HUGINN_BANDIT_MDP": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_BELIEF_DARWIN": EnvSpec("bool", "true", "legacy", status="deprecated"),
@@ -455,7 +487,9 @@ SCHEMA: dict[str, EnvSpec] = {
 
 # 裸读站点棘轮基线 = 当前代码里字面量 HUGINN_* 读点总数.
 # 治理测试断言实际值 <= 此数, 即只减不增; 迁移读点到 env_access 后应下调此数.
-RAW_READ_BASELINE = 467
+# (成本账本 / 价值预算 / token 预算三处读点已从 env_defaults 迁到 env_access,
+#  且 config_audit 补齐了 env_defaults 第二读端的扫描 → 基线随之下调.)
+RAW_READ_BASELINE = 463
 
 
 # 已知默认值分散: 同一变量在代码多处字面量默认值不一致 (双真值来源).

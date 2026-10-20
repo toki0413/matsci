@@ -53,6 +53,7 @@ from huginn.routes.parameters import router as parameters_router
 from huginn.routes.pet import router as pet_router
 from huginn.routes.planner import router as planner_router
 from huginn.routes.project import router as project_router
+from huginn.routes.protocols_api import router as protocols_router
 from huginn.routes.provenance import router as provenance_router
 from huginn.routes.research_project import router as research_project_router
 from huginn.routes.search import router as search_router
@@ -129,6 +130,8 @@ ALL_ROUTERS = [
     parameters_router,
     # 互动层: SSE chat / 中途干预 / 主动提问 / 进度展示
     interaction_router,
+    # 多协议适配层: POST /v1/responses (OpenAI Responses 兼容面)
+    protocols_router,
     # 侧边对话: 不打断主任务的并行 Q&A
     side_router,
     # 视觉感知: I-JEPA 图像编码 / 检索 / 索引

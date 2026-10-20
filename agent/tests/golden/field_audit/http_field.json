@@ -53,13 +53,13 @@
  ],
  "coverage": {
   "dict_checked": 34,
-  "dict_skipped": 75,
+  "dict_skipped": 78,
   "fe_checked": 12,
   "fe_skipped": 0,
   "handler_checked": 26,
   "handler_skipped": 0
  },
- "endpoint_count": 135,
+ "endpoint_count": 138,
  "kind_counts": {},
  "model_count": 238,
  "rows": [
@@ -1474,6 +1474,42 @@
     "content"
    ],
    "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/responses",
+   "kind": "body-dict",
+   "line": 58,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/protocols_api.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/chat/completions",
+   "kind": "body-dict",
+   "line": 64,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/protocols_api.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/messages",
+   "kind": "body-dict",
+   "line": 70,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/protocols_api.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
   },
   {
    "declared": [

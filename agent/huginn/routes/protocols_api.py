@@ -1,21 +1,20 @@
-"""对外协议适配端点 —— OpenAI Responses 兼容面 (缺口① P1-4).
+"""对外协议适配端点 —— OpenAI Responses / Chat Completions + Anthropic Messages.
 
 三段式 handler (对齐 deepseek-recipe ``server-py/main.py``):
 
-1. **prepare**: 解析请求体 → ``ResponsesRequest.convert()`` → 共享 IR ``ChatRequest``;
+1. **prepare**: 解析请求体 → 协议适配器的 ``convert()`` → 共享 IR ``ChatRequest``;
 2. **run**: 调 huginn agent (流式从 agent 产出 token 流, 非流式取终态);
 3. **respond**: token 流喂 ``OutputParser`` → 有序 ``OutputChunk`` 流 →
-   ``ResponsesChunkGenerator.generate()`` → SSE / 终态 JSON.
+   协议 ``ChunkGenerator`` → SSE / 终态 JSON.
 
 不新增传输层、不引第三方 SDK: 复用既有 SSE 与 auth 中间件. 注册进
-``routes.ALL_ROUTERS`` 后由 ``include_v1_routes`` 落到 ``POST /v1/responses``.
+``routes.ALL_ROUTERS`` 后由 ``include_v1_routes`` 落到 ``/v1/...``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import queue
 from collections.abc import AsyncIterator, Iterator
@@ -24,9 +23,16 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from huginn.protocols.anthropic_messages import AnthropicMessagesRequest
+from huginn.protocols.chat_completions import ChatCompletionsRequest
 from huginn.protocols.ir import ChatRequest, Role
 from huginn.protocols.openai_responses import ResponsesRequest
-from huginn.protocols.stream import OutputChunk, ProtocolEvent, Token
+from huginn.protocols.stream import (
+    OutputChunk,
+    ProtocolEvent,
+    ProtocolRequest,
+    Token,
+)
 from huginn.server_core import get_agent_factory
 
 router = APIRouter(tags=["protocols"])
@@ -50,14 +56,29 @@ _ROLE_LABEL: dict[Role, str] = {
 
 @router.post("/responses")
 async def responses(params: dict[str, Any]) -> Any:
-    """``POST /v1/responses`` —— Responses 协议入口.
+    """``POST /v1/responses`` —— OpenAI Responses 协议入口."""
+    return await _handle(ResponsesRequest, params)
 
-    请求方向经 ``ResponsesRequest.convert()`` 归一进共享 IR; 响应方向经
-    ``OutputParser`` + ``ResponsesChunkGenerator`` 映射回 Responses 事件.
-    """
+
+@router.post("/chat/completions")
+async def chat_completions(params: dict[str, Any]) -> Any:
+    """``POST /v1/chat/completions`` —— OpenAI Chat Completions 协议入口."""
+    return await _handle(ChatCompletionsRequest, params)
+
+
+@router.post("/messages")
+async def messages(params: dict[str, Any]) -> Any:
+    """``POST /v1/messages`` —— Anthropic Messages 协议入口."""
+    return await _handle(AnthropicMessagesRequest, params)
+
+
+async def _handle(
+    request_type: type[ProtocolRequest], params: dict[str, Any]
+) -> Any:
+    """三段式公共管道: 请求归一 -> 跑 agent -> 按协议成对收口."""
     # ── prepare: 协议请求 -> 共享 IR ──────────────────────────────
     try:
-        request = ResponsesRequest(params)
+        request = request_type(params)
         ir = request.convert()
     except ValueError as exc:
         return _error(str(exc), status_code=400)
@@ -70,7 +91,7 @@ async def responses(params: dict[str, Any]) -> Any:
         try:
             return JSONResponse(await _collect_final(request, ir, agent_id, thread_id))
         except Exception as exc:  # 防御: agent 侧异常收敛为协议错误, 不裸抛 500
-            logger.error("responses 非流式路径失败", exc_info=True)
+            logger.error("%s 非流式路径失败", request_type.__name__, exc_info=True)
             return _error(f"agent error: {exc}", status_code=500)
 
     return StreamingResponse(
@@ -80,32 +101,29 @@ async def responses(params: dict[str, Any]) -> Any:
     )
 
 
-# ── respond: 非流式 (取终态 response.completed) ──────────────────────
+# ── respond: 非流式 (协议终态载荷) ──────────────────────────────────
 
 
 async def _collect_final(
-    request: ResponsesRequest,
+    request: ProtocolRequest,
     ir: ChatRequest,
     agent_id: str,
     thread_id: str,
 ) -> dict:
-    """跑完 agent, 把整段输出过一次解析+映射, 取终态事件 data."""
+    """跑完 agent, 把整段输出过一次解析, 取协议终态载荷 (流式/非流式同口径)."""
     parser = request.output_parser()
     chunks: list[OutputChunk] = []
     async for token in _agent_tokens(ir, agent_id, thread_id):
         chunks.extend(parser.feed(token))
     chunks.extend(parser.finish())
-    final: ProtocolEvent | None = None
-    for event in request.chunk_generator().generate(chunks):
-        final = event
-    return final.data if final is not None else {}
+    return request.final_payload(chunks)
 
 
 # ── respond: 流式 (SSE) ─────────────────────────────────────────────
 
 
 async def _sse_stream(
-    request: ResponsesRequest,
+    request: ProtocolRequest,
     ir: ChatRequest,
     agent_id: str,
     thread_id: str,
@@ -136,7 +154,7 @@ async def _sse_stream(
             for event in request.chunk_generator().generate(_chunks()):
                 loop.call_soon_threadsafe(sse_q.put_nowait, event)
         except Exception as exc:  # 防御: 桥接线程异常也须让消费者收到终止信号
-            logger.error("responses 流式桥接失败", exc_info=True)
+            logger.error("%s 流式桥接失败", type(request).__name__, exc_info=True)
             loop.call_soon_threadsafe(
                 sse_q.put_nowait,
                 ProtocolEvent("error", {"type": "error", "message": str(exc)}),
@@ -150,7 +168,10 @@ async def _sse_stream(
             event = await sse_q.get()
             if event is None:
                 break
-            yield _sse_line(event)
+            yield request.sse_frame(event)
+        terminator = request.sse_terminator()
+        if terminator:
+            yield terminator
     finally:
         # 客户端断开: 取消 agent 协程, 并放终止哨兵解开线程队列的阻塞.
         if not producer.done():
@@ -213,11 +234,6 @@ def _render_prompt(ir: ChatRequest) -> str:
         label = _ROLE_LABEL.get(message.role, str(message.role))
         lines.append(f"{label}: {text}")
     return "\n".join(lines)
-
-
-def _sse_line(event: ProtocolEvent) -> str:
-    """Responses SSE: 事件类型内嵌在 JSON, 故只发 ``data:`` 行."""
-    return f"data: {json.dumps(event.data, ensure_ascii=False)}\n\n"
 
 
 def _error(message: str, *, status_code: int) -> JSONResponse:
