@@ -30,6 +30,7 @@ from huginn.llm_retry import (
     _is_transient_network,
     _jitter,
     call_with_fallback,
+    is_transient_error,
     parse_context_overflow,
     persistent_retry,
     with_retry,
@@ -249,6 +250,46 @@ class TestClassification:
 
     def test_auth_by_text(self):
         assert _is_auth_error(FakeHttpError("invalid api key"))
+
+    def test_rate_limit_provider_chinese_text(self):
+        # 观测到的真实形态: HTTP 400 + 中文限流文案 (非 429). 不识别会导致
+        # autoloop 把限流误判为不可重试的坏请求 → 直接空转 (run74).
+        exc = FakeHttpError(
+            "Error code: 400 - {'code': '-20048', 'message': '请求过于频繁，请稍后再试'}",
+            status_code=400,
+        )
+        assert _is_rate_limit(exc)
+
+    def test_rate_limit_provider_error_code(self):
+        exc = FakeHttpError("bad request", status_code=400, code="-20048")
+        assert _is_rate_limit(exc)
+
+    def test_rate_limit_english_too_frequent(self):
+        assert _is_rate_limit(FakeHttpError("requests are too frequent, slow down"))
+
+    def test_plain_400_stays_not_rate_limit(self):
+        # 真正的参数错误 (400) 不能被误判成限流, 否则会白白重试
+        assert not _is_rate_limit(FakeHttpError("invalid parameter: temperature", status_code=400))
+
+
+class TestIsTransientError:
+    def test_rate_limit_is_transient(self):
+        assert is_transient_error(FakeHttpError("请求过于频繁", status_code=400))
+
+    def test_overloaded_is_transient(self):
+        assert is_transient_error(FakeHttpError("overloaded", status_code=529))
+
+    def test_network_is_transient(self):
+        assert is_transient_error(FakeTimeoutError())
+
+    def test_context_overflow_is_transient(self):
+        assert is_transient_error(FakeHttpError("maximum context length is 8192 tokens"))
+
+    def test_plain_bad_request_not_transient(self):
+        assert not is_transient_error(FakeHttpError("bad param", status_code=400))
+
+    def test_value_error_not_transient(self):
+        assert not is_transient_error(ValueError("nope"))
 
 
 # ── _exponential_backoff ─────────────────────────────────────────

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from huginn.permissions import sidecar_auto_approve
 from huginn.security.auth import require_api_key
 from huginn.server_core import get_context
 
@@ -447,7 +448,7 @@ async def generate_kb_report(req: ReportRequest) -> dict[str, Any]:
     try:
         import asyncio as _aio
 
-        agent._permission_config.auto_approve_all = True
+        agent._permission_config.auto_approve_all = sidecar_auto_approve()
         # invoke 内部用 asyncio.run, 放线程池跑; 独立 thread_id 避免污染默认对话
         state = await _aio.wait_for(
             _aio.to_thread(agent.invoke, prompt, thread_id="kb_report"),

@@ -51,6 +51,7 @@ ProviderLiteral = Literal[
     "doubao",
     "hunyuan",
     "spark",
+    "internlm",
     "openai-compatible",
 ]
 
@@ -242,7 +243,8 @@ class ModelConfig:
     alias: str  # e.g. "gpt4o", "claude-sonnet"
     provider: ProviderLiteral
     model: str | None = None
-    api_key: str | None = None
+    # repr=False: 密钥不进 dataclass repr(), 防止日志/异常里意外回显明文.
+    api_key: str | None = field(default=None, repr=False)
     base_url: str | None = None
     temperature: float = 0.7
     enabled: bool = True
@@ -281,9 +283,9 @@ class AgentProfileConfig:
 class SecurityConfig:
     """Security, privacy, and encryption settings."""
 
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     encryption_enabled: bool = False
-    encryption_password: str | None = None
+    encryption_password: str | None = field(default=None, repr=False)
     encryption_key_file: str | None = None
     encrypt_config: bool = False
     encrypt_rag_documents: bool = True
@@ -326,7 +328,9 @@ class HuginnConfig:
     # Legacy single-model settings (kept for backward compatibility)
     provider: ProviderLiteral = "default"
     model: str | None = None
-    api_key: str | None = None
+    # repr=False: 以下密钥字段不进 dataclass repr(), 防止日志/异常回显明文.
+    # to_dict() 已脱敏; repr() 是同一条信息泄漏面的另一个出口, 一并收口.
+    api_key: str | None = field(default=None, repr=False)
     base_url: str | None = None
 
     # Multi-LLM / multi-agent settings
@@ -346,12 +350,12 @@ class HuginnConfig:
     lammps_executable: str | None = None
 
     # Public materials database API keys
-    mp_api_key: str | None = None
-    oqmd_api_key: str | None = None
+    mp_api_key: str | None = field(default=None, repr=False)
+    oqmd_api_key: str | None = field(default=None, repr=False)
 
     # MinerU 文献解析 API keys (VLM 版面解析服务, 非LLM provider).
     # 多 key 轮询: MINERU_API_KEYS="k1,k2,k3" 或 HuginnConfig.mineru_api_keys=[...]
-    mineru_api_keys: list[str] = field(default_factory=list)
+    mineru_api_keys: list[str] = field(default_factory=list, repr=False)
 
     # HPC / remote execution settings
     execution_backend: Literal["local", "remote"] = "local"
@@ -361,7 +365,7 @@ class HuginnConfig:
     hpc_host: str | None = None
     hpc_username: str | None = None
     hpc_key_path: str | None = None
-    hpc_password: str | None = None
+    hpc_password: str | None = field(default=None, repr=False)
     hpc_port: int = 22
     remote_work_dir: str = "~/huginn_jobs"
     hpc_default_queue: str | None = None
@@ -438,7 +442,7 @@ class HuginnConfig:
 
     # Encryption settings
     encryption_enabled: bool = False
-    encryption_password: str | None = None
+    encryption_password: str | None = field(default=None, repr=False)
     encryption_key_file: str | None = None
     encrypt_rag_documents: bool = True
     encrypt_rag_metadata: bool = True

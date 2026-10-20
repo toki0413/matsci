@@ -295,10 +295,7 @@ def _text_keyword_scores(
             val = meta.get(field)
             if val is None:
                 continue
-            if isinstance(val, list):
-                text = " ".join(str(v) for v in val)
-            else:
-                text = str(val)
+            text = " ".join(str(v) for v in val) if isinstance(val, list) else str(val)
             text_lower = text.lower()
             n_matched = sum(1 for t in tokens if t in text_lower)
             raw += weight * (n_matched / len(tokens))

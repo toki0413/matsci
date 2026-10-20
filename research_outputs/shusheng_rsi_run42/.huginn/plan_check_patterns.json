@@ -1,0 +1,42 @@
+[
+  {
+    "scene_tag": "auto_family",
+    "reason": "该plan存在严重设计缺陷，无法验证hypothesis的核心论点（代数独立性导致对数缩放）。1) 模型错误：hypothesis讨论的是多项式基函数的代数独立性（插值理论），但plan将rigid定义为'5阶多项式'，fat定义为'20项随机多项式'，这混淆了多项式阶数与基函数维度，且随机多项式不具备明确的代数结构来分析独立性。2) 实验设计缺陷：hypothesis要求分析$N_c$随$w$（约束数量）的对数缩放，但plan未定义如何扫描$w$，仅提到寻找有限的$N_c$值，缺乏系统性扫描设置。3) 历史失败重蹈：plan未解决run28的问题（fat族必须是x的高维函数而非噪声），也未明确如何避免run29的尺度问题。4) 验证缺失：plan未说明如何量化'代数独立性'或'Vandermonde条件数'，仅凭训练误差无法支撑hypothesis的数学结构论点。",
+    "missing_steps": [
+      "明确rigid/fat族的数学定义：rigid应为固定基函数集（如单项式基），fat应为高维参数化函数族",
+      "设计$w$的扫描实验：固定基函数，逐步增加约束点数量$w$，测量零违反容量$N_c$",
+      "引入条件数分析：计算基函数矩阵（如Vandermonde）的条件数随$w$的变化，验证对数缩放关系",
+      "定义明确的$N_c$判定标准：基于留出误差的显著性检验，而非单纯的训练误差",
+      "确保fat族是x的函数且具有明确的高自由度结构，避免退化为噪声"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to generate rigid (5th-order polynomial with unique solution) and fat (20-term random polynomial with continuous solution space) constraint s"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "该plan存在严重设计缺陷，无法验证hypothesis的核心论点（代数独立性导致对数缩放）。首先，模型定义错误：hypothesis讨论的是多项式基函数的代数独立性，但plan将rigid定义为'5阶多项式'，fat定义为'20项随机多项式'，这混淆了多项式阶数与基函数维度，且随机多项式不具备明确的代数结构来分析独立性。其次，实验设计缺陷：hypothesis要求分析$N_c$随$w$（约束数量）的对数缩放，但plan未定义如何扫描$w$，缺乏系统性扫描设置。第三，未解决历史失败：plan未明确如何避免run28的噪声问题和run29的尺度问题。最后，验证缺失：plan未说明如何量化'代数独立性'或'Vandermonde条件数'，仅凭训练误差无法支撑数学结构论点。",
+    "missing_steps": [
+      "明确rigid/fat族的数学定义：rigid应为固定基函数集（如单项式基），fat应为高维参数化函数族",
+      "设计$w$的扫描实验：固定基函数，逐步增加约束点数量$w$，测量零违反容量$N_c$",
+      "引入条件数分析：计算基函数矩阵（如Vandermonde）的条件数随$w$的变化，验证对数缩放关系",
+      "定义明确的$N_c$判定标准：基于留出误差的显著性检验，而非单纯的训练误差",
+      "确保fat族是x的函数且具有明确的高自由度结构，避免退化为噪声",
+      "详细说明如何量化代数独立性并计算Vandermonde条件数"
+    ],
+    "mode": "explore",
+    "description": "Redefine the rigid family as a fixed monomial basis (degree $d$) and the fat family as a high-dimensional parameterized polynomial basis (degree $D \\gg d$). Systematically sweep the constraint count $"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "该 plan 存在严重的设计缺陷，无法验证 hypothesis 的核心论点（代数独立性导致对数缩放）。首先，模型定义错误：hypothesis 讨论的是多项式基函数的代数独立性，但 plan 将 rigid 定义为'5阶多项式'，fat 定义为'20项随机多项式'，这混淆了多项式阶数与基函数维度，且随机多项式不具备明确的代数结构来分析独立性。其次，实验设计缺陷：hypothesis 要求分析 N_c 随 w（约束数量）的对数缩放，但 plan 未定义如何扫描 w，缺乏系统性扫描设置。最后，验证缺失：plan 未说明如何量化'代数独立性'或'Vandermonde条件数'，仅凭训练误差无法支撑数学结构论点。",
+    "missing_steps": [
+      "明确 rigid/fat 族的数学定义：rigid 应为固定基函数集（如单项式基），fat 应为高维参数化函数族",
+      "设计 w 的扫描实验：固定基函数，逐步增加约束点数量 w，测量零违反容量 N_c",
+      "引入条件数分析：计算基函数矩阵（如 Vandermonde）的条件数随 w 的变化，验证对数缩放关系",
+      "定义明确的 N_c 判定标准：基于留出误差的显著性检验，而非单纯的训练误差",
+      "确保 fat 族是 x 的函数且具有明确的高自由度结构，避免退化为噪声"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the Rigid family (5th-degree polynomial basis with algebraic constraints) and Fat family (20-term random polynomial basis), ensuring ou"
+  }
+]

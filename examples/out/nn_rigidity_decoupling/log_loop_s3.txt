@@ -1,0 +1,5 @@
+
+===== 第 1/10 轮 · 请书生决策 =====
+      书生判断: 现有证据在 poly/osc/hism（forcing 尺度适中）上稳定给出 beta≈0，支持 H1；但 hi（|f|≈632）和 fat（约束退化）全部无法判定，说明当前判别对 forcing 幅值和约束几何敏感。需先排除 hi 的失败是优化不充分（adam_steps 不足）还是真物理，再决定是否推广结论。
+      action=run reason=hi 锚点已有 5 组实验全部 N_c=None，若延长 adam 步数、加宽网络、增加 N 后仍无法饱和，可确认该锚点本身不适合作为探针载体，而非优化失败；这能划定结论的有效适用范围。
+      $ /workspace/examples/nn_rigidity_decoupling.py --kind hi --widths 16 32 64 128 --ns 2 4 8 16 --seeds 3 --adam-steps 12000 --jobs 3 --tag loop01_s3

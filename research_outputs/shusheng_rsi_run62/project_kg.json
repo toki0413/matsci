@@ -1,0 +1,373 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "** [DIM: structure] Algebraic Independence Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:02:46.315508",
+      "last_seen": "2026-10-01T13:02:46.315508",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The set $\\{1, x, x^2, \\sin(2\\pi x)\\}$ is algebraically independent over $\\mathbb{Q}$, as no non-trivial polynomial identity exists that vanishes identically on the real line. This will be verified by",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] Algebraic Independence Hypothesis"
+    },
+    {
+      "label": "plan_workflow_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315557",
+      "last_seen": "2026-10-01T13:02:46.315557",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315570",
+      "last_seen": "2026-10-01T13:02:46.315570",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] Algebraic Independence Hypothesis",
+        "Method:plan_workflow_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:02:46.315710",
+      "last_seen": "2026-10-01T13:02:46.315710",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f80c79d05df887ad",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:05:20.345822",
+      "last_seen": "2026-10-01T13:05:20.345822",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded and small (≤15) across all w values, showing weak or sub-logarithmic dependence on w, supporting the \"rigid\" classification. If N_c(w) grows significantly with w (e.g., >20",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345865",
+      "last_seen": "2026-10-01T13:05:20.345865",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345875",
+      "last_seen": "2026-10-01T13:05:20.345875",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:05:20.345968",
+      "last_seen": "2026-10-01T13:05:20.345968",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7a7a3d04cdab2cc5",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: Structure] Algebraic Independence Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:20.354617",
+      "last_seen": "2026-10-01T13:18:20.354617",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be ≤ 15 across all w values (10, 20, 50, 100) with standard deviation < 2 across 5 seeds, demonstrating that small networks achieve zero-violation capacity without scaling with w — indicat",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structure] Algebraic Independence Hypothesis"
+    },
+    {
+      "label": "plan_workflow_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354657",
+      "last_seen": "2026-10-01T13:18:20.354657",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354666",
+      "last_seen": "2026-10-01T13:18:20.354666",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structure] Algebraic Independence Hypothesis",
+        "Method:plan_workflow_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_12324489"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:18:20.354752",
+      "last_seen": "2026-10-01T13:18:20.354752",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f6081c652f5681e9",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[Hypothesis Index]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:41:41.542807",
+      "last_seen": "2026-10-01T13:41:41.542807",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be ≤15 for all w values (10, 20, 50, 100), with minimal variation across seeds, confirming solution space rigidity. Max absolute error at N_c(w) will be ≤8e-4 on held-out sets, and trainin",
+      "persona": "reviewer",
+      "id": "experiment:[Hypothesis Index]"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:41:41.542846",
+      "last_seen": "2026-10-01T13:41:41.542846",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:41:41.542857",
+      "last_seen": "2026-10-01T13:41:41.542857",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:41:41.542866",
+      "last_seen": "2026-10-01T13:41:41.542866",
+      "mentions": 1,
+      "members": [
+        "experiment:[Hypothesis Index]",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_8f7456c5"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:41:41.542942",
+      "last_seen": "2026-10-01T13:41:41.542942",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "97442900dfb330fb",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] Algebraic Independence Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:02:46.315588",
+      "last_seen": "2026-10-01T13:02:46.315588",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9edc41f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] Minimal network capacity N_c(w) follows a logarithmic scaling wit",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:05:20.345889",
+      "last_seen": "2026-10-01T13:05:20.345889",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e93733d1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structure] Algebraic Independence Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_12324489"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_12324489"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:18:20.354676",
+      "last_seen": "2026-10-01T13:18:20.354676",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_12324489"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[Hypothesis Index]",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:41:41.542866",
+      "last_seen": "2026-10-01T13:41:41.542866",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f7456c5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:41:41.542866",
+      "last_seen": "2026-10-01T13:41:41.542866",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f7456c5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:41:41.542866",
+      "last_seen": "2026-10-01T13:41:41.542866",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f7456c5"
+    }
+  ]
+}

@@ -173,7 +173,7 @@ class ReportGenerator:
             init = structure.get(f"initial_{param}", "N/A")
             final = structure.get(f"final_{param}", "N/A")
             change = "N/A"
-            if isinstance(init, (int, float)) and isinstance(final, (int, float)):
+            if isinstance(init, int | float) and isinstance(final, int | float):
                 change = f"{((final - init) / init * 100):+.2f}%"
             lines.append(f"| {param} | {init} | {final} | {change} |")
         lines.append("")

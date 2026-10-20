@@ -1,5 +1,8 @@
 """Imagination — 在 hypothesis manifold 上做 structure-preserving transformation.
 
+strong-claim: "Bourbaki 变换"是结构变换的工程隐喻, 非布尔巴基学派数学主张;
+fisher distance 是 prediction-disagreement 代理, 非真 Fisher metric.
+
 不是 pattern completion, 是 extrapolation: 把 hypothesis 的 Bourbaki mother
 structure (algebraic / topological / order) 做一次 group action / 拓扑变换 /
 偏序变换, 生成一个原 manifold 上不存在的 hypothesis. 跟 interpolation 的区别
@@ -126,13 +129,34 @@ def _build_falsifiability_prompt(h: Hypothesis) -> tuple[str, str]:
 
 # ---------- LLM 调用 + JSON 解析 ----------
 
-def _call_llm_sync(model: Any, sys_text: str, usr_text: str) -> str:
-    """sync LLM call. 失败抛异常, 由调用方降级. 跟 llm_likelihood 同款."""
-    from huginn.metacog.step_evaluator import _build_messages, _resp_to_text
-    messages = _build_messages(sys_text, usr_text)
-    if hasattr(model, "invoke"):
-        return _resp_to_text(model.invoke(messages))
-    raise ValueError("model has no sync invoke; ainvoke-only models not supported")
+def _call_llm_sync(
+    model: Any,
+    sys_text: str,
+    usr_text: str,
+    *,
+    schema: dict | None = None,
+    nextra: dict | None = None,
+) -> str:
+    """用"遇错升级"适配器调 LLM(模型无关), 返回成功文本.
+
+    失败抛异常, 由调用方降级. 不再 direct-invoke:
+      - plan[0] 带 nextra(如 thinking_mode) + 放宽 max_tokens;
+        端点不支持该字段(4xx/TypeError)自动跳到下一档, 不硬试
+      - plan[1] 去掉 nextra + 追加硬护栏 prompt, 逼模型输出干净 JSON
+    跟 llm_likelihood 同款调用语义(无 invoke 的 ainvoke-only 模型不支持).
+    """
+    from huginn.metacog.adaptive_call import robust_invoke
+    if not hasattr(model, "invoke"):
+        raise ValueError("model has no sync invoke; ainvoke-only models not supported")
+    res = robust_invoke(
+        model,
+        system=sys_text, user=usr_text, schema=schema or {}, nextra=nextra,
+    )
+    if not res["ok"] or not res["text"]:
+        raise ValueError(
+            f"LLM call failed (status={res['status']}, attempts={res['attempts']})"
+        )
+    return res["text"]
 
 
 def _parse_first_json(text: str) -> dict | None:
@@ -163,9 +187,41 @@ def _parse_first_json(text: str) -> dict | None:
     return None
 
 
+_LOOSE_RESERVED = {"new_n_params", "new_description", "new_predictions", "transform_reason"}
+
+
+def _loose_transform_obj(text: str) -> dict | None:
+    """宽松兜底: 无完整 JSON 时, 用 text_to_json 的宽松 k:v 抓取重建对象.
+
+    兼容"思考+结果混排 / JSON 被截断 / 半 JSON"的输出 —— 对任意模型通用,
+    不依赖具体模型遵循 STRICT JSON(书生 s1 等遵循差时仍可救回).
+    只取到预测数字即视为可用; 完全没有预测 -> None.
+    """
+    try:
+        from huginn.metacog.text_to_json import loose_scalar_fields
+        flat = loose_scalar_fields(text)
+        if not flat:
+            return None
+        preds = {k: v for k, v in flat.items()
+                 if k not in _LOOSE_RESERVED and isinstance(v, int | float)}
+        if not preds:
+            return None
+        desc = flat.get("new_description")
+        if not isinstance(desc, str) or not desc.strip():
+            desc = None
+        n_params = flat.get("new_n_params")
+        n_params = max(1, int(n_params)) if isinstance(n_params, int | float) else 1
+        return {"new_description": desc, "new_predictions": preds,
+                "new_n_params": n_params}
+    except Exception:  # noqa: BLE001 — 宽松兜底失败不阻塞, 由调用层升级
+        return None
+
+
 def _parse_transform_response(text: str) -> Hypothesis | None:
     """解析 LLM 变换输出 -> Hypothesis. 失败返回 None."""
     obj = _parse_first_json(text)
+    if obj is None:
+        obj = _loose_transform_obj(text)
     if obj is None:
         return None
     desc = obj.get("new_description")
@@ -217,7 +273,8 @@ def check_falsifiability(h: Hypothesis, model: Any = None) -> bool:
         return bool(h.predictions)
     try:
         sys_text, usr_text = _build_falsifiability_prompt(h)
-        text = _call_llm_sync(model, sys_text, usr_text)
+        text = _call_llm_sync(model, sys_text, usr_text,
+                              schema={"falsifiable": bool})
         return _parse_falsifiability_response(text)
     except Exception as e:
         logger.warning("falsifiability_check_fallback: reason=%s, h=%s", e, h.h_id)
@@ -275,7 +332,8 @@ def imagine(
         return None
     try:
         sys_text, usr_text = _build_transform_prompt(hypothesis, transform_type)
-        text = _call_llm_sync(model, sys_text, usr_text)
+        text = _call_llm_sync(model, sys_text, usr_text,
+                              schema={"new_description": str, "new_n_params": int})
         new_h = _parse_transform_response(text)
         if new_h is None:
             logger.debug("imagine: transform response unparseable")
@@ -456,7 +514,8 @@ def imagine_from_blind_spot(
     parent_h = next(iter(manifold._hyp.values()))
     try:
         sys_text, usr_text = _build_blind_spot_prompt(parent_h, blind_spot)
-        text = _call_llm_sync(model, sys_text, usr_text)
+        text = _call_llm_sync(model, sys_text, usr_text,
+                              schema={"new_description": str, "new_n_params": int})
         new_h = _parse_transform_response(text)
         if new_h is None:
             logger.debug("imagine_from_blind_spot: response unparseable")

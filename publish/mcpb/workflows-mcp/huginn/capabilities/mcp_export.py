@@ -169,24 +169,24 @@ class CapabilityMCPBackend:
 
 def _jsonable(obj: Any) -> Any:
     """尽力把能力结果规整成 JSON-safe 结构 (失败时回退成字符串)."""
-    if obj is None or isinstance(obj, (bool, int, float, str)):
+    if obj is None or isinstance(obj, bool | int | float | str):
         return obj
-    if isinstance(obj, (dict, list)):
+    if isinstance(obj, dict | list):
         return obj
     if hasattr(obj, "model_dump"):
         try:
             return obj.model_dump()
-        except Exception:
+        except Exception:  # serialization 兜底 → 回退 str
             return str(obj)
     if hasattr(obj, "to_dict"):
         try:
             return obj.to_dict()
-        except Exception:
+        except Exception:  # serialization 兜底 → 回退 str
             return str(obj)
     if hasattr(obj, "tolist"):
         try:
             return obj.tolist()
-        except Exception:
+        except Exception:  # serialization 兜底 → 回退 str
             return str(obj)
     return str(obj)
 
@@ -234,10 +234,32 @@ def build_server(
     """把后端接成一个 mcp.server.Server (低层 API).
 
     ``tools/list`` 返回后端过滤后的能力; ``tools/call`` 分派到能力执行.
-    函数返回 ``Any`` (惰性 import mcp), 让上层在未装 mcp 的环境也能 import.
+    跨 mcp SDK 版本: 新版(>=2)在构造函数里注入 ``on_list_tools``/``on_call_tool``
+    回调; 旧版(1.x)用 ``@server.list_tools()``/``@server.call_tool()`` 装饰器.
+    这里先试新版, 失败再回退旧版, 保证两种都被支持.
     """
     from mcp.server import Server
 
+    async def _call(name: str, arguments: dict[str, Any]) -> Any:
+        return await call_tool_handler(name, arguments, backend)
+
+    # 新版: 构造函数回调.
+    try:
+        from mcp.types import CallToolRequestParams, ListToolsResult
+
+        async def _list_ctor(ctx: Any, params: Any = None) -> Any:
+            return ListToolsResult(tools=await list_tools_handler(backend))
+
+        async def _call_ctor(ctx: Any, params: CallToolRequestParams) -> Any:
+            return await call_tool_handler(
+                params.name, dict(params.arguments or {}), backend
+            )
+
+        return Server(server_name, on_list_tools=_list_ctor, on_call_tool=_call_ctor)
+    except TypeError:
+        pass  # 旧版: Server 不接受 on_* 构造参数, 走装饰器.
+
+    # 旧版: 装饰器 API.
     server = Server(server_name)
 
     @server.list_tools()
@@ -245,8 +267,8 @@ def build_server(
         return await list_tools_handler(backend)
 
     @server.call_tool()
-    async def _call(name: str, arguments: dict[str, Any]) -> Any:
-        return await call_tool_handler(name, arguments, backend)
+    async def _call_deco(name: str, arguments: dict[str, Any]) -> Any:
+        return await _call(name, arguments or {})
 
     return server
 
@@ -329,6 +351,17 @@ def _ensure_capabilities_registered() -> None:
 
         register_all_tools(None)
     register_capability_tools(None)
+    # 具身原则: 让"世界模型能力"进 MCP 码头 —— 默认挂"系外行星 + 力学"两个第一性原理
+    # 科学计算域, 各自经 law/predict/reconcile 三操作对外提供"预告→执行→对账"的可证伪面
+    # (见 capabilities.world_model / research.law_model). 这也就是把 AI4S"算"环节的科学
+    # 模型接到能力/MCP 面上; 其它需要外部可执行(sim 工具)的只在其 is_available 时被自动装箱.
+    try:
+        from huginn.capabilities.world_model import register_world_model_capabilities
+        from huginn.research.law_model import FirstPrinciplesLawModel, MechanicsLawModel
+        register_world_model_capabilities(FirstPrinciplesLawModel())
+        register_world_model_capabilities(MechanicsLawModel())
+    except Exception:  # noqa: BLE001 — 默认世界模型可选, 失败不影响 MCP server 启动
+        logger.debug("world-model capability registration skipped", exc_info=True)
 
 
 def main(argv: list[str] | None = None) -> None:

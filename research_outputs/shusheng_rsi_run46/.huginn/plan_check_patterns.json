@@ -1,0 +1,59 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "e994bd8059b6",
+    "reason": "The plan is invalid due to critical specification gaps and structural mismatches with the hypothesis. First, the MODE 'explore' is appropriate for hypothesis generation, but the DESCRIPTION lacks the essential mathematical definition of the 'Rigid Family'. The hypothesis requires a specific linear subspace of dimension (d-1) in the space of functions satisfying w linear constraints (affine when full rank), but the plan only vaguely suggests 'polynomials of degree < d' without defining the constraint matrix or the function space geometry. Second, the PREDICTION is not verifiable as stated because it does not specify how N_c(w) will be computed or what exact numerical thresholds will be used to validate the hypothesis (e.g., what constitutes 'finite N_c <= 8' or 'zero-violation'). Third, the plan repeats the 'run28' pitfall by not clearly distinguishing the Fat Family as 'x-dependent, high-dimensional but partially learnable' versus noise; it merely says 'high-complexity functions'. Finally, the plan misses the necessary step of defining the constraint matrix and verifying its rank properties before attempting to compute N_c(w).",
+    "missing_steps": [
+      "Define the Rigid Family as a linear subspace of dimension (d-1) in the space of functions satisfying w linear constraints, explicitly specifying the constraint matrix and its rank properties.",
+      "Define the Fat Family as x-dependent, high-dimensional but partially learnable functions (not noise or trivial functions).",
+      "Specify the exact method for computing N_c(w) and the numerical thresholds for validation (e.g., what constitutes 'finite N_c <= 8' or 'zero-violation').",
+      "Verify the constraint matrix rank properties before attempting to compute N_c(w).",
+      "Ensure the Fat Family is not reduced to noise or trivial functions that would make the 'rigid vs. fat' comparison degenerate."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate two function families: (1) a **Rigid Family** (linear subspace, e.g., polynomials of degree < d) and (2) a **Fat Family** (high"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "990a7d85febe",
+    "reason": "The plan fails to address the hypothesis's core requirement: measuring tail behavior (Pareto index α) and comparing it to Gaussian behavior. It only checks zero-violation criteria (val_err ≤ 1e-3), which is insufficient to characterize heavy-tailed vs. Gaussian error distributions. The prediction assumes heavy-tailed behavior without providing a method to estimate α or test tail fit. Additionally, the plan does not specify how to generate the 'fat family' with the required properties (bounded support, O(1) scaling, high-degree polynomial) or how to compute the held-out error variance distribution across multiple runs to assess tail behavior. The plan also lacks a clear method for determining N_c(w) as defined in the hypothesis.",
+    "missing_steps": [
+      "Define the fat family more precisely: specify the distribution of polynomial coefficients and the normalization procedure to ensure O(1) scaling.",
+      "Implement a method to estimate the Pareto tail index α from the held-out error variance distribution (e.g., using Hill estimator or maximum likelihood fitting).",
+      "Specify a method to test if the rigid family's errors follow a Gaussian distribution (e.g., using goodness-of-fit tests like Shapiro-Wilk or Q-Q plots).",
+      "Ensure the experiment is repeated with sufficient seeds to reliably estimate the error variance distribution and tail behavior.",
+      "Clarify the definition of N_c(w) and how it relates to the zero-violation criteria and the hypothesis.",
+      "Add a step to verify that the fat family is indeed 'x-dependent' and not pure noise, as per the historical failure patterns."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two analytical families: (1) Rigid family: affine function y = x (1D, analytically determined by w≥2 points), and (2) Fat family: high-"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "4234f3095649",
+    "reason": "The plan describes an implementation of function families and validation, but it completely misses the core mathematical hypothesis. The hypothesis is about the theoretical convergence of gradient flow in the infinite-width limit (h→∞) to RKHS minimum-norm solutions under a tanh kernel, and the specific role of N_c(w) as a width threshold where constraints become active. The proposed plan only tests finite widths (h≤64) with rigid/fat families, which does not address the asymptotic behavior, kernel theory, or variational principle central to the hypothesis. It fails to implement gradient flow analysis, RKHS norm tracking, or the loss functional structure described in the hypothesis.",
+    "missing_steps": [
+      "Implement gradient flow dynamics for the network rather than just static function approximation",
+      "Set up the tanh kernel and RKHS norm calculation explicitly",
+      "Analyze asymptotic behavior as h→∞ (not just h≤64)",
+      "Track the regularization term λΩ(f) and its interaction with the data fit term",
+      "Verify the variational principle structure: ∑(f(x_i)-y_i)² + λΩ(f)",
+      "Measure N_c(w) as the width where RKHS norm constraint becomes active, not just 'zero violation'"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families with proper O(1) normalization, correct output shape (N,1), and non-overheld validation sets. This addresses"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "4234f3095649",
+    "reason": "The plan is flawed because it proposes a theoretical implementation ('explore' mode) without addressing the critical prerequisite of defining the rigid vs. fat function families with proper scaling and dimensionality, which was the root cause of the historical failures (run28, run29). Specifically, the plan does not specify how to handle the 'zero-violation condition on the rigid family' or the scaling discipline to avoid the ~0.51 error trap. Without these, the experiment is likely to fail again.",
+    "missing_steps": [
+      "Define the rigid family with explicit zero-violation constraints and proper scaling (e.g., bounded derivatives, appropriate amplitude).",
+      "Define the fat family as high-dimensional, x-dependent functions with controlled degrees of freedom (>> w) to avoid the i.i.d. noise pitfall.",
+      "Establish a clear scaling discipline for the loss function and RKHS norm to prevent absolute criterion failure.",
+      "Verify the tanh kernel's Mercer expansion and spectral properties before implementing gradient flow."
+    ],
+    "mode": "explore",
+    "description": "Implement the theoretical framework for the infinite-width gradient flow convergence hypothesis. Specifically: (1) Construct the tanh kernel $k(x,x') = \\tanh(\\gamma x \\cdot x' + \\delta)$ and compute i"
+  }
+]

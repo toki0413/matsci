@@ -165,7 +165,7 @@ def _compile_ode_func(expr: str) -> Any:
     def fn(t: float, y: list[float]) -> list[float]:
         names: dict[str, Any] = {"t": t, "y": y}
         result = safe_math_eval(expr, names)
-        if not isinstance(result, (list, tuple, np.ndarray)):
+        if not isinstance(result, list | tuple | np.ndarray):
             result = [float(result)]
         return list(result)
 

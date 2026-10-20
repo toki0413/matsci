@@ -187,10 +187,15 @@ class TelemetryCollector:
         """Return the currently active span, if any."""
         return self._current_stack[-1] if self._current_stack else None
 
-    def add_event(self, name: str, **metadata: Any) -> None:
-        """Add a zero-duration event under the current span."""
+    def add_event(self, event_name: str, **metadata: Any) -> None:
+        """Add a zero-duration event under the current span.
+
+        The parameter is named ``event_name`` (not ``name``) so that callers can
+        freely put a ``name`` field inside ``metadata`` without colliding with
+        the positional event name.
+        """
         parent = self.current_span()
-        event = TelemetrySpan(name=name, metadata=dict(metadata))
+        event = TelemetrySpan(name=event_name, metadata=dict(metadata))
         event.finish()
         if parent is not None:
             parent.children.append(event)
@@ -314,7 +319,7 @@ class NullTelemetryCollector(TelemetryCollector):
         finally:
             pass
 
-    def add_event(self, name: str, **metadata: Any) -> None:
+    def add_event(self, event_name: str, **metadata: Any) -> None:
         pass
 
     def to_dict(self) -> list[dict[str, Any]]:

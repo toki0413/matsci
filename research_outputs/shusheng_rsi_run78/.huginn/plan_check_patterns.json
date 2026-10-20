@@ -1,0 +1,15 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "962d693a59ff",
+    "reason": "Plan is invalid because it omits critical preprocessing steps required to establish a well-posed mathematical experiment: (1) no specification of the analytic constraint family (e.g., polynomial degree, ODE type, boundary conditions) — without this, 'w constraints' are undefined and N_c(w) is uncomputable; (2) no initialization or optimization protocol (e.g., weight initialization, optimizer, loss function, convergence criterion) — training small networks without these is non-reproducible; (3) no validation of numerical stability or floating-point precision — zero violation ≤1e-3 requires controlled numerical errors. These omissions violate the 'mathematical rigor' and 'physical validation' principles: a hypothesis about algebraic rigidity cannot be tested without a precisely defined constraint manifold and solver fidelity.",
+    "missing_steps": [
+      "Define explicit constraint family (e.g., polynomial interpolation at w points, or ODE residuals at w collocation points) with mathematical formulation",
+      "Specify network architecture details (activation functions, depth, initialization, optimizer, loss formulation)",
+      "Define convergence criteria for training (e.g., max epochs, tolerance, early stopping) and numerical precision handling",
+      "Include baseline sanity check: verify that for fixed w, N_c exists and is finite in a controlled setting before sweeping w"
+    ],
+    "mode": "explore",
+    "description": "Design and run a numerical experiment to test the Algebraic Rigidity Hypothesis using small feedforward networks. Specifically: (1) define a set of analytic constraints (e.g., polynomial interpolation"
+  }
+]

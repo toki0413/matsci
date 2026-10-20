@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from huginn.metacog import recall_audit_context
+from huginn.metacog.audit_context import recall_audit_context
 from huginn.metacog.equivalence_auditor import EquivalenceAuditor, EquivalenceVerdict
 from huginn.metacog.method_registry import MechanismType
 

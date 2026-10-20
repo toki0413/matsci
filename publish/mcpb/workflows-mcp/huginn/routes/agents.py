@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from huginn.config import get_config
 from huginn.models.registry import ModelRegistry
+from huginn.permissions import sidecar_auto_approve
 from huginn.routes.schemas import ChatRequest
 from huginn.server_core import (
     get_agent,
@@ -90,9 +91,11 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
             thinking=req.thinking,
             max_tokens=req.max_tokens,
         )
-        # sidecar serve 是非交互 API 服务, 不可能有审批回调, 强制自动批准所有工具
-        # 不然 ASK 模式的工具会被拒, agent 只能回退到手动计算
-        agent._permission_config.auto_approve_all = True
+        # sidecar serve 是非交互 API 服务, 不可能有审批回调, 否则 ASK 模式的工具
+        # 会被拒. 是否自动放行由显式配置决定 (不再是硬编码 True): dev 模式(本地
+        # 桌面端)默认放行, 生产多用户 server 默认不放行, 可用 HUGINN_AUTO_APPROVE
+        # 覆盖. 见 huginn/permissions.py::sidecar_auto_approve.
+        agent._permission_config.auto_approve_all = sidecar_auto_approve()
         # invoke 内部用 asyncio.run, 直接在 async 端点里调会炸, 放线程池里跑
         # thread_id 必须传进去, 否则 invoke 用默认 "default", 不同对话历史全混一起
         # 180s 超时兜底: DeepSeek 对长输出推理慢 + 内部 3 次重试退避可能累计很久
@@ -451,7 +454,7 @@ async def delete_persona(name: str) -> dict[str, Any]:
 
 
 @router.post("/personas/{name}/switch")
-async def switch_persona(name: str, params: dict[str, Any]) -> dict[str, Any]:
+async def switch_persona(name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Switch the active persona for the current chat session."""
     from huginn.persona_emotion import EmotionTracker
     from huginn.personas import PersonaManager

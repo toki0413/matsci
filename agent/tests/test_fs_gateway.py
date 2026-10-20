@@ -83,3 +83,72 @@ def test_fs_blocks_other_profile(client, monkeypatch, tmp_path: Path):
 def test_fs_read_missing_returns_400(client, tmp_path: Path):
     r = client.get("/v1/fs/read", params={"path": str(tmp_path / "nope.txt")})
     assert r.status_code == 400
+
+
+# ── 附件上传 (浏览器拖拽二进制 → 工作区) ────────────────────────────
+
+
+def test_fs_upload_writes_into_given_dir(client, tmp_path: Path):
+    r = client.post(
+        "/v1/fs/upload",
+        files={"file": ("pic.bin", b"\x00\x01\x02")},
+        data={"dir": str(tmp_path)},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["size"] == 3
+    assert Path(body["path"]) == tmp_path / "pic.bin"
+    assert (tmp_path / "pic.bin").read_bytes() == b"\x00\x01\x02"
+
+
+def test_fs_upload_defaults_to_workspace_huginn_uploads(client, tmp_path: Path, monkeypatch):
+    """不传 dir 时落 `<cwd>/.huginn/uploads/`, 不散落到项目根."""
+    monkeypatch.chdir(tmp_path)
+    r = client.post("/v1/fs/upload", files={"file": ("drop.png", b"png")})
+    assert r.status_code == 200
+    assert Path(r.json()["path"]) == tmp_path / ".huginn" / "uploads" / "drop.png"
+    assert not (tmp_path / "drop.png").exists()
+
+
+def test_fs_upload_strips_path_from_filename(client, tmp_path: Path):
+    """文件名只取 basename: `../../evil.txt` 不能穿越出目标目录."""
+    r = client.post(
+        "/v1/fs/upload",
+        files={"file": ("../../evil.txt", b"x")},
+        data={"dir": str(tmp_path)},
+    )
+    assert r.status_code == 200
+    assert Path(r.json()["path"]) == tmp_path / "evil.txt"
+
+
+def test_fs_upload_avoids_overwriting_same_name(client, tmp_path: Path):
+    (tmp_path / "a.txt").write_text("original", encoding="utf-8")
+    r = client.post(
+        "/v1/fs/upload",
+        files={"file": ("a.txt", b"new")},
+        data={"dir": str(tmp_path)},
+    )
+    assert r.status_code == 200
+    assert Path(r.json()["path"]) == tmp_path / "a-1.txt"
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "original"
+
+
+def test_fs_upload_rejects_oversize(client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("huginn.routes.fs._UPLOAD_MAX_BYTES", 4)
+    r = client.post(
+        "/v1/fs/upload",
+        files={"file": ("big.bin", b"0123456789")},
+        data={"dir": str(tmp_path)},
+    )
+    assert r.status_code == 413
+    # 超限的半截文件要清掉, 不留垃圾
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fs_upload_rejects_non_dir_target(client, tmp_path: Path):
+    target = tmp_path / "a.txt"
+    target.write_text("x", encoding="utf-8")
+    r = client.post(
+        "/v1/fs/upload", files={"file": ("b.bin", b"x")}, data={"dir": str(target)}
+    )
+    assert r.status_code == 400

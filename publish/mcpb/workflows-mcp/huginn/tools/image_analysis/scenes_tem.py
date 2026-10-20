@@ -63,10 +63,7 @@ def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
     )
     radial[:1] = 0.0  # 去 DC
 
-    if fft_threshold is None:
-        thr = float(np.max(radial) * 0.1)
-    else:
-        thr = float(fft_threshold)
+    thr = float(np.max(radial) * 0.1) if fft_threshold is None else float(fft_threshold)
 
     peaks, _ = find_peaks(radial, height=thr, distance=3)
 

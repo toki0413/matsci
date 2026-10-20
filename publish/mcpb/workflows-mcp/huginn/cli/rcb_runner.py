@@ -90,17 +90,18 @@ os.environ.setdefault(
     "HUGINN_ROOT_MARKERS",
     "## Methodology Checklist;## Selected Execution Plan;## Report Coverage Compass;## Intuitive Gamer",
 )
-# RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr
-os.environ["HUGINN_NO_RUST_SANDBOX"] = "1"
+# RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr.
+# P0-7: 真实开关是 HUGINN_USE_RUST_SANDBOX (bash_tool 只读它); 旧写的
+# HUGINN_NO_RUST_SANDBOX 全仓无人读 = 死配置, 已改为强写真实开关为 0.
+os.environ["HUGINN_USE_RUST_SANDBOX"] = "0"
 # RCB 跑分关掉 LLM decider — 跑分需要确定性, run_cognitive 的规则版 decide_fn 已够用.
 # 生产路径 (deli_research/cli/routes) 不设这个变量, 默认开 LLM decider.
 os.environ["HUGINN_COGNITIVE_LLM_DECIDER"] = "0"
 # RCB 场景关熔断器 — file_read_tool 误触发 circuit_open 阻止 agent 读文件 (σ₇)
 os.environ["HUGINN_HEALTH_MONITOR"] = "0"
-# RCB 场景关循环检测 — agent 反复跑 code_tool 是正常行为, 误判为 loop (σ₈)
-# 统一走 FeatureFlags (streaming.py 已不读 HUGINN_SKIP_LOOP_DETECTOR, 此处保留向后兼容).
-# ponytail: 双写新旧 env var, 升级路径是删掉 HUGINN_SKIP_LOOP_DETECTOR 一行.
-os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "1")
+# RCB 场景关循环检测 — agent 反复跑 code_tool 是正常行为, 误判为 loop (σ₈).
+# streaming.py 读 FeatureFlags, 唯一真实开关是 HUGINN_FEATURE_LOOP_DETECTOR;
+# 旧的 HUGINN_SKIP_LOOP_DETECTOR 全仓无人读, 已删除 (契约收敛).
 os.environ["HUGINN_FEATURE_LOOP_DETECTOR"] = "false"
 
 # === 从拆分模块 re-export (rcb_runner 作为向后兼容聚合入口) ===
@@ -333,11 +334,10 @@ async def run(
         os.environ.setdefault("HUGINN_USE_KNOWLEDGE_GRAPH", "1")
         # ponytail: 让 _check_stuck VF2 cycle 和 StructureCognitiveMap 15 个 transform 真触发
         os.environ.setdefault("HUGINN_THINKING", "high")
-        # extreme 长任务开 LoopDetector — 200+ 步轨迹需要死循环保护.
-        # 双写新旧 env var: HUGINN_FEATURE_LOOP_DETECTOR 给 FeatureFlags,
-        # HUGINN_SKIP_LOOP_DETECTOR 兼容旧路径. 普通模式顶部已设 false/1, 这里覆盖.
-        os.environ.setdefault("HUGINN_FEATURE_LOOP_DETECTOR", "true")
-        os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "0")
+        # LoopDetector 在 RCB 全程保持关闭: 模块顶部已强制写入
+        # HUGINN_FEATURE_LOOP_DETECTOR="false" (agent 反复跑 code_tool 属正常行为,
+        # 误判为 loop σ₈). 此处原写 setdefault("...", "true") 是 no-op (键已存在,
+        # 从未通电), 已删除 —— 不引入会误杀长程 run 的控制流.
         # v7 长任务: extreme 模式同时放宽 autoloop stop 阈值, 允许 200+ 步轨迹.
         # 对标 Oxelra 206 步. 默认值已放宽 (20/20/10/5), extreme 再翻倍.
         os.environ.setdefault("HUGINN_MAX_CONSECUTIVE_FAILURES", "50")
@@ -357,11 +357,12 @@ async def run(
         #   零 LLM 成本纯规则, 接入 context_builder.build() 主流程.
         # TASK_TOOL_ROUTER: task keyword → tool category 动态路由 (11 cat +
         #   中英双语), 接入 agent/core.py + streaming.py 两处.
-        # 两者都已在主流程 if flag == "1" 处接入, 但全仓无 setdefault, 永远走 fallback.
-        # extreme 模式本就是"全部能力打开", 在此开启兑现设计承诺.
-        # 升级路径: 稳定后下沉到 FeatureFlags 统一接管, 不再用 env var.
-        os.environ.setdefault("HUGINN_CONTEXT_ROUTER", "1")
-        os.environ.setdefault("HUGINN_TASK_TOOL_ROUTER", "1")
+        # 配置收敛: 旧实现写 legacy env (HUGINN_CONTEXT_ROUTER/TASK_TOOL_ROUTER),
+        # 依赖单例构造时读一次 env, 时序脆弱且多一层别名中间人. 改用 FeatureFlags
+        # 的 runtime 覆盖 (最高优先级, 与构造时序无关): extreme = 强制开这两个 router.
+        from huginn.feature_flags import FeatureFlags as _FeatureFlags
+        _FeatureFlags.shared().enable("context_router")
+        _FeatureFlags.shared().enable("task_tool_router")
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
         print("[EXTREME MODE] thinking=high, max_tool_calls=1200, context_budget=model-window, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
 
@@ -1407,7 +1408,7 @@ if __name__ == "__main__":
             "HUGINN_RATE_LIMIT_ENABLED": "0",
             "HUGINN_ALLOW_LOCAL_BASH": "1",
             "HUGINN_CSM_SUBSET_MODE": "1",
-            "HUGINN_NO_RUST_SANDBOX": "1",
+            "HUGINN_USE_RUST_SANDBOX": "0",
             "HUGINN_COGNITIVE_LLM_DECIDER": "0",
             "HUGINN_HEALTH_MONITOR": "0",
             "HUGINN_FEATURE_LOOP_DETECTOR": "false",

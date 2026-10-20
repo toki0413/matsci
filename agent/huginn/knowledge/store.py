@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -108,10 +109,44 @@ def _download_embedding_with_progress() -> None:
         class _ProgressTqdm:
             """Tqdm 兼容壳: 接住 snapshot_download 的 update(), 按字节累计发 progress."""
             def __init__(self, *args, **kwargs):
-                ...
+                # huggingface_hub 会把 total/desc/disable 透传进来, 并在进度循环里
+                # 直接读 self.total / self.n; 缺属性会抛
+                # AttributeError: '_ProgressTqdm' object has no attribute 'total',
+                # 让整次下载失败. 如实挂上这些字段.
+                raw_total = kwargs.get("total")
+                if raw_total is None and args:
+                    raw_total = args[0]
+                self.total = raw_total or 0
+                self.n = 0
+                self.desc = kwargs.get("desc", "")
+                self.disable = kwargs.get("disable", False)
+                self.unit = kwargs.get("unit", "it")
+                # huggingface_hub 的进度包装会读 format_dict 计算 n/total/rate,
+                # 缺它同样抛 AttributeError: '_ProgressTqdm' object has no attribute
+                # 'format_dict', 让下载在每次进度回调处报错. 如实提供字段.
+                self._start = time.monotonic()
+
+            @property
+            def format_dict(self) -> dict[str, Any]:
+                elapsed = max(time.monotonic() - self._start, 1e-9)
+                return {
+                    "n": self.n,
+                    "total": self.total,
+                    "elapsed": elapsed,
+                    "ncols": 0,
+                    "nrows": 0,
+                    "desc": self.desc,
+                    "unit": self.unit,
+                    "rate": self.n / elapsed if isinstance(self.n, int | float) else None,
+                    "postfix": "",
+                    "remaining": 0,
+                    "bar_format": None,
+                }
 
             def reset(self, *args, **kwargs):
-                ...
+                self.n = 0
+                if kwargs.get("total") is not None:
+                    self.total = kwargs["total"]
 
             # 新版本 huggingface_hub 把 tqdm_class 当 context manager 用
             # (HfApi._walk 用 `with tqdm_class(...)`), 补上协议以免 "_ProgressTqdm
@@ -121,6 +156,25 @@ def _download_embedding_with_progress() -> None:
 
             def __exit__(self, *exc):
                 return False
+
+            # hf_hub 各版本会调用这些 no-op 方法, 无脑接住避免再有 AttributeError.
+            def set_description(self, *args, **kwargs):
+                ...
+
+            def set_postfix(self, *args, **kwargs):
+                ...
+
+            def set_postfix_str(self, *args, **kwargs):
+                ...
+
+            def refresh(self, *args, **kwargs):
+                ...
+
+            def clear(self, *args, **kwargs):
+                ...
+
+            def close(self, *args, **kwargs):
+                ...
 
             def update(self, n=1):
                 done_bytes[0] += n
@@ -145,7 +199,6 @@ def _download_embedding_with_progress() -> None:
                 last_err = e
                 if attempt > _EMBED_DOWNLOAD_RETRIES:
                     continue
-                import time
                 wait = 2 ** (attempt - 1)  # 1s, 2s, 4s 指数退避
                 logger.warning("embedding download attempt %d failed (%s), retry in %ss", attempt, e, wait)
                 time.sleep(wait)

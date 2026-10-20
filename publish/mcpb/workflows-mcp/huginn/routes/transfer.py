@@ -1,16 +1,21 @@
 """文件传输管理路由 —— 仿 MobaXterm 的 SFTP 浏览器 + rsync 风格同步。
 
 端点一览:
-    POST /transfer/upload     上传本地文件到远端 (SFTP put)
-    POST /transfer/download   下载远端文件到本地 (SFTP get)
-    GET  /transfer/browse     浏览远端目录, 带文件大小 / 修改时间 / 类型
-    POST /transfer/sync        本地目录同步到远端 (按 size+mtime 判断是否需要传)
+    POST /transfer/upload        上传本地文件到远端 (SFTP put, 服务端本地路径)
+    POST /transfer/download      下载远端文件到本地 (SFTP get, 服务端本地路径)
+    GET  /transfer/browse        浏览远端目录, 带文件大小 / 修改时间 / 类型
+    POST /transfer/sync          本地目录同步到远端 (按 size+mtime 判断是否需要传)
+    POST /transfer/web/upload    浏览器 multipart 上传体 → SFTP put 到远端
+    GET  /transfer/web/download  远端文件 → 流式 HTTP 响应体
 
-底层复用 HPCClient 已经建好的 paramiko SFTP 通道, 不另开连接。
+`/transfer/upload|download` 面向「服务端已有本地路径」的调用方 (CLI / 自动化);
+`/transfer/web/*` 面向浏览器 (拿不到服务端本地路径), 一个收 multipart 上传体、
+一个把远端内容流式吐回。两组都复用 HPCClient 已建好的 paramiko SFTP 通道。
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import fnmatch
 import logging
@@ -19,7 +24,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from huginn.hpc.client import HPCClient
@@ -29,6 +35,10 @@ from huginn.security.auth import require_admin_key
 router = APIRouter(tags=["transfer"], dependencies=[Depends(require_admin_key)])
 
 logger = logging.getLogger(__name__)
+
+# 浏览器侧单次上传 / 单块读写的大小口径 (浏览器传的是整文件, 走 SFTP 批量传输)
+_WEB_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
+_WEB_TRANSFER_CHUNK_BYTES = 1024 * 1024
 
 
 # ── 请求模型 ─────────────────────────────────────────────────────
@@ -343,7 +353,145 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
     }
 
 
+# ── 浏览器形状: multipart 上传 / 流式下载 ──────────────────────────
+#
+# FilesPanel 的「上传」「下载」按钮拿到的是浏览器 `File` / `Blob`, 没有服务端
+# 本地路径, 套不上 `/transfer/upload|download` 的 `local_path` 契约, 故单独给
+# 浏览器一套: 上传收 multipart 上传体直接写进 SFTP, 下载把远端内容流式吐回。
+
+
+@router.post("/transfer/web/upload")
+async def transfer_web_upload(
+    credential_id: str = Form(...),
+    remote_dir: str = Form("~"),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """浏览器 multipart 上传 → 远端 `remote_dir/<basename>`。
+
+    文件名只取 basename (挡路径穿越); 远端父目录按需创建; 半截失败会清掉远端
+    残留文件。阻塞的 SFTP 写入放线程里跑, 不占事件循环。
+    """
+    name = Path(file.filename or "").name.strip()
+    if not name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail="缺少合法的上传文件名")
+    try:
+        _validate_path_safety(remote_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    cfg, err = _build_cfg({"credential_id": credential_id})
+    if err or cfg is None:
+        raise HTTPException(status_code=400, detail=err or "无法解析 HPC 配置")
+
+    # Starlette 已把 multipart 落进 spooled 临时文件, 定位到尾部量一下大小
+    try:
+        file.file.seek(0, 2)
+        size = file.file.tell()
+        file.file.seek(0)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"读取上传体失败: {e}") from e
+    if size > _WEB_UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大: {size} bytes (上限 {_WEB_UPLOAD_MAX_BYTES} bytes)",
+        )
+
+    def _put() -> tuple[str, str]:
+        with HPCClient(cfg) as client:
+            client._ensure_connected()
+            sftp = client._sftp
+            expanded = _expand_remote_path(sftp, remote_dir)
+            _ensure_remote_dir(sftp, expanded)
+            dest = f"{expanded.rstrip('/')}/{name}"
+            try:
+                with sftp.file(dest, "wb") as rf:
+                    while True:
+                        buf = file.file.read(_WEB_TRANSFER_CHUNK_BYTES)
+                        if not buf:
+                            break
+                        rf.write(buf)
+            except Exception:
+                # 写一半失败 → 清掉远端半截文件, 不留垃圾
+                with contextlib.suppress(Exception):
+                    sftp.remove(dest)
+                raise
+            return dest, expanded
+
+    try:
+        dest, _expanded = await asyncio.to_thread(_put)
+    except Exception as exc:
+        logger.warning("浏览器上传 %s -> %s 失败: %s", name, remote_dir, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "name": name,
+        "remote_path": dest,
+        "host": cfg.host,
+        "size": size,
+    }
+
+
+@router.get("/transfer/web/download")
+async def transfer_web_download(credential_id: str, path: str) -> StreamingResponse:
+    """远端文件 → 浏览器流式下载 (SFTP → HTTP 响应体)。
+
+    先探一次 stat 好把「文件不存在」变成干净的 404 (响应一旦开始就没有回头路),
+    再分块读 SFTP 文件句柄 —— Starlette 在线程池里跑同步生成器, 不阻塞事件循环。
+    """
+    try:
+        _validate_path_safety(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    cfg, err = _build_cfg({"credential_id": credential_id})
+    if err or cfg is None:
+        raise HTTPException(status_code=400, detail=err or "无法解析 HPC 配置")
+
+    def _open_and_stat() -> tuple[str, int]:
+        with HPCClient(cfg) as client:
+            client._ensure_connected()
+            sftp = client._sftp
+            expanded = _expand_remote_path(sftp, path)
+            return expanded, (sftp.stat(expanded).st_size or 0)
+
+    try:
+        expanded, size = await asyncio.to_thread(_open_and_stat)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"远端文件不存在: {path}") from exc
+    except Exception as exc:
+        logger.warning("浏览器下载 %s 失败: %s", path, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _iter():
+        with HPCClient(cfg) as client:
+            client._ensure_connected()
+            sftp = client._sftp
+            with sftp.file(expanded, "rb") as rf:
+                while True:
+                    chunk = rf.read(_WEB_TRANSFER_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    yield chunk
+
+    filename = _sanitize_header_filename(Path(path).name or "download")
+    return StreamingResponse(
+        _iter(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(size),
+        },
+    )
+
+
 # ── 内部工具函数 ─────────────────────────────────────────────────
+
+
+def _sanitize_header_filename(name: str) -> str:
+    """Content-Disposition 文件名去掉引号 / 反斜杠 / 换行, 防 header 注入。"""
+    cleaned = "".join(c for c in name if c not in '"\\\r\n')
+    return cleaned.strip() or "download"
 
 
 def _expand_remote_path(sftp: Any, path: str) -> str:
@@ -389,9 +537,9 @@ def _ensure_remote_dir(sftp: Any, remote_dir: str) -> None:
     path 里可能是 ~ 或绝对路径, 用 normalize 统一一下。
     """
     parts = [p for p in remote_dir.split("/") if p and p != "."]
-    cur = "/" if remote_dir.startswith("/") else ""
-    for part in parts:
-        cur = f"{cur}/{part}" if cur else part
+    prefix = "/" if remote_dir.startswith("/") else ""
+    for i in range(1, len(parts) + 1):
+        cur = prefix + "/".join(parts[:i])
         try:
             sftp.stat(cur)
         except FileNotFoundError:

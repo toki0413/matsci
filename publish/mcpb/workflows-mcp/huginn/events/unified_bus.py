@@ -188,13 +188,22 @@ class UnifiedBus:
         self,
         thread_id: str,
         workspace: str = "",
+        response: str = "",
     ) -> None:
-        """Agent 完成一轮回复 — 触发 STOP hook."""
+        """Agent 完成一轮回复 — 触发 STOP hook.
+
+        response: 本轮 assistant 回复文本. ISC 反渗透的 MultiTurnSafetyHook
+        靠它评估本轮是否安全 collapse, 并累加跨轮风险.
+        """
         from huginn.hooks import STOP, HookContext
 
         ctx = HookContext(
             tool_name="agent_turn",
-            metadata={"thread_id": thread_id, "workspace": workspace},
+            metadata={
+                "thread_id": thread_id,
+                "workspace": workspace,
+                "response": response,
+            },
         )
         await self._trigger_hook(STOP, ctx)
 

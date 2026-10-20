@@ -119,10 +119,30 @@ class TestStarPluginLoading:
 
     @pytest.mark.asyncio
     async def test_load_star_plugins_does_not_crash(self):
-        """Loading plugins should not crash even if no plugins exist."""
+        """Loading plugins should not crash even if no plugins exist.
+
+        加载 Star 插件会向**进程级** ToolRegistry 与 prompt 段注册表登记
+        (如 asd_ste100 的 ste_lint/comms_lint 与同名段). 这是生产启动期的
+        正当行为, 但在测试里若不恢复就把全局表污染给后续用例 (conftest 的
+        ``_restore_tool_registry`` 守卫会报泄漏). 故本测试快照两处全局状态,
+        调用后无条件恢复.
+        """
         from huginn.lifespan import _load_star_plugins
-        # Should complete without error
-        await _load_star_plugins()
+        from huginn.plugins.prompt_segments import (
+            registered_prompt_segments,
+            unregister_prompt_segment,
+        )
+        from huginn.tools.registry import ToolRegistry
+
+        tools_before = ToolRegistry.snapshot()
+        segments_before = set(registered_prompt_segments())
+        try:
+            # Should complete without error
+            await _load_star_plugins()
+        finally:
+            ToolRegistry.restore(tools_before)
+            for name in set(registered_prompt_segments()) - segments_before:
+                unregister_prompt_segment(name)
 
 
 # ── call_with_fallback integrated in summarizer ───────────────────

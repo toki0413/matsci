@@ -48,11 +48,11 @@ class SolverResult:
         def _clean(v: Any) -> Any:
             if isinstance(v, np.ndarray):
                 return v.tolist()
-            if isinstance(v, (np.integer, np.floating)):
+            if isinstance(v, np.integer | np.floating):
                 return float(v)
             if isinstance(v, dict):
                 return {k: _clean(val) for k, val in v.items()}
-            if isinstance(v, (list, tuple)):
+            if isinstance(v, list | tuple):
                 return [_clean(x) for x in v]
             return v
 
@@ -187,7 +187,7 @@ def find_root(
     try:
         from scipy.optimize import root, root_scalar
 
-        if isinstance(x0, (int, float)):
+        if isinstance(x0, int | float):
             # Scalar root finding
             kwargs: dict[str, Any] = {"x0": float(x0), "maxiter": maxiter, "xtol": tol}
             if bracket is not None:
@@ -295,10 +295,7 @@ def integrate(
 
             x = np.linspace(a, b, n_points)
             y = np.array([func(xi, *args) for xi in x])
-            if method == "trapezoid":
-                value = trapezoid(y, x)
-            else:
-                value = simpson(y, x=x)
+            value = trapezoid(y, x) if method == "trapezoid" else simpson(y, x=x)
             return SolverResult(
                 success=True,
                 method=f"integrate_{method}",

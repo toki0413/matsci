@@ -100,7 +100,7 @@ def dynamic_resolution_hint(
 
     best-effort: 非文件/读取失败返回 None, 不阻塞.
     """
-    if isinstance(image_path, (bytes, bytearray)):
+    if isinstance(image_path, bytes | bytearray):
         return None
     p = Path(image_path)
     if not p.is_file():
@@ -146,7 +146,7 @@ def detect_modality(image_path: str | Path | bytes) -> dict[str, Any]:
         "confidence": "low",
         "reasons": [],
     }
-    if isinstance(image_path, (bytes, bytearray)):
+    if isinstance(image_path, bytes | bytearray):
         result["reasons"].append("raw bytes, no path/filename signal")
         return result
 
@@ -268,7 +268,7 @@ def modality_routing_hint(
 
     best-effort: 读取失败返回 None. 供 build_cv_context 调用.
     """
-    p = Path(image_path) if not isinstance(image_path, (bytes, bytearray)) else None
+    p = Path(image_path) if not isinstance(image_path, bytes | bytearray) else None
     if p is not None and not p.is_file():
         return None
 

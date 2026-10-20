@@ -120,11 +120,25 @@ class TelemetrySpan:
 
 
 class TelemetryCollector:
-    """In-memory collector for Huginn telemetry spans."""
+    """In-memory collector for Huginn telemetry spans.
 
-    def __init__(self) -> None:
+    When ``exporter`` is set, every finished *root* span is handed off to it in
+    the background (OTLP/HTTP by default; see ``huginn.otel``). Unless
+    ``HUGINN_OTEL_ENDPOINT`` is configured this is a no-op, so existing
+    callers are unaffected.
+    """
+
+    def __init__(self, exporter: Any | None = None) -> None:
         self._roots: list[TelemetrySpan] = []
         self._current_stack: list[TelemetrySpan] = []
+        if exporter is None:
+            try:
+                from huginn.otel import get_default_exporter
+
+                exporter = get_default_exporter()
+            except Exception:
+                exporter = None
+        self._exporter = exporter
 
     @contextmanager
     def span(
@@ -146,15 +160,42 @@ class TelemetryCollector:
         finally:
             span.finish()
             self._current_stack.pop()
+            # Root span finished → hand it to the exporter in the background.
+            if self._exporter is not None and not self._current_stack:
+                try:
+                    self._exporter.emit(span)
+                except Exception:
+                    logger.debug("telemetry exporter.emit failed (fail-open)", exc_info=True)
+
+    def flush(self) -> None:
+        """Synchronously drain any pending export batches. No-op if no exporter."""
+        if self._exporter is not None:
+            try:
+                self._exporter.flush()
+            except Exception:
+                logger.debug("telemetry exporter.flush failed (fail-open)", exc_info=True)
+
+    def shutdown(self, block: bool = False) -> None:
+        """Stop background export and flush remaining spans (best-effort)."""
+        if self._exporter is not None:
+            try:
+                self._exporter.shutdown(block=block)
+            except Exception:
+                logger.debug("telemetry exporter.shutdown failed (fail-open)", exc_info=True)
 
     def current_span(self) -> TelemetrySpan | None:
         """Return the currently active span, if any."""
         return self._current_stack[-1] if self._current_stack else None
 
-    def add_event(self, name: str, **metadata: Any) -> None:
-        """Add a zero-duration event under the current span."""
+    def add_event(self, event_name: str, **metadata: Any) -> None:
+        """Add a zero-duration event under the current span.
+
+        The parameter is named ``event_name`` (not ``name``) so that callers can
+        freely put a ``name`` field inside ``metadata`` without colliding with
+        the positional event name.
+        """
         parent = self.current_span()
-        event = TelemetrySpan(name=name, metadata=dict(metadata))
+        event = TelemetrySpan(name=event_name, metadata=dict(metadata))
         event.finish()
         if parent is not None:
             parent.children.append(event)
@@ -278,7 +319,7 @@ class NullTelemetryCollector(TelemetryCollector):
         finally:
             pass
 
-    def add_event(self, name: str, **metadata: Any) -> None:
+    def add_event(self, event_name: str, **metadata: Any) -> None:
         pass
 
     def to_dict(self) -> list[dict[str, Any]]:

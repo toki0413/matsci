@@ -1,0 +1,40 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan lacks critical implementation details required to test the hypothesis. Specifically, it does not specify the functional form of the 'rigid' family (which must be a specific analytic form with few degrees of freedom) nor the exact 'fat' family (high-dimensional but learnable, not i.i.d. noise). Without these definitions, the experiment cannot be run or reproduced. Additionally, the plan mentions 'capacity_scan' but does not define how the minimum width $N_c$ is quantified or how the 'zero violation' condition is measured. This ambiguity makes the prediction unverified and the experimental setup incomplete.",
+    "missing_steps": [
+      "Define the explicit mathematical form of the rigid polynomial family (e.g., specific low-degree analytic function) to ensure it has a low-dimensional solution space.",
+      "Define the explicit mathematical form of the fat polynomial family (high-dimensional basis but learnable, not i.i.d. noise) to ensure it contrasts properly with the rigid family.",
+      "Specify the exact method for calculating the minimum network width $N_c$ and the 'zero violation' metric on held-out constraints.",
+      "Detail the capacity_scan procedure, including how training and hold-out errors are independently measured and how $N_c(w)$ is extracted."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two polynomial families: a rigid polynomial family (low-dimensional solution space, e.g., a specific analytic form with few degrees of "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to define the explicit mathematical forms of the 'rigid' and 'fat' function families, which is critical for reproducibility and validity. It also lacks a precise definition of the capacity_scan procedure, how N_c(w) is quantified, and how 'zero violation' is measured on held-out constraints. Without these, the experiment cannot be executed or validated, and it risks falling into the historical failure modes (e.g., using i.i.d. noise or ill-scaled polynomials). Additionally, the prediction relies on unverified assumptions about error thresholds and trends without specifying the numerical methodology.",
+    "missing_steps": [
+      "Define explicit analytic form of the rigid polynomial family (e.g., f(x) = ax²+bx+c with fixed coefficients or parameterized range)",
+      "Define explicit analytic form of the fat polynomial family (20-term Chebyshev with x-dependence, not i.i.d. noise)",
+      "Specify the exact method for computing N_c(w), including the zero-violation metric and held-out error calculation",
+      "Detail the capacity_scan procedure: how train_err and heldout_err are independently measured, and how N_c(w) is extracted from the scan",
+      "Specify scaling/normalization scheme for the 20-term Chebyshev to avoid ~1e9 scale issues as in run29"
+    ],
+    "mode": "explore",
+    "description": "Implement two function families (rigid: quadratic polynomial f(x)=ax²+bx+c; fat: 20-term Chebyshev polynomial) with proper O(1) normalization and non-overlapping held-out sets. Run capacity scan to ve"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is overly vague and lacks critical mathematical definitions required to execute the hypothesis test. It does not specify the explicit functional forms of the 'rigid' and 'fat' polynomial families, nor does it define the capacity_scan procedure, the 'zero violation' metric, or how N_c is quantified. This ambiguity directly replicates the historical failures identified in the '同场景历史失败' section (e.g., ill-defined function families, missing N_c quantification). Without these details, the experiment cannot be run, reproduced, or validated against the hypothesis.",
+    "missing_steps": [
+      "Define explicit analytic form of the rigid polynomial family (e.g., low-degree polynomial with fixed coefficients)",
+      "Define explicit analytic form of the fat polynomial family (high-dimensional basis with x-dependence, not i.i.d. noise)",
+      "Specify the exact method for computing N_c(w), including the zero-violation metric and held-out error calculation",
+      "Detail the capacity_scan procedure: how train_err and heldout_err are independently measured, and how N_c(w) is extracted from the scan",
+      "Specify scaling/normalization scheme to avoid scale issues (e.g., ~1e9) as seen in run29"
+    ],
+    "mode": "explore",
+    "description": "The current hypothesis (rigid polynomial family exhibits finite N_c that is flat/decreasing across w) shows a surprise of 1.0, indicating a significant discrepancy between prediction and actual result"
+  }
+]

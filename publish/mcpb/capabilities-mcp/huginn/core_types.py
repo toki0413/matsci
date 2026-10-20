@@ -139,7 +139,7 @@ def _summarize_large_array(arr: Any) -> dict[str, Any]:
 
 def _jsonify(obj: Any) -> Any:
     """Recursively convert non-serializable types to JSON-safe equivalents."""
-    if obj is None or isinstance(obj, (bool, int, float, str)):
+    if obj is None or isinstance(obj, bool | int | float | str):
         return obj
     # Pydantic v2
     if hasattr(obj, "model_dump"):
@@ -163,12 +163,12 @@ def _jsonify(obj: Any) -> Any:
             pass
     if isinstance(obj, bytes):
         return obj.decode("utf-8", errors="replace")
-    if isinstance(obj, (set, frozenset)):
+    if isinstance(obj, set | frozenset):
         return [ _jsonify(x) for x in obj]
     if isinstance(obj, dict):
         return {str(k): _jsonify(v) for k, v in obj.items()}
     # 长 list/tuple 也截断, 防止万级 thermo 数据撑爆上下文
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         if len(obj) > _MAX_ARRAY_ELEMENTS:
             step = max(1, len(obj) // 20)
             sampled = list(obj[::step][:20])

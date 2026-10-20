@@ -343,7 +343,7 @@ def _audit_python_tree(tree: ast.AST, filename: str) -> list[str]:
                     )
 
         # Factory with single product
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and "factory" in node.name.lower():
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and "factory" in node.name.lower():
             returns = [
                 n for n in ast.walk(node)
                 if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)

@@ -1,0 +1,3515 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "** [DIM: Structure] - It provides the most direct, verifiable link between the n",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:57:25.051128",
+      "last_seen": "2026-09-28T13:57:25.051128",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (polynomials degree ≤ 2), N_c(w) will be a small finite integer (e.g., h=2~4) and trend flat or decreasing as w increases. For the fat family (e.g., 20th-order polynomial), N_c(w)",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Structure] - It provides the most direct, verifiable link between the n"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:57:25.051174",
+      "last_seen": "2026-09-28T13:57:25.051174",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:57:25.051188",
+      "last_seen": "2026-09-28T13:57:25.051188",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:57:25.051199",
+      "last_seen": "2026-09-28T13:57:25.051199",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Structure] - It provides the most direct, verifiable link between the n",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_aa791f1d"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:57:25.051332",
+      "last_seen": "2026-09-28T13:57:25.051332",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8967e4d5a64fc270",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The hypothesis that the rigid polynomial constraint family (deg",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:58:20.408763",
+      "last_seen": "2026-09-28T13:58:20.408763",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (degree ≤ 2), N_c(w) will be a small finite integer (e.g., h=2~8) across multiple seeds, with train_err ≤ 1e-4 and val_err ≤ 1e-3 on held-out points. For the fat family (high-orde",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The hypothesis that the rigid polynomial constraint family (deg"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:58:20.408810",
+      "last_seen": "2026-09-28T13:58:20.408810",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:58:20.408820",
+      "last_seen": "2026-09-28T13:58:20.408820",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:58:20.408830",
+      "last_seen": "2026-09-28T13:58:20.408830",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The hypothesis that the rigid polynomial constraint family (deg",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_e2403b7a"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:58:20.408922",
+      "last_seen": "2026-09-28T13:58:20.408922",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "60d0524c28f898ad",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:59:19.464608",
+      "last_seen": "2026-09-28T13:59:19.464608",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family (degree ≤ 2), N_c(w) will be a small finite integer (e.g., h=2 to h=8) that remains flat or decreases as w increases, with held-out error ≤ 1e-3 at those widths. For fat family, all h",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464652",
+      "last_seen": "2026-09-28T13:59:19.464652",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464663",
+      "last_seen": "2026-09-28T13:59:19.464663",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:59:19.464762",
+      "last_seen": "2026-09-28T13:59:19.464762",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "870a6c546097ea9f",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) possesses a",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:00:23.485429",
+      "last_seen": "2026-09-28T14:01:25.606390",
+      "mentions": 2,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (degree ≤ 2), N_c(w) will be a small finite integer (h=2~8) with flat trend across w values. For the fat family (degree 19), N_c(w) will be unreachable (trend='unreachable') for a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) possesses a"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:00:23.485470",
+      "last_seen": "2026-09-28T14:00:23.485470",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:00:23.485480",
+      "last_seen": "2026-09-28T14:00:23.485480",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:00:23.485489",
+      "last_seen": "2026-09-28T14:00:23.485489",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) possesses a",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_ac0e1dd5"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:00:23.485574",
+      "last_seen": "2026-09-28T14:00:23.485574",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "63ed380e9ad94189",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:01:25.606422",
+      "last_seen": "2026-09-28T14:01:25.606422",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:01:25.606442",
+      "last_seen": "2026-09-28T14:01:25.606442",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:01:25.606455",
+      "last_seen": "2026-09-28T14:01:25.606455",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) possesses a",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_3394ca93"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:01:25.606539",
+      "last_seen": "2026-09-28T14:01:25.606539",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "179e2824bb91cb87",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) admits a fi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:02:25.230198",
+      "last_seen": "2026-09-28T14:02:25.230198",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: N_c(w) will be a small finite integer (e.g., h=2~8) and remain flat or decreasing as w increases (e.g., N_c(10)=4, N_c(20)=4, N_c(50)=3). Fat family: N_c(w) will be unreachable (trend='u",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) admits a fi"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:02:25.230238",
+      "last_seen": "2026-09-28T14:02:25.230238",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:02:25.230248",
+      "last_seen": "2026-09-28T14:02:25.230248",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:02:25.230258",
+      "last_seen": "2026-09-28T14:02:25.230258",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) admits a fi",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_997ed851"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:02:25.230339",
+      "last_seen": "2026-09-28T14:02:25.230339",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "aaff6b2e97a25025",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a f",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:03:04.978687",
+      "last_seen": "2026-09-28T14:04:01.011275",
+      "mentions": 2,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will produce polynomial constraints where a two-layer tanh network can achieve zero violation (max absolute error ≤ 1e3 on held-out points) with width h ∈ [2, 8], and this width will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a f"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:03:04.978725",
+      "last_seen": "2026-09-28T14:03:04.978725",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:03:04.978735",
+      "last_seen": "2026-09-28T14:03:04.978735",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:03:04.978744",
+      "last_seen": "2026-09-28T14:03:04.978744",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a f",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_9f92e45d"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:03:04.978828",
+      "last_seen": "2026-09-28T14:03:04.978828",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5d78f70db560e255",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:01.011306",
+      "last_seen": "2026-09-28T14:04:01.011306",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:01.011327",
+      "last_seen": "2026-09-28T14:04:01.011327",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:04:01.011338",
+      "last_seen": "2026-09-28T14:04:01.011338",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a f",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_9840fa21"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:04:01.011423",
+      "last_seen": "2026-09-28T14:04:01.011423",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1c551ca6172b2420",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: structure] The solution manifold of the rigid polynomial family is a linea",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:04:40.123548",
+      "last_seen": "2026-09-28T14:04:40.123548",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid polynomial family will yield finite N_c(w) values (e.g., h=4-8 for w up to d) with flat or decreasing trend as w increases, while the fat polynomial family will show unreachable (N_c=∞) tren",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution manifold of the rigid polynomial family is a linea"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:40.123586",
+      "last_seen": "2026-09-28T14:04:40.123586",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:40.123596",
+      "last_seen": "2026-09-28T14:04:40.123596",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:04:40.123605",
+      "last_seen": "2026-09-28T14:04:40.123605",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution manifold of the rigid polynomial family is a linea",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_8822c1af"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:04:40.123694",
+      "last_seen": "2026-09-28T14:04:40.123694",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "522f91d94f46f3aa",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family exhibits a solution mani",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:05:18.504911",
+      "last_seen": "2026-09-28T14:06:30.792690",
+      "mentions": 2,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid polynomial family with n=2 (d=6) and w≥6 should show finite N_c in range h=2-8 with max absolute error ≤1e3 on held-out set, while the fat polynomial family (e.g., random coefficients with h",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family exhibits a solution mani"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:05:18.504948",
+      "last_seen": "2026-09-28T14:05:18.504948",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:05:18.504957",
+      "last_seen": "2026-09-28T14:05:18.504957",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:05:18.504966",
+      "last_seen": "2026-09-28T14:05:18.504966",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family exhibits a solution mani",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_c3b33d9d"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:05:18.505046",
+      "last_seen": "2026-09-28T14:05:18.505046",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1f98ba5f3c080cd6",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:06:30.792715",
+      "last_seen": "2026-09-28T14:06:30.792715",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:06:30.792742",
+      "last_seen": "2026-09-28T14:06:30.792742",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:06:30.792755",
+      "last_seen": "2026-09-28T14:06:30.792755",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family exhibits a solution mani",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_6b1e1077"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:06:30.792842",
+      "last_seen": "2026-09-28T14:06:30.792842",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "80bc064130746eac",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:07:49.272601",
+      "last_seen": "2026-09-28T14:12:03.452245",
+      "mentions": 2,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The two-layer tanh network with width w ≥ N_c will achieve zero holdout error on the rigid polynomial constraints, with N_c approximately equal to binom(w+1, 2), and the fat polynomial family will mai",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272640",
+      "last_seen": "2026-09-28T14:07:49.272640",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272649",
+      "last_seen": "2026-09-28T14:07:49.272649",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:07:49.272740",
+      "last_seen": "2026-09-28T14:07:49.272740",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4968f91d684b3fa6",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:08:53.624061",
+      "last_seen": "2026-09-28T14:11:01.125699",
+      "mentions": 2,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Define the rigid polynomial constraint family as a linear subspace spanned by a fixed basis of monomials of degree ≤ d (e.g., d=3, basis size 10) with N_c(w) = dim(span) = constant ≤ 8. Implement `fam",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624102",
+      "last_seen": "2026-09-28T14:08:53.624102",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624112",
+      "last_seen": "2026-09-28T14:08:53.624112",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:08:53.624202",
+      "last_seen": "2026-09-28T14:08:53.624202",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4b9072dc3d12c06d",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:11:01.125725",
+      "last_seen": "2026-09-28T14:11:01.125725",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:11:01.125746",
+      "last_seen": "2026-09-28T14:11:01.125746",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:11:01.125757",
+      "last_seen": "2026-09-28T14:11:01.125757",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_a4a5eccd"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:11:01.125839",
+      "last_seen": "2026-09-28T14:11:01.125839",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "64ceaf0c54134c05",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
+    },
+    {
+      "label": "plan_explore_iter75",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:03.452273",
+      "last_seen": "2026-09-28T14:12:03.452273",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter75"
+    },
+    {
+      "label": "pass_iter75",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:03.452295",
+      "last_seen": "2026-09-28T14:12:03.452295",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter75"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:12:03.452306",
+      "last_seen": "2026-09-28T14:12:03.452306",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+        "Method:plan_explore_iter75",
+        "Fact:pass_iter75"
+      ],
+      "iteration": 75,
+      "id": "he_experiment_pipeline_96a65d72"
+    },
+    {
+      "label": "reviewer_iter75",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:12:03.452387",
+      "last_seen": "2026-09-28T14:12:03.452387",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a168ad3ab3549e70",
+      "r_phys": 1.0,
+      "iteration": 75,
+      "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:12:59.311488",
+      "last_seen": "2026-09-28T14:15:46.900092",
+      "mentions": 3,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The family function will return X, y, Xv, yv all with shape (N, 1) and y/yv std ≲ 10. With w=10 (or similar sufficient sample size), the rigid family should achieve zero violation at h=2~8 with train_",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:59.311526",
+      "last_seen": "2026-09-28T14:12:59.311526",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:59.311535",
+      "last_seen": "2026-09-28T14:12:59.311535",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:12:59.311544",
+      "last_seen": "2026-09-28T14:12:59.311544",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_e5436ad"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:12:59.311624",
+      "last_seen": "2026-09-28T14:12:59.311624",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7364a282d08f3b4c",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:14:07.632664",
+      "last_seen": "2026-09-28T14:14:07.632664",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:14:07.632685",
+      "last_seen": "2026-09-28T14:14:07.632685",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:14:07.632695",
+      "last_seen": "2026-09-28T14:14:07.632695",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_289260fb"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:14:07.632783",
+      "last_seen": "2026-09-28T14:14:07.632783",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3f5758888949e86d",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900116",
+      "last_seen": "2026-09-28T14:15:46.900116",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900138",
+      "last_seen": "2026-09-28T14:15:46.900138",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:15:46.900232",
+      "last_seen": "2026-09-28T14:15:46.900232",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2e6e0c6bb76939ec",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family corresponds to a linear ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:16:47.050891",
+      "last_seen": "2026-09-28T14:17:55.745043",
+      "mentions": 2,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite number (e.g., h=4~8) that remains flat or decreases as w increases. For the fat family, N_c(w) will be 'unreachable' (all h≤64 fail to achieve ≤1e3",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a linear"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:16:47.050935",
+      "last_seen": "2026-09-28T14:16:47.050935",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:16:47.050944",
+      "last_seen": "2026-09-28T14:16:47.050944",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:16:47.050961",
+      "last_seen": "2026-09-28T14:16:47.050961",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a linear",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_638c840f"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:16:47.051044",
+      "last_seen": "2026-09-28T14:16:47.051044",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c06c593e85c0aabf",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:17:55.745067",
+      "last_seen": "2026-09-28T14:17:55.745067",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:17:55.745089",
+      "last_seen": "2026-09-28T14:17:55.745089",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:17:55.745100",
+      "last_seen": "2026-09-28T14:17:55.745100",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a linear",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_998718f2"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:17:55.745183",
+      "last_seen": "2026-09-28T14:17:55.745183",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a58a323b021e3f15",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "'.\"",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:19:32.320095",
+      "last_seen": "2026-09-28T14:19:32.320095",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve low validation error due to proper capacity match; fat family will exhibit early violation (small N_c) due to overparameterization despite scaling, confirming capacity limits",
+      "persona": "reviewer",
+      "id": "experiment:'.\""
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320134",
+      "last_seen": "2026-09-28T14:19:32.320134",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320144",
+      "last_seen": "2026-09-28T14:19:32.320144",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "members": [
+        "experiment:'.\"",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:19:32.320236",
+      "last_seen": "2026-09-28T14:19:32.320236",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "04d2dc578f2ff627",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:21:37.440339",
+      "last_seen": "2026-09-28T14:33:33.828044",
+      "mentions": 4,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid polynomial family will show bounded VC dimension with stable generalization error, while the fat family will exhibit unbounded capacity with increasing generalization gap as w grows, confirm",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:21:37.440376",
+      "last_seen": "2026-09-28T14:21:37.440376",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:21:37.440386",
+      "last_seen": "2026-09-28T14:21:37.440386",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:21:37.440396",
+      "last_seen": "2026-09-28T14:21:37.440396",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_28fed6f"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:21:37.440481",
+      "last_seen": "2026-09-28T14:21:37.440481",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f4e8384ffefb7798",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:22:41.984869",
+      "last_seen": "2026-09-28T14:22:41.984869",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:22:41.984890",
+      "last_seen": "2026-09-28T14:22:41.984890",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:22:41.984904",
+      "last_seen": "2026-09-28T14:22:41.984904",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_3ddc3915"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:22:41.985000",
+      "last_seen": "2026-09-28T14:22:41.985000",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "17a6ccbb463af029",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
+    },
+    {
+      "label": "** [DIM: defect] The generalization failure in \"fat\" families is caused by topol",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:23:56.758222",
+      "last_seen": "2026-09-28T14:23:56.758222",
+      "mentions": 1,
+      "iteration": 120,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "[auto-routed: surprise=1.00] Implement rigorous capacity_scan experiment with explicit mathematical specifications: (1) Define polynomial families with controlled dimensionality — rigid family: f(x) =",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: defect] The generalization failure in \"fat\" families is caused by topol"
+    },
+    {
+      "label": "plan_explore_iter120",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:23:56.758269",
+      "last_seen": "2026-09-28T14:23:56.758269",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter120"
+    },
+    {
+      "label": "pass_iter120",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:23:56.758280",
+      "last_seen": "2026-09-28T14:23:56.758280",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter120"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:23:56.758294",
+      "last_seen": "2026-09-28T14:23:56.758294",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: defect] The generalization failure in \"fat\" families is caused by topol",
+        "Method:plan_explore_iter120",
+        "Fact:pass_iter120"
+      ],
+      "iteration": 120,
+      "id": "he_experiment_pipeline_22c6edb"
+    },
+    {
+      "label": "reviewer_iter120",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:23:56.758392",
+      "last_seen": "2026-09-28T14:23:56.758392",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "33c9ca741703fbde",
+      "r_phys": 1.0,
+      "iteration": 120,
+      "id": "persona_use:reviewer_iter120"
+    },
+    {
+      "label": "[DIM: structure] The solution space rigidity of the polynomial families is deter",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:24:58.785604",
+      "last_seen": "2026-09-28T14:26:00.018519",
+      "mentions": 2,
+      "iteration": 125,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (degree ≤ 5) will yield finite N_c values that scale with w, while the fat family (degree > 10) will show N_c = unreachable (exceeds representational capacity). The normalized outputs",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter"
+    },
+    {
+      "label": "plan_explore_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:24:58.785643",
+      "last_seen": "2026-09-28T14:24:58.785643",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:24:58.785653",
+      "last_seen": "2026-09-28T14:24:58.785653",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:24:58.785662",
+      "last_seen": "2026-09-28T14:24:58.785662",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter",
+        "Method:plan_explore_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_9ba28a90"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:24:58.785743",
+      "last_seen": "2026-09-28T14:24:58.785743",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "54ac20d0d283994b",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018544",
+      "last_seen": "2026-09-28T14:26:00.018544",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018566",
+      "last_seen": "2026-09-28T14:26:00.018566",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:26:00.018656",
+      "last_seen": "2026-09-28T14:26:00.018656",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "49193a84bd82e212",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
+    },
+    {
+      "label": "[DIM: structure] The rigidity of the polynomial solution space is governed by th",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:27:01.095749",
+      "last_seen": "2026-09-28T14:27:01.095749",
+      "mentions": 1,
+      "iteration": 135,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show finite N_c (e.g., h=2~8) with flat/decreasing trend; fat family will show unreachable N_c (all h≤64 fail). Output shapes will be (N,1) and y/yv normalized to O(1).\nPLAN_SLOTS: f",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigidity of the polynomial solution space is governed by th"
+    },
+    {
+      "label": "plan_explore_iter135",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:27:01.095791",
+      "last_seen": "2026-09-28T14:27:01.095791",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter135"
+    },
+    {
+      "label": "pass_iter135",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:27:01.095800",
+      "last_seen": "2026-09-28T14:27:01.095800",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter135"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:27:01.095810",
+      "last_seen": "2026-09-28T14:27:01.095810",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigidity of the polynomial solution space is governed by th",
+        "Method:plan_explore_iter135",
+        "Fact:pass_iter135"
+      ],
+      "iteration": 135,
+      "id": "he_experiment_pipeline_71c49a45"
+    },
+    {
+      "label": "reviewer_iter135",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:27:01.095895",
+      "last_seen": "2026-09-28T14:27:01.095895",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9360e418b35fefb7",
+      "r_phys": 1.0,
+      "iteration": 135,
+      "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: structure] The rigidity of the polynomial solution space is determined by ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:28:38.377471",
+      "last_seen": "2026-09-28T14:31:23.238972",
+      "mentions": 3,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid families exhibit finite N_c(w) that remains flat or decreasing with increasing width w; high-dimensional fat families exhibit N_c = ∞ (unreachable within scanned width range h ≤ 64) due to high",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by"
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377511",
+      "last_seen": "2026-09-28T14:28:38.377511",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377522",
+      "last_seen": "2026-09-28T14:28:38.377522",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:28:38.377615",
+      "last_seen": "2026-09-28T14:28:38.377615",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b95910b94c42fff4",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
+    },
+    {
+      "label": "plan_explore_iter145",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:29:43.288040",
+      "last_seen": "2026-09-28T14:29:43.288040",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter145"
+    },
+    {
+      "label": "pass_iter145",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:29:43.288061",
+      "last_seen": "2026-09-28T14:29:43.288061",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter145"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:29:43.288071",
+      "last_seen": "2026-09-28T14:29:43.288071",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+        "Method:plan_explore_iter145",
+        "Fact:pass_iter145"
+      ],
+      "iteration": 145,
+      "id": "he_experiment_pipeline_52491708"
+    },
+    {
+      "label": "reviewer_iter145",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:29:43.288156",
+      "last_seen": "2026-09-28T14:29:43.288156",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "773d8736d1c85f08",
+      "r_phys": 1.0,
+      "iteration": 145,
+      "id": "persona_use:reviewer_iter145"
+    },
+    {
+      "label": "plan_explore_iter150",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:31:23.238999",
+      "last_seen": "2026-09-28T14:31:23.238999",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter150"
+    },
+    {
+      "label": "pass_iter150",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:31:23.239021",
+      "last_seen": "2026-09-28T14:31:23.239021",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter150"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:31:23.239032",
+      "last_seen": "2026-09-28T14:31:23.239032",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+        "Method:plan_explore_iter150",
+        "Fact:pass_iter150"
+      ],
+      "iteration": 150,
+      "id": "he_experiment_pipeline_dbea23ea"
+    },
+    {
+      "label": "reviewer_iter150",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:31:23.239114",
+      "last_seen": "2026-09-28T14:31:23.239114",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fc182285ac042f70",
+      "r_phys": 1.0,
+      "iteration": 150,
+      "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704158",
+      "last_seen": "2026-09-28T14:32:27.704158",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704180",
+      "last_seen": "2026-09-28T14:32:27.704180",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:32:27.704272",
+      "last_seen": "2026-09-28T14:32:27.704272",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0700b57f79cd13af",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
+    },
+    {
+      "label": "plan_explore_iter160",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:33:33.828070",
+      "last_seen": "2026-09-28T14:33:33.828070",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter160"
+    },
+    {
+      "label": "pass_iter160",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:33:33.828093",
+      "last_seen": "2026-09-28T14:33:33.828093",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter160"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:33:33.828103",
+      "last_seen": "2026-09-28T14:33:33.828103",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+        "Method:plan_explore_iter160",
+        "Fact:pass_iter160"
+      ],
+      "iteration": 160,
+      "id": "he_experiment_pipeline_1ffaf071"
+    },
+    {
+      "label": "reviewer_iter160",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:33:33.828187",
+      "last_seen": "2026-09-28T14:33:33.828187",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "04b53d6bfcda6119",
+      "r_phys": 1.0,
+      "iteration": 160,
+      "id": "persona_use:reviewer_iter160"
+    },
+    {
+      "label": "[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:34:40.280608",
+      "last_seen": "2026-09-28T14:34:40.280608",
+      "mentions": 1,
+      "iteration": 165,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "[auto-routed: surprise=1.00] Based on the feedback, I need to correct the MODE mismatch, provide precise mathematical definitions, and specify the implementation details for the capacity_scan tool.\n\n`",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr"
+    },
+    {
+      "label": "plan_explore_iter165",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280649",
+      "last_seen": "2026-09-28T14:34:40.280649",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter165"
+    },
+    {
+      "label": "pass_iter165",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280659",
+      "last_seen": "2026-09-28T14:34:40.280659",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter165"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr",
+        "Method:plan_explore_iter165",
+        "Fact:pass_iter165"
+      ],
+      "iteration": 165,
+      "id": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "label": "reviewer_iter165",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:34:40.280748",
+      "last_seen": "2026-09-28T14:34:40.280748",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b1615924005fb5f",
+      "r_phys": 1.0,
+      "iteration": 165,
+      "id": "persona_use:reviewer_iter165"
+    },
+    {
+      "label": "[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:35:36.889242",
+      "last_seen": "2026-09-28T14:35:36.889242",
+      "mentions": 1,
+      "iteration": 170,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show N_c(w) ≤ 8 with flat/decreasing trend across w values; fat family will show trend='unreachable' (no width ≤64 achieves zero violation). Both families will have training error ≤1",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic"
+    },
+    {
+      "label": "plan_explore_iter170",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889281",
+      "last_seen": "2026-09-28T14:35:36.889281",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter170"
+    },
+    {
+      "label": "pass_iter170",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889291",
+      "last_seen": "2026-09-28T14:35:36.889291",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter170"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic",
+        "Method:plan_explore_iter170",
+        "Fact:pass_iter170"
+      ],
+      "iteration": 170,
+      "id": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "label": "reviewer_iter170",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:35:36.889387",
+      "last_seen": "2026-09-28T14:35:36.889387",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f11e2c0fc386de62",
+      "r_phys": 1.0,
+      "iteration": 170,
+      "id": "persona_use:reviewer_iter170"
+    },
+    {
+      "label": "**[DIM: structure (implementation topology)]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:36:41.313014",
+      "last_seen": "2026-09-28T14:36:41.313014",
+      "mentions": 1,
+      "iteration": 175,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero-violation (val_err ≤ 1e-3) at h=2-8 with flat/decreasing N_c(w) trend; fat family will show all h≤64 with val_err > 1e-3 (trend='unreachable'), confirming the fat signat",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: structure (implementation topology)]**"
+    },
+    {
+      "label": "plan_explore_iter175",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:36:41.313054",
+      "last_seen": "2026-09-28T14:36:41.313054",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter175"
+    },
+    {
+      "label": "pass_iter175",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:36:41.313063",
+      "last_seen": "2026-09-28T14:36:41.313063",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter175"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:36:41.313071",
+      "last_seen": "2026-09-28T14:36:41.313071",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: structure (implementation topology)]**",
+        "Method:plan_explore_iter175",
+        "Fact:pass_iter175"
+      ],
+      "iteration": 175,
+      "id": "he_experiment_pipeline_27126400"
+    },
+    {
+      "label": "reviewer_iter175",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:36:41.313152",
+      "last_seen": "2026-09-28T14:36:41.313152",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7113401c29dab547",
+      "r_phys": 1.0,
+      "iteration": 175,
+      "id": "persona_use:reviewer_iter175"
+    },
+    {
+      "label": "** **[DIM: structure (implementation topology)]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:37:44.041471",
+      "last_seen": "2026-09-28T14:37:44.041471",
+      "mentions": 1,
+      "iteration": 180,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family with w=10, h=4, seed=0, I expect train_err ~1e-5 and val_err ~5e-4 (within 1e-3 threshold). For the fat family with w=10, all h≤64 will yield val_err > 1e-3 with trend='unreachabl",
+      "persona": "reviewer",
+      "id": "experiment:** **[DIM: structure (implementation topology)]**"
+    },
+    {
+      "label": "plan_explore_iter180",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041508",
+      "last_seen": "2026-09-28T14:37:44.041508",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter180"
+    },
+    {
+      "label": "pass_iter180",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041519",
+      "last_seen": "2026-09-28T14:37:44.041519",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter180"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "members": [
+        "experiment:** **[DIM: structure (implementation topology)]**",
+        "Method:plan_explore_iter180",
+        "Fact:pass_iter180"
+      ],
+      "iteration": 180,
+      "id": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "label": "reviewer_iter180",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:37:44.041610",
+      "last_seen": "2026-09-28T14:37:44.041610",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "dc98c648392d19ba",
+      "r_phys": 1.0,
+      "iteration": 180,
+      "id": "persona_use:reviewer_iter180"
+    },
+    {
+      "label": "[DIM: structure (implementation topology)] The rigid polynomial family exhibits ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:38:59.476392",
+      "last_seen": "2026-09-28T14:38:59.476392",
+      "mentions": 1,
+      "iteration": 185,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid polynomial family will exhibit finite N_c(w) plateauing at small network widths (h=2-8) due to low-dimensional algebraic structure invariant under sample augmentation. Fat polynomial family will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure (implementation topology)] The rigid polynomial family exhibits"
+    },
+    {
+      "label": "plan_explore_iter185",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476431",
+      "last_seen": "2026-09-28T14:38:59.476431",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter185"
+    },
+    {
+      "label": "pass_iter185",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476441",
+      "last_seen": "2026-09-28T14:38:59.476441",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter185"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure (implementation topology)] The rigid polynomial family exhibits",
+        "Method:plan_explore_iter185",
+        "Fact:pass_iter185"
+      ],
+      "iteration": 185,
+      "id": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "label": "reviewer_iter185",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:38:59.476533",
+      "last_seen": "2026-09-28T14:38:59.476533",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2fb69b218e87b61a",
+      "r_phys": 1.0,
+      "iteration": 185,
+      "id": "persona_use:reviewer_iter185"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family exhibits a finite N_c plateau that ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:39:56.624205",
+      "last_seen": "2026-09-28T14:39:56.624205",
+      "mentions": 1,
+      "iteration": 190,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve val_err ≤1e-3 at h=2~4 for w≥5 with flat N_c(w) trend; fat family will show val_err >1e-3 across all h≤2~64 with trend='unreachable'. Both families will have y/yv std ≲10 aft",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite N_c plateau that"
+    },
+    {
+      "label": "plan_explore_iter190",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:39:56.624244",
+      "last_seen": "2026-09-28T14:39:56.624244",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter190"
+    },
+    {
+      "label": "pass_iter190",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:39:56.624253",
+      "last_seen": "2026-09-28T14:39:56.624253",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter190"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:39:56.624262",
+      "last_seen": "2026-09-28T14:39:56.624262",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite N_c plateau that",
+        "Method:plan_explore_iter190",
+        "Fact:pass_iter190"
+      ],
+      "iteration": 190,
+      "id": "he_experiment_pipeline_971daf6d"
+    },
+    {
+      "label": "reviewer_iter190",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:39:56.624345",
+      "last_seen": "2026-09-28T14:39:56.624345",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fb648f59721d0128",
+      "r_phys": 1.0,
+      "iteration": 190,
+      "id": "persona_use:reviewer_iter190"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:41:03.697790",
+      "last_seen": "2026-09-28T14:41:03.697790",
+      "mentions": 1,
+      "iteration": 195,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family shows N_c plateau independent of w due to low-dimensional linear manifold structure; fat family shows N_c scaling with w. Numerical instability avoided through proper scaling. Zero violat",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv"
+    },
+    {
+      "label": "plan_explore_iter195",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697832",
+      "last_seen": "2026-09-28T14:41:03.697832",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter195"
+    },
+    {
+      "label": "pass_iter195",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697842",
+      "last_seen": "2026-09-28T14:41:03.697842",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter195"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv",
+        "Method:plan_explore_iter195",
+        "Fact:pass_iter195"
+      ],
+      "iteration": 195,
+      "id": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "label": "reviewer_iter195",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:41:03.697953",
+      "last_seen": "2026-09-28T14:41:03.697953",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "92665af53c79e1fe",
+      "r_phys": 1.0,
+      "iteration": 195,
+      "id": "persona_use:reviewer_iter195"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T14:42:05.425109",
+      "last_seen": "2026-09-28T14:43:08.605676",
+      "mentions": 2,
+      "iteration": 200,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite number (e.g., h=4~8) and flat or decreasing with w. For the fat family, N_c will be unreachable (trend='unreachable') for all h≤64. Training errors",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol"
+    },
+    {
+      "label": "plan_explore_iter200",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:42:05.425149",
+      "last_seen": "2026-09-28T14:42:05.425149",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter200"
+    },
+    {
+      "label": "pass_iter200",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:42:05.425159",
+      "last_seen": "2026-09-28T14:42:05.425159",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter200"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:42:05.425168",
+      "last_seen": "2026-09-28T14:42:05.425168",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+        "Method:plan_explore_iter200",
+        "Fact:pass_iter200"
+      ],
+      "iteration": 200,
+      "id": "he_experiment_pipeline_7611930d"
+    },
+    {
+      "label": "reviewer_iter200",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:42:05.425246",
+      "last_seen": "2026-09-28T14:42:05.425246",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "728451e592a2f2c7",
+      "r_phys": 1.0,
+      "iteration": 200,
+      "id": "persona_use:reviewer_iter200"
+    },
+    {
+      "label": "plan_explore_iter205",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605702",
+      "last_seen": "2026-09-28T14:43:08.605702",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter205"
+    },
+    {
+      "label": "pass_iter205",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605724",
+      "last_seen": "2026-09-28T14:43:08.605724",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter205"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+        "Method:plan_explore_iter205",
+        "Fact:pass_iter205"
+      ],
+      "iteration": 205,
+      "id": "he_experiment_pipeline_e0680a38"
+    },
+    {
+      "label": "reviewer_iter205",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:43:08.605819",
+      "last_seen": "2026-09-28T14:43:08.605819",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1a141737dc113b57",
+      "r_phys": 1.0,
+      "iteration": 205,
+      "id": "persona_use:reviewer_iter205"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Structure] - It provides the most direct, verifiable link between the n",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:57:25.051199",
+      "last_seen": "2026-09-28T13:57:25.051199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aa791f1d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:57:25.051199",
+      "last_seen": "2026-09-28T13:57:25.051199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aa791f1d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:57:25.051199",
+      "last_seen": "2026-09-28T13:57:25.051199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aa791f1d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The hypothesis that the rigid polynomial constraint family (deg",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:58:20.408830",
+      "last_seen": "2026-09-28T13:58:20.408830",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2403b7a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:58:20.408830",
+      "last_seen": "2026-09-28T13:58:20.408830",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2403b7a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:58:20.408830",
+      "last_seen": "2026-09-28T13:58:20.408830",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2403b7a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) possesses a",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:00:23.485489",
+      "last_seen": "2026-09-28T14:00:23.485489",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ac0e1dd5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) possesses a",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:01:25.606455",
+      "last_seen": "2026-09-28T14:01:25.606455",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3394ca93"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:00:23.485489",
+      "last_seen": "2026-09-28T14:00:23.485489",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ac0e1dd5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:00:23.485489",
+      "last_seen": "2026-09-28T14:00:23.485489",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ac0e1dd5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:01:25.606455",
+      "last_seen": "2026-09-28T14:01:25.606455",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3394ca93"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:01:25.606455",
+      "last_seen": "2026-09-28T14:01:25.606455",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3394ca93"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) admits a fi",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:02:25.230258",
+      "last_seen": "2026-09-28T14:02:25.230258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_997ed851"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:02:25.230258",
+      "last_seen": "2026-09-28T14:02:25.230258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_997ed851"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:02:25.230258",
+      "last_seen": "2026-09-28T14:02:25.230258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_997ed851"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:03:04.978744",
+      "last_seen": "2026-09-28T14:03:04.978744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9f92e45d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:01.011338",
+      "last_seen": "2026-09-28T14:04:01.011338",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9840fa21"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:03:04.978744",
+      "last_seen": "2026-09-28T14:03:04.978744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9f92e45d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:03:04.978744",
+      "last_seen": "2026-09-28T14:03:04.978744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9f92e45d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:01.011338",
+      "last_seen": "2026-09-28T14:04:01.011338",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9840fa21"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:01.011338",
+      "last_seen": "2026-09-28T14:04:01.011338",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9840fa21"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution manifold of the rigid polynomial family is a linea",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:40.123605",
+      "last_seen": "2026-09-28T14:04:40.123605",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8822c1af"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:40.123605",
+      "last_seen": "2026-09-28T14:04:40.123605",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8822c1af"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:04:40.123605",
+      "last_seen": "2026-09-28T14:04:40.123605",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8822c1af"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family exhibits a solution mani",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:05:18.504966",
+      "last_seen": "2026-09-28T14:05:18.504966",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c3b33d9d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family exhibits a solution mani",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:06:30.792755",
+      "last_seen": "2026-09-28T14:06:30.792755",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6b1e1077"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:05:18.504966",
+      "last_seen": "2026-09-28T14:05:18.504966",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c3b33d9d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:05:18.504966",
+      "last_seen": "2026-09-28T14:05:18.504966",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c3b33d9d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:06:30.792755",
+      "last_seen": "2026-09-28T14:06:30.792755",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6b1e1077"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:06:30.792755",
+      "last_seen": "2026-09-28T14:06:30.792755",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6b1e1077"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:03.452306",
+      "last_seen": "2026-09-28T14:12:03.452306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_96a65d72"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:11:01.125757",
+      "last_seen": "2026-09-28T14:11:01.125757",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a4a5eccd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:11:01.125757",
+      "last_seen": "2026-09-28T14:11:01.125757",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a4a5eccd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:11:01.125757",
+      "last_seen": "2026-09-28T14:11:01.125757",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a4a5eccd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:03.452306",
+      "last_seen": "2026-09-28T14:12:03.452306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_96a65d72"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter75",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:03.452306",
+      "last_seen": "2026-09-28T14:12:03.452306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_96a65d72"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:59.311544",
+      "last_seen": "2026-09-28T14:12:59.311544",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e5436ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:14:07.632695",
+      "last_seen": "2026-09-28T14:14:07.632695",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_289260fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:59.311544",
+      "last_seen": "2026-09-28T14:12:59.311544",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e5436ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:12:59.311544",
+      "last_seen": "2026-09-28T14:12:59.311544",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e5436ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:14:07.632695",
+      "last_seen": "2026-09-28T14:14:07.632695",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_289260fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:14:07.632695",
+      "last_seen": "2026-09-28T14:14:07.632695",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_289260fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a linear",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:16:47.050961",
+      "last_seen": "2026-09-28T14:16:47.050961",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_638c840f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a linear",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:17:55.745100",
+      "last_seen": "2026-09-28T14:17:55.745100",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_998718f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:16:47.050961",
+      "last_seen": "2026-09-28T14:16:47.050961",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_638c840f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:16:47.050961",
+      "last_seen": "2026-09-28T14:16:47.050961",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_638c840f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:17:55.745100",
+      "last_seen": "2026-09-28T14:17:55.745100",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_998718f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:17:55.745100",
+      "last_seen": "2026-09-28T14:17:55.745100",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_998718f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'.\"",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:21:37.440396",
+      "last_seen": "2026-09-28T14:21:37.440396",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_28fed6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:22:41.984904",
+      "last_seen": "2026-09-28T14:22:41.984904",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3ddc3915"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:33:33.828103",
+      "last_seen": "2026-09-28T14:33:33.828103",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1ffaf071"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:21:37.440396",
+      "last_seen": "2026-09-28T14:21:37.440396",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_28fed6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:21:37.440396",
+      "last_seen": "2026-09-28T14:21:37.440396",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_28fed6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:22:41.984904",
+      "last_seen": "2026-09-28T14:22:41.984904",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3ddc3915"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:22:41.984904",
+      "last_seen": "2026-09-28T14:22:41.984904",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3ddc3915"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: defect] The generalization failure in \"fat\" families is caused by topol",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:23:56.758294",
+      "last_seen": "2026-09-28T14:23:56.758294",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_22c6edb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:23:56.758294",
+      "last_seen": "2026-09-28T14:23:56.758294",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_22c6edb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter120",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:23:56.758294",
+      "last_seen": "2026-09-28T14:23:56.758294",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_22c6edb"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:24:58.785662",
+      "last_seen": "2026-09-28T14:24:58.785662",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ba28a90"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:24:58.785662",
+      "last_seen": "2026-09-28T14:24:58.785662",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ba28a90"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:24:58.785662",
+      "last_seen": "2026-09-28T14:24:58.785662",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ba28a90"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigidity of the polynomial solution space is governed by th",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:27:01.095810",
+      "last_seen": "2026-09-28T14:27:01.095810",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71c49a45"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:27:01.095810",
+      "last_seen": "2026-09-28T14:27:01.095810",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71c49a45"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:27:01.095810",
+      "last_seen": "2026-09-28T14:27:01.095810",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71c49a45"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:29:43.288071",
+      "last_seen": "2026-09-28T14:29:43.288071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_52491708"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:31:23.239032",
+      "last_seen": "2026-09-28T14:31:23.239032",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dbea23ea"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:29:43.288071",
+      "last_seen": "2026-09-28T14:29:43.288071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_52491708"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:29:43.288071",
+      "last_seen": "2026-09-28T14:29:43.288071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_52491708"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:31:23.239032",
+      "last_seen": "2026-09-28T14:31:23.239032",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dbea23ea"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:31:23.239032",
+      "last_seen": "2026-09-28T14:31:23.239032",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dbea23ea"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:33:33.828103",
+      "last_seen": "2026-09-28T14:33:33.828103",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1ffaf071"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:33:33.828103",
+      "last_seen": "2026-09-28T14:33:33.828103",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1ffaf071"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter170",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter170",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: structure (implementation topology)]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:36:41.313071",
+      "last_seen": "2026-09-28T14:36:41.313071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_27126400"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter175",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:36:41.313071",
+      "last_seen": "2026-09-28T14:36:41.313071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_27126400"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter175",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:36:41.313071",
+      "last_seen": "2026-09-28T14:36:41.313071",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_27126400"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** **[DIM: structure (implementation topology)]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure (implementation topology)] The rigid polynomial family exhibits",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite N_c plateau that",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:39:56.624262",
+      "last_seen": "2026-09-28T14:39:56.624262",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_971daf6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter190",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:39:56.624262",
+      "last_seen": "2026-09-28T14:39:56.624262",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_971daf6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter190",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:39:56.624262",
+      "last_seen": "2026-09-28T14:39:56.624262",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_971daf6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:42:05.425168",
+      "last_seen": "2026-09-28T14:42:05.425168",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7611930d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0680a38"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:42:05.425168",
+      "last_seen": "2026-09-28T14:42:05.425168",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7611930d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:42:05.425168",
+      "last_seen": "2026-09-28T14:42:05.425168",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7611930d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter205",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0680a38"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter205",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0680a38"
+    }
+  ]
+}

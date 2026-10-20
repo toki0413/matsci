@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+if TYPE_CHECKING:
+    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def is_available() -> bool:
 
 def cognitive_map_from_cif(cif_str: str) -> str:
     """从 CIF 构建 cognitive map, 返 map_id."""
+    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     m = StructureCognitiveMap.from_cif(cif_str)
     map_id = f"map_{uuid.uuid4().hex[:8]}"
     _MAPS[map_id] = m

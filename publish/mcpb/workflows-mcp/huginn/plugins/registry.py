@@ -50,6 +50,25 @@ class StarHandlerRegistry:
         if metas:
             self.register(*metas)
 
+    def unregister(self, *metas: StarHandlerMetadata) -> int:
+        """移除指定的若干条 metadata。返回实际移除条数。
+
+        与 ``register`` 对称, 供单一订阅的逆使用 (``PluginHost`` 的 ``Mount.on``
+        返回的 disposer): 撤掉这一条而不影响同插件的其他 handler.
+        """
+        removed = 0
+        with self._lock:
+            for m in metas:
+                lst = self._handlers.get(m.event_type)
+                if not lst:
+                    continue
+                try:
+                    lst.remove(m)
+                    removed += 1
+                except ValueError:
+                    pass
+        return removed
+
     def unregister_plugin(self, plugin_name: str) -> int:
         """卸载某插件的所有 handler。返回移除条数。"""
         removed = 0

@@ -266,16 +266,12 @@ export function CredentialsPanel() {
   const importFromConfig = async () => {
     setImporting(true);
     try {
-      const data = await api.post<{ success?: boolean; imported?: number; count?: number; error?: string }>(
+      const data = await api.post<{ imported?: Record<string, string>; count?: number }>(
         "/credentials/import-from-config"
       );
-      if (data.success) {
-        const n = data.imported ?? data.count ?? 0;
-        flash(n > 0 ? `已从配置导入 ${n} 条凭据` : "配置中未发现可导入的密钥");
-        load();
-      } else {
-        flash(data.error || "导入失败", false);
-      }
+      const n = data.count ?? Object.keys(data.imported ?? {}).length;
+      flash(n > 0 ? `已从配置导入 ${n} 条凭据` : "配置中未发现可导入的密钥");
+      load();
     } catch (e: any) {
       flash("导入出错: " + e.message, false);
     }

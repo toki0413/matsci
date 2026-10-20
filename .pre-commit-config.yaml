@@ -10,11 +10,11 @@ repos:
         entry: bash -c 'cd agent && python -m pytest -x --no-cov --timeout=30 -q \
           tests/test_mechanics.py::TestHexagonalBornCriteria \
           tests/test_eos_fit.py::TestEosReferenceConsistency \
-          tests/test_audit14_p1_3_4_5.py::TestDemScriptSyntax \
-          tests/test_audit14_p1_3_4_5.py::TestMsdUnwrap \
-          tests/test_audit14_p1_3_4_5.py::TestScfConvergenceCriterion \
+          tests/test_sim_audit_regression.py::TestDemScriptSyntax \
+          tests/test_sim_audit_regression.py::TestMsdUnwrap \
+          tests/test_sim_audit_regression.py::TestScfConvergenceCriterion \
           tests/test_context_and_jwt.py \
           tests/test_fts5_consistency.py'
         language: system
         pass_filenames: false
-        files: ^agent/(huginn/(mechanics|tools/sci/numerical_tool|tools/sim/lammps_tool|tools/sim/vasp_tool|security/rbac|memory/longterm|memory/decay)\.py|tests/(test_mechanics|test_eos_fit|test_audit14_p1_3_4_5|test_context_and_jwt|test_fts5_consistency)\.py)$
+        files: ^agent/(huginn/(mechanics|tools/sci/numerical_tool|tools/sim/lammps_tool|tools/sim/vasp_tool|security/rbac|memory/longterm|memory/decay)\.py|tests/(test_mechanics|test_eos_fit|test_sim_audit_regression|test_context_and_jwt|test_fts5_consistency)\.py)$

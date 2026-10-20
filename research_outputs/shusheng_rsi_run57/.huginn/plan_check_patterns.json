@@ -1,0 +1,194 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "87a73409c171",
+    "reason": "Plan specifies MODE: explore, but the task requires a Coder role to write reproducible code for a numerical experiment. The description lacks concrete implementation details (e.g., target function definition, constraint formulation, optimization setup, code structure). It also fails to specify how 'constraints' are mathematically defined (e.g., PDE constraints, functional constraints, or point-wise constraints?) which is critical for defining 'zero violation'. Without a concrete mathematical formulation of the 'constraints', the experiment cannot be executed or validated.",
+    "missing_steps": [
+      "Define the exact mathematical form of the 'analytical constraints' (e.g., functional equations, boundary conditions, integral constraints).",
+      "Specify the target function and its relationship to the constraints.",
+      "Detail the network architecture and loss function formulation (how constraints are incorporated into training).",
+      "Provide code structure or pseudocode for the numerical experiment.",
+      "Define the 'constraint count w' precisely (number of constraint points? number of constraint equations?)",
+      "Specify the optimization method and early stopping criteria in detail.",
+      "Define the metric for 'zero violation' on out-of-sample constraints with mathematical precision."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution-space rigidity by measuring N_c(w) — the minimum hidden layer width achieving zero violati"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "87a73409c171",
+    "reason": "The plan is invalid because it specifies MODE: explore, but the task requires a Coder role to write reproducible code for a numerical experiment. The description lacks concrete implementation details needed for execution (e.g., exact constraint formulation, code structure, optimization parameters). While the general approach is mathematically sound, the execution mode mismatch makes it impossible to proceed as specified.",
+    "missing_steps": [
+      "Change MODE to 'coder' for code writing task",
+      "Provide concrete mathematical formulation of constraints",
+      "Specify network architecture details and loss function implementation",
+      "Define optimization method and early stopping criteria precisely",
+      "Provide code structure or pseudocode for the numerical experiment"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] We will design a reproducible numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution-space rigidity by measuring $N_c(w)$ — t"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "1ce1e99db0dc",
+    "reason": "The plan contains a critical logical contradiction in the hypothesis definition. It defines 'rigid' as N_c(w) being small and finite (e.g., 8-16) that does NOT grow with w, but then claims N_c(w) saturates at this small value for w up to a threshold w_th. This is contradictory: if N_c(w) is truly independent of w (rigid), it shouldn't depend on w at all, not just up to a threshold. Furthermore, the hypothesis string is empty ('.'), making the target undefined. The prediction also uses ambiguous language ('will saturate') without specifying what happens beyond w_th or whether N_c(w) actually remains constant.",
+    "missing_steps": [
+      "Define a clear, non-contradictory hypothesis statement (currently empty)",
+      "Clarify whether N_c(w) should be constant for all w or only up to some threshold w_th",
+      "Specify what happens when w exceeds the threshold w_th",
+      "Define the exact analytical target functions to be used (currently only mentioned as 'polynomials, trigonometric combinations')",
+      "Specify the network architecture details (number of hidden layers, activation functions, initialization scheme)",
+      "Define the training procedure (optimizer, learning rate, number of epochs, convergence criteria)",
+      "Specify how the 'zero-violation criterion' is checked (is it on a single point or all 100 held-out points?)",
+      "Define what 'bootstrap rigidity' means in this context"
+    ],
+    "mode": "explore",
+    "description": "I will design a numerical experiment to probe the \"bootstrap rigidity\" of small feedforward networks. Using PyTorch, I will scan over sample counts $w \\in \\{10, 20, 30, 50, 100\\}$ and hidden widths $N"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "1ce1e99db0dc",
+    "reason": "The plan contains a critical logical contradiction in the hypothesis definition. It defines 'rigid' as N_c(w) being small and finite that does NOT grow with w, but then claims N_c(w) saturates at this small value for w up to a threshold w_th. This is contradictory: if N_c(w) is truly independent of w (rigid), it shouldn't depend on w at all, not just up to a threshold. Furthermore, the hypothesis string is empty ('.'), making the target undefined. The prediction also uses ambiguous language without specifying what happens beyond w_th or whether N_c(w) actually remains constant.",
+    "missing_steps": [
+      "Define a clear, non-contradictory hypothesis statement (currently empty)",
+      "Clarify whether N_c(w) should be constant for all w or only up to some threshold w_th",
+      "Specify what happens when w exceeds the threshold w_th",
+      "Define the exact analytical target functions to be used (currently only mentioned as 'polynomials, trigonometric combinations')",
+      "Define the network architecture details (number of hidden layers, activation functions, initialization scheme) - partially specified but needs formalization",
+      "Define the training procedure (optimizer, learning rate, number of epochs, convergence criteria) - partially specified but needs formalization",
+      "Define how the 'zero-violation criterion' is checked (is it on a single point or all 100 held-out points?) - specified but needs verification",
+      "Define what 'bootstrap rigidity' means in this context"
+    ],
+    "mode": "explore",
+    "description": "I will test the bootstrap rigidity hypothesis for small feedforward networks by defining the target function class precisely (polynomials and trigonometric combinations up to degree 5), specifying the"
+  },
+  {
+    "scene_tag": "auto_will",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is fundamentally invalid because it attempts to run a Python script (MODE: coder) without actually executing it. The plan describes writing and saving the script but never includes a step to execute it or analyze the results. Without execution, no numerical values, error trends, or N_c(w) data can be produced to validate the hypothesis about solution-space rigidity. The hypothesis requires empirical validation through running the experiments, which the plan omits entirely.",
+    "missing_steps": [
+      "Execute the generated Python script to produce actual numerical results",
+      "Analyze the output to extract N_c(w) values and error trends",
+      "Validate whether N_c(w) remains bounded as w increases based on actual computed data",
+      "Check if the script actually achieves zero violation (max absolute error <= 1e-3) on validation sets"
+    ],
+    "mode": "coder",
+    "description": "Write a Python script that implements the hypothesis test for solution-space rigidity in small feedforward networks. The script will: (1) define an analytic target function (e.g., a polynomial/trigono"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "5176c2b69be4",
+    "reason": "Plan is fundamentally flawed because it misidentifies the hypothesis. The hypothesis concerns the geometry of the solution space (rigid vs fat) based on the intersection of the neural network manifold and constraint hyperplanes, which relates to the number of parameters (N_p) relative to constraints (w). However, the plan measures N_c(w) as the minimal hidden layer width required to achieve zero error, which is a measure of model capacity/expressivity, not solution space rigidity. A 'flat' N_c(w) would indicate that network capacity doesn't need to grow with more constraints to fit them, which is about approximation capability, not the geometric structure of the solution space. To properly test rigidity, one should measure the dimensionality of the solution space (number of independent solutions) as w increases, not the minimal network width needed.",
+    "missing_steps": [
+      "Define N_c(w) correctly as the dimension of the solution space (number of independent parameters in the solution manifold), not minimal network width",
+      "Measure the actual dimensionality of the solution space by counting linearly independent solutions at different constraint counts",
+      "Verify the transversal intersection condition mathematically before running simulations",
+      "Use proper tools to analyze the solution space geometry (e.g., Hessian analysis, rank of constraint Jacobian)"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the rigidity hypothesis by scanning hidden layer widths N_h and constraint counts w. Construct a target analytical function (e.g., a 1D smooth functio"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "5176c2b69be4",
+    "reason": "Plan uses 'explore' mode (acceptable) but DESCRIPTION misaligns with hypothesis: hypothesis defines N_c(w) as minimum hidden width achieving zero violation on holdout constraints, while DESCRIPTION computes null-space dimension of Jacobian/Hessian—a different quantity. Prediction about null-space dimension drop does not directly test N_c(w) behavior (flat then jump to infinity). Also, no explicit mention of sweep over network widths to determine N_c(w), nor definition of 'zero violation' threshold in DESCRIPTION (though hard rule specifies it). The plan risks measuring manifold geometry instead of capacity rigidity as defined.",
+    "missing_steps": [
+      "Define N_c(w) as minimum hidden width N_h such that max absolute error on holdout constraints ≤ 1e-3, for each constraint count w",
+      "Scan N_h from small to large for each w to find minimal N_h achieving zero violation",
+      "Plot N_c(w) vs w to verify flat region then abrupt jump (infinity) when constraints exceed manifold DOF",
+      "Ensure training uses fixed-width networks as per hypothesis; null-space analysis is secondary at best",
+      "Specify how constraints are constructed (analytic form, number w, distribution) to ensure transversal intersection test"
+    ],
+    "mode": "explore",
+    "description": "Construct a target function with analytic constraints, train small feedforward networks (tanh activation, 1 hidden layer) with fixed width N_h, and for each constraint count w, compute the rank of the"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "80be3ea40720",
+    "reason": "The plan proposes to test the Stochastic Resonance Hypothesis but fundamentally misaligns the mathematical structure with the hypothesis. The plan describes a function approximation task (MSE minimization on polynomials/trig functions), while the hypothesis explicitly requires analyzing 'solution space rigidity' in the context of 'bootstrap sampling' and 'stochastic resonance' (signal-to-noise ratio optimization). The described experiment measures generalization error bounds, not the non-monotonic noise-enhanced signal detection or the topological rigidity of the solution space that defines the hypothesis. Furthermore, the hypothesis requires a specific comparison between 'rigid' and 'fat' regimes based on bootstrap constraints, but the plan's prediction focuses solely on N_c(w) scaling without addressing the stochastic resonance mechanism (optimal noise level) or the topological structure of the solution space.",
+    "missing_steps": [
+      "Reformulate the experiment to measure signal-to-noise ratio (SNR) or coherence gain as a function of noise amplitude, which is the core signature of stochastic resonance.",
+      "Define the 'solution space rigidity' in terms of topological properties (e.g., connected components of the loss landscape) or sensitivity to perturbations, not just MSE thresholds.",
+      "Incorporate bootstrap sampling analysis: compare N_c(w) across different bootstrap replicates to assess variance and stability of the rigidity threshold.",
+      "Define the 'stochastic' component explicitly (e.g., additive Gaussian noise in target or gradients) and test for non-monotonic performance vs. noise level."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the \"stochastic resonance hypothesis\" regarding solution space rigidity in small feedforward networks. Construct a well-defined analytical target function (e.g., "
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "80be3ea40720",
+    "reason": "Plan fails to map the hypothesis to the defined mathematical structures (Variational principle / energy functional, Optimization landscape / convexity) or the specific constraints (N_c(w)). The plan focuses on SNR and Hessian condition number but does not explicitly define how to compute N_c(w) (the minimal network width for zero-violation on held-out constraints) as required by the 'Hard Constraint'. Without defining the target function's constraints and the method to find N_c(w), the core claim about 'solution space rigidity' cannot be validated according to the provided definitions.",
+    "missing_steps": [
+      "Define the specific target function and the set of held-out constraints used to evaluate N_c(w).",
+      "Implement the algorithm to scan N_h (hidden width) to find the minimal N_c(w) such that max absolute error on held-out points ≤ 1e-3 for each w.",
+      "Explicitly link the SNR/stochastic resonance measurement to the N_c(w) stabilization metric as per the hypothesis."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the stochastic resonance hypothesis regarding solution space rigidity in small feedforward networks: (1) Define a target function with a hidden signal (e.g., low-"
+  },
+  {
+    "scene_tag": "auto_will",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is fundamentally invalid because it attempts to run a Python script (MODE: coder) without actually executing it. The plan describes writing and saving the script but never includes a step to execute it or analyze the results. Without execution, no numerical values, error trends, or N_c(w) data can be produced to validate the hypothesis about solution-space rigidity.",
+    "missing_steps": [
+      "Execute the generated Python script to produce actual numerical results",
+      "Analyze the output to extract N_c(w) values and error trends",
+      "Validate whether N_c(w) remains bounded as w increases based on actual computed data",
+      "Check if the script actually achieves zero violation (max absolute error <= 1e-3) on validation sets"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to probe the rigidity of the solution space for small feedforward networks. Specifically, we will define a set of analytic constraints (e.g., polynomial/trigo"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "971654fce698",
+    "reason": "The hypothesis concerns the minimal width N_c required to satisfy w constraints (equivalent to interpolation), whereas the plan uses a held-out validation set of 100 independent points to measure generalization error. This tests whether the network can generalize to unseen data, not whether it can satisfy the original constraints. The plan's PREDICTION also incorrectly expects low validation error (generalization) rather than low constraint error (interpolation).",
+    "missing_steps": [
+      "Define the validation set as the constraint set itself (not an independent held-out set), or add a separate interpolation check on the constraint points."
+    ],
+    "mode": "explore",
+    "description": "Perform a systematic width scan to test the algebraic phase transition hypothesis in solution space rigidity. For each constraint count w ∈ {10, 20, 30, 50, 100}, scan hidden layer widths N_h ∈ {4, 8,"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "971654fce698",
+    "reason": "The plan is fundamentally flawed because it tests generalization error on an independent held-out validation set, whereas the hypothesis concerns constraint satisfaction (interpolation) error on the constraint points themselves. The plan will measure how well the network generalizes to new data, not whether it can satisfy the original w constraints. This is a critical misalignment: the hypothesis is about the minimal width needed for interpolation (zero error on constraint points), not generalization to unseen points. The historical failure explicitly warned about this exact mistake.",
+    "missing_steps": [
+      "Define the constraint set as the training target, not a held-out validation set",
+      "Measure constraint satisfaction error (max absolute residual on the w constraint points) directly",
+      "Determine N_c(w) as the minimal width achieving zero constraint error (≤1e-3) on the constraint points",
+      "Remove the independent held-out validation set from the evaluation metric"
+    ],
+    "mode": "explore",
+    "description": "Perform a systematic width scan to test the algebraic phase transition hypothesis. For each constraint count w ∈ {10, 20, 30, 50, 100}, scan hidden layer widths N_h ∈ {4, 8, 16, 32, 64, 128} to determ"
+  },
+  {
+    "scene_tag": "auto_will",
+    "hyp_key": "4e170579c7e2",
+    "reason": "The plan is described as MODE: explore, but it fundamentally requires actual execution of a numerical experiment to produce the required data (N_c(w) values, error trends, and validation of zero violation). The previous failure mode explicitly states that the plan was invalid because it attempted to write a Python script without executing it. This plan still lacks a concrete step to run the code and analyze the results, making it impossible to verify the hypothesis or produce the required numerical evidence. Without execution, there is no way to determine if the solution space is rigid or fat.",
+    "missing_steps": [
+      "Execute the generated Python script to produce actual numerical results",
+      "Analyze the output to extract N_c(w) values and error trends",
+      "Validate whether N_c(w) remains bounded as w increases based on actual computed data",
+      "Check if the script actually achieves zero violation (max absolute error <= 1e-3) on validation sets"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to probe the \"rigidity\" of the solution space for small feedforward networks. Specifically, we will vary the number of constraints (w) and the network width ("
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "ccb72ea252c6",
+    "reason": "The plan is fundamentally invalid because it attempts to test a hypothesis about 'Curvature-Induced Rigidity' (a geometry/physics concept) using a generic MLP training experiment with arbitrary polynomial/trigonometric functions. This creates a category error: the hypothesis concerns the geometric structure of solution spaces (likely related to manifold curvature), while the plan tests merely the capacity of a neural network to fit arbitrary functions without any geometric constraint or curvature analysis. The prediction about N_c(w) growth says nothing about curvature-induced rigidity — it only reports network capacity vs sample size, which is unrelated to the geometric structure of the solution space.",
+    "missing_steps": [
+      "Define what 'curvature' means in the context of the solution space (e.g., Hessian curvature, manifold curvature, etc.)",
+      "Specify the geometric constraint or curvature mechanism that should induce rigidity",
+      "Design experiments that explicitly measure curvature (e.g., Hessian eigenvalues, geodesic distances, manifold embeddings)",
+      "Establish a mathematical link between curvature and solution space rigidity before testing",
+      "Replace arbitrary functions with geometry-aware constraints (e.g., manifold-constrained optimization, curvature-regularized losses)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Test the small forward-pass network's generalization behavior as a probe for bootstrap solution space rigidity. Generate analytic constraint functions (e.g., polynomial/tr"
+  }
+]

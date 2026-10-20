@@ -1,0 +1,87 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_5c161a97",
+  "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-10-02T13:26:53.281600+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "workflow"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Implement and run the numerical experiment to test Hypothesis 1 (Computation/Approximation Bounds). The experiment will scan constraint sample counts w ∈ {10, 20, 50, 100, 200, 500, 1000} and hidden widths N ∈ {4, 8, 16, 32, 64, 128, 256}. For each (w, N) pair, train a single-hidden-layer ReLU network on f(x) = sin(2πx) + 0.5 sin(6πx) with MAE loss using Adam (lr=1e-3) for 10,000 epochs with 5 random initializations. Determine N_c(w) as the minimum N achieving zero violation (max test MAE ≤ 1e-3 on 100 held-out points). Analyze the scaling of N_c(w) to distinguish between linear, constant, and logarithmic growth."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "skill",
+      "value": "ml_experimental_design"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "N_c(w) will exhibit linear scaling with w (N_c ∝ w), supporting Hypothesis 1. Specifically, N_c values will increase monotonically with w, with N_c(10) ≈ 4-8 and N_c(1000) ≈ 128-256, showing clear linear trend rather than constant or logarithmic behavior."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "target_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_00f7eae3"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "success",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "error",
+      "value": "'str' object has no attribute 'stage_name'"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_5c161a97",
+    "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
+    "instrument": "/workspace/research_outputs/shusheng_rsi_run71/.huginn/trajectories/loop_5c161a97.json",
+    "object": "/workspace/research_outputs/shusheng_rsi_run71/.huginn/provenance.jsonl",
+    "startTime": "2026-10-02T13:11:45.356305",
+    "endTime": "2026-10-02T13:26:52.747950"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_rsi_run71/huginn_autoloop_report_loop_b42dacc0.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_rsi_run71/.huginn/trajectories/loop_5c161a97.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

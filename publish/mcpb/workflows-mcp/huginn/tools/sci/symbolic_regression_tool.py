@@ -536,14 +536,33 @@ class SymbolicRegressionTool(HuginnTool):
                     "n_steps": len(dy),
                 })
 
-        # 3. 量纲一致性 (启发式: 表达式里加减项必须量纲相同 — 简化版只做语法检查)
+        # 3. 量纲一致性 (契约层: sympy 推断 + UnitRegistry, 不再是语法空壳)
         if args.constraints.get("dimensional_check"):
-            # 简化: 表达式不能混合 sin/exp/log 之外的 + — 项 (保守起见视为通过)
-            checks.append({
-                "name": "dimensional_check",
-                "passed": True,
-                "note": "Heuristic dimensional check (syntactic only).",
-            })
+            from huginn.research.external_validator import (
+                _to_symbol,
+                check_expression_dimensions,
+            )
+
+            units = args.constraints.get("units") or {}
+            target_unit = args.constraints.get("target_unit") or ""
+            # feature 单位标签 → SI 符号; 未提供 units 时退化为"仅检查能解析"
+            sym_units = {f: _to_symbol(str(units[f])) for f in features if units.get(f)}
+            if not sym_units or not target_unit:
+                # 没有完整单位声明 → 如实报"量纲未知", 不硬判通过
+                checks.append({
+                    "name": "dimensional_check",
+                    "passed": False,
+                    "note": "需 constraints['units'](feature->unit) + ['target_unit'] 才能做真量纲校验",
+                })
+            else:
+                dim = check_expression_dimensions(args.probe_expression, sym_units, target_unit)
+                checks.append({
+                    "name": "dimensional_check",
+                    "passed": dim["ok"],
+                    "inferred": dim.get("inferred"),
+                    "expected": dim.get("expected"),
+                    "note": dim.get("error") or f"inferred={dim.get('inferred')}",
+                })
 
         # 4. 边界域 (输出在 bounds 内有限)
         finite = bool(np.all(np.isfinite(y_pred)))

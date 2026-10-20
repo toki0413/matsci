@@ -33,7 +33,7 @@
 |--------|------|
 | 多 Provider LLM | OpenAI / Anthropic / DeepSeek / Google / OpenRouter / NVIDIA / Ollama / vLLM / 本地 OpenAI 兼容端点 |
 | 仿真工具链 | VASP / Quantum ESPRESSO / CP2K / Gaussian / ORCA（DFT/QC）；LAMMPS / GROMACS / OpenMM（MD）；Abaqus / COMSOL / OpenFOAM / FEniCS / Elmer（FEA/CFD） |
-| 数学形式化 | SymPy 表达式自动翻译为 Lean 4，`lake build` 验证，6 阶段已形式化 |
+| 数学形式化 | SymPy 表达式自动翻译为 Lean 4，经外部 `lake` 编译/类型检查；`lean/project/` 当前为骨架（类声明 + 示例实例，无定理库） |
 | 桌面应用 | Tauri v2 + React 18，21 个功能面板，3D 结构查看器，WebSocket 流式聊天 |
 | 自主科研 | Autoloop 七阶段闭环（perceive→hypothesize→plan→execute→validate→learn→report） |
 | 记忆与知识 | 三层记忆 + ChromaDB 向量检索 + NetworkX 知识图谱 + RAG 反馈闭环 |
@@ -120,9 +120,10 @@ matsci-agent/
 │   │   ├── llm.py / llm_retry.py  # LLM 工厂与重试
 │   │   ├── mcp_client.py       # MCP 客户端
 │   │   └── types.py            # 核心类型 (ToolResult/PermissionMode/...)
-│   ├── lean/                   # Lean 4 形式化库源码
-│   │   ├── HuginnLean/         # 12 个 Lean 模块
-│   │   └── project/            # lake 项目 (lakefile.toml)
+│   ├── lean/                   # Lean 4 形式化桥 (SymPy→Lean 翻译 + lake 编译)
+│   │   ├── sympy_to_lean.py    # SymPy AST → Lean 表达式
+│   │   ├── auto_pipeline.py    # 生成 Lean Float 定义 + 调外部 lake 编译
+│   │   └── project/            # lake 工程; Huginn/{Basic,Check}.lean 为骨架
 │   ├── tests/                  # pytest 测试套件 (192+ 测试)
 │   └── docs/                   # 架构文档
 ├── cli/                        # Rust CLI 前端 (huginn 二进制)
@@ -927,7 +928,7 @@ LeanInterface.build() 调 lake build
 - **文档风格**：Google convention pydocstyle
 - **提交前**：`pre-commit` 钩子
 - **添加新工具**：继承 `HuginnTool` → 定义 `name`/`description`/`input_schema` → 实现 `_execute()` → 在 `__init__.py` 注册 → 加测试
-- **添加新 Lean 模块**：创建 `.lean` 文件 → 加 import 到 `HuginnLean.lean` → 加 `verify_*` 到 `auto_pipeline.py` → 注册 workflow template → 加 skill preset
+- **添加新 Lean 定理**：在 `lean/project/Huginn/` 建 `.lean` 文件 → 从 `Huginn.Basic` import → 加 `verify_*` 到 `auto_pipeline.py` → 注册 workflow template → 加 skill preset
 
 ### 9.4 关键文件速查
 

@@ -1,0 +1,177 @@
+{
+  "config": {
+    "kind": "hi",
+    "widths": [
+      8,
+      16,
+      32,
+      64
+    ],
+    "ns": [
+      1,
+      2,
+      4
+    ],
+    "seeds": 2,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 3,
+    "tag": "main"
+  },
+  "anchor": "u''=-(8pi)^2 cos(8pi x), u*=cos(8pi x)+0.3x-0.2 (2 DOF, 高频表达瓶颈对照)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 8,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 56786.910017888455,
+      "v_ho_med_all": 56233.4914679109,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 32466.652940092732,
+      "v_ho_med_all": 104676922.31337905,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 20001.393920672377,
+      "v_ho_med_all": 769193.9813258942,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 15054.63220863106,
+      "v_ho_med_all": 353601018.4908381,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.5399268721140016,
+      "v_ho_med_all": 4684727.112112488,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 18.78832966670925,
+      "v_ho_med_all": 9647558484.544392,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 76875.76862051291,
+      "v_ho_med_all": 848402848.0382444,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 32561.76631435276,
+      "v_ho_med_all": 188551475.98457167,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 18193.785527824097,
+      "v_ho_med_all": 8332271.113061213,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 56885.35191997494,
+      "v_ho_med_all": 49315857.46251486,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 77827.92026971048,
+      "v_ho_med_all": 27651152.849046145,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 52254.48506846705,
+      "v_ho_med_all": 15518200.60790835,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    }
+  ],
+  "N_c": {
+    "all": {
+      "8": null,
+      "16": null,
+      "32": null,
+      "64": null
+    },
+    "good": {
+      "8": null,
+      "16": null,
+      "32": null,
+      "64": null
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    }
+  },
+  "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+  "elapsed_s": 2232.3733670711517
+}

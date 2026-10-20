@@ -3,8 +3,9 @@
 4 测:
   1. score 计算: supported/testable/diversity/topology_richness 四维
   2. 棘轮只保留改进: score 退化时不更新 best_score
-  3. 连续 2 轮 Δ<0.5 → early stop (_should_stop=True)
+  3. 连续 2 轮 Δ<0.5 → advisory hint, 不 stop (控制面审计 A3 降级)
   4. topology_richness 维: 有环图比树图得分高
+外加 P3 pivot 非破坏性回退: last-good 快照 stash/restore (含消费式防死循环).
 """
 from __future__ import annotations
 
@@ -106,12 +107,21 @@ class TestDarwinRatchet:
         assert engine._darwin_best_score == best_after_r1
         assert engine._darwin_stagnation >= 1
 
-    def test_early_stop_on_stagnation(self, monkeypatch):
-        """连续 2 轮 Δ<0.5 + iteration>2 → _should_stop=True."""
+    def test_stagnation_advisory_hint_not_stop(self, monkeypatch, caplog):
+        """连续 2 轮 Δ<0.5 + iteration>2 → 只发 advisory hint, 不再 hard stop.
+
+        控制面审计 A3: "该不该收结"是科学判断, 下沉给书生; 长程有挂钟出口,
+        短程有步数上限兜底, 该硬出口只贡献误杀风险 → 降级为提示 + control_trace.
+        本测验证降级后确无硬终止, 且提示与可观测 trace 均在.
+        """
+        import logging
+
         # v7: stagnation 阈值默认从 2 提升到 5 (长任务允许长期低增益).
-        # 测试只跑 3 轮, 显式设回 2 以验证 early stop 逻辑本身.
+        # 测试只跑 3 轮, 显式设回 2 以触发该分支.
         monkeypatch.setenv("HUGINN_DARWIN_STAGNATION_LIMIT", "2")
         engine = _make_engine()
+        # 归因固定 "stop" (unclassifiable), 确保走 advisory 分支而非 pivot/counterexample
+        monkeypatch.setattr(engine._cognitive_runner, "_classify_stall", lambda: "stop")
         graph = engine.hypothesis_graph
 
         graph._nodes = {
@@ -134,9 +144,19 @@ class TestDarwinRatchet:
             "b": _make_node("b", "H2", "untested", ""),
             "c": _make_node("c", "H3", "untested", ""),
         }
-        engine._iteration = 3
-        engine._darwin_ratchet_check()
-        assert engine._should_stop, "连续 2 轮低增益应触发 early stop"
+        with caplog.at_level(logging.WARNING, logger="huginn.autoloop.cognitive_loop"):
+            engine._iteration = 3
+            engine._darwin_ratchet_check()
+
+        # A3: 停滞不再硬终止
+        assert not engine._should_stop, "连续 2 轮低增益应只提示, 不硬终止"
+        # advisory 提示已注入假设生成提示
+        assert "停滞" in (engine._speculator_hint or ""), "应注入停滞 advisory 提示"
+        # 降级路径仍需可观测 (run.log WARNING 的 control_trace 行)
+        assert any(
+            "control_trace name=darwin_stagnation" in r.getMessage()
+            for r in caplog.records
+        ), "降级路径仍需 control_trace 可观测"
 
     def test_no_early_stop_when_improving(self):
         """每轮都改进 (Δ>=0.5) → 不触发 early stop."""
@@ -190,3 +210,94 @@ class TestDarwinRatchet:
         assert cyclic_score > tree_score, (
             f"有环图应比树图得分高: cyclic={cyclic_score}, tree={tree_score}"
         )
+
+    def test_task_perf_joins_score_as_fifth_dim(self):
+        """D: 有 _last_task_perf 信号时并入第 5 维, 让 best 反映真实质量.
+
+        4 维均分: (1+1+1+0)/4*10=7.5; 并入 task_perf=0 → (…+0)/5*10=6.0.
+        """
+        engine = _make_engine()
+        graph = engine.hypothesis_graph
+        graph._nodes = {"a": _make_node("a", "H1", "supported", "p1")}
+        engine._last_task_perf = 0.0
+        engine._iteration = 1
+
+        engine._darwin_ratchet_check()
+
+        assert 5.5 < engine._darwin_best_score < 6.5
+
+    def test_no_task_perf_keeps_four_dim(self):
+        """D: 无 task_perf 信号 → 退化为原 4 维 (行为不变)."""
+        engine = _make_engine()
+        graph = engine.hypothesis_graph
+        graph._nodes = {"a": _make_node("a", "H1", "supported", "p1")}
+        assert getattr(engine, "_last_task_perf", None) is None
+        engine._iteration = 1
+
+        engine._darwin_ratchet_check()
+
+        assert 7.0 < engine._darwin_best_score < 8.0  # =7.5
+
+
+def _cog(hyp=None, plan=None, hyp_id=None):
+    return {
+        "context": {}, "hypothesis": hyp, "plan": plan,
+        "execution_result": None, "validation": None,
+        "current_hyp_id": hyp_id, "phases": [], "completed_steps": 0,
+    }
+
+
+class TestPivotLastGood:
+    """P3 pivot 非破坏性回退: stash / restore (消费式)."""
+
+    def test_stash_restore_roundtrip(self):
+        """暂存 cog 方向 → 清空 → 恢复: 假设/计划/hyp_id 全回来, 快照被消费."""
+        engine = _make_engine()
+        runner = engine._cognitive_runner
+        cog = _cog("H_A", {"description": "plan A", "mode": "coder"}, "n1")
+
+        runner._stash_last_good(cog)
+        assert engine._last_good_hypothesis == "H_A"
+        assert engine._last_good_hyp_id == "n1"
+        assert engine._last_good_plan == {"description": "plan A", "mode": "coder"}
+
+        # 模拟 pivot 清除
+        for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
+            cog[k] = None
+
+        assert runner._restore_last_good(cog) is True
+        assert cog["hypothesis"] == "H_A"
+        assert cog["plan"] == {"description": "plan A", "mode": "coder"}
+        assert cog["current_hyp_id"] == "n1"
+        assert engine._current_hyp_id_for_plan == "n1"
+        # 消费式: 快照已清空 → 同一快照救不了第二次 (防 pivot↔restore 死循环)
+        assert engine._last_good_hypothesis is None
+        assert engine._last_good_plan is None
+        assert runner._restore_last_good(cog) is False
+
+    def test_stash_skips_empty_hypothesis(self):
+        """无假设可存 → 不建快照 (避免用空壳污染回退门)."""
+        engine = _make_engine()
+        runner = engine._cognitive_runner
+        cog = _cog(None, {"description": "orphan plan"}, "n1")
+
+        runner._stash_last_good(cog)
+
+        assert engine._last_good_hypothesis is None
+        assert engine._last_good_plan is None
+
+    def test_restore_without_snapshot_false(self):
+        """无快照 → restore 返回 False (redirect 分支据此回落 stop)."""
+        engine = _make_engine()
+        assert engine._cognitive_runner._restore_last_good(_cog()) is False
+
+    def test_stash_degrades_non_json_plan(self):
+        """计划若为非 JSON 友好对象 → 降级 str, 不污染 engine_state 落盘."""
+        engine = _make_engine()
+        runner = engine._cognitive_runner
+        sentinel = object()
+        cog = _cog("H_A", sentinel, "n1")
+
+        runner._stash_last_good(cog)
+
+        assert isinstance(engine._last_good_plan, str)

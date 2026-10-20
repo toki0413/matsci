@@ -109,6 +109,14 @@ class MemoryManager:
         """追加结构化推理记录 (external thinking 深化侧信道)."""
         self.session.add_reasoning_record(record)
 
+    def iter_reasoning_records(self):
+        """只读迭代结构化推理记录 (deep_think→CSpace 桥读回用).
+
+        惰性迭代 session.reasoning_records, 不复制敏感全文入上下文; 桥从这条
+        访问器读回 records 入工作区, 供体征/promote 门禁消费.
+        """
+        return iter(self.session.reasoning_records)
+
     # --- Long-term memory operations ---
 
     def remember(
@@ -913,11 +921,17 @@ class MemoryManager:
     def _get_memory_dir(self) -> Path:
         """获取主题记忆目录，按 config 优先级回退。
 
-        优先使用 ``config.memory_dir``；否则用 ``memory_md_path`` 同级的 ``memory``
-        子目录；都没有设置时回退到 ``~/.huginn/memory``。目录会按需创建。
+        优先使用 ``config.memory_dir`` (调用方显式传入，如 RCB runner)；
+        未显式设置时读 ``$HUGINN_MEMORY_DIR`` (部署脚本 export 的持久盘目录 ——
+        此前无任何代码读取，该变量空转，长程记忆实际落 runtime home 而非持久盘)；
+        再否则用 ``memory_md_path`` 同级的 ``memory`` 子目录；都没有设置时回退到
+        ``~/.huginn/memory``。目录会按需创建。
         """
+        env_dir = os.environ.get("HUGINN_MEMORY_DIR", "").strip()
         if self.config.memory_dir:
             path = Path(self.config.memory_dir)
+        elif env_dir:
+            path = Path(env_dir)
         elif self.config.memory_md_path:
             path = self.config.memory_md_path.parent / "memory"
         else:
@@ -1266,6 +1280,8 @@ class MemoryManager:
                 "mid": tier_counts["mid"],
                 "long": tier_counts["long"],
             },
+            # 落地锚覆盖率: "知识是否可回查"的可观测面 (0-1). 只读, 不参与排序决策.
+            "anchored_ratio": self.longterm.anchored_ratio(),
         }
 
     # ── 模糊意图捕捉 (见 huginn/memory/intuition.py) ──────────────

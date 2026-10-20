@@ -30,6 +30,9 @@ from huginn.validation.physics import (
     ValidationCheck,
 )
 from huginn.validation.research import (
+    BlueTeamFinding,
+    BlueTeamReport,
+    BlueTeamReviewer,
     RedTeamFinding,
     RedTeamReport,
     RedTeamReviewer,
@@ -63,10 +66,13 @@ __all__ = [
     "Unit",
     "UnitRegistry",
     "registry",
-    # research / red team
+    # research / red team + blue team
     "RedTeamReviewer",
     "RedTeamReport",
     "RedTeamFinding",
+    "BlueTeamReviewer",
+    "BlueTeamReport",
+    "BlueTeamFinding",
     # tool output (may be unavailable in minimal envs)
     *_extra,
 ]

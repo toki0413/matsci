@@ -172,7 +172,7 @@ async def _llm_generate_variants(
 ) -> list[WorkflowScript]:
     """LLM 一次写 N 个 script dict. 失败返回空 list."""
     prompt = (
-        "You are generating workflow variants for a materials science agent. "
+        "You are generating workflow variants for a research agent. "
         "Each variant is a declarative script of independent tool subtasks.\n\n"
         f"Objective: {objective}\n"
         f"Generate {n} distinct variants with different parameter choices.\n\n"

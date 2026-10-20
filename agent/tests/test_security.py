@@ -42,6 +42,50 @@ def _skip_if_oom(exc: BaseException) -> None:
     if isinstance(exc, OSError) and exc.errno == errno.ENOMEM:
         pytest.skip("Cannot allocate memory for subprocess (OOM)")
 
+
+class _FakePopen:
+    """``subprocess.Popen`` 的最小测试替身.
+
+    SandboxExecutor 的超时执行改用 ``Popen`` (自立进程组 + 超时整组回收, 修孤儿
+    泄漏), 故原先 patch ``sandbox.subprocess.run`` 的用例改 patch ``Popen``. 只需
+    提供 ``communicate()`` / ``returncode`` / ``kill()`` 三个接口.
+    """
+
+    def __init__(self, cmd, *, recorder=None, rc=0, out="ok", err="", **kwargs):
+        self.cmd = cmd
+        self.pid = 4242
+        self.returncode = rc
+        self._out, self._err = out, err
+        if recorder is not None:
+            if isinstance(recorder, list):
+                recorder.append(kwargs)
+            else:
+                recorder.update(kwargs)
+
+    def communicate(self, timeout=None):  # noqa: ARG002
+        return self._out, self._err
+
+    def kill(self):
+        pass
+
+
+def _fake_popen_factory(recorder=None, *, rc: int = 0, out: str = "ok", err: str = ""):
+    """返回一个可替代 ``subprocess.Popen`` 的工厂 (记录构造 kwargs)."""
+
+    def _factory(cmd, **kwargs):
+        return _FakePopen(cmd, recorder=recorder, rc=rc, out=out, err=err, **kwargs)
+
+    return _factory
+
+
+def _patch_popen(monkeypatch, recorder, *, rc: int = 0, out: str = "ok", err: str = ""):
+    """把 ``sandbox.subprocess.Popen`` 换成记录构造 kwargs 的替身工厂."""
+    monkeypatch.setattr(
+        "huginn.security.sandbox.subprocess.Popen",
+        _fake_popen_factory(recorder, rc=rc, out=out, err=err),
+    )
+
+
 # ---------------------------------------------------------------------------
 # SandboxExecutor
 # ---------------------------------------------------------------------------
@@ -145,13 +189,7 @@ class TestSandboxExecutor:
             "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
         )
 
-        def fake_subprocess_run(*args, **kwargs):
-            captured["preexec_fn"] = kwargs.get("preexec_fn")
-            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
-
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
-        )
+        _patch_popen(monkeypatch, captured)
 
         sandbox.run(
             [sys.executable, "-c", "print('x')"],
@@ -182,14 +220,7 @@ class TestSandboxExecutor:
             lambda ro, rw, *, required=False, **kwargs: None,
         )
         calls: list[dict] = []
-
-        def fake_subprocess_run(*args, **kwargs):
-            calls.append(kwargs)
-            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
-
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
-        )
+        _patch_popen(monkeypatch, calls)
         sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
         assert calls
         assert "preexec_fn" not in calls[0], "不可用时不应注入 preexec_fn"
@@ -211,14 +242,7 @@ class TestSandboxExecutor:
             ),
         )
         calls: list[dict] = []
-
-        def fake_subprocess_run(*args, **kwargs):
-            calls.append(kwargs)
-            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
-
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
-        )
+        _patch_popen(monkeypatch, calls)
         sandbox.run(
             [sys.executable, "-c", "print('x')"],
             cwd="/tmp",
@@ -249,14 +273,7 @@ class TestSandboxExecutor:
             "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
         )
         calls: list[dict] = []
-
-        def fake_subprocess_run(*args, **kwargs):
-            calls.append(kwargs)
-            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
-
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
-        )
+        _patch_popen(monkeypatch, calls)
         sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
 
         assert captured.get("net_isolate") is True
@@ -281,10 +298,7 @@ class TestSandboxExecutor:
         monkeypatch.setattr(
             "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
         )
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run",
-            lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="ok", stderr=""),
-        )
+        _patch_popen(monkeypatch, {})
         sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
 
         assert captured.get("net_isolate") is True
@@ -310,10 +324,7 @@ class TestSandboxExecutor:
         monkeypatch.setattr(
             "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
         )
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run",
-            lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="ok", stderr=""),
-        )
+        _patch_popen(monkeypatch, {})
         sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
 
         rl = captured.get("rlimits")
@@ -328,14 +339,7 @@ class TestSandboxExecutor:
         )
         sandbox = SandboxExecutor(cfg)
         calls: list[dict] = []
-
-        def fake_subprocess_run(*args, **kwargs):
-            calls.append(kwargs)
-            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
-
-        monkeypatch.setattr(
-            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
-        )
+        _patch_popen(monkeypatch, calls)
         sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
 
         assert calls
@@ -962,10 +966,10 @@ class TestSandboxExtended:
         cfg = SandboxConfig(allowed_executables={"python", "python3"}, max_output_bytes=10)
         sandbox = SandboxExecutor(cfg)
         import sys
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "01234567890123456789"
-            mock_run.return_value.stderr = "abcdefghijklmnopqrstuvwxyz"
+        with patch(
+            "huginn.security.sandbox.subprocess.Popen",
+            _fake_popen_factory(out="01234567890123456789", err="abcdefghijklmnopqrstuvwxyz"),
+        ):
             result = sandbox.run([sys.executable, "-c", "print(1)"])
             assert "truncated" in result.stdout
             assert "truncated" in result.stderr
@@ -974,27 +978,28 @@ class TestSandboxExtended:
         cfg = SandboxConfig(allowed_executables={"python", "python3"})
         sandbox = SandboxExecutor(cfg)
         import sys
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = ""
-            mock_run.return_value.stderr = ""
+        calls: list[dict] = []
+        with patch(
+            "huginn.security.sandbox.subprocess.Popen", _fake_popen_factory(calls)
+        ):
             sandbox.run([sys.executable, "-c", "print(1)"], queue="normal", walltime="1:00:00")
-            # Ensure remote kwargs are not passed to subprocess.run
-            call_kwargs = mock_run.call_args[1]
-            assert "queue" not in call_kwargs
-            assert "walltime" not in call_kwargs
+        # Ensure remote kwargs are not passed to subprocess
+        assert calls, "Popen 未被调用"
+        call_kwargs = calls[0]
+        assert "queue" not in call_kwargs
+        assert "walltime" not in call_kwargs
 
     def test_env_passed(self):
         cfg = SandboxConfig(allowed_executables={"python", "python3"})
         sandbox = SandboxExecutor(cfg)
         import sys
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = ""
-            mock_run.return_value.stderr = ""
+        calls: list[dict] = []
+        with patch(
+            "huginn.security.sandbox.subprocess.Popen", _fake_popen_factory(calls)
+        ):
             sandbox.run([sys.executable, "-c", "print(1)"], env={"FOO": "bar"})
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs.get("env") == {"FOO": "bar"}
+        assert calls, "Popen 未被调用"
+        assert calls[0].get("env") == {"FOO": "bar"}
 
     def test_dry_run_with_custom_config(self):
         cfg = SandboxConfig(dry_run=True, allowed_executables={"python", "python3"})

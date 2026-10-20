@@ -33,13 +33,14 @@ logger = logging.getLogger(__name__)
 # === 常驻基础子集 ===
 #
 # 设备端/小模型懒加载: agent 在任何 task 下都至少需要这几类"基础设施"工具
-# (读写文件/分析/文献/联网). 无 keyword / world-domain 命中时给这份而非全量
+# (读写文件/文献/联网). 无 keyword / world-domain 命中时给这份而非全量
 # 132 工具, 避免每次对话把全部 schema 灌进小模型. 仅在 available 里存在的才保留.
+# 注: 早期还列了 `analysis_tool`, 但全仓无同名注册工具, 永不命中 (MECE 审计记的
+# 允许表死项), 已删 —— 通用分析面由 phases.py::_CORE_TOOLS 的 numerical_tool 承担.
 CORE_TOOL_NAMES: list[str] = [
     "file_read_tool",
     "file_write_tool",
     "file_edit_tool",
-    "analysis_tool",
     "literature_tool",
     "web_search_tool",
 ]

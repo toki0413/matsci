@@ -110,7 +110,7 @@ class GoalJudge:
         prompt = _GOAL_JUDGE_PROMPT.format(
             objective=objective,
             trajectory_summary=traj_summary,
-            final_output=final_output[:4000],
+            final_output=final_output[:12000],
         )
 
         try:
@@ -136,19 +136,34 @@ class GoalJudge:
         raise RuntimeError("LLM is neither a ChatModel nor callable")
 
     def _parse_response(self, response: str) -> dict[str, Any]:
-        """解析 LLM 返回的 JSON, 解析失败时回退到规则判定."""
-        # 去掉可能的 markdown 代码块包裹
-        text = response.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
+        """解析 LLM 返回的 JSON, 解析失败时回退到规则判定.
 
-        try:
-            data = json.loads(text)
+        LLM 常在 JSON 外套围栏/前后加说明文字, 逐层剥离再解析, 避免直接掉进
+        "关键字覆盖" 规则兜底 (那条路几乎恒为 achieved=False, 会误杀好报告).
+        """
+        text = (response or "").strip()
+        if not text:
+            return None
+
+        candidates: list[str] = [text]
+        # 去 markdown 围栏 (```json ... ```)
+        if text.startswith("```"):
+            body = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if body.rstrip().endswith("```"):
+                body = body.rstrip()[:-3]
+            candidates.append(body.strip())
+        # 截取第一个 { 到最后一个 } (前后有说明文字时)
+        _i, _j = text.find("{"), text.rfind("}")
+        if _i != -1 and _j > _i:
+            candidates.append(text[_i : _j + 1])
+
+        for cand in candidates:
+            try:
+                data = json.loads(cand)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
             if not isinstance(data, dict):
-                raise ValueError(f"expected JSON object, got {type(data).__name__}")
+                continue
             return {
                 "achieved": bool(data.get("achieved", False)),
                 "score": float(data.get("score", 0.0)),
@@ -156,10 +171,10 @@ class GoalJudge:
                 "gaps": data.get("gaps", []),
                 "reasoning": data.get("reasoning", ""),
             }
-        except (json.JSONDecodeError, ValueError, TypeError):
-            # JSON 解析失败或类型不对, 降级到规则判定
-            logger.warning("GoalJudge JSON parse failed, falling back to rules")
-            return None  # signal fallback needed
+
+        # 全部候选都解析失败, 降级到规则判定
+        logger.warning("GoalJudge JSON parse failed, falling back to rules")
+        return None  # signal fallback needed
 
     def _rule_based_judge(self, objective: str, final_output: str) -> dict[str, Any]:
         """无 LLM 时的降级判定: 基于关键词覆盖度."""

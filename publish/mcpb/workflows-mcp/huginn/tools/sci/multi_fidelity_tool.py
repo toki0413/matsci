@@ -389,10 +389,7 @@ class MultiFidelityTool(HuginnTool):
             return 0.0
         from scipy.stats import norm
 
-        if maximize:
-            improvement = mu - best
-        else:
-            improvement = best - mu
+        improvement = mu - best if maximize else best - mu
         z = improvement / sigma
         return float(improvement * norm.cdf(z) + sigma * norm.pdf(z))
 
@@ -645,10 +642,7 @@ class MultiFidelityTool(HuginnTool):
         cov_hf_lf = float(np.cov(y_hf, y_lf, ddof=1)[0, 1])
 
         # 最优 beta
-        if var_lf < 1e-12:
-            beta_opt = 0.0
-        else:
-            beta_opt = cov_hf_lf / var_lf
+        beta_opt = 0.0 if var_lf < 1e-12 else cov_hf_lf / var_lf
 
         beta = inp.beta if inp.beta is not None else beta_opt
 

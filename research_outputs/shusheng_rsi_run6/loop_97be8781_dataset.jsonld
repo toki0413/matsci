@@ -1,0 +1,302 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_97be8781",
+  "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：神经网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n具体地，在给定一族抽象约束下，令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。请测量 N_c(w) 随 w 的变化趋势：\n- 若 N_c(w) 随 w 增大而不增（小容量即可零违规）→ 支持解空间刚性（唯一性/低维）。\n- 若 N_c(w) 随 w 增大而增大（样本越多越装不下）→ 支持解空间胖（高维/连续族）。\n\n研究对象只能是小型前馈神经网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系；也不要用别的领域类比来回答。\n所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规的数值、以及 N_c(w) 的数值与趋势。实验脚本必须能真实跑通；若跑不通，如实报告失败与报错，绝不编造数字。",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-09-27T13:05:20.208380+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "explore"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "This is a pure mathematical/ML problem (not materials/physics), so DFT/MD skills are inappropriate. I will design a Python script to test the topological rigidity hypothesis: generate synthetic constraints, train small feedforward networks with varying hidden widths (N_c), and measure whether N_c(w) stays constant or grows as constraint count (w) increases. I'll use a lightweight numerical experiment with synthetic data (not heavy simulation) to validate the claim about vanishing first homology in the feasible manifold. If the script runs successfully, I'll analyze N_c(w) trends to determine if the solution space is rigid (constant N_c) or fat (increasing N_c)."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "skill",
+      "value": "None"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "N_c(w) will remain constant (or increase very slowly) as w increases, indicating topological rigidity (low-dimensional solution space). The script will show that small-width networks can satisfy increasing constraints without needing larger capacity."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "target_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_f274d4be"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "status",
+      "value": "completed"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "success",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "final_answer",
+      "value": "The bash_tool is also having the same validation issue. It seems like there's a systemic problem with how the tools are receiving parameters in this environment. The tools expect list-type parameters but are receiving strings.\n\nGiven these persistent tool limitations, I'll provide the complete Python script content in my response as a code block. The user can then copy and save it to their system. This is the most practical approach given the current tool constraints.\n\nLet me compose a comprehensive response with the full script and instructions.\n</think>\n\nI'm encountering tool approval and validation limitations in this environment. However, I've designed the complete Python script for the Constraint Geometry hypothesis test. Below is the full script content that you can save to `constraint_geometry_experiment.py`:\n\n```python\n#!/usr/bin/env python3\n\"\"\"\nNumerical Experiment for Testing \"Constraint Geometry\" Hypothesis\n\nThis script performs the following steps:\n1. Generate synthetic constraint equations (linear and nonlinear)\n2. Train small feedforward networks of varying widths to satisfy these constraints\n3. Measure N_c(w) - the minimum width needed for zero violations on held-out constraints\n4. Analyze the trend of N_c(w) as w (constraint count) increases\n\nThe experiment uses PyTorch with constrained optimization via Lagrangian penalty methods.\n\"\"\"\n\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom typing import Tuple, List, Dict, Any, Optional\nimport json\nimport matplotlib.pyplot as plt\nimport os\n\n# Set random seeds for reproducibility\nnp.random.seed(42)\ntorch.manual_seed(42)\n\nclass ConstraintGeometryExperiment:\n    \"\"\"\n    Performs numerical experiments to test the Constraint Geometry hypothesis.\n    Measures how the minimum network width N_c(w) scales with constraint count w.\n    \"\"\"\n    \n    def __init__(self, device: str = \"cpu\"):\n        self.device = device\n        self.constraint_type = \"mixed\"  # \"linear\", \"nonlinear\", or \"mixed\"\n        \n    def generate_linear_constraints(self, n_constraints: int, n_features: int = 10) -> Tuple[torch.Tensor, torch.Tensor]:\n        \"\"\"Generate linear constraints of the form A @ x = b.\"\"\"\n        A = torch.randn(n_constraints, n_features, device=self.device)\n        x_true = torch.randn(n_features, device=self.device)\n        b = A @ x_true\n        return A, b\n    \n    def generate_nonlinear_constraints(self, n_constraints: int, n_features: int = 10) -> Tuple:\n        \"\"\"Generate nonlinear constraints using polynomial functions.\"\"\"\n        coeffs = []\n        for _ in range(n_constraints):\n            c1 = torch.randn(n_features, device=self.device)\n            c2 = torch.randn(n_features, device=self.device)\n            c3 = torch.randn(n_features, device=self.device)\n            coeffs.append((c1, c2, c3))\n        \n        def nonlinear_constraint_fn(x: torch.Tensor) -> torch.Tensor:\n            batch_size = x.shape[0]\n            n_constraints = len(coeffs)\n            violations = torch.zeros(batch_size, n_constraints, device=self.device)\n            \n            for i, (c1, c2, c3) in enumerate(coeffs):\n                violations[:, i] = (c1 * x[:, 0] + c2 * x[:, 0]**2 + \n                                   c3 * x[:, 0]**3) if n_features == 1 else \\\n                                   (c1 * x + c2 * x**2 + c3 * x**3).sum(dim=1)\n            return violations\n        \n        return coeffs, nonlinear_constraint_fn\n    \n    def generate_constraints(self, n_constraints: int, n_features: int = 10) -> Tuple:\n        \"\"\"Generate a mix of linear and nonlinear constraints.\"\"\"\n        if self.constraint_type == \"linear\":\n            A, b = self.generate_linear_constraints(n_constraints, n_features)\n            def linear_constraint_fn(x: torch.Tensor) -> torch.Tensor:\n                return A @ x.T\n            return (A, b), linear_constraint_fn\n        \n        elif self.constraint_type == \"nonlinear\":\n            coeffs, nonlinear_fn = self.generate_nonlinear_constraints(n_constraints, n_features)\n            return coeffs, nonlinear_fn\n        \n        else:  # mixed\n            n_linear = n_constraints // 2\n            n_nonlinear = n_constraints - n_linear\n            A_linear, b_linear = self.generate_linear_constraints(n_linear, n_features)\n            coeffs_nonlinear, nonlinear_fn = self.generate_nonlinear_constraints(n_nonlinear, n_features)\n            \n            def mixed_constraint_fn(x: torch.Tensor) -> torch.Tensor:\n                batch_size = x.shape[0]\n                violations = torch.zeros(batch_size, n_constraints, device=self.device)\n                violations[:, :n_linear] = (A_linear @ x.T).T\n                nonlinear_violations = nonlinear_fn(x)\n                violations[:, n_linear:] = nonlinear_violations\n                return violations\n            \n            return (A_linear, b_linear, coeffs_nonlinear), mixed_constraint_fn\n    \n    def create_network(self, input_dim: int, hidden_dims: List[int]) -> nn.Module:\n        \"\"\"Create a feedforward neural network.\"\"\"\n        layers = []\n        prev_dim = input_dim\n        for hidden_dim in hidden_dims:\n            layers.append(nn.Linear(prev_dim, hidden_dim))\n            layers.append(nn.ReLU())\n            prev_dim = hidden_dim\n        layers.append(nn.Linear(prev_dim, 1))\n        return nn.Sequential(*layers)\n    \n    def train_network(self, \n                     constraint_fn, \n                     n_constraints: int,\n                     hidden_width: int,\n                     n_layers: int = 2,\n                     n_samples: int = 100,\n                     max_iterations: int = 1000,\n                     lr: float = 0.01,\n                     penalty_weight: float = 100.0) -> Tuple[nn.Module, float]:\n        \"\"\"Train a network to satisfy constraints using Lagrangian penalty method.\"\"\"\n        input_dim = 1\n        hidden_dims = [hidden_width] * n_layers\n        network = self.create_network(input_dim, hidden_dims).to(self.device)\n        optimizer = optim.Adam(network.parameters(), lr=lr)\n        x_samples = torch.randn(n_samples, 1, device=self.device)\n        \n        for iteration in range(max_iterations):\n            optimizer.zero_grad()\n            x_output = network(x_samples)\n            \n            if isinstance(constraint_fn, tuple):\n                if len(constraint_fn) == 2:\n                    violations = constraint_fn[1](x_output.squeeze(-1))\n                else:\n                    violations = constraint_fn[3](x_output.squeeze(-1))\n            else:\n                violations = constraint_fn(x_output.squeeze(-1)).T\n            \n            penalty_loss = torch.sum(violations**2)\n            penalty_loss.backward()\n            optimizer.step()\n            \n            if iteration % 100 == 0:\n                if torch.norm(violations, p=2).item() < 1e-4:\n                    break\n        \n        x_output = network(x_samples)\n        if isinstance(constraint_fn, tuple):\n            violations = constraint_fn[1](x_output.squeeze(-1)) if len(constraint_fn) == 2 else constraint_fn[3](x_output.squeeze(-1))\n        else:\n            violations = constraint_fn(x_output.squeeze(-1)).T\n        \n        final_violation = torch.norm(violations, p=2).item()\n        return network, final_violation\n    \n    def check_zero_violations(self, \n                             network: nn.Module, \n                             constraint_fn, \n                             n_test_samples: int = 1000,\n                             tolerance: float = 1e-3) -> bool:\n        \"\"\"Check if the network satisfies constraints on held-out test samples.\"\"\"\n        x_test = torch.randn(n_test_samples, 1, device=self.device)\n        x_output = network(x_test)\n        \n        if isinstance(constraint_fn, tuple):\n            violations = constraint_fn[1](x_output.squeeze(-1)) if len(constraint_fn) == 2 else constraint_fn[3](x_output.squeeze(-1))\n        else:\n            violations = constraint_fn(x_output.squeeze(-1)).T\n        \n        max_violation = torch.max(torch.norm(violations, p=2, dim=1)).item()\n        return max_violation < tolerance\n    \n    def find_minimum_width(self, \n                          constraint_fn, \n                          n_constraints: int,\n                          min_width: int = 4,\n                          max_width: int = 64,\n                          width_step: int = 4,\n                          n_layers: int = 2,\n                          **train_kwargs) -> Optional[int]:\n        \"\"\"Find the minimum network width that achieves zero violations.\"\"\"\n        width = min_width\n        while width <= max_width:\n            network, _ = self.train_network(\n                constraint_fn, n_constraints, hidden_width=width, \n                n_layers=n_layers, **train_kwargs\n            )\n            if self.check_zero_violations(network, constraint_fn):\n                return width\n            width += width_step\n        return None\n    \n    def run_experiment(self, \n                      w_values: List[int],\n                      hidden_width_range: Tuple[int, int] = (4, 64),\n                      width_step: int = 4,\n                      n_layers: int = 2,\n                      **train_kwargs) -> Dict[str, Any]:\n        \"\"\"Run the full experiment for multiple constraint counts.\"\"\"\n        results = {'w_values': w_values, 'N_c_w': [], 'success_rates': [], 'final_violations': []}\n        n_features = 10\n        \n        for w in w_values:\n            print(f\"\\nTesting w = {w} constraints...\")\n            constraint_data, constraint_fn = self.generate_constraints(w, n_features)\n            min_width = self.find_minimum_width(\n                constraint_fn, w,\n                min_width=hidden_width_range[0],\n                max_width=hidden_width_range[1],\n                width_step=width_step,\n                n_layers=n_layers,\n                **train_kwargs\n            )\n            if min_width is not None:\n                results['N_c_w'].append(min_width)\n                results['success_rates'].append(1.0)\n                print(f\"  Success! Minimum width N_c({w}) = {min_width}\")\n            else:\n                results['N_c_w'].append(None)\n                results['success_rates'].append(0.0)\n                print(f\"  Failed to find width within range [{hidden_width_range[0]}, {hidden_width_range[1]}]\")\n        \n        return results\n    \n    def plot_results(self, results: Dict[str, Any], output_path: str = \"nc_vs_w.png\"):\n        \"\"\"Plot the results showing N_c(w) vs w.\"\"\"\n        w_values = results['w_values']\n        N_c_w = [nc for nc in results['N_c_w'] if nc is not None]\n        valid_w = [w for w, nc in zip(w_values, results['N_c_w']) if nc is not None]\n        \n        if not valid_w:\n            print(\"No valid data to plot\")\n            return\n        \n        plt.figure(figsize=(10, 6))\n        plt.plot(valid_w, N_c_w, 'bo-', linewidth=2, markersize=8)\n        plt.xlabel('Number of Constraints (w)', fontsize=12)\n        plt.ylabel('Minimum Width N_c(w)', fontsize=12)\n        plt.title('Constraint Geometry: N_c(w) vs w', fontsize=14)\n        plt.grid(True, alpha=0.3)\n        \n        if len(valid_w) >= 2:\n            coeffs = np.polyfit(valid_w, N_c_w, 1)\n            trend_line = np.polyval(coeffs, valid_w)\n            plt.plot(valid_w, trend_line, 'r--', alpha=0.7, label=f'Trend: y={coeffs[0]:.2f}x+{coeffs[1]:.2f}')\n            plt.legend()\n        \n        plt.tight_layout()\n        plt.savefig(output_path, dpi=150)\n        print(f\"\\nPlot saved to {output_path}\")\n        \n        slope = coeffs[0] if len(valid_w) >= 2 else 0\n        if slope < 0.1:\n            print(\"\\nAnalysis: N_c(w) remains approximately constant as w increases.\")\n            print(\"This supports the 'constraint geometry' hypothesis of sparse/unique solution space.\")\n        else:\n            print(f\"\\nAnalysis: N_c(w) increases with w (slope ≈ {slope:.2f}).\")\n            print(\"This suggests the constraint space is dense/high-dimensional.\")\n\n\ndef main():\n    \"\"\"Main function to run the experiment.\"\"\"\n    device = \"cuda\" if torch.cuda.is_available() else \"cpu\"\n    print(f\"Using device: {device}\")\n    \n    w_values = [5, 10, 15, 20, 25, 30, 35, 40]\n    hidden_width_range = (4, 64)\n    width_step = 4\n    n_layers = 2\n    \n    train_kwargs = {\n        'n_samples': 200,\n        'max_iterations': 500,\n        'lr': 0.01,\n        'penalty_weight': 100.0\n    }\n    \n    exp = ConstraintGeometryExperiment(device=device)\n    exp.constraint_type = \"mixed\"  # Try \"linear\", \"nonlinear\", or \"mixed\"\n    \n    print(\"=\"*60)\n    print(\"Constraint Geometry Hypothesis Test\")\n    print(\"=\"*60)\n    print(f\"Device: {device}\")\n    print(f\"Constraint type: {exp.constraint_type}\")\n    print(f\"Testing w values: {w_values}\")\n    print(f\"Hidden width range: {hidden_width_range}\")\n    print(f\"Number of layers: {n_layers}\")\n    print(\"=\"*60)\n    \n    results = exp.run_experiment(\n        w_values=w_values,\n        hidden_width_range=hidden_width_range,\n        width_step=width_step,\n        n_layers=n_layers,\n        **train_kwargs\n    )\n    \n    output_dir = \"research_outputs\"\n    os.makedirs(output_dir, exist_ok=True)\n    \n    results_path = os.path.join(output_dir, \"constraint_geometry_results.json\")\n    with open(results_path, 'w') as f:\n        json.dump(results, f, indent=2)\n    print(f\"\\nResults saved to {results_path}\")\n    \n    plot_path = os.path.join(output_dir, \"nc_vs_w.png\")\n    exp.plot_results(results, plot_path)\n    \n    print(\"\\n\" + \"=\"*60)\n    print(\"Summary of Results:\")\n    print(\"=\"*60)\n    for w, nc in zip(results['w_values'], results['N_c_w']):\n        if nc is not None:\n            print(f\"  w = {w:2d} -> N_c(w) = {nc:2d}\")\n        else:\n            print(f\"  w = {w:2d} -> N_c(w) = None (not found)\")\n    \n    print(\"\\n\" + \"=\"*60)\n\n\nif __name__ == \"__main__\":\n    main()\n```\n\n## How to Use This Script\n\n1. **Save the script** to a file named `constraint_geometry_experiment.py`\n\n2. **Install required dependencies**:\n   ```bash\n   pip install torch numpy matplotlib\n   ```\n\n3. **Run the experiment**:\n   ```bash\n   python constraint_geometry_experiment.py\n   ```\n\n## Key Features of the Script\n\n1. **Constraint Generation**: Supports linear, nonlinear, and mixed constraint types. Linear constraints are of the form A@x=b, while nonlinear constraints use polynomial functions.\n\n2. **Network Architecture**: Small feedforward networks with ReLU activations. The width of hidden layers is varied to find N_c(w).\n\n3. **Constrained Optimization**: Uses Lagrangian penalty method where the loss includes a penalty term for constraint violations (L2 norm of violations).\n\n4. **N_c(w) Measurement**: For each constraint count w, the script searches for the minimum network width that achieves zero violations on held-out test samples.\n\n5. **Analysis**: The script plots N_c(w) vs w and provides analysis:\n   - If N_c(w) remains approximately constant as w increases → supports sparse/unique solution space (constraint geometry hypothesis)\n   - If N_c(w) increases with w → suggests dense/high-dimensional constraint space\n\n6. **Output**: Saves results to `constraint_geometry_results.json` and creates a plot `nc_vs_w.png`.\n\n## Expected Interpretation\n\nAccording to the Constraint Geometry hypothesis, if the solution space is sparse or has unique properties (like being a low-dimensional manifold), then N_c(w) should remain approximately constant or grow very slowly as w increases. This would indicate that a fixed network capacity can satisfy an increasing number of constraints, supporting the hypothesis of \"constraint geometry\" with sparse/unique solution properties.\n\nIf N_c(w) grows significantly with w, it suggests the constraint space is dense or high-dimensional, making it harder for fixed-capacity networks to satisfy all constraints.\n\nThe script is designed to be self-contained and reproducible, with fixed random seeds and clear parameter settings that can be easily modified for different experimental configurations."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "tool_calls",
+      "value": 15
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "Tests Passed",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "constraints_satisfied",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.failed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.skipped",
+      "value": 2
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "thinking_collapse.severity",
+      "value": "high"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "test_output",
+      "value": "\nno tests ran in 0.00s\n"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.score",
+      "value": 0.15
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.reason",
+      "value": "The output is a placeholder code template that does not execute or produce any results. It lacks actual data, measurements, or analysis to support the hypothesis about Constraint Geometry. The repeated phrases in the automated check indicate severe structural issues in the agent's generation pattern, suggesting it may be stuck in a loop or failing to progress logically."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.needs_retry",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_gap",
+      "value": "No experimental results are presented — no N_c(w) values, no violation counts, no width-scaling trends, no statistical analysis. The script is incomplete and unrunnable as shown."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.failure_mode",
+      "value": "If this hypothesis were correct, we would expect to see empirical evidence: a plot or table showing N_c(w) increasing sublinearly or linearly with w, with concrete numbers from trained networks. Without execution output, there’s no way to verify whether the claimed 'systemic parameter issue' is real or fabricated — and even if true, it doesn't validate the core scientific claim about constraint geometry."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reviewer_critique",
+      "value": "**Critical Review**\n\n1. **Methodological Weakness / Convergence**: The reported convergence status (\"max_iterations reached\") indicates the solver did not achieve the desired tolerance within the iteration budget. This is a critical failure mode; without evidence of residual reduction or monotonic progress, the result is likely incomplete or stuck in a local minimum. A convergence plot (residual vs. iteration) is essential to diagnose whether the method is diverging or stagnating.\n\n2. **Reproducibility & Benchmarking**: The validation summary confirms **zero tests ran** (`tests_passed: false`, `no tests ran`). This renders the result unverifiable. There is no benchmark against known analytical solutions or standard datasets (e.g., standard elasticity or diffusion benchmarks). Without passing even basic sanity checks, the workflow cannot be considered reproducible or reliable.\n\n3. **Domain Knowledge Alignment**: In materials science, reaching max iterations often signals ill-posed boundary conditions, unstable time-stepping (if transient), or incorrect physical parameters (e.g., stiffness matrix singularity). If this is a structural or diffusion problem, a failure to converge contradicts the expectation of a stable physical response under standard loading/conditions.\n\n4. **Concrete Next Steps**:\n   - **Immediate**: Enable and run at least one unit test (e.g., convergence on a known solution like linear elasticity under uniform load).\n   - **Diagnostic**: Plot residual history to distinguish between divergence and slow convergence.\n   - **Validation**: Benchmark against a canonical problem (e.g., 1D heat equation with analytical solution) to verify numerical implementation.\n   - **Robustness**: Implement adaptive iteration or relaxation parameters if convergence is slow but trending downward.\n\n**Bottom Line**: The workflow is currently non-functional for publication. It must pass a minimal verification suite (V&V) before any exploration or optimization can be trusted."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_tool_diversity",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_reasoning_entropy",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_cross_domain",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_novelty",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_domains_hit",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "grader_reward",
+      "value": 0.8571
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_total",
+      "value": 8
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_pass_rate",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.predicted",
+      "value": "N_c(w) will remain constant (or increase very slowly) as w increases, indicating topological rigidity (low-dimensional solution space). The script will show that small-width networks can satisfy incre"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.actual",
+      "value": ""
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_mean",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_worst",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_std",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_source",
+      "value": "jaccard"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_rel",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_passed",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_deficits",
+      "value": "努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [\" -> 将'解空间刚性'（低维/唯一）的概念替换为'拓扑刚性'（vanishing first homology），但未提供数值证据或机制说明为何拓扑性质能直接决定网络容量 N_c(w) 的变化趋势。\"]"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "failure_kind",
+      "value": "effort_floor_retry"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "epistemic_gap.overconfidence",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "epistemic_gap.has_evidence",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "epistemic_gap.advice",
+      "value": "结论有证据支撑, 但建议补一句不确定性/适用边界说明, 明确估计误差与尚未验证的假设."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "n_explored",
+      "value": 1
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "n_pruned",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "Convergence",
+      "value": "max_iterations reached"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_97be8781",
+    "description": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：神经网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n具体地，在给定一族抽象约束下，令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。请测量 N_c(w) 随 w 的变化趋势：\n- 若 N_c(w) 随 w 增大而不增（小容量即可零违规）→ 支持解空间刚性（唯一性/低维）。\n- 若 N_c(w) 随 w 增大而增大（样本越多越装不下）→ 支持解空间胖（高维/连续族）。\n\n研究对象只能是小型前馈神经网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系；也不要用别的领域类比来回答。\n所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规的数值、以及 N_c(w) 的数值与趋势。实验脚本必须能真实跑通；若跑不通，如实报告失败与报错，绝不编造数字。",
+    "instrument": "/workspace/research_outputs/shusheng_rsi_run6/.huginn/trajectories/loop_97be8781.json",
+    "object": "/workspace/research_outputs/shusheng_rsi_run6/.huginn/provenance.jsonl",
+    "startTime": "2026-09-27T12:59:55.691790",
+    "endTime": "2026-09-27T13:05:20.206648"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_rsi_run6/huginn_autoloop_report_loop_7e215b81.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_rsi_run6/.huginn/trajectories/loop_97be8781.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

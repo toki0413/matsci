@@ -165,21 +165,27 @@ class RedTeamReviewer:
         else:
             findings = []
 
-        # 多 critic 并行 + DS 合成 (如果配置了 critic_models)
+        # LLM 对抗发现单独收集, 与规则/领域/物理发现分开 —— 供下方 validate→learn
+        # 的 advisory 降级 (只降 LLM 主观发现, 硬性发现仍阻断).
+        llm_findings: list[RedTeamFinding] = []
         if self._critic_models:
+            # 多 critic 并行 + DS 合成 (如果配置了 critic_models)
             critic_findings, ds_note = self._multi_critic_review(
                 from_phase, to_phase, evidence
             )
-            findings.extend(critic_findings)
+            llm_findings.extend(critic_findings)
         else:
             # 单 critic 路径 (向后兼容)
             model_for_review = self._critic_model or self._model
             if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
                 try:
-                    findings.extend(self._llm_findings(from_phase, to_phase, evidence))
-                except Exception:
+                    llm_findings.extend(
+                        self._llm_findings(from_phase, to_phase, evidence)
+                    )
+                except Exception:  # 防御: 扩展生成失败跳过
                     logger.debug("extend failed", exc_info=True)
             ds_note = ""
+        findings.extend(llm_findings)
 
         # 领域失败模式扫描 (材料科学具体陷阱: 数据泄漏 / 单位混乱 / 对称性 / ...)
         findings.extend(self._domain_failure_scan(evidence))
@@ -192,6 +198,15 @@ class RedTeamReviewer:
 
         # 文献共识扫描: multi_review 产出的 high_conf claims 与假设对齐检查
         findings.extend(self._literature_consensus_check(evidence))
+
+        # validate→learn: LLM 对抗发现降为 advisory (high→medium), 只作警告回灌下轮.
+        # RedTeam 的 prompt 明确要求"假设证据有错, 找最可能失败的点", 同模型自审
+        # 几乎必然产出 high —— 若硬阻断, validate→learn 永不放行, learn/RSI 永不触发.
+        # 对齐 phase_gate 既有 "warnings first, option to force proceed" 哲学:
+        # 只降 LLM 主观发现; 规则 (tests_passed=False) / 领域失败模式 / 物理 oracle
+        # 的 high 仍硬阻断.
+        if transition == ("validate", "learn"):
+            self._make_llm_findings_advisory(llm_findings)
 
         summary = self._build_summary(findings, transition)
         if ds_note:
@@ -299,7 +314,7 @@ class RedTeamReviewer:
                         source_class="agent_generated",
                     ))
 
-        except Exception:
+        except Exception:  # 防御: 拓扑扫描失败返回空
             logger.debug("topology_scan failed (non-fatal)", exc_info=True)
         return out
 
@@ -348,7 +363,7 @@ class RedTeamReviewer:
                     source_class="tool_output",
                 ))
             # holds=True 或 holds=None (unknown) 都不发 finding
-        except Exception:
+        except Exception:  # 防御: 反例扫描失败返回空
             logger.debug("discrete_counterexample_scan failed (non-fatal)", exc_info=True)
         return out
 
@@ -433,7 +448,7 @@ class RedTeamReviewer:
                 return []
             try:
                 return self._llm_findings_with(from_phase, to_phase, evidence, critic)
-            except Exception:
+            except Exception:  # 防御: 评审失败返回空
                 logger.debug("critic review failed", exc_info=True)
                 return []
 
@@ -455,7 +470,7 @@ class RedTeamReviewer:
                     per_critic.append(
                         self._llm_findings_with(from_phase, to_phase, evidence, c)
                     )
-                except Exception:
+                except Exception:  # 防御: 单批评失败记空值
                     per_critic.append([])
 
         from huginn.autoloop.phase_gate import DempsterShaferCombiner
@@ -640,6 +655,22 @@ class RedTeamReviewer:
 
         return findings
 
+    def _make_llm_findings_advisory(
+        self, llm_findings: list[RedTeamFinding]
+    ) -> None:
+        """把 LLM 生成的对抗发现从阻断项降为 advisory (high→medium).
+
+        只就地修改传入的 LLM 发现列表; 规则/领域失败模式/物理 oracle 的发现不在
+        此列, 仍可 hard-block. 这样 validate→learn 不会被对抗性同模型自审的随机
+        high 发现永久堵死, learn/RSI 得以运行, 而警示仍回灌下一轮 prompt.
+        """
+        for f in llm_findings:
+            if f.severity == "high":
+                f.severity = "medium"
+                f.mitigation = (
+                    (f.mitigation + " ") if f.mitigation else ""
+                ) + "[LLM 对抗发现, validate→learn 阶段降为 advisory 警告]"
+
     # ── LLM 增强 ────────────────────────────────────────────────────
 
     def _is_real_model(self) -> bool:
@@ -692,11 +723,30 @@ class RedTeamReviewer:
     ) -> str:
         import json
 
-        return (
+        prompt = (
             f"阶段转移: {from_phase} → {to_phase}\n"
             f"证据: {json.dumps(evidence, ensure_ascii=False, default=str)}\n\n"
             f"请做对抗性审查."
         )
+        # 方案2: Code Lab / 闭式数值实验的 tests_passed 依据是"沙箱内真实执行并产出
+        # 数值目标", 不是 workspace 的 pytest 收集. 显式说明防止 reviewer 把
+        # "没有 pytest 测试文件" 误读成"未运行测试 → tests_passed 造假" 而给 high.
+        basis = str(
+            evidence.get("validation_basis")
+            or evidence.get("validation_evidence")
+            or ""
+        )
+        _code_lab = basis in ("code_lab_objectives", "executed_numeric_snippet") or (
+            str(evidence.get("mode", "")) == "code_lab"
+            and bool(evidence.get("objectives"))
+        )
+        if _code_lab:
+            prompt += (
+                "\n\n注: 本证据的 tests_passed=true 来自沙箱内真实执行的数值实验"
+                "(validation_basis=%s, objectives 非空), 而非 workspace 的 pytest 收集. "
+                "不要以'未运行测试/测试为空'为由给 high 严重度发现." % (basis or "code_lab_objectives")
+            )
+        return prompt
 
     @staticmethod
     def _parse_llm_findings(text: str) -> list[RedTeamFinding]:

@@ -138,10 +138,7 @@ def compute_ec(
     # 几何平均: 任一维度为 0 就大幅拉低总分
     dims = [tool_diversity, reasoning_entropy, cross_domain, novelty]
     nonzero = [d for d in dims if d > 0]
-    if nonzero:
-        ec = math.exp(sum(math.log(d) for d in nonzero) / len(nonzero))
-    else:
-        ec = 0.0
+    ec = math.exp(sum(math.log(d) for d in nonzero) / len(nonzero)) if nonzero else 0.0
 
     return {
         "ec_score": round(ec, 4),

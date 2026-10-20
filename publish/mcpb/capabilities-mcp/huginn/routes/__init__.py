@@ -28,6 +28,7 @@ from huginn.routes.compat import router as compat_router
 from huginn.routes.config import router as config_router
 from huginn.routes.credentials import router as credentials_router
 from huginn.routes.data_dict import router as data_dict_router
+from huginn.routes.deep_research import router as deep_research_router
 from huginn.routes.diagnostics import router as diagnostics_router
 from huginn.routes.document import router as document_router
 from huginn.routes.eval import router as eval_router
@@ -87,6 +88,8 @@ ALL_ROUTERS = [
     research_project_router,
     planner_router,
     codebase_router,
+    # 深研 HTTP 入口 (ADR-0001 迁移目标, 见 test_arch_single_gateway 注释)
+    deep_research_router,
     knowledge_router,
     # 知识图谱: stats / graph / query / search / mermaid (P0-2 修复: 之前整路由未注册)
     kg_router,

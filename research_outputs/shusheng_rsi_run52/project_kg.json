@@ -1,0 +1,646 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: Optimization] **The Landau Phase Transition Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:19:56.106134",
+      "last_seen": "2026-09-30T10:19:56.106134",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe a sharp phase transition at a critical constraint density $\\rho_c \\approx 0.1-0.3$ where the required network width $N_c$ jumps from a small finite value to infinity (or the searc",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Optimization] **The Landau Phase Transition Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106176",
+      "last_seen": "2026-09-30T10:19:56.106176",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106189",
+      "last_seen": "2026-09-30T10:19:56.106189",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Optimization] **The Landau Phase Transition Hypothesis**",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:19:56.106302",
+      "last_seen": "2026-09-30T10:19:56.106302",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "416f7fe60ee2417a",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "** [DIM: Optimization] The Loss Landscape Geometry Hypothesis.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:25:58.083325",
+      "last_seen": "2026-09-30T10:25:58.083325",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe that for a sufficiently constrained analytic function (e.g., low-degree polynomial or trigonometric sum), the minimum width $N_c(w)$ required to satisfy constraints on unseen poin",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Optimization] The Loss Landscape Geometry Hypothesis."
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083364",
+      "last_seen": "2026-09-30T10:25:58.083364",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083373",
+      "last_seen": "2026-09-30T10:25:58.083373",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Optimization] The Loss Landscape Geometry Hypothesis.",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:25:58.083457",
+      "last_seen": "2026-09-30T10:25:58.083457",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "275871f21155948c",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "** [DIM: Structure] The Algebraic Independence Hypothesis.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:27:59.554382",
+      "last_seen": "2026-09-30T10:27:59.554382",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For small w (e.g., w=5-10), we expect N_c to be small and finite (rigid regime). As w increases, if the system remains rigid, N_c will plateau; if fat, N_c will grow or become unreachable (inf). Given",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Structure] The Algebraic Independence Hypothesis."
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554426",
+      "last_seen": "2026-09-30T10:27:59.554426",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554435",
+      "last_seen": "2026-09-30T10:27:59.554435",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Structure] The Algebraic Independence Hypothesis.",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:27:59.554515",
+      "last_seen": "2026-09-30T10:27:59.554515",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d911ac83fc7d1e0d",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: Optimization] The Loss Landscape Geometry Hypothesis. This hypothesis is m",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:28:59.981587",
+      "last_seen": "2026-09-30T10:28:59.981587",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will show a sharp step at a critical w_c (e.g., w_c ≈ 5–10), with N_c remaining small and finite below w_c and jumping sharply above it, indicating rigid solution space; no smooth logarithmic o",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Optimization] The Loss Landscape Geometry Hypothesis. This hypothesis is m"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:28:59.981628",
+      "last_seen": "2026-09-30T10:28:59.981628",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:28:59.981637",
+      "last_seen": "2026-09-30T10:28:59.981637",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:28:59.981646",
+      "last_seen": "2026-09-30T10:28:59.981646",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Optimization] The Loss Landscape Geometry Hypothesis. This hypothesis is m",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_4d6c65e7"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:28:59.981722",
+      "last_seen": "2026-09-30T10:28:59.981722",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "facffac0f9fb238b",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: computation] **The Kolmogorov Complexity Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:29:50.381942",
+      "last_seen": "2026-09-30T10:29:50.381942",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain small (e.g., ≤ 20) and roughly constant across w ∈ [10, 100], indicating solution space rigidity. If N_c grows rapidly or fails to converge, the solution space is \"fat\".\nPLAN_SLOTS:",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] **The Kolmogorov Complexity Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:29:50.381983",
+      "last_seen": "2026-09-30T10:29:50.381983",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:29:50.381994",
+      "last_seen": "2026-09-30T10:29:50.381994",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:29:50.382003",
+      "last_seen": "2026-09-30T10:29:50.382003",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] **The Kolmogorov Complexity Hypothesis**",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_cc8a7ea7"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:29:50.382078",
+      "last_seen": "2026-09-30T10:29:50.382078",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "40f6ef3ead90da06",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: structure] **The Algebraic Interpolation Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:30:36.727354",
+      "last_seen": "2026-09-30T10:30:36.727354",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will plateau at small value (e.g., ≤16) for w ∈ [5, 50] if solution space is rigid; otherwise N_c will grow unbounded or remain >100 (fat). Validation error will drop below 1e-3 at plateau thre",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] **The Algebraic Interpolation Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:30:36.727394",
+      "last_seen": "2026-09-30T10:30:36.727394",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:30:36.727404",
+      "last_seen": "2026-09-30T10:30:36.727404",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:30:36.727414",
+      "last_seen": "2026-09-30T10:30:36.727414",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] **The Algebraic Interpolation Hypothesis**",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_89801579"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:30:36.727488",
+      "last_seen": "2026-09-30T10:30:36.727488",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "701865ca9f724903",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: measure] **The Empirical Measure Concentration Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:32:10.809255",
+      "last_seen": "2026-09-30T10:32:10.809255",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will plateau at a small finite value (e.g., ≤32) as w increases from 5 to 50, indicating solution space rigidity; if N_c grows unbounded or exceeds capacity, the space is fat. The trend will be",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] **The Empirical Measure Concentration Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:32:10.809295",
+      "last_seen": "2026-09-30T10:32:10.809295",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:32:10.809305",
+      "last_seen": "2026-09-30T10:32:10.809305",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:32:10.809315",
+      "last_seen": "2026-09-30T10:32:10.809315",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] **The Empirical Measure Concentration Hypothesis**",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_dc76409d"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:32:10.809390",
+      "last_seen": "2026-09-30T10:32:10.809390",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c1d41300f7e2c905",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Optimization] **The Landau Phase Transition Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Optimization] The Loss Landscape Geometry Hypothesis.",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Structure] The Algebraic Independence Hypothesis.",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Optimization] The Loss Landscape Geometry Hypothesis. This hypothesis is m",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:28:59.981646",
+      "last_seen": "2026-09-30T10:28:59.981646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d6c65e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:28:59.981646",
+      "last_seen": "2026-09-30T10:28:59.981646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d6c65e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:28:59.981646",
+      "last_seen": "2026-09-30T10:28:59.981646",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d6c65e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] **The Kolmogorov Complexity Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:29:50.382003",
+      "last_seen": "2026-09-30T10:29:50.382003",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cc8a7ea7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:29:50.382003",
+      "last_seen": "2026-09-30T10:29:50.382003",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cc8a7ea7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:29:50.382003",
+      "last_seen": "2026-09-30T10:29:50.382003",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cc8a7ea7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] **The Algebraic Interpolation Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:30:36.727414",
+      "last_seen": "2026-09-30T10:30:36.727414",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_89801579"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:30:36.727414",
+      "last_seen": "2026-09-30T10:30:36.727414",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_89801579"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:30:36.727414",
+      "last_seen": "2026-09-30T10:30:36.727414",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_89801579"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] **The Empirical Measure Concentration Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:32:10.809315",
+      "last_seen": "2026-09-30T10:32:10.809315",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc76409d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:32:10.809315",
+      "last_seen": "2026-09-30T10:32:10.809315",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc76409d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:32:10.809315",
+      "last_seen": "2026-09-30T10:32:10.809315",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dc76409d"
+    }
+  ]
+}

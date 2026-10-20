@@ -247,7 +247,7 @@ class SubagentDispatch:
                 get_subagent_specs_for_dispatch,
             )
             specs_override = get_subagent_specs_for_dispatch()
-        except Exception:
+        except Exception:  # 防御: 阶段规格覆盖不可用则用内置
             logger.debug("subagent phase spec override unavailable", exc_info=True)
         if specs_override is not None:
             self._specs: dict[str, SubagentSpec] = dict(specs_override)
@@ -344,11 +344,25 @@ class SubagentDispatch:
             final_state = None
             async for state in agent.chat(task, thread_id):
                 if isinstance(state, dict):
-                    final_state = state
+                    # chat() 除 langgraph state (含 "messages") 外, 还 yield 一批
+                    # **控制事件**: {"_token":..} / {"_reasoning":..} /
+                    # {"tool_break":True,"state":{...}} / {"_auto_continue":True} /
+                    # {"_compacted":..}. 末条常是控制事件 → 若直接取最后一条,
+                    # 后面的 _extract_output/_extract_tool_calls/_estimate_tokens
+                    # 读到的 state 根本没有 "messages", 整个子 agent 产出被判为空
+                    # (run62/64 实测: blind_recon dispatch success=True 却
+                    # summary_len=0, 6 次派发里 3 次空手).
+                    # 故只认带非空 messages 的真实状态; {"state": {...}} 一层解开.
+                    # 从未见过 messages 时兜底保留首条 dict (保持旧行为).
+                    _cand = state.get("state") if "messages" not in state else state
+                    if isinstance(_cand, dict) and _cand.get("messages"):
+                        final_state = _cand
+                    elif final_state is None:
+                        final_state = state
                     if on_state is not None:
                         try:
                             await on_state(state)
-                        except Exception:
+                        except Exception:  # 防御: 状态回调失败则忽略
                             logger.debug("on_state callback failed", exc_info=True)
 
             # 子 agent 完成: 触发 SUBAGENT_STOP hook.
@@ -371,7 +385,7 @@ class SubagentDispatch:
                         },
                     )
                     await _hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
-            except Exception:
+            except Exception:  # 防御: 停止钩子失败则忽略
                 logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
 
             output = self._extract_output(final_state)
@@ -386,7 +400,7 @@ class SubagentDispatch:
                 try:
                     if hasattr(agent, "select_model"):
                         summarize_model = agent.select_model("summarize")
-                except Exception:
+                except Exception:  # 防御: 总结模型选择失败回退默认
                     logger.debug(
                         "select summarize model failed, fallback to default",
                         exc_info=True,
@@ -450,16 +464,23 @@ class SubagentDispatch:
 
     @staticmethod
     def _extract_output(state: Any) -> str:
-        """从 agent 最终 state 里取最后一条消息的文本."""
+        """从 agent 最终 state 里取**最后一条非空**消息的文本.
+
+        末条消息常为空 —— 子 agent 用尽 tool 预算 / max_iterations 时, 最后一条是
+        content="" 的 AI 或 tool 消息. 旧实现只取最后一条 → 整个子 agent 产出被判为 ""
+        (run62 实测 blind_reconstructor 6 次派发里 3 次 summary_len=0, 协作零产出).
+        故回退到最近一条非空 content; 全空才返回 "".
+        """
         if not isinstance(state, dict):
             return str(state) if state else ""
         messages = state.get("messages", [])
         if not messages:
             return ""
-        last = messages[-1]
-        if hasattr(last, "content"):
-            return str(last.content)
-        return str(last)
+        for msg in reversed(messages):
+            text = str(msg.content) if hasattr(msg, "content") else str(msg)
+            if text.strip():
+                return text
+        return ""
 
     @staticmethod
     def _extract_tool_calls(state: Any) -> list[dict[str, Any]]:
@@ -521,7 +542,7 @@ class SubagentDispatch:
                 if not alias:
                     return output[:_SUMMARIZE_THRESHOLD] + "..."
                 model = factory.model_registry.resolve(alias)
-            except Exception:
+            except Exception:  # 防御: 总结模型解析失败则截断兜底
                 logger.debug("resolve model for summarize failed", exc_info=True)
                 return output[:_SUMMARIZE_THRESHOLD] + "..."
 
@@ -555,7 +576,7 @@ class SubagentDispatch:
             ]
             result = await asyncio.to_thread(model.invoke, messages)
             return result.content if hasattr(result, "content") else str(result)
-        except Exception:
+        except Exception:  # 防御: 总结LLM调用失败则截断兜底
             logger.debug("summarize LLM call failed", exc_info=True)
             return output[:_SUMMARIZE_THRESHOLD] + "..."
 

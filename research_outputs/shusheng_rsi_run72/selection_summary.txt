@@ -1,0 +1,19 @@
+Three Divergent Hypotheses on Solution Space Rigidity
+
+1. [COMPUTATION] — Linear scaling for floppy spaces: N_c(w) ∝ w
+   Grounding: VC dimension theory (d_Vc(N) = Θ(N))
+   Pro: Direct approximation-theoretic grounding; clear prediction
+   Con: VC bounds are loose; may obscure small-w behavior
+
+2. [GEOMETRY] — Polylogarithmic scaling for floppy spaces: N_c(w) ∼ (log w)^{1/c}
+   Grounding: Manifold covering theory (N_cover ∼ (C/ε)^d)
+   Pro: Connects to intrinsic dimension; distinguishes rigid from sparse
+   Con: Hard to estimate intrinsic dimension from w samples
+
+3. [OPTIMIZATION] — Square-root scaling for floppy spaces: N_c(w) ∼ √w
+   Grounding: Hessian spectrum and effective degrees of freedom in loss landscape
+   Pro: Distinct √w scaling; testable without computing Hessians; novel perspective
+   Con: Near-zero threshold arbitrary; assumes specific constraint-degeneracy relationship
+
+SELECTED: [OPTIMIZATION]
+Reason: Most testable (N_c(w) measurement only) + novel (√w scaling from loss-landscape geometry, distinct from linear and polylogarithmic predictions)

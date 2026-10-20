@@ -162,6 +162,10 @@ class LeanInterface:
 
         This is a thin wrapper around `lake build <module>` plus a regex
         check that the theorem declaration exists in the source.
+
+        ``lake`` 的成功只证明类型检查通过, 不证明命题成立 —— ``sorry`` /
+        ``admit`` / ``axiom`` 都能让编译通过却留下未证明的定理 (§4.3 供应链
+        纪律). 因此源码扫描不健全标记, 命中即判失败, 不把"编译通过"当"已证".
         """
         # 1. Build the module
         result = self.build(target=module, quiet=True)
@@ -188,7 +192,32 @@ class LeanInterface:
                 returncode=-1,
             )
 
+        # 3. Unsound-marker guard: 编译通过 ≠ 已证.
+        from huginn.lean.supply_chain import scan_unsound_tactics
+
+        unsound = scan_unsound_tactics(source)
+        if unsound:
+            return LeanResult(
+                success=False,
+                stdout="",
+                stderr=(
+                    f"Unsound tactic(s) {unsound} in {src_file}: "
+                    "compiled but the theorem is not actually proven "
+                    "(sorry/admit/axiom bypass the proof obligation)."
+                ),
+                returncode=-1,
+            )
+
         return result
+
+    def audit_supply_chain(self) -> dict:
+        """审计本项目的 Lean 供应链完整性 (不健全标记 + 依赖固定).
+
+        只读, 不拉编译器. 返回结构见 ``huginn.lean.supply_chain.audit_project``.
+        """
+        from huginn.lean.supply_chain import audit_project
+
+        return audit_project(self.project_path)
 
     # ------------------------------------------------------------------
     # Helpers

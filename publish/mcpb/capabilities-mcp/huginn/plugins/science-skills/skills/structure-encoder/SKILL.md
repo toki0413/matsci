@@ -1,6 +1,6 @@
 ---
 name: structure-encoder
-description: Use when 用户提供晶体/材料结构文件(CIF/POSCAR/xyz)或化学式(如 LiFePO4)需要归一化成统一的材料描述子用于检索/入库/比对；触发场景包括结构文件标准化、化学式解析、材料指纹提取、结构 vs 化学式统一表示、把异构结构输入转成可检索的 JSON 描述子。对应 chain-of-thought: 输入结构 → 输出统一的"化学式+空间群+晶格+元素比例" JSON。
+description: 'Use when 用户提供晶体/材料结构文件(CIF/POSCAR/xyz)或化学式(如 LiFePO4)需要归一化成统一的材料描述子用于检索/入库/比对；触发场景包括结构文件标准化、化学式解析、材料指纹提取、结构 vs 化学式统一表示、把异构结构输入转成可检索的 JSON 描述子。对应 chain-of-thought: 输入结构 → 输出统一的"化学式+空间群+晶格+元素比例" JSON。'
 ---
 
 # structure-encoder

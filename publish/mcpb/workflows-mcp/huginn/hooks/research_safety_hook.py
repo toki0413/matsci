@@ -14,10 +14,11 @@ from huginn.hooks import PRE_TOOL_USE, HookContext, HookManager
 logger = logging.getLogger(__name__)
 
 # 这些工具单次调用就可能消耗大量计算资源 (HPC 排队 / GPU 时间 / 长时间运行)
+# 工具名用**注册名**; 早期写的 `autoloop_tool` 无对应工具, 永不命中已移除.
 _EXPENSIVE_TOOLS = frozenset({
     "vasp_tool", "lammps_tool", "cp2k_tool", "qe_tool",
     "gaussian_tool", "orca_tool", "gromacs_tool",
-    "transolver_tool", "autoloop_tool",
+    "transolver_tool",
 })
 
 

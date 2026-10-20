@@ -62,6 +62,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y k6
 
+      - name: Pre-warm embedding models
+        working-directory: agent
+        run: |
+          # 全新 runner 上首次启动的大头是 chroma onnx (~80MB) + sentence-transformers
+          # 多语言权重 (数百 MB) 的联网下载, 实测 2-4 分钟且随 runner/镜像站网络波动 ——
+          # 会把 240s 健康窗口整个吃掉, 报 "backend did not become healthy within 240s"
+          # (基础设施 flake, 与代码无关). 这里在起 uvicorn 前先把两份权重拉进 ~/.cache,
+          # 下载发生在独立步骤(不受健康窗口约束), 之后启动只做本地加载(秒级), 窗口不再
+          # 花在网络上. 单次 _EmbeddingModel().encode() 即覆盖 chroma onnx 与 ST 两条
+          # 下载路径; 失败会走降级而非抛异常, 不新增独立的失败面.
+          python - <<'PY'
+          from huginn.knowledge.store import _EmbeddingModel
+          _EmbeddingModel().encode(["warmup"])
+          PY
+
       - name: Start backend
         working-directory: agent
         env:
@@ -73,9 +88,8 @@ jobs:
 
       - name: Wait for health check
         run: |
-          # 全新 runner 上首次启动要下载 chroma onnx 模型 + HF 权重 (~80MB+),
-          # 冷启动实测可达 2-3 分钟. 原 90s 窗口在下载慢时误报 (基础设施 flake,
-          # 与代码无关), 放宽到 240s.
+          # 权重已在上一步预拉, 这里启动不再把窗口花在联网下载上; 240s 仅留给
+          # 模型本地加载 + KB 初始化. 若仍超时, 看下方 uvicorn.log 定位真实原因.
           for i in $(seq 1 240); do
             if curl -sf "$STRESS_TEST_URL/health/live" >/dev/null; then
               echo "backend is healthy"; exit 0

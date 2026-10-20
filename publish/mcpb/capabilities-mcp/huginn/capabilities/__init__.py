@@ -7,6 +7,10 @@
 - :class:`CompositeCapability` — 编排多个子能力为一个流程的组合能力
 - :class:`CapabilityRegistry` — 集装箱堆场: 自动发现/装配/统一视图
 
+本包同时承载 P1 的"能力维度体系" (平行, 不覆盖上述集装箱语义):
+- :class:`CapabilityMetadata` / :func:`capability` — 声明一段能力维度 (loop/session/
+  storage/sysprompt/fusion), 供 AgentSession/loader 装配, 经 CapabilityMountRegistry 注册.
+
 复用既有工具体系:
 - 原子能力直接调 ToolRegistry 里的 HuginnTool
 - 组合能力用 DAG 编排子能力, 输出标准化 ToolResult
@@ -20,6 +24,13 @@ from huginn.capabilities.base import (
     CapabilityError,
     CapabilityResult,
 )
+from huginn.capabilities.capability import (
+    DIMENSIONS,
+    CapabilityMetadata,
+    capabilities_to_metadata,
+    capability,
+    get_capabilities,
+)
 from huginn.capabilities.intents import (
     AtomicCapability,
     CompositeCapability,
@@ -27,7 +38,11 @@ from huginn.capabilities.intents import (
     capability_from_tool,
 )
 from huginn.capabilities.presets import register_capability_presets
-from huginn.capabilities.registry import CapabilityRegistry
+from huginn.capabilities.registry import (
+    CapabilityMountRegistry,
+    CapabilityRegistry,
+    get_shared_capability_registry,
+)
 
 # 对外"MCP 码头" (共享经济/生态融入): 能力 → 标准 MCP server / OpenAI function.
 # 经 PEP 562 惰性导出 (见 __getattr__), 保证 `python -m
@@ -42,6 +57,14 @@ __all__ = [
     "capability_from_tool",
     "CapabilityRegistry",
     "register_capability_presets",
+    # P1 能力维度体系 (平行)
+    "DIMENSIONS",
+    "CapabilityMetadata",
+    "capability",
+    "get_capabilities",
+    "capabilities_to_metadata",
+    "CapabilityMountRegistry",
+    "get_shared_capability_registry",
     # MCP 码头 (惰性)
     "CapabilityMCPBackend",
     "as_mcp_tools",

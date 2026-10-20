@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
@@ -124,7 +123,7 @@ class EventBus:
         """
         handler = meta.handler
         # async generator: 调用得到 async generator, 迭代收集 yield 值
-        if asyncio.iscoroutinefunction(handler):
+        if inspect.iscoroutinefunction(handler):
             # 普通协程 —— await 一下, 返回值忽略 (handler 改 event 生效)
             ret = await handler(event)
             # 如果返回的是 async generator (协程返回 generator), 也消费

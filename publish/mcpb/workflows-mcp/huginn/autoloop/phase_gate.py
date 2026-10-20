@@ -70,7 +70,7 @@ GateStatus = Literal["pending", "approved", "blocked", "rejected"]
 
 def _has_external_source(obj: Any, _depth: int = 0) -> bool:
     """递归扫 dict/list 找 source_class=external_content. ponytail: 写死 depth=50 (实际 evidence 嵌套 < 10)."""
-    if _depth > 50 or not isinstance(obj, (dict, list, tuple)):
+    if _depth > 50 or not isinstance(obj, dict | list | tuple):
         return False
     if isinstance(obj, dict) and obj.get("source_class") == "external_content":
         return True
@@ -81,7 +81,7 @@ def _has_external_source(obj: Any, _depth: int = 0) -> bool:
 
 def _collect_source_classes(obj: Any, _depth: int = 0) -> list[str]:
     """递归收集所有 source_class 值. ponytail: depth=50 防异常深度."""
-    if _depth > 50 or not isinstance(obj, (dict, list, tuple)):
+    if _depth > 50 or not isinstance(obj, dict | list | tuple):
         return []
     found: list[str] = []
     if isinstance(obj, dict):
@@ -166,10 +166,12 @@ class PhaseGate:
                 "status": self.status,
                 "missing": self.missing_evidence,
                 "reviewer": self.reviewer,
+                # feedback 让遥测能定位 review/math 否决的具体原因 (截断防膨胀)
+                "feedback": (self.feedback or "")[:500],
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception:  # 防御: 遥测写入失败跳过
             logger.debug("phase gate telemetry write skipped", exc_info=True)
 
     def to_dict(self) -> dict[str, Any]:
@@ -436,7 +438,7 @@ class MathEvidenceChecker:
                             else self._DUAL_NOT_COVERED_MASS
                         )
                         sources.append("dual_coverage")
-                except Exception:
+                except Exception:  # 防御: 双覆盖检查失败跳过
                     logger.debug("dual_coverage check failed", exc_info=True)
 
         if not masses:
@@ -479,6 +481,8 @@ class PhaseGateHook:
     gate 而不补证据. 人工 checkpoint 仍硬阻断 — 由 human_checkpoint_phases
     显式配置或从 shared state 懒查.
     可选注入 reviewer_fn 做主观审查 (LLM 调用), 不传就只做硬性检查.
+    可选注入 blue_reviewer_fn 做对称的防守校验 (红/蓝对偶): 红队找反驳, 蓝队
+    断言被声明的控制真正在位. 两者独立, 任一拒绝即 rejected.
     可选注入 math_checker 做论文级 Dempster-Shafer 证据合成, 在硬性证据
     齐全后评估数学证据是否足够支撑阶段推进.
     """
@@ -487,11 +491,13 @@ class PhaseGateHook:
         self,
         config: PhaseGateConfig | None = None,
         reviewer_fn: ReviewerFn | None = None,
+        blue_reviewer_fn: ReviewerFn | None = None,
         math_checker: MathCheckerFn | None = None,
         human_checkpoint_phases: set[tuple[str, str]] | None = None,
     ):
         self.config = config or PhaseGateConfig()
         self._reviewer_fn = reviewer_fn
+        self._blue_reviewer_fn = blue_reviewer_fn
         self._math_checker = math_checker
         # None = 评估时懒查 shared state; 显式传 set 时以调用方为准 (测试用)
         self._human_checkpoint_phases = human_checkpoint_phases
@@ -507,7 +513,7 @@ class PhaseGateHook:
         try:
             state = get_shared_phase_gate_state()
             return state.needs_human_checkpoint(from_phase, to_phase)
-        except Exception:
+        except Exception:  # 防御: 校验异常返回失败
             logger.debug("best-effort op failed", exc_info=True)
             return False
 
@@ -582,7 +588,7 @@ class PhaseGateHook:
                         feedback=f"Math evidence blocked: {math_feedback}",
                         reviewer="math_checker",
                     )
-            except Exception:
+            except Exception:  # 防御: 数值检查器异常降级放行
                 # math_checker 挂了不阻断, 降级放行
                 logger.debug("best-effort op failed", exc_info=True)
 
@@ -620,8 +626,25 @@ class PhaseGateHook:
                         feedback=f"Reviewer 拒绝: {reason}",
                         reviewer="reviewer",
                     )
-            except Exception:
+            except Exception:  # 防御: 评审器异常则跳过
                 logger.debug("reviewer fn failed", exc_info=True)
+
+        # 蓝队防守校验 (可选, 与红队对偶). 红队找反驳, 蓝队断言控制在位且有效.
+        # 独立于红队; 挂了不阻断 (降级放行).
+        if self._blue_reviewer_fn is not None:
+            try:
+                approved, reason = self._blue_reviewer_fn(from_phase, to_phase, evidence)
+                if not approved:
+                    return PhaseGate(
+                        from_phase=from_phase,
+                        to_phase=to_phase,
+                        status="rejected",
+                        required_evidence=required,
+                        feedback=f"Blue-team 拒绝: {reason}",
+                        reviewer="blue_reviewer",
+                    )
+            except Exception:  # 防御: 防守校验器异常则跳过
+                logger.debug("blue reviewer fn failed", exc_info=True)
 
         return PhaseGate(
             from_phase=from_phase,

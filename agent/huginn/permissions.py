@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
+from huginn.env_access import env_bool, env_is_set
 
 # 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
 # permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
@@ -37,18 +38,20 @@ DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
 
 # Read-only tool names — SSE chat 路径用来区分“可 auto_approve”和“需 ASK”.
 # ponytail: frozenset 常量, O(1) 查找, 不引新依赖.
+# 必须用**注册名** (`file_read_tool`/`grep`/`glob`) —— 早期写成 `read_file`/`ls`/
+# `cat`/`search` 这类短名, 与注册表对不上, `set_mode()` 永不命中, 只读工具在
+# sidecar 路径实际仍走 ASK (MECE 审计记的"允许表死项").
 READ_ONLY_TOOLS: frozenset[str] = frozenset({
-    "read_file", "list_dir", "grep", "glob", "search",
-    "codebase_search", "search_codebase", "ls", "find",
-    "cat", "head", "tail",
+    "file_read_tool", "grep", "glob",
 })
 
 # Write / exec tool names — 显式标记, SSE 路径下不 auto_approve.
-# 未列在 READ_ONLY_TOOLS 里的工具默认就返回 False, 这个集合留着做可观测性 / 未来显式校验.
+# 与 READ_ONLY_TOOLS 一起被 `routes/interaction.py::chat_stream` 消费:
+# 对两张表的并集按 `is_read_only_tool` 分类 —— 只读放行, 其余强制 ASK.
 WRITE_EXEC_TOOLS: frozenset[str] = frozenset({
-    "file_write", "file_edit", "vasp_tool", "lammps_tool",
-    "code_act", "bash", "shell", "subprocess",
-    "git_commit", "git_push",
+    "file_write_tool", "file_edit_tool", "multi_edit_tool", "notebook_edit_tool",
+    "bash_tool", "code_tool",
+    "vasp_tool", "lammps_tool",
 })
 
 
@@ -59,6 +62,48 @@ def is_read_only_tool(tool_name: str) -> bool:
     写/执行工具仍走 ASK 确认. 未知名默认 False — 按非只读处理.
     """
     return tool_name in READ_ONLY_TOOLS
+
+
+def apply_sse_read_only_policy(config: PermissionConfig) -> None:
+    """SSE / sidecar 只读策略: 只读工具直放 (AUTO), 写/执行工具强制 ASK.
+
+    名单与判定取自本模块单一来源 (READ_ONLY_TOOLS / WRITE_EXEC_TOOLS /
+    is_read_only_tool), 调用方不再各自硬编码工具名. 抽成独立函数是为了让单测
+    直接验证**真实接线**, 而不是在测试里复刻同一段循环. 危险命令模式检查仍在
+    `adapter._check_permission` 里生效 (如 `rm -rf /`), 不受此策略影响.
+    """
+    for tool_name in READ_ONLY_TOOLS | WRITE_EXEC_TOOLS:
+        config.set_mode(
+            tool_name,
+            PermissionMode.AUTO if is_read_only_tool(tool_name) else PermissionMode.ASK,
+        )
+
+
+def sidecar_auto_approve() -> bool:
+    """非交互 sidecar API 的 auto-approve 策略 (显式配置项, 非硬编码).
+
+    sidecar (``/agents/{id}/chat`` / KB 报告) 没有审批回调, ASK 模式的写/执行
+    工具会被直接拒. 旧实现无条件把 ``agent._permission_config.auto_approve_all``
+    置 True —— 任何 API 调用者都能让 agent 静默落盘/执行, 是 demo 阶段的写法.
+
+    新策略:
+    - ``HUGINN_AUTO_APPROVE`` 显式设置时以它为准 (1/true/yes);
+    - 未设置时**仅在 dev 模式** (``HUGINN_DEV_MODE``) 放行 —— 即 loopback 绑定的
+      本地单用户桌面端; 生产多用户 server 默认不放行, 需运维显式开启.
+    """
+    if env_is_set("HUGINN_AUTO_APPROVE"):
+        return env_bool("HUGINN_AUTO_APPROVE")
+    return env_bool("HUGINN_DEV_MODE")
+
+
+def autoloop_auto_approve() -> bool:
+    """autoloop 是**无人值守**自主循环, 默认放行内部 coder 的写/执行工具.
+
+    默认 True 是有意为之 (否则无 approval_callback 时 coder 形同死码), 但不再是
+    硬编码: ``HUGINN_AUTOLOOP_AUTO_APPROVE=0/false`` 可显式收紧. 危险命令模式
+    (``rm -rf /`` 等) 仍由 adapter 先于该放行判定拦下, 不受此开关影响.
+    """
+    return env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE")
 
 # Default permission rules for material science tools
 # Note: science_* tools (science-skills bridge) are auto-approved via wildcard

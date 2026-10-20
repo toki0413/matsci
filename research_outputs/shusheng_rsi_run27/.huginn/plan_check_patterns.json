@@ -1,0 +1,51 @@
+[
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan describes a numerical optimization procedure (capacity_scan with L-BFGS-B) to analyze the dimensionality of a constraint family, but the hypothesis [DIM: defect] in materials science typically refers to identifying, characterizing, or modeling point/line/surface defects in materials (e.g., vacancies, dislocations, grain boundaries). The described plan appears to be a machine learning or constraint satisfaction analysis unrelated to defect characterization. There is a fundamental mismatch between the hypothesis (defect analysis) and the proposed methodology (constraint family capacity analysis).",
+    "missing_steps": [
+      "Identify the specific type of defect to analyze (point, line, surface, etc.)",
+      "Perform appropriate defect characterization methods (e.g., DFT calculations for point defects, molecular dynamics for dislocations, phase-field for grain boundaries)",
+      "Establish proper baseline/reference systems without defects for comparison",
+      "Include physical validation steps (formation energies, migration barriers, structural relaxations appropriate for defect type)"
+    ],
+    "mode": "skill",
+    "description": "Execute the capacity_scan skill for the [DIM: defect] hypothesis by implementing the `family` function to construct a \"fat\" constraint family (high-dimensional continuous solution space) and running t"
+  },
+  {
+    "scene_tag": "md",
+    "reason": "The plan is described as 'explore' but lacks the critical component of being executable. The user explicitly warned in the 'Known Failure Patterns' that the current plan does not contain a directly runnable numerical script. It describes methodology (scipy.optimize.minimize, L-BFGS-B, multi-seed) but provides no actual code, formulas, or implementation details to run. Without a concrete Python snippet to execute, the hypothesis cannot be validated numerically, and the plan remains theoretical rather than actionable.",
+    "missing_steps": [
+      "Provide a runnable Python code snippet that implements the core mathematical structure (constraint counting, capacity measurement, optimization with L-BFGS-B)",
+      "Include import statements, formula definitions, and a print statement to output results",
+      "Execute the code to generate actual numerical data before proceeding to validation",
+      "Define what N_c(w) measures explicitly (e.g., number of solutions, solution space volume, constraint satisfaction count)"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis tests whether network capacity N_c(w) trends flat (rigid solution space) or increasing (fat solution space) as constraint count w increases. Given the previous high surprise (1.0), we n"
+  },
+  {
+    "scene_tag": "md",
+    "reason": "Plan is described as 'explore' but lacks a critical executable component. It describes methodology (scipy.optimize.minimize, L-BFGS-B, constraint families) but provides no actual Python code, formulas, or implementation details to run. Without a concrete runnable snippet, the hypothesis cannot be validated numerically, and the plan remains theoretical. This directly matches the 'Known Failure Patterns' and 'Historical Failures' warnings about missing executable numerical scripts.",
+    "missing_steps": [
+      "Provide a runnable Python code snippet that implements the core mathematical structure (constraint counting, capacity measurement, optimization with L-BFGS-B)",
+      "Include import statements, formula definitions, and print statements to output actual numerical results",
+      "Define explicitly what N_c(w) measures (e.g., number of solutions, solution space volume, constraint satisfaction count)",
+      "Execute the code to generate actual numerical data before proceeding to validation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function that generates rigid and fat constraint families for the capacity scan experiment. The rigid family will be a linear constraint system (uniqu"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes a high-level theoretical exploration (MODE: explore) but lacks executable code or specific numerical methods. It references undefined frameworks ('capacity_scan', 'N_c(w) trends') without implementation details. The hypothesis requires measuring dimensionality reduction in atomic displacement fields, but the plan proposes a generic ML capacity scan without connecting it to grain boundary physics or displacement field analysis. This mirrors the 'low emergent complexity' failure mode where no concrete computation is provided.",
+    "missing_steps": [
+      "Implement concrete Python code defining grain boundary atomic displacement fields",
+      "Define mathematical structure for dimensionality measurement (e.g., PCA on displacement vectors, kernel methods)",
+      "Specify constraint families (rigid vs fat) in terms of physical grain boundary conditions",
+      "Include actual optimization code (L-BFGS-B) with measurable N_c(w) computation",
+      "Add validation against known grain boundary physics benchmarks"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis involves a mathematical structure (dimensionality of solution space) rather than a physical simulation. The context indicates a previous prediction failure (surprise=1.0) and the target"
+  }
+]

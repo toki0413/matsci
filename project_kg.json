@@ -1,0 +1,182 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "DOI:10.1000/test1",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.448610",
+      "last_seen": "2026-09-29T12:10:48.448610",
+      "mentions": 1,
+      "paper_id": "DOI:10.1000/test1",
+      "doi": "10.1000/test1",
+      "depth": 0,
+      "id": "Literature:DOI:10.1000/test1"
+    },
+    {
+      "label": "Cited Paper 1",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.448642",
+      "last_seen": "2026-09-29T12:10:48.448642",
+      "mentions": 1,
+      "paper_id": "child1",
+      "doi": "10.1000/c1",
+      "year": 2020,
+      "depth": 1,
+      "id": "Literature:Cited Paper 1"
+    },
+    {
+      "label": "Cited Paper 2",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.448654",
+      "last_seen": "2026-09-29T12:10:48.448654",
+      "mentions": 1,
+      "paper_id": "child2",
+      "doi": "10.1000/c2",
+      "year": 2019,
+      "depth": 1,
+      "id": "Literature:Cited Paper 2"
+    },
+    {
+      "label": "DOI:10.1000/test2",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.452141",
+      "last_seen": "2026-09-29T12:10:48.452141",
+      "mentions": 1,
+      "paper_id": "DOI:10.1000/test2",
+      "doi": "10.1000/test2",
+      "depth": 0,
+      "id": "Literature:DOI:10.1000/test2"
+    },
+    {
+      "label": "Child 1",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.452160",
+      "last_seen": "2026-09-29T12:10:48.452160",
+      "mentions": 1,
+      "paper_id": "c1",
+      "year": 2020,
+      "depth": 1,
+      "id": "Literature:Child 1"
+    },
+    {
+      "label": "Child 2",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.452168",
+      "last_seen": "2026-09-29T12:10:48.452168",
+      "mentions": 1,
+      "paper_id": "c2",
+      "year": 2020,
+      "depth": 1,
+      "id": "Literature:Child 2"
+    },
+    {
+      "label": "Child 3",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.452174",
+      "last_seen": "2026-09-29T12:10:48.452174",
+      "mentions": 1,
+      "paper_id": "c3",
+      "year": 2020,
+      "depth": 1,
+      "id": "Literature:Child 3"
+    },
+    {
+      "label": "Child 4",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:48.452180",
+      "last_seen": "2026-09-29T12:10:48.452180",
+      "mentions": 1,
+      "paper_id": "c4",
+      "year": 2020,
+      "depth": 1,
+      "id": "Literature:Child 4"
+    },
+    {
+      "label": "DOI:10.1000/test3",
+      "type": "Literature",
+      "source": "citation_graph",
+      "confidence": 0.8,
+      "created_at": "2026-09-29T12:10:54.746772",
+      "last_seen": "2026-09-29T12:10:54.746772",
+      "mentions": 1,
+      "paper_id": "DOI:10.1000/test3",
+      "doi": "10.1000/test3",
+      "depth": 0,
+      "id": "Literature:DOI:10.1000/test3"
+    }
+  ],
+  "links": [
+    {
+      "relation": "cites",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:10:48.448665",
+      "last_seen": "2026-09-29T12:10:48.448665",
+      "mentions": 1,
+      "source": "Literature:DOI:10.1000/test1",
+      "target": "Literature:Cited Paper 1"
+    },
+    {
+      "relation": "cites",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:10:48.448676",
+      "last_seen": "2026-09-29T12:10:48.448676",
+      "mentions": 1,
+      "source": "Literature:DOI:10.1000/test1",
+      "target": "Literature:Cited Paper 2"
+    },
+    {
+      "relation": "cites",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:10:48.452188",
+      "last_seen": "2026-09-29T12:10:48.452188",
+      "mentions": 1,
+      "source": "Literature:DOI:10.1000/test2",
+      "target": "Literature:Child 1"
+    },
+    {
+      "relation": "cites",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:10:48.452196",
+      "last_seen": "2026-09-29T12:10:48.452196",
+      "mentions": 1,
+      "source": "Literature:DOI:10.1000/test2",
+      "target": "Literature:Child 2"
+    },
+    {
+      "relation": "cites",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:10:48.452201",
+      "last_seen": "2026-09-29T12:10:48.452201",
+      "mentions": 1,
+      "source": "Literature:DOI:10.1000/test2",
+      "target": "Literature:Child 3"
+    },
+    {
+      "relation": "cites",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:10:48.452206",
+      "last_seen": "2026-09-29T12:10:48.452206",
+      "mentions": 1,
+      "source": "Literature:DOI:10.1000/test2",
+      "target": "Literature:Child 4"
+    }
+  ]
+}

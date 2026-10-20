@@ -44,7 +44,7 @@ def _load_pil_image(image: str | Path | bytes) -> Any:
     """
     from PIL import Image  # lazy import
 
-    if isinstance(image, (bytes, bytearray)):
+    if isinstance(image, bytes | bytearray):
         img = Image.open(io.BytesIO(image))
     else:
         img = Image.open(image)

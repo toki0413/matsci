@@ -1,0 +1,113 @@
+Starting experiment with function type: polynomial
+Testing w values: [10, 25, 50, 100, 200, 500]
+
+=== Testing w = 10 ===
+  w=  10, H=  4, max_err=1.58e+00, FAIL
+  w=  10, H=  8, max_err=1.88e+00, FAIL
+  w=  10, H= 12, max_err=1.80e+00, FAIL
+  w=  10, H= 16, max_err=1.77e+00, FAIL
+  w=  10, H= 21, max_err=1.81e+00, FAIL
+  w=  10, H= 25, max_err=1.81e+00, FAIL
+  w=  10, H= 29, max_err=1.78e+00, FAIL
+  w=  10, H= 34, max_err=1.87e+00, FAIL
+  w=  10, H= 38, max_err=1.81e+00, FAIL
+  w=  10, H= 42, max_err=1.85e+00, FAIL
+  w=  10, H= 46, max_err=1.88e+00, FAIL
+  w=  10, H= 51, max_err=1.87e+00, FAIL
+  w=  10, H= 55, max_err=1.87e+00, FAIL
+  w=  10, H= 59, max_err=1.92e+00, FAIL
+  w=  10, H= 64, max_err=1.87e+00, FAIL
+  Minimum width for zero violation: None
+
+=== Testing w = 25 ===
+  w=  25, H=  4, max_err=1.86e+00, FAIL
+  w=  25, H=  8, max_err=1.01e+00, FAIL
+  w=  25, H= 12, max_err=1.87e+00, FAIL
+  w=  25, H= 16, max_err=1.91e+00, FAIL
+  w=  25, H= 21, max_err=1.72e+00, FAIL
+  w=  25, H= 25, max_err=1.84e+00, FAIL
+  w=  25, H= 29, max_err=1.96e+00, FAIL
+  w=  25, H= 34, max_err=1.95e+00, FAIL
+  w=  25, H= 38, max_err=1.80e+00, FAIL
+  w=  25, H= 42, max_err=1.94e+00, FAIL
+  w=  25, H= 46, max_err=1.85e+00, FAIL
+  w=  25, H= 51, max_err=1.91e+00, FAIL
+  w=  25, H= 55, max_err=1.95e+00, FAIL
+  w=  25, H= 59, max_err=1.93e+00, FAIL
+  w=  25, H= 64, max_err=1.90e+00, FAIL
+  Minimum width for zero violation: None
+
+=== Testing w = 50 ===
+  w=  50, H=  4, max_err=1.29e+00, FAIL
+  w=  50, H=  8, max_err=7.58e-01, FAIL
+  w=  50, H= 12, max_err=8.75e-01, FAIL
+  w=  50, H= 16, max_err=8.55e-01, FAIL
+  w=  50, H= 21, max_err=7.85e-01, FAIL
+  w=  50, H= 25, max_err=8.09e-01, FAIL
+  w=  50, H= 29, max_err=9.40e-01, FAIL
+  w=  50, H= 34, max_err=7.74e-01, FAIL
+  w=  50, H= 38, max_err=9.24e-01, FAIL
+  w=  50, H= 42, max_err=9.50e-01, FAIL
+  w=  50, H= 46, max_err=9.22e-01, FAIL
+  w=  50, H= 51, max_err=9.93e-01, FAIL
+  w=  50, H= 55, max_err=9.65e-01, FAIL
+  w=  50, H= 59, max_err=9.57e-01, FAIL
+  w=  50, H= 64, max_err=9.50e-01, FAIL
+  Minimum width for zero violation: None
+
+=== Testing w = 100 ===
+  w= 100, H=  4, max_err=1.73e+00, FAIL
+  w= 100, H=  8, max_err=1.68e+00, FAIL
+  w= 100, H= 12, max_err=1.61e+00, FAIL
+  w= 100, H= 16, max_err=1.65e+00, FAIL
+  w= 100, H= 21, max_err=1.64e+00, FAIL
+  w= 100, H= 25, max_err=1.64e+00, FAIL
+  w= 100, H= 29, max_err=1.61e+00, FAIL
+  w= 100, H= 34, max_err=1.63e+00, FAIL
+  w= 100, H= 38, max_err=1.62e+00, FAIL
+  w= 100, H= 42, max_err=1.61e+00, FAIL
+  w= 100, H= 46, max_err=1.63e+00, FAIL
+  w= 100, H= 51, max_err=1.63e+00, FAIL
+  w= 100, H= 55, max_err=1.62e+00, FAIL
+  w= 100, H= 59, max_err=1.62e+00, FAIL
+  w= 100, H= 64, max_err=1.62e+00, FAIL
+  Minimum width for zero violation: None
+
+=== Testing w = 200 ===
+  w= 200, H=  4, max_err=3.01e+00, FAIL
+  w= 200, H=  8, max_err=2.98e+00, FAIL
+  w= 200, H= 12, max_err=3.02e+00, FAIL
+  w= 200, H= 16, max_err=3.03e+00, FAIL
+  w= 200, H= 21, max_err=3.02e+00, FAIL
+  w= 200, H= 25, max_err=3.02e+00, FAIL
+  w= 200, H= 29, max_err=3.04e+00, FAIL
+  w= 200, H= 34, max_err=3.05e+00, FAIL
+  w= 200, H= 38, max_err=3.05e+00, FAIL
+  w= 200, H= 42, max_err=3.05e+00, FAIL
+  w= 200, H= 46, max_err=3.04e+00, FAIL
+  w= 200, H= 51, max_err=3.05e+00, FAIL
+  w= 200, H= 55, max_err=3.05e+00, FAIL
+  w= 200, H= 59, max_err=3.05e+00, FAIL
+  w= 200, H= 64, max_err=3.05e+00, FAIL
+  Minimum width for zero violation: None
+
+=== Testing w = 500 ===
+  w= 500, H=  4, max_err=1.30e+00, FAIL
+  w= 500, H=  8, max_err=1.40e+00, FAIL
+  w= 500, H= 12, max_err=1.44e+00, FAIL
+  w= 500, H= 16, max_err=1.45e+00, FAIL
+  w= 500, H= 21, max_err=1.45e+00, FAIL
+  w= 500, H= 25, max_err=1.43e+00, FAIL
+  w= 500, H= 29, max_err=1.45e+00, FAIL
+  w= 500, H= 34, max_err=1.46e+00, FAIL
+  w= 500, H= 38, max_err=1.46e+00, FAIL
+  w= 500, H= 42, max_err=1.46e+00, FAIL
+  w= 500, H= 46, max_err=1.47e+00, FAIL
+  w= 500, H= 51, max_err=1.46e+00, FAIL
+  w= 500, H= 55, max_err=1.46e+00, FAIL
+  w= 500, H= 59, max_err=1.47e+00, FAIL
+  w= 500, H= 64, max_err=1.45e+00, FAIL
+  Minimum width for zero violation: None
+
+Results saved to /workspace/research_outputs/shusheng_dslice_run87/results/results.json
+Not enough valid data points for fitting.

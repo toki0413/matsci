@@ -1,0 +1,13 @@
+rigid w=5     26.4s  Nc={5: None}  unreachable
+      h2:tr1.7e-10/ho4.8e-02  h4:tr9.2e-10/ho3.0e-02  h8:tr6.4e-10/ho9.2e-02  h16:tr9.6e-11/ho7.8e-03  h32:tr8.9e-10/ho5.1e-03  h64:tr2.6e-10/ho4.2e-03
+rigid w=10    82.0s  Nc={10: 2}  inconclusive
+      h2:tr1.4e-05/ho1.7e-04  h4:tr7.9e-06/ho1.1e-04  h8:tr1.4e-05/ho3.0e-04  h16:tr1.9e-06/ho2.6e-04  h32:tr5.5e-06/ho1.8e-04  h64:tr7.1e-06/ho1.7e-04
+rigid w=20    89.7s  Nc={20: 2}  inconclusive
+      h2:tr3.0e-05/ho1.7e-04  h4:tr3.1e-05/ho1.8e-04  h8:tr1.6e-05/ho1.6e-04  h16:tr2.1e-05/ho3.7e-05  h32:tr2.4e-05/ho1.9e-04  h64:tr7.2e-06/ho2.6e-05
+fat   w=5     14.4s  Nc={5: None}  unreachable
+      h2:tr2.5e-09/ho8.3e-01  h4:tr6.0e-10/ho9.0e-01  h8:tr2.7e-10/ho5.0e-01  h16:tr5.1e-09/ho8.7e-01  h32:tr3.3e-08/ho7.2e-01  h64:tr2.5e-09/ho6.9e-01
+fat   w=10    78.6s  Nc={10: None}  unreachable
+      h2:tr5.4e-02/ho1.0e+00  h4:tr2.3e-05/ho9.3e-02  h8:tr2.3e-04/ho1.3e-01  h16:tr6.8e-05/ho3.3e-01  h32:tr1.0e-05/ho2.1e-01  h64:tr5.0e-06/ho2.6e-01
+fat   w=20   170.0s  Nc={20: None}  unreachable
+      h2:tr6.5e-03/ho1.8e-02  h4:tr7.3e-04/ho2.3e-02  h8:tr1.6e-04/ho1.9e-02  h16:tr5.6e-05/ho7.8e-02  h32:tr6.0e-05/ho4.6e-02  h64:tr7.1e-05/ho1.5e-01
+TOTAL 461.1s

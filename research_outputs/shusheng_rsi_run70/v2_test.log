@@ -1,0 +1,22 @@
+/root/.pyenv/versions/3.14.7/lib/python3.14/site-packages/torch/optim/lr_scheduler.py:1699: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:820.)
+  current = float(metrics)
+Testing polynomial target with ReLU, lr=0.1
+w=10, N=4: train_max_err=0.040848, holdout_max_err=0.038759, zero_violation=False
+w=10, N=8: train_max_err=0.070681, holdout_max_err=0.041894, zero_violation=False
+w=10, N=16: train_max_err=0.004779, holdout_max_err=0.018972, zero_violation=False
+w=10, N=32: train_max_err=0.003244, holdout_max_err=0.008703, zero_violation=False
+w=10, N=64: train_max_err=0.152091, holdout_max_err=0.036979, zero_violation=False
+w=10, N=128: train_max_err=0.089290, holdout_max_err=0.008544, zero_violation=False
+
+Any width achieved zero violation for w=10? False
+
+Need to adjust settings. Trying with even higher learning rate...
+w=10, N=4: train_max_err=0.130780, holdout_max_err=0.113501, zero_violation=False
+w=10, N=8: train_max_err=0.145607, holdout_max_err=0.075568, zero_violation=False
+w=10, N=16: train_max_err=0.134918, holdout_max_err=0.094707, zero_violation=False
+w=10, N=32: train_max_err=0.124300, holdout_max_err=0.125533, zero_violation=False
+w=10, N=64: train_max_err=0.166377, holdout_max_err=0.096599, zero_violation=False
+
+Still not achieving zero violation. Need more debugging.
+Best result for w=10, N=256: {'max_error': 0.06698215007781982, 'train_max_err': 0.11367756128311157, 'zero_violation': False, 'train_errors': [[0.09655006229877472], [0.028088659048080444], [0.10383175313472748], [0.060736238956451416], [0.024001210927963257], [0.01338370144367218], [0.11367756128311157], [0.09892913699150085]], 'holdout_errors': [[0.06698215007781982], [0.010192513465881348]]}

@@ -217,7 +217,10 @@ def apply_patches(
     patch 后的 blocks 自动过 conflict 检查, 不需要额外接入.
 
     toggle off 时直接返回原 blocks (零开销).
-    只应用 Beta mean > 0.5 的 patch (低信念 patch 等积累数据).
+    应用 Beta mean >= 0.5 的 patch: 新 patch (α=β=1, mean=0.5) 先试一次挣证据,
+    失败一次 (α=1,β=2 → 0.33) 即退出; 有证据后 mean>0.5 才继续用.
+    ponytail: 之前是 > 0.5, 但新 patch mean 恰好 =0.5 永远进不来, 也没有别的
+    路径更新 Beta → patch 永不 apply 的死锁. >= 0.5 解开探索第一步.
     同名 block 取最高 Beta mean 的 patch.
     """
     if not _harness_enabled("harness_prompt_patch"):
@@ -238,7 +241,7 @@ def apply_patches(
         return blocks
     good = [
         p for p in patches
-        if p.alpha / max(1, p.alpha + p.beta) > 0.5
+        if p.alpha / max(1, p.alpha + p.beta) >= 0.5
     ]
     if not good:
         return blocks
@@ -301,23 +304,34 @@ async def generate_patch(
     if r_phys is None or r_phys > 0.7:
         return None
     block_names = [name for name, _ in blocks]
-    prompt = (
-        "You are optimizing a research agent's prompt template. Based on the "
-        "last iteration's physical validation score and self-directive, "
-        "propose ONE block-level patch.\n\n"
-        f"Phase: {phase}\n"
-        f"Available blocks: {block_names}\n"
-        f"R_phys (last iter): {r_phys}\n"
-        f"Self-directive: {directive}\n\n"
-        "Output JSON only:\n"
-        '{"block_name": "<one of available>", '
-        '"op": "replace|prepend|append", '
-        '"new_text": "<new block content>"}\n'
-        "Rules:\n"
-        "- replace 'body' block: must preserve {context} or {hypothesis} placeholder\n"
-        "- new_text max 500 chars\n"
-        "- op=prepend/append preserves original block text"
-    )
+    # M-R1: 生成臂 + 改进器模板从 meta-improver 取 (champion 覆盖 / canary 候选 / baseline).
+    # Lazy import 保证 toggle off 时零开销 + 无循环依赖 (meta_improver 不 import 本模块).
+    _arm_id: str | None = None
+    _improv_template = None
+    try:
+        from huginn.harness.meta_improver import MetaImprover
+        _arm_id, _improv_template = MetaImprover.get_instance().select_generation_arm()
+    except Exception:
+        _arm_id, _improv_template = None, None
+    if not _improv_template:
+        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
+        _improv_template = DEFAULT_IMPROV_TEMPLATE
+    try:
+        prompt = _improv_template.format(
+            phase=phase,
+            block_names=block_names,
+            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
+            directive=directive or "",
+        )
+    except Exception:
+        logger.debug("improv template format failed; fallback default", exc_info=True)
+        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
+        prompt = DEFAULT_IMPROV_TEMPLATE.format(
+            phase=phase,
+            block_names=block_names,
+            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
+            directive=directive or "",
+        )
     try:
         response = await llm_chat_fn(prompt, task="summarize")
     except Exception:
@@ -355,6 +369,17 @@ async def generate_patch(
         directive_in=directive[:300],
     )
     PromptPatchStore.get_instance().add_patch(patch)
+    # M-R1: 成功产 patch 后喂给 meta-improver (记 patch→生成臂 + 计数到阈值触发 maybe_propose).
+    # Lazy import, meta 层默认 off 时静默 no-op.
+    try:
+        from huginn.harness.meta_improver import MetaImprover
+
+        await MetaImprover.get_instance().note_generation(
+            phase, blocks, r_phys, directive, llm_chat_fn,
+            patch_id=patch.id, arm_id=_arm_id,
+        )
+    except Exception:
+        logger.debug("meta_improver note_generation failed", exc_info=True)
     return patch
 
 

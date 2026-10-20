@@ -346,7 +346,7 @@ def _validate_protocol_params(protocol: str, params: dict[str, Any]) -> tuple[bo
             continue  # 未知参数, 不报错 (允许扩展)
         spec = schema[name]
         rng = spec.get("range")
-        if rng and isinstance(value, (int, float)) and (not math.isfinite(value) or value < rng[0] or value > rng[1]):
+        if rng and isinstance(value, int | float) and (not math.isfinite(value) or value < rng[0] or value > rng[1]):
                 errors.append(
                     f"参数 {name}={value} 超出范围 [{rng[0]}, {rng[1]}]"
                 )

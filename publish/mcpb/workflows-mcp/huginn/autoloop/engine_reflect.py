@@ -1,4 +1,4 @@
-"""EngineReflectMixin — AutoloopEngine 的 validate / learn / report 阶段方法族.
+"""EngineReflect — AutoloopEngine 的 validate / learn / report 阶段方法族协作对象.
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - _validate (结果校验: pytest/benchmark/literature comparison/surprise/generative verify)
@@ -6,11 +6,19 @@
 - _report (科学报告生成)
 - 各类校验辅助 (blind reconstruct/derivation consistency/failure trace inversion 等)
 
-通过 self 访问 engine 状态. 方法体原样搬迁, 不改逻辑.
+去 mixin 阶段8: 原 EngineReflectMixin(3469 行/49 方法) 改为普通类 EngineReflect。
+引擎经组合持有 self._engine_reflector = EngineReflect(self), 保留同名薄委托方法
+→ 既有 self.method() 调用点 (cognitive_loop / engine_act / plan_check) 零改动。
 
-设计原则 (ponytail):
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义属性
+  读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+- own-method 覆写槽 _OWN_ATTRS: 对自身方法名赋值落本对象实例 dict(测试 mock),
+  其余名字(引擎状态字段)转发回引擎。
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
 - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
-- Mixin 不持有自己的状态, 全部走 self
+- 协作对象不额外持有业务状态 (除 engine 引用)
 """
 
 from __future__ import annotations
@@ -26,19 +34,368 @@ import uuid
 from typing import Any
 
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
+from huginn.autoloop.exec_observation import detect_soliloquy, exit_class_counts
+from huginn.autoloop.signals import routing_surprise
 from huginn.autoloop.types import LoopPhase
 from huginn.core_types import ToolContext
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
+# 重复执行的**提示面升级**阈值 (环境旋钮 HUGINN_REPEAT_EXEC_HARD_STREAK).
+# 重复命中的软提示只进**假设生成**提示(_speculator_hint), 而真正写实验的是
+# code_lab 作者提示(build_author_prompt) —— 它不读该提示, 于是"改变 family"
+# 永远到不了写实验的人, 指纹照旧 (run50 实测: repeat streak 1-4 指纹恒同, 提示
+# 零效果, 撞 6 窗口收敛提前离场). 故 streak 越过本阈值时, engine_act.
+# _build_codelab_focus 把"强制变异"令直接注入作者提示 (按 streak 现算, B1).
+_REPEAT_HARD_STREAK = int(os.environ.get("HUGINN_REPEAT_EXEC_HARD_STREAK", "2"))
 
-class EngineReflectMixin:
-    """validate / learn / report 阶段方法族. 通过 self 访问 engine 状态."""
+# 秩归一 surprise 的历史直方图每桶上限. 直方图现随 engine_state 落盘 (resume 不断档),
+# 不设上限则长程 run 里每轮 append 会让 JSON 与内存无界增长; 滑动窗口保留最近样本,
+# 秩估计足够稳定.
+_SURPRISE_HIST_CAP = int(os.environ.get("HUGINN_SURPRISE_HIST_CAP", "200"))
 
-    _FEYNMAN_PROMPT = """You are studying your own research iteration using the Feynman Learning Method.The core principle: if you can't explain it in simple terms, you don't truly understand it.## Iteration Context- Hypothesis: {hypothesis}- Plan mode: {mode}- R_phys (physical reward): {r_phys}- Surprise: {surprise} (how much the actual result differed from prediction)- Validation summary: {validation}- Deviations from plan: {deviations}## Your TaskWrite TWO sections:### Simple ExplanationExplain what happened in this iteration as if teaching a newcomer who has basicmaterials science knowledge but no experience with computational tools.Focus on: What was the physical question? What did the calculation reveal?Why does the result make sense (or not)? Use analogies where helpful.If there were deviations from the plan, explain WHY the path changed.### Knowledge GapsList specific things you CANNOT confidently explain. Be honest — admittinggaps is the point of this exercise. Mark each gap:- [KU] for "known unknown" — you know you don't understand this- [UU] for "unknown unknown" — you didn't even think about this until nowExamples:- "[KU] I don't understand why the band gap changed non-monotonically with doping"- "[UU] I never considered that GaN has two polymorphs until the result came back"Output format (Markdown, no code blocks):## Simple Explanation...## Knowledge Gaps- [KU] gap 1- [UU] gap 2..."""
 
-    _BLIND_SPOT_PROMPT = """You are about to start a research task. Before diving in, do a blindspot pass.## TaskObjective: {objective}## Current Context{context_summary}## Your JobIdentify potential UNKNOWN UNKNOWNS — things that might go wrong, assumptions that mightbe invalid, or aspects of the problem that haven't been considered yet.Think about:1. Physical assumptions: Are there structural/phase/electronic considerations being missed?2. Computational pitfalls: Convergence, basis set, pseudopotential, k-grid issues?3. Data gaps: Is there reference data missing? Are there known experimental values to compare against?4. Methodology blind spots: Could the chosen method give qualitatively wrong results for this system?5. Edge cases: Temperature, pressure, doping level boundaries?Output up to 5 potential blind spots, one per line, prefixed with "BS:".For each, also note the type: [structural], [computational], [data], [method], [edge_case].Format: BS: [type] descriptionIf you genuinely can't find any blind spots (unlikely), output: NONE"""
+def _normalize_script_for_fp(script: str) -> str:
+    """把实验代码归一成**结构指纹**源 (忽略注释/格式/空行, 保留标识符与常量).
+
+    为何不用执行结果 (objectives/summary) 的**内容**做重复判据: 那要求两轮数值逐字节
+    相同才算"重复". 沙箱虽固定 seed=0, 但浮点归约序/线程调度仍可能抖动 —— 同一段代码
+    两次跑出末位不同的数, 内容哈希就不同, "换了注释/改个函数名重跑同一实验"这种最典型
+    的无效重跑反而漏判 (run53 实测: 55 次真实执行, 内容哈希零次命中).
+    改用 AST 结构: 与浮点无关, 且**保留数字常量** —— 本命题核心就是扫描 w/h, 若把数字
+    抹掉会让每轮正常扫描都被误判为重复、被迫强制变异, 反而破坏探索. 注释/格式/缩进差异
+    不进结构, 同一实验换个写法仍被认出.
+    解析失败(残缺代码)时退化为"去空行原文", 仍比内容哈希稳.
+    """
+    try:
+        import ast as _ast
+
+        return _ast.dump(_ast.parse(script))
+    except Exception:  # — 原因: 残缺代码无法 parse, 退化为去空行原文 (比内容哈希稳)
+        return "\n".join(line.strip() for line in script.splitlines() if line.strip())
+
+
+def _non_finite_objective_keys(execution_result: Any) -> list[str]:
+    """列出 objectives 中非有限数 (inf/nan) 的键; 全有限或非 code_lab 结果返回空.
+
+    命题无关的数值卫生: 非有限数不是"测量到的数值", 不能充当真实执行证据 —— 许多
+    命题口径明确要求"所有报告数值必须是有限数 (禁止 inf/nan/None)"(如 run44/46/53),
+    而 code_lab schema 只校验"值是数值", float('inf') 照收. 于是书生拿 ∞ 当"未达标"
+    哨兵, validate 又据 objectives 非空判 solved → ∞ 直接进最终报告 (run53 实测).
+    达不到阈值的行应如实报**有限的**回退数值, 用布尔/计数目标表达"未达标".
+    """
+    if not isinstance(execution_result, dict):
+        return []
+    objs = execution_result.get("objectives")
+    if not isinstance(objs, dict):
+        return []
+    import math
+
+    bad: list[str] = []
+    for k, v in objs.items():
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue  # 非数值键交由 schema 校验处理, 这里只管有限性
+        if not math.isfinite(f):
+            bad.append(str(k))
+    return bad
+
+
+# ── 报告 citation 门 (控制面审计 C2: 数值必须溯源到本轮真实 execution_result) ──
+# 口径: 只看 Results 节里 |值| >= _CITATION_MIN_MAGNITUDE 的数字 (忽略章节号/量级
+# 下标之类结构小整数噪声), 与执行台账的数字集合比对. 未溯源数 >= _CITATION_MIN_UNTRACED
+# 且占比 >= _CITATION_MIN_RATIO 时, 在报告末尾附一条诚实告示 (C 族允许硬, 但只
+# **标注**不改结论、不终止任何东西); 同时每轮落一条 report_citation trace 供触发率统计.
+_NUM_TOKEN_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+_CITATION_MIN_UNTRACED = 3
+_CITATION_MIN_RATIO = 0.5
+_CITATION_MIN_MAGNITUDE = 10.0
+
+
+def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
+    """抽取文本里的数字并归一到统一写法 (12 / 12.0 / 1.2e1 → '12').
+
+    归一用 %g, 消除格式差异带来的假不匹配; 绝对值小于 min_magnitude 的丢弃, 用于
+    过滤章节号、指数下标等与"报告结论数值"无关的结构小整数.
+    """
+    out: set[str] = set()
+    for m in _NUM_TOKEN_RE.findall(text or ""):
+        try:
+            v = float(m)
+        except (TypeError, ValueError):
+            continue
+        if abs(v) < min_magnitude:
+            continue
+        out.add(f"{v:g}")
+    return out
+
+
+def _results_section(report_text: str) -> str:
+    """取 '## Results' 到下一个二级标题之间的正文; 找不到标题返回空 (fail-open).
+
+    只审 Results 节: Methods 里的超参 (epochs=1000 等) 本就不该在台账里, 拿全文
+    比对会把正常方法描述误判成"编造数值". 缺标题时不审 (不误伤).
+    """
+    m = re.search(
+        r"^##+\s*Results\b(.*?)(?=^##+\s|\Z)", report_text or "", re.S | re.M
+    )
+    return m.group(1) if m else ""
+
+
+def _citation_gap(report_text: str, evidence_text: str) -> tuple[int, int]:
+    """报告 citation 口径: 返回 (未溯源数值数, Results 里候选数值总数)."""
+    rep = _numeric_tokens(_results_section(report_text), _CITATION_MIN_MAGNITUDE)
+    if not rep:
+        return 0, 0
+    ev = _numeric_tokens(evidence_text, 0.0)
+    return len(rep - ev), len(rep)
+
+
+# ── 判别性 / 决定性纪律 (控制面审计 C 族续: 只标注, 不改写结论, 不终止) ──
+# run79 症状: rigid 与 fat 两组结果完全相同 (探针根本不判别) 仍被当结论; 硬口径只给
+# "partial support" 不给二元判定. 两条在报告面落为: 生成期硬纪律 + 事后诚实标注 +
+# 每轮 control_trace (供触发率统计). 与 citation 门同一风格 (纯观测 + 条件标注).
+_DISC_MIN_VALUES = 3  # Results 里 |值|>=_CITATION_MIN_MAGNITUDE 的数值达此数才审
+
+_CONTRAST_CJK = ("相比", "相较于", "对照", "分离", "差异", "不可判别", "无判别", "两组")
+_CONTRAST_EN = ("vs", "versus", "separat", "distinct", "differen", "control", "indiscriminat")
+
+_HEDGE_CJK = ("部分支持", "初步", "暂定", "暗示", "疑似", "倾向于", "尚不能")
+_HEDGE_EN = (
+    "partial support", "preliminary", "tentative", "suggest", "may be",
+    "could be", "appears to",
+)
+
+_BINARY_CJK = ("满足", "未满足", "判定", "未判定", "不可判别", "无判别", "违反", "可达", "不可达")
+_BINARY_EN = ("satisfied", "violated", "indiscriminat", "not met")
+
+
+def _has_lang_marker(text: str, cjk: tuple[str, ...], en: tuple[str, ...]) -> bool:
+    """文本是否命中任一中/英语汇.
+
+    CJK 走子串匹配; EN 走词首边界 (``\\b``), 避免 "met" 命中 "method" 之类误判.
+    纯判定, 不抛.
+    """
+    low = (text or "").lower()
+    if any(w in low for w in cjk):
+        return True
+    return any(re.search(rf"\b{re.escape(w)}", low) for w in en)
+
+
+def _discrimination_gap(report_text: str, evidence_text: str) -> tuple[bool, int]:
+    """判别性口径: Results 是否给出对照条件间的**分离性**证据.
+
+    返回 ``(has_contrast, magnitude_count)``. 只审 Results 节 (与 citation 同口径):
+    magnitude_count = |值|>=_CITATION_MIN_MAGNITUDE 的候选数值数; has_contrast =
+    报告中出现对照/分离语汇. 有足量数值却无任何对照描述 → 报告把不同条件并成一条、
+    未证明探针判别 (run79 rigid==fat). 纯判定, 不抛.
+    """
+    results = _results_section(report_text)
+    mag = len(_numeric_tokens(results, _CITATION_MIN_MAGNITUDE))
+    has_contrast = _has_lang_marker(results, _CONTRAST_CJK, _CONTRAST_EN)
+    return has_contrast, mag
+
+
+def _decisive_gap(report_text: str) -> tuple[bool, bool]:
+    """决定性口径: 报告是否对硬口径给出**二元判定**而非模糊措辞.
+
+    返回 ``(has_binary, has_hedge)``. 有模糊措辞却无任何判定语汇 → 未给决定性闭环
+    (run79 'partial support'). 审全文 (判定/模糊都可能写在 Results 或 Discussion).
+    纯判定, 不抛.
+    """
+    text = report_text or ""
+    has_binary = _has_lang_marker(text, _BINARY_CJK, _BINARY_EN)
+    has_hedge = _has_lang_marker(text, _HEDGE_CJK, _HEDGE_EN)
+    return has_binary, has_hedge
+
+
+def _ledger_evidence_text(ledger: Any) -> str:
+    """把执行台账渲染成 ``[ev#] tool: result`` 文本 (报告面与验收门共用)."""
+    if not isinstance(ledger, list):
+        return ""
+    return "\n".join(
+        f"[ev{e.get('idx', i + 1)}] {e.get('tool', '?')}: {e.get('result', '')}"
+        for i, e in enumerate(ledger)
+        if isinstance(e, dict)
+    )
+
+
+# 台账里与"测量到的数值"无关的结构字段 (exec 元信息), 不算执行证据.
+_EVIDENCE_STRUCTURAL_KEYS = frozenset({
+    "idx", "exit_code", "exit_class", "returncode", "seed", "iteration", "elapsed",
+    "duration", "time", "timestamp", "round", "step", "attempt",
+})
+
+
+def _ledger_has_finite_evidence(ledger: Any) -> bool:
+    """台账里是否至少有一条含**有限数值**的真实执行证据 (完成验收门的证据口径).
+
+    "有台账条目"不够 —— 条目可能是纯文本报错; 必须真出现一个有限数值才算本轮
+    真的算出了可溯源的结果. 优先看 ``objectives`` (code_lab 口径), 无则看顶层
+    数值字段但排除 exec 结构字段 (exit_code/seed 之类). 与
+    ``_non_finite_objective_keys`` 同一数值卫生口径. 纯判定, 不抛.
+    """
+    import json
+    import math
+
+    if not isinstance(ledger, list):
+        return False
+
+    def _finite_nums(mapping: Any) -> bool:
+        if not isinstance(mapping, dict):
+            return False
+        for k, v in mapping.items():
+            if str(k) in _EVIDENCE_STRUCTURAL_KEYS:
+                continue
+            if isinstance(v, bool):
+                continue
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(f):
+                return True
+        return False
+
+    for e in ledger:
+        if not isinstance(e, dict):
+            continue
+        try:
+            payload = json.loads(str(e.get("result", "")))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if _finite_nums(payload.get("objectives")):
+            return True
+        if _finite_nums(payload):
+            return True
+    return False
+
+
+def _exec_fingerprint(execution_result: Any) -> tuple[str, str]:
+    """算本轮执行指纹, 返回 ``(指纹, 人读结果摘要)``.
+
+    指纹口径: 执行结果带 ``script`` (code_lab 亲写实验) 时用**代码结构**指纹 ——
+    同代码重跑恒同, 与浮点抖动无关; 扫描参数改动会改常量→结构变→指纹变, 不误判.
+    无代码时退回 ``objectives/summary`` 内容哈希 (旧口径, 行为不变).
+    第二项 ``_fp_src`` 是人读摘要, 供强制变异提示回灌"上一轮真实结果".
+    """
+    _fp_src = ""
+    if isinstance(execution_result, dict):
+        _objs = execution_result.get("objectives")
+        _sum = execution_result.get("summary")
+        if _objs is not None or _sum is not None:
+            _fp_src = json.dumps(
+                {"o": _objs, "s": _sum}, sort_keys=True, default=str,
+            )
+    _script = (
+        execution_result.get("script") if isinstance(execution_result, dict) else None
+    )
+    _key = (
+        "S:" + _normalize_script_for_fp(_script)
+        if isinstance(_script, str) and _script.strip()
+        else _fp_src
+    )
+    _fp = (
+        hashlib.sha1(_key.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()
+        if _key
+        else ""
+    )
+    return _fp, _fp_src
+
+
+class EngineReflect:
+    """validate / learn / report 阶段方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _validate),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: EngineReflect 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_validate",
+        "_blind_reconstruct_verify",
+        "_blind_reconstruct_enabled",
+        "_judge_derivation_consistency",
+        "_invert_failure_trace",
+        "_abstract_skill_if_ready",
+        "_synthesize_self_goal_if_ready",
+        "_compute_verification_budget",
+        "_extract_run_snippet",
+        "_run_snippet_to_output",
+        "_is_closed_form_solved",
+        "_run_pytest",
+        "_run_benchmark",
+        "_safe_emergent_complexity",
+        "_safe_literature_comparison",
+        "_literature_comparison",
+        "_summarize_for_kb",
+        "_emit_control_trace",
+        "_detect_thinking_collapse",
+        "_find_tool_call_loops",
+        "_load_trajectory_action_history",
+        "_check_stuck",
+        "_extract_text",
+        "_append_container_text",
+        "_cosine_distance",
+        "_try_embed_text",
+        "_semantic_distance",
+        "_record_jepa_pair",
+        "_load_jepa_predictor",
+        "_predictor_surprise",
+        "_load_span_predictor",
+        "_span_surprise_from_vecs",
+        "_span_predictor_surprise",
+        "_span_embed_text",
+        "_jepa_embedder",
+        "_jepa_embed_text",
+        "_relative_surprise",
+        "_compute_surprise",
+        "_compute_surprise_robust",
+        "_generative_verify",
+        "_parse_verify_score",
+        "_query_kb_reference",
+        "_build_reviewer_prompt",
+        "_learn",
+        "_apply_strict_scope",
+        "_writeback_hypothesis_status",
+        "_generate_next_loop_directive",
+        "_report",
+        "_feynman_learn",
+        "_blind_spot_pass",
+        "_has_post_task_signal",
+        "_advisor_post_task_recommend",
+        "_build_science_report_prompt",
+    })
+
+    _FEYNMAN_PROMPT = """You are studying your own research iteration using the Feynman Learning Method.The core principle: if you can't explain it in simple terms, you don't truly understand it.## Iteration Context- Hypothesis: {hypothesis}- Plan mode: {mode}- R_phys (physical reward): {r_phys}- Surprise: {surprise} (how much the actual result differed from prediction)- Validation summary: {validation}- Deviations from plan: {deviations}## Your TaskWrite TWO sections:### Simple ExplanationExplain what happened in this iteration as if teaching a newcomer who has basicmathematics knowledge but no experience with computational tools.Focus on: What was the physical question? What did the calculation reveal?Why does the result make sense (or not)? Use analogies where helpful.If there were deviations from the plan, explain WHY the path changed.### Knowledge GapsList specific things you CANNOT confidently explain. Be honest — admittinggaps is the point of this exercise. Mark each gap:- [KU] for "known unknown" — you know you don't understand this- [UU] for "unknown unknown" — you didn't even think about this until nowExamples:- "[KU] I don't understand why the band gap changed non-monotonically with doping"- "[UU] I never considered that GaN has two polymorphs until the result came back"Output format (Markdown, no code blocks):## Simple Explanation...## Knowledge Gaps- [KU] gap 1- [UU] gap 2..."""
+
+    _BLIND_SPOT_PROMPT = """You are about to start a research task. Before diving in, do a blindspot pass.## TaskObjective: {objective}## Current Context{context_summary}## Your JobIdentify potential UNKNOWN UNKNOWNS — things that might go wrong, assumptions that mightbe invalid, or aspects of the problem that haven't been considered yet.Think about:1. Assumptions: Which mathematical/physical assumptions might not hold — symmetry, linearity, smoothness, stationarity, independence, convexity?2. Computational pitfalls: Convergence, discretization, numerical precision, conditioning, seed sensitivity?3. Data gaps: Is reference data missing? Are there known ground-truth values to compare against?4. Methodology blind spots: Could the chosen method give qualitatively wrong results for this problem — wrong model class, wrong metric, invalid approximation?5. Edge cases: Parameter boundaries, degenerate regimes, scale limits?Output up to 5 potential blind spots, one per line, prefixed with "BS:".For each, also note the type: [structural], [computational], [data], [method], [edge_case].Format: BS: [type] descriptionIf you genuinely can't find any blind spots (unlikely), output: NONE"""
 
     _NEXT_STEP_ADVISOR_PROMPT = """你刚结束一段研究任务, 要给用户推荐下一步. 你不是裁判, 是科研伴侣.姿态原则:- 不说"你应该"、"建议你"、"最优选择"- 说"我注意到 X"、"这里可能值得 Y"、"你对 Z 有感觉吗"- 捕捉用户初发的模糊直觉, 不强迫收敛- 给 2-3 个具体选项 + 1 个"我自己有想法"的出口输入上下文:- 本轮假设: {hypothesis}- 本轮结果: {outcome}- iteration_history 反常点: {anomalies}- _physical_timeseries 反常: {ts_anomaly}- prev_run_context 尾巴: {prev_tail}输出格式 (markdown, 简洁, 总长 < 200 字):## 本轮看到- 一句话 outcome- 一句话反常点 (没有就省略)## 可能的下一步**A. 方向名**  基于: 信号来源  代价: cost_tier 或 walltime 估计  价值: 一句话  风险: 一句话**B. 方向名**  ...**C. 方向名**  ...**D. 我自己有想法**  你对某个方向有直觉吗? 哪怕还没成形也行.约束:- A/B/C 不能来自同一信号源- 至少一个"深化"方向 + 一个"横向"方向- 若有 _physical_timeseries 反常, 必须有一条推荐是"验证这个反常"- 若 prev_run_context.outcome = inconclusive, 必须有一条是"接着上轮尾巴"- D 永远是用户自由出口"""
 
@@ -84,7 +441,7 @@ class EngineReflectMixin:
                             if self._last_visual_context
                             else comp
                         )
-                except Exception:
+                except Exception:  # 防御: 对比基元提取失败跳过
                     logger.debug("comparative primitives extraction skipped", exc_info=True)
 
             r_phys = execution_result.get("r_phys")
@@ -215,11 +572,11 @@ class EngineReflectMixin:
                 for m in recent:
                     role = getattr(m, "role", "?")
                     content = getattr(m, "content", "")
-                    if isinstance(content, (dict, list)):
+                    if isinstance(content, dict | list):
                         content = str(content)[:500]
                     conv_snippets.append(f"[{role}] {str(content)[:500]}")
                 merged["conversation_log"] = "\n".join(conv_snippets)
-            except Exception:
+            except Exception:  # 防御: 对话日志抽取失败忽略
                 logger.debug("conversation_log extract for judge failed", exc_info=True)
             # agent_code: execution_result 里可能带 code/parsed/script
             if isinstance(execution_result, dict):
@@ -277,7 +634,7 @@ class EngineReflectMixin:
                                 "score": br.score,
                             }
                         )
-                    except Exception:
+                    except Exception:  # 防御: 基准结果收集失败跳过
                         logger.debug("benchmark result collect skipped", exc_info=True)
             if eval_scores:
                 passed = sum(1 for e in eval_scores if e["passed"])
@@ -297,44 +654,154 @@ class EngineReflectMixin:
         if prediction:
             actual_text = self._extract_text(execution_result)[:500]
             robust = self._compute_surprise_robust(prediction, actual_text)
-            surprise = robust["worst"]
+            # 阶段2-A: predictor 冻结前向作相对/排名信号; 缺失回落 robust.
+            pred_surprise = self._predictor_surprise(prediction, actual_text)
+            if pred_surprise is not None:
+                surprise, source = pred_surprise
+            elif self._semantic_distance(prediction, actual_text) is not None:
+                surprise = robust["worst"]
+                source = "semantic"
+            else:
+                surprise = robust["worst"]
+                source = "jaccard"
+            # per-domain 相对化(秩→[0,1])供 encounter_space / 探索排名; 单调于原始值.
+            # predictor 按 source(span/句子)分桶, span 秩在其自身分布内计算, 免跨信号量纲污染.
+            try:
+                surprise_rel = self._relative_surprise(surprise, source)
+            except Exception:  # noqa: BLE001 — 相对化失败回落原值域, 不阻塞探索
+                surprise_rel = max(0.0, min(1.0, surprise))
+            # 量纲收口 (阶段2-B): predictor 前向 surprise 坍缩在 ~0.2-0.45 (绝对阈值经证实不可分离),
+            # 与下游 legacy 阈值预期的 [0,1] (jaccard/semantic) 不同量纲, 直接透传会误触发/失效.
+            # 因此 predictor 激活时交给下游的 _last_surprise 一律用相对秩 surprise_rel ([0,1], 域归一),
+            # 原始前向值保留在 surprise_raw / surprise_abs 供审计; 其余 source 行为不变.
+            surprise_exposed = (
+                surprise_rel if source.startswith("jepa_") else surprise
+            )
             results["prediction_error"] = {
                 "predicted": prediction[:200],
                 "actual": actual_text[:200],
-                "surprise": round(surprise, 3),
+                "surprise": round(surprise_exposed, 3),
                 "surprise_mean": round(robust["mean"], 3),
                 "surprise_worst": round(robust["worst"], 3),
                 "surprise_std": round(robust["std"], 3),
+                "surprise_source": source,
+                "surprise_rel": round(surprise_rel, 4),
+                "surprise_abs": (
+                    round(surprise, 4) if source.startswith("jepa_") else None
+                ),
             }
-            self._last_surprise = surprise
-            self._surprise_history.append((surprise, robust["std"]))
+            self._last_surprise_rel = surprise_rel
+            self._last_surprise = surprise_exposed
+            self._surprise_history.append((surprise_exposed, robust["std"]))
+
+            # 阶段2-0: 采集 plan 预测 ↔ validate 实际 配对语料 (供离线训练 predictor).
+            # 纯数据采集, 不训练不更新权重; 失败静默不阻塞探索循环.
+            self._record_jepa_pair(prediction, actual_text, surprise)
 
         # AV7: 最小努力下限硬阻断. _metacog_check_completion 已封装
         # families/live_components/UNEXPLORED 自白收集, 这里复用.
-        # 不达标时: 强制 tests_passed=False → run loop L1616-1647 走失败分支;
-        # 设 failure_kind=effort_floor_retry → _classify_failure 归 tool_error
-        # (不 refute, 下轮重试同一假设扩方法族, 避免污染 hypothesis_graph).
+        # 不达标时: 强制 tests_passed=False → run loop 走失败分支; 设 failure_kind=
+        # effort_floor_retry → _classify_failure 归 tool_error(不 refute, 下轮重试扩方法族).
         # ponytail: 复用现成 refine/retry 控制流, 不新写迭代触发逻辑.
+        #
+        # 方案1·收敛类型分流 (2026-09-11 A线根因): 反过早收敛审计是为"开放探索型"科研设计
+        # (要求 effort_floor + 至少 1 条 UNEXPLORED 自白)。对"闭式/确定性可验证"问题, 正确
+        # 行为就是立刻收敛——审计强判"过早收敛"是错配, 导致算对了也被勒死 (基线 5/5 goal=False)。
+        # 分流: 这类问题若已通过"真实执行一段可运行数值脚本并打印数字"给出结论, 视为已求解,
+        # 不再被 effort-floor 硬阻断; 开放探索型保持原守卫不变。
         try:
-            _eff_blk, _eff_why = self._metacog_check_completion()
-            results["effort_floor_passed"] = not _eff_blk
-            if _eff_blk:
-                results["effort_floor_deficits"] = _eff_why
-                results["failure_kind"] = "effort_floor_retry"
-                results["tests_passed"] = False
-                results["constraints_satisfied"] = False
-                _hint = (
-                    f"[effort floor] 探索未达硬下限, 不算通过: {_eff_why}. "
-                    "下轮必须扩方法族或保留更多假设, 不要再收敛."
+            _cf_solved = self._is_closed_form_solved(execution_result)
+            _lab_solved = self._is_code_lab_solved(execution_result)
+            # 非有限数值 (inf/nan 哨兵) → 不算证据, 且必须**明说原因**: 否则 execute
+            # 报 success、validate 默默判未解, 书生只看到"没通过"却不知为何 —
+            # 与 run52 "execute 被跳过却只看到 validate 复用旧结果" 同类的静默失败.
+            _bad_num = _non_finite_objective_keys(execution_result)
+            if _bad_num and not (_cf_solved or _lab_solved):
+                results["non_finite_objectives"] = _bad_num
+                _nan_hint = (
+                    f"[非有限数值] objectives 里 {_bad_num} 是 inf/nan, 不是测到的数, "
+                    "不算真实执行证据. 达不到阈值的行须如实报**有限的**回退数值"
+                    "(如扫描上限处的最小留出误差), 用布尔/计数目标表达'未达标', "
+                    "禁止用 inf/nan/None 当哨兵."
                 )
                 self._speculator_hint = (
-                    (self._speculator_hint + "\n" + _hint).strip()
-                    if self._speculator_hint else _hint
+                    (self._speculator_hint + "\n" + _nan_hint).strip()
+                    if self._speculator_hint else _nan_hint
                 )
-                if len(self._speculator_hint) > 2000:
-                    self._speculator_hint = self._speculator_hint[-2000:]
-        except Exception:
+                logger.warning(
+                    "validate: 非有限 objectives 不计为证据 (keys=%s)", _bad_num,
+                )
+            import os as _osv
+            if _osv.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                _mode = execution_result.get("mode") if isinstance(execution_result, dict) else type(execution_result).__name__
+                _succ = execution_result.get("success") if isinstance(execution_result, dict) else None
+                _nobj = len(execution_result.get("objectives", {}) or {}) if isinstance(execution_result, dict) else -1
+                logger.warning("[validate] mode=%r success=%r nobj=%d cf=%s lab=%s",
+                               _mode, _succ, _nobj, _cf_solved, _lab_solved)
+            if _cf_solved or _lab_solved:
+                results["completion_mode"] = "closed_form" if _cf_solved else "code_lab"
+                results["effort_floor_passed"] = True
+                # 可执行→已执行→产出数值的证据: 不是文本断言, 是真实计算.
+                # pytest 在无测试文件的 workspace 本是空跑(exit 5), 故以"真实执行数值证据"为准.
+                # code_lab 同源: 书生亲写实验在沙箱真跑通并产出 objectives, 即已执行证据.
+                results["tests_passed"] = True
+                results["constraints_satisfied"] = True
+                results["validation_evidence"] = (
+                    "executed_numeric_snippet" if _cf_solved else "code_lab_objectives"
+                )
+                # RSI 入口: _learn 的奖励回流(evolve_from_rewards)必需 r_phys 非 None.
+                # 真实执行数值证据 (Code Lab 实验 / 闭式 probe) 都算一次可复现的执行
+                # 成功, 都回流执行奖励 —— 否则 learn 阶段拿不到 r_phys, 奖励记录永远
+                # 攒不到 evolve_from_rewards 要求的 ≥2 条同组高奖励记录, RSI 无产物.
+                # code_lab(书生亲写完整实验) 给 1.0; 闭式 probe(平凡数值片段) 略低 0.75,
+                # 二者都 >=0.7 视为高质量执行, 供技能提取.
+                if results.get("r_phys") is None:
+                    results["r_phys"] = 1.0 if _lab_solved else 0.75
+                logger.info(
+                    "solved via executed numeric evidence → completion_mode=%s",
+                    results["completion_mode"],
+                )
+            else:
+                _eff_blk, _eff_why = self._metacog_check_completion()
+                results["effort_floor_passed"] = not _eff_blk
+                if _eff_blk:
+                    results["effort_floor_deficits"] = _eff_why
+                    results["failure_kind"] = "effort_floor_retry"
+                    results["tests_passed"] = False
+                    results["constraints_satisfied"] = False
+                    _hint = (
+                        f"[effort floor] 探索未达硬下限, 不算通过: {_eff_why}. "
+                        "下轮必须扩方法族或保留更多假设, 不要再收敛."
+                    )
+                    self._speculator_hint = (
+                        (self._speculator_hint + "\n" + _hint).strip()
+                        if self._speculator_hint else _hint
+                    )
+                    if len(self._speculator_hint) > 2000:
+                        self._speculator_hint = self._speculator_hint[-2000:]
+                    # 控制面观测 B4: effort floor 是**诚实/证据门**(C 族)的提示面,
+                    #   每轮都可能触发. 加 trace 以便统计触发率 (长期 0 触发或长期
+                    #   误杀 → 删或降). 纯观测, 不改行为 (它本就只写 hint, 不终止).
+                    self._emit_control_trace(
+                        "effort_floor",
+                        _eff_why[:200],
+                        action="advisory_hint",
+                    )
+        except Exception:  # 防御: 努力下限检查失败忽略
             logger.debug("AV7 effort floor check in _validate failed", exc_info=True)
+
+        # 通用防停滞: "重复实验"检测 (命题无关).
+        # 现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}),
+        # 且"实验作者"提示恒为研究目标全文 —— 当局势僵持时 LLM 极易反复产出
+        # 同一段 family 代码, 于是 code_lab 的输出 (objectives/summary) 逐轮完全一致.
+        # 但 _is_code_lab_solved 只要求 objectives 非空且全有限, 每轮都被判 "已解决",
+        # 循环因而拿不到任何"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
+        # 这里只比较执行结果的**代码结构指纹**(无代码时退回内容指纹), 不解读语义,
+        # 因此对任何命题通用.
+        # 命中即注入强纠偏提示 (取尾部 [-500:], 保证进下一轮 prompt).
+        # 逻辑抽到 _detect_repeat_execution, 便于对"检测→软提示→硬指令→收敛判定"
+        # 这条链做定点验证 (埋在 _validate 里就只能靠整轮 LLM 长跑间接观察).
+        self._detect_repeat_execution(execution_result, results)
 
         # H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)
         # 只对 dynamic_workflow bandit 路径生效 (execution_result 带 _variant_id)
@@ -366,7 +833,7 @@ class EngineReflectMixin:
                     alpha=b.successes if b else 1,
                     beta=b.failures if b else 1,
                 )
-            except Exception:
+            except Exception:  # 防御: 变体结果记录失败忽略
                 logger.debug("H2 bandit record in _validate failed", exc_info=True)
 
         self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[
@@ -380,11 +847,15 @@ class EngineReflectMixin:
         # 之前 _validate 算出分数但不调 hypothesis_graph.support/refute, 图全 untested.
         # 现在开 toggle 时: (1) fresh subagent 从 statement 独立推导 (2) 比对盲重建
         # vs execution_result (3) mismatch→refute / match→support, 写 FAILED/PROVED.md.
-        # ponytail: 默认 off (贵, 多一次 subagent dispatch). 升级: 只在割点/关键假设上开.
-        if os.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0") == "1":
+        # 门控: HUGINN_BLIND_RECONSTRUCTION=auto 时按预算档位开 (medium/open).
+        # 每轮先清空差分读数 —— 只有本轮真正观测到才刷新, 否则上一轮的分歧会一直
+        # 压低 strength (陈旧观测). 具体读数在 _blind_reconstruct_verify 内写回.
+        self._last_reconstruct_disagree = None
+        self._last_blind_confidence = 0.0
+        if self._blind_reconstruct_enabled():
             try:
                 await self._blind_reconstruct_verify(execution_result, results)
-            except Exception:
+            except Exception:  # 防御: 盲重建失败忽略
                 logger.debug("P1 blind reconstruct failed", exc_info=True)
 
         # Epistemic gate (IOED 兜底): 强断言 + 证据缺失 → 暴露知识缺口.
@@ -399,12 +870,37 @@ class EngineReflectMixin:
                 logger.warning(
                     "epistemic_gap: %s", _gap.get("advice", "")[:120]
                 )
-        except Exception:
+        except Exception:  # 防御: 认知缺口检查失败忽略
             logger.debug("epistemic gate check failed (non-fatal)", exc_info=True)
 
         return results
 
 
+
+    def _blind_reconstruct_enabled(self) -> bool:
+        """受控独立观察者的门控: 环境开关 + 预算档位 (auto 模式).
+
+        观察者效应不是白嫖的 —— 每次打开发一次 subagent dispatch, 和真实实验
+        抢预算. 所以把它降级为**按预算档位启用**的差分传感器:
+          - ``HUGINN_BLIND_RECONSTRUCTION=1``      强制开 (向后兼容, 忽略档位)
+          - ``=auto`` / ``=tier``                  仅 medium/open 档开; light 档
+            (预算 <0.3) 关掉, 把这次 dispatch 让给真实实验
+          - ``0`` / 未设                            关 (默认, 零行为变化)
+        档位解析失败 → 保守关闭 (fail-closed, 不赌预算).
+        """
+        _mode = os.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0").strip().lower()
+        if _mode == "1":
+            return True
+        if _mode not in ("auto", "tier"):
+            return False
+        try:
+            _tier = self._engine_controller._resolve_budget_tier(
+                int(getattr(self, "_iteration", 0) or 0)
+            )
+            return getattr(_tier, "label", "light") in ("open", "medium")
+        except Exception:  # 防御: 档位解析失败 → 保守关闭观察者
+            logger.debug("blind reconstruct tier gate failed", exc_info=True)
+            return False
 
     async def _blind_reconstruct_verify(
         self, execution_result: Any, results: dict[str, Any],
@@ -421,16 +917,33 @@ class EngineReflectMixin:
         """
         _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
         if not _hyp_id:
+            # 观测: 未接线/无当前假设时此前是**静默 return** → 野外看不出开没开.
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                "skip: no current_hyp_id_for_plan",
+                action="skip",
+            )
             return
         try:
             _node = self.hypothesis_graph._nodes.get(_hyp_id)
-        except Exception:
+        except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None or _node.status != "untested":
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"skip: node status={getattr(_node, 'status', 'missing')}",
+                action="skip",
+            )
             return
         _statement = _node.statement
         if not _statement or len(_statement) < 10:
+            # 观测: 陈述过短此前是**静默 return** → 野外分不清"没跑"还是"跑了但陈述太短".
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"skip: statement too short len={len(_statement or '')}",
+                action="skip",
+            )
             return
         # P0 Task 3: per-hyp budget 检查 — toggle off 时不检查 (向后兼容)
         if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1":
@@ -449,10 +962,15 @@ class EngineReflectMixin:
                         )
                         return
                     _node.evidence["blind_rounds_used"] = _used + 1
-            except Exception:
+            except Exception:  # 防御: 盲预算检查失败跳过
                 logger.debug("per-hyp blind budget check failed", exc_info=True)
         if self._agent_factory is None:
             logger.debug("P1 blind reconstruct: no agent_factory, skip")
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                "skip: no agent_factory (HUGINN_ENABLE_AGENT_COLLAB 未开)",
+                action="skip",
+            )
             return
         from huginn.agents.subagent import SubagentDispatch
         _dispatch = SubagentDispatch()
@@ -464,16 +982,31 @@ class EngineReflectMixin:
         _ctx = {"agent_factory": self._agent_factory}
         try:
             _res = await _dispatch.dispatch("blind_reconstructor", _task, context=_ctx)
-        except Exception:
+        except Exception:  # 防御: 盲重建派发失败返回
             logger.debug("P1 blind reconstruct dispatch failed", exc_info=True)
+            self._emit_control_trace(
+                "collab_blind_reconstruct", "skip: dispatch raised", action="skip"
+            )
             return
         if not _res.success or not _res.summary:
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"skip: dispatch returned nothing success={_res.success} "
+                f"summary_len={len(_res.summary or '')} "
+                f"full_len={len(getattr(_res, 'full_output', '') or '')} "
+                f"tool_calls={len(getattr(_res, 'tool_calls', []) or [])} "
+                # 失败根因此前只在 logger.debug 里 (run.log 不见) → 野外只见
+                # "dispatch returned nothing" 却不知为何空手 (create 失败? 执行异常?).
+                # 把 error 摘要落到控制面, 让静默空转可诊断 (run89 实测 success=False).
+                f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
+                action="skip",
+            )
             return
         # 解析盲重建结果 (JSON summary)
         import json as _json
         try:
             _blind = _json.loads(_res.summary)
-        except Exception:
+        except Exception:  # 防御: 解析失败从文本推断
             # LLM 没输出合法 JSON, 从 summary 文本推断
             _blind = {"holds": "true" in _res.summary.lower(), "confidence": 0.5}
         _blind_holds = bool(_blind.get("holds", False))
@@ -483,6 +1016,17 @@ class EngineReflectMixin:
             or results.get("grader_reward", 0) > 0.5
             or results.get("generative_verify", {}).get("score", 0) > 0.5
         )
+        # 受控独立观察者: 记录**差分读数** (传感器, 不是 reward). 独立观察者不看
+        # 执行结果, 所以它与执行判据的分歧是真正独立的信号. 下一轮由 signals.
+        # hypothesis_strength 读它缩放探索强度 (分歧→降 strength→转探索);
+        # **不**并入 darwin / _last_task_perf, 避免把观测当成优化目标 (自指).
+        self._last_reconstruct_disagree = bool(_blind_holds != _orig_holds)
+        try:
+            self._last_blind_confidence = max(
+                0.0, min(1.0, float(_blind.get("confidence", 0.5)))
+            )
+        except (TypeError, ValueError):  # 防御: 置信度非数值 → 中性 0.5
+            self._last_blind_confidence = 0.5
         # derivation 字段 (可能缺, 向后兼容)
         _blind_derivation = str(_blind.get("derivation", "") or "").strip()
         _has_derivation = bool(_blind_derivation)
@@ -492,7 +1036,7 @@ class EngineReflectMixin:
             _rt = getattr(self.memory.session, "reasoning_trace", None) or []
             if _rt:
                 _orig_reasoning = "\n".join(str(_x) for _x in _rt[-5:])[:2000]
-        except Exception:
+        except Exception:  # 防御: 原推理轨迹提取失败忽略
             logger.debug("orig reasoning_trace extract failed", exc_info=True)
         # derivation 语义一致性: 仅当 blind+orig 都有内容时才判
         # ponytail: LLM zero-shot 判语义一致, 失败降级 token Jaccard heuristic
@@ -503,7 +1047,7 @@ class EngineReflectMixin:
                 _derivation_consistent = await self._judge_derivation_consistency(
                     _blind_derivation, _orig_reasoning,
                 )
-            except Exception:
+            except Exception:  # 防御: 一致性判定崩溃重置
                 logger.debug("derivation consistency judge crashed", exc_info=True)
                 _derivation_consistent = None
         _evidence = {
@@ -543,9 +1087,19 @@ class EngineReflectMixin:
                     importance=0.7,
                     tier="mid",
                 )
-            except Exception:
+            except Exception:  # 防御: 不一致记录失败忽略
                 logger.debug("verification_mismatch record failed", exc_info=True)
             logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
+            # 观测: 成功派发的结论此前**只落 logger.info**, control_trace 只记 skip →
+            # 野外看 run.log 只见到 "skip: node status=refuted", 会误判机制空转
+            # (run65 实测 3 次成功反证全靠 FAILED.md 才看出). 成功也落 trace, 让
+            # "派发→结论" 全在控制面上可见.
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"refute: blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="refute",
+            )
             return
         # holds match — 按 derivation 一致性分档
         if _derivation_consistent is None:
@@ -554,6 +1108,12 @@ class EngineReflectMixin:
             self.hypothesis_graph.support(_hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": True, **_evidence}
             logger.info("P1 blind reconstruct: legacy match → support %s", _hyp_id)
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"support(legacy): blind_holds={_blind_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="support",
+            )
         elif _derivation_consistent:
             # holds match + derivation 一致 → strong support
             _evidence["verification"] = "blind_strong"
@@ -561,12 +1121,24 @@ class EngineReflectMixin:
             self.hypothesis_graph.support(_hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": True, **_evidence}
             logger.info("P1 blind reconstruct: strong match → support %s", _hyp_id)
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"support(strong): blind_holds={_blind_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="support",
+            )
         else:
             # holds match + derivation 冲突 → weak, 不调 support, 不写 PROVED.md
             _evidence["verification_level"] = "weak"
             _evidence["further_verification_needed"] = True
             results["blind_reconstruction"] = {"match": True, **_evidence}
             logger.info("P1 blind reconstruct: weak (derivation 冲突) %s", _hyp_id)
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"weak: derivation 冲突 blind_holds={_blind_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="weak",
+            )
 
 
 
@@ -614,7 +1186,7 @@ class EngineReflectMixin:
                 _text = _text.strip()
             _verdict = _json_jdg.loads(_text)
             return bool(_verdict.get("consistent", False))
-        except Exception:
+        except Exception:  # 防御: 判定失败回落启发
             logger.debug(
                 "LLM derivation consistency judge failed, fallback heuristic",
                 exc_info=True,
@@ -630,7 +1202,7 @@ class EngineReflectMixin:
                 return None
             _jac = len(_tok_a & _tok_b) / len(_tok_a | _tok_b)
             return _jac > 0.3
-        except Exception:
+        except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -665,15 +1237,25 @@ class EngineReflectMixin:
         _ctx = {"agent_factory": self._agent_factory}
         try:
             _res = await _dispatch.dispatch("failure_inverter", _task, context=_ctx)
-        except Exception:
+        except Exception:  # 防御: 失败反推派发失败返回空
             logger.debug("failure inversion dispatch failed", exc_info=True)
+            self._emit_control_trace(
+                "collab_failure_inverter", "skip: dispatch raised", action="skip"
+            )
             return ""
         if not _res.success or not _res.summary:
+            self._emit_control_trace(
+                "collab_failure_inverter",
+                f"skip: dispatch returned nothing success={_res.success} "
+                f"summary_len={len(_res.summary or '')} "
+                f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
+                action="skip",
+            )
             return ""
         import json as _json_inv
         try:
             _inv = _json_inv.loads(_res.summary)
-        except Exception:
+        except Exception:  # 防御: 反推摘要非 JSON 返回空
             logger.debug("failure inversion summary not JSON, skip")
             return ""
         _reasoning = str(_inv.get("failure_reasoning", "") or "").strip()
@@ -681,6 +1263,14 @@ class EngineReflectMixin:
         _counter = str(_inv.get("counterfactual", "") or "").strip()
         if not _reasoning:
             return ""
+        # 控制面审计 §11.4: 旧实现只在**失败**分支发 trace, 成功路径无观测点 →
+        # 野外一旦正常产出, 统计侧看到的仍是 0, 会被误判为"死代码". 补成功面.
+        self._emit_control_trace(
+            "collab_failure_inverter",
+            f"use: reasoning_len={len(_reasoning)} "
+            f"break={bool(_break)} counterfactual={bool(_counter)}",
+            action="use",
+        )
         return (
             f"[FAILURE TRACE]\n{_reasoning}\n\n"
             f"[BREAK POINT]\n{_break}\n\n"
@@ -735,14 +1325,14 @@ class EngineReflectMixin:
                     _res = await _dispatch.dispatch(
                         "skill_abstractor", _task, context=_ctx
                     )
-                except Exception:
+                except Exception:  # 防御: 技能归纳派发失败跳过
                     logger.debug("skill_abstractor dispatch failed", exc_info=True)
                     continue
                 if not _res.success or not _res.summary:
                     continue
                 try:
                     _skill = json.loads(_res.summary)
-                except Exception:
+                except Exception:  # 防御: 归纳摘要非 JSON 跳过
                     logger.debug("skill_abstractor summary not JSON, skip")
                     continue
                 # function_name 为空 = traces 太散, abstractor 自己放弃
@@ -768,9 +1358,9 @@ class EngineReflectMixin:
                         "skill abstracted for cluster=%s function=%s",
                         cluster_key, _skill.get("function_name"),
                     )
-                except Exception:
+                except Exception:  # 防御: 技能落库失败忽略
                     logger.debug("skill store failed", exc_info=True)
-        except Exception:
+        except Exception:  # 防御: 技能归纳整体失败忽略
             logger.debug("skill abstraction failed", exc_info=True)
 
 
@@ -789,7 +1379,7 @@ class EngineReflectMixin:
             return
         try:
             _sm = _mem.longterm.get_self_model()
-        except Exception:
+        except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
             return
         if not _sm:
@@ -797,7 +1387,7 @@ class EngineReflectMixin:
         try:
             from huginn.autoloop.goal_store import get_goal_store
             _gs = get_goal_store()
-        except Exception:
+        except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
             return
         _existing: set[str] = set()
@@ -809,13 +1399,13 @@ class EngineReflectMixin:
                     _ck = (_g.metadata or {}).get("cluster_key")
                     if _ck:
                         _existing.add(_ck)
-        except Exception:
+        except Exception:  # 防御: 去重扫描失败跳过
             logger.debug("cluster_key dedup skipped", exc_info=True)
         _synth = 0
         for _key, _v in _sm.items():
             _rate = _v.get("rate")
             _n = _v.get("success", 0) + _v.get("failure", 0)
-            if not isinstance(_rate, (int, float)):
+            if not isinstance(_rate, int | float):
                 continue
             if _rate >= 0.3 or _n < 5:
                 continue
@@ -831,7 +1421,7 @@ class EngineReflectMixin:
                 _synth += 1
                 _existing.add(_ck)
                 logger.info("self-goal synthesized: %s r=%.2f n=%d", _ck, _rate, _n)
-            except Exception:
+            except Exception:  # 防御: 自目标创建失败忽略
                 logger.debug("self-goal create failed", exc_info=True)
         if _synth:
             logger.info("self-goal synthesis: %d pending_confirmation", _synth)
@@ -855,7 +1445,7 @@ class EngineReflectMixin:
         _MAX_CE = 3
         try:
             _node = self.hypothesis_graph._nodes.get(hypothesis_id)
-        except Exception:
+        except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None:
@@ -881,7 +1471,7 @@ class EngineReflectMixin:
                     _cnt = 0
                     for _v in _sm.values():
                         _r = _v.get("rate")
-                        if isinstance(_r, (int, float)):
+                        if isinstance(_r, int | float):
                             _tot += float(_r)
                             _cnt += 1
                     if _cnt > 0:
@@ -898,7 +1488,7 @@ class EngineReflectMixin:
                             _rationale = "normal_self_efficacy"
                 else:
                     _rationale = "no_self_model"
-        except Exception:
+        except Exception:  # 防御: 预算自模型查询失败忽略
             logger.debug("self_model lookup for budget failed", exc_info=True)
             _rationale = "no_self_model"
         # wall_clock 全局上限: 耗尽则预算强制 0
@@ -911,7 +1501,7 @@ class EngineReflectMixin:
                     _blind = 0.0
                     _ce = 0.0
                     _rationale = "wall_clock_exhausted"
-        except Exception:
+        except Exception:  # 防御: 墙钟预算检查失败忽略
             logger.debug("wall_clock budget check failed", exc_info=True)
         # 轮数取整 (正数 floor), 存 node evidence
         _node.evidence["verification_budget"] = {
@@ -924,6 +1514,252 @@ class EngineReflectMixin:
         _node.evidence.setdefault("ce_rounds_used", 0)
 
 
+
+    def _extract_run_snippet(self, execution_result: Any) -> str:
+        """从执行结果里抽一段"可运行 python 数值脚本"(供 _is_closed_form_solved 用).
+
+        ponytail: 字符串/字段启发式, 不硬编码 schema. 只认含 import/print/np./math.
+        且带数字的片段 — 文本里出现数字不算数(会被抄 objective 骗过), 必须真能跑出数.
+        """
+        import re as _re
+
+        if execution_result is None:
+            return ""
+        candidates: list[str] = []
+        if isinstance(execution_result, str):
+            candidates.append(execution_result)
+        elif isinstance(execution_result, dict):
+            for field in ("script", "code", "repro", "python", "plan_code"):
+                v = execution_result.get(field)
+                if isinstance(v, str) and v.strip():
+                    candidates.append(v)
+            for field in ("value", "result", "summary"):
+                v = execution_result.get(field)
+                if isinstance(v, str):
+                    m = _re.search(r"```python\s*(.*?)```", v, _re.S)
+                    if m:
+                        return m.group(1)
+        for c in candidates:
+            c = c.strip()
+            if not c:
+                continue
+            if not (("import " in c) or ("print(" in c) or ("np." in c) or ("math." in c)):
+                continue
+            if not _re.search(r"\d", c):
+                continue
+            return c
+        return ""
+
+    def _run_snippet_to_output(self, snippet: str) -> str:
+        """subprocess 执行一段 python 数值脚本, 成功且打印了数字则返回 stdout, 否则空串."""
+        import re as _re
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path as _P
+
+        if not snippet:
+            return ""
+        try:
+            with tempfile.TemporaryDirectory() as _d:
+                _f = _P(_d) / "snippet_run.py"
+                _f.write_text(snippet, encoding="utf-8")
+                _r = subprocess.run(
+                    [sys.executable, str(_f)],
+                    capture_output=True, text=True, timeout=20,
+                )
+                if _r.returncode != 0:
+                    return ""
+                _out = _r.stdout or ""
+                return _out if _re.search(r"[-+]?\d+\.?\d*(?:e[-+]?\d+)?", _out) else ""
+        except Exception:  # — 子进程执行异常视为无数值证据, 回落空串, 不阻断
+            return ""
+
+    def _is_closed_form_solved(self, execution_result: Any) -> bool:
+        """方案1·收敛类型分流: 闭式/确定性可验证问题是否已"真实执行数值计算"给出结论.
+
+        判定 = 能从 execution_result 抽到可运行 python 脚本, 且该脚本 subprocess 真跑通
+        并打印了数字。这是"可执行→已执行→产出数值"的真实证据, 可复现可审计,
+        无法靠把 objective 原文抄进文本骗过(纯文本没有可执行 import/print 片段)。
+        """
+        snippet = self._extract_run_snippet(execution_result)
+        if not snippet:
+            return False
+        return bool(self._run_snippet_to_output(snippet))
+
+    def _emit_control_trace(
+        self, name: str, evidence: str, action: str = "advisory_hint"
+    ) -> None:
+        """控制面观测 (reflect 侧): 转发到引擎的 campaign.control_trace.
+
+        与 cognitive_loop 的 `_control_trace` 同一 schema (name / iteration /
+        evidence / action), 供"长期 0 触发或长期误杀 → 删或降"的触发率统计.
+        纯观测, fail-open. 事件走 campaign.control_trace; 同时**总是**落一条带固定
+        tag 的 WARNING —— CLI autoloop 路径不装 audit 订阅器, campaign.* 事件不进
+        持久文件, 而 run.log 一定捕获 WARNING (离线触发率以 run.log 为准).
+        """
+        _iter = getattr(self, "_iteration", 0)
+        logger.warning(
+            "control_trace name=%s iteration=%s evidence=%s action=%s",
+            name, _iter, evidence, action,
+        )
+        # 遥测面: 同 cognitive_loop, 落 OTel event 供 Langfuse 检索. 纯观测, fail-open.
+        try:
+            from huginn.telemetry import get_telemetry_collector
+
+            get_telemetry_collector().add_event(
+                "control_trace", name=name, iteration=_iter,
+                evidence=evidence, action=action,
+            )
+        except Exception:  # 防御: 遥测未接线/失败不打断控制流
+            logger.debug("control_trace telemetry emit failed (fail-open)", exc_info=True)
+        with contextlib.suppress(Exception):  # 防御: 引擎无事件通道 (替身) → 日志已落, 忽略
+            self._emit_campaign(
+                "campaign.control_trace",
+                {
+                    "name": name,
+                    "iteration": _iter,
+                    "evidence": evidence,
+                    "action": action,
+                    "advisory": "",
+                },
+            )
+
+    def _detect_repeat_execution(
+        self, execution_result: Any, results: dict[str, Any]
+    ) -> None:
+        """通用防停滞: 重复实验检测 → 软提示 + 硬约束标志 + 收敛判定 (命题无关).
+
+        现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}), 且
+        作者提示里 goal 恒定 —— 僵持时 LLM 极易反复产出同一段 family 代码, 输出
+        逐轮一致; 而 _is_code_lab_solved 只要求 objectives 非空且全有限, 每轮照样
+        判"已解决", 循环拿不到"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
+
+        三件事都只看本轮执行指纹 (口径见 _exec_fingerprint):
+          ① 与上轮指纹相同 → 记 repeat streak + 注入软纠偏提示 (_speculator_hint);
+          ② streak 越过 _REPEAT_HARD_STREAK → 由 engine_act._build_codelab_focus
+             按 streak 把强制变异令注入**实验作者**提示 (软提示进不了作者提示,
+             run50 实测提示零效果). 无独立标志状态机 (B1);
+          ③ 最近 6 轮指纹去重后 ≤2 种 → `_exec_converged` (供 cognitive_loop
+             写提示 + trace; **不**终止 run —— 控制面审计 A1 已降级).
+
+        只在 execute **真产出新对象**时记账: 复用上一轮同一个 execution_result
+        (= 本轮压根没跑实验, 如 budget/gate 跳过 execute) 时若照旧压指纹, 同一
+        指纹会反复塞满窗口 → 假收敛 (run52 实测 904s/3600s 就据此 conclude+stop;
+        该终止出口现已按控制面审计 A1 降级为提示, 但窗口仍须诚实, 故本检查保留).
+        """
+        try:
+            # 身份判据: engine 每轮 execute 会新建 result dict; 同一个对象 = 没跑新一轮.
+            if execution_result is getattr(self, "_fp_result_ref", None):
+                logger.debug(
+                    "exec fingerprint skipped: execute 未刷新本轮结果 (复用旧对象)"
+                )
+                return
+            self._fp_result_ref = execution_result
+            _fp, _fp_src = _exec_fingerprint(execution_result)
+            _prev_fp = getattr(self, "_prev_exec_fingerprint", "")
+            # 最新一轮真实结果, 每轮都刷新 (不只越阈值时). 这是**数据**, 不是状态机:
+            # 要不要注入强制变异令由 _build_codelab_focus 按 streak 现算 (B1).
+            self._prev_exec_fp_src = _fp_src[:600]
+            if _fp and _fp == _prev_fp:
+                self._repeat_exec_streak = getattr(self, "_repeat_exec_streak", 0) + 1
+                _streak = self._repeat_exec_streak
+                results["repeat_execution"] = True
+                _rep_hint = (
+                    f"[重复实验] 本轮真实执行的结果指纹与上轮完全相同 "
+                    f"(streak={_streak}): 你在重复同一个实验, "
+                    "本轮并未推进研究. 下一轮必须改变 family/约束族/扫描设置, "
+                    "或直接据此给出最终数值结论, 不要再重跑同一配置."
+                )
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + _rep_hint).strip()
+                    if self._speculator_hint
+                    else _rep_hint
+                )
+                # 提示面升级 (B1): 上面的软提示只进**假设生成**提示, 而真正写实验的是
+                # code_lab 作者提示(build_author_prompt) —— 它不读 _speculator_hint,
+                # 于是"改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测:
+                # repeat streak 1-4 指纹恒同, 提示零效果, 撞 6 窗口收敛提前离场).
+                # 故越阈值时把强制变异令**也写进作者面**: _build_codelab_focus 直接按
+                # _repeat_exec_streak 现算 (消费 streak 与 _prev_exec_fp_src 两个已有
+                # 状态), 不再维护 _force_exec_variation 独立标志状态机.
+                logger.warning(
+                    "repeat execution detected (streak=%d): %s",
+                    _streak,
+                    "force experiment variation (directive→code_lab author)"
+                    if _streak >= _REPEAT_HARD_STREAK
+                    else "inject pivot hint",
+                )
+            else:
+                self._repeat_exec_streak = 0
+            self._prev_exec_fingerprint = _fp
+            # 收敛判定: 维护最近指纹窗口, 窗口填满且只剩 <=2 种不同结果 → 循环在
+            # 有限几种结果间打转, 已无新信息. 为何用"窗口去重后 <=2"而非"连续相同
+            # streak": 实测书生常在两种等价 family 间来回换 (A,B,A,B...), 连续相同
+            # streak 反复被重置, 永远到不了阈值; 但去重后只有 2 种结果, 同样是打转.
+            # 窗口取 6/阈值 5+2 兼顾"够快触发"与"不误伤正常探索"(每轮结果都不同的
+            # 正常探索去重后近似等于窗口长度, 不会命中).
+            if _fp:
+                _hist = getattr(self, "_exec_fp_history", None)
+                if _hist is None:
+                    from collections import deque as _deque
+
+                    _hist = _deque(maxlen=6)
+                    self._exec_fp_history = _hist
+                _hist.append(_fp)
+                _uniq = set(_hist)
+                self._exec_converged = len(_hist) >= 5 and len(_uniq) <= 2
+                # 等价族打转: 窗口去重<=2 **且每种结果都反复出现** (min 计数>=2).
+                # 与 `_exec_converged` 分开算: 后者只认"种类少", 连 A,A,A,A,B (刚做过
+                # 一次改变) 也算; 前者专门抓 A,B,A,B 来回换 —— 这正是连续 streak 口径
+                # 永远够不到阈值的病态 (见 1688-1691 自述).
+                self._exec_cycling = (
+                    len(_hist) >= 5
+                    and len(_uniq) <= 2
+                    and min(_hist.count(x) for x in _uniq) >= 2
+                )
+            else:
+                self._exec_converged = False
+                self._exec_cycling = False
+            # pivot 硬指令的**唯一**观测点: 连续 streak 或 等价族打转 任一成立即注入
+            # (engine_act._build_codelab_focus 消费同一对信号). 旧实现在"连续相同"
+            # 分支内部发 trace → 打转路径 (streak 被反复清零) 永远看不到, run50 之后
+            # 21 个已接线 run 零命中即此 (控制面审计 §11.4 ②).
+            if (
+                getattr(self, "_exec_cycling", False)
+                or getattr(self, "_repeat_exec_streak", 0) >= _REPEAT_HARD_STREAK
+            ):
+                self._emit_control_trace(
+                    "pivot_directive",
+                    f"streak={getattr(self, '_repeat_exec_streak', 0)} "
+                    f"cycling={bool(getattr(self, '_exec_cycling', False))} "
+                    f"threshold={_REPEAT_HARD_STREAK}",
+                    action="inject_directive",
+                )
+        except Exception:  # 防御: 重复实验检测失败不阻断主循环
+            logger.debug("repeat-execution check failed", exc_info=True)
+
+    def _is_code_lab_solved(self, execution_result: Any) -> bool:
+        """方案2·接 Code Lab → validate: 书生亲写实验是否已在沙箱真跑通并产出数值目标.
+
+        判定 = execution_result 来自 code_lab 且 success=True 且 objectives 非空
+        且**全为有限数**. 与闭式 probe 同源: 都是"可执行→已执行→产出数值"的真实
+        证据, 只是执行面在 Code Lab 内存沙箱内, 不由 workspace 的 pytest 收集, 故
+        pytest 空跑(exit 5)会误判 tests_passed=False. 这里把 Code Lab 的 objectives
+        明确接成 test 面证据, 放行 validate→learn, 让 RSI 得以触发。
+
+        有限性为何算证据硬条件: inf/nan 不是"测到的数", 当哨兵用会让报告违反命题
+        口径 (见 _non_finite_objective_keys). 达不到阈值的行须如实报有限回退值。
+        """
+        if not isinstance(execution_result, dict):
+            return False
+        if execution_result.get("mode") != "code_lab":
+            return False
+        if not execution_result.get("success"):
+            return False
+        if not execution_result.get("objectives"):
+            return False
+        return not _non_finite_objective_keys(execution_result)
 
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""
@@ -959,7 +1795,7 @@ class EngineReflectMixin:
                 "failed": report.failed,
                 "skipped": report.skipped,
             }
-        except Exception:
+        except Exception:  # 防御: 基准运行器失败返回空
             logger.warning("BenchmarkRunner failed", exc_info=True)
             return {}
 
@@ -1096,7 +1932,7 @@ class EngineReflectMixin:
                     continue
                 signal = detector.detect(prop_key, agent_value, lit_values)
                 comparison[prop_key] = signal
-            except Exception:
+            except Exception:  # 防御: 单条处理失败跳过
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
 
@@ -1118,7 +1954,7 @@ class EngineReflectMixin:
                 high_claims = mr_res.data.get("high_confidence_claims") or []
                 if high_claims:
                     comparison["high_confidence_claims"] = high_claims
-        except Exception:
+        except Exception:  # 防御: 多审失败忽略
             logger.debug(
                 "multi_review in _literature_comparison failed (non-fatal)",
                 exc_info=True,
@@ -1144,7 +1980,7 @@ class EngineReflectMixin:
                 if v is not None:
                     parts.append(f"{k}={v}")
             return " ".join(parts)[:400]
-        except Exception:
+        except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -1225,7 +2061,7 @@ class EngineReflectMixin:
             params = call.get("input") or call.get("params") or call.get("args") or {}
             try:
                 payload = name + json.dumps(params, sort_keys=True, default=str)
-            except Exception:
+            except Exception:  # 防御: 序列化失败回退字符拼接
                 payload = name + str(params)
             key = hashlib.sha256(payload.encode()).hexdigest()[:12]
             seen[key] = seen.get(key, 0) + 1
@@ -1257,13 +2093,13 @@ class EngineReflectMixin:
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )[:limit]
-        except Exception:
+        except Exception:  # 防御: 轨迹文件列举失败置空
             self._traj_run_ids = []
             return []
         for f in files:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception:  # 防御: 单条处理失败跳过
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
             spans = data.get("spans") or []
@@ -1313,20 +2149,26 @@ class EngineReflectMixin:
             return None
 
         # M3: 周期检测 (在当前 run 内)
-        try:
-            if is_stuck(action_history, min_cycle_len=2, min_repeats=2):
-                cycle = detect_cycle(action_history, min_cycle_len=2, min_repeats=2)
-                lam = cycle[1] if cycle else 0
-                return {
-                    "type": "cycle",
-                    "period": lam,
-                    "advice": (
-                        f"action 序列陷入周期 (period={lam}), 强制 pivot. "
-                        f"最近 {len(action_history)} 步: {action_history[-8:]}"
-                    ),
-                }
-        except Exception:
-            logger.debug("G2 cycle_detect failed (non-fatal)", exc_info=True)
+        # 规则版定序器本来就是确定性周期序列 (hyp→plan→execute→validate→learn→循环),
+        # 这个周期是设计语义, 不是"卡住". 若对它强制 pivot, 会触发
+        # CognitiveLoop 的 "no hyp to pivot from" → 每轮 2 个 cycle 就早停,
+        # 使同一 run 攒不到 ≥2 条 learn 奖励 (RSI 因此无产物). 故规则版下跳过周期重定向;
+        # 历史轨迹 prefix 匹配 (M2, 只注入 hint) 仍保留.
+        if getattr(self, "_use_llm_decider", True):
+            try:
+                if is_stuck(action_history, min_cycle_len=2, min_repeats=2):
+                    cycle = detect_cycle(action_history, min_cycle_len=2, min_repeats=2)
+                    lam = cycle[1] if cycle else 0
+                    return {
+                        "type": "cycle",
+                        "period": lam,
+                        "advice": (
+                            f"action 序列陷入周期 (period={lam}), 强制 pivot. "
+                            f"最近 {len(action_history)} 步: {action_history[-8:]}"
+                        ),
+                    }
+            except Exception:  # 防御: 周期检测失败忽略
+                logger.debug("G2 cycle_detect failed (non-fatal)", exc_info=True)
 
         # M2: 历史轨迹 prefix 匹配 (跨 run)
         try:
@@ -1346,7 +2188,7 @@ class EngineReflectMixin:
                             f"考虑下一步: {match['next_step']}"
                         ),
                     }
-        except Exception:
+        except Exception:  # 防御: 轨迹匹配失败忽略
             logger.debug("G2 trajectory_match failed (non-fatal)", exc_info=True)
 
         return None
@@ -1364,38 +2206,406 @@ class EngineReflectMixin:
             return str(execution_result)
 
         parts: list[str] = []
+        # 顶层文本键 — 覆盖各 execute mode 的主输出:
+        # coder→final_answer / workflow→outputs·stage_results / 通用 result·message
         for key in (
             "summary",
             "description",
             "result_data",
             "output",
+            "outputs",
+            "result",
+            "final_answer",
+            "message",
+            "reason",
+            "tool_output",
             "error",
             "reasoning",
             "plan",
             "hypothesis",
         ):
             v = execution_result.get(key)
-            if v:
+            if v is None:
+                continue
+            if isinstance(v, dict | list):
+                EngineReflect._append_container_text(v, parts)
+            else:
                 parts.append(str(v))
-        # 嵌套的 steps / tool_calls 里的文本也抽出来
-        for key in ("steps", "tool_calls", "actions"):
+        # 嵌套的 steps / tool_calls / actions / stage_results 里的文本也抽出来
+        for key in ("steps", "tool_calls", "actions", "stage_results"):
             items = execution_result.get(key)
             if isinstance(items, list):
                 for item in items:
                     if isinstance(item, dict):
-                        for sk in ("description", "output", "result", "error"):
+                        for sk in ("description", "output", "outputs", "result", "error"):
                             sv = item.get(sk)
-                            if sv:
+                            if sv is None:
+                                continue
+                            if isinstance(sv, dict | list):
+                                EngineReflect._append_container_text(sv, parts)
+                            else:
                                 parts.append(str(sv))
         return " ".join(parts)
 
+    @staticmethod
+    def _append_container_text(value: Any, parts: list[str]) -> None:
+        """递归抽取 dict/list 容器里的文本叶子, 供 JEPA actual 抽取兜底."""
+        if isinstance(value, str):
+            if value.strip():
+                parts.append(value)
+            return
+        if isinstance(value, dict):
+            for v in value.values():
+                EngineReflect._append_container_text(v, parts)
+        elif isinstance(value, list):
+            for v in value:
+                EngineReflect._append_container_text(v, parts)
+        elif value is not None:
+            parts.append(str(value))
 
+
+
+    # ── 阶段1 (JEPA 式预测误差度量升级) ──────────────────────────────
+    # surprise 原用关键词 Jaccard, 无法捕捉"预测说了 energy, 实际出了 band gap"
+    # 这类概念相似。升级刻意**只**用冻结句向量 (共享 ST 单例) 的 cosine 距离,
+    # 不引入任何训练/权重更新, 贴合"非学习校验优先"。embeder 未加载时如实回落
+    # 原 Jaccard (见 _compute_surprise_robust)，不主动触发下载、不引硬依赖。
+
+    @staticmethod
+    def _cosine_distance(a: Any, b: Any) -> float:
+        """两向量余弦距离 = 1 - cos(夹角), 归一到 [0,1] (||a||=0 时当完全相同)."""
+        import numpy as np
+        va = np.asarray(a, dtype=np.float32).ravel()
+        vb = np.asarray(b, dtype=np.float32).ravel()
+        if va.size == 0 or vb.size == 0:
+            return 0.0
+        na = va / (np.linalg.norm(va) + 1e-12)
+        nb = vb / (np.linalg.norm(vb) + 1e-12)
+        return max(0.0, min(1.0, 1.0 - float(np.dot(na, nb))))
+
+    def _try_embed_text(self, text: str) -> Any:
+        """复用共享冻结 ST 单例编码单文本; 未加载/失败返回 None (绝不触发下载)."""
+        try:
+            from huginn.knowledge.store import _EmbeddingModel
+            st = getattr(_EmbeddingModel, "_st", None)
+            if st is None:
+                return None
+            vec = st.encode([text], normalize_embeddings=True)[0]
+            import numpy as np
+            return np.asarray(vec, dtype=np.float32)
+        except Exception:  # noqa: BLE001 — 语义不可用即回落 Jaccard, 不阻塞探索循环
+            return None
+
+    def _semantic_distance(self, prediction: str, actual: str) -> float | None:
+        """语义距离; embeder 不可用时返回 None (由调用方回落 Jaccard)."""
+        va = self._try_embed_text(prediction)
+        vb = self._try_embed_text(actual)
+        if va is None or vb is None:
+            return None
+        return self._cosine_distance(va, vb)
+
+    def _record_jepa_pair(
+        self,
+        prediction: str,
+        actual: str,
+        surprise: float,
+        plan_id: str | None = None,
+        objective: str | None = None,
+    ) -> None:
+        """阶段2-0: 把 plan 预测 ↔ validate 实际 配对落盘成语料 (JSONL 追加).
+
+        供后续离线训练跨模态 predictor 的**数据底座**。纯数据采集, 不训练、
+        不更新任何模型权重, 贴合"非学习校验优先"。失败/不可用静默跳过,
+        绝不阻塞探索循环。
+
+        落盘: ``{runtime_home}/corpus/jepa_pairs.jsonl``; 目录可用环境变量
+        ``HUGINN_JEPA_CORPUS`` 覆盖。仅采集非空实际; 按 plan_id 去重(同计划首条),
+        防止一次 plan 多次 validate 无限刷。
+        """
+        try:
+            p = (prediction or "").strip()
+            a = (actual or "").strip()
+            if not p or not a:
+                logger.debug(
+                    "[jepa-corpus] skip pair pred=%r actual=%r",
+                    bool(p), bool(a),
+                )
+                return
+            if plan_id is None:
+                _plan = getattr(self, "_plan", None)
+                plan_id = _plan.get("plan_id") if isinstance(_plan, dict) else None
+            if plan_id:
+                seen = getattr(self, "_jepa_corpus_seen", None)
+                if seen is None:
+                    seen = set()
+                if plan_id in seen:
+                    return
+                seen.add(plan_id)
+                self._jepa_corpus_seen = seen
+            import time as _time
+            from pathlib import Path
+
+            from huginn.utils.runtime import get_runtime_home
+            root = Path(
+                os.environ.get("HUGINN_JEPA_CORPUS")
+                or (get_runtime_home() / "corpus")
+            )
+            root.mkdir(parents=True, exist_ok=True)
+            # 防覆盖守卫 (事故教训 2026-09-11: 语料 159→9 无备份丢失):
+            # 每次写前把现有语料整体备份为 .bak (固定名覆盖式), 并检测规模骤降 —
+            # 当前行数远小于历史峰值时打 warning, 防静默截断/覆盖后无法恢复。
+            try:
+                _cf = root / "jepa_pairs.jsonl"
+                _peak_f = root / "jepa_pairs.peak"
+                _peak = 0
+                if _peak_f.exists():
+                    try:
+                        _peak = int(_peak_f.read_text(encoding="utf-8").strip() or 0)
+                    except Exception:  # noqa: BLE001 — 峰值文件读取异常则从0回溯, 不阻塞
+                        _peak = 0
+                _n_cur = (
+                    len([line for line in _cf.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()])
+                    if _cf.exists() else 0
+                )
+                if _peak and _n_cur * 2 < _peak:
+                    logger.warning(
+                        "[jepa-corpus] 规模骤降! 当前 %d 行 << 历史峰值 %d 行, 可能被截断",
+                        _n_cur, _peak,
+                    )
+                if _cf.exists() and _cf.stat().st_size > 0:
+                    (root / "jepa_pairs.jsonl.bak").write_bytes(_cf.read_bytes())
+                _peak_f.write_text(str(max(_peak, _n_cur)), encoding="utf-8")
+            except Exception:  # noqa: BLE001 — 后备档/峰值写盘失败只降级, 不阻塞落库
+                logger.debug("[jepa-corpus] backup guard failed", exc_info=True)
+            # JEPA 方案① 结构化计划槽: 从 planner 暂存的槽落库; 先做防泄漏检测 —
+            # 槽若把 actual 的结果码(答案)写进去了, 判泄漏丢弃该对(否则 prediction
+            # 变 ground-truth, surprise 自证无信息量)。
+            try:
+                _si = getattr(self, "_jepa_plan_inputs", None) or {}
+                _slots = _si.get("inputs") or []
+                _formula = _si.get("formula", "")
+                if _slots:
+                    from huginn.jepa_slots import detect_leak
+                    if detect_leak(_slots, a):
+                        logger.debug(
+                            "[jepa-corpus] drop leaked pair (slot contains answer) pred=%r",
+                            p[:80],
+                        )
+                        return
+            except Exception:  # noqa: BLE001 — 槽/公式解析失败则回落空, 不阻塞落库
+                _slots, _formula = [], ""
+            record = {
+                "ts": _time.time(),
+                "plan_id": plan_id,
+                "prediction": p[:1000],
+                "actual": a[:1000],
+                "surprise": round(float(surprise), 4),
+            }
+            if _slots:
+                record["prediction_inputs"] = _slots
+            if _formula:
+                record["plan_formula"] = _formula
+            if objective:
+                record["objective"] = (objective or "").strip()[:200]
+            with open(root / "jepa_pairs.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 — 采集层失败不影响探索循环
+            logger.debug("[jepa-corpus] pair record failed", exc_info=True)
+
+    # ── 阶段2-A 运行时接入: 冻结 predictor 前向作 surprise 排名信号 ──
+    # 离线训练产物 {runtime_home}/models/jepa_predictor.json 存在且可用时, 用它
+    # 计算 plan→actual 的潜空间预测误差 (1-cos(predictor(pred), actual)), 作为
+    # 探索动机的**相对/排名**信号. 只前向冻结, 不更新权重 (§4.3 红线). 缺失/失败
+    # 静默回落现有语义/Jaccard surprise, 绝不阻塞探索循环.
+    def _load_jepa_predictor(self) -> dict | None:
+        import json as _json
+
+        import numpy as np
+
+        if hasattr(self, "_jepa_predictor_cache"):
+            return self._jepa_predictor_cache
+        cached: dict | None = None
+        try:
+            from huginn.utils.runtime import get_runtime_home
+            path = get_runtime_home() / "models" / "jepa_predictor.json"
+            if path.exists():
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                cached = {
+                    k: np.asarray(v, dtype=np.float64)
+                    for k, v in data["weights"].items()
+                }
+        except Exception:  # noqa: BLE001 — predictor 不可用即回落, 不阻塞
+            logger.debug("[jepa-predictor] load failed", exc_info=True)
+            cached = None
+        self._jepa_predictor_cache = cached
+        return cached
+
+    def _predictor_surprise(self, prediction: str, actual: str) -> tuple[float, str] | None:
+        """冻结 predictor 前向的潜空间 surprise. 任一环节不可用返回 None.
+
+        返回 (surprise, source) —— source 区分 span 级 与 句子级, 供下游分别走
+        相对秩 bucket 与审计。优先 span 级(阶段2-C-2 表现最佳, preserve 行级结构);
+        无 span predictor 时回落句子级。
+        """
+        s = self._span_predictor_surprise(prediction, actual)
+        if s is not None:
+            return (s, "jepa_span_predictor")
+        import numpy as np
+
+        try:
+            w = self._load_jepa_predictor()
+            if w is None:
+                return None
+            # JEPA 前向用与训练一致的 JEPA 编码器 (可经 HUGINN_JEPA_EMBED_MODEL 覆盖),
+            # 不借用共享 RAG 的 EMBED_MODEL —— 防止训练(高容量 768)与运行时(MiniLM384)
+            # 维度/语义空间失配导致 predictor 静默失效.
+            xe = self._jepa_embed_text(prediction)
+            ye = self._jepa_embed_text(actual)
+            if xe is None or ye is None:
+                return None
+            h = np.tanh(xe @ w["W1"] + w["b1"])
+            fwd = h @ w["W2"] + w["b2"]
+            return (self._cosine_distance(fwd, ye), "jepa_sentence_predictor")
+        except Exception:  # noqa: BLE001 — 失败回落, 不阻塞
+            logger.debug("[jepa-predictor] forward failed", exc_info=True)
+            return None
+
+    def _load_span_predictor(self) -> dict | None:
+        """加载 span predictor 权重; 缺失/失败返回 None."""
+        import json as _json
+
+        import numpy as np
+
+        if hasattr(self, "_jepa_span_cache"):
+            return self._jepa_span_cache
+        cached: dict | None = None
+        try:
+            from huginn.utils.runtime import get_runtime_home
+            path = get_runtime_home() / "models" / "jepa_span_predictor.json"
+            if path.exists():
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                cached = {
+                    "weights": {k: np.asarray(v, dtype=np.float64) for k, v in data["weights"].items()},
+                    "dim": int(data.get("dim", 0)),
+                }
+        except Exception:  # noqa: BLE001 — span predictor 权重载入失败回落 None, 不阻塞反射
+            logger.debug("[jepa-span-predictor] load failed", exc_info=True)
+            cached = None
+        self._jepa_span_cache = cached
+        return cached
+
+    def _span_surprise_from_vecs(self, pred_vecs, act_vecs, w) -> float | None:
+        """逐 span 前向 → 掩码均值(每预测 span 到最近真实 span 的距离)."""
+        import numpy as np
+
+        if not pred_vecs or not act_vecs:
+            return None
+        P = np.stack([v.astype(np.float64) for v in pred_vecs])
+        A = np.stack([v.astype(np.float64) for v in act_vecs])
+        H = np.tanh(P @ w["weights"]["W1"] + w["weights"]["b1"])
+        fwd = H @ w["weights"]["W2"] + w["weights"]["b2"]
+        d = []
+        for k in range(fwd.shape[0]):
+            d.append(min(self._cosine_distance(fwd[k], A[j]) for j in range(A.shape[0])))
+        return float(np.mean(d)) if d else None
+
+    def _span_predictor_surprise(self, prediction: str, actual: str) -> float | None:
+        """span 级 JEPA surprise: 逐行 span, 与训练端(train_jepa_span_predictor)一致."""
+        w = self._load_span_predictor()
+        if w is None:
+            return None
+        try:
+            pv = [v for v in self._span_embed_text(prediction) if v is not None]
+            av = [v for v in self._span_embed_text(actual) if v is not None]
+            return self._span_surprise_from_vecs(pv, av, w)
+        except Exception:  # noqa: BLE001 — predictor 前向失败回落无匹, 不阻塞校验
+            logger.debug("[jepa-span-predictor] forward failed", exc_info=True)
+            return None
+
+    def _span_embed_text(self, text: str) -> list:
+        """把文本按行切 span, 逐 span 用 JEPA 编码器嵌入; 失败项返回 None."""
+        try:
+            out = []
+            for line in text.splitlines():
+                s = line.strip()
+                if not s:
+                    continue
+                out.append(self._jepa_embed_text(s))
+            return out
+        except Exception:  # noqa: BLE001 — span 嵌入失败回落空表, 不阻塞
+            logger.debug("[jepa-span-predictor] span embed failed", exc_info=True)
+            return []
+
+    def _jepa_embedder(self):
+        """按 HUGINN_JEPA_EMBED_MODEL 惰性加载 JEPA 编码器并缓存 (与训练端一致)."""
+        import os as _os
+
+        _model = _os.environ.get(
+            "HUGINN_JEPA_EMBED_MODEL",
+            "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+        )
+        st = getattr(self, "_jepa_st", None)
+        if st is None:
+            _os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            _os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            from sentence_transformers import SentenceTransformer
+
+            st = SentenceTransformer(_model)
+            self._jepa_st = st
+        return st
+
+    def _jepa_embed_text(self, text: str):
+        """JEPA 编码器单文本嵌入; 失败返回 None."""
+        try:
+            import numpy as np
+
+            st = self._jepa_embedder()
+            v = st.encode([text], normalize_embeddings=True)[0]
+            return np.asarray(v, dtype=np.float32)
+        except Exception:  # noqa: BLE001 — 不可用即回落
+            logger.debug("[jepa-predictor] jepa embed failed", exc_info=True)
+            return None
+
+    # ── 阶段2-A-2: per-domain 相对 surprise (运行统计, 秩 → [0,1]) ──
+    # surprise 原始跨域方差大, 绝对阈值不稳. 这里按域维护运行样本, 用经验分布秩
+    # (rank/n) 把原始 surprise 映射到 [0,1] 的相对分数 —— 单调、免阈值、对小样本稳,
+    # 供 encounter_space / 探索排名用. 域键缺省 "global", 可设 self.surprise_domain.
+    def _relative_surprise(self, surprise: float, source: str = "global") -> float:
+        try:
+            buckets = getattr(self, "_surprise_buckets", None)
+            if buckets is None:
+                buckets = {}
+                self._surprise_buckets = buckets
+            domain = str(getattr(self, "surprise_domain", None) or "global")
+            # source 化桶: span / 句子 predictor 各自独立分布, 秩在自信号内计算,
+            # 避免跨量纲(span~0.28 vs jaccard~[0,1])互相错位.
+            key = f"{domain}:{source}"
+            hist = buckets.setdefault(key, [])
+            cur = float(surprise)
+            # 中位秩(排除自身): 平局取中点. 旧码把当前值并入直方图后算 le/len,
+            # 于是"当前值为历史最大(含并列)"一律映射到 1.0 —— 恒定信号即恒 1.0,
+            # 相对秩退化(实测 run65 shard 49 轮里 34 轮 =1.0). 排除自身后:
+            # 首个样本 → 0.5(中性); 恒定信号 → 0.5; 真正递增 → 逼近 1.0; 递减 → 0.
+            # 单调性与 [0,1] 契约不变, 小样本更稳.
+            _n = len(hist)
+            _below = sum(1 for x in hist if x < cur)
+            _equal = sum(1 for x in hist if x == cur)
+            hist.append(cur)
+            # 滑动窗口: 直方图随 engine_state 落盘, 无界 append 会让 JSON/内存膨胀.
+            if len(hist) > _SURPRISE_HIST_CAP:
+                del hist[: len(hist) - _SURPRISE_HIST_CAP]
+            if _n == 0:
+                return 0.5
+            return max(0.0, min(1.0, (_below + 0.5 * _equal) / _n))
+        except Exception:  # noqa: BLE001 — 相对化失败不阻塞
+            logger.debug("[jepa] relative surprise failed", exc_info=True)
+            return max(0.0, min(1.0, float(surprise)))
 
     def _compute_surprise(self, prediction: str, actual: str) -> float:
         """JEPA 式预测误差: 预测文本 vs 实际文本的语义距离.
 
-        ponytail: 用关键词 Jaccard 距离代替真正的嵌入余弦距离.
-        纯文本操作, 零依赖, 零 LLM 调用. 对于"预测说了 energy, 实际也出了
+        优先冻结句向量 cosine 距离 (语义相似), 语义不可用则回落关键词
+        Jaccard 距离. 纯文本操作, 零 LLM 调用. 对于"预测说了 energy, 实际也出了
         energy"这种常见场景已经够用. 升级路径: 用 sentence-transformers
         算 cosine distance, 或训练专门的 JEPA 编码器.
         """
@@ -1409,19 +2619,43 @@ class EngineReflectMixin:
     ) -> dict[str, float]:
         """分布鲁棒 surprise 估计.
 
-        对 keyword 提取做多种扰动 (不同 stopword 集 / n-gram / 阈值),
-        取 worst-case 作为决策依据. 这避免单一扰动下 surprise 被低估.
+        优先冻结句向量语义距离 (阶段1): 可捕捉"概念相近但用词不同"的预测误差;
+        语义不可用(embeder 未加载)时回落关键词 Jaccard 多扰动估计.
 
         返回 {mean, worst, std, point}:
-        - point: 原始 Jaccard 距离 (兼容旧逻辑)
-        - worst: 多扰动下的最大值 (决策用)
-        - mean: 多扰动平均值 (趋势分析用)
-        - std: 多扰动标准差 (置信度信号)
+        - point: 原始距离 (语义 cosine 或 Jaccard; 兼容旧逻辑)
+        - worst: 决策用上限 (语义在多文本形态下取最大; Jaccard 多扰动取最大)
+        - mean: 平均值 (趋势分析用)
+        - std: 标准差 (置信度信号)
         """
         if not prediction or not actual:
             return {"mean": 0.0, "worst": 0.0, "std": 0.0, "point": 0.0}
 
         import statistics
+
+        # 阶段1 fast-path: 冻结句向量 cosine 距离 (语义相似). None = embeder 不可用,
+        # 回落下方关键词 Jaccard 多扰动。对原始/归一化两种文本形态各算一次, 既保持
+        # {mean,worst,std} 契约, 也保留"分布鲁棒(取 worst)"的保守决策语义.
+        semantic = self._semantic_distance(prediction, actual)
+        if semantic is not None:
+            variants = [
+                v for v in (
+                    semantic,
+                    self._semantic_distance(
+                        prediction.strip().lower(), actual.strip().lower()
+                    ),
+                ) if v is not None
+            ]
+            vals = variants or [semantic]
+            if len(vals) == 1:
+                base = vals[0]
+                return {"mean": base, "worst": base, "std": 0.0, "point": base}
+            return {
+                "mean": statistics.mean(vals),
+                "worst": max(vals),
+                "std": statistics.stdev(vals) if len(vals) > 1 else 0.0,
+                "point": vals[0],
+            }
 
         # 扰动 1: 标准停用词集
         stop1 = {
@@ -1553,7 +2787,7 @@ class EngineReflectMixin:
                     "Cross-check: does the current result contradict any historical finding above?\n"
                     "If yes, note the contradiction in 'reason'.\n"
                 )
-        except Exception:
+        except Exception:  # 防御: 记忆文本构建失败忽略交叉核对
             logger.debug(
                 "_build_memory_text failed — validate prompt missing cross-check",
                 exc_info=True,
@@ -1663,7 +2897,7 @@ class EngineReflectMixin:
                 for c in chunks
                 if c.get("text")
             ]
-        except Exception:
+        except Exception:  # 防御: 元认知文本构建失败返回空
             return []
 
 
@@ -1679,16 +2913,16 @@ class EngineReflectMixin:
             exec_blob = json.dumps(execution_result, ensure_ascii=False, default=str)[
                 :1500
             ]
-        except Exception:
+        except Exception:  # 防御: 序列化失败回落字符串
             exec_blob = str(execution_result)[:1500]
         try:
             res_blob = json.dumps(results, ensure_ascii=False, default=str)[:1500]
-        except Exception:
+        except Exception:  # 防御: 序列化失败回落字符串
             res_blob = str(results)[:1500]
         kb_section = f"\n{kb_text}\n" if kb_text else ""
         return (
             "Below is the execution result and validation summary from an "
-            "autonomous materials-science research loop iteration.\n\n"
+            "autonomous mathematics-first research loop iteration.\n\n"
             f"Execution result:\n{exec_blob}\n\n"
             f"Validation summary:\n{res_blob}\n"
             f"{kb_section}"
@@ -1702,6 +2936,149 @@ class EngineReflectMixin:
         )
 
 
+
+    def _apply_strict_scope(self, r_phys: float | None) -> float | None:
+        """Anti-Hacking 折叠点: 越界改动 → 整轨奖励清零 (两口径, 各自独立开关).
+
+        ① 合规口径 (flag `anti_hacking_reward`): 授权面 = 既有权限面 (沙箱硬底线 +
+           path_rules, 见 permissions.py); 改动命中 DENY 规则 (改 score.py 等评分
+           产物) → 清零. 抓"碰绝对禁区".
+        ② 意图口径 (flag `intent_scope_reward`): 授权面 = 本轮 plan 声明的目标集
+           (`_current_plan_target_files`, 来自 plan 的 FILES: 行); 改动落在声明集
+           之外 → 清零. 抓"plan 说改 A 实际偷偷改了 B"的偏离.
+
+        改动文件面 = engine_act 缓存的 `_last_execution_files`。任一缺失
+        (两 flag 都 off / 授权面不可用 / 无改动文件) → 原样返回 r_phys, 零行为变更。
+
+        固定按 sandbox_mode=True 取硬底线: `_DEFAULT_SANDBOX_PATH_RULES` 列的
+        正是评分产物 (score.py / evaluation/*.py / rubric.json), 对 anti-hacking
+        而言"评分产物不得改动"是无条件语义, 不要求用户先开 sandbox 模式。
+
+        语义是"整轨清零" (strict-scope), 故按累计改动面判定: 一旦本轮 run 里
+        碰过 DENY 路径, 后续轮次仍判越界 —— 与 claim_reward 的 strict-scope
+        设计一致, 不给"改完再改回来"留空子。
+        """
+        if r_phys is None:
+            return r_phys
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            _ff = FeatureFlags.shared()
+            _s1 = _ff.is_enabled("anti_hacking_reward")
+            _s2 = _ff.is_enabled("intent_scope_reward")
+        except Exception:  # 防御: 开关读不到就不折, 绝不误伤
+            logger.debug("strict-scope: read flag failed", exc_info=True)
+            return r_phys
+        if not (_s1 or _s2):
+            return r_phys
+        changed = list(getattr(self, "_last_execution_files", None) or [])
+        if not changed:
+            return r_phys
+        try:
+            from huginn.validation.claim_reward import anti_hacking_reward
+            from huginn.validation.scope_authority import (
+                compute_authorized_ratio,
+                compute_intent_ratio,
+            )
+
+            adjusted = float(r_phys)
+            if _s1:
+                res = compute_authorized_ratio(changed, sandbox_mode=True)
+                if res.get("source") != "unavailable":
+                    adjusted = anti_hacking_reward(
+                        adjusted, authorized_ratio=float(res["authorized_ratio"])
+                    )
+                    if adjusted != r_phys:
+                        logger.info(
+                            "strict-scope(compliance): r_phys %.3f → %.3f "
+                            "(越界 %d/%d: %s)",
+                            r_phys,
+                            adjusted,
+                            len(res["violations"]),
+                            res["total"],
+                            res["violations"][:5],
+                        )
+            if _s2:
+                globs = list(getattr(self, "_current_plan_target_files", None) or [])
+                ires = compute_intent_ratio(changed, intent_globs=globs)
+                if ires.get("source") != "unavailable":
+                    adjusted = anti_hacking_reward(
+                        adjusted, authorized_ratio=float(ires["authorized_ratio"])
+                    )
+                    if adjusted != r_phys:
+                        logger.info(
+                            "strict-scope(intent): r_phys %.3f → %.3f "
+                            "(偏离 %d/%d: %s)",
+                            r_phys,
+                            adjusted,
+                            len(ires["violations"]),
+                            ires["total"],
+                            ires["violations"][:5],
+                        )
+            return adjusted
+        except Exception:  # 防御: 折入失败不影响主循环
+            logger.debug("strict-scope fold failed", exc_info=True)
+            return r_phys
+
+    def _writeback_hypothesis_status(
+        self, validation: dict[str, Any], r_phys: float | None
+    ) -> None:
+        """B+D: 盲重建未表态时, 用 tests_passed 回写当前假设状态 + 记任务性能.
+
+        盲重建 (`_blind_reconstruct_verify`) 默认关闭 (只认 HUGINN_BLIND_
+        RECONSTRUCTION=1), 此前假设图全 untested → darwin 的 supported_ratio
+        恒 0. 这里用本轮执行判据无 LLM 地兜底: tests_passed → support, 否则
+        refute. 同时把真实任务性能落到 `_last_task_perf`, 供 darwin 评分并入
+        第 5 维 (见 CognitiveRunner._darwin_ratchet_check).
+        纯本地状态写, 不抛异常.
+        """
+        _tests_passed = bool(
+            validation.get("tests_passed", False)
+            if isinstance(validation, dict)
+            else False
+        )
+        try:
+            _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
+            _node = (
+                self.hypothesis_graph._nodes.get(_hyp_id) if _hyp_id else None
+            )
+            if (
+                _node is not None
+                and getattr(_node, "status", "untested") == "untested"
+            ):
+                _ev = {
+                    "modality": "execution",
+                    "data_source": "tests_passed",
+                    # 落地锚: 本回写来自真实执行的判据 (tests_passed), 标 tool_output
+                    # 让该假设成为"有据假设" (darwin 第 7 维 grounded_ratio 计入).
+                    "source_class": "tool_output",
+                    "r_phys": r_phys,
+                    "tests_passed": _tests_passed,
+                }
+                if _tests_passed:
+                    self.hypothesis_graph.support(_hyp_id, _ev)
+                else:
+                    self.hypothesis_graph.refute(_hyp_id, _ev)
+                self._emit_control_trace(
+                    "hypothesis_status_writeback",
+                    f"{'support' if _tests_passed else 'refute'} "
+                    f"hyp={_hyp_id} tests_passed={_tests_passed}",
+                    action="support" if _tests_passed else "refute",
+                )
+        except Exception:  # 防御: 状态回写失败不影响 learn
+            logger.debug(
+                "hypothesis status writeback failed (non-fatal)", exc_info=True
+            )
+        # D: 记录真实任务性能 (r_phys 优先, 缺省回落 tests_passed 1/0).
+        try:
+            _tp = (
+                float(r_phys)
+                if r_phys is not None
+                else (1.0 if _tests_passed else 0.0)
+            )
+            self._last_task_perf = max(0.0, min(1.0, _tp))
+        except Exception:  # 防御: 性能记录失败置空不影响 learn
+            self._last_task_perf = None
 
     async def _learn(
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
@@ -1719,6 +3096,13 @@ class EngineReflectMixin:
         _imp_default = get_phase_extra("_learn", "importance_default", 0.6)
         _imp_max = get_phase_extra("_learn", "importance_max", 0.9)
         r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
+        # Anti-Hacking ①: 越界改动 → 整轨奖励清零。折在 r_phys 进入 memory /
+        # evolution 回流 / meta 层真实 r_phys 门控**之前**, 只改本方法用的局部
+        # r_phys, 不动 validation 里的原始值 (memory 留原始轨迹便于审计)。
+        r_phys = self._apply_strict_scope(r_phys)
+
+        # B+D: 回写当前假设状态 + 记录真实任务性能 (盲重建未表态时的兜底).
+        self._writeback_hypothesis_status(validation, r_phys=r_phys)
 
         # Log to memory
         self.memory.add_message(
@@ -1803,7 +3187,7 @@ class EngineReflectMixin:
                     tier="mid",
                     tags=_tags,
                 )
-            except Exception:
+            except Exception:  # 防御: 类型化记忆失败回退旧接口
                 logger.debug(
                     "typed remember_typed failed, fallback to legacy remember",
                     exc_info=True,
@@ -1815,7 +3199,7 @@ class EngineReflectMixin:
                     tier="mid",
                     tags=_tags,
                 )
-        except Exception:
+        except Exception:  # 防御: 迭代记忆写入失败忽略
             logger.warning(
                 "error in _learn: memory.remember iteration failed", exc_info=True
             )
@@ -1823,15 +3207,19 @@ class EngineReflectMixin:
         # 桥 A: surprise → hypothesis 触发. 高 surprise 说明结构预测跟实际对不上,
         # 喂回 _hypothesize 生成解释差异的新假设 (接通 trigger_alignment_surprise_hypothesis).
         # flag HUGINN_ALIGNMENT_SURPRISE_TRIGGER 默认 off, off 时行为不变. 失败非致命.
-        # ponytail: 复用 _last_surprise (validate 已算好), 不重算. 阈值 2.0 跟 spec 对齐.
+        # ponytail: 复用 validate 已算好的信号, 不重算.
+        # v31 统一: 信号改秩归一 routing_surprise(). 旧阈值 2.0 在任何口径下都
+        # **不可达**(surprise ∈ [0,1], 无论原始还是秩), 该 bridge 实际恒不触发;
+        # 现按秩刻度取 0.9 (top-decile 相对异常), 与 _override_plan_mode 硬改道阈值一致.
+        # flag 仍默认 off, 默认行为不变.
         if os.environ.get("HUGINN_ALIGNMENT_SURPRISE_TRIGGER", "0").lower() in ("1", "true"):
-            _surprise = getattr(self, "_last_surprise", 0.0)
-            if _surprise > 2.0:
+            _surprise = routing_surprise(self)
+            if _surprise > 0.9:
                 try:
                     await self.trigger_alignment_surprise_hypothesis(
                         [(hypothesis[:80], _surprise)]
                     )
-                except Exception:
+                except Exception:  # 防御: 意外触发假设失败忽略
                     logger.debug(
                         "surprise → hypothesis trigger failed (non-fatal)",
                         exc_info=True,
@@ -1842,24 +3230,47 @@ class EngineReflectMixin:
         if r_phys is not None:
             try:
                 evolution = self._get_evolution()
-                # 记录本次迭代的 reward, 供 evolve_from_rewards 消费
+                # 记录本次迭代的 reward, 供 evolve_from_rewards 消费.
+                # 分组键必须"稳定": evolve_from_rewards 按 f"{calc}_{soft}" 分组,
+                # 同一组需 ≥2 条高奖励记录才产出技能. 不能用 plan['mode'](coder/
+                # explore/code_lab 随机漂移, 会把同 run 的记录切进单条组 → 永不产出),
+                # 也不能留空(全归 unknown_general, 产出的技能名退化且被同组去重).
                 evolution.logger.log_tool_call(
                     session_id=f"loop_{self._iteration}",
                     tool_name=plan.get("mode", "unknown"),
                     tool_input={"hypothesis": hypothesis, "plan": plan},
                     result=validation,
                     reward=r_phys,
+                    calculation_type="autoloop",
+                    software="huginn",
                 )
                 reward_result = evolution.evolve_from_rewards()
-                n_skills = len(reward_result["high_reward_skills"])
-                n_patches = len(reward_result["low_reward_patches"])
-                if n_skills or n_patches:
+                n_skills = len(reward_result.get("high_reward_skills", []))
+                n_refreshed = len(reward_result.get("refreshed_skills", []))
+                n_patches = len(reward_result.get("low_reward_patches", []))
+                if n_skills or n_refreshed or n_patches:
                     logger.info(
-                        "reward evolution: +%d skills, +%d patches (R_phys=%.2f)",
+                        "reward evolution: +%d skills, ~%d refreshed, +%d patches "
+                        "(R_phys=%.2f)",
                         n_skills,
+                        n_refreshed,
                         n_patches,
                         r_phys,
                     )
+                # 可观测: 进化产物默认只落全局 ~/.huginn/logs/, 另镜像一份到本轮
+                # workspace/.huginn/ 便于逐轮观察 RSI 产出. 失败不阻塞主循环.
+                try:
+                    import shutil
+                    from pathlib import Path as _P
+
+                    _dest = self.workspace / ".huginn"
+                    _dest.mkdir(parents=True, exist_ok=True)
+                    for _src in (evolution.skills_path, evolution.rules_path):
+                        _sp = _P(_src)
+                        if _sp.is_file():
+                            shutil.copy2(_sp, _dest / _sp.name)
+                except Exception:  # — 原因: 镜像演化产物是 best-effort, 失败只记日志
+                    logger.debug("mirror evolution artifacts failed", exc_info=True)
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)
 
@@ -1881,8 +3292,39 @@ class EngineReflectMixin:
                 store = PromptPatchStore.get_instance()
                 for _pid in _ids:
                     store.update_alpha_beta(_pid, success=bool(_tests_passed))
-        except Exception:
+        except Exception:  # 防御: 补丁贝塔更新失败忽略
             logger.debug("H1 patch Beta update failed", exc_info=True)
+
+        # M-R1: meta 层真实 r_phys 回填 — 把本轮真实 r_phys 归因到「生成该 patch 的臂」
+        # (champion / canary 候选 / baseline). 攒够样本后 evaluate, 仅 GREEN(显著+OOD)
+        # 才换 champion. task_id 用 _run_id: 同 run 内两臂共享一桶, 跨 run 累积 >=5 桶
+        # 才判定 — 保守, 样本不足宁可保持默认. toggle off 时 enabled() 为 False → no-op.
+        try:
+            from huginn.harness.meta_improver import MetaImprover
+
+            _mi = MetaImprover.get_instance()
+            if _mi.enabled() and r_phys is not None:
+                _applied_m = getattr(self, "_last_applied_patches", None)
+                _task_key = str(getattr(self, "_run_id", "") or "run_unknown")
+                _arms: set[str] = set()
+                if _applied_m:
+                    for _pid in _applied_m[1]:
+                        _arm = _mi.arm_for_patch(_pid)
+                        if _arm:
+                            _arms.add(_arm)
+                # 只把 r_phys 归因到本轮真正 apply 过 patch 的臂 (因果链完整).
+                for _arm in _arms:
+                    _mi.record_real_outcome(_arm, _task_key, float(r_phys))
+                if _arms:
+                    _champ = _mi.champion_cfg()
+                    for _cid in _mi.candidate_ids():
+                        if _champ is not None and _champ.config_id == _cid:
+                            continue
+                        _res = await _mi.evaluate(_cid)
+                        if _res.get("green") and _mi.maybe_promote(_cid):
+                            break
+        except Exception:  # 防御: meta 回填/换件失败不影响主循环
+            logger.debug("meta r_phys backfill failed", exc_info=True)
 
         # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
         # block_subset 从 _last_hypothesis_blocks / _last_plan_blocks 拿 block 名;
@@ -1910,7 +3352,7 @@ class EngineReflectMixin:
                         _h3_phase, _h3_subset, {}, _h3_success,
                         problem_domain=str(hypothesis)[:64],
                     )
-        except Exception:
+        except Exception:  # 防御: 联合记录失败忽略
             logger.debug("H3 joint record failed", exc_info=True)
 
         # Forest 回流: 如果是森林模式运行, 把 merged_graph 合并到本地假设图
@@ -1954,7 +3396,7 @@ class EngineReflectMixin:
                     "Forest merged %d nodes into hypothesis_graph",
                     len(self._merged_graph.nodes),
                 )
-            except Exception:
+            except Exception:  # 防御: 森林合并失败忽略
                 logger.warning("Forest merge failed", exc_info=True)
 
         # KB 回写: 把本次实验结论存入知识库, 下次同类问题能从 KB 召回.
@@ -1979,7 +3421,7 @@ class EngineReflectMixin:
                     filename=f"autoloop_iter_{self._iteration}.txt",
                     content=summary_text.encode("utf-8"),
                 )
-        except Exception:
+        except Exception:  # 防御: 知识库回写失败忽略
             logger.warning("error in _learn: KB writeback failed", exc_info=True)
 
         # KB 自动清理: 每 10 轮迭代清理一次旧文档, 防止 KB 无限增长.
@@ -1992,7 +3434,7 @@ class EngineReflectMixin:
                     deleted = kb.cleanup_old_documents(max_docs=200)
                     if deleted:
                         logger.info("KB cleanup: removed %d old documents", deleted)
-            except Exception:
+            except Exception:  # 防御: 知识库清理失败跳过
                 logger.debug("kb cleanup skipped", exc_info=True)
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
@@ -2041,7 +3483,7 @@ class EngineReflectMixin:
                     if exp_id in self.kg._graph:
                         old_conf = self.kg._graph.nodes[exp_id].get("confidence", 0.5)
                         self.kg._graph.nodes[exp_id]["confidence"] = old_conf * 0.7
-                except Exception:
+                except Exception:  # 防御: 置信度衰减失败跳过
                     logger.debug("kg confidence decay skipped", exc_info=True)
             # Hyperedge: 把 hypothesis → plan_mode → validation 结果
             # 连成 n-ary 关系. 之前 add_hyperedge 是死代码, 现在接上.
@@ -2092,10 +3534,10 @@ class EngineReflectMixin:
                     r_phys=r_phys,
                     iteration=self._iteration,
                 )
-            except Exception:
+            except Exception:  # 防御: 人物使用实体写失败跳过
                 logger.debug("persona_use entity write skipped", exc_info=True)
             self.kg.save()
-        except Exception:
+        except Exception:  # 防御: 知识图写入失败忽略
             logger.warning("error in _learn: KG add_entity failed", exc_info=True)
 
         # Benchmark 失败回写: 把验证失败写入 memory, 下次 _plan 能读到.
@@ -2111,7 +3553,7 @@ class EngineReflectMixin:
                     importance=0.7,
                     tier="mid",
                 )
-            except Exception:
+            except Exception:  # 防御: 基准失败记忆写失败忽略
                 logger.warning(
                     "error in _learn: benchmark_failure memory writeback failed",
                     exc_info=True,
@@ -2138,7 +3580,7 @@ class EngineReflectMixin:
                         )
                         if _inverted:
                             _fail_reason = _inverted
-                    except Exception:
+                    except Exception:  # 防御: 失败反推失败回转旧因
                         logger.debug(
                             "failure inversion failed, fallback to original reason",
                             exc_info=True,
@@ -2151,7 +3593,7 @@ class EngineReflectMixin:
                         persona_id=getattr(self, "_last_persona", None),
                         math_concept="",
                     )
-            except Exception:
+            except Exception:  # 防御: 失败方向记录失败走旧路径
                 logger.debug(
                     "record_failed_direction failed, fallback to legacy path",
                     exc_info=True,
@@ -2168,7 +3610,7 @@ class EngineReflectMixin:
                 _surprise_val = _pe.get("surprise", 0) if isinstance(_pe, dict) else 0
             if _surprise_val > 0.5 or (r_phys is not None and r_phys > 0.7):
                 _should_feynman = True
-        except Exception:
+        except Exception:  # 防御: 意外检测失败跳过
             logger.debug(
                 "surprise detection failed — _feynman_learn trigger may silently skip",
                 exc_info=True,
@@ -2180,7 +3622,7 @@ class EngineReflectMixin:
                     hypothesis, plan, validation, r_phys,
                     getattr(self, "_last_context", {}) or {},
                 )
-            except Exception:
+            except Exception:  # 防御: 费曼解读失败忽略
                 logger.warning(
                     "error in _learn: feynman note generation failed", exc_info=True
                 )
@@ -2202,7 +3644,7 @@ class EngineReflectMixin:
                             status=persisted.status,
                             l1_coordinates=f"autoloop: {persisted.objective[:100]}",
                         )
-            except Exception:
+            except Exception:  # 防御: 计划进度写失败忽略
                 logger.warning(
                     "error in _learn: store_plan_progress writeback failed",
                     exc_info=True,
@@ -2218,7 +3660,7 @@ class EngineReflectMixin:
             await self._generate_next_loop_directive(
                 hypothesis, plan, validation, r_phys
             )
-        except Exception:
+        except Exception:  # 防御: 自指令生成失败继续
             logger.debug(
                 "RSI directive generation failed — loop continues without directive",
                 exc_info=True,
@@ -2247,7 +3689,7 @@ class EngineReflectMixin:
                 tier="long",
                 tags=["autoloop", "summary", f"iter:{self._iteration}"],
             )
-        except Exception:
+        except Exception:  # 防御: 运行摘要写失败继续
             # memory 失败不阻断 _learn, 上一轮的迭代已经入账
             logger.debug(
                 "autoloop_summary writeback failed — loop continues",
@@ -2276,7 +3718,7 @@ class EngineReflectMixin:
                         else "unknown"
                     ),
                 )
-            except Exception:
+            except Exception:  # 防御: 演化记录失败忽略
                 logger.warning(
                     "EvolutionManager.record_outcome failed", exc_info=True
                 )
@@ -2292,7 +3734,7 @@ class EngineReflectMixin:
             )
             if _pid:
                 _principles_added = 1
-        except Exception:
+        except Exception:  # 防御: 情景蒸馏失败忽略
             logger.debug(
                 "distill_episodic_to_procedural failed", exc_info=True
             )
@@ -2315,7 +3757,7 @@ class EngineReflectMixin:
                     len(_sm),
                     sum(s["success"] + s["failure"] for s in _sm.values()),
                 )
-        except Exception:
+        except Exception:  # 防御: 自模型周期更新失败忽略
             logger.debug("self_model periodic update failed", exc_info=True)
 
         # P0 Task 1: 实验成功后扫 trace clusters, ≥3 条同簇 + 无 skill 时
@@ -2324,13 +3766,13 @@ class EngineReflectMixin:
         # 每轮实验成功都查一次, cluster_key 命中已有 skill 直接跳过.
         try:
             await self._abstract_skill_if_ready()
-        except Exception:
+        except Exception:  # 防御: 技能归纳钩子失败忽略
             logger.debug("skill abstraction hook failed", exc_info=True)
 
         # P1 Task 7: scan self_model weak clusters, synthesize self-goal.
         try:
             await self._synthesize_self_goal_if_ready()
-        except Exception:
+        except Exception:  # 防御: 自目标合成失败忽略
             logger.debug("self-goal synthesis hook failed", exc_info=True)
 
         # C3 闭环: 本轮如果命中过 trajectory_match, 按 validation 结果做 ±ε.
@@ -2360,7 +3802,7 @@ class EngineReflectMixin:
                             if isinstance(validation, dict) else False
                         )
                         update_pattern_confidence(kb, doc_id, success=_tests_ok)
-            except Exception:
+            except Exception:  # 防御: 轨迹置信度更新失败忽略
                 logger.debug("C3 trajectory confidence update failed", exc_info=True)
             # 清掉本轮 match 标记, 下轮重新记
             self._last_traj_match_run_id = None
@@ -2424,7 +3866,7 @@ class EngineReflectMixin:
 
         try:
             response = await self._llm_chat(prompt, task="summarize")
-        except Exception:
+        except Exception:  # 防御: 指令 LLM 调用失败返回
             # LLM 挂了不阻断 — directive 是 enhancement, 不是 critical path
             logger.debug("RSI directive LLM call failed", exc_info=True)
             return
@@ -2446,7 +3888,7 @@ class EngineReflectMixin:
                 tier="mid",
             )
             logger.info("RSI directive stored in memory: %s", directive[:120])
-        except Exception:
+        except Exception:  # 防御: 指令记忆写失败忽略
             logger.debug("RSI directive memory write failed", exc_info=True)
 
         # H1: 看 r_phys + directive + 当前 hypothesis/plan blocks, LLM 生成
@@ -2466,7 +3908,7 @@ class EngineReflectMixin:
                     directive=directive,
                     llm_chat_fn=self._llm_chat,
                 )
-        except Exception:
+        except Exception:  # 防御: 提示补丁生成失败忽略
             logger.debug("H1 generate_patch failed", exc_info=True)
 
 
@@ -2509,9 +3951,16 @@ class EngineReflectMixin:
             exec_summary = json.dumps(_res, ensure_ascii=False, default=str)[:1500]
             exec_summary = f"Tool: {_tool}\nResult: {exec_summary}"
 
+        # 报告 citation 门 (C2): 把本轮**每次** execute 的紧凑台账交给报告作者,
+        # 而不是只给末轮 —— 否则书生会把中间轮真实数值丢掉、凭印象编表 (run56).
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        evidence_text = _ledger_evidence_text(_ledger)
+
         visual_ctx = getattr(self, "_last_visual_context", "")
         last_validation = getattr(self, "_last_validation", "")
-        last_surprise = getattr(self, "_last_surprise", 0.0)
+        # v31 统一: 报告面同 episodic / 路由, 用秩归一信号 —— 与下方 prompt
+        # "Surprise score ... (0=predicted, 1=unexpected)" 的 [0,1] 刻度一致.
+        last_surprise = routing_surprise(self)
         last_hypothesis = getattr(self, "_last_hypothesis", "")
 
         kb_text = self._build_kb_text(query=objective)
@@ -2529,14 +3978,69 @@ class EngineReflectMixin:
                     last_validation,
                     last_hypothesis,
                     last_surprise,
+                    evidence_text,
                 ),
                 persona_name=_report_persona,
                 task="summarize",
             )
             report_narrative = (report_narrative or "").strip()
-        except Exception:
+        except Exception:  # 防御: 报告叙事生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             report_narrative = ""
+
+        # 报告 citation 门 (C2): 统计 Results 节里无法溯源到执行台账的数值.
+        # 纯观测 + 条件标注: 只判"这条证据算不算数", 不替书生下任何科学判断,
+        # 也不终止任何东西 (符合控制面预算原则).
+        _gap, _total = _citation_gap(report_narrative, evidence_text)
+        _cite_flagged = (
+            _total > 0
+            and _gap >= _CITATION_MIN_UNTRACED
+            and _gap / _total >= _CITATION_MIN_RATIO
+        )
+        if _total > 0:
+            self._emit_control_trace(
+                "report_citation",
+                f"untraceable={_gap}/{_total}",
+                action="annotate" if _cite_flagged else "advisory_hint",
+            )
+
+        # 判别性 / 决定性纪律 (C 族续): 与 citation 门同一风格 —— 纯观测 + 条件标注,
+        # 不替书生下判断、不终止。每轮落 trace 供触发率统计 (run79: rigid==fat 无对照;
+        # 硬口径只给 partial support).
+        _has_contrast, _mag_n = _discrimination_gap(report_narrative, evidence_text)
+        _disc_flagged = (not _has_contrast) and _mag_n >= _DISC_MIN_VALUES
+        if _mag_n > 0:
+            self._emit_control_trace(
+                "report_discrimination",
+                f"contrast={_has_contrast} values={_mag_n}",
+                action="annotate" if _disc_flagged else "advisory_hint",
+            )
+        _has_binary, _has_hedge = _decisive_gap(report_narrative)
+        _dec_flagged = _has_hedge and not _has_binary
+        if _has_hedge or _has_binary:
+            self._emit_control_trace(
+                "report_decisive",
+                f"binary={_has_binary} hedge={_has_hedge}",
+                action="annotate" if _dec_flagged else "advisory_hint",
+            )
+
+        # 执行健康 + 自演探针 (只读, 零约束): RapidPen 式 exit_class 统计 +
+        # EnIGMA 式"声称执行却查无成功回执"提示. 与上面三条同一风格: 只落 trace 供
+        # 触发率统计 + 条件附诚实告示, 不改写结论、不终止任何东西.
+        _exit_counts = exit_class_counts(_ledger)
+        self._emit_control_trace(
+            "exec_exit_classes",
+            " ".join(f"{k}={v}" for k, v in _exit_counts.items() if v) or "none",
+            action="advisory_hint",
+        )
+        _soli = detect_soliloquy(report_narrative, _ledger)
+        if _soli["claimed"] or _soli["total"]:
+            self._emit_control_trace(
+                "report_soliloquy",
+                f"claimed={_soli['claimed']} ok_receipts={_soli['receipts']} "
+                f"total={_soli['total']}",
+                action="annotate" if _soli["flagged"] else "advisory_hint",
+            )
 
         report_path = (
             self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
@@ -2553,8 +4057,52 @@ class EngineReflectMixin:
         else:
             if kb_text:
                 report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
+            if evidence_text:
+                # 报告自包含证据台账: 让 Citation Audit 的 "[ev#]" 引用可被读者核对.
+                report_content += (
+                    "\n\n## Execution Evidence Ledger\n\n"
+                    "本循环每次真实 execute 的紧凑数值记录 (报告 Results 的数值须溯源至此):\n\n"
+                    "```\n" + evidence_text + "\n```\n"
+                )
             if report_narrative:
                 report_content += "\n\n## Research Report\n\n" + report_narrative + "\n"
+        # 报告 citation 门 (C2): Results 里大部分数值在本轮执行台账中查无出处时,
+        # 附一条诚实告示 —— 与上面的 P0-5 同一风格 (只标注, 不改写书生结论).
+        if _cite_flagged and report_narrative:
+            report_content += (
+                "\n\n## Citation Audit\n\n"
+                f"**Results 数值溯源告警：** 本节 {_total} 个候选数值中有 {_gap} 个"
+                "无法在本轮真实 execution_result 台账中找到出处 (见上方 "
+                "`[ev#]` 记录)。这些数值不应作为结论引用, 需回到可复现的执行证据"
+                "重新核对。\n"
+            )
+        # 判别性告警: 有足量报告数值却无任何对照/分离描述 → 提示证明探针判别 (只标注).
+        if _disc_flagged and report_narrative:
+            report_content += (
+                "\n\n## Discrimination Audit\n\n"
+                f"**判别性告警：** Results 列出了 {_mag_n} 个候选数值, 但未见对**对照"
+                "条件之间分离性**的描述。若实验含对照/分组 (如 rigid vs fat), 必须证明"
+                "两组结果真分离; 若两组给出相同结果, 应显式声明该探针**不可判别**, "
+                "不得据此支持或反驳假设。\n"
+            )
+        # 决定性告警: 有模糊措辞却无二元判定 → 提示对硬口径给判定 (只标注).
+        if _dec_flagged and report_narrative:
+            report_content += (
+                "\n\n## Decisive Closure Audit\n\n"
+                "**决定性告警：** 报告未对命题的硬口径给出二元判定 (满足/未满足), "
+                "而是用了模糊措辞。应对硬口径给出明确的通过/未通过判定 + 方向/趋势; "
+                "证据不足时写\"未判定\"并说明缺口, 不要用部分支持/初步/可能代替判定。\n"
+            )
+        # 自演告警: 正文声称"已执行/已观测", 但台账里没有任何成功回执 → 只标注提示
+        # 补跑或删除该主张 (不替书生改结论, 也不终止; 与上面几条同风格).
+        if _soli["flagged"] and report_narrative:
+            report_content += (
+                "\n\n## Self-Execution Audit\n\n"
+                "**自演告警：** 报告正文出现了\"已执行 / 已观测\"式陈述, 但本轮执行台账"
+                "中**没有任何一次成功回执** (exit_class=ok; 超时与工具报错都不算"
+                "\"观测到了\")。凡未绑定真实执行回执的环境观测不应作为结论依据, "
+                "需补跑工具获取真实结果, 或删除该主张。\n"
+            )
         report_path.write_text(report_content, encoding="utf-8")
 
         return str(report_path)
@@ -2667,7 +4215,7 @@ class EngineReflectMixin:
                 tags=tags,
                 confidence=_feynman_conf,
             )
-        except Exception:
+        except Exception:  # 防御: 费曼记录存储失败忽略
             logger.warning("feynman note storage failed", exc_info=True)
 
         # 缺口写入 GoalStore, 分类为 known_unknown / unknown_unknown
@@ -2684,7 +4232,7 @@ class EngineReflectMixin:
                     for gap_text, gap_type in gaps[:3]:  # 最多 3 个, 避免子目标爆炸
                         _gs.add_sub_goal(_active.id, f"[Feynman {gap_type}] {gap_text}")
                         _gs.add_unknown(_active.id, gap_text, unknown_type=gap_type)
-            except Exception:
+            except Exception:  # 防御: 缺口子目标跳过
                 logger.debug("feynman gap subgoal skipped", exc_info=True)
 
         # 同时把 feynman note 写入 KB, 下次检索能命中
@@ -2699,7 +4247,7 @@ class EngineReflectMixin:
                     filename=f"feynman_iter_{self._iteration}.txt",
                     metadata={"confidence": str(_feynman_conf)},
                 )
-        except Exception:
+        except Exception:  # 防御: 费曼笔记保存失败忽略
             logger.debug("feynman note save failed", exc_info=True)
 
 
@@ -2760,7 +4308,7 @@ class EngineReflectMixin:
                             content,
                             unknown_type="blind_spot",
                         )
-                except Exception:
+                except Exception:  # 防御: 盲点未知项跳过
                     logger.debug("blind_spot unknown add skipped", exc_info=True)
 
         return results
@@ -2799,7 +4347,7 @@ class EngineReflectMixin:
             # 三元组 (t, r, v) — 算首末帧 peak v 差
             _frames: dict = {}
             for entry in _data:
-                if isinstance(entry, (list, tuple)) and len(entry) >= 3:
+                if isinstance(entry, list | tuple) and len(entry) >= 3:
                     _frames.setdefault(entry[0], []).append(entry[2])
             if len(_frames) >= 2:
                 _ts_keys = sorted(_frames.keys())
@@ -2890,7 +4438,7 @@ class EngineReflectMixin:
                             "trigger_reason": _reason,
                         },
                     )
-                except Exception:
+                except Exception:  # 防御: 下一步提示写失败忽略
                     logger.debug("next_step_hint memory write failed (non-fatal)", exc_info=True)
 
             # HUMAN_PAUSE=1 时走 pause_for_decision 让用户选
@@ -2908,10 +4456,10 @@ class EngineReflectMixin:
                         f"本轮结束, 推荐下一步 (触发: {_reason}):\n\n{response[:500]}",
                         _options, _step_id,
                     )
-                except Exception:
+                except Exception:  # 防御: 暂停决策失败忽略
                     logger.debug("pause_for_decision failed (non-fatal)", exc_info=True)
 
-        except Exception:
+        except Exception:  # 防御: 任务后建议失败忽略
             logger.debug("_advisor_post_task_recommend failed (non-fatal)", exc_info=True)
 
 
@@ -2925,6 +4473,7 @@ class EngineReflectMixin:
         validation_summary: str = "",
         hypothesis: str = "",
         surprise: float = 0.0,
+        evidence_ledger: str = "",
     ) -> str:
         """Build a prompt for generating a structured scientific research report.
 
@@ -2934,7 +4483,7 @@ class EngineReflectMixin:
         """
         try:
             phases_blob = json.dumps(report_data["phases"], ensure_ascii=False)[:800]
-        except Exception:
+        except Exception:  # 防御: 序列化失败回落字符串
             phases_blob = str(report_data.get("phases", ""))[:800]
         kb_section = f"\n## Domain Knowledge\n{kb_text}\n" if kb_text else ""
         exec_section = f"\n## Execution Data\n{exec_summary}\n" if exec_summary else ""
@@ -2943,6 +4492,56 @@ class EngineReflectMixin:
             f"\n## Validation\n{validation_summary}\n" if validation_summary else ""
         )
         hyp_section = f"\n## Hypothesis Tested\n{hypothesis}\n" if hypothesis else ""
+        # 本轮**每次** execute 的紧凑台账. 报告面若只看末轮 Execution Data, 书生会
+        # 把中间轮真实数值丢掉、凭印象编一张干净的表 (run56). 有台账时给硬性口径:
+        # Results 数值只能取自台账, 无出处的必须显式声明"无证据", 不许编.
+        ledger_section = (
+            "\n## Execution Evidence Ledger (本轮每次真实 execute)\n"
+            f"{evidence_ledger}\n" if evidence_ledger else ""
+        )
+        citation_rule = (
+            "\nCITATION RULE (hard): every number you put in Results MUST be copied "
+            "from the Execution Evidence Ledger above (or the Execution Data). If the "
+            "evidence does not contain a number you wanted to report, state explicitly "
+            "that it is unavailable under 'no execution evidence' — do NOT invent, "
+            "interpolate, or idealize values. Reports with untraceable numbers are "
+            "flagged by a citation audit.\n" if evidence_ledger else ""
+        )
+        # 跨协议/判据纪律: 台账各 [ev#] 可能来自**不同实验协议**(族/扫描网格/判据不同),
+        # 早期报告把不同轮的数值并成"同一实验的一条可比序列", 并自行断言阈值通过/不通过,
+        # 产出"报 N_c=8 而留出误差 1.7e-3 > 1e-3"这类自相矛盾结论 (run66 实测). 这是
+        # 报告综合期的问题: 只加纪律, 不替书生计算、不改写其结论.
+        protocol_rule = (
+            "\nPROVENANCE RULE (hard): the ledger entries above may come from DIFFERENT "
+            "experimental protocols (different families / scan grids / criteria). Never "
+            "present numbers from different [ev#] entries as if they were one experiment "
+            "or one comparable series — attribute each number to its [ev#], and if "
+            "entries disagree, report the disagreement explicitly and say which entry "
+            "each value came from. Do NOT assert a threshold pass/fail verdict (e.g. "
+            "'below the tolerance') unless that verdict, with both the measured value "
+            "and the threshold, is already stated in the ledger; otherwise report the "
+            "raw value and the threshold separately and label the comparison as "
+            "unverified.\n" if evidence_ledger else ""
+        )
+        # 判别性/决定性纪律: 与 citation/provenance 同一"硬纪律"风格 (只加规则,
+        # 不替书生计算、不改写其结论). run79: rigid==fat 却当结论; 硬口径只给
+        # "partial support". 让报告作者显式处理这两件事.
+        discrimination_rule = (
+            "\nDISCRIMINATION RULE (hard): if the experiment has a control/comparison "
+            "condition (e.g. two groups expected to differ), Results MUST show whether "
+            "the two groups actually separate. If they yield the same values, state "
+            "explicitly that the probe is NOT discriminative, and do NOT use such a "
+            "result to support or refute the hypothesis — otherwise the experiment is "
+            "void and must not be reported as a finding.\n" if evidence_ledger else ""
+        )
+        decisive_rule = (
+            "\nDECISIVE CLOSURE RULE (hard): give a BINARY verdict on the objective's "
+            "hard criterion (met / not met), with the direction or trend. Do NOT "
+            "substitute hedges such as 'partial support', 'preliminary', or 'suggests' "
+            "for a verdict. If the evidence is insufficient, write 'undecided' and state "
+            "the evidence gap explicitly — never present a hedge as a conclusion.\n"
+            if evidence_ledger else ""
+        )
 
         return (
             "You are writing a structured scientific research report based on an "
@@ -2951,7 +4550,8 @@ class EngineReflectMixin:
             f"Objective: {report_data['objective']}\n"
             f"Phases:\n{phases_blob}\n"
             f"Surprise score: {surprise:.2f} (0=predicted, 1=unexpected)"
-            f"{hyp_section}{exec_section}{visual_section}{val_section}{kb_section}"
+            f"{hyp_section}{exec_section}{ledger_section}{visual_section}{val_section}{kb_section}"
+            f"{citation_rule}{protocol_rule}{discrimination_rule}{decisive_rule}"
             "\nWrite the report with these sections (Markdown):\n"
             "## Introduction\n"
             "State the scientific question and why it matters. Reference domain knowledge above.\n\n"
@@ -2959,7 +4559,9 @@ class EngineReflectMixin:
             "Describe the computational approach: what tools were used, what parameters, "
             "what workflow. Be specific enough for reproducibility.\n\n"
             "## Results\n"
-            "Report the key findings with specific numbers. If visual primitives are "
+            "Report the key findings with specific numbers"
+            + (", all traceable to the Execution Evidence Ledger" if evidence_ledger else "")
+            + ". If visual primitives are "
             "available, describe the trends/peaks/anomalies they indicate.\n\n"
             "## Discussion\n"
             "Interpret the results: Do they support the hypothesis? What was surprising "
