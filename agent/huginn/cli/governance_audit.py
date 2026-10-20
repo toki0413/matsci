@@ -771,6 +771,18 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
         ),
         "tests": ("tests/test_reproduce.py",),
     },
+    # ── 多协议适配层 (缺口①): always_on 型锚点 ──
+    # 协议面靠共享 IR 契约而非 feature flag 治理 (无开关可翻转). 锚点双判据:
+    # 承载模块 (protocols 包存在) + 不变量回归网 (红蓝双轨契约门存在).
+    {
+        "id": "protocol_adapter",
+        "name": "多协议适配层 (共享 IR + 每协议成对)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": ("huginn/protocols/__init__.py",),
+        "tests": ("tests/test_protocol_contract.py",),
+    },
 )
 
 # ── 能力面闭合分诊表 (feature flag 全部登记: 锚定 or 豁免) ──
