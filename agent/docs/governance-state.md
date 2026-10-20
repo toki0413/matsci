@@ -178,7 +178,7 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 127 | 5 | Governance gate registry guard |
 | 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
 | prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 13 | 13 | 0 | Governance gate registry guard |
-| gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
+| gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 7 | 7 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 覆盖率下限 | `pyproject.toml` | 下限 | 60 | 60 | 0 | Governance gate registry guard |
