@@ -258,6 +258,10 @@ build_sidecar_log*.txt
 
 # Scratch directories
 _archive/
+# _scratch/: 本地一次性实验脚手架 (run*.sh 启动器 / diag_*.py 探针). 属非交付物,
+# 不应入库. 此前被误提交, 且 run*.sh 里硬编码了 INTERNLM_API_KEY 明文, 是真实
+# 密钥泄漏源头. 默认忽略, 防止后续 autoloop 生成的启动器再次把密钥带进仓库.
+_scratch/
 test_dir/
 si_scf/
 si_bandstructure/
