@@ -93,37 +93,47 @@ def _check_pmk_timeseries_route():
 
 
 def _check_pmk_consistency_timeseries():
-    """结合3: _check_pmk_consistency 识别 timeseries 路, 跟 persona 冲突."""
-    from huginn.runtime.task_lifecycle import _check_pmk_consistency
+    """三轴: memory/kb/timeseries 属认识论（advisory），persona/action 属规范（block）."""
+    from huginn.runtime.task_lifecycle import _check_pmk_axes, _check_pmk_consistency
 
-    # VACF decaying (扩散) 但 persona 说束缚态 → 冲突
+    # 认识论: memory 说束缚态 vs timeseries decaying → advisory, 不阻断
     _pmk = {
-        "persona": "I recommend 束缚态 stable bound state for this system",
+        "memory": "I recommend 束缚态 stable bound state for this system",
         "timeseries": "VACF (lammps): 3 pts, trend=decaying. meaning: velocity autocorrelation",
     }
-    _inconsistent, _reason = _check_pmk_consistency(_pmk)
-    assert _inconsistent, "VACF decaying + persona 束缚态应触发冲突"
-    assert "timeseries" in _reason or "persona" in _reason, \
-        f"冲突 reason 应提到 timeseries 或 persona, 实际: {_reason}"
+    _blocked, _reason = _check_pmk_consistency(_pmk)
+    assert not _blocked, "认识论冲突只应 advisory, 不应阻断"
+    assert "EPISTEMIC" in _reason, _reason
+    _axes = _check_pmk_axes(_pmk)
+    assert _axes.advisory and not _axes.blocked
 
-    # VACF flat (平衡) + persona 说平衡 → 不冲突
+    # 认识论: flat + 平衡 → 不冲突
     _pmk2 = {
-        "persona": "I recommend 平衡 equilibrium state",
+        "memory": "I recommend 平衡 equilibrium state",
         "timeseries": "Temp: 2 pts, trend=flat. meaning: temperature",
     }
-    _inc2, _ = _check_pmk_consistency(_pmk2)
-    # 都 recommend 平衡 → 不冲突
-    assert not _inc2, "VACF flat + persona 平衡不应冲突"
+    _blocked2, _ = _check_pmk_consistency(_pmk2)
+    assert not _blocked2, "memory 平衡 + timeseries flat 不应冲突"
 
-    # 无 timeseries — 原有三路行为不变
+    # 认识论: memory vs kb 冲突 → advisory
     _pmk3 = {
-        "persona": "I recommend approach A",
-        "memory": "I oppose approach A",
+        "memory": "I recommend approach A",
+        "kb": "I oppose approach A",
     }
-    _inc3, _reason3 = _check_pmk_consistency(_pmk3)
-    assert _inc3, "原有三路冲突应正常工作"
+    _blocked3, _reason3 = _check_pmk_consistency(_pmk3)
+    assert not _blocked3, "memory/kb 冲突属认识论, 不应阻断"
+    assert "EPISTEMIC" in _reason3, _reason3
 
-    print("[ok] 结合3: _check_pmk_consistency 识别 timeseries 路")
+    # 规范: persona 反对 action 推荐 → block
+    _pmk4 = {
+        "persona": "I oppose approach A",
+        "action": "I recommend approach A",
+    }
+    _blocked4, _reason4 = _check_pmk_consistency(_pmk4)
+    assert _blocked4, "persona/action 冲突应阻断"
+    assert "NORMATIVE" in _reason4, _reason4
+
+    print("[ok] 三轴: 认识论 advisory / 规范 block")
 
 
 def _check_pause_iteration_history():
@@ -133,13 +143,13 @@ def _check_pause_iteration_history():
     # mock should_pause_for_decision 返回 pause=True
     from huginn.runtime import task_lifecycle as _tl
     _orig = _tl.should_pause_for_decision
-    _tl.should_pause_for_decision = lambda *a, **k: (True, "PMK conflict", [])
+    _tl.should_pause_for_decision = lambda *a, **k: (True, "decision conflict", [])
 
     try:
         # 不传 iteration_history — reason 不升级
         _pause, _reason, _ = check_pause_decision([], [], None, None, {})
         assert _pause
-        assert _reason == "PMK conflict", f"无 iter_hist 时 reason 不应升级: {_reason}"
+        assert _reason == "decision conflict", f"无 iter_hist 时 reason 不应升级: {_reason}"
 
         # 传 iteration_history, 3/5 redirect — reason 升级
         _hist = [
@@ -160,7 +170,7 @@ def _check_pause_iteration_history():
         _pause3, _reason3, _ = check_pause_decision(
             [], [], None, None, {}, iteration_history=_hist2,
         )
-        assert _reason3 == "PMK conflict", f"1/5 redirect 不应升级: {_reason3}"
+        assert _reason3 == "decision conflict", f"1/5 redirect 不应升级: {_reason3}"
     finally:
         _tl.should_pause_for_decision = _orig
 
@@ -168,30 +178,31 @@ def _check_pause_iteration_history():
 
 
 def _qualia_probe_self_reference():
-    """感质探针: self_eval 自指路与 persona/memory/kb 世界路对同一 subject 冲突 →
-    自指固定点. 这是"同一直由度既当世界事实又当系统自我状态, 不可分离"的工程探针."""
+    """感质探针: persona（身份/规范）与 self_eval（自指报告）对同一 subject 冲突 →
+    自指固定点；与 persona/action 的规范冲突区分开（后者不带 qualia 标记）."""
     from huginn.runtime.task_lifecycle import _check_pmk_consistency
 
-    # persona (世界路, 赞成 GNN 方法) vs self_eval (自指路, 自我报告自己用不好 GNN)
-    # 同一 subject "gnn" 被 persona 当客观方法论主张、被 self_eval 当自身状态 → 冲突
+    # persona (身份: 赞成 GNN 方法) vs self_eval (自指路: 自我报告自己用不好 GNN)
+    # 同一 subject "gnn" 被 persona 当身份主张、被 self_eval 当自身状态 → 自指冲突
     _pmk_q = {
         "persona": "I recommend GNN approach for this task",
         "self_eval": "self-report: my GNN attempt failed, I now oppose continuing GNN",
     }
     _inc, _reason = _check_pmk_consistency(_pmk_q)
-    assert _inc, "world persona + self_eval 对同一 subject 冲突应触发"
+    assert _inc, "persona + self_eval 对同一 subject 冲突应触发"
     assert "qualia-probe" in _reason, \
         f"自指冲突 reason 应带 qualia-probe 标记, 实际: {_reason}"
 
-    # pure 世界冲突 (persona vs memory) — 不涉及自指路 → 无 qualia 标记
+    # 纯规范冲突 (persona vs action) — 不涉及自指路 → 无 qualia 标记
     _pmk_w = {
         "persona": "I recommend approach A",
-        "memory": "I oppose approach A",
+        "action": "I oppose approach A",
     }
     _inc2, _reason2 = _check_pmk_consistency(_pmk_w)
-    assert _inc2, "pure 世界路冲突应触发"
+    assert _inc2, "persona/action 规范冲突应触发"
+    assert "NORMATIVE" in _reason2, _reason2
     assert "qualia-probe" not in _reason2, \
-        f"纯世界冲突不应带 qualia 标记, 实际: {_reason2}"
+        f"纯规范冲突不应带 qualia 标记, 实际: {_reason2}"
 
     print("[ok] 感质探针: self_eval 自指路冲突 → qualia-probe 自指固定点")
 
