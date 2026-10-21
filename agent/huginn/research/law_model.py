@@ -320,26 +320,62 @@ class MechanicsLawModel(LawModel):
 
 def reconcile(predicted: LawState, actual: dict, *, tol: float = 0.03,
               metrics: tuple[str, ...] = ("S_Wm2", "T_eq_K")) -> dict:
-    """预测 vs 真实执行的数值对账.
+    """预测 vs 真实执行的数值对账（三态）.
 
-    每个可测指标算相对误差; 全部 ≤ tol → 定律被当前证据**证实**(borne_out=True),
-    否则如实标 **falsified**(定律是假说, 偏差不覆盖 —— 本身就是发现)。
+    只比较**双方都存在且有限**的指标；每个可测指标算相对误差：
+    - 至少一个指标参与比较，且全部参与指标 ≤ tol → ``status="borne_out"``（证实）；
+    - 有参与指标 > tol → ``status="falsified"``（证伪，偏差不覆盖）；
+    - 没有任何指标可比较（缺失 / NaN / 非数值）→ ``status="insufficient"``。
+      ``insufficient`` 不是通过：未检查的维度不能冒充已验证。
 
-    Returns: {"borne_out": bool, "errors": {metric: rel_err}, "mismatch": {...}}
+    向后兼容：保留 ``borne_out`` 布尔字段；``insufficient`` 时 ``borne_out=False``。
+
+    Returns: {"status": str, "borne_out": bool, "falsified": bool,
+              "errors": {metric: rel_err}, "mismatch": {...},
+              "compared": {...}, "skipped": [metric], "tol": float}
     """
     errors: dict[str, float] = {}
     mismatch: dict[str, tuple[float, float]] = {}
+    compared: dict[str, tuple[float, float]] = {}
+    skipped: list[str] = []
     for m in metrics:
         y_m = predicted.get(m)
-        y_e = float(actual.get(m, float("nan")))
-        if y_m is None or math.isnan(y_e):
+        y_e_raw = actual.get(m)
+        if y_m is None or y_e_raw is None:
+            skipped.append(m)
             continue
-        err = abs(y_m - y_e) / (abs(y_e) if abs(y_e) > 1e-12 else 1.0)
+        try:
+            y_m_f = float(y_m)
+            y_e = float(y_e_raw)
+        except (TypeError, ValueError):
+            skipped.append(m)
+            continue
+        if not (math.isfinite(y_m_f) and math.isfinite(y_e)):
+            skipped.append(m)
+            continue
+        err = abs(y_m_f - y_e) / (abs(y_e) if abs(y_e) > 1e-12 else 1.0)
         errors[m] = round(err, 4)
+        compared[m] = (y_m_f, y_e)
         if err > tol:
-            mismatch[m] = (y_m, y_e)
-    return {"borne_out": not bool(mismatch), "errors": errors,
-            "mismatch": mismatch, "tol": tol}
+            mismatch[m] = (y_m_f, y_e)
+
+    if not compared:
+        status = "insufficient"
+    elif mismatch:
+        status = "falsified"
+    else:
+        status = "borne_out"
+
+    return {
+        "status": status,
+        "borne_out": status == "borne_out",
+        "falsified": status == "falsified",
+        "errors": errors,
+        "mismatch": mismatch,
+        "compared": compared,
+        "skipped": skipped,
+        "tol": tol,
+    }
 
 
 # ── 模型基规划 (state-space rollout, 对标模型驱动规划) ─────────────

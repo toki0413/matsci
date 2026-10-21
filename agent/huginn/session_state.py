@@ -15,6 +15,7 @@ decides next step. This is NOT full auto-pilot.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -94,6 +95,11 @@ class UnifiedSessionState:
     # When not None, we're waiting for user to confirm something.
     # Keys: type ("new_plan"|"plan_update"|"high_cost_tool"|"mode_switch"),
     #       message (what we're asking), data (plan dict, tool name, etc.)
+    #       proposition_id (规范账里的稳定提案 id, 可选)
+
+    # 规范账适配器（可选）。设置后 request_confirmation / clear_confirmation
+    # 会把「提议」与「接受/拒绝」落成 append-only 规范事件；未设置时行为不变。
+    grounding: Any | None = None
 
     # Cognitive prompt from the state machine — context_builder reads this
     # to inject the dual-mode attention prompt into the LLM messages.
@@ -165,15 +171,48 @@ class UnifiedSessionState:
         data: dict[str, Any] | None = None,
     ) -> None:
         """Set a pending confirmation request. The chat loop will yield this
-        to the user and wait for their response."""
+        to the user and wait for their response.
+
+        若配置了 ``grounding``，同时写一条 ``propose`` 规范事件；只提议，
+        不自动接受、不自动授权（proposal ≠ acceptance ≠ authorization）。
+        """
+        proposition_id = f"confirm:{confirm_type}:{uuid.uuid4().hex[:12]}"
         self.pending_confirmation = {
             "type": confirm_type,
             "message": message,
             "data": data or {},
+            "proposition_id": proposition_id,
         }
+        if self.grounding is not None:
+            try:
+                self.grounding.propose(
+                    proposition_id,
+                    evidence={"type": confirm_type, "message": message[:200]},
+                )
+            except Exception:  # 防御: 规范账不可用时不影响确认流程
+                logger.debug("grounding propose skipped", exc_info=True)
 
-    def clear_confirmation(self) -> None:
-        """Clear a pending confirmation after user responds."""
+    def clear_confirmation(self, *, accepted: bool | None = None) -> None:
+        """Clear a pending confirmation after user responds.
+
+        ``accepted`` 明确给出时，把结果落成 ``accept`` / ``reject`` 规范事件；
+        未给出时保持旧行为（只清工作状态，不猜测用户意图）。
+        """
+        pending = self.pending_confirmation
+        if (
+            self.grounding is not None
+            and pending is not None
+            and accepted is not None
+        ):
+            proposition_id = pending.get("proposition_id")
+            if proposition_id:
+                try:
+                    if accepted:
+                        self.grounding.accept(proposition_id)
+                    else:
+                        self.grounding.reject(proposition_id)
+                except Exception:  # 防御: 规范账不可用时不影响清理
+                    logger.debug("grounding outcome skipped", exc_info=True)
         self.pending_confirmation = None
 
     def add_tool_result(self, result: dict[str, Any]) -> None:

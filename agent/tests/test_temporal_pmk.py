@@ -196,6 +196,19 @@ def _qualia_probe_self_reference():
     print("[ok] 感质探针: self_eval 自指路冲突 → qualia-probe 自指固定点")
 
 
+def test_oppose_oppose_is_alignment_not_conflict():
+    """回归: 两路都反对同一 subject 是一致，不是冲突（旧实现误报）."""
+    from huginn.runtime.task_lifecycle import _check_pmk_consistency
+
+    _pmk = {
+        "persona": "I oppose approach A",
+        "memory": "I oppose approach A",
+    }
+    _inc, _reason = _check_pmk_consistency(_pmk)
+    assert not _inc, f"oppose+oppose 不应判冲突, 实际: {_reason}"
+    assert _reason == "", _reason
+
+
 def main():
     _check_pmk_since_kb()
     _check_pmk_since_memory()

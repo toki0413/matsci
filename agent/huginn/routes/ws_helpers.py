@@ -37,6 +37,40 @@ _pending_tasks: set[asyncio.Task] = set()
 # Pending plan confirmations: plan_id -> Future (used by send_plan_and_wait).
 _pending_plans: dict[str, asyncio.Future] = {}
 
+# 规范账延迟单例：首次真实确认时才打开，避免每个连接都建库。
+_grounding_ledger: Any | None = None
+
+
+def _record_plan_decision(
+    ctx: WSCtx,
+    thread_id: str,
+    plan_id: str,
+    confirmed: bool,
+) -> None:
+    """把计划确认落成 accept/reject 规范事件（不伪造授权）.
+
+    plan 确认是「接受计划」，不是「授权执行」；按 spec，accept ≠ authorize。
+    ledger 不可用时只记 debug，不影响主流程。
+    """
+    try:
+        from huginn.normative.ledger import NormativeLedger
+        from huginn.normative.session import SessionGrounding
+
+        global _grounding_ledger
+        if _grounding_ledger is None:
+            _grounding_ledger = NormativeLedger()
+        grounding = SessionGrounding(
+            _grounding_ledger,
+            ctx.user_id or "default",
+            str(thread_id),
+        )
+        if confirmed:
+            grounding.accept(str(plan_id))
+        else:
+            grounding.reject(str(plan_id))
+    except Exception:  # 防御: 规范账失败不影响计划确认/执行
+        logger.debug("plan decision not recorded in normative ledger", exc_info=True)
+
 
 @dataclass
 class WSCtx:
@@ -1509,6 +1543,8 @@ async def _handle_plan_confirm(
         if future is not None and not future.done():
             future.set_result({"confirmed": confirmed, "edited_plan": edited_plan})
         return
+
+    _record_plan_decision(ctx, ctx_plan["thread_id"], plan_id, confirmed)
 
     if not confirmed:
         await websocket.send_json({

@@ -178,8 +178,41 @@ def test_reconcile_flags_wrong_world_model_as_falsified():
     # 真值(独立执行)被系统性放大 1.5 倍 → 靠近轨道但温度假设错误
     tru_t = pred.get("T_eq_K") * 1.5
     resp = reconcile(pred, {"S_Wm2": pred.get("S_Wm2"), "T_eq_K": tru_t}, tol=0.03)
+    assert resp["status"] == "falsified", resp
+    assert resp["falsified"] is True, resp
     assert resp["borne_out"] is False, resp
     assert "T_eq_K" in resp["mismatch"], "偏差应被如实记录, 而非悄悄抹平"
+
+
+def test_reconcile_three_states_insufficient_when_no_metric_comparable():
+    """三态: 没有任何指标可比较 → insufficient, 不得冒充 borne_out."""
+    from huginn.research.law_model import LawState, reconcile
+
+    pred = LawState({"S_Wm2": 1361.0}, domain="exoplanet")
+    # actual 为空: 两个默认 metric 都 skipped
+    resp = reconcile(pred, {}, tol=0.03)
+    assert resp["status"] == "insufficient", resp
+    assert resp["borne_out"] is False, "指标缺失不能当通过"
+    assert resp["falsified"] is False, resp
+    assert set(resp["skipped"]) == {"S_Wm2", "T_eq_K"}, resp
+
+    # NaN / 非数值也视为不可比较
+    resp_nan = reconcile(pred, {"S_Wm2": float("nan"), "T_eq_K": "not-a-number"})
+    assert resp_nan["status"] == "insufficient", resp_nan
+    assert resp_nan["borne_out"] is False, resp_nan
+
+
+def test_reconcile_three_states_partial_comparison_can_confirm():
+    """三态: 至少一个指标参与且全部参与指标在容差内 → borne_out, 同时记录 skipped."""
+    from huginn.research.law_model import LawState, reconcile
+
+    pred = LawState({"S_Wm2": 1361.0, "T_eq_K": 200.0}, domain="exoplanet")
+    # 只提供 S_Wm2, 且一致 → S 参与并通过; T_eq_K 未检查
+    resp = reconcile(pred, {"S_Wm2": 1361.0}, tol=0.03)
+    assert resp["status"] == "borne_out", resp
+    assert resp["borne_out"] is True, resp
+    assert "T_eq_K" in resp["skipped"], resp
+    assert "S_Wm2" in resp["compared"], resp
 
 
 def test_model_based_planner_ranks_actions_by_predicted_objective():
@@ -464,9 +497,16 @@ def test_world_model_capability_ops_law_predict_reconcile():
     pred = r_pred.data["predicted"]
     r_ok = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": pred}))
     assert r_ok.success and r_ok.data["borne_out"] is True
+    assert r_ok.data["status"] == "borne_out", r_ok.data
     bad_pred = {**pred, "state": {**pred["state"], "T_eq_K": pred["state"]["T_eq_K"] * 1.5}}
     r_bad = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": bad_pred}))
     assert r_bad.success and r_bad.data["borne_out"] is False, "偏差须如实标 falsified"
+    assert r_bad.data["status"] == "falsified", r_bad.data
+
+    # 指标缺失 → insufficient, 不得冒充通过
+    r_ins = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": {}}))
+    assert r_ins.success and r_ins.data["status"] == "insufficient", r_ins.data
+    assert r_ins.data["borne_out"] is False, r_ins.data
 
 
 def test_world_model_capability_mcp_surface():

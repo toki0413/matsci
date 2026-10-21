@@ -387,10 +387,10 @@ def _pmk_gluing_obstruction(
             if not _pmk_subjects_similar(sub1, sub2):
                 continue
             nerve_edges.append((s1, s2))
-            # 显式对立: 一个 recommend 一个 oppose, 或两个都 oppose
+            # 显式对立: 必须是一方 recommend、另一方 oppose.
+            # 两方都 oppose 同一 subject 是「一致反对」，不是冲突（旧实现误报）。
             if (st1 == "oppose" and st2 == "recommend") or \
-               (st1 == "recommend" and st2 == "oppose") or \
-               (st1 == "oppose" and st2 == "oppose"):
+               (st1 == "recommend" and st2 == "oppose"):
                 conflicts.append((s1, st1, sub1, s2, st2, sub2))
 
     if not conflicts:
