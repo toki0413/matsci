@@ -24,6 +24,7 @@
 | 文档 | 状态 | 用途 |
 |---|---|---|
 | [architecture.md](architecture.md) | active | 系统架构总览（技术架构） |
+| [side-tasks.md](side-tasks.md) | active | 侧边任务使用文档（消息级 fork + 独立 thread + 转正任务卡片 + 零残留清理；含界面与 HTTP API） |
 | [DESIGN_RATIONALE.md](DESIGN_RATIONALE.md) | active | 设计论据：全局 how+why、设计原则、诚实边界、数学层与朗兰兹精神的定调 |
 | [HOW_TO_READ.md](HOW_TO_READ.md) | active | 新人上手导览：目录地图、主线走通、改哪找哪、文档真相层级 |
 | [env-contract.md](env-contract.md) | active | 环境变量契约（265 个 HUGINN_*，可自动再生成） |
