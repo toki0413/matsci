@@ -54,7 +54,7 @@ _ensure_namespace_pkg("huginn", _AGENT / "huginn")
 _ensure_namespace_pkg("huginn.plugins", _AGENT / "huginn" / "plugins")
 _ensure_namespace_pkg("huginn.agent", _AGENT / "huginn" / "agent")
 
-# 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 13 个内置段.
+# 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 14 个内置段.
 import huginn.agent.prompt_builder as pb  # noqa: E402
 import huginn.plugins.prompt_segments as ps  # noqa: E402
 
@@ -63,7 +63,7 @@ _VALID_PATHS = frozenset({"main", "s7", "autoloop"})
 # 关键段 floor (不得从注册/声明中消失). 与治理台账 `PROMPT_SPECS` 同源 (下方交叉核对).
 _REQUIRED_SEGMENTS = (
     "persona", "core_principles", "behavioral_discipline", "response_format",
-    "mode", "phase", "metacog", "tools",
+    "first_principles", "mode", "phase", "metacog", "tools",
     "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
 )
 
@@ -285,7 +285,7 @@ def _register_calls() -> list[tuple[pathlib.Path, ast.Call]]:
 def test_plugin_registrations_declare_applies_to():
     """AC-4: 非内置段名的 register 调用必须显式声明 applies_to (不得靠默认静默).
 
-    内置段 (prompt_builder 里以字面量段名注册的 13 段) 声明来自内置 `_APPLIES_TO`;
+    内置段 (prompt_builder 里以字面量段名注册的 14 段) 声明来自内置 `_APPLIES_TO`;
     其余调用 (第三方插件段) 段名非内置 → 必须显式给 `applies_to=`.
     """
     builtin = frozenset(_REQUIRED_SEGMENTS)

@@ -35,6 +35,8 @@ _PRIORITY = {
     "core_principles": 11,
     "behavioral_discipline": 12,
     "response_format": 13,
+    # 第一性原理 + 需求审慎: 行为规范之后、mode/phase 之前, 先审需求再谈执行.
+    "first_principles": 14,
     "mode": 20,
     "phase": 30,
     "metacog": 40,
@@ -54,7 +56,8 @@ _PRIORITY = {
 # (若误列入本集合, autoloop 将丢失 §3/§4/§7 → 契约门与 autoloop 段集合门会红).
 _FRAMEWORK_SEGMENTS = frozenset({
     "persona", "mode", "phase", "metacog", "tools",
-    "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
+    "multimodal", "writing", "multi_agent_protocol", "first_principles",
+    "thinking", "safety",
 })
 
 # 段生效面声明 (声明面**单一事实来源**): 段名 -> 该段**必须**在哪些生产路径生效.
@@ -74,6 +77,9 @@ _APPLIES_TO: dict[str, tuple[str, ...]] = {
     "core_principles": ("main", "s7", "autoloop"),
     "behavioral_discipline": ("main", "s7", "autoloop"),
     "response_format": ("main", "s7", "autoloop"),
+    # 第一性原理/需求审慎: 只在有用户可讨论的交互路径生效 (main/s7);
+    # autoloop 无用户可澄清, 强行"停下来讨论"会卡死自主循环.
+    "first_principles": ("main", "s7"),
     "mode": ("s7",),
     "phase": ("s7",),
     "metacog": ("s7",),

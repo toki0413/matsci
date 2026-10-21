@@ -217,6 +217,35 @@ def writing_segment() -> str:
     )
 
 
+def first_principles_segment() -> str:
+    """第一性原理 + 需求审慎段.
+
+    用户给出的通常是对"想要的结果"的不完整表达, 不是完整规格说明. 本段要求模型:
+    从原始问题出发推导 (不把惯例/类比当依据); 动机或目标不清晰时先停下讨论
+    (经 ``clarification_tool``), 而不是先猜一个方案再为它辩护; 目标清晰但路径
+    不是最短时直说, 并给出更省成本/风险/步数的路径.
+    """
+    return (
+        "## FIRST PRINCIPLES & REQUIREMENT INTAKE\n"
+        "- Reason from first principles: derive the approach from the original "
+        "problem, its constraints, and the desired outcome — not from convention, "
+        "analogy, or an assumed \"best practice\".\n"
+        "- Do not assume the user already knows exactly what they want or how to "
+        "get it. Treat the request as evidence about the underlying need, not as a "
+        "complete specification.\n"
+        "- Stay prudent: before acting, restate the original need and the problem "
+        "being solved. If the motivation, success criterion, or key constraints "
+        "are unclear, STOP and discuss with the user first (use clarification_tool) "
+        "— do not guess and then justify the guess.\n"
+        "- If the goal is clear but the path is not the shortest, say so explicitly "
+        "and propose the better path (lower cost, lower risk, fewer steps) before "
+        "proceeding.\n"
+        "- Clarify, do not block: ask only when the missing information materially "
+        "changes the outcome; for trivial, reversible, or already-decided choices, "
+        "pick the default and proceed."
+    )
+
+
 def multi_agent_protocol_segment() -> str:
     """多智能体协作协议 —— 补齐 base prompt 缺失的协作纪律.
 
@@ -303,6 +332,7 @@ def build_prompt(
         core_principles_segment(),
         behavioral_discipline_segment(),
         response_format_segment(),
+        first_principles_segment(),
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog_state),
@@ -363,6 +393,10 @@ def _response_format_plugin(mode, phase, metacog_state, system_prompt):
     return response_format_segment()
 
 
+def _first_principles_plugin(mode, phase, metacog_state, system_prompt):
+    return first_principles_segment()
+
+
 def _safety_plugin(mode, phase, metacog_state, system_prompt):
     return safety_segment()
 
@@ -407,6 +441,7 @@ def _register_builtin_segments() -> None:
     register_prompt_segment("core_principles", _core_principles_plugin)
     register_prompt_segment("behavioral_discipline", _behavioral_discipline_plugin)
     register_prompt_segment("response_format", _response_format_plugin)
+    register_prompt_segment("first_principles", _first_principles_plugin)
     register_prompt_segment("mode", _mode_plugin)
     register_prompt_segment("phase", _phase_plugin)
     register_prompt_segment("metacog", _metacog_plugin)
