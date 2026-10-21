@@ -3,6 +3,8 @@
 > 适用版本：侧边任务（fork + 转正）落地后。
 > 代码入口：`huginn/side_tasks.py`、`huginn/routes/side.py`、`desktop/src/components/panels/SidePanel.tsx`
 > 回归门：`tests/test_side_tasks.py`（CI: `Side tasks contract guard`）
+>
+> 相关文档：[设计文档](side-tasks-design.md) · [API 参考](side-tasks-api.md) · [前端 UI 文档](side-tasks-ui.md)
 
 ## 1. 它解决什么问题
 

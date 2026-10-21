@@ -25,6 +25,9 @@
 |---|---|---|
 | [architecture.md](architecture.md) | active | 系统架构总览（技术架构） |
 | [side-tasks.md](side-tasks.md) | active | 侧边任务使用文档（消息级 fork + 独立 thread + 转正任务卡片 + 零残留清理；含界面与 HTTP API） |
+| [side-tasks-design.md](side-tasks-design.md) | active | 侧边任务设计文档（架构、数据模型、状态机、fork/转正/清理流程、不变量与扩展点） |
+| [side-tasks-api.md](side-tasks-api.md) | active | 侧边任务 API 参考（端点、请求/响应、错误语义、数据字典、配置项、并发与幂等） |
+| [side-tasks-ui.md](side-tasks-ui.md) | active | 侧边任务前端 UI 文档（SidePanel props、dock/page 模式、交互、可访问性、i18n、测试） |
 | [DESIGN_RATIONALE.md](DESIGN_RATIONALE.md) | active | 设计论据：全局 how+why、设计原则、诚实边界、数学层与朗兰兹精神的定调 |
 | [HOW_TO_READ.md](HOW_TO_READ.md) | active | 新人上手导览：目录地图、主线走通、改哪找哪、文档真相层级 |
 | [env-contract.md](env-contract.md) | active | 环境变量契约（265 个 HUGINN_*，可自动再生成） |
