@@ -83,7 +83,9 @@ _APPLIES_TO: dict[str, tuple[str, ...]] = {
     "mode": ("s7",),
     "phase": ("s7",),
     "metacog": ("s7",),
-    "tools": ("s7",),
+    # 工具不只 s7 才需要: 主路径同样要"能力阶梯" (先 capability_tool 再
+    # tool_search 再域工具), 否则动态路由裁掉工具后模型没有找回通道的指令.
+    "tools": ("main", "s7"),
     # 以下三段此前只在 s7 生效, 主路径静默缺席 (反防御写作 / 多模态引导 / 外部思考):
     # 声明进 main 后由 render_prompt_segments_for_path("main") 真正注入.
     "multimodal": ("main", "s7"),

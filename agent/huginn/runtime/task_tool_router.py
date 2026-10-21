@@ -45,6 +45,16 @@ CORE_TOOL_NAMES: list[str] = [
     "web_search_tool",
 ]
 
+# === 能力发现工具 (永不被动态路由裁掉) ===
+#
+# task router 的作用是"缩小直接可见面", 但缩小后必须留一条**找回能力的通道**,
+# 否则模型遇到未暴露的工具只能猜 API 或放弃:
+#   capability_tool — 按能力 (组合/原子) 检索并执行, 适合多步流程;
+#   tool_search     — 语义/关键词搜未暴露的原子工具, 并可直接 invoke.
+# 两者不在 keyword category / world-domain 里, 旧实现会在设置 task 后把它们
+# 一并滤掉, 与 capability_tool 文档的"LLM 始终可见"矛盾.
+DISCOVERY_TOOL_NAMES: tuple[str, ...] = ("capability_tool", "tool_search")
+
 
 # === Tool Category 定义 ===
 #
@@ -285,11 +295,13 @@ def compute_effective_subset(
     task_message: str | None,
     available_tool_names: list[str],
 ) -> list[str]:
-    """常驻路由的最终工具子集 = keyword 命中 ∪ core 基础 ∪ world-domain 命中.
+    """常驻路由的最终工具子集 = keyword ∪ core ∪ world-domain ∪ 能力发现工具.
 
     这是 ``register_tools_from_registry`` 在 task 存在时实际用的入口: 相比
     ``route_tools`` (纯 keyword, 无命中返回空), 这里保证"总有最小可用集"——
     无任何 keyword/domain 命中时返回 core 基础子集, 而非让调用方回退到全量.
+    同时保留 ``DISCOVERY_TOOL_NAMES``: 子集裁得再小, 模型仍能通过
+    capability_tool / tool_search 找回未直接暴露的能力 (能力可达性底线).
     空 task / 空 available → 空 (调用方回退原 tool_filter, 不破坏现状).
     """
     if not task_message or not available_tool_names:
@@ -298,6 +310,7 @@ def compute_effective_subset(
     keyword_hits = set(route_tools(task_message, available_tool_names))
     subset: set[str] = set(keyword_hits)
     subset |= {t for t in CORE_TOOL_NAMES if t in available_set}
+    subset |= {t for t in DISCOVERY_TOOL_NAMES if t in available_set}
     subset |= {t for t in world_domain_tools(task_message) if t in available_set}
     # 未知域补充: keyword 零命中时, 用 JEV 语义判断建议额外工具.
     # 默认关 (jev_tool_router), 且受隐私外发闸约束; 失败/不可用 → 空, 不破坏现状.
@@ -322,6 +335,7 @@ if __name__ == "__main__":
         "structure_tool", "file_read_tool", "file_write_tool", "file_edit_tool",
         "analysis_tool", "literature_tool", "web_search_tool",
         "diagnose_tool", "knowledge_tool",  # 杂项
+        "capability_tool", "tool_search",  # 能力发现通道
     ]
 
     # 1. 单关键词命中 — VASP
@@ -384,6 +398,12 @@ if __name__ == "__main__":
     # 11. categorize_tool
     assert categorize_tool("vasp_tool") == "vasp"
     assert categorize_tool("lammps_tool") == "lammps"
+
+    # 12. 能力发现工具在任何 task 下都保留 (裁工具不能裁"找回工具"的通道)
+    for _task in ("hello world", "vasp calc", "用第一性原理算一下"):
+        _subset = compute_effective_subset(_task, AVAILABLE)
+        assert "capability_tool" in _subset, f"capability_tool 被裁: {_task}"
+        assert "tool_search" in _subset, f"tool_search 被裁: {_task}"
     assert categorize_tool("ml_potential_tool") == "ml"
     assert categorize_tool("web_search_tool") == "web"
     assert categorize_tool("unknown_tool") == "unknown"

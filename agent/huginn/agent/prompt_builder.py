@@ -157,10 +157,24 @@ def metacog_segment(metacog_state: str) -> str:
     return "\n".join(parts)
 
 
-# ponytail: tools_segment 不做复杂过滤, 避免重复 tools/__init__.py 的 schema 生成逻辑;
-# 升级路径是加 mode/phase/state 过滤规则映射
+# 能力阶梯: 先找"整箱能力", 再按名找回原子工具, 最后才直接调域工具.
+# 不做具体工具清单 (schema 已由装配层提供, 重复列会浪费 token 且易漂移);
+# 只固化"找不到工具时怎么办"的选择顺序, 避免模型猜 API / 重复造轮子.
 def tools_segment(mode: str, phase: str, metacog_state: str) -> str:
-    return "## TOOLS\nTools available per current mode/phase/state."
+    return (
+        "## TOOLS & CAPABILITY ROUTING\n"
+        "- Capability ladder: (1) `capability_tool` action=list/search for a "
+        "composite capability that already wraps the workflow; (2) `tool_search` "
+        "action=search for an atomic tool missing from the current schema, then "
+        "action=invoke; (3) call the domain tool directly. Never guess an API or "
+        "hand-roll what an existing tool already does.\n"
+        "- Match the tool to the phase: inspect/retrieve before heavy execution; "
+        "validate against references before concluding.\n"
+        "- Prefer the narrowest tool that can answer; escalate to a heavier "
+        "backend only after lighter paths fail.\n"
+        "- If the needed capability is unavailable, name what is missing and "
+        "offer the closest available alternative; never silently substitute."
+    )
 
 
 # ponytail: safety 段保持最小; 不涉及 persona/phase 迁移.

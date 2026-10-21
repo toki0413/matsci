@@ -151,7 +151,7 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | `mode` | `s7` |
 | `phase` | `s7` |
 | `metacog` | `s7` |
-| `tools` | `s7` |
+| `tools` | `main`, `s7` |
 | `multimodal` | `main`, `s7` |
 | `writing` | `main`, `s7` |
 | `multi_agent_protocol` | `main`, `s7` |
