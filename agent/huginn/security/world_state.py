@@ -108,7 +108,9 @@ def _gaussian_update(
     if obs_value is None:
         return prior_mean, prior_var
     if prior_mean is None or prior_var is None:
-        return float(obs_value), float(obs_var if obs_var is not None else _OBSERVED_SIGMA)
+        return float(obs_value), float(
+            obs_var if obs_var is not None else _OBSERVED_SIGMA
+        )
     pv = max(float(prior_var), 1e-12)
     ov = float(obs_var) if obs_var is not None else _OBSERVED_SIGMA
     ov = max(ov, 1e-12)
@@ -137,11 +139,15 @@ class StateSnapshot:
         return {
             "state": self.state,
             "observables": list(self.observables),
-            "uncertainty": {k: (v if v is not None else None) for k, v in self.uncertainty.items()},
+            "uncertainty": {
+                k: (v if v is not None else None) for k, v in self.uncertainty.items()
+            },
             "identifiable_level": self.identifiable_level,
             "contract_version": self.contract_version,
             "predicted": self.predicted,
-            "posterior_var": {k: (v if v is not None else None) for k, v in self.posterior_var.items()},
+            "posterior_var": {
+                k: (v if v is not None else None) for k, v in self.posterior_var.items()
+            },
             "ts": self.ts,
         }
 
@@ -153,8 +159,12 @@ class StateSnapshot:
             observables=tuple(data.get("observables") or ()),
             uncertainty=dict(data.get("uncertainty") or {}),
             identifiable_level=str(data.get("identifiable_level") or _DEFICIENT),
-            contract_version=int(data.get("contract_version") or physics_schema.SHARED_CONTRACT_VERSION),
-            predicted=dict(data["predicted"]) if data.get("predicted") is not None else None,
+            contract_version=int(
+                data.get("contract_version") or physics_schema.SHARED_CONTRACT_VERSION
+            ),
+            predicted=dict(data["predicted"])
+            if data.get("predicted") is not None
+            else None,
             posterior_var=dict(data.get("posterior_var") or {}),
             ts=float(data.get("ts") or time.time()),
         )
@@ -310,6 +320,17 @@ class ForwardPredictor:
         )
 
 
+def _require_measured(state_after: Any) -> None:
+    """拒收代理预测: 非实测观测不得进入状态估计/代理训练 (红队红线)."""
+    provenance = getattr(state_after, "provenance", None)
+    if getattr(provenance, "value", provenance) == "predicted":
+        from huginn.security.recovery_planner import UnmeasuredObservationError
+
+        raise UnmeasuredObservationError(
+            f"拒绝把代理预测写入世界状态: source={getattr(state_after, 'source', '?')}"
+        )
+
+
 class WorldStateTracker:
     """逐轮世界状态跟踪器 — 把 StateEstimator + ForwardPredictor 接进物理主循环.
 
@@ -378,6 +399,7 @@ class WorldStateTracker:
         无预测 / 二者无共享维度时返回 None (不误报 0 错). 学代理喂养独立于预测成功 —
         只要有 (前状态, 动作, 实测后状态) 就喂, 让代理从实际执行里积累数据.
         """
+        _require_measured(state_after)
         # 幽灵回流防御: 每收到一代新观测, 老一代预测即被淘汰 (避免旧预测冒充当前).
         self._epoch += 1
         # P2 线: 本轮 (前状态, 动作, 实测后状态) 喂给学代理积累真实运行数据.
@@ -443,7 +465,9 @@ class WorldStateTracker:
         payload = {
             "snapshot": self.last_snapshot.to_dict(),
             "posterior": (
-                self.last_posterior.to_dict() if self.last_posterior is not None else None
+                self.last_posterior.to_dict()
+                if self.last_posterior is not None
+                else None
             ),
             "prediction": self.last_prediction,
             "prediction_error": self.last_prediction_error,
@@ -492,12 +516,18 @@ class WorldStateTracker:
         tracker._last_state_before = None
         tracker._last_action = None
         tracker.last_snapshot = (
-            StateSnapshot.from_dict(payload["snapshot"]) if payload.get("snapshot") else None
+            StateSnapshot.from_dict(payload["snapshot"])
+            if payload.get("snapshot")
+            else None
         )
         tracker.last_posterior = (
-            StateSnapshot.from_dict(payload["posterior"]) if payload.get("posterior") else None
+            StateSnapshot.from_dict(payload["posterior"])
+            if payload.get("posterior")
+            else None
         )
-        tracker.last_prediction = dict(payload["prediction"]) if payload.get("prediction") else None
+        tracker.last_prediction = (
+            dict(payload["prediction"]) if payload.get("prediction") else None
+        )
         tracker.last_prediction_error = payload.get("prediction_error")
         tracker.last_prediction_reward = payload.get("prediction_reward")
         avg = payload.get("avg_reward")
@@ -528,7 +558,9 @@ class WorldStateTracker:
             return True
         return (time.time() - float(self.saved_at)) > max_age_s
 
-    def fresh_prediction(self, max_age_s: float = _GHOST_MAX_AGE_S) -> dict[str, float] | None:
+    def fresh_prediction(
+        self, max_age_s: float = _GHOST_MAX_AGE_S
+    ) -> dict[str, float] | None:
         """安全取"当前新鲜"的预测: 过期/反水化的旧预测返回 None, 而非悄悄回流."""
         if self.is_stale(max_age_s=max_age_s):
             return None
@@ -550,7 +582,9 @@ class WorldStateTracker:
         供调用方确认"真实运行数据确实喂进代理" (P2 快预演积累的证据)."""
         if self.surrogate is None:
             return 0
-        return sum(len(rows) for rows, _ in getattr(self.surrogate, "_samples", {}).values())
+        return sum(
+            len(rows) for rows, _ in getattr(self.surrogate, "_samples", {}).values()
+        )
 
     def surrogate_predict(
         self, state: Mapping[str, Any], action: Any

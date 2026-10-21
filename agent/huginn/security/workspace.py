@@ -38,7 +38,27 @@ logger = logging.getLogger(__name__)
 
 
 class WorkspaceConfirmError(Exception):
-    """感知确认失败 — 动作已执行但状态未达预期, 触发事务回滚."""
+    """感知确认失败 — 动作已执行但状态未达预期, 触发事务回滚.
+
+    可选携带最坏偏离的 ``key`` / ``expected`` / ``actual`` / ``sigma``: 恢复定位器
+    据此算噪声归一化残差, 区分"真失配"与"落在噪声带内". 无结构化偏离时留 None,
+    定位器按不可归因处理 (失效安全).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        key: str | None = None,
+        expected: float | None = None,
+        actual: float | None = None,
+        sigma: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.key = key
+        self.expected = expected
+        self.actual = actual
+        self.sigma = sigma
 
 
 class DependencyNotMetError(Exception):
@@ -47,6 +67,46 @@ class DependencyNotMetError(Exception):
     ``spec.preconditions`` 中的依赖 key 在此刻不可用 (AvailableDependency 未
     提供或被 degrade), 在 execute 之前拦截, 不产生任何副作用/逆.
     """
+
+
+def _worst_deviation(
+    expected: Mapping[str, Any],
+    state: Mapping[str, Any],
+    uncertainty: Mapping[str, float | None] | None,
+) -> tuple[str, float, float, float | None] | None:
+    """取共享键中绝对偏离最大的一项, 附带该键的观测 σ (无则 None)."""
+    worst: tuple[float, str, float, float, float | None] | None = None
+    for key, exp in expected.items():
+        if key not in state:
+            continue
+        try:
+            e = float(exp)
+            a = float(state[key])
+        except (TypeError, ValueError):
+            continue
+        delta = abs(a - e)
+        if worst is None or delta > worst[0]:
+            sigma = (uncertainty or {}).get(key)
+            worst = (delta, str(key), e, a, float(sigma) if sigma else None)
+    return None if worst is None else worst[1:]
+
+
+def _deviation_payload(
+    expected: Mapping[str, Any],
+    state: Mapping[str, Any],
+    tracker: Any,
+) -> dict[str, Any]:
+    """组装 ``WorkspaceConfirmError`` 的结构化偏离 (无可用偏离则空)."""
+    snapshot = getattr(tracker, "last_snapshot", None) if tracker is not None else None
+    uncertainty = snapshot.uncertainty if snapshot is not None else None
+    dev = _worst_deviation(expected, state, uncertainty)
+    if dev is None:
+        return {}
+    key, exp, actual, sigma = dev
+    payload: dict[str, Any] = {"key": key, "expected": exp, "actual": actual}
+    if sigma is not None:
+        payload["sigma"] = sigma
+    return payload
 
 
 class ActionExecutor(Protocol):
@@ -272,13 +332,15 @@ class PhysicalWorkspace:
             and not matches_state(spec.expect, self.state)
         ):
             raise WorkspaceConfirmError(
-                f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
+                f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})",
+                **_deviation_payload(spec.expect, self.state, self._world_state),
             )
         elif expected is not None and not matches_state(
             expected, self.state, tolerance
         ):
             raise WorkspaceConfirmError(
-                f"感知确认失败: 状态偏离预期 (动作 {action.type})"
+                f"感知确认失败: 状态偏离预期 (动作 {action.type})",
+                **_deviation_payload(expected, self.state, self._world_state),
             )
 
         if inverse is not None:
@@ -320,6 +382,41 @@ class PhysicalWorkspace:
         if self._world_state is None:
             return None
         return self._world_state.last_prediction_reward
+
+    def diagnose_fault(self, exc: BaseException) -> Any:
+        """把一次执行异常转成故障证据 (advisory).
+
+        结构化偏离 (key/expected/actual/sigma) 与跟踪器快照合力给出 z-score 与
+        可辨识档位; 两者都没有时按 ``deficient`` 失效安全 — 不可归因就不归因.
+        """
+        from huginn.security.recovery_planner import DEFAULT_OBS_SIGMA, FaultObservation
+
+        snapshot = (
+            self._world_state.last_snapshot if self._world_state is not None else None
+        )
+        z_score: float | None = None
+        expected = getattr(exc, "expected", None)
+        actual = getattr(exc, "actual", None)
+        if expected is not None and actual is not None:
+            sigma = getattr(exc, "sigma", None)
+            z_score = abs(float(actual) - float(expected)) / (
+                float(sigma) if sigma else DEFAULT_OBS_SIGMA
+            )
+        return FaultObservation(
+            exception=exc,
+            residual=(
+                self._world_state.last_prediction_error
+                if self._world_state is not None
+                else None
+            ),
+            z_score=z_score,
+            identifiable_level=(
+                snapshot.identifiable_level
+                if snapshot is not None
+                # 有跟踪器 = schema 已声明可观测量, 至少 limited; 无跟踪器才 deficient.
+                else ("limited" if self._world_state is not None else "deficient")
+            ),
+        )
 
     def prediction_reward_avg(self) -> float | None:
         """整次运行的平均预测命中奖励 ([0,1]) — runner 把整协议预测命中原样并进 r_phys."""

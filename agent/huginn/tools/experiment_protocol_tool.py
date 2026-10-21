@@ -28,6 +28,38 @@ logger = logging.getLogger(__name__)
 _STEP_IDS = ("aspirate_step", "dispense_step", "mix_step", "aliquot_step")
 
 
+def _fault_payload(wa: Any | None, exc: BaseException) -> dict[str, Any] | None:
+    """故障诊断 + 恢复建议 (advisory). 自身失败一律退回 None, 不影响错误透传."""
+    try:
+        from huginn.security.recovery_planner import (
+            FaultObservation,
+            locate,
+            plan,
+            recovery_block,
+        )
+
+        obs = (
+            wa.diagnose_fault(exc)
+            if wa is not None
+            else FaultObservation(exception=exc)
+        )
+        layer = locate(obs)
+        steps = plan(obs)
+        return {
+            "fault": {
+                "layer": layer.value if layer is not None else None,
+                "z_score": obs.z_score,
+                "residual": obs.residual,
+                "identifiable_level": obs.identifiable_level,
+            },
+            "recovery": [step.to_dict() for step in steps],
+            "recovery_block": recovery_block(layer, steps),
+        }
+    except Exception:  # 防御: 建议生成失败不改变失败语义
+        logger.debug("recovery advisory failed", exc_info=True)
+        return None
+
+
 class ExperimentProtocolInput(BaseModel):
     action: Literal["run", "status"] = Field(
         default="run", description="run=执行一个协议批次, status=查询步骤激活状态"
@@ -39,9 +71,7 @@ class ExperimentProtocolInput(BaseModel):
         default=True,
         description="混合器是否可用; False 模拟后端缺失 → mix/aliquot 自动停用",
     )
-    executor_backend: Literal[
-        "mock", "sim"
-    ] = Field(
+    executor_backend: Literal["mock", "sim"] = Field(
         default="sim",
         description=(
             "物理执行器后端: mock=内存日志 (无状态), "
@@ -76,7 +106,9 @@ class ExperimentProtocolTool(HuginnTool):
     def is_read_only(self, args: ExperimentProtocolInput) -> bool:
         return args.action == "status"
 
-    def _build_workspace(self, args: ExperimentProtocolInput, context: ToolContext) -> Any:
+    def _build_workspace(
+        self, args: ExperimentProtocolInput, context: ToolContext
+    ) -> Any:
         from huginn.security.experiment_protocol import build_pipette_workflow
         from huginn.security.workspace import MockExecutor, SimExecutor
         from huginn.security.world_model import NaiveWorldModel
@@ -118,6 +150,7 @@ class ExperimentProtocolTool(HuginnTool):
         # 传 dict (工具内部 schema 校验), 直接工具调用传模型. 见 file_read_tool 同款约定.
         if not isinstance(args, ExperimentProtocolInput):
             args = ExperimentProtocolInput.model_validate(args)
+        wa: Any | None = None
         try:
             wa, executor, rv = self._build_workspace(args, context)
 
@@ -142,7 +175,9 @@ class ExperimentProtocolTool(HuginnTool):
                 "executor_backend": args.executor_backend,
                 "executed_steps": executed,
                 "degraded_steps": degraded,
-                "final_state": executor.observe() if args.executor_backend == "sim" else None,
+                "final_state": executor.observe()
+                if args.executor_backend == "sim"
+                else None,
                 "inverse_count": wa.revertible.depth,
                 "revertible_shared_with_agent": rv is not None,
             }
@@ -151,5 +186,10 @@ class ExperimentProtocolTool(HuginnTool):
                 data["surrogate_samples"] = wa.surrogate_samples()
             return ToolResult(success=True, data=data)
         except Exception as exc:
-            # 执行失败/感知确认失败 → 事务已回滚, 物理逆已执行. 透传失败语义.
-            return ToolResult(data=None, success=False, error=f"{type(exc).__name__}: {exc}")
+            # 执行失败/感知确认失败 → 事务已回滚, 物理逆已执行. 透传失败语义,
+            # 附带故障层与恢复建议 (advisory, 供 agent 下一步决策).
+            return ToolResult(
+                data=_fault_payload(wa, exc),
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )

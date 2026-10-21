@@ -57,6 +57,7 @@
 | `tests/test_prompt_contract.py` | 否 | `full-suite-only` | — |
 | `tests/test_protocol_contract.py` | 否 | `fast-fail-guard` | Protocol adapter contract guard |
 | `tests/test_publish_mirror_drift.py` | 否 | `full-suite-only` | — |
+| `tests/test_recovery_planner.py` | 否 | `fast-fail-guard` | World model recovery contract guard |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
 ## CLI 门 (cli gates)
@@ -134,6 +135,7 @@
 | VISTA 过程级 trace 检索 (`trace_inspect`) | `trace_inspect` | feature_flag | false | false | 是 | `huginn/autoloop/recall_modes.py`, `huginn/autoloop/plan_check.py` | `tests/test_vista_recall_modes.py` |
 | VISTA 无损帧记忆 (`visual_frame_memory`) | `visual_frame_memory` | feature_flag | false | false | 是 | `huginn/autoloop/frame_store.py`, `huginn/autoloop/recall_modes.py` | `tests/test_vista_recall_modes.py` |
 | 世界模型 (`world_model`) | `world_model` | feature_flag | true | true | 是 | `huginn/capabilities/world_model.py`, `huginn/security/world_model.py`, `huginn/research/law_model.py` | `tests/test_world_model.py`, `tests/test_research_planning_team.py` |
+| 世界模型故障恢复层 (五层定位 + 硬门策略 + 代理来源标记) (`worldmodel_recovery`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/security/recovery_planner.py`, `huginn/security/workspace.py`, `huginn/tools/experiment_protocol_tool.py` | `tests/test_recovery_planner.py` |
 
 ## prompt 段生效面 (prompt segments)
 
@@ -174,11 +176,11 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |
 | 工作流数下限 | `tests/test_arch_gate_registry.py` | 权威 | 6 | 7 | 1 | Governance gate registry guard |
-| 快速失败门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 20 | 1 | Governance gate registry guard |
+| 快速失败门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 21 | 2 | Governance gate registry guard |
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
-| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 128 | 6 | Governance gate registry guard |
-| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 20 | 1 | Governance gate registry guard |
+| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 129 | 7 | Governance gate registry guard |
+| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 21 | 2 | Governance gate registry guard |
 | prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 13 | 13 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |

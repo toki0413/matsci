@@ -162,6 +162,13 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_protocol_contract.py -q -o addopts=""
 
+      # 世界模型故障恢复层契约门 (红蓝双轨): 五层定位因果序、噪声带内不得归因模型
+      # 失配、转用门未声明关系禁转、不可逆禁自动执行、Beta 下界排序、代理预测不得
+      # 进入状态估计。全部 advisory, 不触碰主流程语义。weightless, 快速 fail。
+      - name: World model recovery contract guard
+        working-directory: agent
+        run: python -m pytest tests/test_recovery_planner.py -q -o addopts=""
+
       # 低熵治理门禁：治理门自身的熵 —— `test_arch_*.py` 存在却未登记 (孤儿门)、
       # ci.yml guard step 指向不存在的测试 (悬空门)、门数萎缩。weightless
       # (stdlib + 可选 yaml, 不 import huginn.*)，先于重型套件快速 fail。

@@ -783,6 +783,22 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
         "modules": ("huginn/protocols/__init__.py",),
         "tests": ("tests/test_protocol_contract.py",),
     },
+    # ── 世界模型故障恢复层 (P2): always_on 型锚点 ──
+    # advisory 层不引入独立开关, 也不改变主流程执行语义; 锚点双判据:
+    # 承载模块 (分层定位/工作台诊断/工具失败接线) + 红蓝双轨契约门.
+    {
+        "id": "worldmodel_recovery",
+        "name": "世界模型故障恢复层 (五层定位 + 硬门策略 + 代理来源标记)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": (
+            "huginn/security/recovery_planner.py",
+            "huginn/security/workspace.py",
+            "huginn/tools/experiment_protocol_tool.py",
+        ),
+        "tests": ("tests/test_recovery_planner.py",),
+    },
 )
 
 # ── 能力面闭合分诊表 (feature flag 全部登记: 锚定 or 豁免) ──

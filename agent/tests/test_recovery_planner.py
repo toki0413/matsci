@@ -19,12 +19,24 @@ from huginn.security.recovery_planner import (
     DEFAULT_Z_THRESHOLD,
     FaultLayer,
     FaultObservation,
+    Observation,
+    Provenance,
+    RecoveryAction,
+    UnmeasuredObservationError,
+    degraded_predict,
     locate,
     normalized_residual,
+    plan,
+    recovery_block,
+    require_measured,
 )
 from huginn.security.tool_registry import ToolContractError, UnknownToolError
 from huginn.security.workspace import DependencyNotMetError, WorkspaceConfirmError
-from huginn.security.world_model import ConstraintViolationError, PhysicalAction
+from huginn.security.world_model import (
+    ConstraintViolationError,
+    NaiveWorldModel,
+    PhysicalAction,
+)
 
 ADEQUATE = "adequate"
 DEFICIENT = "deficient"
@@ -161,3 +173,186 @@ def test_normalized_residual_falls_back_on_bad_sigma() -> None:
 def test_threshold_boundary_is_not_flagged() -> None:
     """恰好等于阈值不算越界 (严格大于才归因)."""
     assert locate(FaultObservation(z_score=DEFAULT_Z_THRESHOLD)) is None
+
+
+# ── P2-2: 策略硬门 + 下界排序 ─────────────────────────────────────
+class _Belief:
+    def __init__(self, successes: int, failures: int) -> None:
+        self.successes = successes
+        self.failures = failures
+
+
+class _Bandit:
+    def __init__(self, table: dict[str, _Belief]) -> None:
+        self._table = table
+
+    def get_belief(self, variant_id: str, objective: str) -> _Belief | None:
+        return self._table.get(variant_id)
+
+
+def test_contract_layer_offers_only_artifact_replacement() -> None:
+    steps = plan(
+        FaultObservation(exception=ToolContractError("m"), identifiable_level=ADEQUATE)
+    )
+    assert [s.action for s in steps] == [RecoveryAction.REPLACE_ARTIFACT]
+    assert "重试" in steps[0].reason
+
+
+def test_irreversible_fault_never_retries_or_rolls_back() -> None:
+    """红队: 不可逆现场只留非破坏性动作, 不得自动重试/换后端/回滚."""
+    steps = plan(FaultObservation(exception=RuntimeError("boom")), reversible=False)
+    assert {s.action for s in steps} == {RecoveryAction.DEGRADED_PROXY}
+
+
+def test_retry_budget_exhaustion_removes_retry() -> None:
+    steps = plan(
+        FaultObservation(exception=RuntimeError("boom")),
+        retry_index=2,
+        max_retries=2,
+    )
+    assert RecoveryAction.RETRY not in {s.action for s in steps}
+
+
+def test_switch_tool_requires_transfer_verdict() -> None:
+    """蓝: 声明 ⊂ 关系才允许换族; 红: 未声明关系一律不出现候选."""
+    obs = FaultObservation(z_score=9.0, identifiable_level=ADEQUATE)
+    allowed = plan(obs, tool="van_der_waals", alternatives=["ideal_gas", "oscillator"])
+    assert [s.label for s in allowed if s.action is RecoveryAction.SWITCH_TOOL] == [
+        "ideal_gas"
+    ]
+
+    denied = plan(obs, tool="ideal_gas", alternatives=["van_der_waals"])
+    assert RecoveryAction.SWITCH_TOOL not in {s.action for s in denied}
+
+
+def test_bandit_posterior_reorders_candidates() -> None:
+    """后验成功的动作排前面 (取 LCB, 不取均值)."""
+    bandit = _Bandit({"retry:": _Belief(8, 0), "switch_backend:": _Belief(0, 8)})
+    steps = plan(
+        FaultObservation(exception=RuntimeError("boom")),
+        bandit=bandit,
+        objective="recovery",
+    )
+    order = [s.action for s in steps]
+    assert order.index(RecoveryAction.RETRY) < order.index(
+        RecoveryAction.SWITCH_BACKEND
+    )
+
+
+def test_measured_cost_penalises_slow_strategy() -> None:
+    steps = plan(
+        FaultObservation(exception=RuntimeError("boom")),
+        costs={"retry": 500.0},
+    )
+    assert steps[0].action is not RecoveryAction.RETRY
+
+
+def test_recovery_block_is_advisory_and_labelled() -> None:
+    obs = FaultObservation(exception=RuntimeError("boom"))
+    block = recovery_block(locate(obs), plan(obs))
+    assert block.startswith("[RECOVERY]")
+    assert "不自动执行" in block
+
+
+# ── P2-3: 接线 (工作台诊断 + 工具失败附带建议) ────────────────────
+def test_diagnose_fault_carries_structured_deviation() -> None:
+    from huginn.security.workspace import MockExecutor, PhysicalWorkspace
+
+    wa = PhysicalWorkspace(
+        NaiveWorldModel(),
+        MockExecutor(),
+        schema={
+            "domain": "wetlab",
+            "space": {"state": ["vol"]},
+            "observables": ["vol"],
+        },
+    )
+    exc = WorkspaceConfirmError("x", key="vol", expected=1.0, actual=1.5, sigma=0.01)
+    obs = wa.diagnose_fault(exc)
+    assert obs.z_score == pytest.approx(50.0)
+    assert obs.identifiable_level == "limited"
+    assert locate(obs) is FaultLayer.MODEL_MISMATCH
+
+
+def test_tool_failure_attaches_recovery_without_changing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import huginn.security.experiment_protocol as proto
+    from huginn.core_types import ToolContext
+    from huginn.tools.experiment_protocol_tool import (
+        ExperimentProtocolInput,
+        ExperimentProtocolTool,
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise WorkspaceConfirmError(
+            "boom", key="sample_vol", expected=1.0, actual=2.0, sigma=0.01
+        )
+
+    monkeypatch.setattr(proto, "run_pipette_protocol", _boom)
+    ctx = ToolContext(session_id="s", workspace="/tmp")
+    result = asyncio.run(
+        ExperimentProtocolTool().call(
+            ExperimentProtocolInput(
+                action="run", executor_backend="sim", learn_surrogate=True
+            ),
+            ctx,
+        )
+    )
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("WorkspaceConfirmError:")
+    assert result.data["fault"]["layer"] == "model_mismatch"
+    assert result.data["recovery"]
+    assert result.data["recovery_block"].startswith("[RECOVERY]")
+
+
+# ── P2-4: 代理降级永不冒充实测 ────────────────────────────────────
+class _FakeSurrogate:
+    def __init__(self, out: object) -> None:
+        self._out = out
+
+    def predict(self, state: object, action: object) -> object:
+        return self._out
+
+
+def test_degraded_prediction_is_labelled_and_not_measured() -> None:
+    obs = degraded_predict(_FakeSurrogate({"vol": 1.2}), {}, None)
+    assert obs is not None
+    assert obs.provenance is Provenance.PREDICTED
+    assert obs.degraded is True
+    assert obs.to_dict()["provenance"] == "predicted"
+    with pytest.raises(UnmeasuredObservationError):
+        require_measured(obs)
+
+
+def test_require_measured_accepts_measured() -> None:
+    obs = Observation(
+        values={"vol": 1.0}, provenance=Provenance.MEASURED, source="sensor"
+    )
+    assert require_measured(obs) == {"vol": 1.0}
+
+
+def test_degraded_predict_refuses_to_fabricate() -> None:
+    class _Broken:
+        def predict(self, state: object, action: object) -> object:
+            raise RuntimeError("no surrogate")
+
+    assert degraded_predict(_Broken(), {}, None) is None
+    assert degraded_predict(_FakeSurrogate({}), {}, None) is None
+    assert degraded_predict(_FakeSurrogate({"x": "not-a-number"}), {}, None) is None
+
+
+def test_world_state_rejects_predicted_observation() -> None:
+    from huginn.security.world_state import WorldStateTracker
+
+    tracker = WorldStateTracker(
+        {"domain": "x", "space": {"state": ["a"]}, "observables": ["a"]},
+        NaiveWorldModel(),
+    )
+    obs = degraded_predict(_FakeSurrogate({"a": 1.0}), {}, None)
+    assert obs is not None
+    with pytest.raises(UnmeasuredObservationError):
+        tracker.observe(obs)
