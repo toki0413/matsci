@@ -58,6 +58,166 @@ class PersonaKernel:
             )
 
 
+def parse_kernel_boundaries(kernel: PersonaKernel) -> dict[str, list[str]]:
+    """把 kernel 的约束串解析成准入边界.
+
+    支持显式前缀（不做语义猜测）：
+      ``deny_action:<name>`` / ``deny_resource:<pattern>``
+      ``allow_action:<name>`` / ``allow_resource:<pattern>``
+    无任何可解析规则 → 空 dict（不设限）。
+    """
+    denied_actions: list[str] = []
+    denied_resources: list[str] = []
+    allowed_actions: list[str] = []
+    allowed_resources: list[str] = []
+
+    def _add(bucket: list[str], token: str, prefix: str) -> None:
+        value = token[len(prefix):].strip()
+        if value:
+            bucket.append(value)
+
+    for token in kernel.safety_constraints:
+        token = str(token).strip()
+        if token.startswith("deny_action:"):
+            _add(denied_actions, token, "deny_action:")
+        elif token.startswith("deny_resource:"):
+            _add(denied_resources, token, "deny_resource:")
+    for token in kernel.authorization_boundaries:
+        token = str(token).strip()
+        if token.startswith("allow_action:"):
+            _add(allowed_actions, token, "allow_action:")
+        elif token.startswith("allow_resource:"):
+            _add(allowed_resources, token, "allow_resource:")
+
+    result: dict[str, list[str]] = {}
+    if denied_actions:
+        result["denied_actions"] = denied_actions
+    if denied_resources:
+        result["denied_resources"] = denied_resources
+    if allowed_actions:
+        result["allowed_actions"] = allowed_actions
+    if allowed_resources:
+        result["allowed_resources"] = allowed_resources
+    return result
+
+
+class PersonaKernelStore:
+    """按 (tenant, persona) 注册不可变 PersonaKernel；供准入读取授权边界."""
+
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        if db_path is None:
+            from huginn.utils.runtime import get_runtime_home
+
+            db_path = get_runtime_home() / "persona_kernels.db"
+        self.db_path = str(db_path)
+        self._lock = threading.RLock()
+        self._memory_conn: sqlite3.Connection | None = None
+        if self.db_path == ":memory:":
+            self._memory_conn = sqlite3.connect(":memory:")
+            self._memory_conn.row_factory = sqlite3.Row
+        else:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            conn = self._connect()
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS persona_kernels ("
+                "tenant_id TEXT NOT NULL, persona_id TEXT NOT NULL, "
+                "role TEXT NOT NULL, safety_json TEXT NOT NULL, "
+                "boundaries_json TEXT NOT NULL, core_digest TEXT NOT NULL, "
+                "updated_at TEXT NOT NULL, "
+                "PRIMARY KEY (tenant_id, persona_id))"
+            )
+            conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        if self._memory_conn is not None:
+            return self._memory_conn
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def register(self, kernel: PersonaKernel, *, tenant_id: str = "default") -> str:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO persona_kernels ("
+                "tenant_id, persona_id, role, safety_json, boundaries_json, "
+                "core_digest, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(tenant_id),
+                    kernel.persona_id,
+                    kernel.role,
+                    json.dumps(list(kernel.safety_constraints), ensure_ascii=False),
+                    json.dumps(
+                        list(kernel.authorization_boundaries), ensure_ascii=False
+                    ),
+                    kernel.core_digest,
+                    _now_iso(),
+                ),
+            )
+            conn.commit()
+        return kernel.persona_id
+
+    def get(
+        self, persona_id: str, *, tenant_id: str = "default"
+    ) -> PersonaKernel | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM persona_kernels "
+                "WHERE tenant_id = ? AND persona_id = ?",
+                (str(tenant_id), str(persona_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            safety = tuple(json.loads(row["safety_json"] or "[]"))
+            boundaries = tuple(json.loads(row["boundaries_json"] or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return PersonaKernel(
+            persona_id=row["persona_id"],
+            role=row["role"],
+            safety_constraints=safety,
+            authorization_boundaries=boundaries,
+            core_digest=row["core_digest"],
+        )
+
+    def boundaries_for(
+        self, persona_id: str, *, tenant_id: str = "default"
+    ) -> dict[str, list[str]]:
+        kernel = self.get(persona_id, tenant_id=tenant_id)
+        return parse_kernel_boundaries(kernel) if kernel else {}
+
+
+_kernel_store: PersonaKernelStore | None = None
+
+
+def get_persona_kernel_store() -> PersonaKernelStore:
+    global _kernel_store
+    if _kernel_store is None:
+        _kernel_store = PersonaKernelStore()
+    return _kernel_store
+
+
+def sync_from_persona(
+    persona: Any, *, tenant_id: str = "default"
+) -> PersonaKernel | None:
+    """从 persona.variables['persona_kernel'] 注册内核；无配置返回 None."""
+    raw = (getattr(persona, "variables", {}) or {}).get("persona_kernel")
+    if not isinstance(raw, dict):
+        return None
+    kernel = PersonaKernel(
+        persona_id=str(raw.get("persona_id") or getattr(persona, "name", "default")),
+        role=str(raw.get("role") or ""),
+        safety_constraints=tuple(raw.get("safety_constraints") or ()),
+        authorization_boundaries=tuple(
+            raw.get("authorization_boundaries") or ()
+        ),
+        core_digest=str(raw.get("core_digest") or ""),
+    )
+    get_persona_kernel_store().register(kernel, tenant_id=tenant_id)
+    return kernel
+
+
 @dataclass(frozen=True)
 class PersonaParams:
     clarification_threshold: float = 0.5
@@ -353,12 +513,16 @@ def render_adaptive_layer(
 __all__ = [
     "PersonaEvidenceStore",
     "PersonaKernel",
+    "PersonaKernelStore",
     "PersonaParams",
     "PersonaRevision",
     "PersonaRevisionStore",
     "RevisionStatus",
     "evaluate_revision",
     "get_persona_evidence_store",
+    "get_persona_kernel_store",
     "get_persona_revision_store",
+    "parse_kernel_boundaries",
     "render_adaptive_layer",
+    "sync_from_persona",
 ]

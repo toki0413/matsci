@@ -145,6 +145,7 @@ def evaluate_tool_call(
     requires_authorization: bool = True,
     claim_statuses: dict[str, str] | None = None,
     trust: str | None = None,
+    persona_boundaries: dict[str, Any] | None = None,
     ledger: NormativeLedger | None = None,
     enabled: bool | None = None,
 ) -> AdmissionDecision | None:
@@ -166,10 +167,19 @@ def evaluate_tool_call(
         view = _view(_l, tenant_id, session_id)
         if trust is not None:
             decision = admit_with_trust(
-                request, view, trust=trust, claim_statuses=claim_statuses
+                request,
+                view,
+                trust=trust,
+                claim_statuses=claim_statuses,
+                persona_boundaries=persona_boundaries,
             )
         else:
-            decision = admit(request, view, claim_statuses=claim_statuses)
+            decision = admit(
+                request,
+                view,
+                claim_statuses=claim_statuses,
+                persona_boundaries=persona_boundaries,
+            )
         if not decision.allow:
             logger.debug(
                 "normative shadow %s/%s tool=%s mode=%s required=%s",

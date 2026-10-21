@@ -155,11 +155,15 @@ class MemoryMaintainer:
                         "state": "sleep",
                         "reason": "no_tenant_seeds",
                     }
+            from huginn.env_access import env_str
+
             result = run_dream_cycle(
                 clock=clock,
                 dream_id=f"dream-{uuid.uuid4().hex[:10]}",
                 memories=memories,
                 now=now,
+                tenant_id=env_str("HUGINN_TENANT_ID") or "default",
+                deployment_id=env_str("HUGINN_DEPLOYMENT_ID") or "local",
             )
             if result.status == "completed" and result.dream_object is not None:
                 from huginn.memory.dream_store import get_dream_store

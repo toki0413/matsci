@@ -1,0 +1,37 @@
+{
+  "policy_id": "candidate",
+  "n": 4,
+  "ips": 1.0,
+  "snips": 1.0,
+  "dr": 1.0,
+  "unauthorized_rate": 0.0,
+  "false_pause_rate": 0.0,
+  "behaviour_value": 1.0,
+  "train_n": 8,
+  "eval_n": 4,
+  "shadow": {
+    "n": 4,
+    "unauthorized_executions": 0,
+    "decisions": [
+      "auto_allow",
+      "auto_allow",
+      "auto_allow",
+      "auto_allow"
+    ],
+    "policy": {
+      "means": {
+        "ask": 0.5,
+        "auto_allow": 1.0,
+        "degrade": 0.5,
+        "deny": 0.5
+      },
+      "counts": {
+        "auto_allow": 8
+      },
+      "regret": 0.0
+    }
+  },
+  "note": "offline OPE only; shadow before any rollout",
+  "tenant_id": "bench",
+  "total_samples": 12
+}

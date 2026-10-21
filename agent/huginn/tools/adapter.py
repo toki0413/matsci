@@ -939,14 +939,14 @@ class ToolAdapter:
                             logger.debug(
                                 "behavior risk probe failed", exc_info=True
                             )
+                        try:
+                            _read_only = bool(tool.is_read_only(input_data))
+                        except Exception:
+                            _read_only = bool(getattr(tool, "read_only", False))
                         _risk_label = (
                             "high"
                             if _is_destr
-                            else (
-                                "low"
-                                if getattr(tool, "read_only", False)
-                                else "medium"
-                            )
+                            else ("low" if _read_only else "medium")
                         )
                         get_behavior_monitor().record_event(
                             tenant_id=env_str("HUGINN_TENANT_ID"),
@@ -1261,28 +1261,46 @@ class ToolAdapter:
                     _is_destructive = bool(tool.is_destructive(input_data))
                 except Exception:
                     logger.debug("is_destructive check failed", exc_info=True)
+                # 只读判定优先用工具自己的 is_read_only(args)；仅退化为类属性。
+                _is_read_only = False
+                try:
+                    _is_read_only = bool(tool.is_read_only(input_data))
+                except Exception:
+                    _is_read_only = bool(getattr(tool, "read_only", False))
                 _risk = (
                     RiskLevel.HIGH
                     if _is_destructive
-                    else (
-                        RiskLevel.LOW
-                        if getattr(tool, "read_only", False)
-                        else RiskLevel.MEDIUM
-                    )
+                    else (RiskLevel.LOW if _is_read_only else RiskLevel.MEDIUM)
                 )
                 _target = ""
                 try:
                     _target = str(extract_target_from_args(_args) or "")
                 except Exception:
                     logger.debug("target extraction failed", exc_info=True)
+                _persona_id = str(
+                    getattr(context, "persona_id", "")
+                    or getattr(getattr(self, "_agent_ref", None), "persona_name", "")
+                    or "default"
+                )
+                _persona_boundaries: dict[str, Any] = {}
+                try:
+                    from huginn.persona_kernel import get_persona_kernel_store
+
+                    _persona_boundaries = get_persona_kernel_store().boundaries_for(
+                        _persona_id,
+                        tenant_id=env_str("HUGINN_TENANT_ID"),
+                    )
+                except Exception:  # 防御: kernel 读取失败不改变准入
+                    logger.debug("persona kernel load skipped", exc_info=True)
                 _normative = evaluate_tool_call(
                     tenant_id=env_str("HUGINN_TENANT_ID"),
                     session_id=_sid,
                     tool_name=tool.name,
                     resources=(_target,) if _target else (),
                     risk=_risk,
-                    requires_authorization=not getattr(tool, "read_only", False),
+                    requires_authorization=not _is_read_only,
                     trust=get_vigil_runtime().status().trust,
+                    persona_boundaries=_persona_boundaries or None,
                 )
                 if _normative is not None:
                     admission_meta["sample_id"] = record_admission_sample(

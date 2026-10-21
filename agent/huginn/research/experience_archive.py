@@ -57,6 +57,13 @@ class ExecutableExperience:
         name: str = "",
         ts: str = "",
         quantities: dict[str, Any] | None = None,
+        world_model_id: str = "",
+        worldview: str = "",
+        law: str = "",
+        contract_version: str = "",
+        prediction_error: float | None = None,
+        reconcile_status: str = "",
+        ground_truth_source: str = "",
     ) -> None:
         self.name = name or f"exp_{uuid.uuid4().hex[:10]}"
         self.goal = goal
@@ -69,6 +76,14 @@ class ExecutableExperience:
         self.verdict = verdict
         # 域科学契约工件(量纲/有效域): 由 compile_domain_guards 透出, replay 时可并入判官.
         self.quantities = dict(quantities or {})
+        # §20.7 世界模型对账标签：只有 borne_out + 可回查真值才允许高证据权威.
+        self.world_model_id = world_model_id
+        self.worldview = worldview
+        self.law = law
+        self.contract_version = contract_version
+        self.prediction_error = prediction_error
+        self.reconcile_status = reconcile_status
+        self.ground_truth_source = ground_truth_source
         self.ts = ts or datetime.now(UTC).isoformat(timespec="seconds")
 
     # ---------- 序列化 ----------
@@ -85,6 +100,13 @@ class ExecutableExperience:
             "ground_truth": {str(k): float(v) for k, v in self.ground_truth.items()},
             "verdict": self.verdict,
             "quantities": dict(self.quantities),
+            "world_model_id": self.world_model_id,
+            "worldview": self.worldview,
+            "law": self.law,
+            "contract_version": self.contract_version,
+            "prediction_error": self.prediction_error,
+            "reconcile_status": self.reconcile_status,
+            "ground_truth_source": self.ground_truth_source,
             "ts": self.ts,
         }
 
@@ -102,7 +124,26 @@ class ExecutableExperience:
             name=d.get("name", ""),
             ts=d.get("ts", ""),
             quantities=d.get("quantities") or {},
+            world_model_id=d.get("world_model_id", ""),
+            worldview=d.get("worldview", ""),
+            law=d.get("law", ""),
+            contract_version=d.get("contract_version", ""),
+            prediction_error=d.get("prediction_error"),
+            reconcile_status=d.get("reconcile_status", ""),
+            ground_truth_source=d.get("ground_truth_source", ""),
         )
+
+    def evidential_authority(self) -> float:
+        """§20.7：世界模型经验只有在 borne_out + 可回查真值时才有高证据权威."""
+        if not self.world_model_id:
+            return 0.9 if self.ground_truth else 0.4
+        if self.reconcile_status == "borne_out" and self.ground_truth_source:
+            return 0.9
+        if self.reconcile_status == "borne_out":
+            return 0.6
+        if self.reconcile_status == "falsified":
+            return 0.1
+        return 0.4  # insufficient / missing
 
     # ---------- 可重放复验 ----------
     def replay(

@@ -90,6 +90,15 @@ def _required_act(request: AdmissionRequest) -> str:
     return f"authorize:{actions}:{resources}"
 
 
+def _resource_matches(pattern: Any, resource: str) -> bool:
+    pattern = str(pattern)
+    if pattern == resource:
+        return True
+    if pattern.endswith("*"):
+        return resource.startswith(pattern[:-1])
+    return False
+
+
 def _persona_violation(
     request: AdmissionRequest, boundaries: dict[str, Any] | None
 ) -> str | None:
@@ -100,11 +109,23 @@ def _persona_violation(
         return f"persona 边界禁止动作: {request.action_name}"
     for pattern in boundaries.get("denied_resources") or []:
         for resource in request.resources:
-            if str(pattern).endswith("*"):
-                if str(resource).startswith(str(pattern)[:-1]):
-                    return f"persona 边界禁止资源: {resource}"
-            elif str(resource) == str(pattern):
+            if _resource_matches(pattern, str(resource)):
                 return f"persona 边界禁止资源: {resource}"
+
+    # 允许清单（PersonaKernel.authorization_boundaries）：非空时必须覆盖请求.
+    allowed_actions = set(boundaries.get("allowed_actions") or [])
+    if allowed_actions and not (
+        request.action_name in allowed_actions or "*" in allowed_actions
+    ):
+        return f"persona 授权边界不允许动作: {request.action_name}"
+    allowed_resources = list(boundaries.get("allowed_resources") or [])
+    if allowed_resources:
+        for resource in request.resources:
+            if not any(
+                _resource_matches(pattern, str(resource))
+                for pattern in allowed_resources
+            ):
+                return f"persona 授权边界不允许资源: {resource}"
     return None
 
 

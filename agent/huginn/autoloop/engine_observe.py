@@ -411,12 +411,23 @@ LUCID review (mandatory after generating hypothesis):
         """
         from dataclasses import replace as _replace
 
-        from huginn.persona_kernel import PersonaParams, get_persona_revision_store
+        from huginn.persona_kernel import (
+            PersonaParams,
+            get_persona_revision_store,
+            sync_from_persona,
+        )
 
         params = PersonaParams()
         name = getattr(self, "_last_persona", None) or "default"
         try:
             persona = self._get_persona_manager().get(name)
+            # 生产供源：persona 卡里的 persona_kernel 注册到 kernel store，
+            # 供工具准入读取安全/授权边界（无配置时 no-op）。
+            from huginn.env_access import env_str
+
+            sync_from_persona(
+                persona, tenant_id=env_str("HUGINN_TENANT_ID") or "default"
+            )
             raw = (getattr(persona, "variables", {}) or {}).get("persona_params") or {}
             allowed = {
                 key: value

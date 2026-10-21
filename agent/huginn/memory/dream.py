@@ -177,6 +177,9 @@ class DreamObject:
     persona_id: str
     sleep_window: tuple[str, str]
     seed_event_ids: tuple[str, ...]
+    # §13: 跨设备同步只同步投影对象；租户/部署用于隔离与溯源.
+    tenant_id: str = "default"
+    deployment_id: str = "local"
     highlights: tuple[str, ...] = ()
     decisions: tuple[str, ...] = ()
     risks: tuple[str, ...] = ()
@@ -342,6 +345,8 @@ def synthesize_dream_object(
     sleep_window: tuple[str, str],
     findings: list[DreamFinding],
     repairs: list[RepairAction],
+    tenant_id: str = "default",
+    deployment_id: str = "local",
 ) -> DreamObject:
     """把 findings/repairs 合成梦对象；默认 derived 权威，不授权动作."""
     ordered = sorted(findings, key=lambda f: f.surprise, reverse=True)
@@ -349,6 +354,8 @@ def synthesize_dream_object(
         dream_id=dream_id,
         persona_id=persona_id,
         sleep_window=sleep_window,
+        tenant_id=str(tenant_id or "default"),
+        deployment_id=str(deployment_id or "local"),
         seed_event_ids=tuple(f.finding_id for f in ordered[:10]),
         highlights=tuple(f.subject for f in ordered[:3]),
         decisions=tuple(f"{r.action}:{','.join(r.target_ids)}" for r in repairs[:5]),
@@ -369,6 +376,8 @@ def run_dream_cycle(
     probes: list[dict[str, Any]] | None = None,
     now: str | datetime | None = None,
     counterfactual: Callable[[DreamFinding, str], bool] | None = None,
+    tenant_id: str = "default",
+    deployment_id: str = "local",
 ) -> DreamCycleResult:
     """睡眠门控 + Dreamer→Analyst→Consolidator 的纯核心."""
     current = tick(clock, now)
@@ -386,6 +395,8 @@ def run_dream_cycle(
         sleep_window=(current.last_transition_at, str(now or "")),
         findings=findings,
         repairs=repairs,
+        tenant_id=tenant_id,
+        deployment_id=deployment_id,
     )
     return DreamCycleResult(
         status="completed",

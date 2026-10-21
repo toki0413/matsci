@@ -1741,7 +1741,7 @@ class LongTermMemory:
         with self._connect() as conn:
             alive_where, alive_params = self._where_alive()
             rows = conn.execute(
-                f"SELECT id, content, tags, formula FROM memories AS m "
+                f"SELECT id, content, tags, formula, created_at FROM memories AS m "
                 f"WHERE {alive_where}",
                 alive_params,
             ).fetchall()
@@ -1759,16 +1759,24 @@ class LongTermMemory:
                 tags_list = []
             for tag in tags_list:
                 if isinstance(tag, str) and (
-                    tag.startswith("contradicts:") or tag.startswith("crossref:")
+                    tag.startswith("contradicts:")
+                    or tag.startswith("crossref:")
+                    or tag.startswith("superseded_by:")
                 ):
                     continue
                 groups.setdefault((formula, tag), []).append(
-                    {"id": r["id"], "content": r["content"], "tags": tags_list}
+                    {
+                        "id": r["id"],
+                        "content": r["content"],
+                        "tags": tags_list,
+                        "created_at": r["created_at"] or "",
+                    }
                 )
 
         contradictions: list[dict[str, Any]] = []
         pending_updates: dict[str, list[str]] = {}
         auto_fixed = 0
+        superseded = 0
         num_re = re.compile(r"-?\d+\.?\d*")
         for (formula, tag), entries in groups.items():
             if len(entries) < 2:
@@ -1795,12 +1803,68 @@ class LongTermMemory:
                     if b_tag not in b_new:
                         b_new.append(b_tag)
                         auto_fixed += 1
+                    # DoD 5: 旧记录标 superseded_by:<new_id>；双份保留，按
+                    # created_at 判定新旧（同时间用 pair 顺序，确定性）。
+                    old, new = (
+                        (a, b)
+                        if (a.get("created_at") or "") <= (b.get("created_at") or "")
+                        else (b, a)
+                    )
+                    old_new = pending_updates.setdefault(
+                        old["id"], list(old["tags"])
+                    )
+                    supersede_tag = f"superseded_by:{new['id']}"
+                    if supersede_tag not in old_new:
+                        old_new.append(supersede_tag)
+                        auto_fixed += 1
+                    try:
+                        from huginn.env_access import env_str
+                        from huginn.research.belief_ledger import (
+                            BeliefRecord,
+                            get_belief_ledger,
+                        )
+
+                        _tenant = env_str("HUGINN_TENANT_ID") or "default"
+                        _subject = f"{formula}:{tag}"
+                        _ledger = get_belief_ledger()
+                        _old_id = f"{old['id']}@{_subject}"
+                        _new_id = f"{new['id']}@{_subject}"
+                        _ledger.append(
+                            BeliefRecord(
+                                belief_id=_old_id,
+                                tenant_id=_tenant,
+                                subject=_subject,
+                                claim=str(old.get("content") or ""),
+                                provenance=(f"memory:{old['id']}",),
+                                valid_from=str(old.get("created_at") or ""),
+                            )
+                        )
+                        _ledger.append(
+                            BeliefRecord(
+                                belief_id=_new_id,
+                                tenant_id=_tenant,
+                                subject=_subject,
+                                claim=str(new.get("content") or ""),
+                                provenance=(f"memory:{new['id']}",),
+                                valid_from=str(new.get("created_at") or ""),
+                                supersedes=_old_id,
+                            )
+                        )
+                        superseded += 1
+                    except Exception:  # 防御: 认知账失败不回滚标签修复
+                        logger.debug(
+                            "belief ledger supersede failed", exc_info=True
+                        )
 
         if auto_fix and pending_updates:
             for entry_id, new_tags in pending_updates.items():
                 self.update(entry_id, tags=new_tags)
 
-        return {"contradictions": contradictions, "auto_fixed": auto_fixed}
+        return {
+            "contradictions": contradictions,
+            "auto_fixed": auto_fixed,
+            "superseded_by": superseded,
+        }
 
     # ── maybe_consolidate: 双门槛记忆整理 (research-dream dream 心智) ───────
     # 时间门 7 天 + 累积门 50 条未归档 short tier. 7 天兜底: 时间到了累积未到

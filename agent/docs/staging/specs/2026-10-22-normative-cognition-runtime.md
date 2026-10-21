@@ -1760,10 +1760,16 @@ CREATE TABLE reconcile_records (
 - [x] 多设备晚到事件重投影：`append_remote_act` 追加后触发 `register_reproject_listener` 回调，投影按 Lamport `seq` 重排、不改历史。
 - [x] OPE 报告工具：`python -m huginn.cli.ope_report`（时间切分 train/eval + IPS/SNIPS/DR + 影子安全指标）。
 
-待完成（真实数据验证）：
+- [x] `PersonaKernel.authorization_boundaries` 接入工具准入路径：`PersonaKernelStore` + `sync_from_persona`（persona.variables['persona_kernel']）→ adapter `evaluate_tool_call(persona_boundaries=...)` → `admit()`；支持 deny/allow 动作与资源清单。
+- [x] 用真实轨迹跑 OPE 报告并归档：[ope-report.json](file:///workspace/agent/docs/ope-report.json) / [ope-report.md](file:///workspace/agent/docs/ope-report.md)。数据为 `HUGINN_NORMATIVE_TRAJECTORY=1` 下 12 次真实 `file_read_tool` 调用（outcome 已回填）；train/eval=8/4，IPS/SNIPS/DR=1.0，unauthorized=0，shadow unauthorized=0。
+- [x] DoD 5：`LongTermMemory.lint(auto_fix=True)` 在保留 `contradicts:` 兼容标签的同时写 `superseded_by:<new_id>`，并把双份记录与取代链落到 `BeliefLedger`（按 `created_at` 判定新旧、valid-time 检索）。
+- [x] §13 梦境同步契约：`DreamObject` 带 `tenant_id / deployment_id`，`DreamStore` 落库并按租户过滤（旧库幂等迁移）；MemoryMaintainer 从 `HUGINN_TENANT_ID / HUGINN_DEPLOYMENT_ID` 注入。
+- [x] §20.7 经验账世界模型标签：`ExecutableExperience` 增补 `world_model_id / worldview / law / contract_version / prediction_error / reconcile_status / ground_truth_source`，并实现 `evidential_authority()` 升格阶梯（prediction ≤0.4 / reconciled 0.6 / replicated 0.9 / falsified 0.1）。
 
-- [ ] 用真实生产轨迹跑一次 OPE 报告并把结果归档；代码/CLI 已就绪，但当前仓库没有生产准入轨迹。
-- [ ] `PersonaKernel.authorization_boundaries` 接入工具准入路径（当前 kernel/params 已实现并可投影，但 `admit()` 的 `persona_boundaries` 尚无生产供源）。
+待完成（规模与线上验证）：
+
+- [ ] 积累生产规模轨迹后重跑 OPE；当前报告是引导用真实语料（12 条），不足以支撑 §14.1 的敏感度/特异度目标。
+- [ ] 线上 false pause / p99 / 行为指纹 JS 散度按 §14.2 基线校准；阈值应走策略注册表。
 
 ---
 
@@ -1815,7 +1821,8 @@ CREATE TABLE reconcile_records (
 | `HUGINN_IDLE_ENABLED` | `0` | 常驻空闲环（PreparedContext/IdleJobQueue） | 设 `0` 关闭 |
 | `HUGINN_IDLE_INTERVAL_S` | `300` | 空闲环 tick 间隔 | 按部署调整 |
 | `HUGINN_IDLE_BUDGET_MS` | `60000` | 单租户空闲预算上限 | 按部署调整 |
-| `HUGINN_TENANT_ID` | `default` | 规范账/记忆账租户分区 | 部署时显式设置 |
+| `HUGINN_TENANT_ID` | `default` | 规范账/记忆账/梦境租户分区 | 部署时显式设置 |
+| `HUGINN_DEPLOYMENT_ID` | `local` | 事件/梦境溯源标签（不参与授权判定） | 按部署设置 |
 | `HUGINN_MEMORY_INFLUENCE_GATE` | `1` | 召回结果过影响闸 | 设 `0` 回退纯召回 |
 | `HUGINN_MEMORY_AUDIT` | `1` | 影响判定写审计事件 | 设 `0` 关闭 |
 | `HUGINN_DREAM_ENABLED` | `1` | 梦境总开关 | 设 `0` |
@@ -1849,7 +1856,8 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   tests/test_physical_workspace.py tests/test_world_state.py \
   tests/test_reconcile.py tests/test_pmk_sheaves.py tests/test_temporal_pmk.py \
   tests/test_belief_ledger.py tests/test_persona_revision.py \
-  tests/test_soul_priority.py tests/test_proactive_prep.py \
+  tests/test_persona_boundaries.py tests/test_soul_priority.py \
+  tests/test_proactive_prep.py \
   tests/test_idle_jobs.py tests/test_distillation_authority.py \
   tests/test_case_policy.py tests/test_bayesian_surprise.py \
   tests/test_behavior_fingerprint.py tests/test_learning_loop.py \
@@ -1857,7 +1865,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   -q -o addopts=""
 ```
 
-当前证据：299 passed（上述不变量套件）；另 302 passed + 1 skipped（autoloop/engine 分解/工具适配/arch 接缝/config 契约/research 管线回归）；ruff clean；契约文档 `env-contract / events-contract / feature-flags-contract` 已按 `config_audit` 重新生成，无漂移。
+当前证据：318 passed（上述不变量套件）；另 302 passed + 1 skipped（autoloop/engine 分解/工具适配/arch 接缝/config 契约/research 管线回归）+ 152 passed（记忆/梦境/长期任务回归）；ruff clean；契约文档 `env-contract / events-contract / feature-flags-contract` 已按 `config_audit` 重新生成，无漂移；OPE 报告见 `docs/ope-report.json` / `docs/ope-report.md`。
 
 ### 22.4 已知限制
 
@@ -1870,10 +1878,11 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
 - VIGIL 默认仍是 lifespan 启动的同进程 daemon 线程；`HUGINN_VIGIL_PROCESS=1` 才切到独立子进程 + `MonitorSupervisor` watchdog（心跳文件 + 1/2/4/8 分钟有界退避，预算耗尽停 L3）。独立进程模式下 trust 通过心跳文件传播，心跳缺失/过期即 `L3/unknown`。
 - 世界模型 `prediction_error` 已由 `PhysicalWorkspace` 自动落 `drift_events`；PMK 的 `world_model` stalk 已与 memory/kb/timeseries 做 worldview/contract 交叉粘合，但只对**双方都带完整标签**的证据建边：无标签证据按「未检查」跳过，不做语义猜测。
 - token 预算已覆盖 autoloop prompt 字符预算、LLM `max_tokens`（仅缩放已配置上限的模型）与工具输出/压缩预算；未配置上限的模型不缩放，避免改变既有行为。
-- P2-b 学习回路已接入真实工具路径（`HUGINN_NORMATIVE_TRAJECTORY=1`，默认关闭）；OPE CLI 已就绪，但 DoD 7 的“完成 OPE 报告”仍需**真实生产轨迹**，当前仓库没有。
+- P2-b 学习回路已接入真实工具路径（`HUGINN_NORMATIVE_TRAJECTORY=1`，默认关闭）；OPE 报告已用 12 条真实只读调用生成并归档（见 §21 / `docs/ope-report.*`），但规模只够验证管线，不足以支撑 §14.1 的统计目标。
 - `PreparedContext` / `IdleJobQueue` 已接 lifespan 常驻空闲环（`HUGINN_IDLE_ENABLED`，默认关闭）；Soul 种子过滤已接 MemoryMaintainer；行为指纹已接工具审计 + VIGIL 周期（超阈值只写 review 级 `drift_events`）。
-- `PersonaParams` 已驱动 plan_check 的接受置信度与澄清触发次数；`PersonaKernel` 安全/授权边界尚未接入 `admit()` 的生产供源。
+- `PersonaParams` 已驱动 plan_check 的接受置信度与澄清触发次数；`PersonaKernel` 边界已通过 `PersonaKernelStore` + `sync_from_persona` 接入 `admit()`。
 - 多设备晚到事件已有显式重投影触发器；投影仍按 Lamport `seq` 确定性重排。
+- `DreamObject` 已带 `tenant_id / deployment_id` 并按租户过滤；跨设备只同步投影对象，不同步原始对话（设计边界，非缺陷）。
 
 
 

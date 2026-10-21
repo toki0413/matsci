@@ -276,6 +276,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_DREAM_ENABLED": EnvSpec("int", "1", "tuning"),
     "HUGINN_DREAM_TIMEZONE": EnvSpec("str", "UTC", "tuning"),
     "HUGINN_DREAM_WINDOWS": EnvSpec("str", "", "tuning"),
+    "HUGINN_DEPLOYMENT_ID": EnvSpec("str", "local", "deployment"),
     "HUGINN_IDLE_BUDGET_MS": EnvSpec("int", "60000", "tuning"),
     "HUGINN_IDLE_ENABLED": EnvSpec("bool", "false", "tuning"),
     "HUGINN_IDLE_INTERVAL_S": EnvSpec("int", "300", "tuning"),

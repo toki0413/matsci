@@ -258,6 +258,16 @@ class BeliefLedger:
         return [_row_to_dict(row) for row in rows]
 
 
+_ledger: BeliefLedger | None = None
+
+
+def get_belief_ledger() -> BeliefLedger:
+    global _ledger
+    if _ledger is None:
+        _ledger = BeliefLedger()
+    return _ledger
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
     try:
@@ -274,4 +284,5 @@ __all__ = [
     "BeliefRecord",
     "BeliefScope",
     "SourceClass",
+    "get_belief_ledger",
 ]

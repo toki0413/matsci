@@ -48,6 +48,8 @@ class DreamStore:
                 CREATE TABLE IF NOT EXISTS dream_objects (
                   dream_id      TEXT PRIMARY KEY,
                   persona_id    TEXT NOT NULL,
+                  tenant_id     TEXT NOT NULL DEFAULT 'default',
+                  deployment_id TEXT NOT NULL DEFAULT 'local',
                   status        TEXT NOT NULL,
                   payload_json  TEXT NOT NULL,
                   created_at    TEXT NOT NULL
@@ -65,8 +67,23 @@ class DreamStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_dream_persona
                   ON dream_objects(persona_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_dream_tenant
+                  ON dream_objects(tenant_id, created_at);
                 """
             )
+            # 旧库迁移：补租户/部署列（幂等）.
+            for column, ddl in (
+                ("tenant_id", "TEXT NOT NULL DEFAULT 'default'"),
+                ("deployment_id", "TEXT NOT NULL DEFAULT 'local'"),
+            ):
+                existing = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(dream_objects)")
+                }
+                if column not in existing:
+                    conn.execute(
+                        f"ALTER TABLE dream_objects ADD COLUMN {column} {ddl}"
+                    )
             conn.commit()
 
     def save(
@@ -78,11 +95,13 @@ class DreamStore:
         with self._lock, self._connect() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO dream_objects "
-                "(dream_id, persona_id, status, payload_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(dream_id, persona_id, tenant_id, deployment_id, status, "
+                "payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     dream.dream_id,
                     dream.persona_id,
+                    dream.tenant_id,
+                    dream.deployment_id,
                     dream.status,
                     json.dumps(payload, ensure_ascii=False, default=str),
                     _now_iso(),
@@ -121,13 +140,23 @@ class DreamStore:
         return item
 
     def list_dreams(
-        self, *, persona_id: str | None = None, limit: int = 50
+        self,
+        *,
+        persona_id: str | None = None,
+        tenant_id: str | None = None,
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM dream_objects "
+        clauses: list[str] = []
         params: list[Any] = []
         if persona_id is not None:
-            sql += "WHERE persona_id = ? "
+            clauses.append("persona_id = ?")
             params.append(persona_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if clauses:
+            sql += "WHERE " + " AND ".join(clauses) + " "
         sql += "ORDER BY created_at DESC LIMIT ?"
         params.append(int(limit))
         with self._connect() as conn:
