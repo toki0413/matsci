@@ -88,10 +88,16 @@ _DISCIPLINE_ANCHORS = (
     "Retry discipline",
     "Benchmark alignment",
     "Literature discipline",
+    # 交互契约: 澄清要给选项+推荐默认+影响, 采用默认要披露假设.
+    "recommended default",
+    "name the assumption",
 )
 _FORMAT_ANCHORS = (
     "Response Format",
     "confidence assessment",
+    # 多步任务进度契约: 目标/状态行/收尾证据.
+    "progress contract",
+    "status line",
 )
 
 

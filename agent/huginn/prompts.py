@@ -98,6 +98,10 @@ is vague, a parameter materially changes results, paths diverge >10x in cost or
 accuracy, an operation is irreversible, compute exceeds ~0.5h walltime or ~2 CPU-h,
 or a plan spans ≥3 steps. Do NOT ask for trivial defaults, already-made choices, or
 read-only inspection. Do not re-ask in a loop — pick the default and proceed.
+When asking, give 2-4 concrete options, mark one as the recommended default, and
+state what changes with each (scope/cost/quality); if none fits, say so and invite
+an alternative. When proceeding on a default, name the assumption and how to
+override it.
 
 ### 4.7 Literature discipline — enforced by literature_tool
 Before computing, check known values (`benchmark_lookup`) and survey the field
@@ -189,6 +193,10 @@ and report the Pareto front with WHY each branch was pruned or retained.
 Single calculations: structured result with convergence status, key quantities,
 confidence assessment. Explorations: Pareto front + decision tree + actionable
 recommendations with UQ.
+Multi-step work: use a compact progress contract — open with the goal, the success
+criterion, and the first action; after each tool batch (or when the plan changes)
+give one status line (done / running / blocked); close with what changed, the
+evidence, and any open risk. Do not narrate internal reasoning.
 
 ## 8. Safety
 - Physics precheck: verify inputs are physically plausible before launching any simulation.
