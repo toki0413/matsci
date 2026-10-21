@@ -181,10 +181,44 @@ def record_prediction_error(
     return (ledger or get_drift_ledger()).record(event)
 
 
+def record_prediction_error_value(
+    error: float | None,
+    *,
+    tenant_id: str,
+    session_id: str,
+    prediction_id: str = "",
+    review_threshold: float = 0.05,
+    intervene_threshold: float = 0.15,
+    ledger: DriftLedger | None = None,
+) -> str | None:
+    """记录裸 prediction_error（ForwardPredictor 路径）；ok/no_signal 不写."""
+    if error is None:
+        return None
+    value = float(error)
+    if value > intervene_threshold:
+        level, threshold = "intervene", intervene_threshold
+    elif value > review_threshold:
+        level, threshold = "review", review_threshold
+    else:
+        return None
+    event = DriftEvent(
+        tenant_id=tenant_id,
+        session_id=session_id,
+        detector="prediction_error",
+        baseline_id=prediction_id or "forward_predictor",
+        observed=value,
+        threshold=float(threshold),
+        level=level,
+        evidence={"source": "forward_predictor"},
+    )
+    return (ledger or get_drift_ledger()).record(event)
+
+
 __all__ = [
     "DriftEvent",
     "DriftLedger",
     "DriftLevel",
     "get_drift_ledger",
     "record_prediction_error",
+    "record_prediction_error_value",
 ]

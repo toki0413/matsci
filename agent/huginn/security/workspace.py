@@ -145,9 +145,15 @@ class PhysicalWorkspace:
         *,
         schema: Mapping[str, Any] | None = None,
         surrogate: Any = None,
+        tenant_id: str | None = None,
+        session_id: str = "default",
     ) -> None:
         self.world_model = world_model
         self.executor = executor
+        from huginn.env_access import env_str
+
+        self.tenant_id = tenant_id or env_str("HUGINN_TENANT_ID")
+        self.session_id = session_id
         # 复用外部逆上下文 (如 agent 的 ToolContext.revertible) 时, 物理逆进入
         # 统一的 agent 逆栈, 上层整体回滚会一并撤销实验副作用; 否则自建一个.
         self.revertible = revertible if revertible is not None else RevertibleContext()
@@ -298,7 +304,17 @@ class PhysicalWorkspace:
         if self._world_state is not None:
             try:
                 self._world_state.step(state_before, action)
-                self._world_state.observe(self.state)
+                _prediction_error = self._world_state.observe(self.state)
+                if _prediction_error is not None:
+                    from huginn.metacog.drift_ledger import (
+                        record_prediction_error_value,
+                    )
+
+                    record_prediction_error_value(
+                        _prediction_error,
+                        tenant_id=self.tenant_id,
+                        session_id=self.session_id,
+                    )
             except Exception:
                 logger.debug("world-state step failed", exc_info=True)
         return action
