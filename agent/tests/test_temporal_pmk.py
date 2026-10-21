@@ -243,6 +243,42 @@ def test_pmk_shadow_does_not_pause(monkeypatch):
     assert "PMK" in _reason2, _reason2
 
 
+def test_pmk_llm_checker_advisory_and_cache():
+    """LLM 只判认识论且只给 advisory；规则阻断优先，不调 LLM；同文本缓存."""
+    import asyncio
+
+    from huginn.runtime.task_lifecycle import check_pmk_consistency_llm
+
+    calls = {"n": 0}
+
+    async def _fake_llm(prompt: str) -> str:
+        calls["n"] += 1
+        return '{"conflict": true, "reason": "same subject, different wording"}'
+
+    _pmk = {
+        "memory": "use GNN for this task",
+        "kb": "avoid graph neural networks",
+    }
+    _blocked, _reason = asyncio.run(check_pmk_consistency_llm(_pmk, _fake_llm))
+    assert not _blocked, "认识论 LLM 冲突只应 advisory"
+    assert "LLM advisory" in _reason, _reason
+
+    _blocked2, _ = asyncio.run(check_pmk_consistency_llm(_pmk, _fake_llm))
+    assert not _blocked2
+    assert calls["n"] == 1, "同文本应命中缓存"
+
+    # 规则轴已阻断 → 不调 LLM
+    calls["n"] = 0
+    _blocked3, _reason3 = asyncio.run(
+        check_pmk_consistency_llm(
+            {"persona": "I oppose approach A", "action": "I recommend approach A"},
+            _fake_llm,
+        )
+    )
+    assert _blocked3, _reason3
+    assert calls["n"] == 0, "规则阻断优先，不应调 LLM"
+
+
 def main():
     _check_pmk_since_kb()
     _check_pmk_since_memory()

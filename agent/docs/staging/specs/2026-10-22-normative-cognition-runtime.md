@@ -1719,17 +1719,81 @@ CREATE TABLE reconcile_records (
 - [x] 会话接线：`SessionGrounding`；`request_confirmation` 写 `propose`，`clear_confirmation(accepted=...)` 写 `accept/reject`（§7.1）。
 - [x] 生产路径：计划确认写 `accept/reject`；显式工具审批写 `authorize/reject`（带 TTL 与单次限额）。
 - [x] 工具执行路径 shadow 准入；`HUGINN_NORMATIVE_ENFORCE=1` 时高风险动作缺授权才阻断（I1、I10）。
-- [x] PMK 默认开启（`HUGINN_PMK_INJECT=1`），`HUGINN_PMK_MODE=shadow` 默认评估不暂停；`oppose+oppose` 误报已修。
+- [x] PMK 默认开启（`HUGINN_PMK_INJECT=1`），`HUGINN_PMK_MODE=enforce` 默认；`oppose+oppose` 误报已修。
+- [x] persona 站位拆分：persona 只进入规范/自指轴，不再进入认识论 sheaf；认识论冲突 advisory、规范/自指冲突 block。
 - [x] 记忆双层治理纯函数：保留闸 / 影响闸 / Hygiene Gate / 上下文装配（§18.1–18.2、18.6，I13–I15、I17、I20–I21 基础）。
+- [x] `memory_state_events` 审计账；`recall_for_prompt` 过影响闸并留痕（`HUGINN_MEMORY_INFLUENCE_GATE=1`、`HUGINN_MEMORY_AUDIT=1`）。
+- [x] PMK LLM 语义判定：规则轴优先、只判认识论、advisory、带缓存（尚未接热路径）。
+- [x] 梦境周期纯核心：SleepClock / Dreamer / Analyst / Consolidator / DreamObject / 写入侧晋升门 / 可逆软衰减。
+- [x] VIGIL 监控核心：L0–L4 状态机、有界重启、队列丢弃、DegradationEvent；Smith 漂移 review/intervene/pause。
+- [x] 世界模型 binding 纯核心：prediction → reconcile → authority ladder、worldview 隔离、prediction_error 信号。
+- [x] `drift_events` 审计账；`record_prediction_error` 把 reconcile 误差落成 review/intervene 事件。
 
 待完成（按依赖顺序）：
 
-- [ ] persona 站位拆分：persona 从认识论 sheaf 移出，改为身份/规范约束；跨 worldview 与人格冲突改走规范 H¹。
-- [ ] PMK `enforce` 接线：LLM 语义判定接入、误报率达标后再切默认。
-- [ ] 记忆状态事件账（`memory_state_events`）与 `recall_for_prompt` 的 `assemble_context` 接入。
-- [ ] 梦境周期（SleepClock / Dreamer / Analyst / Consolidator）与写入侧晋升门。
-- [ ] VIGIL 兄弟监控运行时与 L0–L4 降级状态机。
-- [ ] 世界模型 binding：`world_model` stalk、reconcile 升格链、prediction_error 漂移信号。
+- [ ] 梦境周期生产接线：SleepClock 调度、Consolidator 执行修复、DreamObject 落库。
+- [ ] VIGIL 生产接线：兄弟进程/线程、心跳 watchdog、`drift_events` 落库、System3 读取 `trust`。
+- [ ] 世界模型生产接线：PMK `world_model` stalk、真实执行后自动调用 `record_prediction_error`。
+- [ ] PMK LLM 判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
+
+---
+
+## 22. 实现说明与运维手册（滚动）
+
+### 22.1 新增模块
+
+| 模块 | 职责 | 关键不变量 |
+|---|---|---|
+| `huginn/normative/ledger.py` | 追加式规范事件 + 确定性投影 | I1–I4、I9、I11–I12 |
+| `huginn/normative/admission.py` | 纯函数准入：allow/ask/deny/degrade | I1–I2、I10 |
+| `huginn/normative/session.py` | 会话级 propose/accept/authorize 适配 | I2–I3 |
+| `huginn/normative/shadow.py` | 工具执行路径 shadow 评估 + 高风险 enforce | I1、I10 |
+| `huginn/memory/hygiene_gate.py` | 保留闸 / 影响闸 / 上下文装配 | I13–I15、I17、I20–I21 |
+| `huginn/memory/governance.py` | 记忆状态事件审计账 | I16 |
+| `huginn/memory/dream.py` | SleepClock / Dreamer / Analyst / Consolidator / 写入侧晋升门 | I19、I21、I23 |
+| `huginn/metacog/vigil.py` | VIGIL L0–L4 降级状态机、有界重启、队列丢弃 | I35–I40 |
+| `huginn/metacog/drift_gate.py` | Smith 漂移 review/intervene/pause | I29 |
+| `huginn/research/world_model_binding.py` | prediction → reconcile → authority ladder、worldview 隔离 | I41–I50 |
+| `huginn/metacog/drift_ledger.py` | `drift_events` 审计账 + prediction_error 落库 | I46 |
+
+### 22.2 开关与默认值
+
+| 变量 | 默认 | 作用 | 回滚 |
+|---|---|---|---|
+| `HUGINN_PMK_INJECT` | `1` | PMK 总开关 | 设 `0` |
+| `HUGINN_PMK_MODE` | `enforce` | `off/shadow/enforce` | 设 `shadow` 只评估不暂停 |
+| `HUGINN_NORMATIVE_SHADOW` | `1` | 工具路径 shadow 准入 | 设 `0` |
+| `HUGINN_NORMATIVE_ENFORCE` | `0` | 高风险动作缺授权时阻断 | 设 `1` 启用 |
+| `HUGINN_TENANT_ID` | `default` | 规范账/记忆账租户分区 | 部署时显式设置 |
+| `HUGINN_MEMORY_INFLUENCE_GATE` | `1` | 召回结果过影响闸 | 设 `0` 回退纯召回 |
+| `HUGINN_MEMORY_AUDIT` | `1` | 影响判定写审计事件 | 设 `0` 关闭 |
+
+### 22.3 验证命令
+
+```bash
+cd agent
+python -m ruff check huginn/normative huginn/memory/hygiene_gate.py \
+  huginn/memory/governance.py huginn/tools/adapter.py huginn/routes/ws_helpers.py
+python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
+  tests/test_memory_hygiene_gate.py tests/test_memory_governance.py \
+  tests/test_dream_cycle.py tests/test_vigil_runtime.py \
+  tests/test_drift_ledger.py tests/test_world_model_binding.py \
+  tests/test_temporal_pmk.py tests/test_arch_gate_registry.py \
+  tests/test_env_surface_governance.py -q -o addopts=""
+```
+
+当前证据：296 passed（规范/准入/记忆/梦境/VIGIL/漂移/世界模型/PMK/arch/env/工具/权限/研究管线），ruff clean。
+
+### 22.4 已知限制
+
+- PMK 仍是规则版三轴（推荐/反对词 + token 重合）；LLM 语义判定尚未接线，只应作为 advisory，不能直接放行。
+- 认识论冲突只写 advisory hint + episodic；尚未把相关 claim 自动标 `contested`（需要 ClaimView adapter）。
+- 影响闸的 `relevance` 在召回路径用排序近似，不是真实相似度；后续接 embedding/RRF 分数。
+- 记忆审计目前每次召回逐条写事件；高频场景需批量/采样，否则事件账增长快。
+- `HUGINN_NORMATIVE_ENFORCE` 默认关闭：显式审批后的授权已落账，但自动批准路径尚未写 system authorize，直接开启会阻断 auto-approved 高风险动作。
+- 梦境周期、VIGIL、世界模型 binding 目前是**纯核心 + 单测**，尚未接生产调度/落库；接线前不得宣称这些能力已在线生效。
+- VIGIL 的 `heartbeat_timeout` 依赖调用方驱动 `tick`；独立进程/watchdog 尚未实现。
+- 世界模型 `prediction_error` 已有 `record_prediction_error` 落库函数，但真实执行后自动调用尚未接线；PMK 还没有 `world_model` stalk。
 
 
 

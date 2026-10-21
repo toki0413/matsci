@@ -6,6 +6,7 @@ paused 子状态借鉴 Temporal signal-based pause/resume 思路，可持久化�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
@@ -911,59 +912,85 @@ if __name__ == "__main__":
     print("All self-checks passed.")
 
 
+_PMK_LLM_CACHE: dict[str, tuple[bool, str]] = {}
+_PMK_LLM_CACHE_MAX = 256
+
+
 async def check_pmk_consistency_llm(
     pmk_state: dict, llm_chat_fn,
 ) -> tuple[bool, str]:
-    """v8: LLM 判定 PMK 三路立场语义一致性. 规则版抓显式冲突, LLM 版抓隐式冲突.
+    """v8: LLM 判定**认识论**立场语义一致性（advisory，带缓存）.
 
-    规则版 _check_pmk_consistency 用 token 重合度判 subject 相似, 漏同义改写
+    规则版 `_check_pmk_consistency` 用 token 重合度判 subject 相似, 漏同义改写
     (e.g. "use GNN" vs "graph neural network approach"). LLM 版做语义判断.
 
-    调用时机: 规则版判 (False, "") 时, 若三路都有非空文本, 调 LLM 做二次确认.
-    规则版判 True 时直接 pause, 不需要 LLM (显式冲突已够).
+    边界：
+    - 规则轴已阻断（规范/自指冲突）→ 直接返回，不调 LLM；
+    - LLM 只判 memory/kb/timeseries，persona 属身份/规范，不交给 LLM；
+    - 即使 LLM 判冲突，也只返回 advisory（is_blocked=False），不阻断执行；
+    - 同一文本组合缓存，避免重复调用。
 
-    llm_chat_fn: async callable, 接 prompt 返回 str. 失败返回 (False, "").
-
-    ponytail: 不每步调 (成本高), 只在规则版无冲突但三路都有立场时调.
-    升级路径: 缓存 LLM 判断, 同一 pmk_state 不重复调.
+    llm_chat_fn: async callable, 接 prompt 返回 str. 失败返回规则轴结果.
     """
     if not pmk_state:
         return (False, "")
-    texts = {k: v for k, v in pmk_state.items()
-             if k in ("persona", "memory", "kb") and v and str(v).strip()}
+    # 规则轴优先：规范/自指冲突已可阻断，不需要 LLM 二次判定。
+    axes = _check_pmk_axes(pmk_state)
+    if axes.blocked:
+        return (True, axes.reason)
+
+    # LLM 只判认识论（memory/kb/timeseries）；persona 是身份/规范，不交给它。
+    texts = {
+        key: str(pmk_state.get(key, "") or "").strip()
+        for key in ("memory", "kb", "timeseries")
+        if str(pmk_state.get(key, "") or "").strip()
+    }
     if len(texts) < 2:
-        return (False, "")
-    prompt = """Judge if these three stances (Persona/Memory/Knowledge) are semantically consistent.
+        return (False, axes.advisory)
 
-Persona stance: {persona}
-Memory stance: {memory}
-Knowledge stance: {kb}
+    key_src = "|".join(f"{k}:{v[:200]}" for k, v in sorted(texts.items()))
+    cache_key = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:24]
+    cached = _PMK_LLM_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
-Two stances CONFLICT if they take opposing positions on the SAME subject (even with different wording, e.g. "use GNN" vs "avoid graph neural networks" = conflict on GNN usage).
+    prompt = """Judge whether these EPISTEMIC stances conflict on the same subject.
+
+Memory: {memory}
+Knowledge: {kb}
+Timeseries: {timeseries}
+
+Persona is a normative/identity constraint and is NOT part of this judgment.
+Two stances CONFLICT if they take opposing positions on the SAME subject, even with
+different wording (e.g. "use GNN" vs "avoid graph neural networks" = conflict).
 
 Respond JSON only:
-{{"consistent": true/false, "conflict_pair": "persona-vs-memory|persona-vs-kb|memory-vs-kb|none", "reason": "1 sentence why"}}""".format(
-        persona=texts.get("persona", "NONE")[:300],
+{{"conflict": true/false, "reason": "1 sentence why"}}""".format(
         memory=texts.get("memory", "NONE")[:300],
         kb=texts.get("kb", "NONE")[:300],
+        timeseries=texts.get("timeseries", "NONE")[:300],
     )
     try:
         resp = await llm_chat_fn(prompt)
         if not resp:
-            return (False, "")
-        resp = resp.strip()
-        # 提取 JSON
-        import json as _json
-        start = resp.find("{")
-        end = resp.rfind("}")
-        if start == -1 or end <= start:
-            return (False, "")
-        data = _json.loads(resp[start:end + 1])
-        is_consistent = bool(data.get("consistent", True))
-        if not is_consistent:
-            pair = data.get("conflict_pair", "unknown")
-            reason = data.get("reason", "LLM detected semantic conflict")
-            return (True, f"LLM: {pair} conflict — {reason}")
-        return (False, "")
+            result = (False, axes.advisory)
+        else:
+            resp = resp.strip()
+            start = resp.find("{")
+            end = resp.rfind("}")
+            if start == -1 or end <= start:
+                result = (False, axes.advisory)
+            else:
+                data = json.loads(resp[start:end + 1])
+                if bool(data.get("conflict", False)):
+                    reason = str(data.get("reason", "semantic conflict"))
+                    result = (False, f"LLM advisory (epistemic): {reason}")
+                else:
+                    result = (False, axes.advisory)
     except Exception:
-        return (False, "")
+        result = (False, axes.advisory)
+
+    if len(_PMK_LLM_CACHE) >= _PMK_LLM_CACHE_MAX:
+        _PMK_LLM_CACHE.clear()
+    _PMK_LLM_CACHE[cache_key] = result
+    return result

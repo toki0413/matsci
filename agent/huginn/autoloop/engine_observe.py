@@ -729,7 +729,6 @@ LUCID review (mandatory after generating hypothesis):
 
         try:
             from huginn.autoloop.cognitive_loop import build_pmk_state
-            from huginn.runtime.task_lifecycle import _check_pmk_consistency
 
             # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
             persona_obj = None

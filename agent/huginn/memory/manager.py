@@ -228,33 +228,47 @@ class MemoryManager:
             if _prioritized(r) or float(r.get("importance", 0.5)) >= _noise_floor
         ]
         if results:
-            lines = ["## Relevant past knowledge:"]
-            for r in results:
-                provenance = f" ({r.get('source', '')})" if r.get("source") else ""
-                # 消费 lint() 写入的 contradicts: tag, 标注矛盾条目
-                conflict_warn = ""
-                raw_tags = r.get("tags", "[]")
-                if isinstance(raw_tags, str):
-                    try:
-                        tag_list = json.loads(raw_tags)
-                    except (ValueError, TypeError):
-                        tag_list = []
-                elif isinstance(raw_tags, list):
-                    tag_list = raw_tags
-                else:
-                    tag_list = []
-                contradicts = [
-                    t
-                    for t in tag_list
-                    if isinstance(t, str) and t.startswith("contradicts:")
-                ]
-                if contradicts:
-                    ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
-                    conflict_warn = f" [WARNING: conflicts with {ids}]"
-                lines.append(
-                    f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}{conflict_warn}"
+            from huginn.env_access import env_bool
+
+            labels: dict[int, str] = {}
+            if env_bool("HUGINN_MEMORY_INFLUENCE_GATE"):
+                results, labels, no_evidence = self._influence_gate_results(
+                    results, query, budget=float(max(1, max_entries))
                 )
-            blocks.append("\n".join(lines))
+                if no_evidence:
+                    blocks.append(
+                        "## Relevant past knowledge:\n"
+                        "- [NO-EVIDENCE] no admissible memory for this query"
+                    )
+            if results:
+                lines = ["## Relevant past knowledge:"]
+                for r in results:
+                    provenance = f" ({r.get('source', '')})" if r.get("source") else ""
+                    # 消费 lint() 写入的 contradicts: tag, 标注矛盾条目
+                    conflict_warn = ""
+                    raw_tags = r.get("tags", "[]")
+                    if isinstance(raw_tags, str):
+                        try:
+                            tag_list = json.loads(raw_tags)
+                        except (ValueError, TypeError):
+                            tag_list = []
+                    elif isinstance(raw_tags, list):
+                        tag_list = raw_tags
+                    else:
+                        tag_list = []
+                    contradicts = [
+                        t
+                        for t in tag_list
+                        if isinstance(t, str) and t.startswith("contradicts:")
+                    ]
+                    if contradicts:
+                        ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
+                        conflict_warn = f" [WARNING: conflicts with {ids}]"
+                    label = labels.get(id(r)) or f"[{r.get('category', 'fact')}]"
+                    lines.append(
+                        f"- {label} {r.get('content', '')}{provenance}{conflict_warn}"
+                    )
+                blocks.append("\n".join(lines))
 
         # P0 Task 1: skill library 注入 — Voyager-style 参数化模板, retrieve 命中
         # 直接给 LLM function_name + reasoning_template, 省去重复推理.
@@ -271,6 +285,86 @@ class MemoryManager:
             blocks.append(tool_block)
 
         return "\n\n".join(blocks) if blocks else ""
+
+    def _influence_gate_results(
+        self,
+        results: list[dict[str, Any]],
+        query: str,
+        *,
+        budget: float = 2.0,
+    ) -> tuple[list[dict[str, Any]], dict[int, str], bool]:
+        """把召回结果当候选，过影响闸后再装配；返回 (kept, labels, no_evidence)."""
+        from huginn.memory.hygiene_gate import assemble_context
+
+        candidates: list[dict[str, Any]] = []
+        for rank, r in enumerate(results):
+            raw_tags = r.get("tags", "[]")
+            if isinstance(raw_tags, str):
+                try:
+                    tag_list = json.loads(raw_tags)
+                except (ValueError, TypeError):
+                    tag_list = []
+            elif isinstance(raw_tags, list):
+                tag_list = raw_tags
+            else:
+                tag_list = []
+            contradicts = [
+                t for t in tag_list
+                if isinstance(t, str) and t.startswith("contradicts:")
+            ]
+            content = str(r.get("content", "") or "")
+            source = str(r.get("source", "") or "")
+            derived = (
+                r.get("memory_type") in ("summary", "skill")
+                or source.startswith(("cluster", "distiller"))
+            )
+            candidates.append({
+                "memory_id": f"{r.get('id') or 'recall'}-{rank}",
+                "text": content,
+                "authority_class": "derived" if derived else "direct",
+                "relevance": max(0.25, 1.0 - rank * 0.15),
+                "confidence": float(r.get("importance", 0.5) or 0.5),
+                "grounding_status": 0.8 if any(ch.isdigit() for ch in content) else 0.6,
+                "provenance_completeness": 1.0 if source else 0.6,
+                "contradiction_pressure": 0.9 if contradicts else 0.0,
+            })
+
+        pack = assemble_context(
+            candidates,
+            query={"query_id": query},
+            budget=budget,
+        )
+        # Governed Memory：每次影响判定留审计事件（可关，默认开）。
+        try:
+            from huginn.env_access import env_bool, env_str
+
+            if env_bool("HUGINN_MEMORY_AUDIT"):
+                from huginn.memory.governance import get_memory_state_ledger
+                from huginn.memory.hygiene_gate import evaluate_influence
+
+                ledger = get_memory_state_ledger()
+                tenant_id = env_str("HUGINN_TENANT_ID")
+                for candidate in candidates:
+                    decision = evaluate_influence(
+                        candidate, query={"query_id": query}
+                    )
+                    ledger.record_influence(
+                        tenant_id=tenant_id,
+                        memory_id=candidate["memory_id"],
+                        decision=decision,
+                        evidence={"query": query[:120]},
+                    )
+        except Exception:  # 防御: 审计失败不影响召回
+            logger.debug("memory influence audit skipped", exc_info=True)
+
+        by_id = {c["memory_id"]: r for c, r in zip(candidates, results)}
+        kept = [by_id[e.memory_id] for e in pack.entries if e.memory_id in by_id]
+        labels = {
+            id(by_id[e.memory_id]): e.label
+            for e in pack.entries
+            if e.memory_id in by_id
+        }
+        return kept, labels, pack.no_evidence
 
     def _recent_tool_results_block(self, limit: int = 3, max_chars: int = 200) -> str:
         """格式化 session 内最近成功的 tool_calls 成 prompt 块.
