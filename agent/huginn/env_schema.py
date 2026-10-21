@@ -458,6 +458,9 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_USE_MEMORY_TYPING": EnvSpec("bool", "true", "legacy", status="deprecated"),
     "HUGINN_USE_THREE_CABIN": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_VISUAL_FRAME_MEMORY": EnvSpec("bool", "false", "legacy", status="deprecated"),
+    "HUGINN_VIGIL_ENABLED": EnvSpec("int", "1", "tuning"),
+    "HUGINN_VIGIL_ERROR_THRESHOLD": EnvSpec("float", "0.20", "tuning"),
+    "HUGINN_VIGIL_HEARTBEAT_S": EnvSpec("int", "30", "tuning"),
     "HUGINN_WORLD_MODEL": EnvSpec("bool", "true", "legacy", status="deprecated"),
 }
 

@@ -1730,11 +1730,13 @@ CREATE TABLE reconcile_records (
 - [x] `drift_events` 审计账；`record_prediction_error` 把 reconcile 误差落成 review/intervene 事件。
 - [x] 梦境生产接线（第一段）：MemoryMaintainer 睡眠门控 + DreamStore 落库；修复仍是提案，不自动执行。
 - [x] Consolidator 显式 apply/rollback：soft_decay 与 quarantine 可逆执行；其余动作保持提案。
+- [x] VIGIL 生产接线（第一段）：lifespan 启动兄弟监控线程；工具审计喂 `record_job`；漂移信号可落 `drift_events`。
 
 待完成（按依赖顺序）：
 
+- [ ] VIGIL 独立进程/watchdog：当前是同进程 daemon 线程，进程崩溃无法自恢复。
+- [ ] System3 读取 `trust`：`blind/unknown` 时提高审批门槛、收紧预算。
 - [ ] Consolidator 其余动作：add_link / merge_duplicate / summarize / split_cluster / re_anchor 的专用执行器。
-- [ ] VIGIL 生产接线：兄弟进程/线程、心跳 watchdog、System3 读取 `trust`。
 - [ ] 世界模型生产接线：PMK `world_model` stalk、真实执行后自动调用 `record_prediction_error`。
 - [ ] PMK LLM 判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
 
@@ -1756,6 +1758,7 @@ CREATE TABLE reconcile_records (
 | `huginn/memory/dream_store.py` | DreamObject / 修复提案落库；显式 applied | I21 |
 | `huginn/memory/dream_apply.py` | soft_decay / quarantine 的显式 apply + rollback | I20–I21 |
 | `huginn/metacog/vigil.py` | VIGIL L0–L4 降级状态机、有界重启、队列丢弃 | I35–I40 |
+| `huginn/metacog/vigil_runtime.py` | 兄弟监控线程 + 心跳 + 工具审计喂 jobs + drift 落库 | I35–I40 |
 | `huginn/metacog/drift_gate.py` | Smith 漂移 review/intervene/pause | I29 |
 | `huginn/research/world_model_binding.py` | prediction → reconcile → authority ladder、worldview 隔离 | I41–I50 |
 | `huginn/metacog/drift_ledger.py` | `drift_events` 审计账 + prediction_error 落库 | I46 |
@@ -1774,6 +1777,9 @@ CREATE TABLE reconcile_records (
 | `HUGINN_DREAM_ENABLED` | `1` | 梦境总开关 | 设 `0` |
 | `HUGINN_DREAM_TIMEZONE` | `UTC` | 人格作息时区 | 按部署设置 |
 | `HUGINN_DREAM_WINDOWS` | `""` | JSON 作息窗口，空 = 不进入 sleep | 配置后梦境才会运行 |
+| `HUGINN_VIGIL_ENABLED` | `1` | VIGIL 兄弟监控线程 | 设 `0` |
+| `HUGINN_VIGIL_HEARTBEAT_S` | `30` | 心跳/tick 间隔 | 按部署调整 |
+| `HUGINN_VIGIL_ERROR_THRESHOLD` | `0.20` | L1 错误率阈值 | 按基线调整 |
 
 ### 22.3 验证命令
 
@@ -1790,7 +1796,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   tests/test_env_surface_governance.py -q -o addopts=""
 ```
 
-当前证据：314 passed（规范/准入/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/PMK/arch/env/工具/权限/研究管线），ruff clean。
+当前证据：317 passed（规范/准入/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/PMK/arch/env/工具/权限/研究管线），ruff clean。
 
 ### 22.4 已知限制
 
@@ -1800,7 +1806,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
 - 记忆审计目前每次召回逐条写事件；高频场景需批量/采样，否则事件账增长快。
 - `HUGINN_NORMATIVE_ENFORCE` 默认关闭：显式审批后的授权已落账，但自动批准路径尚未写 system authorize，直接开启会阻断 auto-approved 高风险动作。
 - 梦境周期已接 MemoryMaintainer + DreamStore；Consolidator 的 soft_decay/quarantine 已支持显式 apply/rollback，其余动作仍是提案；`HUGINN_DREAM_WINDOWS` 为空时不会进入 sleep（不伪造作息）。
-- VIGIL 的 `heartbeat_timeout` 依赖调用方驱动 `tick`；独立进程/watchdog 尚未实现。
+- VIGIL 已是 lifespan 启动的同进程 daemon 线程，工具审计会喂成功/失败；但独立进程/watchdog 与 System3 读取 `trust` 尚未实现。
 - 世界模型 `prediction_error` 已有 `record_prediction_error` 落库函数，但真实执行后自动调用尚未接线；PMK 还没有 `world_model` stalk。
 
 

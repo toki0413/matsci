@@ -749,6 +749,17 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.debug(f"[startup] memory maintainer skipped: {exc}")
 
+    # Start VIGIL sibling monitor (heartbeat + L0–L4 degradation state)
+    vigil_runtime = None
+    try:
+        from huginn.metacog.vigil_runtime import get_vigil_runtime
+
+        vigil_runtime = get_vigil_runtime()
+        vigil_runtime.start()
+        logger.info("[startup] vigil runtime started")
+    except Exception as exc:
+        logger.debug(f"[startup] vigil runtime skipped: {exc}")
+
     # Start persona-memory-knowledge loop — periodic background consolidation
     # Runs every 5 min: scores recent memories, updates persona adaptive layer,
     # indexes new KB docs, and logs task state summaries
@@ -825,6 +836,10 @@ async def lifespan(app: FastAPI):
     if memory_maintainer:
         with suppress(Exception):
             memory_maintainer.stop()
+
+    if vigil_runtime:
+        with suppress(Exception):
+            vigil_runtime.stop()
 
     if job_monitor:
         with suppress(Exception):

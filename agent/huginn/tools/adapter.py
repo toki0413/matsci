@@ -902,6 +902,17 @@ class ToolAdapter:
                     input_data=redact_secrets(raw_input),
                     output_data=redact_secrets(raw_output),
                 )
+                # VIGIL 兄弟监控：只记录成功/失败，不影响工具结果。
+                try:
+                    from huginn.metacog.vigil_runtime import get_vigil_runtime
+
+                    success = (
+                        not bool(output.get("error"))
+                        and output.get("success", True) is not False
+                    )
+                    get_vigil_runtime().record_job(success)
+                except Exception:
+                    logger.debug("vigil record_job skipped", exc_info=True)
             except Exception:
                 # Audit failures must not break tool execution.
                 logger.debug("best-effort op failed", exc_info=True)

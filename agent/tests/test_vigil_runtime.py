@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from huginn.metacog.drift_gate import DriftThresholds, evaluate_drift
+from huginn.metacog.drift_ledger import DriftLedger
 from huginn.metacog.vigil import MonitorState, VigilMonitor
+from huginn.metacog.vigil_runtime import VigilRuntime
 
 
 def test_monitor_starts_full_and_degrades_on_error_rate():
@@ -82,3 +84,38 @@ def test_drift_below_thresholds_is_empty():
         truth_seeking=(1.0, 0.90),
         causal_edit_distance=0.1,
     ) == []
+
+
+def test_runtime_records_jobs_and_heartbeat():
+    runtime = VigilRuntime(
+        monitor=VigilMonitor("v1", window=5, error_threshold=0.2),
+        enabled=True,
+    )
+    runtime.run_once("2026-01-01T00:00:00+00:00")
+    runtime.record_job(False)
+    runtime.record_job(False)
+    assert runtime.status().state == "L1"
+
+
+def test_runtime_disabled_does_not_start_thread():
+    runtime = VigilRuntime(enabled=False)
+    runtime.start()
+    assert runtime._thread is None
+    runtime.stop()
+
+
+def test_runtime_persists_drift_signals(tmp_path):
+    ledger = DriftLedger(tmp_path / "drift.db")
+    runtime = VigilRuntime(enabled=True)
+    signals = evaluate_drift(
+        propensity=(1.0, 0.5),
+        truth_seeking=(1.0, 0.5),
+        causal_edit_distance=0.5,
+    )
+    ids = runtime.record_signals(
+        signals, tenant_id="t1", session_id="s1", ledger=ledger
+    )
+    assert len(ids) == len(signals)
+    events = ledger.list_events(tenant_id="t1", session_id="s1")
+    assert len(events) == len(signals)
+    assert {e["level"] for e in events} >= {"review", "intervene", "pause"}
