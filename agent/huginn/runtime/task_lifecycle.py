@@ -432,69 +432,130 @@ def _pmk_gluing_obstruction(
     return (True, reason, beta1)
 
 
-def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
-    """PMK 四路立场一致性检查 — Čech H¹ 粘合障碍检测.
+def _timeseries_stance(text: str) -> tuple[str, str]:
+    """从物理时序摘要构造 stance + subject（无时序 → neutral）."""
+    if not text:
+        return ("neutral", "")
+    _ts_lower = text.lower()
+    if "decaying" in _ts_lower:
+        return ("oppose", "束缚 stable bound")
+    if "rising" in _ts_lower:
+        return ("oppose", "稳定 stable")
+    if "flat" in _ts_lower:
+        return ("recommend", "平衡 equilibrium")
+    return ("neutral", "")
 
-    pmk_state: {"persona": str, "memory": str, "kb": str, "deviation": str,
-                "timeseries": str (可选, P3 结合),
-                "self_eval": str (可选, 感质探针的自指路)}
-    返回 (is_obstructed, reason). 不一致 = 至少两路对同一 subject 显式对立.
 
-    判定 (规则版, 不调 LLM):
-    1. 提取各路 stance + subject (含 timeseries 路, P3 结合)
-    2. 在四路构成的重叠神经网上检测粘合障碍 (见 _pmk_gluing_obstruction)
-    3. neutral 不参与; 全 neutral 或少于两路有立场 → 一致
+@dataclass(frozen=True)
+class PMKAxes:
+    """PMK 三条独立轴：认识论（advisory）、规范（block）、自指（block）."""
 
-    感质探针 (自指固定点): self_eval 路是系统对自身状态的报告 (非世界事实).
-    当它与 persona/memory/kb 任一"世界路"对同一 subject 冲突 → 同一直由度
-    既被当客观世界主张、又被当系统自我状态, 在此深度不可拆分. gluing 返回
-    的 reason 会带 "[qualia-probe: 自指固定点]" 标记.
+    epistemic_reason: str = ""
+    normative_reason: str = ""
+    identity_reason: str = ""
 
-    ponytail: subject 相似用 token 重合度, 不上 embedding. 升级路径: embedding cosine.
-    timeseries 路用 trend 关键词 (rising/decaying/flat) 作为 subject, 让物理
-    动力学趋势能跟 persona/memory/kb 立场冲突 (比如 VACF decaying 但 persona
-    说 "束缚态" → 冲突). ponytail: 简单关键词匹配, 不解析物理含义.
+    @property
+    def blocked(self) -> bool:
+        return bool(self.normative_reason or self.identity_reason)
+
+    @property
+    def advisory(self) -> str:
+        return self.epistemic_reason
+
+    @property
+    def reason(self) -> str:
+        return self.normative_reason or self.identity_reason or self.epistemic_reason
+
+
+def _active_stances(
+    stances: dict[str, tuple[str, str]]
+) -> dict[str, tuple[str, str]]:
+    return {src: value for src, value in stances.items() if value[0] != "neutral"}
+
+
+def _check_pmk_axes(pmk_state: dict) -> PMKAxes:
+    """把 PMK 状态拆成三条轴，分别判定.
+
+    - 认识论（memory / kb / timeseries）：事实/证据能否粘合；冲突只 advisory，
+      不阻断执行。
+    - 规范（persona / action）：身份约束是否允许当前动作；冲突阻断。
+    - 自指（persona / self_eval）：世界主张与自我报告的同一直由度冲突；阻断并
+      标记 qualia-probe。
+
+    persona 只出现在规范/自指轴，不再进入认识论 sheaf（修掉混轴）。
     """
     if not pmk_state:
-        return (False, "")
+        return PMKAxes()
 
-    # P3 结合: timeseries 路从 trend 关键词构造 stance.
-    # decaying → oppose "束缚/stable/bound", recommend "扩散/diffusion"
-    # rising → oppose "稳定/stable", recommend "增长/increase"
-    # ponytail: 关键词匹配, 不调 LLM. 升级路径: 物理含义解析.
-    _ts_text = pmk_state.get("timeseries", "") or ""
-    _ts_stance = ("neutral", "")
-    if _ts_text:
-        _ts_lower = _ts_text.lower()
-        if "decaying" in _ts_lower:
-            _ts_stance = ("oppose", "束缚 stable bound")
-        elif "rising" in _ts_lower:
-            _ts_stance = ("oppose", "稳定 stable")
-        elif "flat" in _ts_lower:
-            _ts_stance = ("recommend", "平衡 equilibrium")
+    epistemic: dict[str, tuple[str, str]] = {}
+    for src in ("memory", "kb"):
+        text = pmk_state.get(src, "") or ""
+        if text.strip():
+            epistemic[src] = _extract_pmk_stance(text)
+    ts_stance = _timeseries_stance(pmk_state.get("timeseries", "") or "")
+    if ts_stance[0] != "neutral":
+        epistemic["timeseries"] = ts_stance
+    epistemic_active = _active_stances(epistemic)
+    epistemic_reason = ""
+    if len(epistemic_active) >= 2:
+        _inc, _reason, _ = _pmk_gluing_obstruction(epistemic_active)
+        if _inc:
+            epistemic_reason = f"EPISTEMIC (advisory): {_reason}"
 
-    # 世界路: persona/memory/kb 是对客观世界的立场主张.
-    stances = {
-        source: _extract_pmk_stance(text)
-        for source, text in pmk_state.items()
-        if source in ("persona", "memory", "kb")
-    }
-    if _ts_stance[0] != "neutral":
-        stances["timeseries"] = _ts_stance
-    # 自指路: self_eval 是系统对自身状态的报告, 从同一 stance 引擎提取 subject.
-    _self_text = pmk_state.get("self_eval", "") or ""
-    _self_stance = _extract_pmk_stance(_self_text) if _self_text else ("neutral", "")
-    if _self_stance[0] != "neutral":
-        stances["self_eval"] = _self_stance
-    # 过滤掉 neutral
-    active = {src: (st, sub) for src, (st, sub) in stances.items() if st != "neutral"}
-    if len(active) < 2:
-        return (False, "")  # 少于两路有立场, 不可能冲突
-
-    is_obstructed, reason, _beta1 = _pmk_gluing_obstruction(
-        active, self_sources={"self_eval"}
+    persona_text = pmk_state.get("persona", "") or ""
+    persona_stance = (
+        _extract_pmk_stance(persona_text) if persona_text else ("neutral", "")
     )
-    return (is_obstructed, reason)
+    action_text = pmk_state.get("action", "") or ""
+    action_stance = (
+        _extract_pmk_stance(action_text) if action_text else ("neutral", "")
+    )
+    normative = _active_stances(
+        {"persona": persona_stance, "action": action_stance}
+    )
+    normative_reason = ""
+    if len(normative) >= 2:
+        _inc, _reason, _ = _pmk_gluing_obstruction(normative)
+        if _inc:
+            normative_reason = f"NORMATIVE: {_reason}"
+
+    self_text = pmk_state.get("self_eval", "") or ""
+    self_stance = (
+        _extract_pmk_stance(self_text) if self_text else ("neutral", "")
+    )
+    identity = _active_stances(
+        {"persona": persona_stance, "self_eval": self_stance}
+    )
+    identity_reason = ""
+    if len(identity) >= 2:
+        _inc, _reason, _ = _pmk_gluing_obstruction(
+            identity, self_sources={"self_eval"}
+        )
+        if _inc:
+            identity_reason = f"IDENTITY: {_reason}"
+
+    return PMKAxes(
+        epistemic_reason=epistemic_reason,
+        normative_reason=normative_reason,
+        identity_reason=identity_reason,
+    )
+
+
+def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
+    """PMK 一致性检查（兼容入口）— 只把规范/自指轴冲突视为阻断.
+
+    pmk_state: {"persona", "memory", "kb", "action", "timeseries", "self_eval"}
+    返回 (is_blocked, reason)。
+
+    - 认识论冲突（memory/kb/timeseries）只返 advisory reason，is_blocked=False；
+    - 规范冲突（persona/action）或自指冲突（persona/self_eval）→ True。
+    """
+    axes = _check_pmk_axes(pmk_state)
+    if axes.blocked:
+        return True, axes.reason
+    if axes.advisory:
+        return False, axes.advisory
+    return False, ""
 
 
 def should_pause_for_decision(
