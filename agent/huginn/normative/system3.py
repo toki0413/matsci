@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from huginn.core_types import RiskLevel
@@ -16,6 +17,25 @@ from huginn.normative.ledger import GroundingView
 
 _STRICT_TRUST = frozenset({"blind", "unknown"})
 _BLOCKING_CLAIMS = frozenset({"contested", "recheck", "refuted"})
+
+
+@dataclass(frozen=True)
+class AutonomyLimits:
+    """trust → 自主边界；调用方按此收紧预算/并发/审批门槛."""
+
+    max_parallel_jobs: int
+    token_budget_scale: float
+    require_approval_for_risk: str
+    strict: bool
+
+
+def autonomy_limits(trust: str) -> AutonomyLimits:
+    trust = str(trust or "unknown").lower()
+    if trust == "full":
+        return AutonomyLimits(5, 1.0, "medium", False)
+    if trust == "partial":
+        return AutonomyLimits(4, 0.75, "medium", False)
+    return AutonomyLimits(2, 0.5, "low", True)
 
 
 def admit_with_trust(
@@ -34,6 +54,7 @@ def admit_with_trust(
         persona_boundaries=persona_boundaries,
     )
     trust = str(trust or "unknown").lower()
+    limits = autonomy_limits(trust)
     reasons = tuple(decision.reasons) + (f"monitor trust={trust}",)
 
     if trust in _STRICT_TRUST and decision.allow and request.requires_authorization:
@@ -51,6 +72,7 @@ def admit_with_trust(
                 ),
                 cited_act_ids=decision.cited_act_ids,
                 cited_claim_ids=blocked,
+                autonomy=asdict(limits),
             )
 
     return AdmissionDecision(
@@ -60,7 +82,8 @@ def admit_with_trust(
         required_acts=decision.required_acts,
         cited_act_ids=decision.cited_act_ids,
         cited_claim_ids=decision.cited_claim_ids,
+        autonomy=asdict(limits),
     )
 
 
-__all__ = ["admit_with_trust"]
+__all__ = ["AutonomyLimits", "admit_with_trust", "autonomy_limits"]

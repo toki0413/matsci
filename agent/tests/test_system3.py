@@ -4,7 +4,7 @@ from __future__ import annotations
 from huginn.core_types import RiskLevel
 from huginn.normative.admission import AdmissionRequest
 from huginn.normative.ledger import NormativeLedger
-from huginn.normative.system3 import admit_with_trust
+from huginn.normative.system3 import admit_with_trust, autonomy_limits
 
 TENANT = "t1"
 SESSION = "s1"
@@ -82,3 +82,26 @@ def test_blind_trust_without_authorization_asks(tmp_path):
     )
     assert decision.allow is False
     assert decision.mode == "ask"
+
+
+def test_autonomy_limits_contract_by_trust():
+    full = autonomy_limits("full")
+    blind = autonomy_limits("blind")
+    assert full.max_parallel_jobs == 5
+    assert full.token_budget_scale == 1.0
+    assert blind.max_parallel_jobs == 2
+    assert blind.token_budget_scale == 0.5
+    assert blind.strict is True
+
+
+def test_decision_carries_autonomy_limits(tmp_path):
+    view = _grounding(tmp_path)
+    decision = admit_with_trust(
+        _request(),
+        view,
+        trust="blind",
+        claim_statuses={"c1": "contested"},
+    )
+    assert decision.autonomy["max_parallel_jobs"] == 2
+    assert decision.autonomy["strict"] is True
+    assert decision.to_dict()["autonomy"]["token_budget_scale"] == 0.5

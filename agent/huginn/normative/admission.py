@@ -16,7 +16,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from huginn.core_types import RiskLevel
@@ -65,6 +65,7 @@ class AdmissionDecision:
     required_acts: tuple[str, ...] = ()
     cited_act_ids: tuple[str, ...] = ()
     cited_claim_ids: tuple[str, ...] = ()
+    autonomy: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +75,7 @@ class AdmissionDecision:
             "required_acts": list(self.required_acts),
             "cited_act_ids": list(self.cited_act_ids),
             "cited_claim_ids": list(self.cited_claim_ids),
+            "autonomy": dict(self.autonomy),
         }
 
 

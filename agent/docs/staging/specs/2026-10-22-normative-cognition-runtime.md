@@ -1734,11 +1734,12 @@ CREATE TABLE reconcile_records (
 - [x] System3 读取 `trust`（第一段）：`admit_with_trust`；blind/unknown 时低风险动作也受 contested claim 约束；工具 shadow 已传入 trust。
 - [x] 世界模型生产接线（第一段）：`PhysicalWorkspace` 执行后自动把 `prediction_error` 落 `drift_events`。
 - [x] PMK `world_model` stalk（第一段）：物理工作区记录最新预测/观测；autoloop 注入；缺标签/高误差走认识论 advisory。
+- [x] System3 预算收紧（第一段）：`autonomy_limits(trust)` 挂到 `AdmissionDecision.autonomy`（并发/预算/审批门槛）。
 
 待完成（按依赖顺序）：
 
+- [ ] 调度器消费 `autonomy`：tool scheduler / autoloop 尚未按 `max_parallel_jobs/token_budget_scale` 降级。
 - [ ] VIGIL 独立进程/watchdog：当前是同进程 daemon 线程，进程崩溃无法自恢复。
-- [ ] System3 预算收紧：`blind` 时的预算/并发降级尚未接入。
 - [ ] Consolidator 其余动作：add_link / merge_duplicate / summarize / split_cluster / re_anchor 的专用执行器。
 - [ ] PMK LLM 判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
 - [ ] `world_model` stalk 与 memory/kb 的 worldview/contract 交叉粘合（当前只做标签与误差 advisory）。
@@ -1803,7 +1804,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   tests/test_env_surface_governance.py -q -o addopts=""
 ```
 
-当前证据：407 passed（规范/准入/System3/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/stalk/物理工作区/PMK/arch/env/工具/权限/研究管线），ruff clean。
+当前证据：409 passed（规范/准入/System3/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/stalk/物理工作区/PMK/arch/env/工具/权限/研究管线），ruff clean。
 
 ### 22.4 已知限制
 
@@ -1813,7 +1814,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
 - 记忆审计目前每次召回逐条写事件；高频场景需批量/采样，否则事件账增长快。
 - `HUGINN_NORMATIVE_ENFORCE` 默认关闭：显式审批后的授权已落账，但自动批准路径尚未写 system authorize，直接开启会阻断 auto-approved 高风险动作。
 - 梦境周期已接 MemoryMaintainer + DreamStore；Consolidator 的 soft_decay/quarantine 已支持显式 apply/rollback，其余动作仍是提案；`HUGINN_DREAM_WINDOWS` 为空时不会进入 sleep（不伪造作息）。
-- VIGIL 已是 lifespan 启动的同进程 daemon 线程，工具审计会喂成功/失败；System3 已在 `trust=blind` 时收紧低风险 claim 约束，但预算/并发降级尚未接入；独立进程/watchdog 仍未实现。
+- VIGIL 已是 lifespan 启动的同进程 daemon 线程，工具审计会喂成功/失败；System3 已把 `autonomy_limits` 挂到决策（并发/预算/审批门槛），但调度器尚未消费；独立进程/watchdog 仍未实现。
 - 世界模型 `prediction_error` 已由 `PhysicalWorkspace` 自动落 `drift_events`；PMK 已注入 `world_model` stalk，但当前只做标签/误差 advisory，尚未与 memory/kb 做 worldview/contract 交叉粘合。
 
 
