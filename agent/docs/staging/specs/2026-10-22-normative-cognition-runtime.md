@@ -524,7 +524,7 @@ class AdmissionSample:
 | I11 | `actor=agent` 不得写 `authorize/revoke/accept/reject` | `test_normative_ledger.py::test_actor_capability` |
 | I12 | 撤销/过期授权不得出现在后续 `AdmissionView` | `test_grounding_awareness.py::test_mask_revoked` |
 
-记忆治理不变量 I13–I24 见 §18.8；常驻运行时不变量 I25–I34 见 §19.8；三表共同构成完整不变量集。
+记忆治理不变量 I13–I24 见 §18.8；常驻运行时不变量 I25–I34 见 §19.8，监控降级不变量 I35–I40 见 §19.12.8；四表共同构成完整不变量集。
 
 ---
 
@@ -568,7 +568,7 @@ class AdmissionSample:
 
 ### 14.3 Definition of Done
 
-1. 三本账 schema 落地，I1–I34 全绿（其中 I13–I24 见 §18.8，I25–I34 见 §19.8）。
+1. 三本账 schema 落地，I1–I40 全绿（I13–I24 见 §18.8，I25–I34 见 §19.8，I35–I40 见 §19.12.8）。
 2. PMK 默认开启，治理锚点与台账同步，无默认翻转漂移。
 3. `session_state` 确认结果落盘；`clear_confirmation` 不再丢规范状态。
 4. persona revision 走 GREEN 采纳门；`adaptive_layer` 变为只读投影。
@@ -582,6 +582,7 @@ class AdmissionSample:
 12. `PreparedContext` 只作候选、带 TTL、按租户隔离；空闲环不产生用户可见动作（I26–I27、I34）。
 13. VIGIL 兄弟运行时只读日志、只写诊断/提案；漂移三级告警可升级、`pause` 不可被任务 Agent 自清（I25、I28–I29、I33）。
 14. 教师/蒸馏产物为 `derived`，惊奇只做排序与探索项，不得绕过 Hygiene Gate（I30、I32）。
+15. 监控降级有 L0–L4 状态机、有界重启、可见降级；任务 p99 开销 ≤5%，且安全联锁不由监控独占（I35–I40）。
 
 ---
 
@@ -1306,7 +1307,7 @@ CREATE TABLE intervention_events (
 | 阶段 | 内容 | 出口 |
 |---|---|---|
 | P1-e | `PreparedContext` + idle jobs + TTL + 影响闸接入 | I26–I27、I34 绿 |
-| P2-e | VIGIL 兄弟运行时 + `drift_events` + 三级告警 | I25、I28–I29、I33 绿 |
+| P2-e | VIGIL 兄弟运行时 + `drift_events` + 三级告警 + L0–L4 降级状态机 | I25、I28–I29、I33、I35–I40 绿 |
 | P2-f | 案例库 + 子任务后蒸馏 + 软 Q 检索策略 | I30–I31 绿 |
 | P3-c | 教师-学生分离 + 主动策略离线训练 + 惊奇优先 | E5、E6 达标 |
 
@@ -1334,6 +1335,165 @@ CREATE TABLE intervention_events (
 - 不做「用 LLM 自评新颖性」作为唯一探索信号。
 - 不做「漂移阈值写死在代码里」。
 - 不做「教师产物直接当事实」。
+
+### 19.12 监控环降级与故障隔离
+
+目标不是「监控永不失败」，而是**监控失败时主任务照常运行、失败可见、安全联锁不被削弱**。
+
+#### 19.12.1 先分职责，再定失败方向
+
+| 类别 | 例子 | 失败方向 | 对主任务 | 审计要求 |
+|---|---|---|---|---|
+| **建议类** advisory | Roses/Buds/Thorns、主动预取、梦境修复建议、漂移提示 | **fail-open**：没有建议就等于没有建议 | 零影响 | 记 `degradation_event`，但不阻断 |
+| **审计类** evidentiary | 监控覆盖率、detector 版本、降级原因、未监控会话标记 | **fail-visible**：不能静默变成「一切正常」 | 零影响，但 `trust` 必须降级 | 强制写 `monitor_health` |
+| **安全联锁类** interlock | 授权、预算、沙箱、硬暂停 | **fail-closed**，但必须由**监控之外**的独立门执行 | 按联锁语义阻断 | 独立审计 |
+
+硬规则：**监控环可以请求联锁动作，但不能是任何硬约束的唯一执行点**。否则监控一挂，安全边界随之消失。
+
+#### 19.12.2 隔离边界：五个「不」
+
+1. **不同执行体**：独立进程优先；至少独立线程/事件循环，禁止在任务 Agent 的协程里同步跑诊断。
+2. **不共享可变状态**：只读快照或事件日志；不持有记忆库/知识库的写锁。
+3. **不阻塞**：任务 Agent 永不 `await` 监控结果；`status()` 带 TTL，过期即视为 `blind`。
+4. **不抛异常**：监控边界捕获所有异常并转成 `MonitorStatus`；异常不得穿过边界。
+5. **不共享资源池**：独立队列、独立预算、独立 DB 连接；监控的 CPU/IO 不得挤占任务路径。
+
+#### 19.12.3 降级状态机（L0–L4）
+
+| 状态 | 触发 | 监控行为 | `trust` | 主任务行为 |
+|---|---|---|---|---|
+| **L0 full** | 全部 detector 正常 | 全量诊断 | `full` | 正常 |
+| **L1 partial** | 部分 detector 不可用 / LLM 5xx / DB 写入缓冲 | 规则版 + 可用的 detector；标注覆盖缺口 | `partial` | 正常，System3 略增澄清 |
+| **L2 blind** | 仅心跳存活，诊断全部失败 | 只发心跳与 `blind` 状态 | `blind` | 正常，但提高审批门槛、限制高风险自主动作 |
+| **L3 offline** | 心跳连续 3 个周期缺失 | 由 supervisor 重启；期间无诊断 | `unknown` | 正常；会话标记 `unmonitored` |
+| **L4 quarantined** | 自身失控（死循环、输出 schema 非法、越权写、跨租户访问） | 立即 kill，指数退避重启 | `unknown` | 正常；不继承其任何输出 |
+
+恢复路径：`L4/L3 → 半开探测（单个 canary job）→ L1 → L0`；退避 1/2/4/8 分钟，单窗口最多重启 3 次，超过则停在 L3 并告警，禁止 crash loop。
+
+#### 19.12.4 熔断、队列与预算
+
+- **单任务超时**：轻量诊断默认 2s，重型诊断默认 30s；超时即丢该 job，不影响其他 job。
+- **有界队列**：默认 1000；满时按优先级丢最旧/最低的 finding，记录 `dropped_findings`。
+- **并发上限**：按租户设置，防止一个租户的监控洪峰拖垮全局。
+- **预算上限**：CPU 时间、内存、LLM token/小时；超限进入 L1/L2，而不是抢任务资源。
+- **熔断器**：1 分钟错误率 > 20% → open 5 分钟 → half-open 放 1 个 canary job；成功则恢复，失败则继续 open。
+- **DB 写入**：本地 ring buffer + 异步 flush；DB 锁不可用则丢最旧，不重试阻塞主路径。
+
+#### 19.12.5 监督与重启
+
+- watchdog **在监控之外**（进程管理器 / 独立 supervisor 协程），只读心跳表。
+- 心跳写 `<runtime>/monitor_health.json` 或 `monitor_health` 表；3 个周期未更新 → 重启。
+- 崩溃恢复是 **crash-only**：监控随时可被杀，任务侧无需清理；重启后从事件日志幂等重建，不补发错过的 finding，只标记 `coverage_gap`。
+- 重启次数与原因写入 `degradation_events`；超过阈值 → L3 + 告警。
+
+#### 19.12.6 降级时的补偿控制：降自主，不降可用性
+
+当 `trust=blind/unknown`：
+
+- 主任务继续运行，不阻断。
+- System3 提高澄清阈值、要求高风险动作显式授权、收紧预算上限。
+- 最终输出标记 `unmonitored`，不得宣称「已通过监控」。
+- 授权/预算/沙箱等联锁仍由独立门执行；监控缺席不改变它们的判定。
+
+这是有意识的取舍：**监控失败时失去的是语义漂移检测，不是执行能力**；用「更严格的自主边界」补偿，而不是用「停摆」补偿。残余风险必须写进会话元数据。
+
+#### 19.12.7 数据契约
+
+```sql
+CREATE TABLE monitor_health (
+  monitor_id      TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  state           TEXT NOT NULL,   -- L0|L1|L2|L3|L4
+  trust           TEXT NOT NULL,   -- full|partial|blind|unknown
+  coverage_json   TEXT NOT NULL,   -- 各 detector 的可用性
+  detector_versions TEXT NOT NULL,
+  last_heartbeat  TEXT NOT NULL,
+  error_rate_1m   REAL NOT NULL,
+  restart_count   INTEGER NOT NULL,
+  degraded_reason TEXT,
+  updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE degradation_events (
+  event_id        TEXT PRIMARY KEY,
+  monitor_id      TEXT NOT NULL,
+  tenant_id       TEXT NOT NULL,
+  from_state      TEXT NOT NULL,
+  to_state        TEXT NOT NULL,
+  trigger         TEXT NOT NULL,   -- timeout|crash|schema_invalid|runaway|db_lock|llm_5xx|clock_skew|queue_full|unauthorized_write
+  task_impact     TEXT NOT NULL,   -- none|strict_autonomy|blocked_by_interlock
+  evidence_json   TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+```
+
+```python
+@dataclass(frozen=True)
+class MonitorStatus:
+    monitor_id: str
+    state: Literal["L0", "L1", "L2", "L3", "L4"]
+    trust: Literal["full", "partial", "blind", "unknown"]
+    coverage: dict[str, bool]
+    last_heartbeat: str
+    degraded_reason: str | None
+
+def status(self) -> MonitorStatus:
+    """永不抛异常；内部失败返回 trust='unknown'。"""
+```
+
+`submit(job)` 非阻塞，返回 `job_id` 或 `DROPPED`；任务侧不关心结果，只读 `status()`。
+
+#### 19.12.8 不变量（补 I35–I40）
+
+| # | 不变量 | 测试 |
+|---|---|---|
+| I35 | 监控失败不得向任务循环抛异常或阻塞；`status()` 永不 raise | `test_monitor_degradation.py::test_no_exception_no_block` |
+| I36 | 监控存在时任务 p99 开销 ≤ 5%，且不共享写锁 | `test_monitor_degradation.py::test_overhead_and_locking` |
+| I37 | 监控不得是授权/预算/沙箱的唯一执行点 | `test_monitor_degradation.py::test_interlock_independence` |
+| I38 | 任何降级必须可见：`trust != full` 必写 `monitor_health` + `degradation_events`；状态过期视为 blind | `test_monitor_degradation.py::test_visible_degradation` |
+| I39 | 重启有界退避；crash loop 停在 L3，不得无限重启 | `test_monitor_degradation.py::test_bounded_restart` |
+| I40 | 单租户监控故障不影响其他租户；监控越权访问触发 L4 | `test_monitor_degradation.py::test_tenant_isolation_and_quarantine` |
+
+#### 19.12.9 故障矩阵
+
+| 故障 | 状态 | 主任务 | 处理 |
+|---|---|---|---|
+| 单 job 超时 | L1 | 无影响 | 丢弃该 job，记超时 |
+| 进程 crash | L3 → 重启 | 无影响 | 心跳检测 + 退避重启 |
+| 输出 schema 非法 | L2 | 无影响 | 丢弃输出，记 `schema_invalid` |
+| 死循环/资源失控 | L4 | 无影响 | kill + 退避；禁止其输出进入任何账本 |
+| DB 锁/不可用 | L1 | 无影响 | ring buffer；丢最旧 |
+| LLM 5xx | L1 | 无影响 | 规则版 detector；不重试阻塞 |
+| 队列打满 | L1 | 无影响 | 按优先级丢弃；记 `queue_full` |
+| 时钟偏斜 | L1 | 无影响 | 服务端时间；记 `clock_skew` |
+| 越权写 / 跨租户 | L4 | 无影响 | 拒绝 + kill + 告警 |
+| 联锁依赖监控 | — | 禁止 | 启动时静态检查 I37 |
+
+测试基线复用现有混沌用例（[test_chaos_fault_injection.py](file:///workspace/agent/tests/test_chaos_fault_injection.py) 的 LLM 超时 / 磁盘满 / 损坏 DB 模式），新增 kill -9、schema 污染、队列洪峰、时钟偏斜四类。
+
+#### 19.12.10 指标（补）
+
+| 指标 | 目标 |
+|---|---|
+| monitor availability（按租户） | ≥ 99% |
+| MTTR（从 L3 到 L0） | ≤ 2 分钟 |
+| unmonitored session rate | ≤ 1% |
+| dropped findings ratio | ≤ 5% |
+| task p99 overhead | ≤ 5% |
+| degradation visibility | 100%（无静默降级） |
+| false pause during degradation | 0（降级不等于乱停） |
+
+#### 19.12.11 反模式
+
+- 把监控写成任务循环里的一个 `await`。
+- 监控持有记忆/知识库写锁。
+- 监控失败时静默返回「一切正常」。
+- 监控是安全约束的唯一执行点。
+- 全局单例监控跨租户共享。
+- 无退避的自动重启，形成 crash loop。
+- 降级时直接停任务，而不是降自主。
+
+
 
 
 
