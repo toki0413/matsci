@@ -209,6 +209,29 @@ def test_oppose_oppose_is_alignment_not_conflict():
     assert _reason == "", _reason
 
 
+def test_pmk_shadow_does_not_pause(monkeypatch):
+    """PMK 默认 shadow: 评估/注入但不在冲突时暂停；enforce 才阻断."""
+    from huginn.autoloop.cognitive_guard import check_pause_decision
+    from huginn.runtime import task_lifecycle as _tl
+
+    monkeypatch.setattr(
+        _tl,
+        "should_pause_for_decision",
+        lambda *a, **k: (True, "PMK 一致性障碍: persona vs memory", []),
+    )
+    pmk_state = {"persona": "推荐 A", "memory": "反对 A"}
+
+    monkeypatch.setenv("HUGINN_PMK_MODE", "shadow")
+    _pause, _reason, _ = check_pause_decision([], [], None, None, pmk_state)
+    assert not _pause, "shadow 模式不应因 PMK 冲突暂停"
+    assert "advisory" in _reason, _reason
+
+    monkeypatch.setenv("HUGINN_PMK_MODE", "enforce")
+    _pause2, _reason2, _ = check_pause_decision([], [], None, None, pmk_state)
+    assert _pause2, "enforce 模式应暂停"
+    assert "PMK" in _reason2, _reason2
+
+
 def main():
     _check_pmk_since_kb()
     _check_pmk_since_memory()

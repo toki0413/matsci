@@ -312,6 +312,13 @@ def check_pause_decision(
             pmk_state=pmk_state,
             grill_state=grill_state,
         )
+        # PMK shadow: 评估并注入提示，但不因 PMK 冲突暂停；只有 enforce 才阻断。
+        if _pause and str(_reason or "").startswith("PMK"):
+            from huginn.env_access import env_str
+
+            _mode = env_str("HUGINN_PMK_MODE").strip().lower()
+            if _mode != "enforce":
+                return False, f"{_reason} [PMK {_mode}: advisory only]", list(_opts or [])
         # P0 时序结合: 如果本轮 PMK 冲突触发 pause, 检查 iteration_history 里
         # 最近 5 轮是否有重复 redirect — 重复说明 agent 陷入循环, 升级 reason.
         if _pause and iteration_history:

@@ -719,7 +719,12 @@ LUCID review (mandatory after generating hypothesis):
         ponytail: hypothesize 和 plan 同一 iteration 都调本方法, side-effect
         (hint append + episodic write) 只在首次调用跑一次, 避免重复污染.
         """
-        if os.environ.get("HUGINN_PMK_INJECT", "0").lower() not in ("1", "true"):
+        from huginn.env_access import env_bool, env_str
+
+        if not env_bool("HUGINN_PMK_INJECT"):
+            return ""
+        pmk_mode = env_str("HUGINN_PMK_MODE").strip().lower()
+        if pmk_mode == "off":
             return ""
 
         try:

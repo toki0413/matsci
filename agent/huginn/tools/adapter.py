@@ -1168,6 +1168,74 @@ class ToolAdapter:
                 _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
                 return output, None
 
+            # 1b. Normative admission（默认 shadow：评估但不阻断）
+            # 只有 HUGINN_NORMATIVE_ENFORCE=1 时，高风险动作缺授权才真正阻断。
+            try:
+                from huginn.core_types import RiskLevel
+                from huginn.env_access import env_bool, env_str
+                from huginn.normative.shadow import evaluate_tool_call
+                from huginn.permissions import extract_target_from_args
+
+                _args = (
+                    input_data.model_dump()
+                    if hasattr(input_data, "model_dump")
+                    else {}
+                )
+                _is_destructive = False
+                try:
+                    _is_destructive = bool(tool.is_destructive(input_data))
+                except Exception:
+                    logger.debug("is_destructive check failed", exc_info=True)
+                _risk = (
+                    RiskLevel.HIGH
+                    if _is_destructive
+                    else (
+                        RiskLevel.LOW
+                        if getattr(tool, "read_only", False)
+                        else RiskLevel.MEDIUM
+                    )
+                )
+                _target = ""
+                try:
+                    _target = str(extract_target_from_args(_args) or "")
+                except Exception:
+                    logger.debug("target extraction failed", exc_info=True)
+                _normative = evaluate_tool_call(
+                    tenant_id=env_str("HUGINN_TENANT_ID"),
+                    session_id=_sid,
+                    tool_name=tool.name,
+                    resources=(_target,) if _target else (),
+                    risk=_risk,
+                    requires_authorization=not getattr(tool, "read_only", False),
+                )
+                if (
+                    _normative is not None
+                    and not _normative.allow
+                    and env_bool("HUGINN_NORMATIVE_ENFORCE")
+                    and _risk in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+                ):
+                    output = {
+                        "error": (
+                            f"Normative admission {_normative.mode}: "
+                            f"{'; '.join(_normative.reasons)}"
+                        ),
+                        "required_acts": list(_normative.required_acts),
+                    }
+                    _audit(
+                        input_data,
+                        output,
+                        approved=False,
+                        reason="normative_admission",
+                    )
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} normative {_normative.mode}",
+                        {"required_acts": list(_normative.required_acts)},
+                    )
+                    return output, None
+            except Exception:  # 防御: 准入评估失败不阻断工具
+                logger.debug("normative admission check failed", exc_info=True)
+
             # 2. Cache (checked before confirmation — safe, no approval needed)
             cached = _get_cached(input_data)
             if cached is not None:

@@ -121,7 +121,7 @@
 | 分子结构文件输入 (MOL/SDF/PDB) (`mol_structure_input`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/tools/sci/rdkit_tool.py` | `tests/test_rdkit_mol_file.py` |
 | 个性化 (风格/口味) (`personalization`) | `personalization` | feature_flag | true | true | 是 | `huginn/personalization/user_style.py`, `huginn/personalization/taste_profile.py`, `huginn/tools/personalization_tool.py` | `tests/test_taste_profile.py` |
 | Pi 极简内核模式 (`pi_mode`) | `pi_mode` | feature_flag | false | false | 是 | `huginn/modes/pi.py`, `huginn/tools/pi_mode_tool.py` | `tests/test_make_tool_pi_mode.py` |
-| PMK 一致性 (persona/memory/knowledge) (`pmk`) | `HUGINN_PMK_INJECT` | env | 0 | 0 | 是 | `huginn/autoloop/cognitive_guard.py`, `huginn/autoloop/engine_observe.py`, `huginn/runtime/task_lifecycle.py` | `tests/test_temporal_pmk.py` |
+| PMK 一致性 (persona/memory/knowledge) (`pmk`) | `HUGINN_PMK_INJECT` | env | 1 | 1 | 是 | `huginn/autoloop/cognitive_guard.py`, `huginn/autoloop/engine_observe.py`, `huginn/runtime/task_lifecycle.py` | `tests/test_temporal_pmk.py` |
 | 计算 provenance 快照 (`provenance`) | `provenance` | feature_flag | true | true | 是 | `huginn/provenance/pipeline.py`, `huginn/provenance/registry.py`, `huginn/provenance/correction.py` | `tests/test_provenance.py`, `tests/test_argus_provenance.py` |
 | 复现重跑闭环 (reproduce) (`reproduce_closed_loop`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/autoloop/reproduce.py`, `huginn/cli/reproduce.py` | `tests/test_reproduce.py` |
 | 递归自我改进 (RSI) (`rsi`) | `harness_meta_improver` | feature_flag | false | false | 是 | `huginn/harness/meta_improver.py`, `huginn/self_improvement/core.py`, `huginn/evolution/engine.py` | `tests/test_meta_improver.py`, `tests/test_evolution_engine.py` |

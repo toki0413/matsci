@@ -467,11 +467,11 @@ def test_capability_env_default_parsing_on_synthetic_tree(tmp_path: pathlib.Path
     (tmp_path / "huginn").mkdir()
     (tmp_path / "huginn" / "env_schema.py").write_text(
         "SCHEMA: dict[str, object] = {\n"
-        "    \"HUGINN_PMK_INJECT\": EnvSpec(\"int\", \"0\", \"tuning\"),\n"
+        "    \"HUGINN_PMK_INJECT\": EnvSpec(\"int\", \"1\", \"tuning\"),\n"
         "}\n",
         encoding="utf-8",
     )
-    assert ga._env_schema_defaults(tmp_path) == {"HUGINN_PMK_INJECT": "0"}
+    assert ga._env_schema_defaults(tmp_path) == {"HUGINN_PMK_INJECT": "1"}
 
 
 def test_capability_default_flip_detected_on_synthetic_tree(tmp_path: pathlib.Path):
@@ -489,7 +489,7 @@ def test_capability_default_flip_detected_on_synthetic_tree(tmp_path: pathlib.Pa
     )
     (tmp_path / "huginn" / "env_schema.py").write_text(
         "SCHEMA: dict[str, object] = {\n"
-        "    \"HUGINN_PMK_INJECT\": EnvSpec(\"int\", \"0\", \"tuning\"),\n"
+        "    \"HUGINN_PMK_INJECT\": EnvSpec(\"int\", \"1\", \"tuning\"),\n"
         "}\n",
         encoding="utf-8",
     )

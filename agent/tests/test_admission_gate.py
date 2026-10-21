@@ -190,3 +190,68 @@ def test_admission_is_deterministic(tmp_path):
     second = admit(_request(), view)
     assert first == second
     assert first.to_dict() == second.to_dict()
+
+
+def test_shadow_evaluates_without_blocking(tmp_path):
+    """shadow 模式：评估真实工具调用，返回 ask/allow，但由调用方决定是否阻断."""
+    from huginn.normative.shadow import evaluate_tool_call
+
+    ledger, _ = _view(tmp_path)
+    decision = evaluate_tool_call(
+        tenant_id=TENANT,
+        session_id=SESSION,
+        tool_name="bash_tool",
+        resources=("workspace/x",),
+        risk=RiskLevel.HIGH,
+        ledger=ledger,
+        enabled=True,
+    )
+    assert decision is not None
+    assert decision.allow is False
+    assert decision.mode == "ask"
+
+    ledger.append_act(
+        tenant_id=TENANT,
+        session_id=SESSION,
+        actor="user",
+        act_type="authorize",
+        proposition_id="tool-1",
+        scope={"actions": ["bash_tool"], "resources": ["*"], "limits": {"uses": 1}},
+    )
+    allowed = evaluate_tool_call(
+        tenant_id=TENANT,
+        session_id=SESSION,
+        tool_name="bash_tool",
+        risk=RiskLevel.HIGH,
+        ledger=ledger,
+        enabled=True,
+    )
+    assert allowed is not None and allowed.allow is True
+
+
+def test_shadow_disabled_returns_none(tmp_path):
+    from huginn.normative.shadow import evaluate_tool_call
+
+    ledger, _ = _view(tmp_path)
+    assert evaluate_tool_call(
+        tenant_id=TENANT,
+        session_id=SESSION,
+        tool_name="bash_tool",
+        ledger=ledger,
+        enabled=False,
+    ) is None
+
+
+def test_shadow_read_only_allows_without_authorization(tmp_path):
+    from huginn.normative.shadow import evaluate_tool_call
+
+    ledger, _ = _view(tmp_path)
+    decision = evaluate_tool_call(
+        tenant_id=TENANT,
+        session_id=SESSION,
+        tool_name="file_read_tool",
+        requires_authorization=False,
+        ledger=ledger,
+        enabled=True,
+    )
+    assert decision is not None and decision.allow is True

@@ -575,7 +575,7 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
         "name": "PMK 一致性 (persona/memory/knowledge)",
         "flag_kind": "env",
         "flag": "HUGINN_PMK_INJECT",
-        "default": "0",
+        "default": "1",
         "modules": (
             "huginn/autoloop/cognitive_guard.py",
             "huginn/autoloop/engine_observe.py",

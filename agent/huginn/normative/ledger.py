@@ -49,6 +49,23 @@ _ACTOR_CAPABILITIES: dict[str, frozenset[str]] = {
 
 _ALLOWED_ACT_TYPES = frozenset(_ACTOR_CAPABILITIES["user"])
 
+# append 监听器：投影缓存（如 shadow 的短 TTL 视图）在写入后立刻失效。
+_append_listeners: list[Any] = []
+
+
+def register_append_listener(callback: Any) -> None:
+    """注册 append 后回调；回调异常不阻塞写入。"""
+    if callback not in _append_listeners:
+        _append_listeners.append(callback)
+
+
+def _notify_append() -> None:
+    for callback in list(_append_listeners):
+        try:
+            callback()
+        except Exception:  # 防御: 缓存失效失败不影响事件写入
+            logger.debug("append listener failed", exc_info=True)
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -272,6 +289,7 @@ class NormativeLedger:
                 if existing:
                     return act.act_id
                 raise
+        _notify_append()
         return act.act_id
 
     def append_act(

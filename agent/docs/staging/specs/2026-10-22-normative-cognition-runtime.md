@@ -1707,6 +1707,30 @@ CREATE TABLE reconcile_records (
 - PyBullet 是仿真真值，只在仿真契约内成立。
 - 世界模型回答「会发生什么」，不回答「是否被允许」；后者只属于规范账。
 
+---
+
+## 21. 实施进度（滚动）
+
+已完成（有测试覆盖）：
+
+- [x] `reconcile` 三态：`borne_out / falsified / insufficient`；缺失指标不再冒充通过（§20.3，I41–I43 基础）。
+- [x] 规范账：追加式 SQLite 事件、确定性投影、TTL、revoke 支配、actor 能力、租户隔离（§7.1，I1–I4、I9、I11–I12）。
+- [x] 准入调度器：纯函数 `admit()`、fail-closed、最小 `required_acts`、claim 降级、persona 边界（§8，I1–I2、I10）。
+- [x] 会话接线：`SessionGrounding`；`request_confirmation` 写 `propose`，`clear_confirmation(accepted=...)` 写 `accept/reject`（§7.1）。
+- [x] 生产路径：计划确认写 `accept/reject`；显式工具审批写 `authorize/reject`（带 TTL 与单次限额）。
+- [x] 工具执行路径 shadow 准入；`HUGINN_NORMATIVE_ENFORCE=1` 时高风险动作缺授权才阻断（I1、I10）。
+- [x] PMK 默认开启（`HUGINN_PMK_INJECT=1`），`HUGINN_PMK_MODE=shadow` 默认评估不暂停；`oppose+oppose` 误报已修。
+- [x] 记忆双层治理纯函数：保留闸 / 影响闸 / Hygiene Gate / 上下文装配（§18.1–18.2、18.6，I13–I15、I17、I20–I21 基础）。
+
+待完成（按依赖顺序）：
+
+- [ ] persona 站位拆分：persona 从认识论 sheaf 移出，改为身份/规范约束；跨 worldview 与人格冲突改走规范 H¹。
+- [ ] PMK `enforce` 接线：LLM 语义判定接入、误报率达标后再切默认。
+- [ ] 记忆状态事件账（`memory_state_events`）与 `recall_for_prompt` 的 `assemble_context` 接入。
+- [ ] 梦境周期（SleepClock / Dreamer / Analyst / Consolidator）与写入侧晋升门。
+- [ ] VIGIL 兄弟监控运行时与 L0–L4 降级状态机。
+- [ ] 世界模型 binding：`world_model` stalk、reconcile 升格链、prediction_error 漂移信号。
+
 
 
 

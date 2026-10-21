@@ -72,6 +72,52 @@ def _record_plan_decision(
         logger.debug("plan decision not recorded in normative ledger", exc_info=True)
 
 
+def _record_tool_decision(
+    ctx: WSCtx,
+    thread_id: str,
+    request_id: str,
+    tool_name: str,
+    approved: bool,
+    reason: str = "",
+) -> None:
+    """把一次显式工具审批落成 authorize/reject 规范事件.
+
+    只记录**用户显式审批**；auto-approve 不在此写 user authorize（那是策略，
+    不是用户当下的授权）。授权带 TTL 与单次使用限额，避免一次批准永久放行。
+    """
+    try:
+        from huginn.normative.ledger import NormativeLedger
+        from huginn.normative.session import SessionGrounding
+
+        global _grounding_ledger
+        if _grounding_ledger is None:
+            _grounding_ledger = NormativeLedger()
+        grounding = SessionGrounding(
+            _grounding_ledger,
+            ctx.user_id or "default",
+            str(thread_id),
+        )
+        proposition_id = f"tool:{request_id}"
+        if approved:
+            grounding.authorize(
+                proposition_id,
+                {
+                    "actions": [tool_name],
+                    "resources": ["*"],
+                    "limits": {"uses": 1},
+                },
+                ttl_s=300,
+                evidence={"request_id": request_id, "reason": reason[:200]},
+            )
+        else:
+            grounding.reject(
+                proposition_id,
+                evidence={"request_id": request_id, "reason": reason[:200]},
+            )
+    except Exception:  # 防御: 规范账失败不影响审批结果
+        logger.debug("tool decision not recorded in normative ledger", exc_info=True)
+
+
 @dataclass
 class WSCtx:
     """Per-connection state bundled so every message handler shares one signature.
@@ -233,7 +279,12 @@ def _make_ws_approval_callback(
                 fut = loop.create_future()
                 pending_approvals[request_id] = fut
             if pending_approval_contexts is not None and last_user_context:
-                pending_approval_contexts[request_id] = dict(last_user_context)
+                pending_approval_contexts[request_id] = {
+                    **dict(last_user_context),
+                    "tool_name": tool_name,
+                    "reason": reason,
+                    "request_id": request_id,
+                }
 
         # v6: auto_approve=True 时改发静默事件, 不再发 approval_request.
         # 之前发 approval_request (auto_approved=true) 让前端弹 "Auto-approved"
@@ -1505,6 +1556,15 @@ async def _handle_approval_response(
         future.set_result(approved)
 
     ctx_ap = ctx.pending_approval_contexts.pop(request_id, None)
+    if ctx_ap is not None:
+        _record_tool_decision(
+            ctx,
+            ctx_ap.get("thread_id") or request_id,
+            request_id,
+            ctx_ap.get("tool_name") or "unknown",
+            approved,
+            ctx_ap.get("reason") or "",
+        )
     if approved and ctx_ap:
         # ponytail: re-runs the full turn, not just the denied tool —
         # acceptable since the user explicitly approved.
