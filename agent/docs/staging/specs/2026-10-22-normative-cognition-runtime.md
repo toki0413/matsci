@@ -1,4 +1,4 @@
-# Spec: Normative Cognition Runtime — 从 PMK 文本一致性到「三账一调度器」
+# Spec: Normative Cognition Runtime — 从 PMK 文本一致性到「三账、两闸、一调度器、一梦境周期」
 
 **日期**: 2026-10-22
 **milestone**: M-NCR（Normative Cognition Runtime）
@@ -9,7 +9,7 @@
 
 ## 0. 一句话目标
 
-把 persona—memory—knowledge 循环从「三路文本快照 + 冲突暂停」重构为**三本可审计账本 + 一个无 LLM 的准入调度器**：认知账管「信什么」，规范账管「被允许做什么」，经验账管「做过且能复现什么」；PMK 默认开启，冲突不再靠文本对立词判定，而靠两张 sheaf 上的 H¹ 障碍分别裁决。
+把 persona—memory—knowledge 循环从「三路文本快照 + 冲突暂停」重构为**三本可审计账本 + 两道独立闸门 + 一个无 LLM 的准入调度器 + 一个受治理的梦境周期**：认知账管「信什么」，规范账管「被允许做什么」，经验账管「做过且能复现什么」；记忆治理拆成**保留闸**（可用/归档/巩固/修剪）与**影响闸**（此刻是否、以多大权威塑造推理），检索命中只是候选者，不等于授权进入上下文；梦境产物走**写入侧治理**，不与在线证据同权。PMK 默认开启，冲突不再靠文本对立词判定，而靠两张 sheaf 上的 H¹ 障碍分别裁决。
 
 一句话主张（可反驳）：
 
@@ -66,9 +66,11 @@
 - 结构直觉：这不是「检索不够好」，而是**规范状态没有独立表示**。把「用户提过」当成「用户接受」，是把认识论状态和规范状态压进同一个向量。
 - **L1 coordinates（压缩后必须保留的不变量）**：
   ```
-  (proposition_id, act_type, scope, status, valid_time)
+  动作坐标: (proposition_id, act_type, scope, status, valid_time)
+  记忆坐标: (memory_id, source_class, epistemic_status, evidential_authority, valid_time)
+  影响坐标: (query_id, memory_id, route, influence_authority, decided_at)
   ```
-  文本、embedding、chunk、摘要都是可丢弃的路径细节；这五个坐标不可丢。
+  文本、embedding、chunk、摘要都是可丢弃的路径细节；这三组坐标不可丢。注意「记忆坐标」与「影响坐标」分离：一条记忆被保留，不代表它此刻被授权影响推理。
 
 ### S2 Verification
 
@@ -85,7 +87,7 @@
 
 ### S4 Construction（本 spec 主体）
 
-公理、数据契约、接口、不变量见 §5–§9。
+公理、数据契约、接口、不变量见 §5–§9；记忆治理的构造见 §18。
 
 ### S5 Unification（同构点）
 
@@ -164,19 +166,39 @@
 │ authorize/...   │   │ supersedes 链   │   │ failed_direction    │
 └────────┬────────┘   └────────┬────────┘   └──────────┬──────────┘
          │                     │                       │
-         └──────────────┬──────┴───────────┬───────────┘
-                        ▼                  ▼
-              ┌─────────────────┐  ┌──────────────────┐
-              │ PMK 双 sheaf    │  │ 学习回路          │
-              │ 认识论 H¹ / 规范 H¹│  │ 轨迹索引 + OPE   │
-              └─────────────────┘  └──────────────────┘
+         │        ┌────────────┴────────────┐          │
+         │        ▼                         ▼          │
+         │  ┌───────────────┐        ┌───────────────┐  │
+         │  │ 保留闸         │        │ 影响闸         │  │
+         │  │ RetentionGate │        │ InfluenceGate │  │
+         │  │ 可用/归档/巩固 │        │ 候选→逐条卫生  │  │
+         │  │ /修剪          │        │ →授权/隔离/阻断│  │
+         │  └───────┬───────┘        └───────┬───────┘  │
+         │          │                        │          │
+         │          └──────────┬─────────────┘          │
+         │                     ▼                        │
+         │            ┌──────────────────┐              │
+         │            │ 梦境周期（离线）  │              │
+         │            │ SleepClock       │              │
+         │            │ Dreamer/Analyst/ │              │
+         │            │ Consolidator     │              │
+         │            │ 写入侧晋升门      │              │
+         │            └────────┬─────────┘              │
+         └─────────────────────┴────────────────────────┘
+                               ▼
+                     ┌─────────────────┐
+                     │ PMK 双 sheaf    │
+                     │ 认识论 H¹ / 规范 H¹│
+                     └─────────────────┘
 ```
 
-三条硬规则：
+硬规则：
 
 1. **规范账只追加**；当前状态是事件日志的确定性投影，不是可变字段。
 2. **认知账复用现有图**；只补 `subject_scope / owner / provenance / supersedes`。
 3. **经验账只存可复现单元**；不可复现的文本摘要不进入该账。
+4. **记忆有两条独立闸**：保留（是否还可用）与影响（此刻是否进入推理上下文）分开判定、分开审计；检索返回候选，不是上下文。
+5. **梦境写入是第四条状态迁移**：必须过写入侧晋升门，不能与在线直接证据同权。详见 §18。
 
 ---
 
@@ -501,6 +523,8 @@ class AdmissionSample:
 | I11 | `actor=agent` 不得写 `authorize/revoke/accept/reject` | `test_normative_ledger.py::test_actor_capability` |
 | I12 | 撤销/过期授权不得出现在后续 `AdmissionView` | `test_grounding_awareness.py::test_mask_revoked` |
 
+记忆治理不变量 I13–I24 见 §18.8；两表共同构成完整不变量集。
+
 ---
 
 ## 13. 多部署与同步
@@ -512,7 +536,8 @@ class AdmissionSample:
   - 同 `proposition_id` 多个 `accept/reject`：以最新 `valid_time` 为准，但保留全部事件。
   - TTL 用服务端时间读取时判定，避免设备时钟偏斜。
 - 隐私：`evidence_json` 只存 `message_id + span + quote_digest`；原文走既有加密存储与保留策略，不复制到规范账。
-- 迁移：SQLite WAL + 原子迁移脚本；不回填历史聊天为规范事件（避免伪造共同基础），只从新会话开始记录。
+- 梦境同步：`DreamObject` 带 `tenant_id / deployment_id`，跨设备只同步投影后的对象与权威向量，不同步原始对话；Soul 层级按租户隔离，禁止 cross-tenant seed。
+- 迁移：SQLite WAL + 原子迁移脚本；不回填历史聊天为规范事件（避免伪造共同基础），只从新会话开始记录；记忆治理事件从启用时刻开始记账，不回填旧记忆的伪影响决策。
 
 ---
 
@@ -542,7 +567,7 @@ class AdmissionSample:
 
 ### 14.3 Definition of Done
 
-1. 三本账 schema 落地，I1–I12 全绿。
+1. 三本账 schema 落地，I1–I24 全绿（其中 I13–I24 见 §18.8）。
 2. PMK 默认开启，治理锚点与台账同步，无默认翻转漂移。
 3. `session_state` 确认结果落盘；`clear_confirmation` 不再丢规范状态。
 4. persona revision 走 GREEN 采纳门；`adaptive_layer` 变为只读投影。
@@ -550,6 +575,9 @@ class AdmissionSample:
 6. System 3 接入 autoloop 的 pause 判定之前，determinism 测试通过。
 7. 离线策略学习完成 OPE 报告，影子模式无未授权执行。
 8. 现有 arch 门、PMK 测试、治理台账全部绿。
+9. 保留闸与影响闸独立实现，Hygiene Gate 七种 route 全量留痕（I13–I17）。
+10. 梦境周期有 SleepClock、DreamObject、写入侧晋升门；`derived/hypothesis` 不授权动作、不改内核（I15、I19、I21、I23）。
+11. Soul 四层优先级全序可审计，跨租户记忆/梦境零泄漏（I18、I22）。
 
 ---
 
@@ -572,6 +600,8 @@ class AdmissionSample:
 - 不做「更聪明的文本冲突判官」；文本只做 advisory。
 - 不用 LLM 做准入判定（只做离线/缓存分类）。
 - 不把规范状态写进 `adaptive_layer` 文本。
+- 不把「检索命中」当作「已授权进入上下文」；影响闸与保留闸必须分开。
+- 不给梦境产物自动权威加成；离线反思只提高抽象权威，不提高证据权威。
 
 ---
 
@@ -588,10 +618,372 @@ class AdmissionSample:
 | P2-b | 轨迹索引 + ActClassifier + AdmissionPolicy 离线训练 + OPE | 敏感度/特异度达标；影子零未授权 |
 | P3 | 灰度 enforce 全路径；多设备同步；行为指纹监控 | 线上指标达标 |
 
+记忆治理补章（§18）的分期 P1-c / P1-d / P2-c / P2-d / P3-b 与本表并行推进，阶段号一一对应；出口以 §18.8 的 I13–I24 与 §18.9 的指标为准。
+
 ---
 
 ## 17. 附：三条给实施者的提醒（双螺旋压缩）
 
-1. **路径可丢，坐标不可丢**：实现可以换表、换算法、换分类器；`(proposition, act, scope, status, valid_time)` 不能丢。
+1. **路径可丢，坐标不可丢**：实现可以换表、换算法、换分类器；三组坐标不能丢——动作 `(proposition, act, scope, status, time)`、记忆 `(memory_id, source_class, epistemic_status, evidential_authority, time)`、影响 `(query_id, memory_id, route, influence_authority, decided_at)`。
 2. **先建切口，再谈学习**：没有授权拓扑的硬边，任何策略学习都会学会绕过；先让未授权动作在结构上不可达。
 3. **反例即结构在说话**：`oppose+oppose` 误报、`clear_confirmation` 丢状态、`adaptive_layer` 前缀漂移——这三个反例不是 bug 清单，是「混轴」这一个结构问题的三个投影。
+
+---
+
+## 18. 记忆治理补章：保留 ≠ 影响，梦境 ≠ 证据
+
+本节回应 DREAM v3 / Governed Memory / Anamnesis / AutoPersonas OSO / MemDream / Auto-Dreamer / Sleep-Gated Dreaming / Soul-Conditioned Dreaming 的共同主张，并把它们并入同一套账本，而不是新增一套并行框架。
+
+三透镜落点：
+
+- **注意力**：Hygiene Gate = 逐查询的动态权重（七维打分）+ 硬 mask（权威类别、租户、TTL、撤销、Soul）；影响预算 = top-k 的稀疏聚合，不做全量上下文。
+- **高阶网络**：保留与影响是**两类不同的边**（同一记忆可同时属于“可留”与“禁入”）；Soul 四层是层级超边，不是可加的标量权重；梦境修复改变的是图结构，不是文本。
+- **双螺旋**：记忆坐标与影响坐标分离；表、算法、分类器都是可替换路径，坐标不可丢；先建切口，再谈学习。
+
+### 18.1 第一原则：记住一件事，不等于授权它此刻塑造推理
+
+把记忆生命周期拆成两个**独立决策**，二者不共享阈值、不共享审计行、不共享默认值：
+
+| 决策 | 问题 | 时机 | 输出 | 失败后果 |
+|---|---|---|---|---|
+| 保留闸 `RetentionGate` | 这条记忆还值不值得留？ | 写入 / 周期维护 / 睡眠 | `keep_available / archive / consolidate / prune` | 删错证据、存储膨胀 |
+| 影响闸 `InfluenceGate` | 此刻是否、以多大权威进入推理？ | 每次查询/每步动作前 | `authorize / uncertain / low_impact / arbitrate / quarantine / block` | 上下文污染、错误归因、未授权行为 |
+
+硬规则：
+
+- 检索返回的是**候选者（candidate）**，不是已授权上下文。
+- 保留决策不能提升影响权威；影响决策不能删除记忆。
+- 一条被 `archive` 的记忆仍可被影响闸以低权威召回（用于审计/反例），反之一条 `keep_available` 的记忆也可以被影响闸 `block`。
+- 两个决策各自写一条 `memory_state_event`（§18.7），审计时可独立追责。
+
+接口：
+
+```python
+@dataclass
+class RetentionDecision:
+    memory_id: str
+    action: Literal["keep_available", "archive", "consolidate", "prune"]
+    policy_id: str
+    policy_version: str
+    reasons: list[str]
+
+@dataclass
+class InfluenceDecision:
+    query_id: str
+    memory_id: str
+    route: Literal["authorize", "uncertain", "low_impact",
+                   "arbitrate", "quarantine", "consolidate", "block"]
+    influence_authority: float          # [0,1]，逐查询计算
+    caps_applied: list[str]
+    reasons: list[str]
+```
+
+### 18.2 Hygiene Gate：状态感知的逐条卫生闸
+
+对每个候选记忆计算七个维度，并允许两个额外硬信号（权威类别、灵魂显著性）参与 clamp：
+
+| 维度 | 信号来源（现有可复用） | 默认处置 |
+|---|---|---|
+| 置信度 confidence | `memory.importance`、claim `confidence`、`evidence_strength` | 低 → `uncertain` |
+| 不确定性 uncertainty | `epistemic.detect_epistemic_gap`、belief entropy、缺失字段比例 | 高 → `uncertain` / `low_impact` |
+| 矛盾压力 contradiction_pressure | `longterm.scan_contradictions`、ClaimHypergraph `contested/recheck`、PMK H¹ | 高 → `arbitrate`，不静默选边 |
+| 来源可靠性 source_reliability | `provenance` source class、`claim_reward`、`harness_ledger` observed 比例 | 低 → `low_impact` / `quarantine` |
+| 时间有效性 temporal_validity | `valid_from/valid_to`、TTL、`since` | 过期 → `block` |
+| 接地状态 grounding_status | `claim_grounding`（数值是否落在工具轨迹）、`experience_archive.verdict` | 未接地 → `uncertain`，不得当事实 |
+| 溯源完整性 provenance_completeness | `memory.anchor`、`provenance` 链、`quote_digest` | 缺失 + 高风险 → `block` / `quarantine` |
+| （硬）权威类别 authority_class | `direct / derived / hypothesis`（§18.6） | 决定影响上限，不可被分数覆盖 |
+| （硬）灵魂显著性 soul_salience | `SoulContext / SalienceProfile`（§18.5） | 只调制种子与边界，不绕过授权 |
+
+评分（可配置、可回放）：
+
+```python
+base = (w_rel * relevance
+        + w_conf * confidence
+        + w_ground * grounding_status
+        + w_prov * provenance_completeness
+        + w_rec * recency_validity)
+penalty = w_unc * uncertainty + w_con * contradiction_pressure
+raw = clamp(base - penalty, 0.0, 1.0)
+influence = min(raw, cap(authority_class, route))
+```
+
+`cap` 默认：
+
+| 权威类别 / 路由 | influence 上限 | 能否作为事实依据 | 能否授权动作 |
+|---|---|---|---|
+| direct + authorize | 1.0 | 是 | 是（仍需规范账 scope） |
+| derived + authorize | 0.6 | 仅作背景/框架 | 否 |
+| hypothesis/dream + uncertain | 0.4 | 否 | 否 |
+| quarantine / block | 0.0 | 否 | 否 |
+| revoked / expired | 0.0 | 否 | 否 |
+
+上下文装配规则：
+
+- 按 `influence` 排序取 top-k，而不是按相似度取 top-k；相似度只作为 `relevance` 的一项。
+- 注入时必须带来源标签（`[DIRECT] / [DERIVED] / [DREAM] / [UNCERTAIN]`），禁止无标签注入。
+- 总影响预算：`sum(influence_i) <= context_budget`；预算不足时优先保留 direct，再保留高显著性的 derived。
+- 若所有候选都被 `block/quarantine`，必须显式输出「无可用证据」，不得用通用知识补位冒充记忆。
+
+实现落点：新增 `huginn/memory/hygiene_gate.py`（纯函数）；阈值走现有 `plugins.memory_maintenance_policy` 策略注册表，不在代码里硬编码；`memory/decay.py` 只保留保留闸的衰减逻辑，不再直接决定召回。
+
+### 18.3 Governed Memory：每一次状态迁移都要过闸并留痕
+
+Anamnesis 的生命周期契约落成一条规则：**写入、索引、巩固、召回、修订、遗忘、再训练、晋升**八类迁移，全部产生 `memory_state_event`，带 `policy_id + policy_version + decision + authority + evidence`。
+
+迁移与闸的对应：
+
+| 迁移 | 闸 | 不可省略的证据 |
+|---|---|---|
+| ingest / index | 保留闸 | 来源、时间、provenance digest |
+| recall | 影响闸 | query_id、七维评分、route |
+| consolidate | 保留闸 + 写入侧晋升门 | 源 id 列表、压缩比、可还原路径 |
+| revise / supersede | 认知账 + 保留闸 | 新旧 id、矛盾证据、`superseded_by` |
+| forget（软） | 保留闸 | 衰减系数、可恢复句柄 |
+| prune（硬） | 保留闸 + 双信号 | 低权威 + 预测失败/过期；不可恢复需二次确认 |
+| retrain | 治理门 | 训练数据快照、策略版本、action mask |
+| promote（梦境/派生→更高权威） | 写入侧晋升门 | 独立佐证、provenance 链、无未解矛盾 |
+
+权威链（Anamnesis）：
+
+```python
+@dataclass(frozen=True)
+class AuthorityLink:
+    node_id: str
+    source_class: Literal["direct", "derived", "hypothesis"]
+    directness: float              # 0..1
+    corroboration: int
+    provenance_digest: str
+    epistemic_status: str
+    parent: str | None             # 指向被派生来源
+
+# 修订 = 追加新 link，不覆盖旧 link；删除 = tombstone，不物理销毁权威链
+```
+
+### 18.4 梦境周期：离线诊断、可学习修复、可逆遗忘
+
+把 [MemoryMaintainer](file:///workspace/agent/huginn/memory/maintainer.py#L20-L102) 从「定时衰减线程」升级为受治理的梦境周期，但**不新增 agent 框架**：Dreamer / Analyst / Consolidator 是同一周期里的三个角色。
+
+| 角色 | 职责 | 输入 | 输出 |
+|---|---|---|---|
+| Dreamer | 探测记忆图的潜在断点 | 孤立节点、低连接簇、陈旧 anchor、矛盾压力、检索探针失败 | `DreamFinding` 列表 |
+| Analyst | 诊断失败类型 | findings + 证据 | `Diagnosis`（缺链/重复/过时/过度泛化/冲突） |
+| Consolidator | 执行修复 | diagnosis | `RepairAction`（add_link / split_cluster / merge_duplicate / re_anchor / soft_decay / quarantine / summarize） |
+
+约束：
+
+- 修复动作**不得删除 direct 证据**；只能调整索引、链接、显著性、摘要。
+- 软衰减可逆：保存衰减系数与恢复句柄；同一预判信号驱动衰减与恢复。
+- 修复策略可学习（MemDream 的 GRPO 路线），但必须离线训练 + OPE + 影子模式；reward = held-out 检索改善 − 成本，不能用 LLM 自评。
+- Auto-Dreamer 的快慢解耦：会话内快速写入不经过梦境；跨会话巩固才进入睡眠周期，二者用不同策略版本。
+- 巩固是可学习能力，不是固定启发式；现有 [cluster.py](file:///workspace/agent/huginn/memory/cluster.py#L36) 的 LLM 摘要作为 Consolidator 的基线，不是终点。
+
+SleepClock：
+
+```python
+@dataclass
+class SleepClock:
+    persona_id: str
+    timezone: str
+    weekly_windows: list[tuple[str, str, str]]  # (weekday, start, end)
+    state: Literal["active", "sleep"]
+    last_transition_at: str
+
+def tick(clock: SleepClock, now_server: str) -> SleepClock: ...
+```
+
+- 睡眠状态是**后台巩固的准入控制**，不是用户请求的准入控制。
+- 活跃状态下不得跑巩固；触发则排队或 deny（policy 决定），并记录 `sleep_leakage` 指标。
+- 梦产物在下一轮以 `[DREAM]` 标签注入，受影响闸上限约束；不得作为事实依据。
+
+梦境对象：
+
+```python
+@dataclass
+class DreamObject:
+    dream_id: str
+    persona_id: str
+    sleep_window: tuple[str, str]
+    seed_event_ids: list[str]
+    highlights: list[str]
+    decisions: list[str]
+    risks: list[str]
+    followups: list[str]
+    affect: dict[str, float]
+    abstraction_authority: float
+    evidential_authority: float
+    influence_authority: float
+    provenance: list[str]
+    soul_priority: str
+    status: Literal["candidate", "promoted", "quarantined", "expired"]
+```
+
+Soul-Conditioned：种子选择、边界厚度、Langevin 漂移、EFE 分流由 `SoulContext + SalienceProfile` 调制；禁止全局一套配置。人格不同，梦境分布就应不同，这是可检验的（见 §18.9 E4）。
+
+### 18.5 Soul 层级：价值排序，不是授权排序
+
+四层优先级：
+
+```
+TenantSoul (4) ≻ OrgUnitSoul (3) ≻ AgentSoul (2) ≻ UserSoul (1)
+```
+
+适用范围：
+
+- **适用**：梦境种子选择、显著性、边界厚度、漂移强度、EFE 分流、价值冲突裁决。
+- **不适用**：事实真假（认识论）、动作授权（规范账）。`UserSoul` 优先级最低，不代表可以绕过用户授权；用户同意仍由规范账独立判定。
+- 高优先级只能**约束**低优先级，不能替它写入 `authorize`；低优先级可以增加约束，不能覆盖高优先级。
+- 每次覆盖/冲突写 `soul_resolution_event`，带 `higher / lower / dimension / decision / reason`。
+- 多租户隔离：`TenantSoul` 不可被 org/agent/user 覆盖；跨租户记忆不得进入梦境种子池。
+
+### 18.6 梦境产物的写入侧治理：回答「更高权威还是更低权威」
+
+结论：**不是更高或更低，而是两个轴分开。**
+
+```python
+@dataclass(frozen=True)
+class AuthorityVector:
+    abstraction_authority: float   # 能提供多抽象的框架
+    evidential_authority: float    # 能作为多强的证据
+    influence_authority: float     # 此刻能多大程度塑造推理（逐查询）
+```
+
+默认配置：
+
+| 来源类别 | 例子 | abstraction | evidential | influence cap | 可授权动作 |
+|---|---|---|---|---|---|
+| `direct` | 工具结果、用户显式行为、已验证实验 | 0.2 | 0.9 | 1.0 | 是（另需 scope） |
+| `derived` | 聚类摘要、巩固产物、梦境对象 | 0.7 | 0.4 | 0.6 | 否 |
+| `hypothesis` | 梦中新抽象、未验证模式 | 0.9 | 0.1 | 0.4 | 否 |
+
+晋升阶梯（写入侧门）：
+
+```
+hypothesis --(provenance 完整 + ≥1 独立在线佐证 + 无未解矛盾)--> derived
+derived    --(可重放/直接测量 + provenance 链完整)--> direct
+任意        --(矛盾/撤销/过期)--> contested / quarantined
+```
+
+硬规则：
+
+1. 梦境产物**不得覆盖** source 记忆；只能新增 `supersedes` 建议，晋升前保留双份。
+2. 梦境产物默认 `derived`；只有通过晋升门才可提升 `evidential_authority`。
+3. 梦境产物**永远不能**直接授权动作，也不能修改 `PersonaKernel`。
+4. 由梦境提出的人格修订走 candidate 通道，证据阈值是在线路径的 2 倍，且必须人工确认涉及安全/授权边界的变更。
+5. 离线反思不自动加分：**抽象权威可以高，证据权威必须低**；这正是对「梦是否应获得更高权威」的回答。
+
+一句话：**Dream can frame, not justify; can propose, not authorize.**
+
+### 18.7 数据契约（补）
+
+```sql
+CREATE TABLE memory_state_events (
+  event_id        TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  memory_id       TEXT NOT NULL,
+  event_type      TEXT NOT NULL,  -- ingest|index|consolidate|recall|revise|forget|retrain|promote|quarantine
+  policy_id       TEXT NOT NULL,
+  policy_version  TEXT NOT NULL,
+  decision        TEXT NOT NULL,
+  route           TEXT,
+  authority_json  TEXT NOT NULL,  -- {abstraction,evidential,influence}
+  evidence_json   TEXT NOT NULL,
+  actor           TEXT NOT NULL,
+  soul_scope      TEXT NOT NULL,  -- tenant|org_unit|agent|user
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX idx_mem_state ON memory_state_events(tenant_id, memory_id, created_at);
+
+CREATE TABLE influence_decisions (
+  query_id        TEXT NOT NULL,
+  memory_id       TEXT NOT NULL,
+  tenant_id       TEXT NOT NULL,
+  route           TEXT NOT NULL,
+  influence       REAL NOT NULL,
+  dims_json       TEXT NOT NULL,   -- 七维原始分
+  caps_json       TEXT NOT NULL,
+  decided_at      TEXT NOT NULL,
+  PRIMARY KEY (query_id, memory_id)
+);
+
+CREATE TABLE soul_resolution_events (
+  event_id        TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  dimension       TEXT NOT NULL,
+  higher_scope    TEXT NOT NULL,
+  lower_scope     TEXT NOT NULL,
+  decision        TEXT NOT NULL,
+  reason          TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+```
+
+### 18.8 不变量（补 I13–I24）
+
+| # | 不变量 | 测试 |
+|---|---|---|
+| I13 | 保留决策与影响决策独立：保留不得提升影响权威，影响不得删除记忆 | `test_memory_dual_gate.py::test_independence` |
+| I14 | 影响权威逐查询计算，且被 authority_class 与 route 双重 clamp | `test_influence_gate.py::test_per_query_cap` |
+| I15 | `derived/hypothesis` 不得授权动作，不得修改 `PersonaKernel` | `test_dream_authority.py::test_no_authorize_no_kernel` |
+| I16 | 八类记忆迁移全部产生 `memory_state_event`，含 policy_id/version | `test_memory_governance.py::test_audit_completeness` |
+| I17 | Hygiene Gate 只允许七种 route，禁止静默放行 | `test_hygiene_gate.py::test_closed_routes` |
+| I18 | Soul 优先级是全序；低层不得覆盖高层；覆盖必须留痕 | `test_soul_priority.py::test_total_order_and_audit` |
+| I19 | 巩固只在 sleep 状态执行；状态迁移可审计 | `test_sleep_gate.py::test_no_consolidation_in_active` |
+| I20 | 软衰减可逆；硬修剪需两个独立信号 + 二次确认 | `test_soft_decay.py::test_reversible_and_two_signal` |
+| I21 | 梦境产物不得覆盖 source；`supersedes` 晋升前保留双份 | `test_dream_authority.py::test_no_overwrite` |
+| I22 | 跨租户记忆/梦境零泄漏 | `test_memory_governance.py::test_tenant_isolation` |
+| I23 | 晋升要求 provenance 链完整 + 无未解矛盾 | `test_dream_authority.py::test_promotion_preconditions` |
+| I24 | 注入上下文的每条记忆必须带来源标签；梦境不得无标签注入 | `test_influence_gate.py::test_labeled_injection` |
+
+### 18.9 指标（补）
+
+| 指标 | 定义 | 目标 |
+|---|---|---|
+| context pollution rate | 注入上下文中与当前 query 无关/被 block 的条目占比 | ≤ 3% |
+| influence precision | 被注入且实际影响正确决策的记忆 / 被注入记忆 | ≥ 0.75 |
+| retention–influence disagreement | 保留=available 但影响=block 的比例（应非零，证明两闸解耦） | 5%–40% |
+| dream promotion precision | 晋升为 derived 的梦境产物中被后续在线证据佐证的占比 | ≥ 0.80 |
+| dream contradiction rate | 被在线证据推翻的梦境产物占比 | ≤ 5% |
+| retrieval preemption rate | 梦境修复后避免的检索失败 / 探针失败 | ≥ 30% |
+| soft decay restore success | 软衰减后恢复原状的成功率 | 100% |
+| soul override violations | 低层覆盖高层事件数 | 0 |
+| sleep leakage | 活跃状态执行巩固的次数 | 0 |
+| no-evidence honesty | 全候选被 block 时显式声明「无可用证据」的比例 | 100% |
+
+可检验实验：
+
+- **E1**：同 token 预算下，influence-gated top-k vs similarity top-k，任务正确率与污染率。
+- **E2**：梦境晋升产物在 30 天窗口内的在线佐证率。
+- **E3**：两闸解耦后，false「无可用证据」是否上升；若显著上升，说明保留闸与影响闸阈值需要重新校准。
+- **E4**：Soul-conditioned 梦境 vs 全局配置，行为指纹 JS 散度与人格一致性评分。
+
+### 18.10 路线补丁
+
+| 阶段 | 内容 | 出口 |
+|---|---|---|
+| P1-c | 保留/影响双闸 + Hygiene Gate + `memory_state_events` | I13–I17 绿 |
+| P1-d | 用户信念 / 记忆的 Anamnesis 权威链；`superseded_by` 双份 | I21、I23 绿 |
+| P2-c | SleepClock + Dreamer/Analyst/Consolidator + DreamObject + 写入侧晋升门 | I18–I19、I21 绿 |
+| P2-d | 学习化修复/巩固（GRPO/离线 RL）+ OPE + 影子 | E2、E3 达标 |
+| P3-b | Soul 四层优先级 + 多租户梦境隔离 + 跨设备同步 | I18、I22 绿 |
+
+### 18.11 风险与反模式
+
+| 风险 | 处理 |
+|---|---|
+| 过度门控导致上下文过空、答案质量下降 | 设最小 direct 配额与显式「无证据」声明；E3 监控；必要时只降 `influence` 不降 `retention` |
+| Hygiene 七维分数被游戏化 | 维度权重走策略注册表 + 版本化；定期 OOD 校准；硬 clamp 不可由分数覆盖 |
+| 梦境产物污染事实层 | 默认 `derived`，`evidential` 上限 0.4；晋升需独立佐证；禁止授权动作 |
+| 学习化修复奖励作弊 | 只奖励 held-out 检索改善；action mask 禁止删 direct 证据；人工抽检 |
+| Soul 优先级被误用为授权 | 明确分离：Soul 管价值/显著性，规范账管授权；两者交叉时必须双门 |
+| 睡眠调度跨时区失真 | 服务端时钟 + 时区显式配置；手动 override 留痕 |
+| 账本写入放大 | 事件分区 + 聚合视图 + TTL；原文只存 digest/引用 |
+
+明确不做：
+
+- 不把「检索到」等同于「已授权进入上下文」。
+- 不给梦境产物自动权威加成；离线反思不是证据。
+- 不用一套全局 salience profile 覆盖所有 persona。
+- 不把 Soul 优先级当作授权优先级。
+- 不用 LLM 自评作为梦境修复的 reward。
+
+
