@@ -215,19 +215,30 @@ LUCID review (mandatory after generating hypothesis):
         )
 
     def _get_prompt_budget(self, phase: str | None) -> int:
-        """按 phase 取 prompt budget. env 覆盖优先, dict 次之, fallback _PROMPT_BUDGET."""
+        """按 phase 取 prompt budget，并按当前 trust 缩放.
+
+        env 覆盖优先, dict 次之, fallback _PROMPT_BUDGET；最后乘
+        System3 autonomy 的 token_budget_scale（blind/unknown → 0.5）。
+        """
         import os
+
+        budget = self._PROMPT_BUDGET
         if phase:
             env_key = f"HUGINN_PROMPT_BUDGET_{phase.upper()}"
             env_val = os.environ.get(env_key)
             if env_val:
                 try:
-                    return int(env_val)
+                    budget = int(env_val)
                 except ValueError:
                     logger.debug("best-effort op failed", exc_info=True)
-            if phase in self._PROMPT_BUDGET_BY_PHASE:
-                return self._PROMPT_BUDGET_BY_PHASE[phase]
-        return self._PROMPT_BUDGET
+            elif phase in self._PROMPT_BUDGET_BY_PHASE:
+                budget = self._PROMPT_BUDGET_BY_PHASE[phase]
+        try:
+            from huginn.normative.system3 import scaled_token_budget
+
+            return scaled_token_budget(budget)
+        except Exception:  # 防御: 自主边界不可用则用原预算
+            return budget
 
     @staticmethod
     def _files_jaccard(a: list[str], b: list[str]) -> float:

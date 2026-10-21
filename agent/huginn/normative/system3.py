@@ -55,6 +55,18 @@ def parallel_cap(requested: int, *, trust: str | None = None) -> int:
     return max(1, min(int(requested), int(limits.max_parallel_jobs)))
 
 
+def scaled_token_budget(
+    budget: int,
+    *,
+    trust: str | None = None,
+    floor: int = 1000,
+) -> int:
+    """按当前 trust 缩放 token/字符预算；不降到 floor 以下."""
+    limits = autonomy_limits(trust) if trust is not None else current_autonomy_limits()
+    scaled = int(float(budget) * float(limits.token_budget_scale))
+    return max(int(floor), scaled)
+
+
 def admit_with_trust(
     request: AdmissionRequest,
     grounding: GroundingView,
@@ -109,4 +121,5 @@ __all__ = [
     "autonomy_limits",
     "current_autonomy_limits",
     "parallel_cap",
+    "scaled_token_budget",
 ]

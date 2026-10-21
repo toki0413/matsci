@@ -1736,14 +1736,15 @@ CREATE TABLE reconcile_records (
 - [x] PMK `world_model` stalk（第一段）：物理工作区记录最新预测/观测；autoloop 注入；缺标签/高误差走认识论 advisory。
 - [x] System3 预算收紧（第一段）：`autonomy_limits(trust)` 挂到 `AdmissionDecision.autonomy`（并发/预算/审批门槛）。
 - [x] 调度器消费 autonomy（并发）：high_throughput 与 WorkflowOrchestrator 按 `parallel_cap` 夹并发。
+- [x] token 预算消费（第一段）：autoloop `_get_prompt_budget` 按 `scaled_token_budget` 缩放（blind/unknown → 0.5）。
 
 待完成（按依赖顺序）：
 
-- [ ] token 预算消费：`token_budget_scale` 尚未接入 LLM/工具预算。
 - [ ] VIGIL 独立进程/watchdog：当前是同进程 daemon 线程，进程崩溃无法自恢复。
 - [ ] Consolidator 其余动作：add_link / merge_duplicate / summarize / split_cluster / re_anchor 的专用执行器。
 - [ ] PMK LLM 判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
 - [ ] `world_model` stalk 与 memory/kb 的 worldview/contract 交叉粘合（当前只做标签与误差 advisory）。
+- [ ] token 预算扩展到 LLM `max_tokens` / 工具输出预算（当前只覆盖 autoloop prompt 字符预算）。
 
 ---
 
@@ -1805,7 +1806,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   tests/test_env_surface_governance.py -q -o addopts=""
 ```
 
-当前证据：410 passed（规范/准入/System3/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/stalk/物理工作区/PMK/arch/env/工具/权限/研究管线），ruff clean。
+当前证据：411 passed（规范/准入/System3/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/stalk/物理工作区/PMK/arch/env/工具/权限/研究管线），ruff clean。
 
 ### 22.4 已知限制
 
@@ -1815,7 +1816,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
 - 记忆审计目前每次召回逐条写事件；高频场景需批量/采样，否则事件账增长快。
 - `HUGINN_NORMATIVE_ENFORCE` 默认关闭：显式审批后的授权已落账，但自动批准路径尚未写 system authorize，直接开启会阻断 auto-approved 高风险动作。
 - 梦境周期已接 MemoryMaintainer + DreamStore；Consolidator 的 soft_decay/quarantine 已支持显式 apply/rollback，其余动作仍是提案；`HUGINN_DREAM_WINDOWS` 为空时不会进入 sleep（不伪造作息）。
-- VIGIL 已是 lifespan 启动的同进程 daemon 线程，工具审计会喂成功/失败；System3 的并发限制已被 high_throughput / WorkflowOrchestrator 消费，但 token 预算缩放尚未接入；独立进程/watchdog 仍未实现。
+- VIGIL 已是 lifespan 启动的同进程 daemon 线程，工具审计会喂成功/失败；System3 的并发限制已被 high_throughput / WorkflowOrchestrator 消费，token 缩放已接 autoloop prompt 预算（LLM `max_tokens`/工具输出预算尚未接）；独立进程/watchdog 仍未实现。
 - 世界模型 `prediction_error` 已由 `PhysicalWorkspace` 自动落 `drift_events`；PMK 已注入 `world_model` stalk，但当前只做标签/误差 advisory，尚未与 memory/kb 做 worldview/contract 交叉粘合。
 
 
