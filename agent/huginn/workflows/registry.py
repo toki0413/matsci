@@ -203,13 +203,23 @@ class WorkflowRegistry:
     @classmethod
     def render_stages(cls, name: str, **params: Any) -> list[dict[str, Any]]:
         """调模板工厂渲染 stages; 非模板/失败抛 ValueError."""
+        return _as_stage_dicts(cls.render(name, **params))
+
+    @classmethod
+    def render(cls, name: str, **params: Any) -> list[Any]:
+        """返回可直接交给 WorkflowEngine 的 stage 对象 (模板先惰性渲染).
+
+        与 ``render_stages`` 的分工: 后者导出可搬运的 dict 骨架 (分享/序列化),
+        本方法保留 ComputationalStage 实例 (执行)。二者共用同一渲染来源。
+        """
         factory = cls._template_factories.get(name)
-        if factory is None:
-            pkg = cls.get(name)
-            if pkg and pkg.kind == "stages":
-                return pkg.stages or []
-            raise ValueError(f"'{name}' 不是可渲染的模板或 stages 工作流")
-        return _as_stage_dicts(factory(**params))
+        if factory is not None:
+            return list(factory(**params))
+        pkg = cls.get(name)
+        if pkg is not None and pkg.kind == "stages":
+            from huginn.workflows.checkpoint import _stage_from_dict
+            return [_stage_from_dict(s) for s in (pkg.stages or [])]
+        raise ValueError(f"'{name}' 不是可渲染的模板或 stages 工作流")
 
     @classmethod
     def register_builtin_templates(cls) -> list[str]:

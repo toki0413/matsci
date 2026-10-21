@@ -49,11 +49,13 @@ CORE_TOOL_NAMES: list[str] = [
 #
 # task router 的作用是"缩小直接可见面", 但缩小后必须留一条**找回能力的通道**,
 # 否则模型遇到未暴露的工具只能猜 API 或放弃:
+#   catalog_search  — 跨 tool/capability/skill/workflow 的统一只读检索;
 #   capability_tool — 按能力 (组合/原子) 检索并执行, 适合多步流程;
 #   tool_search     — 语义/关键词搜未暴露的原子工具, 并可直接 invoke.
-# 两者不在 keyword category / world-domain 里, 旧实现会在设置 task 后把它们
+# 三者不在 keyword category / world-domain 里, 旧实现会在设置 task 后把它们
 # 一并滤掉, 与 capability_tool 文档的"LLM 始终可见"矛盾.
-DISCOVERY_TOOL_NAMES: tuple[str, ...] = ("capability_tool", "tool_search")
+DISCOVERY_TOOL_NAMES: tuple[str, ...] = (
+    "catalog_search", "capability_tool", "tool_search")
 
 
 # === Tool Category 定义 ===
@@ -335,7 +337,7 @@ if __name__ == "__main__":
         "structure_tool", "file_read_tool", "file_write_tool", "file_edit_tool",
         "analysis_tool", "literature_tool", "web_search_tool",
         "diagnose_tool", "knowledge_tool",  # 杂项
-        "capability_tool", "tool_search",  # 能力发现通道
+        "capability_tool", "tool_search", "catalog_search",  # 能力发现通道
     ]
 
     # 1. 单关键词命中 — VASP
@@ -402,6 +404,7 @@ if __name__ == "__main__":
     # 12. 能力发现工具在任何 task 下都保留 (裁工具不能裁"找回工具"的通道)
     for _task in ("hello world", "vasp calc", "用第一性原理算一下"):
         _subset = compute_effective_subset(_task, AVAILABLE)
+        assert "catalog_search" in _subset, f"catalog_search 被裁: {_task}"
         assert "capability_tool" in _subset, f"capability_tool 被裁: {_task}"
         assert "tool_search" in _subset, f"tool_search 被裁: {_task}"
     assert categorize_tool("ml_potential_tool") == "ml"

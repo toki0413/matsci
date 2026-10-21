@@ -10,14 +10,15 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 # 支持的接入种类. 与各注册表的 kind 路由一一对应:
-#   mcp    -> MCPClientManager
-#   tool   -> ToolRegistry
-#   model  -> ModelRegistry
-#   skill  -> SkillRegistry
-#   prompt -> prompt_segments
-#   plugin -> plugins/loader + StarHandlerRegistry
-#   workflow -> WorkflowRegistry
-KINDS = ("mcp", "plugin", "skill", "tool", "prompt", "model", "workflow")
+#   mcp         -> MCPClientManager
+#   tool        -> ToolRegistry
+#   capability  -> CapabilityRegistry
+#   model       -> ModelRegistry
+#   skill       -> SkillRegistry
+#   prompt      -> prompt_segments
+#   plugin      -> plugins/loader + StarHandlerRegistry
+#   workflow    -> WorkflowRegistry
+KINDS = ("mcp", "plugin", "skill", "tool", "capability", "prompt", "model", "workflow")
 
 # 来源. discover_all 去重时按该优先级: 值越大越优先保留.
 #   builtin   -> lifespan/servers 目录内置 server

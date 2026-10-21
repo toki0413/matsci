@@ -34,18 +34,46 @@ class RememberOutput(BaseModel):
 
 
 class RecallInput(BaseModel):
-    query: str = Field(description="Search query for long-term memory.")
-    category: str | None = Field(default=None, description="Optional category filter.")
+    query: str = Field(
+        default="", description="Search query. Empty is allowed for category/handle recall."
+    )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "Category filter. Also selects context recall when mode='auto' "
+            "(e.g. autoloop_summary / failure / hypothesis)."
+        ),
+    )
     tier: str | None = Field(
         default=None, description="Optional tier filter: short, mid, long."
     )
     top_k: int = Field(
-        default=5, ge=1, le=20, description="Number of memories to retrieve."
+        default=5, ge=1, le=50, description="Number of records to retrieve."
+    )
+    mode: str = Field(
+        default="auto",
+        description=(
+            "Recall backend: auto | memory | context | observation. "
+            "auto routes by handle > category > semantic memory search."
+        ),
+    )
+    handle: str | None = Field(
+        default=None,
+        description="Observation handle '@obs:<uuid>' for exact paged recall of offloaded output.",
+    )
+    page: int = Field(default=0, ge=0, description="Page index for observation recall.")
+    page_size: int = Field(
+        default=4000, ge=1, le=20000, description="Characters per page for observation recall."
     )
 
 
 class RecallOutput(BaseModel):
     results: list[dict]
+    intent: str = ""
+    source: str = ""
+    available: bool = True
+    count: int = 0
+    error: str | None = None
 
 
 class RememberTool(HuginnTool[RememberInput, RememberOutput]):
@@ -85,7 +113,9 @@ class RecallTool(HuginnTool[RecallInput, RecallOutput]):
     name = "recall"
     category = "meta"
     description = (
-        "Search long-term memory for relevant facts, insights, or prior conversations."
+        "Unified recall entry. Routes one call to the right backend by intent "
+        "(mode='auto': handle > category > semantic memory), so you do not need "
+        "to pick between memory / externalized context / archived output."
     )
     destructive = False
     read_only = True
@@ -93,22 +123,30 @@ class RecallTool(HuginnTool[RecallInput, RecallOutput]):
     output_schema = RecallOutput
 
     async def call(self, args: RecallInput, context) -> ToolResult:
-        if context.memory_manager is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="Memory manager not available in this context.",
-            )
-        try:
-            results = context.memory_manager.recall(
-                query=args.query,
-                category=args.category,
-                tier=args.tier,
-                top_k=args.top_k,
-            )
-            return ToolResult(
-                data=RecallOutput(results=results).model_dump(),
-                success=True,
-            )
-        except Exception as exc:
-            return ToolResult(data=None, success=False, error=str(exc))
+        from huginn.tools.recall_facade import route_recall
+
+        outcome = route_recall(
+            query=args.query,
+            category=args.category,
+            top_k=args.top_k,
+            tier=args.tier,
+            handle=args.handle,
+            page=args.page,
+            page_size=args.page_size,
+            mode=args.mode,
+            memory_manager=getattr(context, "memory_manager", None),
+            session_id=getattr(context, "session_id", "default"),
+        )
+        output = RecallOutput(
+            results=outcome["results"],
+            intent=outcome["intent"],
+            source=outcome["source"],
+            available=outcome["available"],
+            count=outcome["count"],
+            error=outcome["error"],
+        )
+        return ToolResult(
+            data=output.model_dump(),
+            success=outcome["available"],
+            error=outcome["error"],
+        )

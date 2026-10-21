@@ -14,6 +14,7 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
+from huginn.agents.blackboard import Blackboard
 from huginn.agents.factory import AgentFactory
 from huginn.autoloop.plan_store import Plan, PlanStep, PlanStore
 from huginn.memory.longterm import LongTermMemory
@@ -47,6 +48,9 @@ class OrchestratorResult:
     summary: str = ""
     success: bool = True
     error: str | None = None
+    # task-scoped 结构化共享面: 下游可按 key/kind/provenance 读取, 不必只依赖
+    # outputs 里的裸字符串.
+    blackboard: Blackboard | None = None
 
 
 _PLANNER_PROMPT = """You are a team coordinator. Given the user's objective, break it into 2-5 parallel subtasks suitable for different specialist agents.
@@ -308,6 +312,13 @@ class Orchestrator:
     ) -> OrchestratorResult:
         """Execute a TaskPlan respecting dependencies and concurrency limits."""
         result = OrchestratorResult(objective=plan.objective, plan=plan)
+        board = Blackboard(task_id=f"plan:{uuid.uuid4().hex[:8]}")
+        result.blackboard = board
+        # 目标本身作为 plan 条目入板, 下游能看到"这轮在解什么", 而不只是片段.
+        board.post(
+            "objective", plan.objective, producer="orchestrator", kind="plan",
+            provenance="reported", meta={"scope": "task"},
+        )
         semaphore = asyncio.Semaphore(self.max_concurrent)
         completed: set[str] = set()
         running: dict[str, asyncio.Task] = {}
@@ -319,12 +330,19 @@ class Orchestrator:
                     with contextlib.suppress(Exception):
                         on_status(task)
                 try:
-                    # Build context from dependencies
+                    # Build context from dependencies — 优先用黑板投影 (带
+                    # kind/provenance 标签), 缺失时回退到 outputs 裸文本,
+                    # 保证旧计划 (依赖项未入板) 仍能跑.
                     dep_context = ""
-                    for dep_id in task.depends_on:
-                        dep_out = result.outputs.get(dep_id, "")
-                        if dep_out:
-                            dep_context += f"\n\nOutput from {dep_id}:\n{dep_out}"
+                    if task.depends_on:
+                        digest = board.digest(keys=task.depends_on)
+                        if digest:
+                            dep_context = f"\n\n{digest}"
+                        else:
+                            for dep_id in task.depends_on:
+                                dep_out = result.outputs.get(dep_id, "")
+                                if dep_out:
+                                    dep_context += f"\n\nOutput from {dep_id}:\n{dep_out}"
                     full_prompt = f"{task.prompt}{dep_context}"
 
                     # Each sub-agent shares the long-term memory but gets its own session
@@ -343,10 +361,22 @@ class Orchestrator:
                     task.result = output
                     task.status = "done"
                     result.outputs[task.task_id] = output
+                    if output.strip():
+                        # 子 agent 的自然语言产出是"转述", 不是实测证据.
+                        board.post(
+                            task.task_id, output, producer=task.agent_id,
+                            kind="finding", provenance="reported",
+                            meta={"agent_id": task.agent_id, "step": task.task_id},
+                        )
                 except Exception as exc:
                     task.status = "error"
                     task.result = f"Error: {exc}"
                     result.outputs[task.task_id] = task.result
+                    board.post(
+                        task.task_id, str(exc), producer=task.agent_id,
+                        kind="error", provenance="reported",
+                        meta={"agent_id": task.agent_id, "step": task.task_id},
+                    )
                 if on_status:
                     with contextlib.suppress(Exception):
                         on_status(task)

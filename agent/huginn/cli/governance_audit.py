@@ -800,6 +800,22 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
         ),
         "tests": ("tests/test_recovery_planner.py",),
     },
+    # ── 召回门面 (P3): always_on 型锚点 ──
+    # 三扇互不相通的召回门 (memory / context / observation) 收口成单一确定性路由,
+    # 无开关可翻转. 锚点双判据: 路由模块 + 两个窄门委托存在 + 红蓝双轨契约门.
+    {
+        "id": "recall_facade",
+        "name": "统一召回门面 (memory/context/observation 意图路由)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": (
+            "huginn/tools/recall_facade.py",
+            "huginn/tools/memory_tool.py",
+            "huginn/tools/recall_context_tool.py",
+        ),
+        "tests": ("tests/test_recall_facade.py",),
+    },
 )
 
 # ── 能力面闭合分诊表 (feature flag 全部登记: 锚定 or 豁免) ──

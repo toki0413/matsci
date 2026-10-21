@@ -28,11 +28,14 @@ _intro = _ilu.module_from_spec(_spec)
 sys.modules["_introspection"] = _intro  # 须在 exec_module **前** 注册, dataclass 装饰在模块体里执行
 _spec.loader.exec_module(_intro)
 from _introspection import (  # noqa: E402
+    CAPABILITY_KINDS,
     confirm_proposal,
     create_proposal,
     diagnose_gaps,
+    diagnose_islands,
     diagnose_surface,
     evolution_run,
+    island_totals,
     propose_capabilities,
     reactivate_proposal,
     realize_proposal,
@@ -259,3 +262,115 @@ def test_s6_evolution_run_with_handler_store():
     assert out["proposals"], "应至少产出提案并通过确认门禁"
     # 拓扑已被 hodge_circulation 覆盖 → 不再当缺口; 日晒缺口若缺 handler 记 pending
     assert "pending_no_handler" in out
+
+
+# ── P0 孤岛盘点: 四类注册表分别登记, 分别可见, 分别悬挂 ────────────────────
+
+
+def _patch_island_registries(monkeypatch, *, caps, skills, workflows):
+    """把四类真实注册表替换成确定性快照, 隔离重栈与全局状态."""
+    import _introspection as intro
+
+    monkeypatch.setattr(intro, "_capability_names", lambda: list(caps))
+    monkeypatch.setattr(intro, "_skill_names", lambda: list(skills))
+    monkeypatch.setattr(intro, "_workflow_names", lambda: list(workflows))
+    monkeypatch.setattr(intro, "_capability_unresolved", lambda *a: {})
+    monkeypatch.setattr(intro, "_skill_unresolved", lambda *a: {})
+    monkeypatch.setattr(intro, "_workflow_unresolved", lambda *a: {})
+
+
+def test_p0_all_kinds_reported_with_own_dangling(monkeypatch):
+    """蓝队: 四类都进盘点; 每类的悬挂 = 本类注册 - 本类可见."""
+    _patch_island_registries(monkeypatch, caps=["cap_a"], skills=["sk_a"], workflows=["wf_a"])
+    surfaces = diagnose_islands(
+        tool_registered=["tool_a", "hidden_tool"],
+        tool_discoverable=["tool_a", "capability_tool", "skill"],
+    )
+    assert set(surfaces) == set(CAPABILITY_KINDS)
+    assert surfaces["tool"].dangling == ["hidden_tool"]
+    assert surfaces["capability"].discoverable == ["cap_a"]
+    assert surfaces["capability"].dangling == []
+    assert surfaces["skill"].discoverable == ["sk_a"]
+    # workflow 的两个入口(catalog_search / workflow_tool)都不可见 → 如实全量悬挂
+    assert surfaces["workflow"].discoverable == []
+    assert surfaces["workflow"].dangling == ["wf_a"]
+
+
+def test_p0_entrypoint_hidden_makes_whole_kind_dangling(monkeypatch):
+    """红队: 类目已注册但发现入口工具不可见 → 整类悬挂(不能算作可达)."""
+    _patch_island_registries(monkeypatch, caps=["cap_a"], skills=["sk_a"], workflows=[])
+    surfaces = diagnose_islands(
+        tool_registered=["tool_a", "capability_tool", "skill"],
+        tool_discoverable=["tool_a"],            # 两个入口都被裁掉
+    )
+    assert surfaces["capability"].discoverable == []
+    assert surfaces["capability"].dangling == ["cap_a"]
+    assert surfaces["skill"].dangling == ["sk_a"]
+
+
+def test_p0_explicit_surface_does_not_touch_real_registries(monkeypatch):
+    """确定性: 显式传入 tool 面时只盘点 tool 类, 不暗中读其他注册表."""
+    import _introspection as intro
+
+    def _boom():
+        raise AssertionError("显式盘点不应读取真实注册表")
+
+    monkeypatch.setattr(intro, "_capability_names", _boom)
+    s = diagnose_surface(registered=["a", "b"], discoverable=["a"])
+    assert s.dangling == ["b"]
+    assert set(s.by_kind) == {"tool"}
+    assert s.unresolved_refs == {}
+
+
+def test_p0_island_totals_sum_all_kinds(monkeypatch):
+    """汇总计数覆盖全部 kind, 不隐藏任何一类."""
+    _patch_island_registries(monkeypatch, caps=["c1", "c2"], skills=[], workflows=[])
+    surfaces = diagnose_islands(
+        tool_registered=["t1", "t2"], tool_discoverable=["t1"])
+    totals = island_totals(surfaces)
+    assert totals["registered"] == 4          # 2 tool + 2 cap (+ 0 skill + 0 workflow)
+    assert totals["dangling"] == 3            # t2 + c1 + c2
+
+
+def test_p0_catalog_entrypoint_makes_all_kinds_discoverable(monkeypatch):
+    """蓝队: catalog_search 可见时, capability/skill/workflow 三类都经它可达."""
+    _patch_island_registries(monkeypatch, caps=["cap_a"], skills=["sk_a"], workflows=["wf_a"])
+    surfaces = diagnose_islands(
+        tool_registered=["tool_a", "catalog_search"],
+        tool_discoverable=["tool_a", "catalog_search"],
+    )
+    for kind in ("capability", "skill", "workflow"):
+        assert surfaces[kind].discoverable == surfaces[kind].registered
+        assert surfaces[kind].dangling == []
+
+
+def test_p0_workflow_unresolved_ref_is_reported(monkeypatch):
+    """跨类失效引用: workflow 指向不存在的工具 → 记为孤岛边."""
+    import _introspection as intro
+
+    from huginn.workflows.registry import WorkflowPackage, WorkflowRegistry
+
+    pkg = WorkflowPackage(name="wf_ghost", kind="stages",
+                          stages=[{"tool": "ghost_tool"}])
+    monkeypatch.setattr(WorkflowRegistry, "list_names",
+                        classmethod(lambda cls: ["wf_ghost"]))
+    monkeypatch.setattr(WorkflowRegistry, "get",
+                        classmethod(lambda cls, n: pkg if n == "wf_ghost" else None))
+    assert intro._workflow_unresolved({"real_tool"}) == {"wf_ghost": ["ghost_tool"]}
+
+
+def test_p0_skill_unresolved_ref_is_reported(monkeypatch):
+    """跨类失效引用: skill 步骤指向不存在的工具 → 记为孤岛边."""
+    from types import SimpleNamespace
+
+    import _introspection as intro
+
+    from huginn.skills.registry import SkillRegistry
+
+    skill = SimpleNamespace(name="sk_ghost",
+                            steps=[SimpleNamespace(tool="ghost_tool")],
+                            required_tools=["also_ghost"])
+    monkeypatch.setattr(SkillRegistry, "get_all_definitions",
+                        classmethod(lambda cls: [skill]))
+    assert intro._skill_unresolved({"real_tool"}) == {
+        "sk_ghost": ["also_ghost", "ghost_tool"]}

@@ -308,6 +308,20 @@ class SubagentDispatch:
         # 之前不传, 子 agent 调 vasp_tool 等 ASK 工具会被静默拒绝.
         approval_callback = ctx.get("approval_callback")
 
+        # P2: 父 agent 可挂一块 task-scoped 黑板. 子 agent 默认看不到主上下文,
+        # 由调用方用 blackboard_keys 指定需要哪些上游条目, 这里只投影这些条目,
+        # 避免把整块黑板塞进隔离上下文.
+        board = ctx.get("blackboard")
+        requested_keys = ctx.get("blackboard_keys") or []
+        if board is not None and requested_keys:
+            try:
+                digest = board.digest(keys=[str(k) for k in requested_keys])
+            except Exception:  # 防御: 黑板读取失败不阻断派发
+                logger.debug("blackboard digest failed", exc_info=True)
+                digest = ""
+            if digest:
+                task = f"{task}\n\n{digest}"
+
         # 独立 thread_id, 跟主对话完全隔离
         thread_id = f"subagent_{spec_name}_{uuid.uuid4().hex[:8]}"
 
@@ -412,6 +426,10 @@ class SubagentDispatch:
             else:
                 summary = output
 
+            # P2: 把压缩后的产出写回黑板, 供父/兄弟 agent 结构化读取.
+            self._share_to_blackboard(
+                board, ctx, spec_name, thread_id, summary, kind="finding"
+            )
             return SubagentResult(
                 summary=summary,
                 full_output=output,
@@ -422,6 +440,10 @@ class SubagentDispatch:
             )
         except Exception as exc:
             logger.debug("subagent execution failed", exc_info=True)
+            self._share_to_blackboard(
+                board, ctx, spec_name, thread_id,
+                f"Subagent execution failed: {exc}", kind="error",
+            )
             return SubagentResult(
                 summary="", full_output="",
                 success=False,
@@ -449,6 +471,28 @@ class SubagentDispatch:
         ]
 
     # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _share_to_blackboard(
+        board: Any, ctx: dict[str, Any], spec_name: str, thread_id: str,
+        value: str, *, kind: str = "finding",
+    ) -> None:
+        """把子 agent 产出写回父黑板; 黑板不可用/写入失败都不阻断派发.
+
+        provenance 固定 "reported": 子 agent 的文本是转述, 不是实测证据.
+        key 可由 ctx["blackboard_key"] 指定, 便于下游按语义名读取.
+        """
+        if board is None or not str(value).strip():
+            return
+        key = ctx.get("blackboard_key") or f"subagent:{spec_name}:{thread_id}"
+        try:
+            board.post(
+                str(key), value, producer=f"subagent:{spec_name}",
+                kind=kind, provenance="reported",
+                meta={"spec_name": spec_name, "thread_id": thread_id},
+            )
+        except Exception:  # 防御: 黑板写入失败不影响子 agent 结果返回
+            logger.debug("blackboard post failed", exc_info=True)
 
     @staticmethod
     def _pick_profile(factory: Any) -> str:

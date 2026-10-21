@@ -43,8 +43,8 @@ class ContextMixin:
         "remember", "recall", "rag_tool",
         "structure_tool", "web_search_tool",
         # 能力发现通道: 即使 query-aware 检索把直接工具裁到 top-K, 也要保留
-        # "按能力找" 与 "按名搜" 两个入口, 否则模型无法找回未暴露的能力.
-        "capability_tool", "tool_search",
+        # "统一目录找" / "按能力找" / "按名搜" 三个入口, 否则模型无法找回未暴露的能力.
+        "catalog_search", "capability_tool", "tool_search",
     }
 
     # Above this tool count, switch to query-aware retrieval.

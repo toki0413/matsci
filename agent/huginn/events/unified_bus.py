@@ -280,6 +280,7 @@ class UnifiedBus:
     async def publish_llm_response(self, thread_id: str, response_preview: str = "") -> None:
         """LLM 响应后 — 分发到插件 EventBus + 内部事件总线."""
         from huginn.api.event import EventType
+        from huginn.events.event_types import LLM_RESPONSE
 
         await self._dispatch_plugin(
             EventType.ON_LLM_RESPONSE,
@@ -287,7 +288,7 @@ class UnifiedBus:
             thread_id=thread_id,
         )
         self._publish_internal_sync(
-            "llm.response",
+            LLM_RESPONSE,
             {"response_preview": response_preview[:200]},
             thread_id=thread_id,
             source="agent",
@@ -327,9 +328,11 @@ class UnifiedBus:
         metadata: dict | None = None,
     ) -> None:
         """宠物心情变化 — 发布到 PetBus + 内部事件总线."""
+        from huginn.events.event_types import PET_MOOD
+
         self._publish_pet(mood, detail, metadata)
         self._publish_internal_sync(
-            "pet.mood",
+            PET_MOOD,
             {"mood": mood.value if hasattr(mood, "value") else str(mood), "detail": detail},
             thread_id=(metadata or {}).get("thread_id", ""),
             source="pet",
@@ -343,8 +346,10 @@ class UnifiedBus:
         thread_id: str = "",
     ) -> None:
         """CSM 状态转移 — 发布到内部 EventBus (v23: CSMListener 已删除)."""
+        from huginn.events.event_types import CSM_TRANSITION
+
         self._publish_internal_sync(
-            "cognitive.csm.transition",
+            CSM_TRANSITION,
             {"old_state": old_state, "new_state": new_state, "signal": signal},
             thread_id=thread_id,
             source="csm",

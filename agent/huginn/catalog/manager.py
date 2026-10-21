@@ -31,12 +31,48 @@ def _collect_tools() -> list[CatalogEntry]:
 
     out: list[CatalogEntry] = []
     for name in ToolRegistry.list_tools():
+        tool = ToolRegistry.get(name)
         out.append(CatalogEntry(
             id=make_entry_id("tool", name),
             kind="tool",
             name=name,
             origin="builtin",
+            enabled=bool(getattr(tool, "active", True)),
             registered_names=[name],
+            meta={
+                "description": str(getattr(tool, "description", "") or ""),
+                "category": str(getattr(tool, "category", "") or ""),
+                "read_only": bool(getattr(tool, "read_only", False)),
+            },
+        ))
+    return out
+
+
+def _collect_capabilities() -> list[CatalogEntry]:
+    """从 CapabilityRegistry 采集能力集装箱 (组合/原子/外部)."""
+    from huginn.capabilities.registry import CapabilityRegistry
+
+    out: list[CatalogEntry] = []
+    try:
+        manifest = CapabilityRegistry.manifest()
+    except Exception:  # pragma: no cover - 注册表未就绪, 跳过
+        return []
+    for item in manifest:
+        name = item.get("name")
+        if not name:
+            continue
+        out.append(CatalogEntry(
+            id=make_entry_id("capability", name),
+            kind="capability",
+            name=name,
+            origin="builtin",
+            enabled=bool(item.get("available", True)),
+            registered_names=[name],
+            meta={
+                "description": str(item.get("description", "") or ""),
+                "category": str(item.get("category", "") or ""),
+                "sub_capabilities": list(item.get("sub_capabilities") or []),
+            },
         ))
     return out
 
@@ -70,12 +106,18 @@ def _collect_skills() -> list[CatalogEntry]:
 
     out: list[CatalogEntry] = []
     for name in SkillRegistry.list_skills():
+        skill = SkillRegistry.get(name)
         out.append(CatalogEntry(
             id=make_entry_id("skill", name),
             kind="skill",
             name=name,
             origin="dirs",
             registered_names=[name],
+            meta={
+                "description": str(getattr(skill, "description", "") or ""),
+                "category": str(getattr(skill, "category", "") or ""),
+                "tags": list(getattr(skill, "tags", []) or []),
+            },
         ))
     return out
 
@@ -178,6 +220,7 @@ def _collect_workflows() -> list[CatalogEntry]:
             meta={
                 "kind": it.get("kind"),
                 "category": it.get("category", ""),
+                "description": it.get("description", ""),
                 "n_stages": it.get("n_stages", 0),
                 "n_subtasks": it.get("n_subtasks", 0),
                 "params": it.get("params", []),
@@ -190,6 +233,7 @@ def _collect_workflows() -> list[CatalogEntry]:
 def _kind_collectors(handles: dict[str, Any]) -> dict[str, list[CatalogEntry]]:
     return {
         "tool": _collect_tools(),
+        "capability": _collect_capabilities(),
         "model": _collect_models(handles.get("model_registry")),
         "skill": _collect_skills(),
         "plugin": _collect_plugins(handles.get("plugins_dir")),

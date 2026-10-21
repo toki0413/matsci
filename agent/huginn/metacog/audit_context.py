@@ -15,7 +15,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def recall_context(category: str, query: str = "", top_k: int = 3) -> list[dict]:
+def recall_context(
+    category: str,
+    query: str = "",
+    top_k: int = 3,
+    *,
+    raise_on_error: bool = False,
+) -> list[dict]:
     """通用 context recall — 从 long-term memory 按类别捞外置化上下文 (G19).
 
     支持的 category: autoloop_summary / benchmark_run_summary / skill_invocation /
@@ -25,6 +31,8 @@ def recall_context(category: str, query: str = "", top_k: int = 3) -> list[dict]
         category: memory.longterm 的 category 字段
         query: 可选, 用于 FTS 过滤
         top_k: 最多返回多少条
+        raise_on_error: 默认 False 时失败返回空 list (老调用方语义不变);
+            需要区分"没查到"与"查询失败"的调用方 (如统一召回门面) 传 True
 
     返回 list[dict], 每条至少含 {"content": str, "category": str, ...}
     失败返回空 list — 调用方不应因 memory 不可用而崩溃.
@@ -40,6 +48,8 @@ def recall_context(category: str, query: str = "", top_k: int = 3) -> list[dict]
         )
         return results if results else []
     except Exception as e:
+        if raise_on_error:
+            raise
         logger.debug(f"recall_context({category}) failed: {e}")
         return []
 

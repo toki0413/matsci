@@ -40,18 +40,60 @@ CAPABILITY_EXPECT: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
+# 四类能力面 —— 彼此独立注册, 必须分别盘点才能发现"跨类孤岛".
+# 名字带 CAPABILITY_ 前缀: 与 catalog/share/blackboard 里语义不同的 KINDS 区分,
+# 避免同名值域不一致把两套词表混为一谈.
+CAPABILITY_KINDS: tuple[str, ...] = ("tool", "capability", "skill", "workflow")
+
+# 每类能力的 LLM 侧发现入口(meta 工具). 该类即使已注册, 入口不可见也对 LLM 不可达.
+# 统一目录 catalog_search 覆盖四类; 各专用入口保留, 两者任一可见即可达.
+_KIND_ENTRYPOINTS: dict[str, tuple[str, ...]] = {
+    "capability": ("catalog_search", "capability_tool"),
+    "skill": ("catalog_search", "skill"),
+    "workflow": ("catalog_search", "workflow_tool"),
+}
+
+
+@dataclass
+class KindSurface:
+    """单类能力面快照: 注册面 / 可见面 / 悬挂项 / 跨类失效引用."""
+    kind: str
+    registered: list[str] = field(default_factory=list)
+    discoverable: list[str] = field(default_factory=list)
+    dangling: list[str] = field(default_factory=list)
+    # 该类声明依赖、但目标注册表里不存在的引用: {本类条目名: [失效目标名]}
+    unresolved_refs: dict[str, list[str]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "registered": self.registered,
+            "discoverable": self.discoverable,
+            "dangling": self.dangling,
+            "unresolved_refs": self.unresolved_refs,
+        }
+
+
 @dataclass
 class CapabilitySurface:
-    """agent 运行时能力面快照 (§1)."""
+    """agent 运行时能力面快照 (§1).
+
+    顶层 registered/discoverable/dangling 仍是 **tool** 类字段(向后兼容);
+    四类全貌见 ``by_kind``, 跨类失效引用见 ``unresolved_refs``.
+    """
     registered: list[str] = field(default_factory=list)    # ToolRegistry 已注册
     discoverable: list[str] = field(default_factory=list)  # LLM 可见(活性工具)名
     dangling: list[str] = field(default_factory=list)      # 注册却不可见(被隐藏/失活)
+    by_kind: dict[str, KindSurface] = field(default_factory=dict)
+    unresolved_refs: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "registered": self.registered,
             "discoverable": self.discoverable,
             "dangling": self.dangling,
+            "by_kind": {k: v.to_dict() for k, v in self.by_kind.items()},
+            "unresolved_refs": self.unresolved_refs,
         }
 
 
@@ -74,10 +116,176 @@ def _discoverable_tool_names() -> list[str]:
 def diagnose_surface(registered: list[str] | None = None,
                      discoverable: list[str] | None = None) -> CapabilitySurface:
     """§1 自省盘点. 显式传入用于确定性命中测试; 缺省读真实 ToolRegistry(best-effort)."""
+    explicit = registered is not None or discoverable is not None
     reg = list(registered) if registered is not None else sorted(_registry_tool_names())
     disc = list(discoverable) if discoverable is not None else sorted(_discoverable_tool_names())
     dangling = sorted(set(reg) - set(disc))
-    return CapabilitySurface(registered=reg, discoverable=disc, dangling=dangling)
+    surface = CapabilitySurface(registered=reg, discoverable=disc, dangling=dangling)
+    if explicit:
+        # 显式盘点只针对 tool 类, 不暗中读取真实注册表(确定性)
+        surface.by_kind = {"tool": KindSurface(
+            kind="tool", registered=reg, discoverable=disc, dangling=dangling)}
+    else:
+        surface.by_kind = diagnose_islands(tool_registered=reg, tool_discoverable=disc)
+        surface.unresolved_refs = {
+            k: v.unresolved_refs for k, v in surface.by_kind.items() if v.unresolved_refs}
+    return surface
+
+
+# ── 四类能力面盘点 (P0 孤岛盘点) ────────────────────────────────────────────
+# 各注册表仍是唯一事实源; 本模块只做只读聚合, 不新增注册表、不改注册逻辑.
+# 重依赖(pydantic/各注册表)一律 lazy + best-effort, 轻量环境缺失时如实返回空.
+
+def _safe_names(fn, default: list[str] | None = None) -> list[str]:
+    try:
+        return sorted(fn() or [])
+    except Exception:  # noqa: BLE001 — 注册表不可用(重栈缺失)时视为空
+        return list(default or [])
+
+
+def _capability_names() -> list[str]:
+    from huginn.capabilities.registry import CapabilityRegistry
+    return _safe_names(CapabilityRegistry.list_capabilities)
+
+
+def _skill_names() -> list[str]:
+    from huginn.skills.registry import SkillRegistry
+    return _safe_names(SkillRegistry.list_skills)
+
+
+def _workflow_names() -> list[str]:
+    from huginn.workflows.registry import WorkflowRegistry
+    return _safe_names(WorkflowRegistry.list_names)
+
+
+def _kind_discoverable(kind: str, registered: list[str],
+                       visible_tools: set[str]) -> list[str]:
+    """该类是否经 LLM 可见的入口工具可达; 入口缺失 → 整类不可见(诚实为空)."""
+    entries = _KIND_ENTRYPOINTS.get(kind, ())
+    if not entries:
+        return []
+    if any(e in visible_tools for e in entries):
+        return list(registered)
+    return []
+
+
+def _capability_unresolved(cap_names: set[str], tool_names: set[str]) -> dict[str, list[str]]:
+    """能力声明的 sub_capabilities 若既非能力也非工具 → 失效引用."""
+    from huginn.capabilities.registry import CapabilityRegistry
+
+    out: dict[str, list[str]] = {}
+    try:
+        manifest = CapabilityRegistry.manifest()
+    except Exception:  # noqa: BLE001
+        return out
+    for item in manifest:
+        name = item.get("name") or ""
+        missing = sorted({
+            str(sub) for sub in (item.get("sub_capabilities") or [])
+            if str(sub) not in cap_names and str(sub) not in tool_names
+        })
+        if missing:
+            out[name] = missing
+    return out
+
+
+def _skill_unresolved(tool_names: set[str]) -> dict[str, list[str]]:
+    """skill 的 steps[].tool / required_tools 若不在工具注册表 → 失效引用."""
+    from huginn.skills.registry import SkillRegistry
+
+    out: dict[str, list[str]] = {}
+    try:
+        defs = SkillRegistry.get_all_definitions()
+    except Exception:  # noqa: BLE001
+        return out
+    for skill in defs:
+        refs = [str(getattr(s, "tool", "") or "") for s in (getattr(skill, "steps", []) or [])]
+        refs += [str(t) for t in (getattr(skill, "required_tools", []) or [])]
+        missing = sorted({r for r in refs if r and r not in tool_names})
+        if missing:
+            out[skill.name] = missing
+    return out
+
+
+def _workflow_unresolved(tool_names: set[str]) -> dict[str, list[str]]:
+    """workflow 的 stage.tool / script.subtask.tool 若不在工具注册表 → 失效引用."""
+    from huginn.workflows.registry import WorkflowRegistry
+
+    out: dict[str, list[str]] = {}
+    try:
+        names = WorkflowRegistry.list_names()
+    except Exception:  # noqa: BLE001
+        return out
+    for name in names:
+        pkg = WorkflowRegistry.get(name)
+        if pkg is None:
+            continue
+        refs = [str((s or {}).get("tool", "") or "") for s in (pkg.stages or [])]
+        refs += [str((s or {}).get("tool", "") or "")
+                 for s in ((pkg.script or {}).get("subtasks", []) or [])]
+        if pkg.kind == "template" and not refs:
+            continue  # 惰性模板尚未渲染 stages, 不据此判失效
+        missing = sorted({r for r in refs if r and r not in tool_names})
+        if missing:
+            out[name] = missing
+    return out
+
+
+def diagnose_islands(kinds: tuple[str, ...] = CAPABILITY_KINDS,
+                     *, tool_registered: list[str] | None = None,
+                     tool_discoverable: list[str] | None = None
+                     ) -> dict[str, KindSurface]:
+    """P0 孤岛盘点: 按 kind 输出 registered/discoverable/dangling + 失效引用.
+
+    纯只读投影; 各注册表仍是唯一事实源。显式传入 tool 面用于确定性命中测试。
+    """
+    tool_reg = (list(tool_registered) if tool_registered is not None
+                else _safe_names(_registry_tool_names))
+    tool_disc = (list(tool_discoverable) if tool_discoverable is not None
+                 else _safe_names(_discoverable_tool_names))
+    visible_tools = set(tool_disc)
+    tool_set = set(tool_reg)
+
+    raw: dict[str, list[str]] = {"tool": tool_reg}
+    refs: dict[str, dict[str, list[str]]] = {}
+    if "capability" in kinds:
+        raw["capability"] = _safe_names(_capability_names)
+    if "skill" in kinds:
+        raw["skill"] = _safe_names(_skill_names)
+    if "workflow" in kinds:
+        raw["workflow"] = _safe_names(_workflow_names)
+
+    out: dict[str, KindSurface] = {}
+    for kind, reg in raw.items():
+        disc = tool_disc if kind == "tool" else _kind_discoverable(kind, reg, visible_tools)
+        out[kind] = KindSurface(
+            kind=kind,
+            registered=list(reg),
+            discoverable=list(disc),
+            dangling=sorted(set(reg) - set(disc)),
+        )
+
+    if "capability" in out:
+        cap_set = set(raw["capability"])
+        refs["capability"] = _capability_unresolved(cap_set, tool_set)
+    if "skill" in out:
+        refs["skill"] = _skill_unresolved(tool_set)
+    if "workflow" in out:
+        refs["workflow"] = _workflow_unresolved(tool_set)
+    for kind, mapping in refs.items():
+        out[kind].unresolved_refs = mapping
+    return out
+
+
+def island_totals(surfaces: dict[str, KindSurface]) -> dict[str, int]:
+    """汇总计数, 供报表/门禁使用(不隐藏任何 kind)."""
+    return {
+        "registered": sum(len(s.registered) for s in surfaces.values()),
+        "discoverable": sum(len(s.discoverable) for s in surfaces.values()),
+        "dangling": sum(len(s.dangling) for s in surfaces.values()),
+        "unresolved_refs": sum(len(v) for s in surfaces.values()
+                               for v in s.unresolved_refs.values()),
+    }
 
 
 def _covered(keywords: tuple[str, ...], discoverable: list[str]) -> bool:

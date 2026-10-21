@@ -5,6 +5,8 @@ orchestrator 并发跑 (默认 8 并发), 失败的 subtask 不炸整个 workflo
 参考 Claude Code 的 Dynamic Workflows, 但用 Python/asyncio 而非 JS.
 
 actions:
+- list:         列已注册的命名工作流 (模板/脚本/stages), 让 LLM 发现可复用能力
+- run:          按名执行命名工作流 (模板参数由 params 提供)
 - submit_script: 解析脚本 JSON, 后台启动, 返回 workflow_id + 初始状态
 - status:       查运行中 workflow 的进度摘要
 - cancel:       取消运行中 workflow (已完成的返回 False)
@@ -24,13 +26,23 @@ from huginn.tools.profile import ToolProfile
 
 
 class WorkflowToolInput(BaseModel):
-    action: Literal["submit_script", "status", "cancel", "collect"] = Field(
+    action: Literal["list", "run", "submit_script", "status", "cancel", "collect"] = Field(
         description=(
+            "list: 列已注册的命名工作流; "
+            "run: 按名执行命名工作流; "
             "submit_script: 提交并行工作流脚本, 后台启动; "
             "status: 查进度摘要; "
             "cancel: 取消运行中工作流; "
             "collect: 拿聚合结果 (可阻塞等待)"
         )
+    )
+    name: str | None = Field(
+        default=None,
+        description="list 可选: 按关键词过滤; run 必填: 要执行的命名工作流名.",
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="run 时用: 传给工作流模板的参数 (dict).",
     )
     script: dict[str, Any] | None = Field(
         default=None,
@@ -56,8 +68,9 @@ class WorkflowTool(HuginnTool):
     name = "workflow_tool"
     category = "meta"
     description = (
-        "提交并行工作流脚本 (多个独立 tool call 并发执行), 查询进度, "
-        "取消, 或收集聚合结果. 失败的 subtask 不影响其他 subtask."
+        "Workflows: action='list' 列出已注册的命名工作流; action='run' 按名执行"
+        "(模板参数放 params); 或提交并行工作流脚本 (多个独立 tool call 并发执行), "
+        "查询进度, 取消, 或收集聚合结果. 失败的 subtask 不影响其他 subtask."
     )
     input_schema = WorkflowToolInput
     profile = ToolProfile(
@@ -71,6 +84,10 @@ class WorkflowTool(HuginnTool):
         # Pydantic schema 校验在 try 外, ValidationError 传播不吞
         input_data = WorkflowToolInput(**args)
         try:
+            if input_data.action == "list":
+                return self._list_workflows(input_data)
+            if input_data.action == "run":
+                return await self._run_named(input_data, context)
             if input_data.action == "submit_script":
                 return self._submit_script(input_data, context)
             if input_data.action == "status":
@@ -90,6 +107,66 @@ class WorkflowTool(HuginnTool):
             )
 
     # ── action 实现 ──────────────────────────────────────────────
+
+    def _list_workflows(self, input_data: WorkflowToolInput) -> ToolResult:
+        """列命名工作流 —— 打通"注册了但 LLM 看不见"的孤岛."""
+        from huginn.workflows.registry import WorkflowRegistry
+
+        WorkflowRegistry.register_builtin_templates()
+        items = WorkflowRegistry.manifest()
+        q = (input_data.name or "").strip().lower()
+        if q:
+            items = [it for it in items
+                     if q in str(it.get("name", "")).lower()
+                     or q in str(it.get("description", "")).lower()]
+        return ToolResult(
+            data={"action": "list", "n_workflows": len(items), "workflows": items},
+            success=True,
+        )
+
+    async def _run_named(self, input_data: WorkflowToolInput,
+                         context: ToolContext | None) -> ToolResult:
+        """按名执行已注册工作流 (模板参数走 params)."""
+        from huginn.tools.registry import ToolRegistry
+        from huginn.workflows.engine import WorkflowEngine
+        from huginn.workflows.registry import WorkflowRegistry
+
+        if not input_data.name:
+            return ToolResult(data=None, success=False,
+                              error="run 需要 name (先 action='list' 查可用工作流)")
+        try:
+            WorkflowRegistry.register_builtin_templates()
+            stages = WorkflowRegistry.render(input_data.name, **(input_data.params or {}))
+        except (KeyError, ValueError, TypeError) as exc:
+            return ToolResult(
+                data=None, success=False,
+                error=f"工作流 '{input_data.name}' 无法渲染: {exc}",
+            )
+        if not stages:
+            return ToolResult(data=None, success=False,
+                              error=f"工作流 '{input_data.name}' 无 stages")
+        ctx = context or ToolContext(session_id="workflow", workspace=".")
+        result = await WorkflowEngine(ToolRegistry).execute(stages, ctx)
+        return ToolResult(
+            data={
+                "workflow": input_data.name,
+                "success": result.success,
+                "total_walltime": result.total_walltime,
+                "stages": {
+                    sid: {
+                        "name": s.name,
+                        "status": s.status,
+                        "attempts": s.attempts,
+                        "error": s.result.error if s.result else None,
+                    }
+                    for sid, s in result.stages.items()
+                },
+                "outputs": result.outputs,
+                "error": result.error,
+            },
+            success=result.success,
+            error=result.error,
+        )
 
     def _submit_script(
         self, input_data: WorkflowToolInput, context: ToolContext | None

@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from huginn.agents.blackboard import Blackboard
 from huginn.models.registry import ModelCaps, get_model_capabilities
 
 logger = logging.getLogger(__name__)
@@ -308,6 +309,12 @@ class ModelTeam:
         ctx = dict(context or {})
         ctx["original_task"] = task
         ctx["team_run_id"] = run_id
+        # task-scoped 黑板: 步骤间不再只传裸字符串, 下游按 key/kind/provenance 读.
+        board = Blackboard(task_id=f"team:{run_id}")
+        board.post(
+            "task", task, producer="model_team", kind="plan",
+            provenance="reported", meta={"run_id": run_id},
+        )
         t0 = time.time()
 
         await self._publish("team.run.start", {
@@ -319,13 +326,18 @@ class ModelTeam:
         # 1. 规划
         plan_text = await self._delegate(TeamRole.PLANNER, task, ctx, traces, run_id)
         ctx["planner_output"] = plan_text
+        if plan_text.strip():
+            board.post(
+                "planner", plan_text, producer="model_team",
+                kind="plan", provenance="reported", meta={"role": "planner"},
+            )
         steps = self._parse_plan(plan_text)
         if not steps:
             steps = self._default_plan(task)
         ctx["plan"] = self._plan_to_text(steps)
 
         # 2. 执行
-        step_outputs = await self._execute_plan(steps, ctx, traces, run_id)
+        step_outputs = await self._execute_plan(steps, ctx, traces, run_id, board=board)
         role_outputs: dict[TeamRole, str] = {}
         for step, output in zip(steps, step_outputs):
             role_outputs[step.role] = output
@@ -347,6 +359,11 @@ class ModelTeam:
             critic_output = await self._delegate(
                 TeamRole.CRITIC, critic_input, ctx, traces, run_id
             )
+            if critic_output.strip():
+                board.post(
+                    "review", critic_output, producer="model_team",
+                    kind="finding", provenance="reported", meta={"role": "critic"},
+                )
         ctx["review"] = critic_output
 
         await self._publish("team.run.done", {
@@ -367,6 +384,7 @@ class ModelTeam:
             "trace": [self._trace_to_dict(t) for t in traces],
             "final_output": ctx["execution_result"],
             "review": ctx["review"],
+            "blackboard": board.snapshot(),
         }
 
     # ── 内部方法 ──────────────────────────────────────────
@@ -473,9 +491,11 @@ class ModelTeam:
         ctx: dict[str, Any],
         traces: list[TeamTrace],
         run_id: str = "",
+        board: Blackboard | None = None,
     ) -> list[str]:
         results: dict[str, str] = {}
         pending = {s.id: s for s in steps}
+        by_id = {s.id: s for s in steps}
 
         while pending:
             ready = [
@@ -497,11 +517,18 @@ class ModelTeam:
                 if member is None:
                     return step.id, ""
                 try:
-                    dep_text = "\n".join(
-                        f"{dep}: {results[dep]}"
-                        for dep in step.depends_on
-                        if dep in results
-                    )
+                    # 依赖上下文优先走黑板投影 (带来源标签); 依赖项未入板时
+                    # 回退到 results 裸文本, 保持旧计划可执行.
+                    dep_text = ""
+                    if step.depends_on:
+                        if board is not None:
+                            dep_text = board.digest(keys=step.depends_on)
+                        if not dep_text:
+                            dep_text = "\n".join(
+                                f"{dep}: {results[dep]}"
+                                for dep in step.depends_on
+                                if dep in results
+                            )
                     task = step.task
                     if dep_text:
                         task = f"{task}\n\nContext from previous steps:\n{dep_text}"
@@ -520,6 +547,17 @@ class ModelTeam:
             for step_id, output in batch:
                 results[step_id] = output
                 pending.pop(step_id)
+                step = by_id.get(step_id)
+                if board is not None and step is not None and output.strip():
+                    # 成员产出是模型转述, 不是实测; 失败步骤单独标 error.
+                    board.post(
+                        step_id, output, producer=step.role.value,
+                        kind="error" if output.startswith("[ERROR]") else "finding",
+                        provenance="reported",
+                        meta={"role": step.role.value,
+                              "model": (self.members[step.role].model_name
+                                        if step.role in self.members else "")},
+                    )
 
         return [results[s.id] for s in steps]
 

@@ -84,6 +84,7 @@ _CORE_MODULES = [
     ("huginn.academic.paper_tool", "PaperTool"),
     ("huginn.academic.deli_research", "DeliAutoResearchTool"),
     ("huginn.tools.tool_search_tool", "ToolSearchTool"),
+    ("huginn.tools.catalog_tool", "CatalogSearchTool"),
     ("huginn.capabilities.capability_tool", "CapabilityTool"),
     ("huginn.tools.make_tool", "MakeTool"),
     ("huginn.tools.pi_mode_tool", "PiModeTool"),

@@ -56,6 +56,14 @@ COST_NARRATIVE = "cost.narrative"
 SESSION_START = "session.start"
 SESSION_END = "session.end"
 
+# ── UnifiedBus 桥接事件 ─────────────────────────────────────────────
+# 这三类由 UnifiedBus 的 publish_llm_response / publish_pet_mood /
+# publish_csm_transition 发到内部 EventBus. 此前只在代码里以字面量出现,
+# SSE / audit 订阅方无法从常量面发现它们 —— 声明后事件面与发布面闭合.
+LLM_RESPONSE = "llm.response"
+PET_MOOD = "pet.mood"
+CSM_TRANSITION = "cognitive.csm.transition"
+
 # ── Agent loop step retry ──────────────────────────────────────────
 # graph.stream() 失败被 except 块捕获并退避重试时发布. 对齐 Kimi Code 的
 # turn.step.retrying — 让 SSE 消费者 / audit log / 监控能看到重试, 而不是
@@ -77,6 +85,7 @@ ALL_TYPES = frozenset({
     QUALITY_CHECK,
     HEAT_ENGINE_HEALTH,
     SESSION_START, SESSION_END,
+    LLM_RESPONSE, PET_MOOD, CSM_TRANSITION,
     DECISION_POINT, COST_NARRATIVE,
     STEP_RETRY,
 })

@@ -169,6 +169,19 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_recovery_planner.py -q -o addopts=""
 
+      # 智能体黑板契约门 (红蓝双轨): measured 无 source 必拒、子 agent 产出只能标
+      # reported、依赖上下文走结构化投影、黑板故障不拖垮派发。weightless, 快速 fail。
+      - name: Agent blackboard contract guard
+        working-directory: agent
+        run: python -m pytest tests/test_agent_blackboard.py -q -o addopts=""
+
+      # 统一召回门面契约门 (红蓝双轨): 意图确定性路由 (句柄 > 类别 > 语义检索)、
+      # 后端缺失/失败必须 available=False 且带 error，不得伪装成"查到了空"。
+      # weightless, 快速 fail。
+      - name: Recall facade contract guard
+        working-directory: agent
+        run: python -m pytest tests/test_recall_facade.py -q -o addopts=""
+
       # 低熵治理门禁：治理门自身的熵 —— `test_arch_*.py` 存在却未登记 (孤儿门)、
       # ci.yml guard step 指向不存在的测试 (悬空门)、门数萎缩。weightless
       # (stdlib + 可选 yaml, 不 import huginn.*)，先于重型套件快速 fail。

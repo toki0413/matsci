@@ -9,22 +9,28 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from huginn import metacog
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
 
 
 def recall_context(category: str, query: str = "", top_k: int = 3) -> dict:
-    """tool 入口: 调 metacog.recall_context, 包装成结构化返回.
+    """tool 入口: 委托统一召回门面 (mode='context'), 包装成结构化返回.
+
+    这是 ``recall`` 工具的类型化窄门 (老调用方按 category 直调). 路由逻辑只有
+    ``recall_facade.route_recall`` 一份, 此处不复制后端判定.
 
     返回:
-        {"category": str, "results": list[dict], "count": int}
+        {"category": str, "results": list[dict], "count": int, "available": bool}
     """
-    results = metacog.recall_context(category=category, query=query, top_k=top_k)
+    from huginn.tools.recall_facade import route_recall
+
+    outcome = route_recall(category=category, query=query, top_k=top_k, mode="context")
     return {
         "category": category,
-        "results": results,
-        "count": len(results),
+        "results": outcome["results"],
+        "count": outcome["count"],
+        "available": outcome["available"],
+        "error": outcome["error"],
     }
 
 
@@ -47,10 +53,10 @@ class RecallContextTool(HuginnTool):
     name = "recall_context"
     category = "meta"
     description = (
-        "Recall externalized context segments (autoloop/bench/skill history) on demand. "
-        "Use when you need prior autoloop_summary, benchmark_run_summary, "
-        "skill_invocation, knowledge_seed, stable_principles, hypothesis, "
-        "failure, or subgoal records."
+        "Typed shim for category recall; prefer `recall` with mode='context'. "
+        "Recalls externalized context segments (autoloop/bench/skill history) on demand: "
+        "autoloop_summary, benchmark_run_summary, skill_invocation, knowledge_seed, "
+        "stable_principles, hypothesis, failure, or subgoal records."
     )
     read_only = True
     input_schema = RecallContextToolInput
