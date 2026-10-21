@@ -200,6 +200,7 @@
 4. **记忆有两条独立闸**：保留（是否还可用）与影响（此刻是否进入推理上下文）分开判定、分开审计；检索返回候选，不是上下文。
 5. **梦境写入是第四条状态迁移**：必须过写入侧晋升门，不能与在线直接证据同权。详见 §18。
 6. **监控环是兄弟运行时**：不执行用户任务、不写授权、不改内核；主动准备只是候选，不是已授权上下文。详见 §19。
+7. **世界模型是预测源，不是事实源/授权源**：预测默认 hypothesis，reconcile 后才升格；跨 worldview 不粘合；详见 §20。
 
 ---
 
@@ -524,7 +525,7 @@ class AdmissionSample:
 | I11 | `actor=agent` 不得写 `authorize/revoke/accept/reject` | `test_normative_ledger.py::test_actor_capability` |
 | I12 | 撤销/过期授权不得出现在后续 `AdmissionView` | `test_grounding_awareness.py::test_mask_revoked` |
 
-记忆治理不变量 I13–I24 见 §18.8；常驻运行时不变量 I25–I34 见 §19.8，监控降级不变量 I35–I40 见 §19.12.8；四表共同构成完整不变量集。
+记忆治理不变量 I13–I24 见 §18.8；常驻运行时不变量 I25–I34 见 §19.8，监控降级不变量 I35–I40 见 §19.12.8，世界模型不变量 I41–I50 见 §20.10；五表共同构成完整不变量集。
 
 ---
 
@@ -568,7 +569,7 @@ class AdmissionSample:
 
 ### 14.3 Definition of Done
 
-1. 三本账 schema 落地，I1–I40 全绿（I13–I24 见 §18.8，I25–I34 见 §19.8，I35–I40 见 §19.12.8）。
+1. 三本账 schema 落地，I1–I50 全绿（I13–I24 见 §18.8，I25–I34 见 §19.8，I35–I40 见 §19.12.8，I41–I50 见 §20.10）。
 2. PMK 默认开启，治理锚点与台账同步，无默认翻转漂移。
 3. `session_state` 确认结果落盘；`clear_confirmation` 不再丢规范状态。
 4. persona revision 走 GREEN 采纳门；`adaptive_layer` 变为只读投影。
@@ -583,6 +584,7 @@ class AdmissionSample:
 13. VIGIL 兄弟运行时只读日志、只写诊断/提案；漂移三级告警可升级、`pause` 不可被任务 Agent 自清（I25、I28–I29、I33）。
 14. 教师/蒸馏产物为 `derived`，惊奇只做排序与探索项，不得绕过 Hygiene Gate（I30、I32）。
 15. 监控降级有 L0–L4 状态机、有界重启、可见降级；任务 p99 开销 ≤5%，且安全联锁不由监控独占（I35–I40）。
+16. 世界模型只作预测/对账/风险信号：预测不升格为事实、不授权动作；跨 worldview 不粘合；旧 epoch 预测不消费（I41–I50）。
 
 ---
 
@@ -623,7 +625,7 @@ class AdmissionSample:
 | P2-b | 轨迹索引 + ActClassifier + AdmissionPolicy 离线训练 + OPE | 敏感度/特异度达标；影子零未授权 |
 | P3 | 灰度 enforce 全路径；多设备同步；行为指纹监控 | 线上指标达标 |
 
-记忆治理补章（§18）的分期 P1-c / P1-d / P2-c / P2-d / P3-b 与本表并行推进；常驻运行时（§19）的分期 P1-e / P2-e / P2-f / P3-c 同样并行。阶段号一一对应；出口以 §18.8 / §19.8 的不变量与 §18.9 / §19.9 的指标为准。
+记忆治理补章（§18）的分期 P1-c / P1-d / P2-c / P2-d / P3-b 与本表并行推进；常驻运行时（§19）的分期 P1-e / P2-e / P2-f / P3-c 同样并行；世界模型结合（§20）的分期 P1-f / P2-g / P3-d 也并行。阶段号一一对应；出口以 §18.8 / §19.8 / §19.12.8 / §20.10 的不变量与各节指标为准。
 
 ---
 
@@ -1492,6 +1494,220 @@ def status(self) -> MonitorStatus:
 - 全局单例监控跨租户共享。
 - 无退避的自动重启，形成 crash loop。
 - 降级时直接停任务，而不是降自主。
+
+---
+
+## 20. 与世界模型的结合：预测器、对账器、风险信号
+
+### 20.1 先承认仓库里有四个「世界」，且不合并
+
+[world_model_inventory](file:///workspace/agent/huginn/research/law_model.py#L114-L167) 已经明确：世界模型不是单一范式，强行合并会同时破坏两者的本职。本 spec 沿用这一治理立场，把四个实现分别接到不同账本：
+
+| 实现 | worldview | 能做什么 | 不能做什么 | 接哪本账 |
+|---|---|---|---|---|
+| [research.law_model](file:///workspace/agent/huginn/research/law_model.py#L231-L342) | `physics_causal` | `law()` 方程、`predict()` 前向、`reconcile()` 数值对账、`ModelBasedPlanner` rollout | 不能替代真实执行；不能授权动作 | 认知账（预测/对账）、经验账（真值） |
+| [security.world_state](file:///workspace/agent/huginn/security/world_state.py#L274-L421) | `latent_transition` | `StateEstimator` 状态估计、`ForwardPredictor.step()` 前向投影、`observe()` 算 prediction_error | 隐态没有物理语义，不能拿来论证物理结论 | 认知账（预测）、监控环（漂移信号） |
+| [security.world_model](file:///workspace/agent/huginn/security/world_model.py#L85-L121) | `physics_causal` | `check_constraints()` 预检、`infer_inverse()` 逆动作、可逆性判断 | 不能预测科学量；不能替代规划 | 规范账（风险/可逆性）、经验账 |
+| PyBullet backend | `physics_causal` | 刚体动力学 rollout，作为 reconcile 的仿真真值 | 只是仿真真值，不是现实真值 | 经验账（ground truth） |
+
+硬规则：**`worldview` 是证据标签的一部分**。不同 worldview 的预测不得在同一认识论 sheaf 上直接粘合；跨 worldview 的冲突记为 `worldview_mismatch`，不是 `contradiction`。
+
+### 20.2 世界模型在 spec 里的三种角色
+
+| 角色 | 调用面 | 产出 | 权威类别 | 消费方 |
+|---|---|---|---|---|
+| **预测器** | `predict()` / `ForwardPredictor.step()` / `ModelBasedPlanner.rollout()` | `WorldModelPrediction`（状态、动作、预测值、不确定度、epoch） | `hypothesis`/`derived` | PMK 认识论 sheaf、Dreamer、Analyst |
+| **对账器** | `reconcile()` / `ForwardPredictor.observe()` | `ReconcileRecord`（borne_out / falsified / insufficient、误差、真值来源） | 对账成功才升 `direct` | 认知账、经验账、监控环 |
+| **风险信号** | `check_constraints()` / `infer_inverse()` | 约束违规列表、可逆/不可逆 | 硬约束输入 | System3 准入、规范账 |
+
+三条边界：
+
+1. **预测不是事实**：`WorldModelPrediction` 默认 `evidential_authority ≤ 0.3`，`influence cap ≤ 0.4`；只有 `reconcile` 成功才可升格。
+2. **对账不是授权**：即使预测完全命中，也只证明「模型预测对了」，不证明「动作被允许」。
+3. **风险不是裁决**：`check_constraints` 只提供风险信号；是否执行由 System3 + 规范账决定。
+
+### 20.3 权威晋升链
+
+```
+prediction (hypothesis, evidential 0.2)
+   --reconcile borne_out--> reconciled (derived, evidential 0.6)
+   --independent replication + ground truth--> replicated (direct, evidential 0.9)
+   --reconcile falsified--> contested/refuted (evidential 0.1, 保留为负证据)
+   --insufficient / 缺指标--> insufficient (不得当通过)
+```
+
+规则：
+
+- `reconcile` 必须区分三态：`borne_out / falsified / insufficient`。**当前实现 [reconcile](file:///workspace/agent/huginn/research/law_model.py#L321-L342) 在指标缺失时会返回 `borne_out=True`（errors/mismatch 为空）——这是必须修的语义漏洞**：至少一个指标参与比较，且全部参与指标在容差内，才算 borne_out；否则 insufficient。
+- `actual` 必须来自真实执行或可重放经验，带 `source_id`；禁止合成 actual。
+- `falsified` 不是失败，是发现：进入认知账的 `contested`，并作为负证据保留。
+- `replicated` 需要独立 run / 独立后端 / 独立数据，不能用同一 prediction 重复对账充数。
+
+### 20.4 与 PMK 双 sheaf 的结合
+
+认识论 sheaf 增加一个 `world_model` stalk：
+
+```python
+@dataclass
+class WorldModelStance:
+    world_model_id: str
+    worldview: str              # physics_causal / latent_transition / ...
+    domain: str
+    contract_version: str
+    predicted: dict[str, float]
+    uncertainty: dict[str, float]
+    epoch: int
+    created_at: str
+```
+
+Restriction map 先查兼容性，再查 subject 对齐：
+
+1. `tenant_id` / `domain` / `contract_version` 不兼容 → 不建边，记 `worldview_mismatch` 或 `contract_violation`。
+2. 兼容 → 按 subject 建边，比较 predicted 与 observed；偏差超过容差 → `prediction_error`。
+3. 同 worldview 同 domain 的冲突才是认识论 `contradiction`；跨 worldview 的差异不是。
+
+这样 PMK 的 `timeseries` 路从「关键词 trend 匹配」升级为「世界模型预测 vs 观测」的结构化对账；原来的关键词逻辑保留为无世界模型时的降级路径。
+
+### 20.5 与 System3 准入的结合
+
+- `check_constraints()` 返回非空 → `deny` 或 `degrade`，并给出具体违规项。
+- `infer_inverse()` 返回 `None`（不可逆）→ 提高授权要求：更窄 scope、更短 TTL、显式人工确认；不是直接拒绝。
+- 高风险 + 高不确定度预测 → `ask`，required_acts 写明「授权 scope」。
+- 世界模型不可用 → 只失去预测信号，不阻断任务；`trust=partial`，不是 `blind`。
+- 世界模型给出的预测**永远不能**进入 `authorize` 的判定依据。
+
+### 20.6 与监控环的结合
+
+`ForwardPredictor` 已经有现成的两个信号：
+
+- `last_prediction_error`（[world_state.py#L345](file:///workspace/agent/huginn/security/world_state.py#L345)）：预测 vs 实测的 RMS 误差。
+- `prediction_error_to_reward`（[world_state.py#L570](file:///workspace/agent/huginn/security/world_state.py#L570)）：误差到连续奖励的映射。
+
+接入方式：
+
+1. **漂移前置信号**：`prediction_error` 连续 N 步上升 → 写 `drift_events`，`detector=prediction_error`，级别先 `review`；超过阈值再 `intervene`。它比文本反思更早、更客观。
+2. **惊奇排序**：prediction_error 作为贝叶斯惊奇的廉价代理，喂给 Dreamer 的惊奇探针；高误差 finding 优先诊断。
+3. **幽灵防御**：复用 `epoch` / `restored` 语义——旧 epoch 的预测不得当作当前预测消费；`restored=True` 的预测只能作为历史痕迹，不能进入当前 `AdmissionView`。
+4. **监控降级**：世界模型不可用 → `trust=partial`；预测过期 → 丢弃并记 `stale_prediction`，不得用旧预测补位。
+
+### 20.7 与经验账的结合
+
+给 [ExecutableExperience](file:///workspace/agent/huginn/research/experience_archive.py#L43-L70) 增加字段：
+
+```python
+world_model_id: str
+worldview: str
+law: str
+contract_version: str
+prediction_error: float | None
+reconcile_status: Literal["borne_out", "falsified", "insufficient"]
+ground_truth_source: str          # tool_run_id / pybullet_run_id / replay_id
+```
+
+规则：
+
+- 只有 `reconcile_status=borne_out` 且 `ground_truth_source` 可回查的经验，才允许 `evidential_authority ≥ 0.6`。
+- 只有预测、没有真实对账的经验，最高 `derived`。
+- 检索按 `worldview + domain + contract_version` 过滤；单位/有效域不兼容的经验不得混用。
+- replay 失败 → `degraded`，不伪造 ground truth。
+
+### 20.8 与梦境周期的结合
+
+- **Dreamer**：用 `ModelBasedPlanner.rollout()` 生成反事实探针；`prediction_error` 高或 `reconcile=falsified` 的区域作为高惊奇 finding。
+- **Analyst**：把 `falsified` 归因为 `law_mismatch / contract_violation / missing_link / stale_model` 之一；用 rollout 做反事实：「若修正参数/补一条边，预测是否通过？」
+- **Consolidator**：可以提出世界模型修订（参数、定律、有效域），但**只能提案**；修订走 meta_improver 的 GREEN 采纳门，不能由梦境直接改模型。
+- 梦中新定律默认 `hypothesis` 权威；至少一次独立 `reconcile` 才能升 `derived`。
+
+### 20.9 数据契约（补）
+
+```sql
+CREATE TABLE world_model_predictions (
+  prediction_id   TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  world_model_id  TEXT NOT NULL,
+  worldview       TEXT NOT NULL,
+  domain          TEXT NOT NULL,
+  contract_version TEXT NOT NULL,
+  state_before_digest TEXT NOT NULL,
+  action_digest   TEXT NOT NULL,
+  predicted_json  TEXT NOT NULL,
+  uncertainty_json TEXT,
+  epoch           INTEGER NOT NULL,
+  restored        INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL
+);
+
+CREATE TABLE reconcile_records (
+  reconcile_id    TEXT PRIMARY KEY,
+  prediction_id   TEXT NOT NULL,
+  tenant_id       TEXT NOT NULL,
+  actual_source   TEXT NOT NULL,   -- tool_run_id / pybullet_run_id / replay_id
+  actual_json     TEXT NOT NULL,
+  tol             REAL NOT NULL,
+  errors_json     TEXT NOT NULL,
+  status          TEXT NOT NULL,   -- borne_out|falsified|insufficient
+  prediction_error REAL,
+  worldview_consistent INTEGER NOT NULL,
+  created_at      TEXT NOT NULL
+);
+```
+
+### 20.10 不变量（补 I41–I50）
+
+| # | 不变量 | 测试 |
+|---|---|---|
+| I41 | 预测默认 `hypothesis/derived`，未经 reconcile 不得作为 `direct` 证据 | `test_world_model_binding.py::test_prediction_not_direct` |
+| I42 | 预测必须带 `worldview/domain/contract_version`；缺失即 quarantine | `test_world_model_binding.py::test_required_labels` |
+| I43 | `actual` 必须来自真实执行/可重放经验并带 `source_id`；合成 actual 禁止 | `test_reconcile.py::test_actual_provenance` |
+| I44 | 世界模型不得授权动作；`authorize` 只能由规范账写 | `test_world_model_binding.py::test_no_authority` |
+| I45 | 不可逆动作（`infer_inverse=None`）必须提高授权 scope/TTL 或人工确认 | `test_admission_gate.py::test_irreversible_requires_scope` |
+| I46 | `prediction_error` 超阈值必须写 `drift_events`；禁止静默 | `test_drift_gate.py::test_prediction_error_signal` |
+| I47 | 世界模型修订必须过采纳门；监控/梦境不得直接改模型 | `test_world_model_binding.py::test_revision_gate` |
+| I48 | 世界模型不可用只降预测能力，不阻断任务 | `test_world_model_binding.py::test_availability_degrade` |
+| I49 | 跨 worldview 预测不得粘合；冲突记为 `worldview_mismatch` | `test_pmk_sheaves.py::test_worldview_mismatch` |
+| I50 | 旧 epoch / `restored` 预测不得作为当前预测消费 | `test_world_state.py::test_ghost_prediction_blocked` |
+
+### 20.11 指标（补）
+
+| 指标 | 定义 | 目标 |
+|---|---|---|
+| prediction calibration (ECE) | 预测不确定度与命中率的校准误差 | ≤ 0.10 |
+| reconcile pass rate | `borne_out / (borne_out+falsified)` | 按域设基线，不跨域比较 |
+| prediction-error lead time | 预测误差上升领先真实漂移的步数 | ≥ 2 步 |
+| worldview mismatch rate | 跨 worldview 误粘合次数 | 0 |
+| contract violation rate | 单位/有效域冲突次数 | 0 |
+| irreversible action authorization rate | 不可逆动作中显式授权占比 | 100% |
+| synthetic actual rate | 合成 actual 占比 | 0 |
+| stale prediction consumption | 旧 epoch 预测被消费次数 | 0 |
+
+### 20.12 路线补丁
+
+| 阶段 | 内容 | 出口 |
+|---|---|---|
+| P1-f | 预测/对账记录落库；证据补 `worldview/domain/contract_version` | I41–I43 绿 |
+| P2-g | PMK 增加 `world_model` stalk；`prediction_error` 接漂移告警 | I46、I49–I50 绿 |
+| P3-d | reconcile 升格链 + replay 真值 + Analyst 反事实 rollout | I44–I45、I47–I48 绿 |
+
+### 20.13 反模式
+
+- 把 `predict()` 的输出直接写进报告当事实。
+- 把 `latent_transition` 的隐态预测当作物理结论。
+- 用同一个 `reconcile` 结果给多个预测充数。
+- 指标缺失时仍返回 `borne_out=True`。
+- 用世界模型决定「能不能执行」。
+- 把 PyBullet 仿真真值当成现实真值。
+- 旧 epoch 的预测没有失效标记就继续消费。
+- 跨 worldview 的差异当成「矛盾」去 pause。
+
+### 20.14 诚实边界
+
+- `LawModel` 是域内模型，不存在「通用世界模型」；跨域只能借结构，不能借参数。
+- `reconcile` 只校验声明的 metrics，不校验全状态；未覆盖的维度是「未检查」，不是「通过」。
+- `ForwardPredictor` 的隐态转移没有物理语义，只能用于预测误差/漂移信号，不能用于物理论证。
+- PyBullet 是仿真真值，只在仿真契约内成立。
+- 世界模型回答「会发生什么」，不回答「是否被允许」；后者只属于规范账。
+
+
 
 
 
