@@ -1143,19 +1143,33 @@ class ContextBuilder:
         if not (persona_text or memory_text or kb_text):
             return ""
 
-        # 一致性标签 — 复用 task_lifecycle._check_pmk_consistency (H¹ proxy)
+        action_text = ""
+        if last_step_evaluation is not None:
+            action_text = str(
+                getattr(last_step_evaluation, "attempted", "") or ""
+            ).strip()
+
+        # 三条轴分开：认识论（advisory）/ 规范（block）/ 自指（block）。
         consistency_label = "consistent"
+        advisory_reason = ""
         try:
-            from huginn.runtime.task_lifecycle import _check_pmk_consistency
+            from huginn.runtime.task_lifecycle import _check_pmk_axes
+
             pmk_state = {
                 "persona": persona_text,
                 "memory": memory_text,
                 "kb": kb_text,
+                "action": action_text,
             }
-            inconsistent, reason = _check_pmk_consistency(pmk_state)
-            consistency_label = "INCONSISTENT" if inconsistent else "consistent"
+            _axes = _check_pmk_axes(pmk_state)
+            if _axes.blocked:
+                consistency_label = "INCONSISTENT"
+                advisory_reason = _axes.reason
+            elif _axes.advisory:
+                consistency_label = "EPISTEMIC_ADVISORY"
+                advisory_reason = _axes.advisory
         except Exception:
-            logger.debug("best-effort op failed", exc_info=True)  # import 失败或检查异常, 标 consistent 不阻塞
+            logger.debug("best-effort op failed", exc_info=True)  # 检查异常标 consistent 不阻塞
 
         lines = [
             "## PMK 循环状态",
@@ -1164,11 +1178,22 @@ class ContextBuilder:
             f"- Memory: {memory_text or '(无立场)'}",
             f"- Knowledge: {kb_text or '(无立场)'}",
         ]
+        if action_text:
+            lines.append(f"- Action: {action_text}")
         if consistency_label == "INCONSISTENT":
             lines.append(
-                "- ⚠ 三路立场冲突 — 局部模型无法粘合成全局, "
+                "- ⚠ 规范/自指冲突 — 局部模型无法粘合成全局, "
                 "请显式选择遵从哪一路"
             )
+            if advisory_reason:
+                lines.append(f"- 冲突: {advisory_reason[:200]}")
+        elif consistency_label == "EPISTEMIC_ADVISORY":
+            lines.append(
+                "- 认识论冲突（advisory）— 不得把冲突方当作确定事实；"
+                "请补证据或降级措辞"
+            )
+            if advisory_reason:
+                lines.append(f"- 冲突: {advisory_reason[:200]}")
         return "\n".join(lines)
 
     # ── Full input messages ────────────────────────────────────────

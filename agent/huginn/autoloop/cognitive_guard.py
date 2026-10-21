@@ -268,6 +268,14 @@ def build_pmk_state(
             _result["memory"] = _mem_text
         if _kb_text:
             _result["kb"] = _kb_text
+        # 规范轴：把「当前要执行的动作」显式作为 action 路，让人格约束能在
+        # 规范 sheaf 上与动作对撞，而不是把 persona 混进认识论事实路。
+        if last_step_eval is not None:
+            _action_text = str(
+                getattr(last_step_eval, "attempted", "") or ""
+            ).strip()
+            if _action_text:
+                _result["action"] = _action_text
         # P3 结合: 物理时序作为第四路 (PMKT) — 让一致性检查感知系统动力学.
         if timeseries_ctx:
             _result["timeseries"] = timeseries_ctx

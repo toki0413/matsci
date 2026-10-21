@@ -749,9 +749,12 @@ LUCID review (mandatory after generating hypothesis):
             if not pmk_state:
                 return ""
 
-            # 一致性检查 (Step 2 入口) — 含 timeseries 路, 比 build_pmk_text 内部
-            # 的 3 路检查更全. 这里的判定驱动 hint + shard side-effect.
-            is_inconsistent, reason = _check_pmk_consistency(pmk_state)
+            # 三条轴分开判定：认识论 advisory；规范/自指 block。
+            from huginn.runtime.task_lifecycle import _check_pmk_axes
+
+            axes = _check_pmk_axes(pmk_state)
+            is_inconsistent = axes.blocked
+            reason = axes.reason
 
             # side-effect 每 iteration 只跑一次: hypothesize + plan 都调本方法,
             # 不 guard 会重复 append hint + 重复写 episodic entry.
@@ -787,6 +790,13 @@ LUCID review (mandatory after generating hypothesis):
                             "PMK → evolution bridge failed (non-fatal)",
                             exc_info=True,
                         )
+                elif axes.advisory:
+                    advisory_hint = f"[PMK ADVISORY] {axes.advisory[:200]}"
+                    self._speculator_hint = (
+                        (self._speculator_hint + f"\n{advisory_hint}\n").strip()
+                        if self._speculator_hint else f"{advisory_hint}\n"
+                    )
+                    self._write_pmk_conflict_to_episodic(pmk_state, axes.advisory)
                 self._pmk_side_effect_iter = cur_iter
 
             # 格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
