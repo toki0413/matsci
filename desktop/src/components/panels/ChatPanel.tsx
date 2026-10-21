@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, Pin, MessageSquare, Code2, BookOpen, ThumbsUp, ThumbsDown, FileDown } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, GitFork, Pin, MessageSquare, Code2, BookOpen, ThumbsUp, ThumbsDown, FileDown } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -320,6 +320,7 @@ interface ChatPanelProps {
   contextBudgetTokens?: number;
   onExpandResult?: (content: string, toolName?: string) => void;
   onNavigate?: (target: string) => void;
+  onForkToSideTask?: (messageIndex: number) => void;
   campaignEvents?: Array<{
     event: string;
     data: Record<string, unknown>;
@@ -385,6 +386,7 @@ export function ChatPanel(props: ChatPanelProps) {
     currentPersona,
     setCurrentPersona,
     onNavigate,
+    onForkToSideTask,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
@@ -1412,6 +1414,22 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                       >
                         {copyingId === index ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
                       </button>
+                      {onForkToSideTask && (
+                        <button
+                          onClick={() => {
+                            const ordered = messages.filter(
+                              (m) => m.role === "user" || m.role === "assistant",
+                            );
+                            const forkIdx = ordered.indexOf(msg);
+                            if (forkIdx >= 0) onForkToSideTask(forkIdx);
+                          }}
+                          className="rounded p-1 text-text-muted hover:text-accent transition-colors"
+                          aria-label="Fork into side task"
+                          title="Fork from here into a side task"
+                        >
+                          <GitFork size={13} aria-hidden="true" />
+                        </button>
+                      )}
                       {index === displayMessages.length - 1 && !isStreaming && (
                         <button
                           onClick={() => {
@@ -1443,6 +1461,24 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                 )}
                 {msg.role === "user" && msg.timestamp !== "streaming" && (
                   <div className="relative mt-1.5 flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {onForkToSideTask && (
+                      <button
+                        onClick={() => {
+                          // 后端下标按 user/assistant 过滤后的顺序切 fork 点;
+                          // 这里用同一口径换算, 避免 tool 消息错位.
+                          const ordered = messages.filter(
+                            (m) => m.role === "user" || m.role === "assistant",
+                          );
+                          const forkIdx = ordered.indexOf(msg);
+                          if (forkIdx >= 0) onForkToSideTask(forkIdx);
+                        }}
+                        className="rounded p-1 text-text-muted hover:text-accent transition-colors"
+                        aria-label="Fork into side task"
+                        title="Fork from here into a side task"
+                      >
+                        <GitFork size={13} aria-hidden="true" />
+                      </button>
+                    )}
                     {(() => {
                       const tIdx = displayTurnMap[index];
                       const canCollapse = turns.length > 3 && tIdx < turns.length - 2 && tIdx >= 0;

@@ -60,6 +60,7 @@
 | `tests/test_publish_mirror_drift.py` | 否 | `full-suite-only` | — |
 | `tests/test_recall_facade.py` | 否 | `fast-fail-guard` | Recall facade contract guard |
 | `tests/test_recovery_planner.py` | 否 | `fast-fail-guard` | World model recovery contract guard |
+| `tests/test_side_tasks.py` | 否 | `fast-fail-guard` | Side tasks contract guard |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
 ## CLI 门 (cli gates)
@@ -131,6 +132,7 @@
 | 统一召回门面 (memory/context/observation 意图路由) (`recall_facade`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/tools/recall_facade.py`, `huginn/tools/memory_tool.py`, `huginn/tools/recall_context_tool.py` | `tests/test_recall_facade.py` |
 | 复现重跑闭环 (reproduce) (`reproduce_closed_loop`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/autoloop/reproduce.py`, `huginn/cli/reproduce.py` | `tests/test_reproduce.py` |
 | 递归自我改进 (RSI) (`rsi`) | `harness_meta_improver` | feature_flag | false | false | 是 | `huginn/harness/meta_improver.py`, `huginn/self_improvement/core.py`, `huginn/evolution/engine.py` | `tests/test_meta_improver.py`, `tests/test_evolution_engine.py` |
+| 侧边任务 (消息级 fork + 转正为正式任务) (`side_tasks`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/side_tasks.py`, `huginn/routes/side.py`, `huginn/agent/streaming.py` | `tests/test_side_tasks.py` |
 | NMR/质谱谱图解析 (JCAMP-DX/mzML) (`spectra_parse`) | `—` | 常开 (无开关) | — | — | 是 | `huginn/tools/sci/spectra_parsers.py`, `huginn/tools/characterization_tool.py` | `tests/test_spectra_parsers.py` |
 | 投机执行 (speculator) (`speculator`) | `speculator` | feature_flag | true | true | 是 | `huginn/agents/speculator.py` | `tests/test_proactive_injection.py` |
 | 系统资源监控 (`system_health`) | `system_health_monitor` | feature_flag | true | true | 是 | `huginn/diagnostics/system_health.py` | `tests/test_system_health.py` |
@@ -180,11 +182,11 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |
 | 工作流数下限 | `tests/test_arch_gate_registry.py` | 权威 | 6 | 7 | 1 | Governance gate registry guard |
-| 快速失败门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 23 | 4 | Governance gate registry guard |
+| 快速失败门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 24 | 5 | Governance gate registry guard |
 | 字段审计 golden | `tests/golden/field_audit` | 引用 | 5 文件 | — | — | MECE 字段级面 · 全量 |
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
-| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 131 | 9 | Governance gate registry guard |
-| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 22 | 3 | Governance gate registry guard |
+| 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 132 | 10 | Governance gate registry guard |
+| 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 23 | 4 | Governance gate registry guard |
 | prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 14 | 14 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 4 | 4 | 0 | Governance gate registry guard |
 | pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |

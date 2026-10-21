@@ -816,6 +816,22 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
         ),
         "tests": ("tests/test_recall_facade.py",),
     },
+    # ── 侧边任务 (fork + 转正): always_on 型锚点 ──
+    # 侧边任务是普通 thread 的元数据扩展, 无开关可翻. 锚点双判据:
+    # 存储/路由/种子注入模块 + 红蓝双轨契约门 (fork 切点/转正卡片/零残留).
+    {
+        "id": "side_tasks",
+        "name": "侧边任务 (消息级 fork + 转正为正式任务)",
+        "flag_kind": "always_on",
+        "flag": "—",
+        "default": None,
+        "modules": (
+            "huginn/side_tasks.py",
+            "huginn/routes/side.py",
+            "huginn/agent/streaming.py",
+        ),
+        "tests": ("tests/test_side_tasks.py",),
+    },
 )
 
 # ── 能力面闭合分诊表 (feature flag 全部登记: 锚定 or 豁免) ──

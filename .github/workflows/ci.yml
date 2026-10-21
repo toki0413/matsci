@@ -182,6 +182,13 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_recall_facade.py -q -o addopts=""
 
+      # 侧边任务契约门 (红蓝双轨): 消息级 fork 切点/只继承 user+assistant、
+      # 种子只注入一次、转正保留 thread_id 并生成任务卡片、过期清理与零残留。
+      # weightless, 快速 fail。
+      - name: Side tasks contract guard
+        working-directory: agent
+        run: python -m pytest tests/test_side_tasks.py -q -o addopts=""
+
       # 低熵治理门禁：治理门自身的熵 —— `test_arch_*.py` 存在却未登记 (孤儿门)、
       # ci.yml guard step 指向不存在的测试 (悬空门)、门数萎缩。weightless
       # (stdlib + 可选 yaml, 不 import huginn.*)，先于重型套件快速 fail。

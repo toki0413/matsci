@@ -224,11 +224,11 @@ const resources = {
       'provenance.keyProps': 'Key Properties',
       'provenance.time': 'Time',
 
-      /* ── Side Q&A panel ── */
-      'side.title': 'Side Q&A',
-      'side.placeholder': 'Ask a side question…',
-      'side.empty': 'No pending questions.',
-      'side.answerPlaceholder': 'Type answer…',
+      /* ── Side tasks panel ── */
+      'side.title': 'Side Tasks',
+      'side.placeholder': 'Ask a side question, then discard or promote…',
+      'side.empty': 'No side tasks. Fork a message from the main chat.',
+      'side.answerPlaceholder': 'Type the side task message…',
 
       /* ── Knowledge base panel ── */
       'kb.searchPlaceholder': 'Search documents...',
@@ -1100,11 +1100,11 @@ const resources = {
       'provenance.keyProps': '关键属性',
       'provenance.time': '时间',
 
-      /* ── Side Q&A panel ── */
-      'side.title': '侧边问答',
-      'side.placeholder': '提出一个侧边问题…',
-      'side.empty': '暂无待回答问题。',
-      'side.answerPlaceholder': '输入回答…',
+      /* ── Side tasks panel ── */
+      'side.title': '侧边任务',
+      'side.placeholder': '提出侧边问题, 之后可丢弃或转正…',
+      'side.empty': '暂无侧边任务。从主对话的消息 fork 一条即可。',
+      'side.answerPlaceholder': '输入侧边任务消息…',
 
       /* ── Knowledge base panel ── */
       'kb.searchPlaceholder': '搜索文档...',

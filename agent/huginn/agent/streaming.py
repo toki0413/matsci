@@ -1383,6 +1383,24 @@ class StreamingMixin:
                 self.refresh_tools_from_registry()
                 self._last_routed_task = message
 
+        # Side task fork: 把父对话 fork 点之前的上下文一次性注入本轮历史.
+        # 之后 checkpointer 接管该 thread, seed_consumed 置位避免每轮重复放大.
+        try:
+            from huginn.side_tasks import get_shared_side_task_store
+
+            _side_store = get_shared_side_task_store()
+            _side_seed = _side_store.peek_seed(thread_id)
+            if _side_seed:
+                for _sm in _side_seed:
+                    self._conversation_tree.add_message(
+                        role=_sm.get("role", "user"),
+                        content=_sm.get("content", ""),
+                        metadata={"source": "side_task_fork"},
+                    )
+                _side_store.consume_seed(thread_id)
+        except Exception:  # 防御: 侧边种子注入失败不阻断主对话
+            logger.debug("side task seed injection skipped", exc_info=True)
+
         # OAK 启发: ConversationTree 通电 — 把每条 user/ai 消息写进树
         # phase 转移时 fork 出新分支, 让研究历史成为树而非线性序列
         try:

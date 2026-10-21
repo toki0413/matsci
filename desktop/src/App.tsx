@@ -46,6 +46,7 @@ import { ProjectPanel } from "./components/panels/ProjectPanel";
 import { ResearchProjectPanel } from "./components/panels/ResearchProjectPanel";
 import { FilesPanel } from "./components/panels/FilesPanel";
 import { ThreadsPanel } from "./components/panels/ThreadsPanel";
+import { SidePanel } from "./components/panels/SidePanel";
 import { ReviewPanel } from "./components/panels/ReviewPanel";
 import { CoderPanel } from "./components/panels/CoderPanel";
 import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
@@ -513,52 +514,36 @@ export default function App() {
     defaultError: "Diagnosis failed.",
   });
 
-  // ── Side dialogue state ──────────────────────────────────────
-  const [sideInput, setSideInput] = useState("");
-  const [sideQuestions, setSideQuestions] = useState<any[]>([]);
-  const [sideAnswerId, setSideAnswerId] = useState<string | null>(null);
-  const [sideAnswer, setSideAnswer] = useState("");
-  const [sideMsg, setSideMsg] = useState("");
+  // ── Side tasks ───────────────────────────────────────────────
+  // 侧边任务与主对话同屏: fork 自当前 thread 的某条消息, 独立运行, 可转正.
+  const [sideFocusTaskId, setSideFocusTaskId] = useState<string | null>(null);
 
-  const loadSidePending = async () => {
+  const forkToSideTask = async (messageIndex: number) => {
+    if (!activeThread) {
+      toast.error("Open a conversation first");
+      return;
+    }
     try {
-      const data = await api.get<any[]>("/side/pending");
-      setSideQuestions(Array.isArray(data) ? data : []);
+      const res = await api.post<any>("/side/tasks", {
+        parent_thread_id: activeThread,
+        from_message_index: messageIndex,
+      });
+      if (!res?.success) {
+        toast.error(res?.error || "Fork failed");
+        return;
+      }
+      setSideFocusTaskId(res.task.id);
+      setActiveTab("side");
+      toast.success(`Side task created (${res.inherited_messages} inherited messages)`);
     } catch (e: any) {
-      setSideMsg(`Load failed: ${e.message}`);
+      toast.error(e.message || "Fork failed");
     }
   };
 
-  const sendSideQuestion = async () => {
-    if (!sideInput.trim()) return;
-    try {
-      await api.post("/side", { question: sideInput });
-      setSideInput("");
-      loadSidePending();
-    } catch (e: any) {
-      setSideMsg(`Send failed: ${e.message}`);
-    }
-  };
-
-  const answerSideQuestion = async (id: string) => {
-    if (!sideAnswer.trim()) return;
-    try {
-      await api.post("/side", { id, answer: sideAnswer });
-      setSideAnswer("");
-      setSideAnswerId(null);
-      loadSidePending();
-    } catch (e: any) {
-      setSideMsg(`Answer failed: ${e.message}`);
-    }
-  };
-
-  const clearSide = async () => {
-    try {
-      await api.del("/side");
-      setSideQuestions([]);
-    } catch (e: any) {
-      setSideMsg(`Clear failed: ${e.message}`);
-    }
+  const openPromotedTask = (threadId: string) => {
+    switchThread(threadId);
+    loadThreads();
+    setActiveTab("chat");
   };
 
   // ── Unified solver state ─────────────────────────────────────
@@ -836,7 +821,7 @@ export default function App() {
       tabs: [
         { id: "persona" as const, label: "Personas", icon: <User size={16} aria-hidden="true" /> },
         { id: "emotion" as const, label: "Emotion", icon: <Smile size={16} aria-hidden="true" /> },
-        { id: "side" as const, label: "Side Chat", icon: <PanelRight size={16} aria-hidden="true" /> },
+        { id: "side" as const, label: "Side Tasks", icon: <PanelRight size={16} aria-hidden="true" /> },
       ],
     },
   ];
@@ -998,9 +983,6 @@ export default function App() {
     }
     if (activeTab === "provenance") {
       loadProvenance();
-    }
-    if (activeTab === "side") {
-      loadSidePending();
     }
     if (activeTab === "solver" && solverModels.length === 0) {
       loadSolverModels();
@@ -1598,6 +1580,7 @@ export default function App() {
               }}
               onOpenFiles={() => setActiveTab("files")}
               onNavigate={handleSlashNavigate}
+              onForkToSideTask={forkToSideTask}
               personas={personaList.map(p => ({ name: p.label, description: p.description }))}
               currentPersona={config.persona}
               setCurrentPersona={switchPersona}
@@ -2249,57 +2232,12 @@ export default function App() {
           )}
 
           {activeTab === "side" && (
-            <div className="flex h-full flex-col">
-              <PanelHeader title={t('side.title')}>
-                <button onClick={loadSidePending} className="btn-secondary px-3 py-1 text-xs">{t('common.refresh')}</button>
-                <button onClick={clearSide} className="btn-secondary px-3 py-1 text-xs">{t('common.clear')}</button>
-              </PanelHeader>
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="mx-auto max-w-2xl space-y-4">
-                  <div className="card space-y-2">
-                    <textarea
-                      value={sideInput}
-                      onChange={(e) => setSideInput(e.target.value)}
-                      placeholder={t('side.placeholder')}
-                      aria-label="Side question input"
-                      rows={3}
-                      className="input resize-none text-sm"
-                    />
-                    <button onClick={sendSideQuestion} disabled={!sideInput.trim()} className="btn-primary text-xs">
-                      Ask
-                    </button>
-                  </div>
-                  {sideMsg && <div className="text-xs text-error">{sideMsg}</div>}
-                  <div className="space-y-2">
-                    {sideQuestions.length === 0 ? (
-                      <p className="text-sm text-text-muted">{t('side.empty')}</p>
-                    ) : sideQuestions.map((q) => (
-                      <div key={q.id || q.question} className="card space-y-2">
-                        <p className="text-sm font-medium">{q.question}</p>
-                        {q.answer && <p className="text-xs text-text-secondary">{q.answer}</p>}
-                        {sideAnswerId === (q.id || q.local_id) ? (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={sideAnswer}
-                              onChange={(e) => setSideAnswer(e.target.value)}
-                              placeholder="Type answer…"
-                              aria-label="Side answer"
-                              className="input flex-1 text-xs"
-                              onKeyDown={(e) => { if (e.key === "Enter") answerSideQuestion(q.id || q.local_id); }}
-                            />
-                            <button onClick={() => answerSideQuestion(q.id || q.local_id)} disabled={!sideAnswer.trim()} className="btn-primary text-xs">{t('common.send')}</button>
-                            <button onClick={() => setSideAnswerId(null)} className="btn-secondary text-xs">{t('common.cancel')}</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => setSideAnswerId(q.id || q.local_id)} className="btn-secondary text-xs">{t('common.answer')}</button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <SidePanel
+              activeThread={activeThread}
+              focusTaskId={sideFocusTaskId}
+              onOpenThread={openPromotedTask}
+              onThreadsChanged={loadThreads}
+            />
           )}
 
           {activeTab === "solver" && (

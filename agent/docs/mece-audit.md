@@ -244,7 +244,7 @@
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/research_safety_hook.py:18` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `PRIMITIVES` | `huginn/modes/pi.py:22` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `READ_ONLY_TOOLS` | `huginn/permissions.py:44` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:51` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
+| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:51` | 8 | 8 | registry | `wired` | 1 | 0 | 0 |
 | `_CORE_TOOLS` | `huginn/phases.py:109` | 15 | 15 | registry | `internal-only` | 0 | 0 | 0 |
 | `_KNOWN_TOOLS` | `huginn/provenance/pipeline.py:90` | 39 | 38 | registry | `internal-only` | 0 | 0 | 1 |
 | `_EXPENSIVE_TOOLS` | `huginn/research_budget.py:24` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
@@ -304,7 +304,7 @@
 | `SUBAGENT_STOP` | `huginn/agents/subagent.py:401` | — |
 | `PRE_COMPACT` | `huginn/agent/streaming.py:918` | — |
 | `POST_COMPACT` | `huginn/events/unified_bus.py:379` | — |
-| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1639` | `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332`, `huginn/agents/factory.py:337`, `huginn/hooks/safety_collapse_hook.py:397` |
+| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1657` | `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332`, `huginn/agents/factory.py:337`, `huginn/hooks/safety_collapse_hook.py:397` |
 | `POST_TOOL_USE_FAILURE` | `huginn/hooks/__init__.py:280` | — |
 
 ### 互斥违例 (mutually exclusive)
@@ -395,17 +395,17 @@
 
 | 帧名 | 通道 | 状态 | 位置 | 备注 |
 |---|---|---|---|---|
-| `mousemove` | — | `external` | `desktop/src/App.tsx:189` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `mouseup` | — | `external` | `desktop/src/App.tsx:190` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `keydown` | — | `external` | `desktop/src/App.tsx:1110` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `resize` | — | `external` | `desktop/src/App.tsx:1119` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `mousemove` | — | `external` | `desktop/src/App.tsx:190` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `mouseup` | — | `external` | `desktop/src/App.tsx:191` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `keydown` | — | `external` | `desktop/src/App.tsx:1095` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `resize` | — | `external` | `desktop/src/App.tsx:1104` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `storage` | — | `external` | `desktop/src/Pet.tsx:773` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `pointermove` | — | `external` | `desktop/src/Pet.tsx:1070` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `keydown` | — | `external` | `desktop/src/Pet.tsx:1071` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `keydown` | — | `external` | `desktop/src/components/Modal.tsx:30` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `mousedown` | — | `external` | `desktop/src/components/SandboxPanel.tsx:193` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `mousedown` | — | `external` | `desktop/src/components/SaveToMemoryButton.tsx:38` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `click` | — | `external` | `desktop/src/components/panels/ChatPanel.tsx:488` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `click` | — | `external` | `desktop/src/components/panels/ChatPanel.tsx:490` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `click` | — | `external` | `desktop/src/components/panels/ThreadsPanel.tsx:46` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `visibilitychange` | — | `external` | `desktop/src/hooks/useChatAndConnection.ts:1300` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `keydown` | — | `external` | `desktop/src/hooks/useFocusTrap.ts:70` | 非 SSE 通道 (DOM 事件), 不计入 |
@@ -581,8 +581,8 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | 类型 | 通道 | 状态 | 位置 | 备注 |
 |---|---|---|---|---|
 | `approval_response` | `agent` | `handled` | `desktop/src/Pet.tsx:1253` |  |
-| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1581` |  |
-| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1599` |  |
+| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1601` |  |
+| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1619` |  |
 | `input` | `terminal` | `handled` | `desktop/src/components/panels/TerminalPanel.tsx:57` |  |
 | `pong` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1192` |  |
 | `user_input` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1405` |  |
@@ -623,26 +623,23 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 状态: `wired`=前端调用的方法与路径后端已注册; `method-mismatch`=路径已注册但无此方法 (405, 调用必失败); `no-source`=后端无此路径 (404 死链); `external`=绝对 URL / 非后端路径, 不计入
 
-端点: 后端注册 **368** 个 (实存 **368** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **146** 个; 前端调用点 **171** 处.
+端点: 后端注册 **374** 个 (实存 **374** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **149** 个; 前端调用点 **174** 处.
 
 ### 前端调用点 (按状态)
 
 | 方法 | 路径 | 状态 | 位置 | 备注 |
 |---|---|---|---|---|
-| `GET` | `/provenance/recent?n=50` | `wired` | `desktop/src/App.tsx:342` |  |
-| `POST` | `/checkpoints` | `wired` | `desktop/src/App.tsx:352` |  |
-| `GET` | `/checkpoints/${cpId}/diff` | `wired` | `desktop/src/App.tsx:363` |  |
-| `POST` | `/checkpoints/${cpId}/accept` | `wired` | `desktop/src/App.tsx:373` |  |
-| `POST` | `/checkpoints/${cpId}/reject` | `wired` | `desktop/src/App.tsx:386` |  |
-| `GET` | `/side/pending` | `wired` | `desktop/src/App.tsx:525` |  |
-| `POST` | `/side` | `wired` | `desktop/src/App.tsx:535` |  |
-| `POST` | `/side` | `wired` | `desktop/src/App.tsx:546` |  |
-| `DELETE` | `/side` | `wired` | `desktop/src/App.tsx:557` |  |
-| `GET` | `/unified/models` | `wired` | `desktop/src/App.tsx:576` |  |
-| `POST` | `/unified/derive` | `wired` | `desktop/src/App.tsx:588` |  |
-| `POST` | `/unified/solve` | `wired` | `desktop/src/App.tsx:601` |  |
-| `POST` | `/unified/plot` | `wired` | `desktop/src/App.tsx:610` |  |
-| `GET` | `/workflows` | `wired` | `desktop/src/App.tsx:743` |  |
+| `GET` | `/provenance/recent?n=50` | `wired` | `desktop/src/App.tsx:343` |  |
+| `POST` | `/checkpoints` | `wired` | `desktop/src/App.tsx:353` |  |
+| `GET` | `/checkpoints/${cpId}/diff` | `wired` | `desktop/src/App.tsx:364` |  |
+| `POST` | `/checkpoints/${cpId}/accept` | `wired` | `desktop/src/App.tsx:374` |  |
+| `POST` | `/checkpoints/${cpId}/reject` | `wired` | `desktop/src/App.tsx:387` |  |
+| `POST` | `/side/tasks` | `wired` | `desktop/src/App.tsx:527` |  |
+| `GET` | `/unified/models` | `wired` | `desktop/src/App.tsx:561` |  |
+| `POST` | `/unified/derive` | `wired` | `desktop/src/App.tsx:573` |  |
+| `POST` | `/unified/solve` | `wired` | `desktop/src/App.tsx:586` |  |
+| `POST` | `/unified/plot` | `wired` | `desktop/src/App.tsx:595` |  |
+| `GET` | `/workflows` | `wired` | `desktop/src/App.tsx:728` |  |
 | `POST` | `/pet/feed` | `wired` | `desktop/src/Pet.tsx:1354` |  |
 | `POST` | `/pet/pet` | `wired` | `desktop/src/Pet.tsx:1365` |  |
 | `GET` | `/v1/fs/search` | `wired` | `desktop/src/components/CommandPalette.tsx:50` |  |
@@ -694,7 +691,7 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `POST` | `/viewer3d/load` | `wired` | `desktop/src/components/StructureViewer.tsx:246` |  |
 | `GET` | `/workflows` | `wired` | `desktop/src/components/SweepDashboard.tsx:176` |  |
 | `POST` | `/workflows/execute` | `wired` | `desktop/src/components/SweepDashboard.tsx:270` |  |
-| `POST` | `/v1/fs/upload` | `wired` | `desktop/src/components/panels/ChatPanel.tsx:574` |  |
+| `POST` | `/v1/fs/upload` | `wired` | `desktop/src/components/panels/ChatPanel.tsx:576` |  |
 | `GET` | `/events/recent?n=400` | `wired` | `desktop/src/components/panels/EventAuditPanel.tsx:55` |  |
 | `GET` | `/credentials/defaults` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:48` |  |
 | `POST` | `/transfer/web/upload` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:65` |  |
@@ -722,6 +719,12 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `POST` | `/export/memory` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1257` |  |
 | `POST` | `/export/knowledge` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1274` |  |
 | `POST` | `/import/all` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1303` |  |
+| `GET` | `/side/tasks` | `wired` | `desktop/src/components/panels/SidePanel.tsx:65` |  |
+| `GET` | `/side/tasks/${id}` | `wired` | `desktop/src/components/panels/SidePanel.tsx:79` |  |
+| `POST` | `/side/tasks` | `wired` | `desktop/src/components/panels/SidePanel.tsx:98` |  |
+| `POST` | `/side/tasks/${detail.id}/messages` | `wired` | `desktop/src/components/panels/SidePanel.tsx:116` |  |
+| `POST` | `/side/tasks/${detail.id}/promote` | `wired` | `desktop/src/components/panels/SidePanel.tsx:134` |  |
+| `DELETE` | `/side/tasks/${detail.id}` | `wired` | `desktop/src/components/panels/SidePanel.tsx:152` |  |
 | `POST` | `/skills/execute` | `wired` | `desktop/src/components/panels/SkillsPanel.tsx:147` |  |
 | `GET` | `/v1/todos` | `wired` | `desktop/src/components/panels/TodoPanel.tsx:27` |  |
 | `PUT` | `/v1/todos` | `wired` | `desktop/src/components/panels/TodoPanel.tsx:48` |  |
@@ -895,7 +898,7 @@ HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里
 
 违例类型: `missing-query`=后端必填 query 参数前端未传 (422); `missing-body`=后端必填请求体前端未发 (422); `missing-body-field`=后端模型必填字段前端未含 (422); `shape-mismatch`=前后端请求载体形状不符 (JSON ↔ multipart, 422); `missing-form-field`=后端必填 Form/File 字段前端未含 (422)
 
-覆盖: 命中端点的调用 **171** 处 (共 177 个 `api.*` 调用点); 后端模型 **239** 个; 可静态核对 —— query 2 / body 12 / multipart 2 处.
+覆盖: 命中端点的调用 **174** 处 (共 180 个 `api.*` 调用点); 后端模型 **239** 个; 可静态核对 —— query 2 / body 12 / multipart 2 处.
 违例: **0** 条.
 
 ### 违例 (前端漏发后端必填)
@@ -918,7 +921,7 @@ HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里
 
 违例类型: `missing-field`=前端声明的响应字段后端从不返回 (恒 undefined)
 
-覆盖: 命中端点的调用 **171** 处 (共 177 个 `api.*` 调用点); 前端类型 **166** 个; 可静态核对 **86** 处.
+覆盖: 命中端点的调用 **174** 处 (共 180 个 `api.*` 调用点); 前端类型 **169** 个; 可静态核对 **86** 处.
 违例: **0** 条.
 
 ### 违例 (前端声明要读, 后端从不返回)
@@ -929,8 +932,8 @@ HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里
 
 | 维度 | 已核对 | 跳过 (形状开放/读不出) |
 |---|---|---|
-| 后端响应形状封闭 | 86 | 24 |
-| 前端声明可解析 | 86 | 61 |
+| 后端响应形状封闭 | 86 | 25 |
+| 前端声明可解析 | 86 | 63 |
 | 路径唯一命中 | — | 0 (歧义跳过) |
 
 诚实边界: 只读**字面量**形状 —— 后端 `return` 传变量 / `**` 展开 / `Response`对象 / 引不到的 `response_model` 即记开放并跳过, 故违例是**下界** (可能漏报); 前端泛型为 `<any>` / 数组 / `Record` 交叉 / 无泛型时该维度跳过; 类型解析只认同仓`interface`/`type` 字面量对象, `extends` / `&` 拼接一律记开放; 路径动态段同时命中多个端点且强位置并列时跳过 (不猜端点); 反向 (后端返回前端没读的字段) 不是违例.
@@ -1138,7 +1141,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 
 违例类型: `handler-undeclared`=body-model 端点 handler 读 `body.<字段>` 而模型未声明 ⇒ AttributeError (死端点); `fe-undeclared`=body-model 端点前端发的 body 键模型未声明 ⇒ Pydantic 静默丢弃 (前端以为传了); `dict-key-unsent`=body-dict 端点 handler 下标读 `body["键"]` 而该端点前端调用从不发此键 ⇒ KeyError
 
-请求体端点: **138** 处; 违例: **0** 条.
+请求体端点: **141** 处; 违例: **0** 条.
 
 ### body-model 端点: 声明字段 vs handler 读取 vs 前端发送
 
@@ -1260,7 +1263,10 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 | `/research/run_program` | `POST` | — | — | 开放(无前端调用) |
 | `/responses` | `POST` | — | — | 开放(无前端调用) |
 | `/sandbox/execute` | `POST` | — | `code` | 封闭 |
-| `/side` | `POST` | — | `answer`, `id`, `question` | 封闭 |
+| `/side` | `POST` | — | — | 开放(无前端调用) |
+| `/side/tasks` | `POST` | — | `from_message_index`, `parent_thread_id` | 封闭 |
+| `/side/tasks/{task_id}/messages` | `POST` | — | `content` | 封闭 |
+| `/side/tasks/{task_id}/promote` | `POST` | — | — | 封闭 |
 | `/skills/execute` | `POST` | — | `args`, `skill` | 封闭 |
 | `/swarm/run` | `POST` | — | — | 开放(无前端调用) |
 | `/team/plan` | `POST` | — | `objective` | 封闭 |
@@ -1310,7 +1316,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 |---|---|---|
 | body-model handler 读取 | 26 | 0 |
 | body-model 前端发送 | 12 | 0 |
-| body-dict 下标读键 | 34 | 78 |
+| body-dict 下标读键 | 36 | 79 |
 
 诚实边界: 请求体类型静态解析不到 (跨模块 / 别名) 的端点跳过 (下界, 可能漏报); `extra=allow` 的模型发送面开放、跳过; body-dict 端点须有 ≥1 个**唯一命中**且 body 静态可辨的前端调用才核 (外部客户端 / 动态段并列命中 / 调用含展开均跳过); `body.get("k")` 的缺省 None 是**有意**可选语义, 不计入下标读; handler 经别名或 `**body` / 迭代读取 (如 `for k in body`) 无法逐字段归因, 跳过 (漏报); 反向(handler 读了前端从不发 / 模型声明无人接管) 不是违例, 只列候选.
 
