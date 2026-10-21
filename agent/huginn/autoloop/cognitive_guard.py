@@ -123,6 +123,7 @@ def build_pmk_state(
     since: str | None = None,
     mem_mgr: Any = None,
     timeseries_ctx: str | None = None,
+    world_model_ctx: str | None = None,
 ) -> dict[str, str] | None:
     """AV4: PMK 三路立场状态构建共享函数.
 
@@ -279,6 +280,9 @@ def build_pmk_state(
         # P3 结合: 物理时序作为第四路 (PMKT) — 让一致性检查感知系统动力学.
         if timeseries_ctx:
             _result["timeseries"] = timeseries_ctx
+        # 世界模型 stalk：带 worldview/domain/contract 标签，只进认识论 advisory。
+        if world_model_ctx:
+            _result["world_model"] = world_model_ctx
         if _result:
             return _result
     except Exception as exc:

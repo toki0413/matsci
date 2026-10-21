@@ -454,6 +454,7 @@ class PMKAxes:
     epistemic_reason: str = ""
     normative_reason: str = ""
     identity_reason: str = ""
+    world_model_reason: str = ""
 
     @property
     def blocked(self) -> bool:
@@ -461,11 +462,13 @@ class PMKAxes:
 
     @property
     def advisory(self) -> str:
-        return self.epistemic_reason
+        return " | ".join(
+            part for part in (self.epistemic_reason, self.world_model_reason) if part
+        )
 
     @property
     def reason(self) -> str:
-        return self.normative_reason or self.identity_reason or self.epistemic_reason
+        return self.normative_reason or self.identity_reason or self.advisory
 
 
 def _active_stances(
@@ -535,10 +538,39 @@ def _check_pmk_axes(pmk_state: dict) -> PMKAxes:
         if _inc:
             identity_reason = f"IDENTITY: {_reason}"
 
+    # world_model stalk：必须带 worldview/domain/contract 标签；高预测误差只 advisory。
+    world_model_reason = ""
+    wm_text = str(pmk_state.get("world_model", "") or "").strip()
+    if wm_text:
+        lower = wm_text.lower()
+        missing = [
+            label for label in ("worldview=", "domain=", "contract=")
+            if label not in lower
+        ]
+        if missing:
+            world_model_reason = (
+                f"EPISTEMIC (advisory): world_model missing labels {missing}"
+            )
+        else:
+            import re as _re
+
+            match = _re.search(r"prediction_error=([0-9.]+)", lower)
+            if match:
+                try:
+                    value = float(match.group(1))
+                except ValueError:
+                    value = 0.0
+                if value > 0.15:
+                    world_model_reason = (
+                        f"EPISTEMIC (advisory): world_model prediction_error="
+                        f"{value:.2f} > 0.15"
+                    )
+
     return PMKAxes(
         epistemic_reason=epistemic_reason,
         normative_reason=normative_reason,
         identity_reason=identity_reason,
+        world_model_reason=world_model_reason,
     )
 
 

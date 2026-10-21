@@ -279,6 +279,47 @@ def test_pmk_llm_checker_advisory_and_cache():
     assert calls["n"] == 0, "规则阻断优先，不应调 LLM"
 
 
+def test_pmk_world_model_stalk_advisory():
+    """世界模型 stalk：缺标签或高预测误差只 advisory，不阻断."""
+    from huginn.runtime.task_lifecycle import _check_pmk_axes, _check_pmk_consistency
+
+    labeled = {
+        "world_model": (
+            "world_model=law.exoplanet worldview=physics_causal "
+            "domain=exoplanet contract=v1 prediction_error=0.30"
+        )
+    }
+    axes = _check_pmk_axes(labeled)
+    assert not axes.blocked
+    assert "world_model" in axes.advisory
+    blocked, reason = _check_pmk_consistency(labeled)
+    assert not blocked
+    assert "world_model" in reason
+
+    missing = {"world_model": "predicted T_eq_K=200"}
+    axes2 = _check_pmk_axes(missing)
+    assert not axes2.blocked
+    assert "missing labels" in axes2.advisory
+
+
+def test_build_pmk_state_includes_world_model_stalk():
+    from huginn.autoloop.cognitive_guard import build_pmk_state
+
+    class _Eval:
+        attempted = "run experiment"
+        pmk_feedback = "memory: m"
+
+    state = build_pmk_state(
+        None,
+        _Eval(),
+        None,
+        world_model_ctx="world_model=x worldview=physics domain=d contract=v1",
+    )
+    assert state is not None
+    assert state["world_model"].startswith("world_model=")
+    assert state["action"] == "run experiment"
+
+
 def main():
     _check_pmk_since_kb()
     _check_pmk_since_memory()

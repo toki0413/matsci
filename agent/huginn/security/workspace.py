@@ -315,6 +315,38 @@ class PhysicalWorkspace:
                         tenant_id=self.tenant_id,
                         session_id=self.session_id,
                     )
+                # PMK world_model stalk：记录最新预测/观测，供认识论 sheaf 读取。
+                try:
+                    from huginn.research.world_model_stalk import (
+                        record_world_model_stalk,
+                    )
+
+                    _schema = getattr(self._world_state, "schema", {}) or {}
+                    record_world_model_stalk(
+                        world_model_id=type(self.world_model).__name__,
+                        worldview=str(
+                            getattr(self.world_model, "worldview", "unknown")
+                        ),
+                        domain=str(
+                            getattr(self.world_model, "domain", "")
+                            or _schema.get("domain", "")
+                        ),
+                        contract_version=str(
+                            _schema.get("contract_version", "unknown")
+                        ),
+                        predicted=getattr(
+                            self._world_state, "last_prediction", {}
+                        ) or {},
+                        observed=dict(self.state),
+                        prediction_error=_prediction_error,
+                        epoch=int(
+                            getattr(self._world_state, "_epoch", 0) or 0
+                        ),
+                        tenant_id=self.tenant_id,
+                        session_id=self.session_id,
+                    )
+                except Exception:
+                    logger.debug("world-model stalk record skipped", exc_info=True)
             except Exception:
                 logger.debug("world-state step failed", exc_info=True)
         return action

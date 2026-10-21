@@ -711,6 +711,31 @@ LUCID review (mandatory after generating hypothesis):
             logger.debug("episodic replay failed (non-fatal)", exc_info=True)
             return ""
 
+    def _format_world_model_stalk(self) -> str:
+        """读取最近一次物理执行的世界模型预测，格式化为 PMK world_model stalk."""
+        try:
+            from huginn.env_access import env_str
+            from huginn.research.world_model_stalk import get_world_model_stalk
+
+            record = get_world_model_stalk(
+                tenant_id=env_str("HUGINN_TENANT_ID"),
+                session_id="default",
+            )
+            if not record:
+                return ""
+            error = record.get("prediction_error")
+            return (
+                f"world_model={record.get('world_model_id', '')} "
+                f"worldview={record.get('worldview', '')} "
+                f"domain={record.get('domain', '')} "
+                f"contract={record.get('contract_version', '')} "
+                f"prediction_error={error if error is not None else 'na'} "
+                f"epoch={record.get('epoch', 0)}"
+            )
+        except Exception:  # 防御: stalk 读取失败不影响 PMK
+            logger.debug("world model stalk format failed", exc_info=True)
+            return ""
+
     def _build_pmk_block(self, context: dict[str, Any]) -> str:
         """PMK 三路立场注入决策上下文. flag off 或全空时返回空串.
 
@@ -744,6 +769,7 @@ LUCID review (mandatory after generating hypothesis):
                 since=since,
                 mem_mgr=getattr(self, "memory", None),
                 timeseries_ctx=self._format_timeseries_context() or None,
+                world_model_ctx=self._format_world_model_stalk() or None,
             )
             if not pmk_state:
                 return ""
