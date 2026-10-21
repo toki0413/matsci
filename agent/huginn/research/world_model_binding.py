@@ -60,6 +60,43 @@ class AuthorityVector:
 
 
 @dataclass(frozen=True)
+class WorldModelRiskSignal:
+    """世界模型的风险信号（§20.5）：只约束，不授权."""
+
+    mode: Literal["allow", "ask", "degrade", "deny"]
+    reasons: tuple[str, ...] = ()
+    reversible: bool = True
+    constraints: tuple[str, ...] = ()
+
+
+def world_model_risk(
+    *,
+    constraints: tuple[str, ...] = (),
+    reversible: bool = True,
+    uncertainty: float = 0.0,
+    risk: str = "low",
+) -> WorldModelRiskSignal:
+    """约束违规 → deny；不可逆 → ask；高风险 + 高不确定 → ask；其余 allow."""
+    if constraints:
+        return WorldModelRiskSignal(
+            mode="deny", reasons=tuple(str(c) for c in constraints),
+            reversible=reversible, constraints=tuple(constraints),
+        )
+    if not reversible:
+        return WorldModelRiskSignal(
+            mode="ask", reasons=("irreversible action requires explicit scope/confirmation",),
+            reversible=False,
+        )
+    if str(risk).lower() in ("high", "critical") and float(uncertainty) > 0.5:
+        return WorldModelRiskSignal(
+            mode="ask",
+            reasons=(f"high risk with uncertainty={float(uncertainty):.2f}",),
+            reversible=reversible,
+        )
+    return WorldModelRiskSignal(mode="allow", reversible=reversible)
+
+
+@dataclass(frozen=True)
 class WorldModelRevision:
     """世界模型参数/定律修订提案；只有过采纳门才 active（I47）."""
 
@@ -281,6 +318,72 @@ def cross_glue_labels(
     return obstructions
 
 
+@dataclass(frozen=True)
+class WorldModelFinding:
+    """Dreamer 可消费的世界模型 finding（§20.8）；只作候选，不改模型."""
+
+    finding_id: str
+    subject: str
+    probe_type: str = "surprise"
+    surprise: float = 0.0
+    expected_impact: float = 0.0
+    evidence_ids: tuple[str, ...] = ()
+    status: str = ""
+
+
+def findings_from_reconciles(
+    records: list[ReconcileRecord],
+) -> list[WorldModelFinding]:
+    """falsified / insufficient 的 reconcile → 高惊奇 finding；borne_out 跳过."""
+    findings: list[WorldModelFinding] = []
+    for record in records:
+        if record.status == "borne_out":
+            continue
+        error = float(record.prediction_error or 0.0)
+        surprise = (
+            min(1.0, 0.5 + error * 2.0)
+            if record.status == "falsified"
+            else 0.5
+        )
+        findings.append(
+            WorldModelFinding(
+                finding_id=f"wm:{record.prediction_id}:{record.status}",
+                subject=record.prediction_id,
+                surprise=round(surprise, 4),
+                expected_impact=0.8 if record.status == "falsified" else 0.5,
+                evidence_ids=(
+                    record.prediction_id,
+                    record.actual_source,
+                ),
+                status=record.status,
+            )
+        )
+    return findings
+
+
+def diagnose_world_model_failure(
+    record: ReconcileRecord,
+    *,
+    contract_compatible: bool = True,
+) -> dict[str, Any]:
+    """把 reconcile 失败归因到 law_mismatch / contract_violation / stale_model."""
+    if not contract_compatible or not record.worldview_consistent:
+        cause = "contract_violation"
+    elif record.status == "falsified":
+        cause = "law_mismatch"
+    elif record.status == "insufficient":
+        cause = "stale_model"
+    else:
+        cause = "none"
+    return {
+        "cause_class": cause,
+        "confidence": 0.8 if cause != "none" else 0.5,
+        "abstain": cause == "none",
+        "prediction_id": record.prediction_id,
+        "evidence_ids": [record.prediction_id, record.actual_source],
+    }
+
+
 def to_pmk_stance(prediction: WorldModelPrediction) -> dict[str, Any]:
     """给 PMK 认识论 sheaf 的 world_model stalk（不是事实，必须带标签）."""
     summary = ", ".join(
@@ -302,16 +405,21 @@ __all__ = [
     "PromotionStatus",
     "ReconcileRecord",
     "ReconcileStatus",
+    "WorldModelFinding",
     "WorldModelPrediction",
     "WorldModelRevision",
+    "WorldModelRiskSignal",
     "apply_revision",
     "authority_for",
     "cross_glue_labels",
+    "diagnose_world_model_failure",
+    "findings_from_reconciles",
     "propose_revision",
     "parse_world_labels",
     "prediction_error_signal",
     "promotion_status",
     "reconcile_prediction",
     "to_pmk_stance",
+    "world_model_risk",
     "worldview_compatible",
 ]

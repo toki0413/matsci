@@ -196,6 +196,39 @@ def test_availability_degrade(tmp_path):
     assert decision.allow is True, "没有世界模型也必须能执行已授权任务"
 
 
+def test_world_model_findings_and_diagnosis():
+    """§20.8: reconcile 失败转 Dreamer finding，并归因到 law/contract/stale."""
+    from huginn.research.world_model_binding import (
+        diagnose_world_model_failure,
+        findings_from_reconciles,
+    )
+
+    prediction = _prediction()
+    falsified = reconcile_prediction(
+        prediction, {"T_eq_K": 400.0}, actual_source="tool_run:1"
+    )
+    insufficient = reconcile_prediction(
+        prediction, {}, actual_source="tool_run:1"
+    )
+    borne_out = reconcile_prediction(
+        prediction, {"T_eq_K": 200.0, "S_Wm2": 1000.0},
+        actual_source="tool_run:1",
+    )
+
+    findings = findings_from_reconciles([falsified, insufficient, borne_out])
+    assert len(findings) == 2
+    assert {f.status for f in findings} == {"falsified", "insufficient"}
+    assert findings[0].evidence_ids[1] == "tool_run:1"
+
+    assert diagnose_world_model_failure(falsified)["cause_class"] == "law_mismatch"
+    assert diagnose_world_model_failure(insufficient)["cause_class"] == "stale_model"
+    assert diagnose_world_model_failure(
+        falsified, contract_compatible=False
+    )["cause_class"] == "contract_violation"
+    none = diagnose_world_model_failure(borne_out)
+    assert none["cause_class"] == "none" and none["abstain"] is True
+
+
 def test_cross_glue_worldview_mismatch_is_not_contradiction():
     """跨 worldview 的预测/证据不粘合，记 worldview_mismatch，不升级矛盾."""
     wm = "world_model=x worldview=physics_causal domain=exoplanet contract=v1"

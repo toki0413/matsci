@@ -1765,6 +1765,10 @@ CREATE TABLE reconcile_records (
 - [x] DoD 5：`LongTermMemory.lint(auto_fix=True)` 在保留 `contradicts:` 兼容标签的同时写 `superseded_by:<new_id>`，并把双份记录与取代链落到 `BeliefLedger`（按 `created_at` 判定新旧、valid-time 检索）。
 - [x] §13 梦境同步契约：`DreamObject` 带 `tenant_id / deployment_id`，`DreamStore` 落库并按租户过滤（旧库幂等迁移）；MemoryMaintainer 从 `HUGINN_TENANT_ID / HUGINN_DEPLOYMENT_ID` 注入。
 - [x] §20.7 经验账世界模型标签：`ExecutableExperience` 增补 `world_model_id / worldview / law / contract_version / prediction_error / reconcile_status / ground_truth_source`，并实现 `evidential_authority()` 升格阶梯（prediction ≤0.4 / reconciled 0.6 / replicated 0.9 / falsified 0.1）。
+- [x] §20.5 世界模型风险接 System3：`world_model_risk()`（约束/不可逆/高不确定）+ `admit_with_trust(world_model_risk=...)`；信号只能收紧（deny/ask/degrade），不能授权。
+- [x] §20.8 世界模型接梦境：`findings_from_reconciles()` 把 falsified/insufficient 转高惊奇 finding；`diagnose_world_model_failure()` 归因 law_mismatch / contract_violation / stale_model。
+- [x] §19.12.4 监控熔断器：`MonitorCircuitBreaker`（60s 错误率 >20% → open 5min → half-open 单 canary）；`VigilMonitor.submit` 消费熔断状态。
+- [x] DoD 13 漂移闸生产接线：`VigilRuntime.record_signals` 单调升级 `DriftGate`；`clear_drift` 拒绝 agent/task 自清，仅 user/monitor/system + 显式确认可清除。
 
 待完成（规模与线上验证）：
 
@@ -1865,7 +1869,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   -q -o addopts=""
 ```
 
-当前证据：318 passed（上述不变量套件）；另 302 passed + 1 skipped（autoloop/engine 分解/工具适配/arch 接缝/config 契约/research 管线回归）+ 152 passed（记忆/梦境/长期任务回归）；ruff clean；契约文档 `env-contract / events-contract / feature-flags-contract` 已按 `config_audit` 重新生成，无漂移；OPE 报告见 `docs/ope-report.json` / `docs/ope-report.md`。
+当前证据：323 passed（上述不变量套件）；另 302 passed + 1 skipped（autoloop/engine 分解/工具适配/arch 接缝/config 契约/research 管线回归）+ 152 passed（记忆/梦境/长期任务回归）；ruff clean；契约文档 `env-contract / events-contract / feature-flags-contract` 已按 `config_audit` 重新生成，无漂移；OPE 报告见 `docs/ope-report.json` / `docs/ope-report.md`。
 
 ### 22.4 已知限制
 

@@ -133,6 +133,41 @@ def test_tool_output_budget_scales_with_trust(monkeypatch):
     assert adapter._default_tool_output_tokens() == 12500
 
 
+def test_world_model_risk_only_restricts(tmp_path):
+    """§20.5: 世界模型风险只能收紧，不能把 ask/deny 变 allow."""
+    from huginn.research.world_model_binding import world_model_risk
+
+    ledger = NormativeLedger(tmp_path / "norm.db")
+    ledger.append_act(
+        tenant_id=TENANT, session_id=SESSION, actor="user",
+        act_type="authorize", proposition_id="p1", scope=SCOPE,
+    )
+    view = ledger.project(TENANT, SESSION)
+    request = _request()
+
+    assert admit_with_trust(request, view, trust="full").allow is True
+
+    denied = admit_with_trust(
+        request, view, trust="full",
+        world_model_risk=world_model_risk(constraints=("density>limit",)),
+    )
+    assert denied.allow is False and denied.mode == "deny"
+
+    irreversible = admit_with_trust(
+        request, view, trust="full",
+        world_model_risk=world_model_risk(reversible=False),
+    )
+    assert irreversible.allow is False and irreversible.mode == "ask"
+
+    # 无授权时，世界模型说 allow 也不能放行
+    empty = NormativeLedger(tmp_path / "empty.db").project(TENANT, SESSION)
+    still_ask = admit_with_trust(
+        request, empty, trust="full",
+        world_model_risk=world_model_risk(),
+    )
+    assert still_ask.allow is False and still_ask.mode == "ask"
+
+
 def test_decision_carries_autonomy_limits(tmp_path):
     view = _grounding(tmp_path)
     decision = admit_with_trust(

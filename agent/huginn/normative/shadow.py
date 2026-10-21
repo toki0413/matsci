@@ -146,6 +146,7 @@ def evaluate_tool_call(
     claim_statuses: dict[str, str] | None = None,
     trust: str | None = None,
     persona_boundaries: dict[str, Any] | None = None,
+    world_model_risk: Any = None,
     ledger: NormativeLedger | None = None,
     enabled: bool | None = None,
 ) -> AdmissionDecision | None:
@@ -172,6 +173,7 @@ def evaluate_tool_call(
                 trust=trust,
                 claim_statuses=claim_statuses,
                 persona_boundaries=persona_boundaries,
+                world_model_risk=world_model_risk,
             )
         else:
             decision = admit(

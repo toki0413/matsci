@@ -99,6 +99,33 @@ def test_tenant_isolation_and_quarantine():
     assert b.submit("job") == "job"
 
 
+def test_circuit_breaker_open_and_canary():
+    """§19.12.4: 1 分钟错误率 >20% → open 5 分钟 → half-open 只放一个 canary."""
+    from huginn.metacog.vigil import MonitorCircuitBreaker
+
+    breaker = MonitorCircuitBreaker()
+    for t in (100.0, 101.0, 102.0):
+        breaker.record(False, now=t)
+    assert breaker.state() == "open"
+    assert breaker.allow(now=200.0) is False
+    assert breaker.allow(now=402.0) is True, "5 分钟后进入 half-open"
+    assert breaker.state() == "half_open"
+    assert breaker.allow(now=403.0) is False, "half-open 只放一个 canary"
+    breaker.record(True, now=404.0)
+    assert breaker.state() == "closed"
+    assert breaker.allow(now=405.0) is True
+
+
+def test_monitor_submit_consults_breaker():
+    monitor = VigilMonitor("v1")
+    for t in (100.0, 101.0, 102.0):
+        monitor.breaker.record(False, now=t)
+    assert monitor.breaker_state() == "open"
+    assert monitor.submit("j1", now=200.0) == "DROPPED"
+    assert monitor.submit("j2", now=402.0) == "j2", "half-open 放 canary"
+    assert monitor.submit("j3", now=403.0) == "DROPPED"
+
+
 def test_monitor_latency_p99_small():
     """I36 补充: 单次 status 延迟远低于 5% 任务预算（此处用绝对上界近似）."""
     monitor = VigilMonitor("v1")

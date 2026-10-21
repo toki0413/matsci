@@ -121,6 +121,22 @@ def test_explicit_degradation():
     assert status.degraded_reason == "status_failure"
 
 
+def test_drift_gate_wired_and_pause_not_self_clearable(tmp_path):
+    """I29/DoD 13: 漂移告警接入 runtime，pause 不可被任务 Agent 自清."""
+    runtime = VigilRuntime(monitor=VigilMonitor("v1"), enabled=False)
+    signals = evaluate_drift(causal_edit_distance=0.9)
+    runtime.record_signals(signals, tenant_id="t1", session_id="s1",
+                           ledger=DriftLedger(tmp_path / "drift.db"))
+    assert runtime.drift_status()["level"] == "pause"
+    assert runtime.drift_status()["can_execute"] is False
+
+    assert runtime.clear_drift(actor="agent", confirmation=True) is False
+    assert runtime.clear_drift(actor="task", confirmation=True) is False
+    assert runtime.drift_status()["level"] == "pause"
+    assert runtime.clear_drift(actor="user", confirmation=True) is True
+    assert runtime.drift_status()["level"] == "ok"
+
+
 def test_runtime_records_jobs_and_heartbeat():
     runtime = VigilRuntime(
         monitor=VigilMonitor("v1", window=5, error_threshold=0.2),

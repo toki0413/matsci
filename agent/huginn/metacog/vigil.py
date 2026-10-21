@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -79,6 +80,64 @@ class DegradationEvent:
 
 
 @dataclass
+class MonitorCircuitBreaker:
+    """监控自身 job 的熔断器：1 分钟错误率 > 20% → open 5 分钟 → half-open 放 1 个 canary.
+
+    只保护监控自己的处理队列，不参与任务授权/预算/沙箱联锁。
+    """
+
+    error_threshold: float = 0.20
+    window_s: float = 60.0
+    open_s: float = 300.0
+    _events: deque[tuple[float, bool]] = field(default_factory=deque)
+    _state: Literal["closed", "open", "half_open"] = "closed"
+    _opened_at: float = 0.0
+    _canary_in_flight: bool = False
+
+    def record(self, success: bool, *, now: float) -> str:
+        now = float(now)
+        self._events.append((now, bool(success)))
+        cutoff = now - self.window_s
+        while self._events and self._events[0][0] < cutoff:
+            self._events.popleft()
+        if self._state == "half_open":
+            if success:
+                self._state, self._canary_in_flight = "closed", False
+                self._events.clear()
+            else:
+                self._state, self._opened_at, self._canary_in_flight = (
+                    "open", now, False,
+                )
+            return self._state
+        if self._state == "open":
+            return self._state
+        if self._events:
+            failures = sum(1 for _, ok in self._events if not ok)
+            if failures / len(self._events) > self.error_threshold:
+                self._state, self._opened_at = "open", now
+        return self._state
+
+    def allow(self, *, now: float) -> bool:
+        now = float(now)
+        if self._state == "closed":
+            return True
+        if self._state == "open":
+            if now - self._opened_at >= self.open_s:
+                self._state = "half_open"
+                self._canary_in_flight = True
+                return True
+            return False
+        # half_open：只放一个 canary
+        if not self._canary_in_flight:
+            self._canary_in_flight = True
+            return True
+        return False
+
+    def state(self) -> str:
+        return self._state
+
+
+@dataclass
 class VigilMonitor:
     monitor_id: str
     tenant_id: str = "default"
@@ -88,6 +147,9 @@ class VigilMonitor:
     max_restarts: int = 3
     restart_window_s: float = 600.0
     heartbeat_timeout_s: float = 60.0
+    breaker: MonitorCircuitBreaker = field(
+        default_factory=lambda: MonitorCircuitBreaker()
+    )
 
     _state: MonitorState = MonitorState.L0
     _coverage: dict[str, bool] = field(default_factory=lambda: {"default": True})
@@ -140,7 +202,9 @@ class VigilMonitor:
     def record_job(self, success: bool, now: str | datetime | None = None) -> MonitorStatus:
         if self._state == MonitorState.L4:
             return self.status()
-        self._last_heartbeat = _now(now)
+        now_dt = _now(now)
+        self._last_heartbeat = now_dt
+        self.breaker.record(bool(success), now=now_dt.timestamp())
         self._events.append(bool(success))
         if not any(self._coverage.values()):
             self._transition(MonitorState.L2, "all_detectors_down")
@@ -182,8 +246,10 @@ class VigilMonitor:
         return True
 
     # ── queue ──────────────────────────────────────────────────────
-    def submit(self, job_id: str) -> str:
+    def submit(self, job_id: str, now: float | None = None) -> str:
         if self._state in (MonitorState.L2, MonitorState.L3, MonitorState.L4):
+            return "DROPPED"
+        if not self.breaker.allow(now=time.time() if now is None else now):
             return "DROPPED"
         if len(self._queue) >= self.max_queue:
             return "DROPPED"
@@ -197,6 +263,9 @@ class VigilMonitor:
     @property
     def degradation_events(self) -> list[DegradationEvent]:
         return list(self._degradation_events)
+
+    def breaker_state(self) -> str:
+        return self.breaker.state()
 
     def status(self) -> MonitorStatus:
         """永不抛异常；内部异常返回 trust=unknown."""

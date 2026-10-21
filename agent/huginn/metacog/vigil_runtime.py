@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from huginn.metacog.drift_gate import DriftSignal
+from huginn.metacog.drift_gate import DriftGate, DriftSignal
 from huginn.metacog.drift_ledger import DriftEvent, get_drift_ledger
 from huginn.metacog.vigil import MonitorStatus, VigilMonitor
 
@@ -29,6 +29,7 @@ class VigilRuntime:
     # 独立进程模式：本地不起线程，status() 读 daemon 写的原子心跳文件。
     external: bool = False
     heartbeat_path: str | None = None
+    drift_gate: DriftGate = field(default_factory=DriftGate)
     _thread: threading.Thread | None = None
     _stop: threading.Event = field(default_factory=threading.Event)
 
@@ -121,6 +122,17 @@ class VigilRuntime:
     def record_detector(self, name: str, ok: bool) -> MonitorStatus:
         return self.monitor.record_detector(name, ok)
 
+    def drift_status(self) -> dict[str, Any]:
+        """当前漂移闸状态；任务侧只读，不提供自清入口."""
+        return {
+            "level": self.drift_gate.level,
+            "can_execute": self.drift_gate.can_execute(),
+        }
+
+    def clear_drift(self, *, actor: str, confirmation: bool = False) -> bool:
+        """显式清除 pause：actor=agent/task 一律拒绝（I29）."""
+        return bool(self.drift_gate.clear(actor=actor, confirmation=confirmation))
+
     def record_signals(
         self,
         signals: list[DriftSignal],
@@ -129,7 +141,12 @@ class VigilRuntime:
         session_id: str,
         ledger: Any = None,
     ) -> list[str]:
-        """把 Smith 漂移信号落成 drift_events；不阻断任务."""
+        """把 Smith 漂移信号落成 drift_events；同时单调升级 DriftGate.
+
+        告警级别只升不降；``pause`` 只能由监控环/用户显式确认清除，任务 Agent
+        不能自清（I29）。写账失败不影响任务。
+        """
+        self.drift_gate.update(signals)
         target = ledger or get_drift_ledger()
         ids: list[str] = []
         for signal in signals:

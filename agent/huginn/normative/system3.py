@@ -74,8 +74,13 @@ def admit_with_trust(
     trust: str,
     claim_statuses: dict[str, str] | None = None,
     persona_boundaries: dict[str, Any] | None = None,
+    world_model_risk: Any = None,
 ) -> AdmissionDecision:
-    """在 admit() 结果上叠加 trust；不调 LLM、不做 I/O."""
+    """在 admit() 结果上叠加 trust / 世界模型风险；不调 LLM、不做 I/O.
+
+    ``world_model_risk`` 只允许**收紧**（deny/degrade/ask），永远不能把
+    deny/ask 变成 allow —— 预测与风险信号不是授权（§20.5）。
+    """
     decision = admit(
         request,
         grounding,
@@ -85,6 +90,25 @@ def admit_with_trust(
     trust = str(trust or "unknown").lower()
     limits = autonomy_limits(trust)
     reasons = tuple(decision.reasons) + (f"monitor trust={trust}",)
+
+    wm_mode = str(getattr(world_model_risk, "mode", "") or "")
+    wm_reasons = tuple(getattr(world_model_risk, "reasons", ()) or ())
+    if wm_mode and decision.allow and wm_mode in ("deny", "degrade", "ask"):
+        return AdmissionDecision(
+            allow=False,
+            mode="deny" if wm_mode == "deny" else (
+                "degrade" if wm_mode == "degrade" else "ask"
+            ),
+            reasons=reasons + wm_reasons + ("world_model risk signal",),
+            required_acts=(
+                decision.required_acts
+                if wm_mode != "deny"
+                else ()
+            ),
+            cited_act_ids=decision.cited_act_ids,
+            cited_claim_ids=decision.cited_claim_ids,
+            autonomy=asdict(limits),
+        )
 
     if trust in _STRICT_TRUST and decision.allow and request.requires_authorization:
         claim_statuses = claim_statuses or {}

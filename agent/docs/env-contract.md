@@ -333,11 +333,11 @@
 | `HUGINN_VALIDATE_WINDOW` | 100 | autoloop/engine.py:477 | — | external |
 | `HUGINN_VAULT_ADDR` | '' | security/secrets.py:166 | — | external |
 | `HUGINN_VAULT_TOKEN` | '' | security/secrets.py:167 | — | external |
-| `HUGINN_VIGIL_ENABLED` | '' | metacog/vigil_runtime.py:168 | — | external |
-| `HUGINN_VIGIL_ERROR_THRESHOLD` | '' | metacog/vigil_daemon.py:38, metacog/vigil_runtime.py:165 | — | external |
+| `HUGINN_VIGIL_ENABLED` | '' | metacog/vigil_runtime.py:185 | — | external |
+| `HUGINN_VIGIL_ERROR_THRESHOLD` | '' | metacog/vigil_daemon.py:38, metacog/vigil_runtime.py:182 | — | external |
 | `HUGINN_VIGIL_HEARTBEAT_FILE` | '' | metacog/vigil_process.py:61 | — | external |
-| `HUGINN_VIGIL_HEARTBEAT_S` | '' | metacog/vigil_daemon.py:36, metacog/vigil_process.py:373, metacog/vigil_runtime.py:167 | — | external |
-| `HUGINN_VIGIL_PROCESS` | '' | lifespan.py:761, metacog/vigil_runtime.py:169 | — | external |
+| `HUGINN_VIGIL_HEARTBEAT_S` | '' | metacog/vigil_daemon.py:36, metacog/vigil_process.py:373, metacog/vigil_runtime.py:184 | — | external |
+| `HUGINN_VIGIL_PROCESS` | '' | lifespan.py:761, metacog/vigil_runtime.py:186 | — | external |
 | `HUGINN_VIGIL_RESTART_MAX` | '' | metacog/vigil_process.py:374 | — | external |
 | `HUGINN_VISION_BASE_URL` | '' | vision/local_decoder.py:119 | — | external |
 | `HUGINN_VISION_MODEL` | '' | vision/local_decoder.py:118 | — | external |
