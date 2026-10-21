@@ -1417,6 +1417,18 @@ Please modify the code to address this task."""
                     )
 
         llm = model or self.model
+        # System3: trust=blind/unknown 时收紧 LLM 输出预算 (max_tokens)。
+        # 只缩放已配置上限的模型；未配置/无上限 (-1/None) 保持原行为。
+        try:
+            from huginn.normative.system3 import scaled_token_budget
+
+            _base_max = getattr(llm, "max_tokens", None)
+            if isinstance(_base_max, int) and _base_max > 0:
+                _scaled_max = scaled_token_budget(_base_max, floor=256)
+                if _scaled_max < _base_max and hasattr(llm, "bind"):
+                    llm = llm.bind(max_tokens=_scaled_max)
+        except Exception:  # 防御: 预算缩放失败不阻塞 LLM
+            logger.debug("max_tokens trust scaling skipped", exc_info=True)
         messages: list[Any] = []
         if persona_name:
             sys_prompt = self._persona_system_prompt(persona_name)

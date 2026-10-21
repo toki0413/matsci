@@ -207,10 +207,22 @@ def build_pmk_state(
                     else kb.query(_kb_query, top_k=top_k, since=since)
                 )
                 if _kb_hits:
-                    _kb_text = " ".join(
-                        str(h.get("content", "") if isinstance(h, dict) else h)
-                        for h in _kb_hits[:top_k]
-                    )[:200]
+                    # 保留可选的 worldview/domain/contract 标签：PMK 的
+                    # world_model stalk 需要跟记忆/知识做交叉粘合（§20.4）。
+                    _kb_parts: list[str] = []
+                    for _h in _kb_hits[:top_k]:
+                        if not isinstance(_h, dict):
+                            _kb_parts.append(str(_h))
+                            continue
+                        _chunk = str(_h.get("content", ""))
+                        if _h.get("worldview") and _h.get("domain"):
+                            _chunk += (
+                                f" [worldview={_h.get('worldview')}"
+                                f" domain={_h.get('domain')}"
+                                f" contract={_h.get('contract_version', '?')}]"
+                            )
+                        _kb_parts.append(_chunk)
+                    _kb_text = " ".join(_kb_parts)[:300]
             except Exception:  # 防御: 知识库查询失败跳过
                 logger.debug("kb query skipped", exc_info=True)
         # 桥 C: evolution_rules 作为 Knowledge 路 — 让 PMK 一致性检查能看到

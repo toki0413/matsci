@@ -509,6 +509,29 @@ def test_world_model_capability_ops_law_predict_reconcile():
     assert r_ins.data["borne_out"] is False, r_ins.data
 
 
+def test_world_model_capability_reconcile_is_domain_agnostic():
+    """能力 op reconcile 未显式给 metrics 时按预测指标对账，力学域不能永远 insufficient."""
+    import asyncio
+
+    from huginn.capabilities.world_model import WorldModelCapability
+    from huginn.research.law_model import LawAction, LawState, MechanicsLawModel
+
+    wm = MechanicsLawModel()
+    cap = WorldModelCapability(wm)
+    state = LawState({"mass_kg": 1.0, "stiffness_Nm": 4.0}, domain="mechanics")
+    pred = wm.predict(state, LawAction({"k_scale": 1.0, "m_scale": 1.0})).as_dict()
+
+    ok = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": pred}))
+    assert ok.success and ok.data["status"] == "borne_out", ok.data
+    bad = {
+        **pred,
+        "state": {**pred["state"], "T_s": pred["state"]["T_s"] * 1.5},
+    }
+    r_bad = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": bad}))
+    assert r_bad.data["status"] == "falsified", r_bad.data
+    assert "T_s" in r_bad.data["mismatch"], r_bad.data
+
+
 def test_world_model_capability_mcp_surface():
     """世界模型能力进注册表 → MCP 码头可见、可调(默认 exoplanet 世界模型)."""
     import asyncio

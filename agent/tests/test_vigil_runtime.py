@@ -86,6 +86,41 @@ def test_drift_below_thresholds_is_empty():
     ) == []
 
 
+def test_no_task_authority(monkeypatch):
+    """I25: 监控环不执行用户任务、不写 authorize、不改 PersonaKernel."""
+    from huginn.normative.ledger import NormativeLedger
+
+    def _boom(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("监控不得写规范账")
+
+    monkeypatch.setattr(NormativeLedger, "append_act", _boom)
+    runtime = VigilRuntime(monitor=VigilMonitor("v1"), enabled=True)
+    runtime.run_once("2026-01-01T00:00:00+00:00")  # 不触发 append
+    for forbidden in ("authorize", "execute", "commit_act", "revoke"):
+        assert not hasattr(runtime, forbidden)
+
+
+def test_protected_surface():
+    """I28: 监控更新只作用于诊断/自适应面，内核不可变."""
+    runtime = VigilRuntime(monitor=VigilMonitor("v1"), enabled=True)
+    for forbidden in ("set_persona", "apply_kernel_delta", "modify_persona_kernel"):
+        assert not hasattr(runtime, forbidden)
+    assert hasattr(runtime, "record_signals"), "监控只能写漂移诊断"
+
+
+def test_explicit_degradation():
+    """I33: 监控自身失败必须显式降级（精确错误 + unknown），禁止静默通过."""
+    class _Broken:
+        def status(self):
+            raise RuntimeError("boom")
+
+    runtime = VigilRuntime(monitor=_Broken(), enabled=False)  # type: ignore[arg-type]
+    status = runtime.status()
+    assert status.state == "L4"
+    assert status.trust == "unknown"
+    assert status.degraded_reason == "status_failure"
+
+
 def test_runtime_records_jobs_and_heartbeat():
     runtime = VigilRuntime(
         monitor=VigilMonitor("v1", window=5, error_threshold=0.2),

@@ -26,11 +26,17 @@ class VigilRuntime:
     monitor: VigilMonitor = field(default_factory=lambda: VigilMonitor("vigil"))
     heartbeat_interval_s: float = 30.0
     enabled: bool = True
+    # 独立进程模式：本地不起线程，status() 读 daemon 写的原子心跳文件。
+    external: bool = False
+    heartbeat_path: str | None = None
     _thread: threading.Thread | None = None
     _stop: threading.Event = field(default_factory=threading.Event)
 
     def start(self) -> None:
         if not self.enabled:
+            return
+        if self.external:
+            # 由 MonitorSupervisor 管理子进程；本地不重复启动线程。
             return
         if self._thread and self._thread.is_alive():
             return
@@ -58,10 +64,45 @@ class VigilRuntime:
 
     def run_once(self, now: str | datetime | None = None) -> MonitorStatus:
         self.monitor.heartbeat(now)
-        return self.monitor.tick(now)
+        status = self.monitor.tick(now)
+        self._write_heartbeat(status)
+        return status
+
+    def _write_heartbeat(self, status: MonitorStatus) -> None:
+        if not self.heartbeat_path:
+            return
+        try:
+            from huginn.metacog.vigil_process import write_heartbeat
+
+            write_heartbeat(status, path=self.heartbeat_path)
+        except Exception:  # 防御: 心跳写失败不影响监控/主任务
+            logger.debug("vigil heartbeat write failed", exc_info=True)
 
     def status(self) -> MonitorStatus:
-        return self.monitor.status()
+        """永不抛异常；内部失败返回 L4/unknown（I33/I35）."""
+        try:
+            if self.external and self.heartbeat_path:
+                from huginn.metacog.vigil_process import (
+                    read_heartbeat,
+                    status_from_heartbeat,
+                )
+
+                record = read_heartbeat(self.heartbeat_path)
+                return status_from_heartbeat(
+                    record, stale_after_s=self.heartbeat_interval_s * 3.0
+                )
+            return self.monitor.status()
+        except Exception:  # 防御: 监控自身失败必须显式降级，不穿透任务循环
+            logger.debug("vigil status failed", exc_info=True)
+            return MonitorStatus(
+                monitor_id="vigil",
+                tenant_id="default",
+                state="L4",
+                trust="unknown",
+                coverage={},
+                last_heartbeat="",
+                degraded_reason="status_failure",
+            )
 
     def record_job(self, success: bool) -> MonitorStatus:
         return self.monitor.record_job(success)
@@ -105,6 +146,7 @@ def get_vigil_runtime() -> VigilRuntime:
     global _runtime
     if _runtime is None:
         from huginn.env_access import env_bool, env_float, env_int
+        from huginn.metacog.vigil_process import heartbeat_path
 
         _runtime = VigilRuntime(
             monitor=VigilMonitor(
@@ -113,6 +155,8 @@ def get_vigil_runtime() -> VigilRuntime:
             ),
             heartbeat_interval_s=float(env_int("HUGINN_VIGIL_HEARTBEAT_S")),
             enabled=env_bool("HUGINN_VIGIL_ENABLED"),
+            external=env_bool("HUGINN_VIGIL_PROCESS"),
+            heartbeat_path=str(heartbeat_path()),
         )
     return _runtime
 

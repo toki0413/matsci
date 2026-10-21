@@ -5,9 +5,13 @@ import pytest
 
 from huginn.research.world_model_binding import (
     WorldModelPrediction,
+    apply_revision,
     authority_for,
+    cross_glue_labels,
+    parse_world_labels,
     prediction_error_signal,
     promotion_status,
+    propose_revision,
     reconcile_prediction,
     to_pmk_stance,
     worldview_compatible,
@@ -100,6 +104,129 @@ def test_prediction_error_signal_levels():
     )
     signal_bad = prediction_error_signal(bad)
     assert signal_bad["level"] in ("review", "intervene")
+
+
+def test_prediction_not_direct():
+    """I41: 预测默认 hypothesis/derived，未经 reconcile 不得作为 direct 证据."""
+    assert authority_for(None).evidential_authority <= 0.2
+    prediction = _prediction()
+    insufficient = reconcile_prediction(
+        prediction, {}, actual_source="tool_run:1"
+    )
+    assert insufficient.status == "insufficient"
+    assert authority_for(insufficient).evidential_authority <= 0.1
+    reconciled = reconcile_prediction(
+        prediction,
+        {"T_eq_K": 200.0, "S_Wm2": 1000.0},
+        actual_source="tool_run:1",
+    )
+    assert authority_for(reconciled).evidential_authority == 0.6
+
+
+def test_required_labels():
+    """I42: 预测必须带 worldview/domain/contract；缺失即 advisory/quarantine."""
+    from huginn.runtime.task_lifecycle import _check_pmk_axes
+
+    stance = to_pmk_stance(_prediction())
+    assert stance["worldview"] and stance["domain"] and stance["contract_version"]
+    axes = _check_pmk_axes({"world_model": "predicted T_eq_K=200"})
+    assert "missing labels" in axes.advisory
+    assert not axes.blocked
+
+
+def test_no_authority():
+    """I44: 世界模型不得授权动作；authorize 只能由规范账写."""
+    import huginn.research.world_model_binding as binding
+
+    assert not hasattr(binding, "authorize")
+    assert not hasattr(binding, "append_act")
+    record = reconcile_prediction(
+        _prediction(),
+        {"T_eq_K": 200.0, "S_Wm2": 1000.0},
+        actual_source="tool_run:1",
+    )
+    assert not hasattr(record, "scope"), "对账记录不携带授权 scope"
+
+
+def test_revision_gate():
+    """I47: 世界模型修订必须过采纳门；监控/梦境不得直接改模型."""
+    revision = propose_revision(
+        world_model_id="law.exoplanet", delta={"albedo": 0.2},
+        evidence_ids=("run:1",),
+    )
+    for actor in ("monitor", "dream", "agent"):
+        rejected = apply_revision(
+            revision, actor=actor, adoption_green=True, independent_runs=1
+        )
+        assert rejected.status == "rejected", actor
+
+    pending = apply_revision(
+        revision, actor="meta_improver", adoption_green=False, independent_runs=1
+    )
+    assert pending.status == "candidate"
+    active = apply_revision(
+        revision, actor="meta_improver", adoption_green=True, independent_runs=1
+    )
+    assert active.status == "active"
+
+
+def test_availability_degrade(tmp_path):
+    """I48: 世界模型不可用只降预测能力，不阻断任务."""
+    from huginn.core_types import RiskLevel
+    from huginn.normative.admission import AdmissionRequest, admit
+    from huginn.normative.ledger import NormativeLedger
+
+    prediction = _prediction()
+    record = reconcile_prediction(prediction, {}, actual_source="tool_run:1")
+    assert promotion_status(record) == "insufficient"
+
+    ledger = NormativeLedger(tmp_path / "norm.db")
+    scope = {"actions": ["write"], "resources": ["*"], "limits": {}}
+    ledger.append_act(
+        tenant_id="t1", session_id="s1", actor="user",
+        act_type="authorize", proposition_id="p1", scope=scope,
+    )
+    decision = admit(
+        AdmissionRequest(
+            tenant_id="t1", session_id="s1", action_name="write",
+            risk=RiskLevel.MEDIUM,
+        ),
+        ledger.project("t1", "s1"),
+    )
+    assert decision.allow is True, "没有世界模型也必须能执行已授权任务"
+
+
+def test_cross_glue_worldview_mismatch_is_not_contradiction():
+    """跨 worldview 的预测/证据不粘合，记 worldview_mismatch，不升级矛盾."""
+    wm = "world_model=x worldview=physics_causal domain=exoplanet contract=v1"
+    obs = cross_glue_labels(
+        wm,
+        {"kb": "T_eq=200 [worldview=latent_transition domain=exoplanet contract=v1]"},
+    )
+    assert len(obs) == 1, obs
+    assert obs[0]["kind"] == "worldview_mismatch"
+    assert "not a contradiction" in obs[0]["reason"]
+
+
+def test_cross_glue_contract_violation_same_worldview():
+    wm = "world_model=x worldview=physics_causal domain=exoplanet contract=v1"
+    obs = cross_glue_labels(
+        wm,
+        {
+            "kb": "T_eq=200 [worldview=physics_causal domain=mechanics contract=v1]",
+            "memory": "T_eq=210 [worldview=physics_causal domain=exoplanet contract=v2]",
+        },
+    )
+    assert {o["kind"] for o in obs} == {"contract_violation"}
+    assert {o["source"] for o in obs} == {"kb", "memory"}
+
+
+def test_cross_glue_skips_unlabeled_evidence():
+    """无标签 = 未检查，不是通过，也不是 mismatch."""
+    wm = "world_model=x worldview=physics_causal domain=exoplanet contract=v1"
+    assert cross_glue_labels(wm, {"kb": "plain unlabeled text"}) == []
+    assert parse_world_labels("plain text") == {}
+    assert cross_glue_labels("plain stalk", {"kb": wm}) == []
 
 
 def test_pmk_stance_is_labeled_not_fact():

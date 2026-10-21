@@ -18,6 +18,55 @@ def _ledger(tmp_path) -> NormativeLedger:
     return NormativeLedger(tmp_path / "normative.db")
 
 
+def test_revoke_dominance(tmp_path):
+    """I3: 同 actor 同 scope 的 revoke 支配更早 authorize."""
+    ledger = _ledger(tmp_path)
+    auth = ledger.append_act(
+        tenant_id=TENANT, session_id=SESSION, actor="user",
+        act_type="authorize", proposition_id="p1", scope=WRITE_SCOPE,
+    )
+    assert ledger.project(TENANT, SESSION).covers(WRITE_SCOPE)
+    ledger.append_act(
+        tenant_id=TENANT, session_id=SESSION, actor="user",
+        act_type="revoke", proposition_id="p1", supersedes=auth.act_id,
+    )
+    view = ledger.project(TENANT, SESSION)
+    assert not view.covers(WRITE_SCOPE), "revoke 后不得再有 active 授权"
+    assert not view.authorizations
+    assert view.revoked
+
+
+def test_replay_determinism(tmp_path):
+    """I4: 同一事件序列 + 同一 now → 逐字段一致的投影."""
+    ledger = _ledger(tmp_path)
+    for i in range(5):
+        ledger.append_act(
+            tenant_id=TENANT, session_id=SESSION, actor="agent",
+            act_type="propose", proposition_id=f"p{i}",
+        )
+    now = "2030-01-01T00:00:00+00:00"
+    first = ledger.project(TENANT, SESSION, now=now)
+    second = ledger.project(TENANT, SESSION, now=now)
+    assert [a.act_id for a in first.events] == [a.act_id for a in second.events]
+    assert [a.act_id for a in first.proposals] == [
+        a.act_id for a in second.proposals
+    ]
+    assert first.tenant_id == second.tenant_id == TENANT
+
+
+def test_actor_capability(tmp_path):
+    """I11: actor=agent 不得写 authorize/revoke/accept/reject."""
+    for act_type in ("authorize", "revoke", "accept", "reject"):
+        kwargs = {"scope": WRITE_SCOPE} if act_type == "authorize" else {}
+        if act_type == "revoke":
+            kwargs = {"supersedes": "x"}
+        with pytest.raises(PermissionError):
+            NormativeLedger(tmp_path / f"{act_type}.db").append_act(
+                tenant_id=TENANT, session_id=SESSION, actor="agent",
+                act_type=act_type, proposition_id="p", **kwargs,
+            )
+
+
 def test_propose_accept_authorize_are_distinct(tmp_path):
     """I2: propose ≠ accept ≠ authorize."""
     ledger = _ledger(tmp_path)

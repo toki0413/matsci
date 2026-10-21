@@ -749,14 +749,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.debug(f"[startup] memory maintainer skipped: {exc}")
 
-    # Start VIGIL sibling monitor (heartbeat + L0–L4 degradation state)
+    # Start VIGIL sibling monitor (heartbeat + L0–L4 degradation state).
+    # HUGINN_VIGIL_PROCESS=1 → 独立子进程 + 外部 watchdog；否则保持同进程线程。
     vigil_runtime = None
+    vigil_supervisor = None
     try:
+        from huginn.env_access import env_bool
         from huginn.metacog.vigil_runtime import get_vigil_runtime
 
         vigil_runtime = get_vigil_runtime()
-        vigil_runtime.start()
-        logger.info("[startup] vigil runtime started")
+        if env_bool("HUGINN_VIGIL_PROCESS"):
+            from huginn.metacog.vigil_process import get_vigil_supervisor
+
+            vigil_supervisor = get_vigil_supervisor()
+            vigil_supervisor.start()
+            logger.info("[startup] vigil daemon + watchdog started")
+        else:
+            vigil_runtime.start()
+            logger.info("[startup] vigil runtime started")
     except Exception as exc:
         logger.debug(f"[startup] vigil runtime skipped: {exc}")
 
@@ -836,6 +846,10 @@ async def lifespan(app: FastAPI):
     if memory_maintainer:
         with suppress(Exception):
             memory_maintainer.stop()
+
+    if vigil_supervisor:
+        with suppress(Exception):
+            vigil_supervisor.stop()
 
     if vigil_runtime:
         with suppress(Exception):

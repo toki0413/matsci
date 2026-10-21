@@ -27,6 +27,51 @@ def _request(**overrides) -> AdmissionRequest:
     return AdmissionRequest(**data)
 
 
+def test_fail_closed(tmp_path):
+    """I1: 无 active authorization 覆盖 scope 时，写/执行动作必须不 allow."""
+    _, view = _view(tmp_path)
+    for risk in (RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL):
+        decision = admit(_request(risk=risk), view)
+        assert decision.allow is False, f"risk={risk} 无授权不得放行"
+        assert decision.mode in ("ask", "deny")
+
+
+def test_latency_no_llm(tmp_path):
+    """I10: 准入热路径 p99 达标且不产生 LLM 调用（纯函数重复执行）."""
+    import time
+
+    _, view = _view(tmp_path)
+    request = _request()
+    start = time.perf_counter()
+    for _ in range(2000):
+        decision = admit(request, view)
+    elapsed = time.perf_counter() - start
+    assert decision.mode == "ask"
+    assert elapsed < 1.0, f"2000 次准入耗时 {elapsed:.3f}s，热路径过慢"
+
+
+def test_irreversible_requires_scope(tmp_path):
+    """I45: 不可逆/高风险动作必须显式授权，且 scope 要覆盖请求资源."""
+    ledger, _ = _view(tmp_path)
+    irreversible = _request(risk=RiskLevel.HIGH, resources=("workspace/db.sqlite",))
+    decision = admit(irreversible, ledger.project(TENANT, SESSION))
+    assert not decision.allow
+    assert decision.required_acts == ("authorize:write:workspace/db.sqlite",)
+
+    # 授权覆盖精确资源 → 放行
+    ledger.append_act(
+        tenant_id=TENANT, session_id=SESSION, actor="user",
+        act_type="authorize", proposition_id="p1",
+        scope={"actions": ["write"], "resources": ["workspace/db.sqlite"], "limits": {}},
+    )
+    allowed = admit(irreversible, ledger.project(TENANT, SESSION))
+    assert allowed.allow is True
+
+    # 授权不覆盖其他资源 → 仍 ask（不能拿窄 scope 冒充宽授权）
+    other = _request(risk=RiskLevel.HIGH, resources=("workspace/other.txt",))
+    assert admit(other, ledger.project(TENANT, SESSION)).allow is False
+
+
 def test_no_authorization_asks_with_minimal_act(tmp_path):
     """I1: 无 active 授权 → 不 allow，并给出机器可执行的 required_acts."""
     _, view = _view(tmp_path)

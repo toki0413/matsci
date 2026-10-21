@@ -114,7 +114,20 @@ class WorldModelCapability(Capability):
                         else pred)
             act_vec = (actual.get("state") if isinstance(actual, dict) and "state" in actual
                        else actual)
-            resp = reconcile(LawState(dict(pred_vec or {})), dict(act_vec or {}), tol=tol)
+            # 未显式给 metrics 时，用预测向量自身的指标（域无关）。否则默认指标
+            # 只适配 exoplanet，力学域会永远 insufficient——那正是三态漏洞的变体。
+            requested = args.get("metrics")
+            metrics = (
+                tuple(str(m) for m in requested)
+                if isinstance(requested, (list, tuple)) and requested
+                else tuple(dict(pred_vec or {}).keys())
+            )
+            resp = reconcile(
+                LawState(dict(pred_vec or {})),
+                dict(act_vec or {}),
+                tol=tol,
+                metrics=metrics,
+            )
             return CapabilityResult.ok(resp)
         return CapabilityResult.fail(f"未知 op '{op}'(law|predict|reconcile)",
                                      code="invalid_input")

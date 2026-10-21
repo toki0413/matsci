@@ -279,6 +279,108 @@ def test_pmk_llm_checker_advisory_and_cache():
     assert calls["n"] == 0, "规则阻断优先，不应调 LLM"
 
 
+def test_pmk_llm_advisory_async_reflect_path(monkeypatch):
+    """异步 reflect 路径: LLM 语义判定只给 advisory，并写入 episodic."""
+    import asyncio
+
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    monkeypatch.setenv("HUGINN_PMK_INJECT", "1")
+    monkeypatch.setenv("HUGINN_PMK_MODE", "enforce")
+
+    class _Engine:
+        _last_pmk_state = {
+            "memory": "use GNN for this task",
+            "kb": "avoid graph neural networks",
+        }
+        _speculator_hint = ""
+
+        def __init__(self):
+            self.written = []
+
+        async def _llm_chat(self, prompt):
+            return '{"conflict": true, "reason": "same subject, different wording"}'
+
+        def _write_pmk_conflict_to_episodic(self, state, reason):
+            self.written.append(reason)
+
+    engine = _Engine()
+    asyncio.run(EngineReflect(engine)._pmk_llm_advisory())
+    assert "LLM advisory" in engine._speculator_hint
+    assert engine.written, "advisory 应写入 episodic"
+
+
+def test_pmk_llm_advisory_degrades_on_timeout(monkeypatch):
+    """超时/LLM 失败只损失 advisory，不抛出、不阻断主循环."""
+    import asyncio
+
+    from huginn.autoloop import engine_reflect
+
+    monkeypatch.setenv("HUGINN_PMK_INJECT", "1")
+    monkeypatch.setenv("HUGINN_PMK_MODE", "enforce")
+    monkeypatch.setattr(engine_reflect, "_PMK_LLM_TIMEOUT_S", 0.05)
+
+    class _Engine:
+        _last_pmk_state = {"memory": "use GNN", "kb": "avoid GNN"}
+        _speculator_hint = ""
+
+        async def _llm_chat(self, prompt):
+            await asyncio.sleep(5)
+            return '{"conflict": true}'
+
+        def _write_pmk_conflict_to_episodic(self, state, reason):
+            raise AssertionError("超时不应写 episodic")
+
+    engine = _Engine()
+    asyncio.run(engine_reflect.EngineReflect(engine)._pmk_llm_advisory())
+    assert engine._speculator_hint == ""
+
+
+def test_pmk_llm_advisory_skips_without_epistemic_pair(monkeypatch):
+    """只有 <2 路认识论文本时不调 LLM（persona 不交给 LLM）."""
+    import asyncio
+
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    monkeypatch.setenv("HUGINN_PMK_INJECT", "1")
+
+    class _Engine:
+        _last_pmk_state = {"persona": "recommend GNN", "memory": "use GNN"}
+        _speculator_hint = ""
+
+        async def _llm_chat(self, prompt):
+            raise AssertionError("不应调用 LLM")
+
+    engine = _Engine()
+    asyncio.run(EngineReflect(engine)._pmk_llm_advisory())
+    assert engine._speculator_hint == ""
+
+
+def test_pmk_cross_worldview_is_advisory_not_blocking():
+    """世界模型与 kb 的 worldview 标签不兼容 → advisory，绝不阻断（I49）."""
+    from huginn.runtime.task_lifecycle import _check_pmk_axes
+
+    axes = _check_pmk_axes({
+        "world_model": (
+            "world_model=law.exoplanet worldview=physics_causal "
+            "domain=exoplanet contract=v1 prediction_error=na"
+        ),
+        "kb": "T_eq=200 [worldview=latent_transition domain=exoplanet contract=v1]",
+    })
+    assert not axes.blocked
+    assert "worldview_mismatch" in axes.advisory, axes.advisory
+
+    axes2 = _check_pmk_axes({
+        "world_model": (
+            "world_model=law.exoplanet worldview=physics_causal "
+            "domain=exoplanet contract=v1"
+        ),
+        "memory": "T_eq=210 [worldview=physics_causal domain=mechanics contract=v1]",
+    })
+    assert not axes2.blocked
+    assert "contract_violation" in axes2.advisory, axes2.advisory
+
+
 def test_pmk_world_model_stalk_advisory():
     """世界模型 stalk：缺标签或高预测误差只 advisory，不阻断."""
     from huginn.runtime.task_lifecycle import _check_pmk_axes, _check_pmk_consistency

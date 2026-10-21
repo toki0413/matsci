@@ -11,6 +11,39 @@ def _ledger(tmp_path) -> MemoryStateLedger:
     return MemoryStateLedger(tmp_path / "memory_state.db")
 
 
+def test_audit_completeness(tmp_path):
+    """I16: 所有记忆迁移类型都产生事件，且带 policy_id/version."""
+    from huginn.memory.governance import MemoryStateEvent, MemoryStateLedger
+
+    ledger = MemoryStateLedger(tmp_path / "mem.db")
+    event_types = (
+        "ingest", "index", "consolidate", "recall", "revise",
+        "forget", "retrain", "promote", "quarantine",
+    )
+    for event_type in event_types:
+        ledger.record(
+            MemoryStateEvent(
+                tenant_id="t1",
+                memory_id="m1",
+                event_type=event_type,
+                policy_id="policy",
+                policy_version="v1",
+                decision=event_type,
+                authority={"abstraction": 0.5, "evidential": 0.5, "influence": 0.5},
+                evidence={"source": "test"},
+                actor="system",
+                soul_scope="agent",
+            )
+        )
+    rows = ledger.list_events(tenant_id="t1", memory_id="m1", limit=100)
+    assert {row["event_type"] for row in rows} == set(event_types)
+    for row in rows:
+        assert row["policy_id"] == "policy"
+        assert row["policy_version"] == "v1"
+        assert row["decision"]
+        assert row["evidence_json"]
+
+
 def test_record_and_list_events(tmp_path):
     ledger = _ledger(tmp_path)
     decision = InfluenceDecision(

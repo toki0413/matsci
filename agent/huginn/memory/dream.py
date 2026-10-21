@@ -276,6 +276,11 @@ def diagnose(
     else:
         cause, repair = "coverage_gap", "summarize"
 
+    if cause == "duplicate" and len(finding.evidence_ids) >= 2:
+        affected_ids = tuple(finding.evidence_ids[:2])  # (duplicate, original)
+    else:
+        affected_ids = (subject,)
+
     confidence = 0.5 + 0.3 * min(1.0, finding.surprise)
     passed = False
     if counterfactual is not None:
@@ -292,7 +297,7 @@ def diagnose(
         finding_id=finding.finding_id,
         cause_class=cause,
         confidence=round(confidence, 3),
-        affected_ids=(subject,),
+        affected_ids=affected_ids,
         repair_class=repair,
         expected_gain=finding.expected_impact,
         risk=risk,

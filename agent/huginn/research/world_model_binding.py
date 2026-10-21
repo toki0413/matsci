@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -56,6 +57,63 @@ class AuthorityVector:
     abstraction_authority: float
     evidential_authority: float
     influence_authority: float
+
+
+@dataclass(frozen=True)
+class WorldModelRevision:
+    """世界模型参数/定律修订提案；只有过采纳门才 active（I47）."""
+
+    revision_id: str
+    world_model_id: str
+    delta: dict[str, Any]
+    evidence_ids: tuple[str, ...] = ()
+    status: Literal["candidate", "active", "rejected"] = "candidate"
+
+
+def propose_revision(
+    *,
+    world_model_id: str,
+    delta: dict[str, Any],
+    evidence_ids: tuple[str, ...] = (),
+    revision_id: str | None = None,
+) -> WorldModelRevision:
+    return WorldModelRevision(
+        revision_id=revision_id or f"rev:{world_model_id}:{len(delta)}",
+        world_model_id=str(world_model_id),
+        delta=dict(delta),
+        evidence_ids=tuple(evidence_ids),
+    )
+
+
+def apply_revision(
+    revision: WorldModelRevision,
+    *,
+    actor: str,
+    adoption_green: bool,
+    independent_runs: int = 0,
+) -> WorldModelRevision:
+    """修订只有 ``actor=user/system/meta_improver`` + GREEN 采纳门才 active.
+
+    监控环/梦境/agent 不能直接改模型（I47）；未过门保持 candidate，被拒则 rejected。
+    """
+    actor = str(actor or "unknown").lower()
+    if actor in ("agent", "dream", "monitor", "unknown"):
+        return WorldModelRevision(
+            revision_id=revision.revision_id,
+            world_model_id=revision.world_model_id,
+            delta=revision.delta,
+            evidence_ids=revision.evidence_ids,
+            status="rejected",
+        )
+    if not adoption_green or independent_runs < 1:
+        return revision
+    return WorldModelRevision(
+        revision_id=revision.revision_id,
+        world_model_id=revision.world_model_id,
+        delta=revision.delta,
+        evidence_ids=revision.evidence_ids,
+        status="active",
+    )
 
 
 def reconcile_prediction(
@@ -165,6 +223,64 @@ def prediction_error_signal(
     }
 
 
+_LABEL_KEYS = ("worldview", "domain", "contract")
+
+
+def parse_world_labels(text: str) -> dict[str, str]:
+    """从 PMK 文本里解析 ``worldview/domain/contract`` 标签（缺哪个就少哪个）."""
+    raw = str(text or "")
+    labels: dict[str, str] = {}
+    for key in _LABEL_KEYS:
+        match = re.search(
+            rf"{key}(?:_version)?\s*[=:]\s*([A-Za-z0-9_.\-]+)", raw, re.IGNORECASE
+        )
+        if match:
+            labels[key] = match.group(1)
+    return labels
+
+
+def cross_glue_labels(
+    world_model_text: str,
+    epistemic_texts: dict[str, str],
+) -> list[dict[str, str]]:
+    """世界模型 stalk 与 memory/kb/timeseries 的 worldview/contract 兼容性检查.
+
+    Spec §20.4 的 restriction map 第一层：标签不兼容时**不建边**，记为
+    ``worldview_mismatch`` 或 ``contract_violation``；跨 worldview 的差异不是
+    认识论 contradiction，绝不能升级成 pause。
+
+    只有**双方都带完整标签**时才判定；无标签的证据不是 glue 候选（未检查 ≠ 通过）。
+    """
+    wm = parse_world_labels(world_model_text)
+    if not all(key in wm for key in _LABEL_KEYS):
+        return []
+    obstructions: list[dict[str, str]] = []
+    for source, text in (epistemic_texts or {}).items():
+        other = parse_world_labels(text)
+        if not all(key in other for key in _LABEL_KEYS):
+            continue
+        if other["worldview"] != wm["worldview"]:
+            obstructions.append({
+                "kind": "worldview_mismatch",
+                "source": str(source),
+                "reason": (
+                    f"{source} worldview={other['worldview']} vs world_model "
+                    f"worldview={wm['worldview']}; not glued, not a contradiction"
+                ),
+            })
+            continue
+        if other["domain"] != wm["domain"] or other["contract"] != wm["contract"]:
+            obstructions.append({
+                "kind": "contract_violation",
+                "source": str(source),
+                "reason": (
+                    f"{source} domain={other['domain']}/contract={other['contract']} "
+                    f"vs world_model domain={wm['domain']}/contract={wm['contract']}"
+                ),
+            })
+    return obstructions
+
+
 def to_pmk_stance(prediction: WorldModelPrediction) -> dict[str, Any]:
     """给 PMK 认识论 sheaf 的 world_model stalk（不是事实，必须带标签）."""
     summary = ", ".join(
@@ -187,7 +303,12 @@ __all__ = [
     "ReconcileRecord",
     "ReconcileStatus",
     "WorldModelPrediction",
+    "WorldModelRevision",
+    "apply_revision",
     "authority_for",
+    "cross_glue_labels",
+    "propose_revision",
+    "parse_world_labels",
     "prediction_error_signal",
     "promotion_status",
     "reconcile_prediction",

@@ -7,7 +7,7 @@
 
 | 事件 | 分组 | 派发点 |
 |---|---|---|
-| ON_HUGINN_LOADED | 生命周期 | lifespan.py:811 |
+| ON_HUGINN_LOADED | 生命周期 | lifespan.py:837 |
 | ON_PLUGIN_LOADED | 生命周期 | plugins/loader.py:241, plugins/loader.py:295 |
 | ON_PLUGIN_UNLOADED | 生命周期 | plugins/loader.py:337 |
 | ON_PLUGIN_ERROR | 生命周期 | plugins/loader.py:228, plugins/loader.py:321 |
@@ -16,7 +16,7 @@
 | ON_LLM_REQUEST | LLM 调用 | api/event.py:94, api/filter.py:190, events/unified_bus.py:275 |
 | ON_LLM_RESPONSE | LLM 调用 | api/event.py:106, api/filter.py:203, events/unified_bus.py:285 |
 | ON_TOOL_CALL | 工具调用三段式 | api/event.py:121, api/filter.py:224, events/unified_bus.py:249 +1 处 |
-| ON_TOOL_EXECUTE | 工具调用三段式 | tools/adapter.py:1021 |
+| ON_TOOL_EXECUTE | 工具调用三段式 | tools/adapter.py:1046 |
 | ON_TOOL_RESPOND | 工具调用三段式 | api/event.py:134, api/filter.py:242, events/unified_bus.py:255 +1 处 |
 | ON_WORKFLOW_BEGIN | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:209 |
 | ON_WORKFLOW_STAGE_START | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:672, autoloop/cognitive_loop.py:759 |

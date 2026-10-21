@@ -113,6 +113,26 @@ def test_scaled_token_budget_by_trust():
     assert scaled_token_budget(1200, trust="blind") == 1000
 
 
+def test_tool_output_budget_scales_with_trust(monkeypatch):
+    """工具输出预算随 trust 收紧（§19.12.6），显式预算不受影响."""
+    import huginn.normative.system3 as s3
+    from huginn.tools import adapter
+
+    monkeypatch.delenv("HUGINN_MAX_TOOL_OUTPUT_TOKENS", raising=False)
+    monkeypatch.setattr(
+        s3, "current_autonomy_limits", lambda: s3.autonomy_limits("full")
+    )
+    assert adapter._default_tool_output_tokens() == 25000
+    monkeypatch.setattr(
+        s3, "current_autonomy_limits", lambda: s3.autonomy_limits("partial")
+    )
+    assert adapter._default_tool_output_tokens() == 18750
+    monkeypatch.setattr(
+        s3, "current_autonomy_limits", lambda: s3.autonomy_limits("blind")
+    )
+    assert adapter._default_tool_output_tokens() == 12500
+
+
 def test_decision_carries_autonomy_limits(tmp_path):
     view = _grounding(tmp_path)
     decision = admit_with_trust(

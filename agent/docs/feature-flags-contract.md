@@ -5,7 +5,7 @@
 
 | 开关 | 默认 | 描述 | 旧 env 别名 | 消费点 |
 |---|---|---|---|---|
-| `anti_hacking_reward` | False | Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关) | — | autoloop/engine_reflect.py:2967 |
+| `anti_hacking_reward` | False | Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关) | — | autoloop/engine_reflect.py:2972 |
 | `asd_ste100` | True | ASD-STE100 受控语言纪律: 向系统提示注入 agent 面向文本规则 (默认开; HUGINN_STE_MODE 选档) | — | plugins/asd_ste100/main.py:149 |
 | `bandit_mdp` | True | bandit MDP 决策 (HUGINN_BANDIT_MDP) | HUGINN_BANDIT_MDP | agent/bandit_controller.py:117 |
 | `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | HUGINN_BELIEF_DARWIN | autoloop/cognitive_loop.py:1213, autoloop/cognitive_loop.py:1319 |
@@ -14,12 +14,12 @@
 | `clarification` | True | agent 主动向用户提问 | — | tools/clarification_tool.py:206 |
 | `comms_contract` | True | 通信契约审计: 事件总线/工作流/agent 间消息的确定性契约检查 (默认开, 只报告不拦截) | — | events/event_bus.py:185 |
 | `compute_policy` | False | M2 计算路由目标维度策略 + 预算 (默认关) | — | execution/orchestrator.py:224 |
-| `context_router` | False | P3 信息路径多样性稀疏化 (context_builder, 默认关) | HUGINN_CONTEXT_ROUTER | context_builder.py:1231 |
+| `context_router` | False | P3 信息路径多样性稀疏化 (context_builder, 默认关) | HUGINN_CONTEXT_ROUTER | context_builder.py:1256 |
 | `crdt_branch_merge` | True | CRDT 分支合并 (HUGINN_CRDT_BRANCH_MERGE) | HUGINN_CRDT_BRANCH_MERGE | utils/conversation_tree.py:345, utils/conversation_tree.py:37 |
 | `crdt_merge` | True | CRDT 合并 (HUGINN_CRDT_MERGE) | HUGINN_CRDT_MERGE | tools/subagent_tool.py:33 |
-| `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:407, cli/rcb_step2.py:868 |
+| `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:418, cli/rcb_step2.py:868 |
 | `external_thinking` | False | 外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关) | — | agent/prompt_builder.py:379 |
-| `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2139 +1 处 |
+| `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2144 +1 处 |
 | `frontier_claim` | False | 假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_CLAIM | autoloop/cognitive_loop.py:3233 |
 | `frontier_empty_stop` | False | 可执行前沿空即停: 无'未执行且前置证据满足'的方向 → 主终止, 预算降为安全上限 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_EMPTY_STOP | autoloop/cognitive_loop.py:3214 |
 | `frontier_single_writer_strict` | False | 假设图单写者纪律: 非 hypothesize/branch 阶段追加方向时拒绝 (默认关, 只观测计数) | HUGINN_FRONTIER_SINGLE_WRITER_STRICT | autoloop/hypothesis_loop.py:78 |
@@ -34,7 +34,7 @@
 | `harness_workflow_evolution` | False | H2 variant bandit 演化回路 (实验性, 默认关) | — | — |
 | `hils_attention` | True | HILS 注意力 (HUGINN_HILS_ATTENTION) | HUGINN_HILS_ATTENTION | — |
 | `hypothesis_llm_semantic` | False | 假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级) | — | — |
-| `intent_scope_reward` | False | Anti-Hacking ② 意图口径越界清零: 改动偏离 plan 声明的目标集即清零 (默认关) | — | autoloop/engine_reflect.py:2968 |
+| `intent_scope_reward` | False | Anti-Hacking ② 意图口径越界清零: 改动偏离 plan 声明的目标集即清零 (默认关) | — | autoloop/engine_reflect.py:2973 |
 | `ising_frontier` | True | Ising 前沿 (HUGINN_ISING_FRONTIER) | HUGINN_ISING_FRONTIER | autoloop/hypothesis_loop.py:2199, autoloop/hypothesis_loop.py:60 |
 | `ising_rerank` | True | Ising 重排 (HUGINN_ISING_RERANK) | HUGINN_ISING_RERANK | — |
 | `jev_enabled` | False | JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束) | — | — |
@@ -50,7 +50,7 @@
 | `privacy_local_only` | False | 隐私级别: local_only (完全本地) | — | privacy_guard.py:77, runtime/jev/_enabled.py:45 |
 | `privacy_off` | True | 隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效) | — | — |
 | `privacy_redact` | False | 隐私级别: redact (脱敏后发云端) | — | privacy_guard.py:79, runtime/jev/_enabled.py:47 |
-| `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:862 |
+| `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:876 |
 | `prompt_cache_control` | True | prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL) | HUGINN_PROMPT_CACHE_CONTROL | agent_config.py:108 |
 | `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:259, tools/base.py:367 |
 | `sandbox_net_isolation` | True | P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认开; 不支持则降级) | — | security/sandbox.py:60 |
@@ -65,6 +65,6 @@
 | `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | agent/code_act_loop.py:344, agent/code_act_loop.py:398 |
 | `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | agent/code_act_loop.py:355, agent/code_act_loop.py:417, runtime/engine_state.py:224 |
 | `visual_frame_memory` | False | 无损观测记忆: 每次 execute 的视觉帧原样落盘 + frame_inspect 区域回看/read_pixels (VISTA 借鉴, 默认关) | HUGINN_VISUAL_FRAME_MEMORY | autoloop/plan_check.py:135, autoloop/plan_check.py:166 |
-| `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:449 |
+| `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:460 |
 
 共 61 个功能开关。

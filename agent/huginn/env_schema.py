@@ -288,6 +288,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_PER_HYP_BUDGET": EnvSpec("int", "0", "tuning"),
     "HUGINN_PLAN_AUTO_CONFIRM": EnvSpec("int", "0", "tuning"),
     "HUGINN_PMK_INJECT": EnvSpec("int", "1", "tuning"),
+    "HUGINN_PMK_LLM_TIMEOUT_S": EnvSpec("float", "5", "tuning"),
     "HUGINN_PMK_MODE": EnvSpec("str", "enforce", "tuning"),
     "HUGINN_PM_C_MIN": EnvSpec("float", "0.2", "tuning"),
     "HUGINN_PRM_VERIFIER": EnvSpec("int", "0", "tuning"),
@@ -460,7 +461,10 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_VISUAL_FRAME_MEMORY": EnvSpec("bool", "false", "legacy", status="deprecated"),
     "HUGINN_VIGIL_ENABLED": EnvSpec("int", "1", "tuning"),
     "HUGINN_VIGIL_ERROR_THRESHOLD": EnvSpec("float", "0.20", "tuning"),
+    "HUGINN_VIGIL_HEARTBEAT_FILE": EnvSpec("str", "", "tuning"),
     "HUGINN_VIGIL_HEARTBEAT_S": EnvSpec("int", "30", "tuning"),
+    "HUGINN_VIGIL_PROCESS": EnvSpec("bool", "false", "tuning"),
+    "HUGINN_VIGIL_RESTART_MAX": EnvSpec("int", "3", "tuning"),
     "HUGINN_WORLD_MODEL": EnvSpec("bool", "true", "legacy", status="deprecated"),
 }
 

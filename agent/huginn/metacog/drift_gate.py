@@ -90,8 +90,47 @@ def evaluate_drift(
     return signals
 
 
+_RANK = {"ok": 0, "review": 1, "intervene": 2, "pause": 3}
+
+
+@dataclass
+class DriftGate:
+    """单调升级的漂移闸；``pause`` 只能由监控环/用户显式确认清除.
+
+    - 升级只由监控信号驱动，任务 Agent 无法降低级别；
+    - ``pause`` 的清除必须 ``actor != agent/task`` 且 ``confirmation=True``；
+    - fail-safe：未知 actor 一律拒绝清除。
+    """
+
+    level: str = "ok"
+
+    def update(self, signals: list[DriftSignal]) -> str:
+        for signal in signals or []:
+            if _RANK.get(signal.level, 0) > _RANK.get(self.level, 3):
+                self.level = signal.level
+        return self.level
+
+    def can_execute(self) -> bool:
+        return self.level != "pause"
+
+    def clear(self, *, actor: str, confirmation: bool = False) -> bool:
+        actor = str(actor or "unknown").lower()
+        if self.level != "pause":
+            if actor in ("agent", "task"):
+                return False
+            self.level = "ok"
+            return True
+        if actor in ("agent", "task", "unknown"):
+            return False
+        if actor in ("user", "monitor", "system") and confirmation:
+            self.level = "ok"
+            return True
+        return False
+
+
 __all__ = [
     "DriftDetector",
+    "DriftGate",
     "DriftLevel",
     "DriftSignal",
     "DriftThresholds",

@@ -1737,14 +1737,30 @@ CREATE TABLE reconcile_records (
 - [x] System3 预算收紧（第一段）：`autonomy_limits(trust)` 挂到 `AdmissionDecision.autonomy`（并发/预算/审批门槛）。
 - [x] 调度器消费 autonomy（并发）：high_throughput 与 WorkflowOrchestrator 按 `parallel_cap` 夹并发。
 - [x] token 预算消费（第一段）：autoloop `_get_prompt_budget` 按 `scaled_token_budget` 缩放（blind/unknown → 0.5）。
+- [x] VIGIL 独立进程/watchdog：`vigil_daemon` 子进程 + 心跳文件 + `MonitorSupervisor` 有界退避重启（1/2/4/8 分钟，单窗口 ≤3 次），预算耗尽停 L3；外部模式 `VigilRuntime.status()` 读心跳，缺失/过期即 `L3/unknown`（I35–I40）。
+- [x] Consolidator 七类修复执行器：`soft_decay / quarantine / merge_duplicate / add_link / summarize / split_cluster / re_anchor`，每类都有显式 apply/rollback 且不删除 direct 证据（I20–I21、I23）。
+- [x] PMK LLM 判定接入异步 reflect 路径：`_learn` 调 `_pmk_llm_advisory`，规则轴优先、只判认识论、缓存、5s 超时、失败降级（§21 advisory 边界不变）。
+- [x] `world_model` stalk 与 memory/kb/timeseries 的 worldview/contract 交叉粘合：`cross_glue_labels` 只对双方完整标签建边；不兼容记 `worldview_mismatch` / `contract_violation`，只 advisory，不升级 contradiction（I49）。
+- [x] token 预算扩展到 LLM `max_tokens` 与工具输出预算：`_llm_chat` 按 trust 缩放已配置的 `max_tokens`；`ToolAdapter` 默认输出/压缩预算按 trust 缩放（显式传入预算不受影响）。
+- [x] I1–I50 具名不变量测试：新增 `test_grounding_awareness / test_system3_scheduler / test_memory_dual_gate / test_influence_gate / test_hygiene_gate / test_dream_authority / test_sleep_gate / test_soft_decay / test_soul_priority / test_proactive_prep / test_idle_jobs / test_distillation_authority / test_case_policy / test_bayesian_surprise / test_belief_ledger / test_persona_revision / test_reconcile / test_pmk_sheaves / test_monitor_degradation / test_drift_gate / test_behavior_fingerprint / test_learning_loop`；同时补 `test_normative_ledger / test_admission_gate / test_vigil_runtime / test_world_model_binding / test_world_state` 的具名用例。
+- [x] P1-a 认知账：`BeliefLedger` 追加式信念 + `supersedes` 链（双份保留、valid-time 检索、可寻址冲突），I6–I7。
+- [x] P1-b Persona：`PersonaKernel`（不可变）+ `PersonaParams` + `PersonaRevision` 采纳门/回滚账；`adaptive_layer` 改为 params+证据的**只读投影**，rcb 反向边不再前缀累加（I5、DoD 4）。
+- [x] §18.5 Soul：四层全序、`resolve` + `soul_resolution_events`、梦境种子租户过滤、Soul 不授权动作（I18、I22）。
+- [x] P1-e PreparedContext：候选 + TTL + 租户隔离；`IdleJobQueue` 租户预算、活跃态拒绝、无用户可见动作（I26–I27、I34）。
+- [x] §19.5/§19.6：蒸馏权威/晋升门（derived 默认、矛盾降级）、案例策略（可回放、不改模型权重）、KL 贝叶斯惊奇 + 廉价代理（I30–I32）。
+- [x] §7.3 行为指纹：工具族/风险分布、澄清率、证据门通过率、授权边界命中 + JS 散度漂移报告。
+- [x] P2-b 学习回路核心：`TrajectoryIndex`、`ActClassifier`（advisory + 校准）、`AdmissionPolicy`（硬 action mask）、`MemoryOpPolicy`、IPS/SNIPS/DR OPE 与影子评估（未授权执行 = 0）。
+- [x] `DriftGate`：告警单调升级、`pause` 不可被任务 Agent 自清（I29）。
+- [x] 世界模型修订门：`WorldModelRevision` / `propose_revision` / `apply_revision`，监控/梦境/agent 不得直接改模型（I47）。
 
-待完成（按依赖顺序）：
+待完成（生产接线与真实数据验证）：
 
-- [ ] VIGIL 独立进程/watchdog：当前是同进程 daemon 线程，进程崩溃无法自恢复。
-- [ ] Consolidator 其余动作：add_link / merge_duplicate / summarize / split_cluster / re_anchor 的专用执行器。
-- [ ] PMK LLM 判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
-- [ ] `world_model` stalk 与 memory/kb 的 worldview/contract 交叉粘合（当前只做标签与误差 advisory）。
-- [ ] token 预算扩展到 LLM `max_tokens` / 工具输出预算（当前只覆盖 autoloop prompt 字符预算）。
+- [ ] 轨迹索引接入真实工具调用路径（默认关闭的采样开关）；当前 `TrajectoryIndex` 只有离线 API。
+- [ ] `PreparedContext` / `IdleJobQueue` 接入常驻空闲环；当前是纯核心 + 测试。
+- [ ] Soul 接入梦境种子生产路径；`BehaviorFingerprint` 接入 VIGIL 定期监控。
+- [ ] `PersonaParams` 进入运行时 persona 决策（当前仅 `adaptive_layer` 投影生效）。
+- [ ] 用真实轨迹跑一次 OPE 报告（IPS/SNIPS/DR 与影子评估已就绪）；DoD 7 的“完成 OPE 报告”仍需真实数据。
+- [ ] 多设备晚到事件的重投影触发器（当前投影确定性已保证，晚到事件在下一次 `project()` 生效）。
 
 ---
 
@@ -1759,13 +1775,24 @@ CREATE TABLE reconcile_records (
 | `huginn/normative/session.py` | 会话级 propose/accept/authorize 适配 | I2–I3 |
 | `huginn/normative/shadow.py` | 工具执行路径 shadow 评估 + 高风险 enforce | I1、I10 |
 | `huginn/normative/system3.py` | trust-aware admission：blind/unknown 收紧自主 | I29、I38 |
+| `huginn/normative/learning.py` | 轨迹索引 / ActClassifier / AdmissionPolicy / MemoryOpPolicy / IPS-SNIPS-DR OPE / 影子评估 | §11、DoD 7 |
+| `huginn/research/belief_ledger.py` | 认知账：追加式信念 + supersedes 链 + 可寻址冲突 | I6–I7 |
+| `huginn/persona_kernel.py` | PersonaKernel/Params/Revision + 采纳门/回滚 + adaptive_layer 只读投影 | I5 |
+| `huginn/memory/soul.py` | Soul 四层全序 + resolution 审计 + 梦境种子租户过滤 | I18、I22 |
+| `huginn/metacog/proactive_prep.py` | PreparedContext（候选/TTL/租户）+ IdleJobQueue（预算/隔离） | I26–I27、I34 |
+| `huginn/research/distillation.py` | 蒸馏权威分类 + 写入侧晋升门 | I30 |
+| `huginn/research/case_policy.py` | 案例均值策略（可回放、不改模型权重） | I31 |
+| `huginn/metacog/belief_surprise.py` | KL 贝叶斯惊奇 + 廉价代理 + 排序 | I32 |
+| `huginn/research/behavior_fingerprint.py` | 行为指纹 + JS 散度漂移报告 | §7.3、P3 |
 | `huginn/memory/hygiene_gate.py` | 保留闸 / 影响闸 / 上下文装配 | I13–I15、I17、I20–I21 |
 | `huginn/memory/governance.py` | 记忆状态事件审计账 | I16 |
 | `huginn/memory/dream.py` | SleepClock / Dreamer / Analyst / Consolidator / 写入侧晋升门 | I19、I21、I23 |
 | `huginn/memory/dream_store.py` | DreamObject / 修复提案落库；显式 applied | I21 |
-| `huginn/memory/dream_apply.py` | soft_decay / quarantine 的显式 apply + rollback | I20–I21 |
+| `huginn/memory/dream_apply.py` | 七类修复（soft_decay / quarantine / merge_duplicate / add_link / summarize / split_cluster / re_anchor）的显式 apply + rollback | I20–I21、I23 |
 | `huginn/metacog/vigil.py` | VIGIL L0–L4 降级状态机、有界重启、队列丢弃 | I35–I40 |
-| `huginn/metacog/vigil_runtime.py` | 兄弟监控线程 + 心跳 + 工具审计喂 jobs + drift 落库 | I35–I40 |
+| `huginn/metacog/vigil_runtime.py` | 同进程兄弟监控线程或外部模式心跳读取；工具审计喂 jobs + drift 落库 | I35–I40 |
+| `huginn/metacog/vigil_process.py` | 原子心跳读写 + `MonitorSupervisor` 外部 watchdog（有界退避、L4 kill、L3 停） | I35–I40 |
+| `huginn/metacog/vigil_daemon.py` | 独立监控子进程入口（crash-only、父进程消失即退出、异常写 L4 心跳） | I35–I40 |
 | `huginn/metacog/drift_gate.py` | Smith 漂移 review/intervene/pause | I29 |
 | `huginn/research/world_model_binding.py` | prediction → reconcile → authority ladder、worldview 隔离 | I41–I50 |
 | `huginn/research/world_model_stalk.py` | 最新预测/观测的进程内 last-value 注册表 | I42、I49 |
@@ -1786,8 +1813,12 @@ CREATE TABLE reconcile_records (
 | `HUGINN_DREAM_TIMEZONE` | `UTC` | 人格作息时区 | 按部署设置 |
 | `HUGINN_DREAM_WINDOWS` | `""` | JSON 作息窗口，空 = 不进入 sleep | 配置后梦境才会运行 |
 | `HUGINN_VIGIL_ENABLED` | `1` | VIGIL 兄弟监控线程 | 设 `0` |
-| `HUGINN_VIGIL_HEARTBEAT_S` | `30` | 心跳/tick 间隔 | 按部署调整 |
+| `HUGINN_VIGIL_HEARTBEAT_S` | `30` | 心跳/tick 间隔（外部模式也是过期阈值基数） | 按部署调整 |
 | `HUGINN_VIGIL_ERROR_THRESHOLD` | `0.20` | L1 错误率阈值 | 按基线调整 |
+| `HUGINN_VIGIL_PROCESS` | `0` | 独立子进程 + watchdog | 设 `0` 回退同进程线程 |
+| `HUGINN_VIGIL_HEARTBEAT_FILE` | `""` | 心跳文件路径覆盖 | 空 = `<runtime>/monitor_health.json` |
+| `HUGINN_VIGIL_RESTART_MAX` | `3` | 单窗口最大重启次数 | 按部署调整；耗尽停 L3 |
+| `HUGINN_PMK_LLM_TIMEOUT_S` | `5` | reflect 阶段 PMK LLM advisory 超时 | 超时即降级回规则轴 |
 
 ### 22.3 验证命令
 
@@ -1796,28 +1827,44 @@ cd agent
 python -m ruff check huginn/normative huginn/memory/hygiene_gate.py \
   huginn/memory/governance.py huginn/tools/adapter.py huginn/routes/ws_helpers.py
 python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
-  tests/test_system3.py tests/test_memory_hygiene_gate.py \
-  tests/test_memory_governance.py tests/test_dream_cycle.py \
-  tests/test_dream_store.py tests/test_dream_apply.py \
+  tests/test_grounding_awareness.py tests/test_system3.py \
+  tests/test_system3_scheduler.py tests/test_memory_hygiene_gate.py \
+  tests/test_memory_dual_gate.py tests/test_influence_gate.py \
+  tests/test_hygiene_gate.py tests/test_memory_governance.py \
+  tests/test_dream_cycle.py tests/test_dream_store.py tests/test_dream_apply.py \
+  tests/test_dream_authority.py tests/test_sleep_gate.py tests/test_soft_decay.py \
   tests/test_memory_maintainer_dream.py tests/test_vigil_runtime.py \
-  tests/test_drift_ledger.py tests/test_world_model_binding.py \
-  tests/test_world_model_stalk.py tests/test_physical_workspace.py \
-  tests/test_temporal_pmk.py tests/test_arch_gate_registry.py \
-  tests/test_env_surface_governance.py -q -o addopts=""
+  tests/test_vigil_process.py tests/test_monitor_degradation.py \
+  tests/test_drift_ledger.py tests/test_drift_gate.py \
+  tests/test_world_model_binding.py tests/test_world_model_stalk.py \
+  tests/test_physical_workspace.py tests/test_world_state.py \
+  tests/test_reconcile.py tests/test_pmk_sheaves.py tests/test_temporal_pmk.py \
+  tests/test_belief_ledger.py tests/test_persona_revision.py \
+  tests/test_soul_priority.py tests/test_proactive_prep.py \
+  tests/test_idle_jobs.py tests/test_distillation_authority.py \
+  tests/test_case_policy.py tests/test_bayesian_surprise.py \
+  tests/test_behavior_fingerprint.py tests/test_learning_loop.py \
+  tests/test_arch_gate_registry.py tests/test_env_surface_governance.py \
+  -q -o addopts=""
 ```
 
-当前证据：411 passed（规范/准入/System3/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/stalk/物理工作区/PMK/arch/env/工具/权限/研究管线），ruff clean。
+当前证据：285 passed（上述不变量套件）；另 207 passed + 1 skipped（autoloop/engine 分解/工具适配/arch 接缝/config 契约/research 管线回归）；ruff clean；契约文档 `env-contract / events-contract / feature-flags-contract` 已按 `config_audit` 重新生成，无漂移。
 
 ### 22.4 已知限制
 
-- PMK 仍是规则版三轴（推荐/反对词 + token 重合）；LLM 语义判定尚未接线，只应作为 advisory，不能直接放行。
+- PMK 规则轴仍用推荐/反对词 + token 重合；LLM 语义判定已接入异步 reflect（advisory + 缓存 + 5s 超时 + 失败降级），但**不参与放行/阻断**，只写 hint 与 episodic。
 - 认识论冲突只写 advisory hint + episodic；尚未把相关 claim 自动标 `contested`（需要 ClaimView adapter）。
 - 影响闸的 `relevance` 在召回路径用排序近似，不是真实相似度；后续接 embedding/RRF 分数。
 - 记忆审计目前每次召回逐条写事件；高频场景需批量/采样，否则事件账增长快。
 - `HUGINN_NORMATIVE_ENFORCE` 默认关闭：显式审批后的授权已落账，但自动批准路径尚未写 system authorize，直接开启会阻断 auto-approved 高风险动作。
-- 梦境周期已接 MemoryMaintainer + DreamStore；Consolidator 的 soft_decay/quarantine 已支持显式 apply/rollback，其余动作仍是提案；`HUGINN_DREAM_WINDOWS` 为空时不会进入 sleep（不伪造作息）。
-- VIGIL 已是 lifespan 启动的同进程 daemon 线程，工具审计会喂成功/失败；System3 的并发限制已被 high_throughput / WorkflowOrchestrator 消费，token 缩放已接 autoloop prompt 预算（LLM `max_tokens`/工具输出预算尚未接）；独立进程/watchdog 仍未实现。
-- 世界模型 `prediction_error` 已由 `PhysicalWorkspace` 自动落 `drift_events`；PMK 已注入 `world_model` stalk，但当前只做标签/误差 advisory，尚未与 memory/kb 做 worldview/contract 交叉粘合。
+- 梦境周期已接 MemoryMaintainer + DreamStore；Consolidator 七类动作均有显式 apply/rollback，但 `summarize` 需要调用方提供 `evidence.summary`（执行器内不调 LLM），`add_link` 需要 `link_to`，`re_anchor` 只对带可验证锚的记忆生效；`HUGINN_DREAM_WINDOWS` 为空时不会进入 sleep（不伪造作息）。
+- VIGIL 默认仍是 lifespan 启动的同进程 daemon 线程；`HUGINN_VIGIL_PROCESS=1` 才切到独立子进程 + `MonitorSupervisor` watchdog（心跳文件 + 1/2/4/8 分钟有界退避，预算耗尽停 L3）。独立进程模式下 trust 通过心跳文件传播，心跳缺失/过期即 `L3/unknown`。
+- 世界模型 `prediction_error` 已由 `PhysicalWorkspace` 自动落 `drift_events`；PMK 的 `world_model` stalk 已与 memory/kb/timeseries 做 worldview/contract 交叉粘合，但只对**双方都带完整标签**的证据建边：无标签证据按「未检查」跳过，不做语义猜测。
+- token 预算已覆盖 autoloop prompt 字符预算、LLM `max_tokens`（仅缩放已配置上限的模型）与工具输出/压缩预算；未配置上限的模型不缩放，避免改变既有行为。
+- P2-b 学习回路目前是**离线核心**：`TrajectoryIndex` / `ActClassifier` / `AdmissionPolicy` / `MemoryOpPolicy` / OPE 已实现并有单测，但真实工具调用尚未写入轨迹索引（待加默认关闭的采样开关）；DoD 7 的 OPE 报告需真实轨迹。
+- `PreparedContext` / `IdleJobQueue`、Soul 种子过滤、行为指纹目前是纯核心 + 测试，尚未接入常驻空闲环 / 梦境生产路径 / VIGIL 周期任务。
+- `PersonaParams` 目前只进入 `adaptive_layer` 只读投影，尚未驱动运行时澄清阈值/证据严格度等决策参数。
+- 多设备晚到事件依赖下一次 `project()` 重投影；尚无显式重投影触发器（投影本身已确定性）。
 
 
 

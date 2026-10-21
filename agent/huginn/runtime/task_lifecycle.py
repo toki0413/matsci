@@ -566,6 +566,25 @@ def _check_pmk_axes(pmk_state: dict) -> PMKAxes:
                         f"{value:.2f} > 0.15"
                     )
 
+        # 与 memory/kb/timeseries 的 worldview/contract 交叉粘合：标签不兼容时
+        # 不建边，记 mismatch / contract_violation；跨 worldview 的差异不是
+        # 认识论 contradiction，只 advisory，不阻断（§20.4 / I49）。
+        from huginn.research.world_model_binding import cross_glue_labels
+
+        epistemic_texts = {
+            src: str(pmk_state.get(src, "") or "")
+            for src in ("memory", "kb", "timeseries")
+            if str(pmk_state.get(src, "") or "").strip()
+        }
+        pieces = [world_model_reason] if world_model_reason else []
+        for obstruction in cross_glue_labels(wm_text, epistemic_texts):
+            pieces.append(
+                f"{obstruction['kind']} ({obstruction['source']}): "
+                f"{obstruction['reason']}"
+            )
+        if pieces:
+            world_model_reason = "EPISTEMIC (advisory): " + " | ".join(pieces)
+
     return PMKAxes(
         epistemic_reason=epistemic_reason,
         normative_reason=normative_reason,

@@ -435,6 +435,21 @@ def _update_hashline_cache(tool_name: str, input_data: Any, context: Any) -> Non
             _HASHLINE_CACHE[ap] = h
 
 
+def _default_tool_output_tokens() -> int:
+    """工具输出预算：按 System3 trust 缩放（blind/unknown → ×0.5，floor=2000）.
+
+    spec §19.12.6：监控失败时降自主，不降可用性；输出预算随 trust 收紧，
+    但显式传入预算的调用方不受影响。
+    """
+    base = int(os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000"))
+    try:
+        from huginn.normative.system3 import scaled_token_budget
+
+        return scaled_token_budget(base, floor=2000)
+    except Exception:  # 防御: 缩放失败用基础值
+        return base
+
+
 class ToolAdapter:
     """Adapts HuginnTool instances to LangChain StructuredTool."""
 
@@ -529,9 +544,8 @@ class ToolAdapter:
         permission_config = permission_config or PermissionConfig()
         audit_logger = audit_logger or _default_audit_logger()
         if max_tool_output_tokens is None:
-            max_tool_output_tokens = int(
-                os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
-            )
+            # 显式传入的 max_tool_output_tokens 不被改写，保持调用方控制权。
+            max_tool_output_tokens = _default_tool_output_tokens()
         if compression_max_tokens is None:
             compression_max_tokens = int(
                 os.environ.get(

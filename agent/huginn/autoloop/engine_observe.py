@@ -784,6 +784,9 @@ LUCID review (mandatory after generating hypothesis):
             )
             if not pmk_state:
                 return ""
+            # 缓存最新 PMK 状态给异步 reflect 阶段做 LLM 语义判定（advisory）。
+            # 不在热路径调 LLM：这里只存快照，_learn 里再异步跑。
+            self._last_pmk_state = pmk_state
 
             # 三条轴分开判定：认识论 advisory；规范/自指 block。
             from huginn.runtime.task_lifecycle import _check_pmk_axes

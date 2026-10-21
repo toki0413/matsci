@@ -29,6 +29,30 @@ _SCHEMA = {
 }
 
 
+def test_ghost_prediction_blocked(tmp_path):
+    """I50: 旧 epoch / restored 预测不得作为当前预测消费."""
+    import json
+
+    path = tmp_path / "world_state.json"
+    stale = {
+        "prediction": {"T": 300.0},
+        "epoch": 0,
+        "saved_at": time.time() - 10_000,
+    }
+    path.write_text(json.dumps(stale), encoding="utf-8")
+    tracker = WorldStateTracker.load_state(path)
+    assert tracker is not None
+    assert tracker.is_restored()
+    assert tracker.is_stale()
+    assert tracker.fresh_prediction() is None, "旧 epoch 预测必须被阻断"
+
+    fresh = {"prediction": {"T": 300.0}, "epoch": 3, "saved_at": time.time()}
+    path.write_text(json.dumps(fresh), encoding="utf-8")
+    tracker2 = WorldStateTracker.load_state(path)
+    assert tracker2 is not None
+    assert tracker2.fresh_prediction() == {"T": 300.0}
+
+
 def test_obsvector_zero_pads_missing_slots():
     ov = ObsVector.from_schema(_SCHEMA)
     assert ov.slots == ("p", "V", "T", "n")

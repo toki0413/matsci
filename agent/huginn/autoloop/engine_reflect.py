@@ -38,6 +38,7 @@ from huginn.autoloop.exec_observation import detect_soliloquy, exit_class_counts
 from huginn.autoloop.signals import routing_surprise
 from huginn.autoloop.types import LoopPhase
 from huginn.core_types import ToolContext
+from huginn.env_access import env_float as _env_float
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,10 @@ _REPEAT_HARD_STREAK = int(os.environ.get("HUGINN_REPEAT_EXEC_HARD_STREAK", "2"))
 # 不设上限则长程 run 里每轮 append 会让 JSON 与内存无界增长; 滑动窗口保留最近样本,
 # 秩估计足够稳定.
 _SURPRISE_HIST_CAP = int(os.environ.get("HUGINN_SURPRISE_HIST_CAP", "200"))
+
+# PMK LLM advisory 的单次超时（秒）。reflect 是慢路径但仍不能阻塞主循环；
+# 超时/异常一律降级回规则轴结果。
+_PMK_LLM_TIMEOUT_S = _env_float("HUGINN_PMK_LLM_TIMEOUT_S")
 
 
 def _normalize_script_for_fp(script: str) -> str:
@@ -3080,6 +3085,52 @@ class EngineReflect:
         except Exception:  # 防御: 性能记录失败置空不影响 learn
             self._last_task_perf = None
 
+    async def _pmk_llm_advisory(self) -> None:
+        """异步 reflect 阶段的 PMK 语义判定：advisory + 缓存 + 超时 + 失败降级.
+
+        - 规则轴已阻断 → ``check_pmk_consistency_llm`` 直接返回，不调 LLM；
+        - 同一文本组合命中缓存，不重复调用；
+        - 只判认识论（memory/kb/timeseries），persona 不交给 LLM；
+        - 超时 / 异常 → 保持规则轴结果，不影响主循环。
+        """
+        from huginn.env_access import env_bool, env_str
+
+        if not env_bool("HUGINN_PMK_INJECT"):
+            return
+        if env_str("HUGINN_PMK_MODE").strip().lower() == "off":
+            return
+        pmk_state = getattr(self, "_last_pmk_state", None)
+        if not isinstance(pmk_state, dict) or not pmk_state:
+            return
+        epistemic = [
+            key
+            for key in ("memory", "kb", "timeseries")
+            if str(pmk_state.get(key, "") or "").strip()
+        ]
+        if len(epistemic) < 2:
+            return
+        try:
+            from huginn.runtime.task_lifecycle import check_pmk_consistency_llm
+
+            blocked, reason = await asyncio.wait_for(
+                check_pmk_consistency_llm(pmk_state, self._llm_chat),
+                timeout=_PMK_LLM_TIMEOUT_S,
+            )
+        except Exception:  # 超时/LLM 失败 → 只损失 advisory，不阻断
+            logger.debug("PMK LLM advisory skipped (timeout/failure)", exc_info=True)
+            return
+        if blocked or "LLM advisory" not in (reason or ""):
+            return
+        hint = f"[PMK LLM ADVISORY] {reason[:200]}"
+        if hint in (getattr(self, "_speculator_hint", "") or ""):
+            return
+        self._speculator_hint = (
+            (self._speculator_hint + f"\n{hint}\n").strip()
+            if self._speculator_hint
+            else f"{hint}\n"
+        )
+        self._write_pmk_conflict_to_episodic(pmk_state, reason)
+
     async def _learn(
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
     ) -> dict[str, Any]:
@@ -3100,6 +3151,10 @@ class EngineReflect:
         # evolution 回流 / meta 层真实 r_phys 门控**之前**, 只改本方法用的局部
         # r_phys, 不动 validation 里的原始值 (memory 留原始轨迹便于审计)。
         r_phys = self._apply_strict_scope(r_phys)
+
+        # PMK LLM 语义判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
+        # 只做 advisory，不阻断；规则轴已阻断或没有 ≥2 路认识论文本时直接跳过。
+        await self._pmk_llm_advisory()
 
         # B+D: 回写当前假设状态 + 记录真实任务性能 (盲重建未表态时的兜底).
         self._writeback_hypothesis_status(validation, r_phys=r_phys)

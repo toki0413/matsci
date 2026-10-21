@@ -1573,7 +1573,8 @@ LUCID review (mandatory after generating hypothesis):
                         if "_entry" in dir() else 0.5
                     )
                     # 反向边 1: PMK memory+kb → persona.adaptive_layer
-                    # 不覆盖原 adaptive_layer, 而是前缀拼接本轮 PMK 摘要.
+                    # DoD 4: adaptive_layer 是**只读投影**（params + 最近证据），
+                    # 不再前缀累加旧摘要 —— 同输入同输出，可重新生成。
                     if "_pm" in dir() and _pm is not None and persona is not None:  # noqa: F821
                         _pmk_summary_bits = []
                         if _pmk_state.get("memory"):
@@ -1583,16 +1584,31 @@ LUCID review (mandatory after generating hypothesis):
                             _pmk_summary_bits.append(
                                 f"[iter {_iter_n+1} kb] {_pmk_state['kb'][:120]}")
                         if _pmk_summary_bits:
-                            _old_adaptive = getattr(persona, "adaptive_layer", "") or ""
-                            _new_adaptive = (
-                                " | ".join(_pmk_summary_bits)
-                                + (f" | {_old_adaptive}" if _old_adaptive else "")
+                            from huginn.persona_kernel import (
+                                PersonaParams,
+                                get_persona_evidence_store,
+                                render_adaptive_layer,
                             )
-                            # 截断防膨胀: 上限 800 字符, 老摘要自然滚出.
-                            _new_adaptive = _new_adaptive[:800]
+
+                            _evidence = get_persona_evidence_store()
+                            _evidence.append(
+                                _persona_name,  # noqa: F821
+                                " | ".join(_pmk_summary_bits),
+                            )
+                            _raw_params = (
+                                getattr(persona, "variables", {}) or {}
+                            ).get("persona_params") or {}
+                            _allowed = {
+                                key: value for key, value in _raw_params.items()
+                                if key in PersonaParams.__dataclass_fields__
+                            }
+                            _new_adaptive = render_adaptive_layer(
+                                PersonaParams(**_allowed),
+                                _evidence.recent(_persona_name),  # noqa: F821
+                            )
                             _pm.update(_persona_name, adaptive_layer=_new_adaptive)  # noqa: F821
                             print(
-                                f"[PMK reverse edge] persona.adaptive_layer updated "
+                                f"[PMK reverse edge] persona.adaptive_layer projected "
                                 f"(len={len(_new_adaptive)})", flush=True)
 
                     # 反向边 2: PMK memory → prospective memory
