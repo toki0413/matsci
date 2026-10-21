@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   GitFork, Plus, RefreshCw, Send, Trash2, ArrowUpRight, FileText,
-  ChevronDown, ChevronRight, Loader2, MessageSquare, Package,
+  ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquare, Package, X,
 } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
 import EmptyState from '../EmptyState';
@@ -35,8 +35,12 @@ interface SideTask {
 interface SidePanelProps {
   activeThread: string;
   focusTaskId?: string | null;
+  /** page = 全页管理；dock = 与主对话同屏的右侧临时面板 (Codex 风格). */
+  variant?: 'page' | 'dock';
   onOpenThread: (threadId: string) => void;
   onThreadsChanged?: () => void;
+  /** dock 模式的关闭按钮 (page 模式不需要). */
+  onClose?: () => void;
 }
 
 function Badge({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'accent' | 'success' }) {
@@ -49,7 +53,8 @@ function Badge({ children, tone = 'muted' }: { children: ReactNode; tone?: 'mute
   return <span className={`rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>{children}</span>;
 }
 
-export function SidePanel({ activeThread, focusTaskId, onOpenThread, onThreadsChanged }: SidePanelProps) {
+export function SidePanel({ activeThread, focusTaskId, variant = 'page', onOpenThread, onThreadsChanged, onClose }: SidePanelProps) {
+  const dock = variant === 'dock';
   const [tasks, setTasks] = useState<SideTask[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SideTask | null>(null);
@@ -173,78 +178,96 @@ export function SidePanel({ activeThread, focusTaskId, onOpenThread, onThreadsCh
         <button onClick={load} className="btn-secondary flex items-center gap-1 px-3 py-1.5 text-xs" aria-label="Refresh">
           <RefreshCw size={12} className={loading ? 'animate-spin motion-reduce:animate-none' : ''} />
         </button>
+        {dock && onClose && (
+          <button onClick={onClose} className="rounded p-1.5 text-text-muted hover:text-text-primary" aria-label="Close side tasks panel">
+            <X size={14} />
+          </button>
+        )}
       </PanelHeader>
 
       <div className="flex min-h-0 flex-1">
-        {/* task list */}
-        <div className="w-72 shrink-0 overflow-y-auto border-r border-border p-3">
-          {error && <div className="mb-2 text-xs text-error">{error}</div>}
-          {sideTasks.length === 0 ? (
-            <EmptyState
-              icon={GitFork}
-              title="No side tasks"
-              subtitle="Fork a message from the main chat, or create one from the current context."
-            />
-          ) : (
-            <div className="space-y-2">
-              {sideTasks.map((task) => (
-                <button
-                  key={task.id}
-                  onClick={() => openTask(task.id)}
-                  className={`w-full rounded-lg border p-3 text-left transition-colors ${
-                    selectedId === task.id
-                      ? 'border-accent bg-accent/10'
-                      : 'border-border bg-bg-secondary hover:bg-bg-tertiary'
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <GitFork size={13} className="mt-0.5 shrink-0 text-accent" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-text-primary">{task.title}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1">
-                        <Badge>{task.seed_count} inherited</Badge>
-                        <Badge>{task.message_count} turns</Badge>
-                        {task.artifacts.length > 0 && <Badge tone="success">{task.artifacts.length} artifacts</Badge>}
-                        {task.is_promoted && <Badge tone="success">formal</Badge>}
+        {/* task list — dock 模式下与详情互斥显示, 避免窄栏左右挤 */}
+        {(!dock || !detail) && (
+          <div className={`overflow-y-auto border-r border-border p-3 ${dock ? 'w-full' : 'w-72 shrink-0'}`}>
+            {error && <div className="mb-2 text-xs text-error">{error}</div>}
+            {sideTasks.length === 0 ? (
+              <EmptyState
+                icon={GitFork}
+                title="No side tasks"
+                subtitle="Fork a message from the main chat, or create one from the current context."
+              />
+            ) : (
+              <div className="space-y-2">
+                {sideTasks.map((task) => (
+                  <button
+                    key={task.id}
+                    onClick={() => openTask(task.id)}
+                    className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                      selectedId === task.id
+                        ? 'border-accent bg-accent/10'
+                        : 'border-border bg-bg-secondary hover:bg-bg-tertiary'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <GitFork size={13} className="mt-0.5 shrink-0 text-accent" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-text-primary">{task.title}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <Badge>{task.seed_count} inherited</Badge>
+                          <Badge>{task.message_count} turns</Badge>
+                          {task.artifacts.length > 0 && <Badge tone="success">{task.artifacts.length} artifacts</Badge>}
+                          {task.is_promoted && <Badge tone="success">formal</Badge>}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* detail */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          {!detail ? (
-            <div className="flex h-full items-center justify-center p-8 text-sm text-text-muted">
-              Select a side task to continue the conversation.
-            </div>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-text-primary">{detail.title}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-1">
-                    <Badge tone={detail.is_promoted ? 'success' : 'accent'}>
-                      {detail.is_promoted ? 'formal task' : 'side task'}
-                    </Badge>
-                    <Badge>{detail.seed_count} inherited</Badge>
-                    <Badge>{detail.message_count} turns</Badge>
-                  </div>
-                </div>
-                {!detail.is_promoted && (
-                  <button onClick={promote} className="btn-primary flex items-center gap-1 px-3 py-1.5 text-xs">
-                    <ArrowUpRight size={12} /> Promote
-                  </button>
-                )}
-                {!detail.is_promoted && (
-                  <button onClick={discard} className="btn-secondary flex items-center gap-1 px-3 py-1.5 text-xs text-error">
-                    <Trash2 size={12} /> Discard
-                  </button>
-                )}
+        {(!dock || detail) && (
+          <div className="flex min-w-0 flex-1 flex-col">
+            {!detail ? (
+              <div className="flex h-full items-center justify-center p-8 text-sm text-text-muted">
+                Select a side task to continue the conversation.
               </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+                  {dock && (
+                    <button
+                      onClick={() => { setDetail(null); setSelectedId(null); }}
+                      className="rounded p-1 text-text-muted hover:text-text-primary"
+                      aria-label="Back to side task list"
+                      title="Back"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-text-primary">{detail.title}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <Badge tone={detail.is_promoted ? 'success' : 'accent'}>
+                        {detail.is_promoted ? 'formal task' : 'side task'}
+                      </Badge>
+                      <Badge>{detail.seed_count} inherited</Badge>
+                      <Badge>{detail.message_count} turns</Badge>
+                    </div>
+                  </div>
+                  {!detail.is_promoted && (
+                    <button onClick={promote} className="btn-primary flex items-center gap-1 px-3 py-1.5 text-xs">
+                      <ArrowUpRight size={12} /> Promote
+                    </button>
+                  )}
+                  {!detail.is_promoted && (
+                    <button onClick={discard} className="btn-secondary flex items-center gap-1 px-3 py-1.5 text-xs text-error">
+                      <Trash2 size={12} /> Discard
+                    </button>
+                  )}
+                </div>
 
               <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
                 {detail.seed_count > 0 && (
@@ -334,7 +357,8 @@ export function SidePanel({ activeThread, focusTaskId, onOpenThread, onThreadsCh
               </div>
             </>
           )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

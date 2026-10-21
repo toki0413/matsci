@@ -517,6 +517,7 @@ export default function App() {
   // ── Side tasks ───────────────────────────────────────────────
   // 侧边任务与主对话同屏: fork 自当前 thread 的某条消息, 独立运行, 可转正.
   const [sideFocusTaskId, setSideFocusTaskId] = useState<string | null>(null);
+  const [sideDockOpen, setSideDockOpen] = useState(false);
 
   const forkToSideTask = async (messageIndex: number) => {
     if (!activeThread) {
@@ -533,7 +534,9 @@ export default function App() {
         return;
       }
       setSideFocusTaskId(res.task.id);
-      setActiveTab("side");
+      // Codex 风格: 在右侧临时面板打开, 主对话保持可见、不打断.
+      setSideDockOpen(true);
+      setActiveTab("chat");
       toast.success(`Side task created (${res.inherited_messages} inherited messages)`);
     } catch (e: any) {
       toast.error(e.message || "Fork failed");
@@ -541,6 +544,7 @@ export default function App() {
   };
 
   const openPromotedTask = (threadId: string) => {
+    setSideDockOpen(false);
     switchThread(threadId);
     loadThreads();
     setActiveTab("chat");
@@ -1435,6 +1439,17 @@ export default function App() {
                 <Search size={16} />
               </button>
             )}
+            {activeTab === "chat" && (
+              <button
+                onClick={() => setSideDockOpen((v) => !v)}
+                className={`rounded-lg p-1.5 transition-colors ${sideDockOpen ? "bg-bg-tertiary text-accent" : "text-text-muted hover:text-text-secondary"}`}
+                title="Side tasks"
+                aria-label="Toggle side tasks panel"
+                aria-pressed={sideDockOpen}
+              >
+                <PanelRight size={16} />
+              </button>
+            )}
             <button
               onClick={() => setGlobalSearchOpen(true)}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary px-2.5 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
@@ -1519,7 +1534,8 @@ export default function App() {
             </div>
           )}
           {/* ChatPanel — 永久挂载，用 hidden 控制可见性，切换 tab 不丢失状态 */}
-          <div hidden={activeTab !== "chat"} className="h-full">
+          <div hidden={activeTab !== "chat"} className="flex h-full min-h-0">
+            <div className="min-w-0 flex-1 h-full">
             <ChatPanel
               messages={messages}
               campaignEvents={campaignEvents}
@@ -1585,6 +1601,23 @@ export default function App() {
               currentPersona={config.persona}
               setCurrentPersona={switchPersona}
             />
+            </div>
+            {/* Codex 风格侧边面板: 与主对话同屏, 用完即弃. 窄屏自动收窄. */}
+            {sideDockOpen && (
+              <aside
+                className="flex w-[380px] shrink-0 flex-col border-l border-border bg-bg-primary lg:w-[420px] xl:w-[480px]"
+                aria-label="Side tasks panel"
+              >
+                <SidePanel
+                  variant="dock"
+                  activeThread={activeThread}
+                  focusTaskId={sideFocusTaskId}
+                  onOpenThread={openPromotedTask}
+                  onThreadsChanged={loadThreads}
+                  onClose={() => setSideDockOpen(false)}
+                />
+              </aside>
+            )}
           </div>
 
           {activeTab === "team" && (
