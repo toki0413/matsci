@@ -38,6 +38,23 @@ def autonomy_limits(trust: str) -> AutonomyLimits:
     return AutonomyLimits(2, 0.5, "low", True)
 
 
+def current_autonomy_limits() -> AutonomyLimits:
+    """读取当前 VIGIL trust 对应的自主边界；读不到按 unknown 最严格处理."""
+    try:
+        from huginn.metacog.vigil_runtime import get_vigil_runtime
+
+        trust = get_vigil_runtime().status().trust
+    except Exception:
+        trust = "unknown"
+    return autonomy_limits(trust)
+
+
+def parallel_cap(requested: int, *, trust: str | None = None) -> int:
+    """把请求的并发数夹到当前自主边界内（最低 1）."""
+    limits = autonomy_limits(trust) if trust is not None else current_autonomy_limits()
+    return max(1, min(int(requested), int(limits.max_parallel_jobs)))
+
+
 def admit_with_trust(
     request: AdmissionRequest,
     grounding: GroundingView,
@@ -86,4 +103,10 @@ def admit_with_trust(
     )
 
 
-__all__ = ["AutonomyLimits", "admit_with_trust", "autonomy_limits"]
+__all__ = [
+    "AutonomyLimits",
+    "admit_with_trust",
+    "autonomy_limits",
+    "current_autonomy_limits",
+    "parallel_cap",
+]

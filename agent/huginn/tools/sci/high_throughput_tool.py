@@ -118,12 +118,19 @@ class HighThroughputTool(HuginnTool):
             else:
                 return ToolResult(data=None, success=False, error=f"Unknown space_type: {input_data.space_type}")
 
+            max_parallel = input_data.max_parallel
+            try:
+                from huginn.normative.system3 import parallel_cap
+
+                max_parallel = parallel_cap(max_parallel)
+            except Exception:  # 防御: 自主边界不可用则保持请求值
+                pass
             sweep = ParameterSweep(
                 name=f"ht_{input_data.tool_name}",
                 tool_name=input_data.tool_name,
                 parameter_space=space,
                 base_input=input_data.base_input,
-                max_parallel=input_data.max_parallel,
+                max_parallel=max_parallel,
                 early_termination=input_data.early_termination,
             )
             jobs = sweep.generate_jobs()
@@ -133,7 +140,7 @@ class HighThroughputTool(HuginnTool):
                 return ToolResult(data=None, success=False, error=f"Tool '{input_data.tool_name}' not found")
 
             # Execute jobs, respecting max_parallel
-            semaphore = asyncio.Semaphore(max(1, input_data.max_parallel))
+            semaphore = asyncio.Semaphore(max(1, max_parallel))
 
             async def _run_job(job):
                 async with semaphore:

@@ -264,7 +264,14 @@ class WorkflowOrchestrator:
             result.completed_at = now_iso()
             return result
 
-        sem = asyncio.Semaphore(min(script.max_concurrent, self.max_concurrent))
+        cap = min(script.max_concurrent, self.max_concurrent)
+        try:
+            from huginn.normative.system3 import current_autonomy_limits
+
+            cap = min(cap, current_autonomy_limits().max_parallel_jobs)
+        except Exception:  # 防御: 自主边界不可用则用原 cap
+            pass
+        sem = asyncio.Semaphore(max(1, cap))
         ctx = context or ToolContext(
             session_id=script.id, workspace=".", config=None
         )
