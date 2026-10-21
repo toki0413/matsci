@@ -199,6 +199,7 @@
 3. **经验账只存可复现单元**；不可复现的文本摘要不进入该账。
 4. **记忆有两条独立闸**：保留（是否还可用）与影响（此刻是否进入推理上下文）分开判定、分开审计；检索返回候选，不是上下文。
 5. **梦境写入是第四条状态迁移**：必须过写入侧晋升门，不能与在线直接证据同权。详见 §18。
+6. **监控环是兄弟运行时**：不执行用户任务、不写授权、不改内核；主动准备只是候选，不是已授权上下文。详见 §19。
 
 ---
 
@@ -523,7 +524,7 @@ class AdmissionSample:
 | I11 | `actor=agent` 不得写 `authorize/revoke/accept/reject` | `test_normative_ledger.py::test_actor_capability` |
 | I12 | 撤销/过期授权不得出现在后续 `AdmissionView` | `test_grounding_awareness.py::test_mask_revoked` |
 
-记忆治理不变量 I13–I24 见 §18.8；两表共同构成完整不变量集。
+记忆治理不变量 I13–I24 见 §18.8；常驻运行时不变量 I25–I34 见 §19.8；三表共同构成完整不变量集。
 
 ---
 
@@ -567,7 +568,7 @@ class AdmissionSample:
 
 ### 14.3 Definition of Done
 
-1. 三本账 schema 落地，I1–I24 全绿（其中 I13–I24 见 §18.8）。
+1. 三本账 schema 落地，I1–I34 全绿（其中 I13–I24 见 §18.8，I25–I34 见 §19.8）。
 2. PMK 默认开启，治理锚点与台账同步，无默认翻转漂移。
 3. `session_state` 确认结果落盘；`clear_confirmation` 不再丢规范状态。
 4. persona revision 走 GREEN 采纳门；`adaptive_layer` 变为只读投影。
@@ -578,6 +579,9 @@ class AdmissionSample:
 9. 保留闸与影响闸独立实现，Hygiene Gate 七种 route 全量留痕（I13–I17）。
 10. 梦境周期有 SleepClock、DreamObject、写入侧晋升门；`derived/hypothesis` 不授权动作、不改内核（I15、I19、I21、I23）。
 11. Soul 四层优先级全序可审计，跨租户记忆/梦境零泄漏（I18、I22）。
+12. `PreparedContext` 只作候选、带 TTL、按租户隔离；空闲环不产生用户可见动作（I26–I27、I34）。
+13. VIGIL 兄弟运行时只读日志、只写诊断/提案；漂移三级告警可升级、`pause` 不可被任务 Agent 自清（I25、I28–I29、I33）。
+14. 教师/蒸馏产物为 `derived`，惊奇只做排序与探索项，不得绕过 Hygiene Gate（I30、I32）。
 
 ---
 
@@ -618,15 +622,16 @@ class AdmissionSample:
 | P2-b | 轨迹索引 + ActClassifier + AdmissionPolicy 离线训练 + OPE | 敏感度/特异度达标；影子零未授权 |
 | P3 | 灰度 enforce 全路径；多设备同步；行为指纹监控 | 线上指标达标 |
 
-记忆治理补章（§18）的分期 P1-c / P1-d / P2-c / P2-d / P3-b 与本表并行推进，阶段号一一对应；出口以 §18.8 的 I13–I24 与 §18.9 的指标为准。
+记忆治理补章（§18）的分期 P1-c / P1-d / P2-c / P2-d / P3-b 与本表并行推进；常驻运行时（§19）的分期 P1-e / P2-e / P2-f / P3-c 同样并行。阶段号一一对应；出口以 §18.8 / §19.8 的不变量与 §18.9 / §19.9 的指标为准。
 
 ---
 
-## 17. 附：三条给实施者的提醒（双螺旋压缩）
+## 17. 附：四条给实施者的提醒（双螺旋压缩）
 
 1. **路径可丢，坐标不可丢**：实现可以换表、换算法、换分类器；三组坐标不能丢——动作 `(proposition, act, scope, status, time)`、记忆 `(memory_id, source_class, epistemic_status, evidential_authority, time)`、影响 `(query_id, memory_id, route, influence_authority, decided_at)`。
 2. **先建切口，再谈学习**：没有授权拓扑的硬边，任何策略学习都会学会绕过；先让未授权动作在结构上不可达。
 3. **反例即结构在说话**：`oppose+oppose` 误报、`clear_confirmation` 丢状态、`adaptive_layer` 前缀漂移——这三个反例不是 bug 清单，是「混轴」这一个结构问题的三个投影。
+4. **监控不是任务的一步**：兄弟运行时的价值在失败隔离；把它塞进任务循环，等于让被监控者自己写体检报告。
 
 ---
 
@@ -759,15 +764,80 @@ class AuthorityLink:
 # 修订 = 追加新 link，不覆盖旧 link；删除 = tombstone，不物理销毁权威链
 ```
 
-### 18.4 梦境周期：离线诊断、可学习修复、可逆遗忘
+### 18.4 梦境周期：Dreamer 生成，Analyst 归因，Consolidator 受门执行
 
 把 [MemoryMaintainer](file:///workspace/agent/huginn/memory/maintainer.py#L20-L102) 从「定时衰减线程」升级为受治理的梦境周期，但**不新增 agent 框架**：Dreamer / Analyst / Consolidator 是同一周期里的三个角色。
 
-| 角色 | 职责 | 输入 | 输出 |
-|---|---|---|---|
-| Dreamer | 探测记忆图的潜在断点 | 孤立节点、低连接簇、陈旧 anchor、矛盾压力、检索探针失败 | `DreamFinding` 列表 |
-| Analyst | 诊断失败类型 | findings + 证据 | `Diagnosis`（缺链/重复/过时/过度泛化/冲突） |
-| Consolidator | 执行修复 | diagnosis | `RepairAction`（add_link / split_cluster / merge_duplicate / re_anchor / soft_decay / quarantine / summarize） |
+三者的边界不是流水线工序，而是**生成与验证的不对称**：
+
+| 角色 | 回答的问题 | 输入 | 输出 | 允许动作 | 失败模式 | 度量 |
+|---|---|---|---|---|---|---|
+| **Dreamer（生成）** | 哪里可能有问题？接下来可能需要什么？什么改变了信念？ | 目标/承诺、近期轨迹、记忆图、检索探针、DreamObject 历史 | `DreamFinding` 列表（含 surprise、expected_impact、cost） | 只读探测；可写 finding；不可改记忆 | 高召回低精度，制造噪声 | finding 召回率、surprise 校准、单周期预算 |
+| **Analyst（归因）** | 为什么？属于哪类故障？哪种修复最可能有效？ | findings + 可寻址证据 + 反事实回放 | `Diagnosis`（cause_class、confidence、affected_ids、repair_class） | 只读；可弃权；不可执行修复 | 误诊导致错误修复 | 诊断准确率、弃权率、反事实一致率 |
+| **Consolidator（执行）** | 在允许的风险等级内，执行哪一个最小修复？ | 高置信 diagnosis + 策略门 | `RepairAction` + 回滚句柄 | 受门执行；可逆；不得删 direct 证据 | 过度修复、不可逆破坏 | 修复成功率、回滚率、检索改善 |
+
+**Dreamer 的三类探针**
+
+1. **需求探针（ProAct / Pask / ContextAgent）**：从 `goal_store` 的目标、未解 unknown、prospective intentions 和近期轨迹中采样「接下来可能被问到的查询」；对这些查询做 **dry-run 检索**，记录缺口、延迟、低权威命中。它输出的是「预期需求 + 缺什么证据」，不是答案，也不是动作。
+2. **结构探针**：扫描记忆图/结论超图的孤立节点、低连接簇、桥边、陈旧 anchor、重复簇、矛盾压力、跨域未连边。复用 [scan_contradictions](file:///workspace/agent/huginn/memory/longterm.py#L1676-L1754)、[anchor](file:///workspace/agent/huginn/memory/anchor.py)、[cluster](file:///workspace/agent/huginn/memory/cluster.py#L36)。
+3. **惊奇探针（AutoDiscovery）**：以贝叶斯惊奇度作为优先级，而不是让 LLM 直接判断「有没有用/新不新」。
+   ```
+   surprise = KL( P(belief | evidence) || P(belief) )
+   ```
+   - 廉价近似：预测误差、矛盾新出现、dry-run 检索失败、同一 subject 的权威断层。
+   - 完整版：对候选假设做 LLM 采样估计先验/后验分布，取 KL；沿用 AutoDiscovery 的 MCTS/渐进展宽做候选扩展。
+   - 注意：现有 [belief_entropy](file:///workspace/agent/huginn/utils/belief_entropy.py#L1-L13) 衡量的是**上下文压缩后的不确定度**，不是信念修订惊奇；两者不能混用，需新增 `belief_surprise` 字段。
+
+`DreamFinding`：
+
+```python
+@dataclass
+class DreamFinding:
+    finding_id: str
+    probe_type: Literal["demand", "structure", "surprise"]
+    subject: str
+    evidence_ids: list[str]        # memory_id / claim_id / chunk_id / act_id
+    surprise: float                # 0..1，贝叶斯惊奇或代理
+    expected_impact: float         # 若修复，预期检索改善
+    cost: float                    # 预算估计
+    created_at: str
+```
+
+**Analyst 的四项归因**
+
+1. **反事实归因**：对每个 finding，枚举候选修复类（缺链/重复/过时/过度泛化/冲突/覆盖缺口/溯源缺口/权威错配），用回放或廉价模拟问：「加上这个修复，探针会通过吗？」通过才给高置信。
+2. **目标锚定（RefAct）**：不是只看「下一步做什么」，而是每步计算**当前状态相对于原始目标的关系**。目标来自 `goal_store` 的 objective/required_results，状态来自 `session_state` + 最近执行结果；偏离超过阈值 → `goal_drift` 诊断。这是对 ReAct 式「向前看」的结构性修正。
+3. **漂移检测（Smith）**：三类检测器 + 三级告警。
+   - 倾向性回归：反思频次/深度相对基线下滑 > 15%。
+   - 求真下降：证据引用率/接地率相对基线下滑 > 20%。
+   - 因果图编辑距离：目标/计划因果图相对基线 > 0.3。
+   - 告警级别：`review`（记录 + 提示）→ `intervene`（注入纠正/降级自主面）→ `pause`（停手等确认）。
+   - 阈值走策略注册表，不硬编码；基线按 tenant/persona/task family 分别维护。
+4. **校准与弃权**：Analyst 必须输出 confidence，并在证据不足时**弃权**（`abstain`），而不是猜一个诊断。这是对「噪声验证器 + 噪声修复器会破坏正确计划」的直接防御。
+
+`Diagnosis`：
+
+```python
+@dataclass
+class Diagnosis:
+    diagnosis_id: str
+    finding_id: str
+    cause_class: Literal["missing_link", "duplicate", "stale", "overgeneralized",
+                         "contradiction", "coverage_gap", "provenance_gap",
+                         "authority_mismatch", "goal_drift"]
+    confidence: float              # < 阈值则 abstain
+    affected_ids: list[str]
+    repair_class: str
+    expected_gain: float
+    risk: Literal["low", "medium", "high"]
+    counterfactual_passed: bool
+```
+
+**为什么必须拆开**
+
+- Dreamer 可以错，因为它只产生候选；Analyst 不能乱猜，因为它决定修什么；Consolidator 不能自由发挥，因为它改的是状态。
+- 如果把三者合成一个 LLM 调用，就会出现「生成 → 自检 → 重试」的经典失败：验证器和修复器同时有噪声时，修复会损坏本来正确的计划。
+- 这与快时的三舱反射（[three_cabin_reflector](file:///workspace/agent/huginn/metacog/three_cabin_reflector.py#L1-L17)：Step/Evaluate/Reflect）是**不同时间尺度**的同一原则：快时做单步反射，慢时做图级诊断；不要用一个角色承担两个时间尺度。
 
 约束：
 
@@ -985,5 +1055,286 @@ CREATE TABLE soul_resolution_events (
 - 不用一套全局 salience profile 覆盖所有 persona。
 - 不把 Soul 优先级当作授权优先级。
 - 不用 LLM 自评作为梦境修复的 reward。
+
+---
+
+## 19. 常驻运行时：交互间隔中的监控、预测与自我修改
+
+本节回应 ProAct / Pask / ContextAgent / CER / MUSE / Memento / ATLAS / RefAct / Smith / VIGIL / AutoCrit / Wink / AutoDiscovery 的共同方向：Agent 不再只是「交互时刻才启动的推理过程」，而是**在交互间隔中持续运行、带独立监控层与受控自我修改能力的常驻系统**。
+
+### 19.1 三层时间尺度，三个运行时
+
+| 循环 | 节奏 | 归属 | 写权限 | 失败隔离 |
+|---|---|---|---|---|
+| **快环** 交互 | 每轮 / 每步 | 任务 Agent | 正常执行，受规范账约束 | 失败影响当轮 |
+| **慢环** 梦境 | 空闲 / 睡眠窗口 | Dreamer / Analyst / Consolidator | 只能改索引、链接、显著性、摘要；不得删 direct 证据 | 失败不影响在线任务 |
+| **监控环** 常驻 | 持续 / 异步 | VIGIL 兄弟运行时 | 只能写诊断、告警、受保护的 adaptive 更新与只读修复提案 | 失败必须显式降级，不得静默 |
+
+三条硬规则：
+
+1. **监控环是兄弟运行时，不是任务 Agent 的一个阶段**。它不执行用户任务、不写 `authorize`、不改 `PersonaKernel`。
+2. **慢环的产物是候选**，进入上下文仍须影响闸（§18.2）授权。
+3. **快环的失败不能靠慢环事后补**；慢环只能降低下一次失败的概率。
+
+### 19.2 主动准备：回答先于提问，但不先于授权
+
+ProAct / Pask / ContextAgent 的共同点是利用空闲时间预测需求；在我们的架构里，它落在 Dreamer 的**需求探针**与一个受控的 `PreparedContext` 缓存上。
+
+```python
+@dataclass
+class PreparedContext:
+    prep_id: str
+    tenant_id: str
+    persona_id: str
+    predicted_need: str            # 预期问题/任务
+    query_hint: str
+    evidence_ids: list[str]
+    authority_vector: dict         # abstraction / evidential / influence
+    ttl_s: int
+    created_at: str
+    status: Literal["candidate", "expired", "consumed"]
+```
+
+规则：
+
+- 空闲期可以**预取、预计算、预组织**，但不得产生用户可见动作。
+- `PreparedContext` 只是候选，不自动注入；命中时仍过影响闸，并按 `query_hint` 与实际 query 的相关性打折。
+- 必须带 TTL；过期即 `expired`，不得作为「当前共同基础」使用。
+- Pask 式「静默副驾驶」输出的是概念澄清与语义提示，不是事实断言；ContextAgent 式「先判断是否需要主动服务」对应 `predicted_need.requires_service`，但「需要服务」不等于「被授权服务」。
+- 预取内容跨租户零共享；敏感字段只存 digest/引用。
+
+反模式：把「提前准备好」做成「提前执行」；把「预测到用户会问」当成「用户已经问过」。
+
+### 19.3 VIGIL 式兄弟监控运行时
+
+把 VIGIL 的结构映射到现有底座，不新增一个会执行任务的 agent：
+
+| VIGIL 概念 | Huginn 落点 | 约束 |
+|---|---|---|
+| 行为日志摄取 | [harness_ledger](file:///workspace/agent/huginn/research/harness_ledger.py#L1-L13) + audit chain + `task_metrics` | 只读；按租户分区 |
+| 情感银行（带衰减） | [persona_emotion](file:///workspace/agent/huginn/persona_emotion.py#L119) 的事件轨迹 + 衰减 | 情绪不是授权，不得改写身份 |
+| Roses / Buds / Thorns | `MonitorFinding`：稳定优势 / 新兴机会 / 失败模式 | 必须引用事件 id，不得泛泛而谈 |
+| 受保护的提示更新 | [meta_improver](file:///workspace/agent/huginn/harness/meta_improver.py#L492) 的 GREEN 采纳门 | 只改 adaptive/prompt block，不碰内核 |
+| 只读代码修复提案 | `CodeFixProposal`（diff + 证据 + 风险） | 只提案，不自动 apply |
+| 元程序性自我修复 | 诊断工具失败时输出**精确内部错误 + 降级诊断 + 修复计划** | 禁止优雅降级掩盖失败 |
+
+`MonitorFinding`：
+
+```python
+@dataclass
+class MonitorFinding:
+    finding_id: str
+    tenant_id: str
+    persona_id: str
+    kind: Literal["rose", "bud", "thorn"]   # 稳定优势 / 新兴机会 / 失败
+    subject: str
+    evidence_ids: list[str]
+    decayed_weight: float
+    confidence: float
+    suggested_surface: Literal["prompt_adaptive", "code_proposal", "none"]
+    created_at: str
+```
+
+与 AutoCrit 的关系：AutoCrit 的「推理 / 批判 / 执行监控」三元环是**快环内**的；我们的 [three_cabin_reflector](file:///workspace/agent/huginn/metacog/three_cabin_reflector.py#L1-L17) 已经承担其中的单步反射。VIGIL 是**跨轨迹、异步**的外部监控，不替代三舱，二者时间尺度不同。
+
+Wink 的可迁移点：用大规模轨迹建立**不当行为分类学**，做轻量异步干预，而不是每步都跑重型反思。对应本 spec 的轨迹索引（§11.1）与 `intervention_events`；单次干预解决率作为指标。
+
+### 19.4 目标漂移：从「规划下一步」到「持续对齐目标」
+
+RefAct 的修正是结构性的：ReAct 向前看，RefAct 持续检查当前状态相对于原始目标的位置。落地为 `GoalAnchor`：
+
+```python
+@dataclass
+class GoalAnchor:
+    goal_id: str
+    objective: str
+    required_results: list[str]
+    current_state_digest: str
+    alignment: float                 # 0..1
+    drift_reasons: list[str]
+    checked_at: str
+```
+
+Smith 的三类检测器 + 三级告警（阈值可配置，默认值仅作起点）：
+
+| 检测器 | 信号 | 默认触发 | 级别 |
+|---|---|---|---|
+| 倾向性回归 | 反思频次/深度相对基线 | 下降 > 15% | review |
+| 求真下降 | 证据引用率 / 接地率相对基线 | 下降 > 20% | intervene |
+| 因果图编辑距离 | 目标/计划因果图相对基线 | > 0.3 | pause |
+
+- 告警级别只能由监控环升级；任务 Agent 不能自己清除 `pause`。
+- `pause` 是 fail-safe，不替代规范账；恢复需要显式确认或策略放行。
+- `drift_events` 必须带检测器版本与基线 id，避免「阈值漂移」无法追责。
+- 现有 [detect_drift](file:///workspace/agent/huginn/metacog/target_chain.py#L231) 可作为第一版倾向性信号，但需要补因果图与接地率两个维度。
+
+### 19.5 经验蒸馏与在线适应：改检索策略，不改权重
+
+CER / MUSE / Memento / ATLAS 的共同点是**梯度无关的推理时适应**：
+
+| 机制 | 做法 | Huginn 落点 | 权威类别 |
+|---|---|---|---|
+| CER | 历史交互合成动态记忆缓冲区，新任务检索复用 | [experience_archive](file:///workspace/agent/huginn/research/experience_archive.py#L43-L70) + 动态 buffer | derived |
+| MUSE | 子任务完成后批判执行日志，蒸馏结构化知识 | 子任务结束钩子 + 经验账 | derived |
+| Memento | 成功/失败案例库 + 软 Q 学习优化检索策略 | 案例库 + `AdmissionPolicy` 的同族 bandit/RL | 策略，不改权重 |
+| ATLAS | 教师-学生分离：教师蒸馏指导经验，学生执行 | 教师只写经验账；学生只执行 | 教师产物 = derived |
+
+硬规则：
+
+- 蒸馏产物默认 `derived`，不得直接当事实依据；晋升走 §18.6 的写入侧门。
+- 教师不得执行用户任务；学生不得改写教师记忆。
+- 软 Q / 检索策略更新必须可回放、可审计；每次策略切换记录 `policy_version`。
+- 经验库按 tenant + task family 分区，防止跨域污染。
+
+### 19.6 贝叶斯惊奇：不要问「这有用吗」，问「什么改变了信念」
+
+AutoDiscovery 的核心可迁移点：有用性/新颖性主观且难优化，**信念变化**可计算、可验证。
+
+```python
+surprise = KL( P(belief | evidence) || P(belief) )
+```
+
+用途：
+
+1. **Dreamer 优先级**：高惊奇 finding 先诊断，低惊奇进低优先级队列或丢弃。
+2. **探索奖励**：离线策略学习里，用 surprise 作为探索项，而不是让 LLM 自评「新颖」。
+3. **监控信号**：惊奇骤降可能意味着认知停滞；惊奇骤升可能意味着分布外事件。
+
+约束：
+
+- 惊奇不是权威：高惊奇不能绕过 Hygiene Gate，也不能提升 evidential authority。
+- 估计方法必须版本化：廉价代理（预测误差/矛盾出现/检索失败）与完整 LLM 采样版分开记录，避免把代理当定理。
+- 校准目标：与人工「惊讶感」评分相关性 ≥ 0.6（AutoDiscovery 报告 0.67，仅作参照，不作承诺）。
+- 不能只用 LLM 自评作为 reward；至少两路信号交叉（惊奇 + 下游检索/任务改善）。
+
+### 19.7 数据契约（补）
+
+```sql
+CREATE TABLE idle_jobs (
+  job_id          TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  persona_id      TEXT NOT NULL,
+  job_type        TEXT NOT NULL,   -- demand_probe|structure_probe|surprise_probe|prepare_context
+  sleep_state     TEXT NOT NULL,   -- active|sleep
+  budget_ms       INTEGER NOT NULL,
+  status          TEXT NOT NULL,   -- queued|running|done|failed|expired
+  created_at      TEXT NOT NULL,
+  finished_at     TEXT
+);
+
+CREATE TABLE prepared_contexts (
+  prep_id         TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  persona_id      TEXT NOT NULL,
+  predicted_need  TEXT NOT NULL,
+  evidence_json   TEXT NOT NULL,
+  authority_json  TEXT NOT NULL,
+  ttl_s           INTEGER NOT NULL,
+  status          TEXT NOT NULL,   -- candidate|expired|consumed
+  created_at      TEXT NOT NULL
+);
+
+CREATE TABLE monitor_findings (
+  finding_id      TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  persona_id      TEXT NOT NULL,
+  kind            TEXT NOT NULL,   -- rose|bud|thorn
+  subject         TEXT NOT NULL,
+  evidence_json   TEXT NOT NULL,
+  decayed_weight  REAL NOT NULL,
+  confidence      REAL NOT NULL,
+  suggested_surface TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+
+CREATE TABLE drift_events (
+  event_id        TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  detector        TEXT NOT NULL,   -- propensity|truth_seeking|causal_edit
+  baseline_id     TEXT NOT NULL,
+  observed        REAL NOT NULL,
+  threshold       REAL NOT NULL,
+  level           TEXT NOT NULL,   -- review|intervene|pause
+  evidence_json   TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+
+CREATE TABLE intervention_events (
+  intervention_id TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  trigger_event   TEXT NOT NULL,
+  action          TEXT NOT NULL,   -- prompt_patch|scope_reduce|pause|code_proposal
+  outcome         TEXT,            -- resolved|unresolved|regressed
+  created_at      TEXT NOT NULL
+);
+```
+
+### 19.8 不变量（补 I25–I34）
+
+| # | 不变量 | 测试 |
+|---|---|---|
+| I25 | 监控环是兄弟运行时：不得执行用户任务、不得写 `authorize`、不得改 `PersonaKernel` | `test_vigil_runtime.py::test_no_task_authority` |
+| I26 | `PreparedContext` 只是候选，不自动注入；TTL 过期即不可用 | `test_proactive_prep.py::test_candidate_and_ttl` |
+| I27 | 空闲环不得产生用户可见动作；任何动作仍需规范账授权 | `test_proactive_prep.py::test_no_visible_action` |
+| I28 | 监控更新只作用于 adaptive/prompt block；内核不可变 | `test_vigil_runtime.py::test_protected_surface` |
+| I29 | 告警级别单调升级；任务 Agent 不能自行清除 `pause` | `test_drift_gate.py::test_pause_not_self_clearable` |
+| I30 | 教师/蒸馏产物为 `derived`；未经晋升不得作为直接证据 | `test_distillation_authority.py::test_derived_only` |
+| I31 | 软 Q / 检索策略更新不改权重，且可回放审计 | `test_case_policy.py::test_replayable_no_weight_update` |
+| I32 | 高惊奇不得绕过 Hygiene Gate，不得提升证据权威 | `test_bayesian_surprise.py::test_surprise_not_authority` |
+| I33 | 监控自身失败必须显式降级（精确错误 + 降级诊断），禁止静默通过 | `test_vigil_runtime.py::test_explicit_degradation` |
+| I34 | 空闲任务按租户隔离且有预算上限；超预算即停 | `test_idle_jobs.py::test_tenant_and_budget` |
+
+### 19.9 指标（补）
+
+| 指标 | 定义 | 目标 |
+|---|---|---|
+| anticipation hit rate | `PreparedContext` 被后续真实 query 命中的比例 | ≥ 40% |
+| wasted prefetch ratio | 过期/未消费的预取占比 | ≤ 30% |
+| time-to-evidence | 从问题出现到证据齐备的时间 | 相对基线下降 ≥ 25% |
+| drift detection lead time | 漂移发生到告警的步数 | ≤ 3 步 |
+| false intervention rate | 干预后无改善的比例 | ≤ 10% |
+| intervention success rate | 单次干预解决的不当行为比例 | ≥ 80%（Wink 90% 作参照） |
+| error propagation reduction | 下游错误传播相对基线下降 | ≥ 30%（AutoCrit 减半作参照） |
+| surprise–human correlation | 惊奇分与人工惊讶感评分相关性 | ≥ 0.6 |
+| monitor coverage | 被监控事件 / 应监控事件 | ≥ 95% |
+| idle cost per useful prep | 每个有效预取的 CPU/LLM 成本 | 有预算上限，按租户计量 |
+
+### 19.10 路线补丁
+
+| 阶段 | 内容 | 出口 |
+|---|---|---|
+| P1-e | `PreparedContext` + idle jobs + TTL + 影响闸接入 | I26–I27、I34 绿 |
+| P2-e | VIGIL 兄弟运行时 + `drift_events` + 三级告警 | I25、I28–I29、I33 绿 |
+| P2-f | 案例库 + 子任务后蒸馏 + 软 Q 检索策略 | I30–I31 绿 |
+| P3-c | 教师-学生分离 + 主动策略离线训练 + 惊奇优先 | E5、E6 达标 |
+
+可检验实验：
+
+- **E5**：主动预取（ProAct 式）在真实任务分布上，time-to-evidence 与准确率是否优于纯被动检索。
+- **E6**：贝叶斯惊奇排序 vs LLM 自评排序，在人工标注的 200 条 finding 上，前者 precision@10 是否更高。
+
+### 19.11 风险与反模式
+
+| 风险 | 处理 |
+|---|---|
+| 常驻系统变成「常驻执行」 | 监控环写权限白名单；用户可见动作一律走规范账 |
+| 预取泄漏隐私 / 跨租户 | 预取按 tenant 分区；敏感内容只存 digest；TTL 短 |
+| 监控变成第二个任务 Agent | 禁止工具执行权限；只读日志 + 提案；代码修复只出 diff |
+| 漂移阈值误报 | 基线按 tenant/persona/task family 维护；三级告警先 review；阈值版本化 |
+| 惊奇奖励被游戏化 | 惊奇只做排序/探索项；硬约束 mask；两路信号交叉验证 |
+| 教师-学生共谋 | 教师产物 derived；学生执行记录可审计；独立验证器抽查 |
+| 监控自身静默失败 | 必须输出精确错误 + 降级诊断；I33 硬门 |
+
+明确不做：
+
+- 不做「监控 Agent 直接接管任务」。
+- 不做「预取即执行」。
+- 不做「用 LLM 自评新颖性」作为唯一探索信号。
+- 不做「漂移阈值写死在代码里」。
+- 不做「教师产物直接当事实」。
+
+
 
 
