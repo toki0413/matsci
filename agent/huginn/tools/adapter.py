@@ -1184,6 +1184,7 @@ class ToolAdapter:
             try:
                 from huginn.core_types import RiskLevel
                 from huginn.env_access import env_bool, env_str
+                from huginn.metacog.vigil_runtime import get_vigil_runtime
                 from huginn.normative.shadow import evaluate_tool_call
                 from huginn.permissions import extract_target_from_args
 
@@ -1218,6 +1219,7 @@ class ToolAdapter:
                     resources=(_target,) if _target else (),
                     risk=_risk,
                     requires_authorization=not getattr(tool, "read_only", False),
+                    trust=get_vigil_runtime().status().trust,
                 )
                 if (
                     _normative is not None

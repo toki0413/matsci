@@ -18,6 +18,7 @@ from typing import Any
 from huginn.core_types import RiskLevel
 from huginn.normative.admission import AdmissionDecision, AdmissionRequest, admit
 from huginn.normative.ledger import NormativeLedger, register_append_listener
+from huginn.normative.system3 import admit_with_trust
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ def evaluate_tool_call(
     risk: RiskLevel = RiskLevel.MEDIUM,
     requires_authorization: bool = True,
     claim_statuses: dict[str, str] | None = None,
+    trust: str | None = None,
     ledger: NormativeLedger | None = None,
     enabled: bool | None = None,
 ) -> AdmissionDecision | None:
@@ -87,11 +89,13 @@ def evaluate_tool_call(
             risk=risk,
             requires_authorization=requires_authorization,
         )
-        decision = admit(
-            request,
-            _view(_l, tenant_id, session_id),
-            claim_statuses=claim_statuses,
-        )
+        view = _view(_l, tenant_id, session_id)
+        if trust is not None:
+            decision = admit_with_trust(
+                request, view, trust=trust, claim_statuses=claim_statuses
+            )
+        else:
+            decision = admit(request, view, claim_statuses=claim_statuses)
         if not decision.allow:
             logger.debug(
                 "normative shadow %s/%s tool=%s mode=%s required=%s",

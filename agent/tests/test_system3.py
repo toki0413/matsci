@@ -1,0 +1,84 @@
+"""System3 trust-aware admission 测试."""
+from __future__ import annotations
+
+from huginn.core_types import RiskLevel
+from huginn.normative.admission import AdmissionRequest
+from huginn.normative.ledger import NormativeLedger
+from huginn.normative.system3 import admit_with_trust
+
+TENANT = "t1"
+SESSION = "s1"
+SCOPE = {"actions": ["write"], "resources": ["*"], "limits": {}}
+
+
+def _grounding(tmp_path):
+    ledger = NormativeLedger(tmp_path / "norm.db")
+    ledger.append_act(
+        tenant_id=TENANT,
+        session_id=SESSION,
+        actor="user",
+        act_type="authorize",
+        proposition_id="p1",
+        scope=SCOPE,
+    )
+    return ledger.project(TENANT, SESSION)
+
+
+def _request(**overrides) -> AdmissionRequest:
+    data = {
+        "tenant_id": TENANT,
+        "session_id": SESSION,
+        "action_name": "write",
+        "risk": RiskLevel.LOW,
+        "claim_ids": ("c1",),
+    }
+    data.update(overrides)
+    return AdmissionRequest(**data)
+
+
+def test_full_trust_allows_low_risk_with_contested_claim(tmp_path):
+    view = _grounding(tmp_path)
+    decision = admit_with_trust(
+        _request(),
+        view,
+        trust="full",
+        claim_statuses={"c1": "contested"},
+    )
+    assert decision.allow is True
+    assert decision.mode == "allow"
+
+
+def test_blind_trust_degrades_low_risk_with_contested_claim(tmp_path):
+    view = _grounding(tmp_path)
+    decision = admit_with_trust(
+        _request(),
+        view,
+        trust="blind",
+        claim_statuses={"c1": "contested"},
+    )
+    assert decision.allow is False
+    assert decision.mode == "degrade"
+    assert "monitor trust=blind" in decision.reasons
+
+
+def test_blind_trust_still_allows_read_only(tmp_path):
+    view = _grounding(tmp_path)
+    decision = admit_with_trust(
+        _request(requires_authorization=False),
+        view,
+        trust="blind",
+        claim_statuses={"c1": "contested"},
+    )
+    assert decision.allow is True
+
+
+def test_blind_trust_without_authorization_asks(tmp_path):
+    ledger = NormativeLedger(tmp_path / "norm.db")
+    view = ledger.project(TENANT, SESSION)
+    decision = admit_with_trust(
+        _request(),
+        view,
+        trust="blind",
+    )
+    assert decision.allow is False
+    assert decision.mode == "ask"
