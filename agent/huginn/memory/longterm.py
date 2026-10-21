@@ -1342,6 +1342,55 @@ class LongTermMemory:
                 self._vector_store.delete([entry_id])
             return True
 
+    def snapshot_for_dream(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Dreamer 的结构探针输入：alive 记忆的轻量投影（不加载 embedding）.
+
+        degree 用 tags 数近似（无图时的可用代理）；stale 由 age_days 判定；
+        contradiction_pressure 由 contradicts: tag 置高。
+        """
+        where, params = self._where_alive("m")
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT m.id, m.content, m.importance, m.tags, m.tier, "
+                f"m.created_at, m.last_accessed FROM memories AS m "
+                f"WHERE {where} ORDER BY m.importance DESC LIMIT ?",
+                (*params, int(limit)),
+            ).fetchall()
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                tags = json.loads(row["tags"]) if row["tags"] else []
+            except (json.JSONDecodeError, TypeError):
+                tags = []
+            if not isinstance(tags, list):
+                tags = []
+            contradicts = any(
+                isinstance(tag, str) and tag.startswith("contradicts:")
+                for tag in tags
+            )
+            age_days = 0.0
+            try:
+                created = datetime.fromisoformat(
+                    str(row["created_at"]).replace("Z", "+00:00")
+                )
+                now = datetime.now(created.tzinfo) if created.tzinfo else datetime.now()
+                age_days = max(0.0, (now - created).total_seconds() / 86400)
+            except (TypeError, ValueError):
+                age_days = 0.0
+            out.append({
+                "memory_id": row["id"],
+                "content": row["content"],
+                "importance": float(row["importance"] or 0.5),
+                "tier": row["tier"] or "mid",
+                "tags": tags,
+                "degree": len(tags),
+                "age_days": round(age_days, 1),
+                "stale": age_days > 90,
+                "contradiction_pressure": 0.9 if contradicts else 0.0,
+            })
+        return out
+
     def list_by_category(
         self,
         category: str,

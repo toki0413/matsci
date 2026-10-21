@@ -1728,11 +1728,13 @@ CREATE TABLE reconcile_records (
 - [x] VIGIL 监控核心：L0–L4 状态机、有界重启、队列丢弃、DegradationEvent；Smith 漂移 review/intervene/pause。
 - [x] 世界模型 binding 纯核心：prediction → reconcile → authority ladder、worldview 隔离、prediction_error 信号。
 - [x] `drift_events` 审计账；`record_prediction_error` 把 reconcile 误差落成 review/intervene 事件。
+- [x] 梦境生产接线（第一段）：MemoryMaintainer 睡眠门控 + DreamStore 落库；修复仍是提案，不自动执行。
+- [x] Consolidator 显式 apply/rollback：soft_decay 与 quarantine 可逆执行；其余动作保持提案。
 
 待完成（按依赖顺序）：
 
-- [ ] 梦境周期生产接线：SleepClock 调度、Consolidator 执行修复、DreamObject 落库。
-- [ ] VIGIL 生产接线：兄弟进程/线程、心跳 watchdog、`drift_events` 落库、System3 读取 `trust`。
+- [ ] Consolidator 其余动作：add_link / merge_duplicate / summarize / split_cluster / re_anchor 的专用执行器。
+- [ ] VIGIL 生产接线：兄弟进程/线程、心跳 watchdog、System3 读取 `trust`。
 - [ ] 世界模型生产接线：PMK `world_model` stalk、真实执行后自动调用 `record_prediction_error`。
 - [ ] PMK LLM 判定接入异步 reflect 路径（缓存 + 超时 + 失败降级）。
 
@@ -1751,6 +1753,8 @@ CREATE TABLE reconcile_records (
 | `huginn/memory/hygiene_gate.py` | 保留闸 / 影响闸 / 上下文装配 | I13–I15、I17、I20–I21 |
 | `huginn/memory/governance.py` | 记忆状态事件审计账 | I16 |
 | `huginn/memory/dream.py` | SleepClock / Dreamer / Analyst / Consolidator / 写入侧晋升门 | I19、I21、I23 |
+| `huginn/memory/dream_store.py` | DreamObject / 修复提案落库；显式 applied | I21 |
+| `huginn/memory/dream_apply.py` | soft_decay / quarantine 的显式 apply + rollback | I20–I21 |
 | `huginn/metacog/vigil.py` | VIGIL L0–L4 降级状态机、有界重启、队列丢弃 | I35–I40 |
 | `huginn/metacog/drift_gate.py` | Smith 漂移 review/intervene/pause | I29 |
 | `huginn/research/world_model_binding.py` | prediction → reconcile → authority ladder、worldview 隔离 | I41–I50 |
@@ -1767,6 +1771,9 @@ CREATE TABLE reconcile_records (
 | `HUGINN_TENANT_ID` | `default` | 规范账/记忆账租户分区 | 部署时显式设置 |
 | `HUGINN_MEMORY_INFLUENCE_GATE` | `1` | 召回结果过影响闸 | 设 `0` 回退纯召回 |
 | `HUGINN_MEMORY_AUDIT` | `1` | 影响判定写审计事件 | 设 `0` 关闭 |
+| `HUGINN_DREAM_ENABLED` | `1` | 梦境总开关 | 设 `0` |
+| `HUGINN_DREAM_TIMEZONE` | `UTC` | 人格作息时区 | 按部署设置 |
+| `HUGINN_DREAM_WINDOWS` | `""` | JSON 作息窗口，空 = 不进入 sleep | 配置后梦境才会运行 |
 
 ### 22.3 验证命令
 
@@ -1776,13 +1783,14 @@ python -m ruff check huginn/normative huginn/memory/hygiene_gate.py \
   huginn/memory/governance.py huginn/tools/adapter.py huginn/routes/ws_helpers.py
 python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
   tests/test_memory_hygiene_gate.py tests/test_memory_governance.py \
-  tests/test_dream_cycle.py tests/test_vigil_runtime.py \
+  tests/test_dream_cycle.py tests/test_dream_store.py tests/test_dream_apply.py \
+  tests/test_memory_maintainer_dream.py tests/test_vigil_runtime.py \
   tests/test_drift_ledger.py tests/test_world_model_binding.py \
   tests/test_temporal_pmk.py tests/test_arch_gate_registry.py \
   tests/test_env_surface_governance.py -q -o addopts=""
 ```
 
-当前证据：296 passed（规范/准入/记忆/梦境/VIGIL/漂移/世界模型/PMK/arch/env/工具/权限/研究管线），ruff clean。
+当前证据：314 passed（规范/准入/记忆/梦境/维护器/apply/VIGIL/漂移/世界模型/PMK/arch/env/工具/权限/研究管线），ruff clean。
 
 ### 22.4 已知限制
 
@@ -1791,7 +1799,7 @@ python -m pytest tests/test_normative_ledger.py tests/test_admission_gate.py \
 - 影响闸的 `relevance` 在召回路径用排序近似，不是真实相似度；后续接 embedding/RRF 分数。
 - 记忆审计目前每次召回逐条写事件；高频场景需批量/采样，否则事件账增长快。
 - `HUGINN_NORMATIVE_ENFORCE` 默认关闭：显式审批后的授权已落账，但自动批准路径尚未写 system authorize，直接开启会阻断 auto-approved 高风险动作。
-- 梦境周期、VIGIL、世界模型 binding 目前是**纯核心 + 单测**，尚未接生产调度/落库；接线前不得宣称这些能力已在线生效。
+- 梦境周期已接 MemoryMaintainer + DreamStore；Consolidator 的 soft_decay/quarantine 已支持显式 apply/rollback，其余动作仍是提案；`HUGINN_DREAM_WINDOWS` 为空时不会进入 sleep（不伪造作息）。
 - VIGIL 的 `heartbeat_timeout` 依赖调用方驱动 `tick`；独立进程/watchdog 尚未实现。
 - 世界模型 `prediction_error` 已有 `record_prediction_error` 落库函数，但真实执行后自动调用尚未接线；PMK 还没有 `world_model` stalk。
 

@@ -738,7 +738,12 @@ async def lifespan(app: FastAPI):
     memory_maintainer = None
     try:
         from huginn.memory.maintainer import MemoryMaintainer
-        memory_maintainer = MemoryMaintainer(interval_hours=1)
+
+        _ctx = get_context()
+        memory_maintainer = MemoryMaintainer(
+            memory_manager=getattr(_ctx, "memory_manager", None),
+            interval=3600,
+        )
         memory_maintainer.start()
         logger.info("[startup] memory maintainer started")
     except Exception as exc:
