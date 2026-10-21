@@ -925,6 +925,45 @@ class ToolAdapter:
                         and output.get("success", True) is not False
                     )
                     get_vigil_runtime().record_job(success)
+                    # 行为指纹：只累积可数事件，供 VIGIL 周期比较 JS 散度.
+                    try:
+                        from huginn.env_access import env_str
+                        from huginn.research.behavior_fingerprint import (
+                            get_behavior_monitor,
+                        )
+
+                        _is_destr = False
+                        try:
+                            _is_destr = bool(tool.is_destructive(input_data))
+                        except Exception:
+                            logger.debug(
+                                "behavior risk probe failed", exc_info=True
+                            )
+                        _risk_label = (
+                            "high"
+                            if _is_destr
+                            else (
+                                "low"
+                                if getattr(tool, "read_only", False)
+                                else "medium"
+                            )
+                        )
+                        get_behavior_monitor().record_event(
+                            tenant_id=env_str("HUGINN_TENANT_ID"),
+                            persona_id="default",
+                            event={
+                                "tool": tool.name,
+                                "success": success,
+                                "clarified": tool.name == "clarification_tool",
+                                "evidence_gate_passed": success,
+                                "risk": _risk_label,
+                                "boundary_hit": reason == "normative_admission",
+                            },
+                        )
+                    except Exception:
+                        logger.debug(
+                            "behavior fingerprint record skipped", exc_info=True
+                        )
                 except Exception:
                     logger.debug("vigil record_job skipped", exc_info=True)
             except Exception:
@@ -1172,6 +1211,7 @@ class ToolAdapter:
             input_data: Any,
             kwargs: dict[str, Any],
             context: Any = None,
+            admission_meta: dict[str, Any] | None = None,
         ) -> tuple[dict[str, Any] | None, Any]:
             """Run pre-execution gates: permission, cache, router, budget,
             loop detection, circuit breaker.
@@ -1179,7 +1219,12 @@ class ToolAdapter:
             Returns ``(early_return, router)``.  ``early_return`` is a
             dict to return immediately if a gate blocks, or ``None``.
             ``router`` is the ToolCallRouter (may be None).
+
+            ``admission_meta`` 非空时写入轨迹 sample_id，供执行后回填 outcome。
             """
+            if admission_meta is None:
+                admission_meta = {}
+            admission_meta["sample_id"] = ""
             # 1. Permission
             _sid = (
                 getattr(context, "session_id", None) or "default"
@@ -1199,7 +1244,11 @@ class ToolAdapter:
                 from huginn.core_types import RiskLevel
                 from huginn.env_access import env_bool, env_str
                 from huginn.metacog.vigil_runtime import get_vigil_runtime
-                from huginn.normative.shadow import evaluate_tool_call
+                from huginn.normative.shadow import (
+                    annotate_admission_sample,
+                    evaluate_tool_call,
+                    record_admission_sample,
+                )
                 from huginn.permissions import extract_target_from_args
 
                 _args = (
@@ -1235,6 +1284,15 @@ class ToolAdapter:
                     requires_authorization=not getattr(tool, "read_only", False),
                     trust=get_vigil_runtime().status().trust,
                 )
+                if _normative is not None:
+                    admission_meta["sample_id"] = record_admission_sample(
+                        tenant_id=env_str("HUGINN_TENANT_ID"),
+                        session_id=_sid,
+                        tool_name=tool.name,
+                        decision=_normative,
+                        risk=_risk,
+                        resources=(_target,) if _target else (),
+                    )
                 if (
                     _normative is not None
                     and not _normative.allow
@@ -1248,6 +1306,15 @@ class ToolAdapter:
                         ),
                         "required_acts": list(_normative.required_acts),
                     }
+                    if admission_meta.get("sample_id"):
+                        annotate_admission_sample(
+                            admission_meta["sample_id"],
+                            outcome={
+                                "success": False,
+                                "blocked": True,
+                                "reward": 0.0,
+                            },
+                        )
                     _audit(
                         input_data,
                         output,
@@ -1380,6 +1447,7 @@ class ToolAdapter:
             router: Any,
             duration: float = 0.0,
             kwargs: dict[str, Any] | None = None,
+            admission_sample_id: str = "",
         ) -> dict[str, Any]:
             """Post-execution: constraints, audit, cache, publish."""
             if router is not None:
@@ -1435,6 +1503,19 @@ class ToolAdapter:
             result = _check_constraints(result, context)
             output = _serialize(result)
             _audit(input_data, output, approved=True, reason=None)
+            if admission_sample_id:
+                try:
+                    from huginn.normative.shadow import annotate_admission_sample
+
+                    annotate_admission_sample(
+                        admission_sample_id,
+                        outcome={
+                            "success": bool(result.success),
+                            "reward": 1.0 if result.success else 0.0,
+                        },
+                    )
+                except Exception:  # 防御: 轨迹回填失败不影响工具
+                    logger.debug("trajectory annotate skipped", exc_info=True)
             if result.success:
                 _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
                 _set_cached(input_data, output)
@@ -1487,7 +1568,10 @@ class ToolAdapter:
             input_data = tool.input_schema(**kwargs)
 
             # Shared pre-checks (permission, cache, router, budget, loop, breaker)
-            early, router = _run_pre_checks(input_data, kwargs, context)
+            admission_meta: dict[str, Any] = {}
+            early, router = _run_pre_checks(
+                input_data, kwargs, context, admission_meta
+            )
             if early is not None:
                 return early
 
@@ -1625,6 +1709,7 @@ class ToolAdapter:
                 router,
                 time.time() - _call_start,
                 kwargs,
+                admission_meta.get("sample_id", ""),
             )
             return output
 
@@ -1642,7 +1727,10 @@ class ToolAdapter:
             input_data = tool.input_schema(**kwargs)
 
             # Shared pre-checks (permission, cache, router, budget, loop, breaker)
-            early, router = _run_pre_checks(input_data, kwargs, context)
+            admission_meta: dict[str, Any] = {}
+            early, router = _run_pre_checks(
+                input_data, kwargs, context, admission_meta
+            )
             if early is not None:
                 return early
 
@@ -1806,6 +1894,7 @@ class ToolAdapter:
                 router,
                 time.time() - _call_start,
                 kwargs,
+                admission_meta.get("sample_id", ""),
             )
             return output
 

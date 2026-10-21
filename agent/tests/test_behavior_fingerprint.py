@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from huginn.research.behavior_fingerprint import (
+    BehaviorMonitor,
     behavior_drift,
     fingerprint_from_events,
     js_divergence,
@@ -47,6 +48,38 @@ def test_empty_events_are_zero_not_fabricated():
     assert empty.n_events == 0
     assert empty.tool_family_dist == {}
     assert js_divergence({}, {}) == 0.0
+
+
+def test_monitor_baseline_and_drift_event(tmp_path):
+    from huginn.metacog.drift_ledger import DriftLedger
+
+    ledger = DriftLedger(tmp_path / "drift.db")
+    monitor = BehaviorMonitor(window=10, threshold=0.1)
+    for _ in range(5):
+        monitor.record_event(
+            tenant_id="t1", persona_id="p1",
+            event={"tool": "vasp_tool", "risk": "low"},
+        )
+    assert monitor.maybe_record_drift(
+        tenant_id="t1", persona_id="p1", ledger=ledger
+    ) is None, "首次只建基线"
+
+    # 窗口滚动为全 lammps → JS=1 > 阈值
+    for _ in range(10):
+        monitor.record_event(
+            tenant_id="t1", persona_id="p1",
+            event={"tool": "lammps_tool", "risk": "high"},
+        )
+    event_id = monitor.maybe_record_drift(
+        tenant_id="t1", persona_id="p1", ledger=ledger
+    )
+    assert event_id
+    events = ledger.list_events(tenant_id="t1", session_id="p1")
+    assert events[0]["detector"] == "behavior_fingerprint"
+    assert events[0]["level"] == "review"
+
+    # 其他租户不受影响
+    assert monitor.current(tenant_id="t2", persona_id="p1").n_events == 0
 
 
 def test_rates_and_boundary_hits():

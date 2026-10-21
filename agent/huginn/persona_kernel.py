@@ -79,6 +79,16 @@ class PersonaParams:
             "tool_bias": dict(self.tool_bias),
         }
 
+    def plan_accept_threshold(self) -> float:
+        """plan_check 的置信度门槛：严格度越高，越不轻易放行."""
+        value = 0.5 + (float(self.evidence_strictness) - 0.7) * 0.5
+        return round(max(0.3, min(0.9, value)), 4)
+
+    def plan_clarify_fails(self, *, base: int = 3) -> int:
+        """连续失败多少次触发主动澄清；澄清阈值越高越早问."""
+        value = float(base) - (float(self.clarification_threshold) - 0.5) * 4.0
+        return max(2, min(6, int(round(value))))
+
 
 @dataclass(frozen=True)
 class PersonaRevision:
@@ -235,6 +245,16 @@ class PersonaRevisionStore:
         return self.activate(revision_id)
 
 
+_revision_store: PersonaRevisionStore | None = None
+
+
+def get_persona_revision_store() -> PersonaRevisionStore:
+    global _revision_store
+    if _revision_store is None:
+        _revision_store = PersonaRevisionStore()
+    return _revision_store
+
+
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
     for key in ("delta_json", "evidence_json", "eval_json"):
@@ -339,5 +359,6 @@ __all__ = [
     "RevisionStatus",
     "evaluate_revision",
     "get_persona_evidence_store",
+    "get_persona_revision_store",
     "render_adaptive_layer",
 ]

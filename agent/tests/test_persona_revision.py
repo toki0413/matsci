@@ -94,6 +94,56 @@ def test_active_revision_and_rollback(tmp_path):
     assert store.get("rev1")["status"] == "active"
 
 
+def test_params_drive_runtime_thresholds():
+    """I5/DoD 4: PersonaParams 真正驱动 plan_check 门槛，默认值保持旧行为."""
+    default = PersonaParams()
+    assert default.plan_accept_threshold() == 0.5
+    assert default.plan_clarify_fails() == 3
+
+    strict = PersonaParams(evidence_strictness=0.9, clarification_threshold=0.7)
+    assert strict.plan_accept_threshold() > default.plan_accept_threshold()
+    assert strict.plan_clarify_fails() < default.plan_clarify_fails()
+
+    loose = PersonaParams(evidence_strictness=0.3, clarification_threshold=0.2)
+    assert loose.plan_accept_threshold() < default.plan_accept_threshold()
+    assert loose.plan_clarify_fails() > default.plan_clarify_fails()
+
+
+def test_runtime_reads_persona_params_and_active_revision(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import huginn.persona_kernel as kernel
+    from huginn.autoloop.engine_observe import EngineObserve
+
+    store = PersonaRevisionStore(tmp_path / "rev.db")
+    active = evaluate_revision(
+        _revision(revision_id="rev-active", delta={"verbosity": 0.9}),
+        cross_session_evidence=3, outcome_improved=True,
+        ood_regressed=False, safety_regression=False,
+    )
+    store.save(active)
+    store.activate("rev-active")
+    monkeypatch.setattr(kernel, "get_persona_revision_store", lambda: store)
+
+    persona = SimpleNamespace(
+        variables={"persona_params": {"evidence_strictness": 0.8}}
+    )
+
+    class _PM:
+        def get(self, name):
+            return persona
+
+    class _Engine:
+        _last_persona = "p1"
+
+        def _get_persona_manager(self):
+            return _PM()
+
+    params = EngineObserve(_Engine())._persona_params()
+    assert params.evidence_strictness == 0.8
+    assert params.verbosity == 0.9, "active revision 必须覆盖默认参数"
+
+
 def test_adaptive_layer_is_readonly_projection(tmp_path):
     store = PersonaEvidenceStore(tmp_path / "evidence.db")
     store.append("p1", "iter 1: memory says A")

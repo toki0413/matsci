@@ -122,6 +122,39 @@ class TrajectoryIndex:
             conn.commit()
         return sample_id
 
+    def annotate(
+        self,
+        sample_id: str,
+        *,
+        outcome: dict[str, Any] | None = None,
+        decision: dict[str, Any] | None = None,
+    ) -> bool:
+        """执行后回填 outcome / 最终决策；保持其余字段不变."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM admission_samples WHERE sample_id = ?",
+                (sample_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                return False
+            if outcome is not None:
+                payload["outcome"] = dict(outcome)
+            if decision is not None:
+                payload["decision"] = dict(decision)
+            conn.execute(
+                "UPDATE admission_samples SET payload_json = ? WHERE sample_id = ?",
+                (
+                    json.dumps(payload, ensure_ascii=False, default=str),
+                    sample_id,
+                ),
+            )
+            conn.commit()
+        return True
+
     def list_samples(self, tenant_id: str, limit: int = 1000) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -421,6 +454,74 @@ def ope_report(
     }
 
 
+def sample_from_payload(
+    payload: dict[str, Any],
+    *,
+    tenant_id: str,
+    sample_id: str = "",
+) -> AdmissionSample | None:
+    """把 TrajectoryIndex 中的 payload 还原成 AdmissionSample；坏数据返回 None."""
+    try:
+        query = payload.get("query") or {}
+        return AdmissionSample(
+            query=AdmissionQuery(
+                intent=str(query.get("intent") or ""),
+                goal=str(query.get("goal") or ""),
+                persona_params=dict(query.get("persona_params") or {}),
+            ),
+            context_features=dict(payload.get("context_features") or {}),
+            decision=dict(payload.get("decision") or {}),
+            outcome=dict(payload.get("outcome") or {}),
+            tenant_id=tenant_id,
+            ts=str(payload.get("ts") or ""),
+            behaviour_prob=float(payload.get("behaviour_prob", 1.0) or 1.0),
+            sample_id=sample_id,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def build_ope_report(
+    samples: list[AdmissionSample],
+    *,
+    train_ratio: float = 0.7,
+    policy: AdmissionPolicy | None = None,
+    policy_id: str = "candidate",
+) -> dict[str, Any]:
+    """离线 OPE 报告：按时间切分 train/eval，训练策略后评估 + 影子模式.
+
+    禁止用同一批数据既训练又评估造成泄漏；输出仅作灰度前置证据。
+    """
+    ordered = sorted(samples, key=lambda s: s.ts)
+    cut = max(0, min(len(ordered), int(len(ordered) * float(train_ratio))))
+    train, eval_samples = ordered[:cut], ordered[cut:]
+    policy = policy or AdmissionPolicy()
+    for sample in train:
+        policy.update(sample.action(), sample.reward())
+
+    def target(sample: AdmissionSample) -> str:
+        features = sample.context_features
+        try:
+            risk = RiskLevel(str(features.get("risk", "low")))
+        except ValueError:
+            risk = RiskLevel.LOW
+        return policy.select(
+            authorized=bool(features.get("authorized")),
+            revoked=bool(features.get("revoked")),
+            cross_tenant=bool(
+                features.get("tenant_id", sample.tenant_id) != sample.tenant_id
+            ),
+            risk=risk,
+        )
+
+    report = ope_report(eval_samples, target, policy_id=policy_id)
+    report["train_n"] = len(train)
+    report["eval_n"] = len(eval_samples)
+    report["shadow"] = shadow_evaluate(eval_samples, policy)
+    report["note"] = "offline OPE only; shadow before any rollout"
+    return report
+
+
 def shadow_evaluate(
     samples: list[AdmissionSample],
     policy: AdmissionPolicy,
@@ -456,6 +557,8 @@ __all__ = [
     "MemoryArm",
     "MemoryOpPolicy",
     "TrajectoryIndex",
+    "build_ope_report",
     "ope_report",
+    "sample_from_payload",
     "shadow_evaluate",
 ]

@@ -207,8 +207,8 @@ class IdleJobQueue:
 
     def submit(self, job: IdleJob, *, budget_cap_ms: int = 60_000) -> str:
         with self._lock:
-            if job.sleep_state != "sleep":
-                return "DROPPED"  # 活跃状态不跑巩固/预取
+            # 本队列只承载探针/预取（非破坏、无用户可见动作），活跃间隙也可跑；
+            # 睡眠门控只约束梦境巩固（由 run_dream_cycle 负责）。
             queue = self._queues.setdefault(job.tenant_id, [])
             if len(queue) >= self.per_tenant_max:
                 return "DROPPED"

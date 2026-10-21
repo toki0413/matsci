@@ -770,6 +770,20 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.debug(f"[startup] vigil runtime skipped: {exc}")
 
+    # Start idle runtime (PreparedContext / IdleJobQueue) — only prefetch, no visible actions.
+    idle_runtime = None
+    try:
+        from huginn.env_access import env_bool as _env_bool
+
+        if _env_bool("HUGINN_IDLE_ENABLED"):
+            from huginn.metacog.idle_runtime import get_idle_runtime
+
+            idle_runtime = get_idle_runtime()
+            idle_runtime.start()
+            logger.info("[startup] idle runtime started")
+    except Exception as exc:
+        logger.debug(f"[startup] idle runtime skipped: {exc}")
+
     # Start persona-memory-knowledge loop — periodic background consolidation
     # Runs every 5 min: scores recent memories, updates persona adaptive layer,
     # indexes new KB docs, and logs task state summaries
@@ -854,6 +868,10 @@ async def lifespan(app: FastAPI):
     if vigil_runtime:
         with suppress(Exception):
             vigil_runtime.stop()
+
+    if idle_runtime:
+        with suppress(Exception):
+            idle_runtime.stop()
 
     if job_monitor:
         with suppress(Exception):

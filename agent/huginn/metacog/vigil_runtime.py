@@ -66,6 +66,17 @@ class VigilRuntime:
         self.monitor.heartbeat(now)
         status = self.monitor.tick(now)
         self._write_heartbeat(status)
+        # 行为指纹周期比较：只写 review 级 drift_events，不阻断任务.
+        try:
+            from huginn.env_access import env_str
+            from huginn.research.behavior_fingerprint import get_behavior_monitor
+
+            get_behavior_monitor().maybe_record_drift(
+                tenant_id=env_str("HUGINN_TENANT_ID") or "default",
+                persona_id="default",
+            )
+        except Exception:  # 防御: 指纹监控失败不影响 VIGIL 状态
+            logger.debug("behavior fingerprint tick skipped", exc_info=True)
         return status
 
     def _write_heartbeat(self, status: MonitorStatus) -> None:

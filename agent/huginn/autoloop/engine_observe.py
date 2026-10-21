@@ -81,6 +81,7 @@ class EngineObserve:
         "_apply_block_patches",
         "_trim_to_budget",
         "_persona_system_prompt",
+        "_persona_params",
         "_build_curiosity_block",
         "_build_world_model_block",
         "_build_world_catalog_block",
@@ -402,6 +403,42 @@ LUCID review (mandatory after generating hypothesis):
         if adaptive:
             return f"{core}\n\n--- Adaptive ---\n{adaptive}"
         return core
+
+    def _persona_params(self) -> Any:
+        """读取当前 persona 的参数：默认值 + persona.variables + active revision.
+
+        只影响澄清/证据门槛等决策参数，不触碰 PersonaKernel 安全边界。
+        """
+        from dataclasses import replace as _replace
+
+        from huginn.persona_kernel import PersonaParams, get_persona_revision_store
+
+        params = PersonaParams()
+        name = getattr(self, "_last_persona", None) or "default"
+        try:
+            persona = self._get_persona_manager().get(name)
+            raw = (getattr(persona, "variables", {}) or {}).get("persona_params") or {}
+            allowed = {
+                key: value
+                for key, value in raw.items()
+                if key in PersonaParams.__dataclass_fields__
+            }
+            params = PersonaParams(**allowed)
+        except Exception:  # 防御: persona 不存在时用默认参数
+            logger.debug("persona params load skipped", exc_info=True)
+        try:
+            active = get_persona_revision_store().active(name)
+            if active:
+                delta = {
+                    key: value
+                    for key, value in (active.get("delta_json") or {}).items()
+                    if key in PersonaParams.__dataclass_fields__
+                    and key not in ("tool_bias",)
+                }
+                params = _replace(params, **delta)
+        except Exception:  # 防御: revision 读取失败保持默认
+            logger.debug("persona revision load skipped", exc_info=True)
+        return params
 
     # _phase_persona removed — per-call persona_name= in each phase method
     # is the active injection path. _PHASE_PERSONAS stays as documentation.

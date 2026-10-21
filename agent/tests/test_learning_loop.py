@@ -9,7 +9,9 @@ from huginn.normative.learning import (
     AdmissionSample,
     MemoryOpPolicy,
     TrajectoryIndex,
+    build_ope_report,
     ope_report,
+    sample_from_payload,
     shadow_evaluate,
 )
 
@@ -118,6 +120,105 @@ def test_ope_report_and_shadow_no_unauthorized():
     )
     assert shadow["unauthorized_executions"] == 0
     assert shadow["decisions"] == ["ask"]
+
+
+def test_shadow_trajectory_sampling(monkeypatch, tmp_path):
+    """真实工具准入可采样成轨迹，并在执行后回填 outcome（默认关闭）."""
+    import huginn.normative.shadow as shadow
+    from huginn.normative.admission import AdmissionDecision
+
+    index = TrajectoryIndex(tmp_path / "traj.db")
+    monkeypatch.setattr(shadow, "_trajectory", index)
+    monkeypatch.setenv("HUGINN_NORMATIVE_TRAJECTORY", "true")
+
+    decision = AdmissionDecision(allow=True, mode="allow")
+    sample_id = shadow.record_admission_sample(
+        tenant_id="t1",
+        session_id="s1",
+        tool_name="vasp_tool",
+        decision=decision,
+        risk=RiskLevel.LOW,
+    )
+    assert sample_id
+    assert index.count("t1") == 1
+    assert shadow.annotate_admission_sample(
+        sample_id, outcome={"success": True, "reward": 1.0}
+    )
+    payload = index.list_samples("t1")[0]["payload"]
+    assert payload["context_features"]["authorized"] is True
+    assert payload["outcome"]["success"] is True
+
+    monkeypatch.setenv("HUGINN_NORMATIVE_TRAJECTORY", "false")
+    assert shadow.record_admission_sample(
+        tenant_id="t1",
+        session_id="s1",
+        tool_name="vasp_tool",
+        decision=decision,
+        risk=RiskLevel.LOW,
+    ) == ""
+
+
+def test_build_ope_report_time_split_and_shadow():
+    """DoD 7: 离线 OPE 报告按时间切分 train/eval，影子模式零未授权."""
+    samples = []
+    for i in range(10):
+        authorized = i % 2 == 0
+        samples.append(
+            _sample(
+                context_features={"authorized": authorized, "risk": "low"},
+                decision={"mode": "allow" if authorized else "ask"},
+                outcome={"reward": 1.0 if authorized else 0.3},
+                ts=f"2026-01-01T00:00:{i:02d}+00:00",
+            )
+        )
+    report = build_ope_report(samples, train_ratio=0.7)
+    assert report["train_n"] == 7
+    assert report["eval_n"] == 3
+    assert report["eval_n"] > 0
+    assert report["shadow"]["unauthorized_executions"] == 0
+    assert report["note"].startswith("offline OPE")
+
+
+def test_cli_ope_report_roundtrip(tmp_path):
+    """CLI 能从轨迹库生成 JSON 报告."""
+    import json
+
+    from huginn.cli.ope_report import main
+
+    index = TrajectoryIndex(tmp_path / "traj.db")
+    for i in range(5):
+        index.record(
+            _sample(
+                ts=f"2026-01-01T00:00:{i:02d}+00:00",
+                decision={"mode": "allow"},
+                outcome={"reward": 1.0},
+            )
+        )
+    out = tmp_path / "report.json"
+    assert main([
+        "--tenant", "t1", "--db", str(tmp_path / "traj.db"),
+        "--out", str(out),
+    ]) == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["tenant_id"] == "t1"
+    assert report["total_samples"] == 5
+    assert report["shadow"]["unauthorized_executions"] == 0
+
+
+def test_sample_payload_roundtrip():
+    sample = _sample()
+    payload = {
+        "query": {"intent": "write", "goal": "s1", "persona_params": {}},
+        "context_features": sample.context_features,
+        "decision": sample.decision,
+        "outcome": sample.outcome,
+        "behaviour_prob": 0.5,
+        "ts": sample.ts,
+    }
+    restored = sample_from_payload(payload, tenant_id="t1")
+    assert restored is not None
+    assert restored.action() == "auto_allow"
+    assert restored.reward() == 1.0
 
 
 def test_policy_replay_deterministic():

@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import math
-from collections import Counter
+import threading
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -136,9 +137,115 @@ def behavior_drift(
     }
 
 
+class BehaviorMonitor:
+    """按 (tenant, persona) 累积近期行为事件；基线漂移写成 drift_events.
+
+    只做可观测，不改变任何授权/检索行为；阈值默认仅作起点。
+    """
+
+    def __init__(self, *, window: int = 200, threshold: float = 0.2) -> None:
+        self.window = max(10, int(window))
+        self.threshold = float(threshold)
+        self._lock = threading.RLock()
+        self._events: dict[tuple[str, str], deque[dict[str, Any]]] = {}
+        self._baseline: dict[tuple[str, str], BehaviorFingerprint] = {}
+
+    def record_event(
+        self,
+        *,
+        tenant_id: str,
+        persona_id: str,
+        event: dict[str, Any],
+    ) -> None:
+        key = (str(tenant_id), str(persona_id))
+        with self._lock:
+            queue = self._events.setdefault(key, deque(maxlen=self.window))
+            queue.append(dict(event))
+
+    def current(
+        self, *, tenant_id: str, persona_id: str
+    ) -> BehaviorFingerprint:
+        key = (str(tenant_id), str(persona_id))
+        with self._lock:
+            events = list(self._events.get(key, ()))
+        return fingerprint_from_events(
+            events, persona_id=str(persona_id)
+        )
+
+    def set_baseline(self, *, tenant_id: str, persona_id: str) -> BehaviorFingerprint:
+        key = (str(tenant_id), str(persona_id))
+        baseline = self.current(tenant_id=tenant_id, persona_id=persona_id)
+        with self._lock:
+            self._baseline[key] = baseline
+        return baseline
+
+    def drift(
+        self, *, tenant_id: str, persona_id: str
+    ) -> dict[str, Any] | None:
+        key = (str(tenant_id), str(persona_id))
+        with self._lock:
+            baseline = self._baseline.get(key)
+        if baseline is None or baseline.n_events == 0:
+            return None
+        current = self.current(tenant_id=tenant_id, persona_id=persona_id)
+        if current.n_events == 0:
+            return None
+        report = behavior_drift(baseline, current)
+        report["drifted"] = (
+            float(report["tool_family_js"]) > self.threshold
+            or float(report["risk_js"]) > self.threshold
+        )
+        return report
+
+    def maybe_record_drift(
+        self,
+        *,
+        tenant_id: str = "default",
+        persona_id: str = "default",
+        ledger: Any = None,
+    ) -> str | None:
+        """基线缺失时先建基线；漂移超阈值才写 drift_events（不阻断）."""
+        key = (str(tenant_id), str(persona_id))
+        with self._lock:
+            has_baseline = key in self._baseline
+        if not has_baseline:
+            self.set_baseline(tenant_id=tenant_id, persona_id=persona_id)
+            return None
+        report = self.drift(tenant_id=tenant_id, persona_id=persona_id)
+        if not report or not report.get("drifted"):
+            return None
+        from huginn.metacog.drift_ledger import DriftEvent, get_drift_ledger
+
+        target = ledger or get_drift_ledger()
+        observed = max(float(report["tool_family_js"]), float(report["risk_js"]))
+        event = DriftEvent(
+            tenant_id=str(tenant_id),
+            session_id=str(persona_id),
+            detector="behavior_fingerprint",
+            baseline_id=f"behavior:{persona_id}",
+            observed=observed,
+            threshold=self.threshold,
+            level="review",
+            evidence=report,
+        )
+        return target.record(event)
+
+
+_monitor: BehaviorMonitor | None = None
+
+
+def get_behavior_monitor() -> BehaviorMonitor:
+    global _monitor
+    if _monitor is None:
+        _monitor = BehaviorMonitor()
+    return _monitor
+
+
 __all__ = [
     "BehaviorFingerprint",
+    "BehaviorMonitor",
     "behavior_drift",
     "fingerprint_from_events",
+    "get_behavior_monitor",
     "js_divergence",
 ]

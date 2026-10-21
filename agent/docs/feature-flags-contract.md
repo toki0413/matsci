@@ -17,7 +17,7 @@
 | `context_router` | False | P3 信息路径多样性稀疏化 (context_builder, 默认关) | HUGINN_CONTEXT_ROUTER | context_builder.py:1256 |
 | `crdt_branch_merge` | True | CRDT 分支合并 (HUGINN_CRDT_BRANCH_MERGE) | HUGINN_CRDT_BRANCH_MERGE | utils/conversation_tree.py:345, utils/conversation_tree.py:37 |
 | `crdt_merge` | True | CRDT 合并 (HUGINN_CRDT_MERGE) | HUGINN_CRDT_MERGE | tools/subagent_tool.py:33 |
-| `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:418, cli/rcb_step2.py:868 |
+| `curiosity_hint` | True | 好奇心提示 (HUGINN_CURIOSITY_HINT) | HUGINN_CURIOSITY_HINT | autoloop/engine_observe.py:455, cli/rcb_step2.py:868 |
 | `external_thinking` | False | 外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关) | — | agent/prompt_builder.py:379 |
 | `extreme_dispatch` | False | 极端模式分发 (HUGINN_EXTREME_DISPATCH) | HUGINN_EXTREME_DISPATCH | agent/core.py:564, autoloop/engine_perceive.py:330, autoloop/engine_reflect.py:2144 +1 处 |
 | `frontier_claim` | False | 假设图单写者领用前沿: execute 优先领已有可执行方向而非凭空生成 (ARTEX 借鉴, 默认关) | HUGINN_FRONTIER_CLAIM | autoloop/cognitive_loop.py:3233 |
@@ -65,6 +65,6 @@
 | `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | agent/code_act_loop.py:344, agent/code_act_loop.py:398 |
 | `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | agent/code_act_loop.py:355, agent/code_act_loop.py:417, runtime/engine_state.py:224 |
 | `visual_frame_memory` | False | 无损观测记忆: 每次 execute 的视觉帧原样落盘 + frame_inspect 区域回看/read_pixels (VISTA 借鉴, 默认关) | HUGINN_VISUAL_FRAME_MEMORY | autoloop/plan_check.py:135, autoloop/plan_check.py:166 |
-| `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:460 |
+| `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:497 |
 
 共 61 个功能开关。

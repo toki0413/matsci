@@ -140,6 +140,21 @@ class MemoryMaintainer:
             memories = self._dream_memories_fn() if self._dream_memories_fn else []
             if not memories:
                 return {"dreamed": 0, "state": "sleep", "reason": "no_memories"}
+            # Soul/租户隔离：只有带 tenant_id 的种子才做过滤；旧快照无标签时
+            # 保持原行为（不把本地记忆误判为跨租户而全部丢弃）。
+            if any(isinstance(m, dict) and m.get("tenant_id") for m in memories):
+                from huginn.env_access import env_str
+                from huginn.memory.soul import filter_dream_seeds
+
+                memories = filter_dream_seeds(
+                    memories, tenant_id=env_str("HUGINN_TENANT_ID")
+                )
+                if not memories:
+                    return {
+                        "dreamed": 0,
+                        "state": "sleep",
+                        "reason": "no_tenant_seeds",
+                    }
             result = run_dream_cycle(
                 clock=clock,
                 dream_id=f"dream-{uuid.uuid4().hex[:10]}",

@@ -695,6 +695,12 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             return plan
         scene = self._plan_check_scene_tag(plan)
         max_refines = self._plan_check_max_refines(tier, scene)
+        # PersonaParams 驱动真实决策门槛；默认值保持既有行为 (0.5 / 3).
+        try:
+            _persona_params = self._persona_params()
+            _accept_conf = _persona_params.plan_accept_threshold()
+        except Exception:  # 防御: 参数读取失败用既有默认
+            _accept_conf = 0.5
         attempt = 0
         # 用 while 而非 for range(max_refines+1): 失败时可能需要临时抬高预算
         # (见下), for 的 range 在进入循环时就固定了, 抬了也无效.
@@ -721,7 +727,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                 # confidence 分级: 低置信通过 (<0.5) 强制 refine 一次, 防 LLM
                 # 没看懂就放行; 高置信直接通过.
                 confidence = float(check.get("confidence", 0.8))
-                if confidence >= 0.5 or attempt >= max_refines or max_refines == 0:
+                if confidence >= _accept_conf or attempt >= max_refines or max_refines == 0:
                     logger.info(
                         "plan_check passed (attempt %d, tier=%s, scene=%s, conf=%.2f)",
                         attempt,
@@ -808,7 +814,11 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                 recent_fails += 1
             else:
                 break
-        if recent_fails < 3:
+        try:
+            required = self._persona_params().plan_clarify_fails()
+        except Exception:  # 防御: 参数读取失败用既有默认
+            required = 3
+        if recent_fails < required:
             return
         try:
             await self._maybe_clarify(

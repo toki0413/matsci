@@ -49,6 +49,80 @@ def _get_ledger() -> NormativeLedger:
     return _ledger
 
 
+_trajectory: Any = None
+
+
+def _trajectory_enabled() -> bool:
+    from huginn.env_access import env_bool
+
+    return env_bool("HUGINN_NORMATIVE_TRAJECTORY")
+
+
+def _get_trajectory() -> Any:
+    global _trajectory
+    if _trajectory is None:
+        from huginn.normative.learning import TrajectoryIndex
+
+        _trajectory = TrajectoryIndex()
+    return _trajectory
+
+
+def record_admission_sample(
+    *,
+    tenant_id: str,
+    session_id: str,
+    tool_name: str,
+    decision: AdmissionDecision,
+    risk: RiskLevel,
+    resources: tuple[str, ...] = (),
+    claim_statuses: dict[str, str] | None = None,
+) -> str:
+    """把一次真实工具准入写成训练样本（默认关闭，I34/§11）."""
+    if not _trajectory_enabled():
+        return ""
+    try:
+        from huginn.normative.learning import AdmissionQuery, AdmissionSample
+
+        sample = AdmissionSample(
+            query=AdmissionQuery(intent=tool_name, goal=session_id),
+            context_features={
+                "risk": str(risk),
+                "authorized": bool(decision.allow),
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "resources": list(resources),
+                "claims": dict(claim_statuses or {}),
+            },
+            decision=decision.to_dict(),
+            outcome={},
+            tenant_id=tenant_id,
+            behaviour_prob=1.0,
+        )
+        return _get_trajectory().record(sample)
+    except Exception:  # 防御: 轨迹采样失败不影响工具
+        logger.debug("admission trajectory record failed", exc_info=True)
+        return ""
+
+
+def annotate_admission_sample(
+    sample_id: str,
+    *,
+    outcome: dict[str, Any] | None = None,
+    decision: dict[str, Any] | None = None,
+) -> bool:
+    if not sample_id:
+        return False
+    try:
+        return bool(
+            _get_trajectory().annotate(
+                sample_id, outcome=outcome, decision=decision
+            )
+        )
+    except Exception:  # 防御: 回填失败不影响工具
+        logger.debug("admission trajectory annotate failed", exc_info=True)
+        return False
+
+
 def _view(ledger: NormativeLedger, tenant_id: str, session_id: str):
     key = (tenant_id, session_id)
     now = time.monotonic()
@@ -111,4 +185,8 @@ def evaluate_tool_call(
         return None
 
 
-__all__ = ["evaluate_tool_call"]
+__all__ = [
+    "annotate_admission_sample",
+    "evaluate_tool_call",
+    "record_admission_sample",
+]

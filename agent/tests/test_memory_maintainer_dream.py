@@ -50,6 +50,29 @@ def test_dream_skips_when_active(tmp_path):
     assert not store.list_dreams(persona_id="default")
 
 
+def test_dream_seed_tenant_isolation(tmp_path, monkeypatch):
+    """I22: 梦境种子池跨租户零泄漏；只选当前 tenant 的种子."""
+    monkeypatch.setenv("HUGINN_TENANT_ID", "t1")
+    store = DreamStore(tmp_path / "dream.db")
+    m = MemoryMaintainer(
+        memory_manager=_FakeMM(),
+        dream_enabled=True,
+        sleep_clock=_clock(("mon", "00:00", "23:59")),
+        dream_store=store,
+        dream_memories_fn=lambda: [
+            {"memory_id": "t1m", "degree": 0, "tenant_id": "t1"},
+            {"memory_id": "t2m", "degree": 0, "tenant_id": "t2"},
+        ],
+        now_fn=lambda: "2026-10-19T12:00:00+00:00",
+    )
+    result = m.run_once()
+    assert result["dream"]["dreamed"] == 1
+    payload = store.list_dreams(persona_id="p1")[0]["payload"]
+    seeds = " ".join(payload["seed_event_ids"])
+    assert "t1m" in seeds
+    assert "t2m" not in seeds, "跨租户种子不得进入梦境"
+
+
 def test_dream_skips_without_memories(tmp_path):
     store = DreamStore(tmp_path / "dream.db")
     m = MemoryMaintainer(

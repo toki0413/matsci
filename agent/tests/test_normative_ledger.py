@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from huginn.normative.ledger import NormativeLedger, scope_covers
+from huginn.normative.ledger import (
+    NormativeAct,
+    NormativeLedger,
+    register_reproject_listener,
+    scope_covers,
+    unregister_reproject_listener,
+)
 
 TENANT = "tenant-a"
 SESSION = "session-1"
@@ -52,6 +58,36 @@ def test_replay_determinism(tmp_path):
         a.act_id for a in second.proposals
     ]
     assert first.tenant_id == second.tenant_id == TENANT
+
+
+def test_late_event_triggers_reprojection(tmp_path):
+    """§13: 跨设备晚到事件不改历史，但触发重投影；投影按 Lamport seq 排序."""
+    ledger = _ledger(tmp_path)
+    ledger.append_remote_act(
+        NormativeAct(
+            tenant_id=TENANT, session_id=SESSION, actor="agent",
+            act_type="propose", proposition_id="late", seq=5,
+            created_at="2026-01-01T00:00:05+00:00",
+        )
+    )
+    calls: list[tuple[str, str]] = []
+    listener = lambda tenant, session: calls.append((tenant, session))  # noqa: E731
+    register_reproject_listener(listener)
+    try:
+        ledger.append_remote_act(
+            NormativeAct(
+                tenant_id=TENANT, session_id=SESSION, actor="agent",
+                act_type="propose", proposition_id="early", seq=3,
+                created_at="2026-01-01T00:00:03+00:00",
+            )
+        )
+    finally:
+        unregister_reproject_listener(listener)
+
+    assert calls == [(TENANT, SESSION)]
+    view = ledger.project(TENANT, SESSION)
+    assert [e.seq for e in view.events] == [3, 5], "晚到事件按 seq 重投影"
+    assert [e.proposition_id for e in view.proposals] == ["early", "late"]
 
 
 def test_actor_capability(tmp_path):

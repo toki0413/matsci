@@ -51,6 +51,8 @@ _ALLOWED_ACT_TYPES = frozenset(_ACTOR_CAPABILITIES["user"])
 
 # append 监听器：投影缓存（如 shadow 的短 TTL 视图）在写入后立刻失效。
 _append_listeners: list[Any] = []
+# 晚到事件监听器：按 (tenant, session) 触发**重新投影**（不改历史）。
+_reproject_listeners: list[Any] = []
 
 
 def register_append_listener(callback: Any) -> None:
@@ -59,12 +61,31 @@ def register_append_listener(callback: Any) -> None:
         _append_listeners.append(callback)
 
 
+def register_reproject_listener(callback: Any) -> None:
+    """注册晚到事件后的重投影回调 ``callback(tenant_id, session_id)``."""
+    if callback not in _reproject_listeners:
+        _reproject_listeners.append(callback)
+
+
+def unregister_reproject_listener(callback: Any) -> None:
+    if callback in _reproject_listeners:
+        _reproject_listeners.remove(callback)
+
+
 def _notify_append() -> None:
     for callback in list(_append_listeners):
         try:
             callback()
         except Exception:  # 防御: 缓存失效失败不影响事件写入
             logger.debug("append listener failed", exc_info=True)
+
+
+def _notify_reproject(tenant_id: str, session_id: str) -> None:
+    for callback in list(_reproject_listeners):
+        try:
+            callback(tenant_id, session_id)
+        except Exception:  # 防御: 重投影回调失败不影响事件写入
+            logger.debug("reproject listener failed", exc_info=True)
 
 
 def _now_iso() -> str:
@@ -292,6 +313,21 @@ class NormativeLedger:
         _notify_append()
         return act.act_id
 
+    def append_remote_act(self, act: NormativeAct) -> str:
+        """跨设备晚到事件：追加后触发重投影；不改历史、不覆盖本地状态."""
+        existing = self._fetch_events(act.tenant_id, act.session_id)
+        max_seq = max((int(e.seq or 0) for e in existing), default=0)
+        if act.seq is None:
+            act = NormativeAct(
+                **{
+                    **act.__dict__,
+                    "seq": max_seq + 1,
+                }
+            )
+        act_id = self.append(act)
+        _notify_reproject(act.tenant_id, act.session_id)
+        return act_id
+
     def append_act(
         self,
         *,
@@ -466,6 +502,8 @@ class NormativeLedger:
 
 
 __all__ = [
+    "register_reproject_listener",
+    "unregister_reproject_listener",
     "ActType",
     "Actor",
     "GroundingView",
