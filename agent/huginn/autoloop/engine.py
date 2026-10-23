@@ -996,10 +996,21 @@ class AutoloopEngine:
         persona_name: str | None = None,
         model: Any = None,
         task: str | None = None,
+        tools: list[Any] | None = None,
+        max_tool_rounds: int = 2,
     ) -> str:
         return await self._engine_actor._llm_chat(
-            prompt, persona_name=persona_name, model=model, task=task
+            prompt,
+            persona_name=persona_name,
+            model=model,
+            task=task,
+            tools=tools,
+            max_tool_rounds=max_tool_rounds,
         )
+
+    def _resolve_readonly_tools(self) -> list[Any]:
+        """plan/validate 阶段可挂的只读工具面 (实现在 EngineAct, 此处薄委托)."""
+        return self._engine_actor._resolve_readonly_tools()
 
     # ── 去 mixin 阶段5: EngineControl 薄委托 ─────────────────────
     # 循环控制/checkpoint/状态持久化/澄清交互/事件总线方法族已下沉为 EngineControl

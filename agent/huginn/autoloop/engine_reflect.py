@@ -538,6 +538,9 @@ class EngineReflect:
                     self._build_reviewer_prompt(execution_result, results, reviewer_kb),
                     persona_name="reviewer",
                     model=self.verification_model,
+                    # P2-1: 审稿人可查文献/翻记忆/看自己的执行 trace, 不再只凭
+                    # 已拼好的 kb 文本空口批评 (只读工具, 无副作用).
+                    tools=self._resolve_readonly_tools(),
                 )
                 if critique and critique.strip():
                     results["reviewer_critique"] = critique.strip()

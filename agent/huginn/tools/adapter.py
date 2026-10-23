@@ -7,6 +7,7 @@ so they can be used in the Agent Loop.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
 import hashlib
@@ -17,13 +18,14 @@ import os
 import re
 import threading
 import time
+import types
 import typing
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, get_origin
+from typing import Any, get_args, get_origin
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from huginn.constraints import ConstraintAdapter
 from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
@@ -221,6 +223,311 @@ def _truncate_for_trajectory(value: Any) -> Any:
     if isinstance(value, list | tuple):
         return [_truncate_for_trajectory(v) for v in value]
     return value
+
+
+# ── 参数边界校验 (不可信的 LLM 参数 → 工具 schema) ──────────────────────
+# 模型给出的参数常常"语义对、形状错": 该给数组的地方给一个 JSON 字符串
+# ('["ls","-la"]'), 该给整数的地方给 "5". langchain 在 _parse_input 里用
+# args_schema 严格校验, 形状不符直接抛 ValidationError, 调用在到达工具之前
+# 就死了 —— 既没有修复机会, 也没有遥测. 这里补两层:
+#   1) _coerce_tool_args: 按声明类型做一次可解释的反序列化, 只修形状;
+#   2) _validate_tool_args: 严格校验 → 一次修复重试 → 结构化错误回执.
+# 安全边界: 只接受 json / 字面量反序列化, 绝不 eval; 只改形状不猜语义 —
+# 解析不了的字符串原样交给严格校验, 由它报错 (不静默改写用户数据).
+_NO_PARSE = object()
+# 反序列化体量上限: 防超长字符串把 json/literal 解析拖成 CPU 黑洞.
+_ARG_PARSE_LIMIT = 200_000
+
+
+def _jsonish(raw: str) -> Any:
+    """把形状错误的字符串按 JSON / Python 字面量反序列化, 失败返回 _NO_PARSE."""
+    s = raw.strip()
+    if not s or len(s) > _ARG_PARSE_LIMIT:
+        return _NO_PARSE
+    try:
+        return json.loads(s)
+    except (ValueError, TypeError):
+        pass
+    try:
+        # 仅字面量解析 (字符串/数字/容器/布尔/None), 不执行任何代码.
+        return ast.literal_eval(s)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return _NO_PARSE
+
+
+def _matches_annotation(value: Any, annotation: Any) -> bool:
+    """value 是否已经符合 annotation 的形状 (用于 union 短路, 避免过度改写)."""
+    origin = get_origin(annotation)
+    if origin is not None:
+        if origin is list:
+            return isinstance(value, list)
+        if origin is dict:
+            return isinstance(value, dict)
+        if origin is tuple:
+            return isinstance(value, tuple)
+        if origin in (set, frozenset):
+            return isinstance(value, (set, frozenset))
+        return False
+    try:
+        return isinstance(value, annotation)
+    except TypeError:
+        # Literal / 复杂注解无法用 isinstance 判定 → 视作匹配, 不冒险改动.
+        return True
+
+
+def _coerce_for_annotation(raw: Any, annotation: Any) -> tuple[Any, str]:
+    """按声明类型修一次形状. 返回 (值, 修复说明); 无需修复时说明为空串."""
+    origin = get_origin(annotation)
+
+    if origin in (types.UnionType, typing.Union):
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        for arg in args:
+            if _matches_annotation(raw, arg):
+                return raw, ""
+        for arg in args:
+            value, note = _coerce_for_annotation(raw, arg)
+            if note:
+                return value, note
+        return raw, ""
+
+    if origin is dict:
+        if isinstance(raw, str):
+            parsed = _jsonish(raw)
+            if parsed is _NO_PARSE or not isinstance(parsed, dict):
+                return raw, ""
+            return parsed, "str→dict (JSON 反序列化)"
+        return raw, ""
+
+    if origin in (list, tuple, set, frozenset):
+        container = origin
+        if isinstance(raw, str):
+            parsed = _jsonish(raw)
+            if parsed is _NO_PARSE or not isinstance(
+                parsed, (list, tuple, set, frozenset)
+            ):
+                return raw, ""
+            value = parsed if container is list else container(parsed)
+            return value, f"str→{container.__name__} (JSON 反序列化)"
+        if container is list and isinstance(raw, tuple):
+            return list(raw), "tuple→list"
+        if container is tuple and isinstance(raw, list):
+            return tuple(raw), "list→tuple"
+        if container in (set, frozenset) and isinstance(raw, list):
+            return container(raw), f"list→{container.__name__}"
+        return raw, ""
+
+    if isinstance(raw, str):
+        text = raw.strip()
+        if annotation is bool:
+            low = text.lower()
+            if low in {"true", "1", "yes", "on"}:
+                return True, "str→bool"
+            if low in {"false", "0", "no", "off"}:
+                return False, "str→bool"
+            return raw, ""
+        if annotation is int:
+            try:
+                return int(text), "str→int"
+            except ValueError:
+                return raw, ""
+        if annotation is float:
+            try:
+                return float(text), "str→float"
+            except ValueError:
+                return raw, ""
+        return raw, ""
+
+    if annotation is float and isinstance(raw, int) and not isinstance(raw, bool):
+        return float(raw), "int→float"
+
+    return raw, ""
+
+
+def _coerce_tool_args(
+    tool: HuginnTool, kwargs: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """对 kwargs 逐一按 schema 声明类型修形状, 返回 (新 kwargs, 修复说明列表)."""
+    schema = getattr(tool, "input_schema", None)
+    fields = getattr(schema, "model_fields", None) or {}
+    if not fields:
+        return dict(kwargs), []
+
+    out = dict(kwargs)
+    notes: list[str] = []
+    for name, field in fields.items():
+        if name not in out or out[name] is None:
+            continue
+        annotation = getattr(field, "annotation", None)
+        if annotation is None:
+            continue
+        try:
+            value, note = _coerce_for_annotation(out[name], annotation)
+        except Exception:  # 防御: 单个字段修复失败不影响其余字段
+            logger.debug("arg coercion failed for %s.%s", tool.name, name, exc_info=True)
+            continue
+        if note:
+            out[name] = value
+            notes.append(f"{name}: {note}")
+    return out, notes
+
+
+def _annotation_example(annotation: Any, depth: int = 0) -> Any:
+    """给 LLM 看的字段形状示例. 只覆盖常见类型, 认不出返回 "..."."""
+    if depth > 2 or annotation is None:
+        return "..."
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, typing.Union):
+        for arg in get_args(annotation):
+            if arg is not type(None):
+                return _annotation_example(arg, depth + 1)
+        return "..."
+    if origin is list:
+        args = get_args(annotation)
+        return [_annotation_example(args[0], depth + 1)] if args else []
+    if origin is tuple:
+        return []
+    if origin in (set, frozenset):
+        return []
+    if origin is dict:
+        return {}
+    if origin is typing.Literal:
+        args = get_args(annotation)
+        return args[0] if args else "..."
+    return {str: "string", int: 0, float: 0.0, bool: False, dict: {}, list: []}.get(
+        annotation, "..."
+    )
+
+
+def _preview_value(value: Any, limit: int = 200) -> str:
+    """错误回执里的输入预览: 限长, 不把整段输入回灌给模型."""
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, default=str, ensure_ascii=False)
+        except Exception:
+            text = str(value)
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _invalid_args_output(
+    tool: HuginnTool,
+    exc: BaseException,
+    repairs: list[str],
+) -> dict[str, Any]:
+    """把参数校验失败转成模型能自修的结构化回执 (而不是裸 ValidationError)."""
+    detail: list[dict[str, Any]] = []
+    raw_errors = getattr(exc, "errors", None)
+    if callable(raw_errors):
+        try:
+            for err in raw_errors()[:5]:
+                loc = ".".join(str(p) for p in err.get("loc", ()))
+                detail.append(
+                    {
+                        "field": loc or "<args>",
+                        "problem": str(err.get("msg", ""))[:300],
+                        "got": _preview_value(err.get("input")),
+                    }
+                )
+        except Exception:  # 防御: 非标准异常对象, 退回字符串
+            detail = []
+    if not detail:
+        detail = [{"field": "<args>", "problem": str(exc)[:500]}]
+
+    fields = getattr(getattr(tool, "input_schema", None), "model_fields", None) or {}
+    expected = {name: _annotation_example(getattr(f, "annotation", None)) for name, f in fields.items()}
+
+    return {
+        "error": f"invalid_tool_args: {tool.name} 参数不符合 schema, 本次调用未执行",
+        "_invalid_args": True,
+        "tool": tool.name,
+        "detail": detail,
+        "expected_shape": expected,
+        "repairs_attempted": repairs,
+        "hint": (
+            "按 expected_shape 重新发起调用: 数组/对象字段必须是真实 JSON 数组/对象, "
+            "不能是 JSON 字符串; 缺失的必填字段必须补齐."
+        ),
+    }
+
+
+def _validate_tool_args(
+    tool: HuginnTool, kwargs: dict[str, Any]
+) -> tuple[Any | None, dict[str, Any] | None, list[str]]:
+    """边界校验: 严格 → 一次修复重试 → 结构化错误.
+
+    返回 ``(input_data, error_output, repairs)``。error_output 非空表示本次
+    调用不能执行, 调用方应原样回给模型 (含修复建议), 而不是让异常穿透。
+    """
+    schema = getattr(tool, "input_schema", None)
+    try:
+        return schema(**kwargs), None, []  # type: ignore[misc]
+    except ValidationError as first:
+        repaired, notes = _coerce_tool_args(tool, kwargs)
+        if notes:
+            try:
+                return schema(**repaired), None, notes  # type: ignore[misc]
+            except ValidationError as second:
+                return None, _invalid_args_output(tool, second, notes), notes
+        return None, _invalid_args_output(tool, first, []), []
+    except (TypeError, ValueError) as exc:
+        return None, _invalid_args_output(tool, exc, []), []
+
+
+def _emit_span(
+    tool_name: str,
+    args: Any,
+    output: Any,
+    *,
+    stage: str,
+    started: float | None = None,
+    repairs: list[str] | None = None,
+) -> None:
+    """为"执行前就被拦下"的调用补一条 tool_call span.
+
+    之前 span 只在真正执行工具时开, 于是参数非法 / 权限拒绝 / 预算耗尽 /
+    校验失败这些路径在遥测里完全不可见 —— 失败率被系统性低估. 这里让每条
+    调用路径都恰好产生一条 span, success 由回执内容判定.
+    """
+    try:
+        with get_telemetry_collector().span("tool_call", tool=tool_name) as span:
+            failed = isinstance(output, dict) and (
+                "error" in output or output.get("_user_cancelled") is True
+            )
+            span.metadata["success"] = not failed
+            span.metadata["stage"] = stage
+            span.metadata["args"] = _truncate_for_trajectory(args)
+            span.metadata["result"] = _truncate_for_trajectory(output)
+            if started is not None:
+                span.metadata["latency_ms"] = round((time.time() - started) * 1000, 1)
+            if repairs:
+                span.metadata["arg_repairs"] = repairs
+            if failed and isinstance(output, dict):
+                span.metadata["error"] = str(output.get("error") or output)[:2000]
+    except Exception:  # 遥测必须 fail-open, 绝不阻断工具路径
+        logger.debug("pre-execution telemetry span failed (fail-open)", exc_info=True)
+
+
+class _AdapterStructuredTool(StructuredTool):
+    """StructuredTool 的运行时校验让位给 adapter 的修复层.
+
+    langchain_core 的 ``_parse_input`` 会在 wrapper 之前用 args_schema 严格
+    校验 dict 参数, 形状不符直接抛 ValidationError —— 我们的修复层根本没机会
+    看到参数. 这里保留 happy path 完全不变 (仍然走父类校验, 保证默认值/injected
+    参数行为一致), 只在校验失败时把原始 dict 透传下去, 由 ``_validate_tool_args``
+    做一次修复并提供可自修的错误回执.
+    """
+
+    def _parse_input(self, tool_input: Any, tool_call_id: str | None) -> Any:
+        try:
+            return super()._parse_input(tool_input, tool_call_id)
+        except ValidationError as exc:
+            if isinstance(tool_input, dict):
+                logger.debug(
+                    "deferring arg validation to adapter (%s): %s", self.name, exc
+                )
+                return dict(tool_input)
+            raise
 
 
 def _default_audit_logger() -> AuditLogger:
@@ -702,9 +1009,14 @@ class ToolAdapter:
                 return False
 
         def _build_inputs(
-            **kwargs: Any,
+            input_data: BaseModel | dict[str, Any],
         ) -> tuple[BaseModel | dict[str, Any], ToolContext]:
-            input_data = tool.input_schema(**kwargs)
+            """Attach the execution context to an already-validated input.
+
+            Schema construction moved out (``_validate_tool_args``) so a failed
+            validation can be answered with a repair receipt instead of raising
+            inside the wrapper.
+            """
             context = ToolContext(
                 session_id="default",
                 workspace=".",
@@ -1147,13 +1459,15 @@ class ToolAdapter:
             input_data: Any,
             kwargs: dict[str, Any],
             context: Any = None,
-        ) -> tuple[dict[str, Any] | None, Any]:
+        ) -> tuple[dict[str, Any] | None, Any, str]:
             """Run pre-execution gates: permission, cache, router, budget,
             loop detection, circuit breaker.
 
-            Returns ``(early_return, router)``.  ``early_return`` is a
+            Returns ``(early_return, router, stage)``.  ``early_return`` is a
             dict to return immediately if a gate blocks, or ``None``.
-            ``router`` is the ToolCallRouter (may be None).
+            ``router`` is the ToolCallRouter (may be None).  ``stage`` names the
+            gate that fired so the caller can emit a span for it (blocked calls
+            used to vanish from telemetry entirely).
             """
             # 1. Permission
             _sid = (
@@ -1166,7 +1480,7 @@ class ToolAdapter:
                 output = {"error": reason or f"Tool '{tool.name}' was denied"}
                 _audit(input_data, output, approved=False, reason=reason)
                 _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
-                return output, None
+                return output, None, "permission"
 
             # 2. Cache (checked before confirmation — safe, no approval needed)
             cached = _get_cached(input_data)
@@ -1174,7 +1488,7 @@ class ToolAdapter:
                 _audit(input_data, cached, approved=True, reason="cache_hit")
                 _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
                 _record_cache_hit(tool.name)
-                return cached, None
+                return cached, None, "cache"
 
             # 2b. Dedupe (same step, same tool+args → return last result)
             # 跟 read_only cache 互补: cache 只对 read_only 工具生效,
@@ -1188,7 +1502,7 @@ class ToolAdapter:
                     _publish(
                         PetMood.SUCCESS, f"{tool.name} (deduped)", {"tool": tool.name}
                     )
-                    return cached_dedup, None
+                    return cached_dedup, None, "dedupe"
 
             # 3. Router (lightweight-path decision)
             router = self._current_router
@@ -1202,7 +1516,7 @@ class ToolAdapter:
                         f"{tool.name} blocked by router",
                         {"reason": router_reason},
                     )
-                    return output, router
+                    return output, router, "router"
 
             # 4. Budget
             budget = self._current_budget
@@ -1224,7 +1538,7 @@ class ToolAdapter:
                     f"{tool.name} blocked by budget",
                     {"reason": budget_reason},
                 )
-                return output, router
+                return output, router, "budget"
 
             # 5. Loop detection
             loop_detector = self._current_loop_detector
@@ -1240,7 +1554,7 @@ class ToolAdapter:
                         {"reason": loop_reason},
                     )
                     _publish_blocked(tool.name, input_data, loop_reason, context)
-                    return output, router
+                    return output, router, "loop_detector"
 
             # 6. Circuit breaker → Degradation coordinator
             blocked = _breaker_blocked(tool.name)
@@ -1264,7 +1578,7 @@ class ToolAdapter:
                         f"{tool.name} degraded → {degraded.get('_degraded_to', '?')}",
                         {"quality_tier": degraded.get("_quality_tier", "")},
                     )
-                    return degraded, router
+                    return degraded, router, "degraded"
                 # 降级链耗尽或无降级链 — 返回结构化错误
                 _audit(input_data, degraded, approved=False, reason="circuit_open")
                 _publish(
@@ -1273,9 +1587,9 @@ class ToolAdapter:
                     {"tried": degraded.get("tried", [])},
                 )
                 _publish_blocked(tool.name, input_data, "circuit_open", context)
-                return degraded, router
+                return degraded, router, "circuit_breaker"
 
-            return None, router
+            return None, router, ""
 
         def _run_post_checks(
             input_data: Any,
@@ -1386,28 +1700,58 @@ class ToolAdapter:
 
         async def _arun(**kwargs: Any) -> dict[str, Any]:
             """Async execution wrapper."""
+            _t_start = time.time()
             # Hashline 自动闭环: 编辑前注入 expected_hash (来自缓存的上次所见版本)
             kwargs = _maybe_inject_hashline(tool.name, kwargs)
-            payload, context = _build_inputs(**kwargs)
-            input_data = tool.input_schema(**kwargs)
+            # 参数边界校验: 只修形状, 修不动就回结构化错误 (绝不抛到调用方)
+            input_data, invalid, repairs = _validate_tool_args(tool, kwargs)
+            if invalid is not None:
+                _audit(kwargs, invalid, approved=True, reason="invalid_tool_args")
+                _publish(
+                    PetMood.ERROR, f"{tool.name} args invalid", {"tool": tool.name}
+                )
+                _emit_span(
+                    tool.name,
+                    kwargs,
+                    invalid,
+                    stage="schema_validation",
+                    started=_t_start,
+                    repairs=repairs or None,
+                )
+                return invalid
+            if repairs:
+                logger.info(
+                    "repaired tool args for %s: %s", tool.name, "; ".join(repairs)
+                )
+            payload, context = _build_inputs(input_data)
 
             # Shared pre-checks (permission, cache, router, budget, loop, breaker)
-            early, router = _run_pre_checks(input_data, kwargs, context)
+            early, router, stage = _run_pre_checks(input_data, kwargs, context)
             if early is not None:
+                _emit_span(
+                    tool.name,
+                    kwargs,
+                    early,
+                    stage=stage,
+                    started=_t_start,
+                    repairs=repairs or None,
+                )
                 return early
 
             # 插件事件系统: 分发 typed ToolCallEvent (有别于内部 tool.call 字符串事件)
+            # 预置兜底值: 下面 model_dump 失败时后续 ON_TOOL_EXECUTE 仍能拿到参数,
+            # 不会因未绑定局部变量抛 NameError.
+            _call_args: dict[str, Any] = (
+                input_data.model_dump()
+                if hasattr(input_data, "model_dump")
+                else dict(kwargs)
+            )
+            _call_sid = (
+                getattr(context, "thread_id", None)
+                or getattr(context, "session_id", "")
+                or ""
+            )
             try:
-                _call_args = (
-                    input_data.model_dump()
-                    if hasattr(input_data, "model_dump")
-                    else dict(kwargs)
-                )
-                _call_sid = (
-                    getattr(context, "thread_id", None)
-                    or getattr(context, "session_id", "")
-                    or ""
-                )
                 await _dispatch_tool_call_event(_call_args, _call_sid)
             except Exception:
                 logger.debug(
@@ -1436,6 +1780,14 @@ class ToolAdapter:
                             f"{tool.name} cancelled by user",
                             {"reason": confirm_q},
                         )
+                        _emit_span(
+                            tool.name,
+                            kwargs,
+                            output,
+                            stage="confirmation",
+                            started=_t_start,
+                            repairs=repairs or None,
+                        )
                         return output
 
             validation = await tool.validate_input(input_data, context)
@@ -1446,6 +1798,14 @@ class ToolAdapter:
                     PetMood.ERROR,
                     f"{tool.name} input invalid",
                     {"reason": validation.message},
+                )
+                _emit_span(
+                    tool.name,
+                    kwargs,
+                    output,
+                    stage="validate_input",
+                    started=_t_start,
+                    repairs=repairs or None,
                 )
                 return output
 
@@ -1514,6 +1874,8 @@ class ToolAdapter:
                 _eco_before = _estimate_chars(output)
                 output = await _smart_compress_output(output)
                 _economy_bump(chars_before=_eco_before, chars_after=_estimate_chars(output))
+                if repairs:
+                    span.metadata["arg_repairs"] = repairs
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
@@ -1542,27 +1904,55 @@ class ToolAdapter:
             are handled differently here.
             """
             # Hashline 自动闭环: 编辑前注入 expected_hash (同 async 路径)
+            _t_start = time.time()
             kwargs = _maybe_inject_hashline(tool.name, kwargs)
-            payload, context = _build_inputs(**kwargs)
-            input_data = tool.input_schema(**kwargs)
+            # 参数边界校验: 与 async 路径同一层 (只修形状, 修不动回结构化错误)
+            input_data, invalid, repairs = _validate_tool_args(tool, kwargs)
+            if invalid is not None:
+                _audit(kwargs, invalid, approved=True, reason="invalid_tool_args")
+                _publish(
+                    PetMood.ERROR, f"{tool.name} args invalid", {"tool": tool.name}
+                )
+                _emit_span(
+                    tool.name,
+                    kwargs,
+                    invalid,
+                    stage="schema_validation",
+                    started=_t_start,
+                    repairs=repairs or None,
+                )
+                return invalid
+            if repairs:
+                logger.info(
+                    "repaired tool args for %s: %s", tool.name, "; ".join(repairs)
+                )
+            payload, context = _build_inputs(input_data)
 
             # Shared pre-checks (permission, cache, router, budget, loop, breaker)
-            early, router = _run_pre_checks(input_data, kwargs, context)
+            early, router, stage = _run_pre_checks(input_data, kwargs, context)
             if early is not None:
+                _emit_span(
+                    tool.name,
+                    kwargs,
+                    early,
+                    stage=stage,
+                    started=_t_start,
+                    repairs=repairs or None,
+                )
                 return early
 
             # 插件事件系统: 分发 typed ToolCallEvent (sync 路径 fire-and-forget)
+            _call_args: dict[str, Any] = (
+                input_data.model_dump()
+                if hasattr(input_data, "model_dump")
+                else dict(kwargs)
+            )
+            _call_sid = (
+                getattr(context, "thread_id", None)
+                or getattr(context, "session_id", "")
+                or ""
+            )
             try:
-                _call_args = (
-                    input_data.model_dump()
-                    if hasattr(input_data, "model_dump")
-                    else dict(kwargs)
-                )
-                _call_sid = (
-                    getattr(context, "thread_id", None)
-                    or getattr(context, "session_id", "")
-                    or ""
-                )
                 _schedule_event(_dispatch_tool_call_event(_call_args, _call_sid))
             except Exception:
                 logger.debug(
@@ -1611,6 +2001,14 @@ class ToolAdapter:
                             f"{tool.name} cancelled by user",
                             {"reason": confirm_q},
                         )
+                        _emit_span(
+                            tool.name,
+                            kwargs,
+                            output,
+                            stage="confirmation",
+                            started=_t_start,
+                            repairs=repairs or None,
+                        )
                         return output
 
             # Input validation (sync: handle coroutine result)
@@ -1633,6 +2031,14 @@ class ToolAdapter:
                     PetMood.ERROR,
                     f"{tool.name} input invalid",
                     {"reason": validation.message},
+                )
+                _emit_span(
+                    tool.name,
+                    kwargs,
+                    output,
+                    stage="validate_input",
+                    started=_t_start,
+                    repairs=repairs or None,
                 )
                 return output
 
@@ -1695,6 +2101,8 @@ class ToolAdapter:
                 _eco_before = _estimate_chars(output)
                 output = _sync_smart_compress(output)
                 _economy_bump(chars_before=_eco_before, chars_after=_estimate_chars(output))
+                if repairs:
+                    span.metadata["arg_repairs"] = repairs
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
@@ -1714,7 +2122,7 @@ class ToolAdapter:
             )
             return output
 
-        return StructuredTool.from_function(
+        return _AdapterStructuredTool.from_function(
             name=tool.name,
             description=tool.description,
             args_schema=tool.input_schema,
