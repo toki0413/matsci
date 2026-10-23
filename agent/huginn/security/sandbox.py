@@ -271,13 +271,16 @@ class SandboxExecutor:
         # HUGINN_SANDBOX_RELAX=1 关闭 strict_work_dir (兼容老用户)
         if os.environ.get("HUGINN_SANDBOX_RELAX") == "1":
             self.config.strict_work_dir = False
-        # strict=True 但 allowed_work_dirs 空 → path scoping 实际不生效, warn
+        # strict=True 但 allowed_work_dirs 空 → path scoping 静默失效, 命令能在任意
+        # cwd 落地 (ws9: 产物写进源码树). 缺省按 run workspace 建作用域; 显式给了
+        # allowed_work_dirs 的调用方一律尊重, 不覆盖.
         if self.config.strict_work_dir and not self.config.allowed_work_dirs:
-            import logging
+            from huginn.utils.common import default_workspace_dir
 
-            logging.getLogger(__name__).warning(
-                "strict_work_dir=True but allowed_work_dirs empty — path scoping "
-                "inactive. Set allowed_work_dirs or HUGINN_WORKSPACE to enable."
+            self.config.allowed_work_dirs = {default_workspace_dir().resolve()}
+            logger.debug(
+                "allowed_work_dirs 未显式给出, 收敛到 %s",
+                next(iter(self.config.allowed_work_dirs)),
             )
 
     def _resolve_executable(self, cmd: list[str]) -> str:

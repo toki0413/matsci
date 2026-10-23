@@ -169,3 +169,31 @@ def test_no_timeout_keeps_the_cap():
     from huginn.autoloop.engine_act import _next_timeout_cap
 
     assert _next_timeout_cap(None, 600.0, timed_out=False) == (None, True)
+
+
+def test_sandbox_executor_scopes_empty_config(tmp_path, monkeypatch):
+    """code_tool 等直接 `SandboxExecutor()` 的调用点也必须落在 run workspace.
+
+    `get_executor()` 修好后仍有一条旁路: code_tool 的实例化沙箱用默认 config,
+    allowed_work_dirs 为空 → strict 静默失效, 代码执行可写源码树 (启动日志里的
+    "path scoping inactive")。
+    """
+    from huginn.security.sandbox import SandboxConfig, SandboxExecutor
+
+    monkeypatch.setenv("HUGINN_WORKSPACE", str(tmp_path))
+    executor = SandboxExecutor(SandboxConfig())
+
+    assert tmp_path.resolve() in executor.config.allowed_work_dirs
+
+
+def test_sandbox_explicit_scope_is_kept(tmp_path):
+    """显式给了 allowed_work_dirs 就尊重调用方, 不用 workspace 覆盖."""
+    from huginn.security.sandbox import SandboxConfig, SandboxExecutor
+
+    explicit = tmp_path / "explicit"
+    forced = tmp_path / "forced"
+    explicit.mkdir()
+    forced.mkdir()
+    executor = SandboxExecutor(SandboxConfig(allowed_work_dirs={explicit.resolve()}))
+
+    assert executor.config.allowed_work_dirs == {explicit.resolve()}
