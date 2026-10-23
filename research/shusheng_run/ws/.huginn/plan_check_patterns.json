@@ -1,0 +1,28 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "9564a8571054",
+    "reason": "The plan's scientific content is sound (split-step Fourier + Crank–Nicolson cross-check, mesh refinement, conservation tracking, analytical-form verification), and the MODE=coder match is appropriate for a numerical NLSE study. However, the plan is a prose specification only: it contains no executable code block, no import/formula/print scaffold, and no actual numerical output. The advisory explicitly requires a runnable Python snippet to be landed and executed before entering execute→validate. Without a concrete script, the claimed tolerances (L2<1e-6, energy<1e-8, momentum<1e-7) are unverified assertions, so the plan cannot yet be judged as achieving the hypothesis. It also does not repeat the scene-history failures (N/A), and there are no dimensional-precheck warnings.",
+    "missing_steps": [
+      "Land a runnable Python script in the plan: imports, NLSE parameters (dispersion/nonlinearity sign), exact soliton formula (sech vs sech²), split-step Fourier step, Crank–Nicolson cross-check, L2-error/energy/momentum diagnostics, and mesh-refinement loop.",
+      "Execute the script and report concrete numbers (errors at t=0,2,5,10; conservation relative errors; convergence orders) rather than leaving them as predictions.",
+      "Add an explicit incompleteness confession / retained-assumption list if the numerics do not meet the tolerances, per the failure-mode warning.",
+      "Only after real numerical results are returned proceed to execute→validate."
+    ],
+    "mode": "coder",
+    "description": "[auto-routed: 代码实验走真实执行] Implement a high-accuracy 1D NLSE solver (split-step Fourier method for primary validation, plus a conservative Crank–Nicolson finite-difference cross-check) to evolve the ana"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "9564a8571054",
+    "reason": "The plan's scientific design is appropriate (split-step Fourier + Crank-Nicolson, conservation diagnostics, mesh refinement), but it remains a prose specification with no executable code block and no actual numerical output. The advisory has flagged this three times: a runnable Python snippet (imports + formula + print) must be landed and executed before entering execute→validate. Without concrete numbers, the claimed tolerances (L2<1e-6, energy drift<1e-8, momentum drift<1e-7) are unverified assertions. It also lacks an explicit incompleteness-confession block, which is a listed failure mode.",
+    "missing_steps": [
+      "Land a runnable Python script in the plan: imports, NLSE sign convention, exact soliton ansatz, split-step Fourier propagator with de-aliasing, Crank-Nicolson predictor-corrector cross-check",
+      "Execute the script and report concrete L2 errors at t=0,2,5,10, relative mass/energy/momentum drifts, and measured convergence orders",
+      "Add an explicit incompleteness / retained-assumption block if tolerances are missed, per the failure-mode warning",
+      "Only proceed to execute→validate after real numerical results are returned"
+    ],
+    "mode": "coder",
+    "description": "Land and execute a runnable Python script that (1) symbolically verifies the exact soliton ansatz against the chosen NLSE sign convention (iψ_t + (1/2)ψ_xx + |ψ|²ψ = 0 → sech profile), (2) implements "
+  }
+]
