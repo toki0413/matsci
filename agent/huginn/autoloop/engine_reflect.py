@@ -3925,9 +3925,15 @@ class EngineReflect:
         Introduction/Methods/Results/Discussion. We assemble execution data
         from self and let the LLM write a proper report instead of a loop summary.
         """
+        # 证据链: 报告头/文件名必须用本轮真实 run_id, 与 trajectory 文件名、
+        # provenance、run_result.run_id 对得上. 此前这里另造了一个 uuid, 导致
+        # 6/6 轮报告自称的 Run ID 在 workspace 里根本找不到对应 trajectory (ws7:
+        # 报告 loop_14248d13 vs 真实 loop_4a965b85) —— 自证链条自己断一节.
         report_data = {
             "objective": objective,
-            "run_id": f"loop_{uuid.uuid4().hex[:8]}",
+            "run_id": str(
+                getattr(self, "_run_id", None) or f"loop_{uuid.uuid4().hex[:8]}"
+            ),
             "total_time_seconds": total_time,
             "phases": [
                 {

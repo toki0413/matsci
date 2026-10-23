@@ -341,3 +341,97 @@ async def test_degraded_tool_is_demoted_out_of_schemas():
         )
     finally:
         ToolRegistry.restore(snapshot)
+
+
+# ── D8/D10: surfaced read-only tools must actually be usable ───────────────
+
+
+class _MemoryStub:
+    def recall(self, **kwargs):
+        return [{"content": "soliton sech"}]
+
+
+class _ReadonlyHost:
+    memory = _MemoryStub()
+
+
+def _patch_registry(monkeypatch, tools: dict[str, object]) -> None:
+    from huginn.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(
+        ToolRegistry, "list_tools", classmethod(lambda cls: list(tools))
+    )
+    monkeypatch.setattr(
+        ToolRegistry, "get", classmethod(lambda cls, name: tools.get(name))
+    )
+
+
+async def test_recall_tool_receives_engine_memory_manager(monkeypatch):
+    """adapter 默认丢掉 memory_manager → recall 在 driver 里恒报不可用."""
+    from huginn.tools.memory_tool import RecallTool
+
+    _patch_registry(monkeypatch, {"recall": RecallTool()})
+    tools = EngineAct(_ReadonlyHost())._resolve_readonly_tools()
+
+    assert [t.name for t in tools] == ["recall"]
+    result = await tools[0].ainvoke({"query": "soliton"})
+    assert "soliton sech" in str(result)
+    assert "Memory manager not available" not in str(result)
+
+
+def test_recall_observation_hidden_without_archived_handles(monkeypatch):
+    """没有 offload 句柄时挂出 recall_observation = 必然失败的陷阱选项."""
+    from huginn.tools.observation_pack import RecallObservationTool
+
+    _patch_registry(monkeypatch, {"recall_observation": RecallObservationTool()})
+
+    monkeypatch.setattr(EngineAct, "_has_archived_observations", lambda self: False)
+    assert EngineAct(_ReadonlyHost())._resolve_readonly_tools() == []
+
+    monkeypatch.setattr(EngineAct, "_has_archived_observations", lambda self: True)
+    tools = EngineAct(_ReadonlyHost())._resolve_readonly_tools()
+    assert [t.name for t in tools] == ["recall_observation"]
+
+
+def test_observation_archive_has_entries(tmp_path):
+    from huginn.tools.observation_pack import ObservationArchive
+
+    archive = ObservationArchive("t")
+    archive.dir = tmp_path
+    assert archive.has_entries() is False
+    archive.archive_body("payload")
+    assert archive.has_entries() is True
+
+
+# ── D9: arxiv 后端必须走 https (代理下 http 握手失败) ─────────────────────
+
+
+def test_arxiv_search_uses_https(monkeypatch):
+    import huginn.tools.web_search_tool as wst
+
+    captured: dict[str, str] = {}
+    xml = (
+        b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">'
+        b"<entry><title>t</title><summary>s</summary><id>u</id></entry></feed>"
+    )
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return xml
+
+    def _fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _Resp()
+
+    monkeypatch.setattr(wst.urllib.request, "urlopen", _fake_urlopen)
+    result = wst.WebSearchTool._search_arxiv(object(), "soliton", 1)
+
+    assert captured["url"].startswith("https://export.arxiv.org/")
+    assert result is not None
+    assert result.data["search_engine"] == "arxiv"

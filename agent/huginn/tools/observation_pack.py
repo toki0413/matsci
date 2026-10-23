@@ -146,6 +146,17 @@ class ObservationArchive:
         """便捷入口: 归档正文, 返回 (handle, path)。"""
         return self.archive_body(body)
 
+    def has_entries(self) -> bool:
+        """本 session 是否已有可召回的档案。
+
+        供工具面裁剪用: 没有句柄时 ``recall_observation`` 必然失败 (模型只能
+        瞎猜 ``@obs:``), 不该挂给 LLM。
+        """
+        try:
+            return any(p.suffix == ".txt" for p in self.dir.iterdir())
+        except OSError:
+            return False
+
 
 class _RecallInput(BaseModel):
     handle: str = Field(..., description="例如 @obs:<uuid>; 由工具超长输出句柄给出")

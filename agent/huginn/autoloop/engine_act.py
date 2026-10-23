@@ -127,6 +127,11 @@ class EngineAct:
             tool = ToolRegistry.get(name)
             if tool is None or not getattr(tool, "read_only", False):
                 continue
+            if name == "recall_observation" and not self._has_archived_observations():
+                # 前置状态工具: 没有 offload 句柄时它 100% 失败 (ws7 实测书生
+                # 只能瞎传 '@obs:' → malformed handle). 按需裁剪, 不给"必然失败"
+                # 的选项, 免得浪费一轮工具调用并污染成功率.
+                continue
             if not getattr(tool, "active", True):
                 continue
             try:
@@ -135,7 +140,17 @@ class EngineAct:
             except Exception:  # 防御: 可用性探测异常按不可用处理
                 continue
             try:
-                out.append(adapter.adapt(tool, permission_config=perm))
+                # memory_manager 必须透传: engine 持有 MemoryManager, 但 adapter
+                # 默认丢弃 → recall/remember 在 driver 上下文恒返回 "Memory manager
+                # not available" (ws7 实测 2/2 失败). 工具面给了却不给运行期依赖,
+                # 等于又一层"注册≠可用".
+                out.append(
+                    adapter.adapt(
+                        tool,
+                        permission_config=perm,
+                        memory_manager=getattr(self, "memory", None),
+                    )
+                )
             except Exception:  # 防御: 单个工具适配失败不影响其余工具
                 logger.debug("adapt readonly tool %s failed", name, exc_info=True)
         if out:
@@ -145,6 +160,17 @@ class EngineAct:
                 [getattr(t, "name", "?") for t in out],
             )
         return out
+
+    def _has_archived_observations(self) -> bool:
+        """本 session 是否已有 offload 句柄 (决定 recall_observation 是否挂出)."""
+        try:
+            from huginn.tools.observation_pack import ObservationArchive
+
+            # adapter 构造 ToolContext 时 session_id 固定为 "default", 这里必须
+            # 用同一口径, 否则裁剪判断与实际召回目录对不上.
+            return ObservationArchive("default").has_entries()
+        except Exception:  # 防御: 探测失败按"无句柄"处理, 只是少给一个工具
+            return False
 
     async def _plan(
         self, hypothesis: str, context: dict[str, Any]
