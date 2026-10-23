@@ -10,7 +10,6 @@ import logging
 import os
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,6 +19,7 @@ from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationRes
 from huginn.security import SandboxExecutor
 from huginn.security.conservation import audit_material_conservation
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.sim._async_job import submit_background
 from huginn.validation.handle_validator import HandleValidator
 
 logger = logging.getLogger(__name__)
@@ -516,43 +516,13 @@ class VaspTool(HuginnTool):
             walltime_hours=args.walltime_hours,
         )
 
-        job_id = f"vasp-{uuid.uuid4().hex[:12]}"
-
-        job_entry: dict[str, Any] = {
-            "status": "running",
-            "task": None,
-            "result": None,
-            "error": None,
-            "compute_action": args.compute_action,
-            "working_dir": args.working_dir,
-            "started_at": time.time(),
-            "finished_at": None,
-        }
-        VaspTool._async_jobs[job_id] = job_entry
-
-        async def _run_in_background() -> None:
-            """后台跑实际计算, 完成后更新 job_entry."""
-            try:
-                result = await self.call(sync_args, context)
-                job_entry["result"] = (
-                    result.data if result.success else None
-                )
-                job_entry["error"] = result.error
-                job_entry["status"] = "done" if result.success else "failed"
-            except Exception as exc:
-                job_entry["error"] = str(exc)
-                job_entry["status"] = "failed"
-            finally:
-                job_entry["finished_at"] = time.time()
-
-        # create_task 把协程排到当前事件循环, agent chat 期间会并发跑
-        try:
-            task = asyncio.create_task(_run_in_background())
-            job_entry["task"] = task
-        except RuntimeError:
-            # 没有运行中的事件循环 (比如同步路径调用), 退化为同步执行
-            # 这种情况下 "异步" 提交实际是阻塞的, 但至少功能正确
-            await _run_in_background()
+        job_id = await submit_background(
+            "vasp",
+            compute_action=args.compute_action,
+            working_dir=args.working_dir,
+            jobs=VaspTool._async_jobs,
+            run=lambda: self.call(sync_args, context),
+        )
 
         return ToolResult(
             data={

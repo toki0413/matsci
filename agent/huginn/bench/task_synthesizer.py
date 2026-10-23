@@ -13,11 +13,12 @@ LLM 生成任务描述 + 判分脚本, sanity_check 用已知答案验证判分�
 from __future__ import annotations
 
 import ast
-import json
 import logging
 import textwrap
 from dataclasses import dataclass
 from typing import Any
+
+from huginn.metacog.text_to_json import extract_json_object
 
 from .task import BenchmarkTask
 
@@ -335,21 +336,8 @@ def _build_synth_prompt(domain: str, difficulty: str) -> list:
 
 
 def _parse_json(text: str) -> dict[str, Any]:
-    if not text:
-        return {}
-    if "```" in text:
-        parts = text.split("```")
-        if len(parts) >= 2:
-            text = parts[1]
-            if text.startswith("json"):
-                text = text[4:]
-    try:
-        result = json.loads(text.strip())
-        if isinstance(result, dict):
-            return result
-    except (json.JSONDecodeError, TypeError):
-        logger.debug("best-effort op failed", exc_info=True)
-    return {}
+    """从 LLM 输出里抠 JSON 对象 (围栏/散文容忍统一由 text_to_json 负责)."""
+    return extract_json_object(text) or {}
 
 
 def _validate_synth_payload(p: dict[str, Any]) -> bool:

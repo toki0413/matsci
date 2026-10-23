@@ -66,6 +66,33 @@ def _pre_lean_dimensional_check(
     return checks
 
 
+# auto_verify 子动作 → AutoLeanPipeline 上的验证器方法名.
+# 未列出的 (derivative / unified) 有专属预处理, 见 LeanTool 的同名私有方法.
+_SIMPLE_VERIFIERS: dict[str, str] = {
+    "constitutive": "verify_constitutive",
+    "weak_form": "verify_weak_form",
+    "eigenvalue": "verify_eigenvalue",
+    "tensor_ops": "verify_tensor_ops",
+    "tensor_calculus": "verify_tensor_calculus",
+    "solve": "verify_solve",
+    "fem": "verify_fem",
+    "linear_algebra": "verify_linear_algebra",
+    "dft": "verify_dft",
+    "thermodynamics": "verify_thermodynamics",
+    "probability": "verify_probability",
+    "discretization": "verify_discretization",
+}
+
+
+def _missing_symbolic_result(action: str | None) -> ToolResult:
+    """缺 symbolic_result 时统一的失败回执 (文案按子动作区分, 便于调用方纠错)."""
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"symbolic_result required for auto_verify {action}",
+    )
+
+
 class LeanToolInput(BaseModel):
     action: str = Field(
         ...,
@@ -345,153 +372,85 @@ class LeanTool(HuginnTool):
         pipe = self._get_auto_pipeline()
         sym = args.symbols or []
 
-        if sub == "constitutive":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify constitutive",
-                )
-            result = pipe.verify_constitutive(args.symbolic_result, symbols=sym)
-        elif sub == "derivative":
-            # Support both explicit fields and symbolic_result dict from SymbolicMathTool
-            original = args.original_expression
-            variable = args.variable
-            expected = args.expected_expression
-            if args.symbolic_result and isinstance(args.symbolic_result, dict):
-                original = (
-                    original
-                    or args.symbolic_result.get("input")
-                    or args.symbolic_result.get("original_expression")
-                )
-                variable = variable or args.symbolic_result.get("variable")
-                expected = (
-                    expected
-                    or args.symbolic_result.get("result")
-                    or args.symbolic_result.get("expected_expression")
-                )
-            if not original or not variable or not expected:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="original_expression, variable, expected_expression required (or pass symbolic_result with input/variable/result)",
-                )
-            pts = args.test_points or {variable: 1.0}
-            result = pipe.verify_derivative(
-                original=original,
-                variable=variable,
-                expected=expected,
-                test_points=pts,
-            )
-        elif sub == "weak_form":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify weak_form",
-                )
-            result = pipe.verify_weak_form(args.symbolic_result, symbols=sym)
-        elif sub == "eigenvalue":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify eigenvalue",
-                )
-            result = pipe.verify_eigenvalue(args.symbolic_result, symbols=sym)
-        elif sub == "tensor_ops":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify tensor_ops",
-                )
-            result = pipe.verify_tensor_ops(args.symbolic_result, symbols=sym)
-        elif sub == "tensor_calculus":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify tensor_calculus",
-                )
-            result = pipe.verify_tensor_calculus(args.symbolic_result, symbols=sym)
-        elif sub == "solve":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify solve",
-                )
-            result = pipe.verify_solve(args.symbolic_result, symbols=sym)
-        elif sub == "fem":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify fem",
-                )
-            result = pipe.verify_fem(args.symbolic_result, symbols=sym)
-        elif sub == "linear_algebra":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify linear_algebra",
-                )
-            result = pipe.verify_linear_algebra(args.symbolic_result, symbols=sym)
-        elif sub == "dft":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify dft",
-                )
-            result = pipe.verify_dft(args.symbolic_result, symbols=sym)
-        elif sub == "thermodynamics":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify thermodynamics",
-                )
-            result = pipe.verify_thermodynamics(args.symbolic_result, symbols=sym)
-        elif sub == "probability":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify probability",
-                )
-            result = pipe.verify_probability(args.symbolic_result, symbols=sym)
-        elif sub == "unified":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify unified",
-                )
-            # 量纲前置自检(可选): 仅当提供 unit_symbols/expected_units 时启用, 否则不阻断.
-            dimension_checks = _pre_lean_dimensional_check(
-                args.symbolic_result, args.unit_symbols, args.expected_units
-            )
-            if dimension_checks:
-                args.symbolic_result["dimension_checks"] = dimension_checks
-            result = pipe.verify_unified(args.symbolic_result, symbols=sym)
-        elif sub == "discretization":
-            if not args.symbolic_result:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="symbolic_result required for auto_verify discretization",
-                )
-            result = pipe.verify_discretization(args.symbolic_result, symbols=sym)
-        else:
+        if sub == "derivative":
+            return self._auto_verify_derivative(args, pipe, sym)
+        if sub == "unified":
+            return self._auto_verify_unified(args, pipe, sym)
+
+        verifier = _SIMPLE_VERIFIERS.get(sub)
+        if verifier is None:
             return ToolResult(
                 data=None,
                 success=False,
                 error=f"Unknown auto_verify_action: {args.auto_verify_action}",
             )
+        if not args.symbolic_result:
+            return _missing_symbolic_result(sub)
+        result = getattr(pipe, verifier)(args.symbolic_result, symbols=sym)
 
+        return ToolResult(
+            data={
+                "verified": result.success,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "elapsed_seconds": result.elapsed_seconds,
+            },
+            success=result.success,
+            error=None if result.success else result.stderr,
+        )
+
+    def _auto_verify_derivative(self, args: LeanToolInput, pipe, sym: list) -> ToolResult:
+        """derivative 子动作: 支持显式字段, 也支持 SymbolicMathTool 的 symbolic_result."""
+        original = args.original_expression
+        variable = args.variable
+        expected = args.expected_expression
+        if args.symbolic_result and isinstance(args.symbolic_result, dict):
+            original = (
+                original
+                or args.symbolic_result.get("input")
+                or args.symbolic_result.get("original_expression")
+            )
+            variable = variable or args.symbolic_result.get("variable")
+            expected = (
+                expected
+                or args.symbolic_result.get("result")
+                or args.symbolic_result.get("expected_expression")
+            )
+        if not original or not variable or not expected:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="original_expression, variable, expected_expression required (or pass symbolic_result with input/variable/result)",
+            )
+        pts = args.test_points or {variable: 1.0}
+        result = pipe.verify_derivative(
+            original=original,
+            variable=variable,
+            expected=expected,
+            test_points=pts,
+        )
+        return ToolResult(
+            data={
+                "verified": result.success,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "elapsed_seconds": result.elapsed_seconds,
+            },
+            success=result.success,
+            error=None if result.success else result.stderr,
+        )
+
+    def _auto_verify_unified(self, args: LeanToolInput, pipe, sym: list) -> ToolResult:
+        """unified 子动作: 先做可选量纲前置自检, 再交给 Lean 统一验证器."""
+        if not args.symbolic_result:
+            return _missing_symbolic_result("unified")
+        # 量纲前置自检(可选): 仅当提供 unit_symbols/expected_units 时启用, 否则不阻断.
+        dimension_checks = _pre_lean_dimensional_check(
+            args.symbolic_result, args.unit_symbols, args.expected_units
+        )
+        if dimension_checks:
+            args.symbolic_result["dimension_checks"] = dimension_checks
+        result = pipe.verify_unified(args.symbolic_result, symbols=sym)
         return ToolResult(
             data={
                 "verified": result.success,

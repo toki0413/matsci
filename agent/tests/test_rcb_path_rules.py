@@ -1,4 +1,4 @@
-﻿"""Step 4 RepoLaw path_rules tests — assert-based, runnable standalone or via pytest.
+"""Step 4 RepoLaw path_rules tests — assert-based, runnable standalone or via pytest.
 
 Covers _DEFAULT_SANDBOX_PATH_RULES, sandbox_mode injection, env var append, and the
 hard-floor subset guarantee (defaults cannot be removed).

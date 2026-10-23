@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from huginn.metacog._json import parse_first_json as _parse_first_json
 from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
 
 logger = logging.getLogger(__name__)
@@ -157,34 +158,6 @@ def _call_llm_sync(
             f"LLM call failed (status={res['status']}, attempts={res['attempts']})"
         )
     return res["text"]
-
-
-def _parse_first_json(text: str) -> dict | None:
-    """从 text 抓第一个平衡的 {...} JSON 对象 (支持嵌套). 失败返回 None.
-
-    ponytail: 手写平衡括号匹配, 不引 json5/retrying. LLM 偶尔在 JSON 外加
-    markdown fence / 前后文本, 这里只找第一个平衡的 { ... }.
-    """
-    if not text:
-        return None
-    depth = 0
-    start = -1
-    for i, ch in enumerate(text):
-        if ch == '{':
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == '}':
-            if depth == 0:
-                continue
-            depth -= 1
-            if depth == 0 and start >= 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    return None
-    return None
 
 
 _LOOSE_RESERVED = {"new_n_params", "new_description", "new_predictions", "transform_reason"}

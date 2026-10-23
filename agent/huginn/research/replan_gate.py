@@ -29,6 +29,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from huginn.research._scalars import first_scalar as _first_scalar
+
 
 def _kw(text: str) -> set[str]:
     """关键词集合 (与 decision_gate.distill_tool_output 同切法): 只留 >1 字符的词干."""
@@ -41,30 +43,6 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
-
-
-def _first_scalar(node: Any) -> float | None:
-    """从任意结构取第一个可量标量 (与 program/decision_gate/law_model 同语义, 不伪造)."""
-    if isinstance(node, bool):
-        return None
-    if isinstance(node, int | float):
-        return float(node)
-    if isinstance(node, dict):
-        for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
-            if k in node:
-                v = _first_scalar(node[k])
-                if v is not None:
-                    return v
-        for v in node.values():
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    elif isinstance(node, list | tuple):
-        for v in node:
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    return None
 
 
 def decide_replan_skip(

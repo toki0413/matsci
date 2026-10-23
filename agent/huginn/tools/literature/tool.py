@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.tools._llm import invoke_llm_text
 from huginn.tools.base import HuginnTool
 
 # ───────────────────────── search 增强 (P0-1 / P1-4) ─────────────────────────
@@ -747,7 +748,7 @@ class LiteratureTool(HuginnTool):
                 error=f"LLM 初始化失败: {exc}",
             )
 
-        content = await self._llm_invoke(model, _SUMMARY_SYSTEM_PROMPT, user_prompt)
+        content = await invoke_llm_text(model, _SUMMARY_SYSTEM_PROMPT, user_prompt)
 
         # 顺带生成 bibtex, 方便用户直接拿去用
         bibtex = self._to_bibtex(papers)
@@ -996,7 +997,7 @@ class LiteratureTool(HuginnTool):
             f"请抽出关于 {system} 的 {property} 报道值."
         )
         try:
-            content = await self._llm_invoke(model, _BENCHMARK_SYSTEM_PROMPT, user_prompt)
+            content = await invoke_llm_text(model, _BENCHMARK_SYSTEM_PROMPT, user_prompt)
         except Exception as exc:
             logger.debug("benchmark value extraction failed: %s", exc)
             return []
@@ -2130,7 +2131,7 @@ class LiteratureTool(HuginnTool):
                 f"请用 '{lens_name}' 透镜分析, 按 JSON 格式输出."
             )
             try:
-                content = await self._llm_invoke(model, system_prompt, user_prompt)
+                content = await invoke_llm_text(model, system_prompt, user_prompt)
                 parsed = self._parse_json(content)
                 if not parsed or "findings" not in parsed:
                     logger.warning("lens %s 返回无效 JSON: %s", lens_name, content[:200])
@@ -2363,19 +2364,6 @@ class LiteratureTool(HuginnTool):
 
         config = getattr(context, "config", None)
         return get_model(config=config, temperature=0.2, max_tokens=6000)
-
-    async def _llm_invoke(self, model: Any, system_prompt: str, user_prompt: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        if hasattr(model, "ainvoke"):
-            response = await model.ainvoke(messages)
-        else:
-            response = await asyncio.to_thread(model.invoke, messages)
-        content = response.content if hasattr(response, "content") else str(response)
-        if not isinstance(content, str):
-            content = json.dumps(content, ensure_ascii=False)
-        return content
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any] | None:

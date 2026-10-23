@@ -12,8 +12,18 @@ ponytail: 不引新依赖, 不上策略模式, 单文件单类. 14 hint 的分�
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
+
+# 白名单/正则/公开 API 均来自 huginn.utils.numeric_targets (与 cli.rcb_utils
+# 共用同一事实来源). engine_observe 走 `from huginn.agent.hint_coordinator import
+# extract_numeric_targets`, 故此处 re-export 该名字.
+from huginn.utils.numeric_targets import (
+    METRIC_WHITELIST as _METRIC_WHITELIST,
+)
+from huginn.utils.numeric_targets import (
+    NUMERIC_PAIR_RE as _NUMERIC_PAIR_RE,
+)
+from huginn.utils.numeric_targets import extract_numeric_targets  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -156,38 +166,7 @@ def _build_posterior_guided_hint(
 # E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用.
 # 从自由文本里抓 "metric = value" 喂给 manifold 做后验/溯因. 不调 LLM.
 # 白名单过滤避免误抓年份/版本号; 失败/无文本返回空 list, 不阻塞.
-_METRIC_WHITELIST = frozenset({
-    "mae", "rmse", "mse", "r2", "r\u00b2", "r3", "accuracy",
-    "precision", "recall", "f1", "auc", "pearson", "spearman",
-    "loss", "error", "score", "bias",
-})
-_NUMERIC_PAIR_RE = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9_\u00b2\u00b3]{1,15})\s*(?:=|:|of|\u2248|~|is)\s*"
-    r"([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-)
-
-
-def extract_numeric_targets(text: str) -> dict[str, float]:
-    """从文本抓 'metric = value' 模式, 返回 {metric: value}.
-
-    白名单 + 数值量级过滤, 避免误抓年份/版本号. 无文本返回空 dict.
-    """
-    if not text:
-        return {}
-    targets: dict[str, float] = {}
-    for m in _NUMERIC_PAIR_RE.finditer(text):
-        name = m.group(1).lower()
-        try:
-            val = float(m.group(2))
-        except ValueError:
-            logger.debug("best-effort op failed", exc_info=True)
-            continue
-        if name not in _METRIC_WHITELIST:
-            continue
-        if abs(val) > 1e6:
-            continue
-        targets[name] = val
-    return targets
+# 白名单/正则见 huginn.utils.numeric_targets (与 cli.rcb_utils 共用).
 
 
 def extract_observations(text: str) -> list:

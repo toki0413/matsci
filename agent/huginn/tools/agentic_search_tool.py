@@ -27,7 +27,6 @@ Cost tier is "none" (not a CPU/GPU-heavy simulation) — gated by phase
 
 from __future__ import annotations
 
-import asyncio
 import ipaddress
 import json
 import logging
@@ -43,6 +42,8 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
+from huginn.tools._embed import lazy_embed_fn
+from huginn.tools._llm import invoke_llm_text
 from huginn.tools._offline import web_search_disabled
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
@@ -127,31 +128,6 @@ def _cosine(a: list[float], b: list[float]) -> float:
     na = math.sqrt(sum(x * x for x in a)) or 1.0
     nb = math.sqrt(sum(y * y for y in b)) or 1.0
     return dot / (na * nb)
-
-
-def _lazy_embed_fn() -> Callable[[list[str]], list[list[float]]] | None:
-    """复用 RAG 的 embedding 模型 (chroma DefaultEF ONNX), 未缓存则 None.
-
-    语义打分是可选增强 (P1-6): embedding 模型没下载时安静降级为关键词打分,
-    不阻塞抓取/抽取流程. 与 ``VectorStore._compute_embeddings`` 同一事实来源.
-    """
-    try:
-        from huginn.rag.vector_store import _embedding_model_cached
-
-        if not _embedding_model_cached():
-            return None
-        from chromadb.utils.embedding_functions import DefaultEF
-
-        ef = DefaultEF()
-        _ = ef(["probe"])  # 触发加载, 失败会抛异常
-
-        def embed(texts: list[str]) -> list[list[float]]:
-            return ef(texts)
-
-        return embed
-    except Exception:
-        logger.debug("semantic embed unavailable, keyword scoring only", exc_info=True)
-        return None
 
 
 def _extract_relevant(
@@ -478,19 +454,6 @@ class AgenticSearchTool(HuginnTool):
         config = getattr(context, "config", None)
         return get_model(config=config, temperature=0.2, max_tokens=2000)
 
-    async def _llm_invoke(self, model: Any, system_prompt: str, user_prompt: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        if hasattr(model, "ainvoke"):
-            response = await model.ainvoke(messages)
-        else:
-            response = await asyncio.to_thread(model.invoke, messages)
-        content = response.content if hasattr(response, "content") else str(response)
-        if not isinstance(content, str):
-            content = json.dumps(content, ensure_ascii=False)
-        return content
-
     async def _llm_synthesize(
         self, findings: list[dict[str, Any]], question: str, context: ToolContext | None
     ) -> str:
@@ -514,7 +477,7 @@ class AgenticSearchTool(HuginnTool):
                 "\n## 结论\n- ...\n引用只允许用证据里的 [编号], 不要编造来源."
             )
             user_p = f"研究问题: {question}\n\n证据列表:\n{evidence}"
-            content = await self._llm_invoke(model, sys_p, user_p)
+            content = await invoke_llm_text(model, sys_p, user_p)
             return (content or "").strip() or _synthesize(findings, question)
         except Exception as exc:
             logger.debug("llm synthesize failed, fallback to concatenation: %s", exc)
@@ -543,7 +506,7 @@ class AgenticSearchTool(HuginnTool):
                 f'只输出 JSON: {{"queries": ["q1", "q2"]}}'
             )
             user_p = f"原问题: {question}\n\n已有发现:\n{titles}"
-            content = await self._llm_invoke(model, sys_p, user_p)
+            content = await invoke_llm_text(model, sys_p, user_p)
             parsed = _parse_json_text(content)
             queries = [q for q in (parsed.get("queries", []) if parsed else []) if isinstance(q, str) and q.strip()]
             if queries:
@@ -632,7 +595,7 @@ class AgenticSearchTool(HuginnTool):
         queries: list[str] = [inp.question]
         # P1-6: 懒加载语义 embedding (模型未缓存则为 None)
         if self._embed is None:
-            self._embed = _lazy_embed_fn()
+            self._embed = lazy_embed_fn()
 
         # L3: 深度检索闭环 = plan→retrieve→critique→refine (+ 可选再 retrieve)
         for hop in range(inp.max_hops):
@@ -715,7 +678,6 @@ class AgenticSearchTool(HuginnTool):
 
 def _parse_json_text(text: str) -> dict[str, Any] | None:
     """容错 JSON 解析 (容忍 ```json 代码块 / 首尾花括号外噪声)."""
-    import json
 
     text = text.strip()
     if text.startswith("```"):

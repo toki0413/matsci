@@ -6,7 +6,6 @@ When OpenFOAM is not installed, the tool falls back to case-export mode.
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import os
 import shutil
@@ -19,6 +18,7 @@ from pydantic import BaseModel, Field
 from huginn.core_types import ToolContext, ToolResult
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.sim._packing import load_packing_objects
 
 logger = logging.getLogger(__name__)
 
@@ -794,7 +794,7 @@ boundaryField
     def _set_fields(self, args: OpenFoamToolInput, case_dir: Path) -> ToolResult:
         """Write setFieldsDict and initial phase field from packing output."""
         work_dir = Path(args.working_dir) if args.working_dir else Path.cwd()
-        objects = self._load_packing_data(args.packing_data, work_dir)
+        objects = load_packing_objects(args.packing_data, work_dir)
         if not objects:
             return ToolResult(
                 data=None,
@@ -860,22 +860,6 @@ boundaryField
             },
             success=True,
         )
-
-    def _load_packing_data(
-        self,
-        packing_data: dict[str, Any] | str | None,
-        work_dir: Path,
-    ) -> list[dict[str, Any]]:
-        if packing_data is None:
-            return []
-        if isinstance(packing_data, str):
-            path = Path(packing_data)
-            if not path.is_absolute():
-                path = work_dir / path
-            data = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            data = packing_data
-        return data.get("objects", [])
 
     def _write_set_fields_dict(
         self,

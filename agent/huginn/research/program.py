@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from huginn.research._scalars import first_scalar as _first_scalar
+
 if TYPE_CHECKING:
     from huginn.research.planning import ResearchPlan
 
@@ -100,34 +102,6 @@ _REPLAN_SIM = 0.55
 # 稳定判据: 最后两层 top-1 得分相对变化 <= margin(分数高原) → 提前终止剩余层.
 _EARLY_STOP_MIN_LAYERS = 2
 _EARLY_STOP_MARGIN = 0.02
-
-
-def _first_scalar(node: Any) -> float | None:
-    """从预测/真实结果里取"第一个可用的数值指标"作对账依据(深度优先, 不伪造).
-
-    优先取常见量纲判定名(T/K/score/value/...); 折返时取任意第一个 float。
-    取不到返回 None(调用方跳过, 不硬造对账)。
-    """
-    if isinstance(node, bool):
-        return None
-    if isinstance(node, int | float):
-        return float(node)
-    if isinstance(node, dict):
-        for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
-            if k in node:
-                v = _first_scalar(node[k])
-                if v is not None:
-                    return v
-        for v in node.values():
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    elif isinstance(node, list | tuple):
-        for v in node:
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    return None
 
 
 def _wm_predict(world_model: Any, spec: Experiment) -> dict:

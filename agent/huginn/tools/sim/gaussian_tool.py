@@ -17,10 +17,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.validation.handle_validator import HandleValidator
+from huginn.tools.sim._validate import validate_working_dir
 
 logger = logging.getLogger(__name__)
 
@@ -131,16 +131,7 @@ class GaussianTool(HuginnTool):
     async def validate_input(
         self, args: GaussianToolInput, context: ToolContext
     ) -> ValidationResult:
-        vr = HandleValidator.validate(
-            HandleType.FILE_PATH, args.working_dir, context
-        )
-        if not vr.result:
-            return ValidationResult(
-                result=False,
-                message=f"Working directory not found: {args.working_dir}",
-                error_code=404,
-            )
-        return ValidationResult(result=True)
+        return await validate_working_dir(args, context)
 
     async def call(
         self, args: GaussianToolInput, context: ToolContext

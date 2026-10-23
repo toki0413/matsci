@@ -285,6 +285,18 @@ class CodeTool(HuginnTool):
         # 复用 bash_tool 的结果分类 (本身也是重活/进度 helper 的宿主)
         from huginn.tools.bash_tool import _result_error_kind
 
+        _timed_out = bool(getattr(result, "timed_out", False))
+        # 超时是"算力预算耗尽", 不是崩溃. 不给显式 error 时, adapter 会把它
+        # 译成 "silent failure — likely a sandbox/process crash", agent 就会
+        # 换方法而不是砍计算量 (ws11: 8 次 60s 超时全部误判).
+        _timeout_error = (
+            f"Execution timed out (> {args.timeout}s): compute budget exhausted, "
+            "not a crash. Reduce iterations/resolution/parameter-grid size or "
+            "split into smaller runs, then retry."
+            if _timed_out
+            else None
+        )
+
         tool_result = ToolResult(
             data={
                 "returncode": result.returncode,
@@ -294,6 +306,8 @@ class CodeTool(HuginnTool):
                 "output_files": output_paths,
                 "suggest_fix": suggest,
                 "stream_progress": progress,
+                "timed_out": _timed_out,
+                "timeout": args.timeout,
                 "message": (
                     "Code executed successfully."
                     if result.success
@@ -301,6 +315,7 @@ class CodeTool(HuginnTool):
                 ),
             },
             success=result.success,
+            error=_timeout_error,
             error_kind=_result_error_kind(result),
         )
 

@@ -30,6 +30,7 @@ from pydantic import BaseModel, ValidationError
 from huginn.constraints import ConstraintAdapter
 from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
 from huginn.core_types import (
+    ErrorKind,
     PermissionMode,
     ToolContext,
     ToolResult,
@@ -48,6 +49,20 @@ from huginn.utils.runtime import get_runtime_home
 from huginn.utils.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
+
+
+def _timeout_failure_hint(timeout: float | None = None) -> str:
+    """超时失败的可操作提示 (与 code_lab 的超时专用口径一致).
+
+    超时 = 算力预算耗尽, 不是崩溃. 把它译成 "sandbox/process crash" 会让 agent
+    换方法而不是砍计算量, 从而在同一个太重的方案上反复撞墙 (ws11 观察到 8 次).
+    """
+    budget = f" (> {timeout}s)" if timeout else ""
+    return (
+        f"Execution timed out{budget}: compute budget exhausted, not a crash. "
+        "Reduce iterations/resolution/parameter-grid size or split into smaller "
+        "runs, then retry."
+    )
 
 
 # ── Tool economy — 让"工具瘦身"每天可见、可变、可调 ───────────────────────
@@ -1096,11 +1111,16 @@ class ToolAdapter:
                     not data.get("error_detail")
                     and data.get("error") == "Unknown error"
                 ):
-                    data["error"] = (
-                        "Unknown error (silent failure — no stderr/stdout captured). "
-                        "This is likely a sandbox/process crash, not a code bug. "
-                        "Try a different approach or tool."
-                    )
+                    if result.error_kind == ErrorKind.TIMEOUT:
+                        _d = result.data if isinstance(result.data, dict) else {}
+                        data["error"] = _timeout_failure_hint(_d.get("timeout"))
+                        data["timed_out"] = True
+                    else:
+                        data["error"] = (
+                            "Unknown error (silent failure — no stderr/stdout captured). "
+                            "This is likely a sandbox/process crash, not a code bug. "
+                            "Try a different approach or tool."
+                        )
             # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
             # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
             data["_source_class"] = "tool_output"
