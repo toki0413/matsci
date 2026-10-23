@@ -649,6 +649,7 @@ class EngineAct:
                         "reproducible": True,
                     }
                     self._record_provenance("closed_form_exec", plan, result)
+                    self._record_internal_tool_call("closed_form_exec", plan, result)
                     self._last_execution_result = {
                         "_tool_name": "closed_form_exec",
                         "_tool_input": plan,
@@ -671,6 +672,8 @@ class EngineAct:
                 str(getattr(self, "_objective", "") or "")
             ):
                 _lab = await self._execute_code_lab(description, context)
+                # 成败都记: 失败的内建实验也占用了真实算力, 不能从遥测里消失.
+                self._record_internal_tool_call("code_lab", plan, _lab)
                 if _lab.get("success"):
                     self._record_provenance("code_lab", plan, _lab)
                     self._last_execution_result = {
@@ -704,6 +707,7 @@ class EngineAct:
                             "reproducible": True,
                         }
                         self._record_provenance("probe_exec", plan, result)
+                        self._record_internal_tool_call("probe_exec", plan, result)
                         self._last_execution_result = {
                             "_tool_name": "probe_exec",
                             "_tool_input": plan,
@@ -834,6 +838,10 @@ class EngineAct:
 
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
+        # dispatch / 回落阶段的内建执行成功路径: 同样补 tool_call span,
+        # 与快路的记法一致 (快路已提前 return, 不会重复).
+        if mode in self._INTERNAL_EXEC_MODES:
+            self._record_internal_tool_call(mode, plan, result)
         # VISTA 借鉴: 本轮若产出视觉帧, 原样落盘进无损观测记忆.
         # flag (visual_frame_memory) 关时 capture_if_enabled 直返, 零成本零回归.
         # frame_inspect 本身是"回看已有帧", 不重复入库.
@@ -853,6 +861,42 @@ class EngineAct:
         # (高重叠 → 下轮降级引导). context 无 changed_files 时记空, 不触发门控.
         self._last_execution_files = context.get("changed_files", [])
         return result
+
+    #: 引擎内建执行快路 (不经 ToolAdapter 的 LLM function call).
+    #: 这些路径真实跑代码/数值, 必须进 trajectory.tool_calls, 否则利用率被低估.
+    _INTERNAL_EXEC_MODES: frozenset[str] = frozenset(
+        {"code_lab", "probe_exec", "closed_form_exec"}
+    )
+
+    def _record_internal_tool_call(
+        self, tool_name: str, input_params: Any, output: Any
+    ) -> None:
+        """把内建执行快路记成一条与 adapter 同形的 tool_call span.
+
+        code_lab / probe_exec / closed_form_exec 不经过 ToolAdapter, 以前只在
+        provenance.tool_chain 留痕 → trajectory.tool_calls 恒为 0: 利用率被系统性
+        低估, G31 审计还会把"真跑了实验"误判成空转. success 口径与
+        `_derive_coder_outcome` 一致: 显式 False 或带 error 即失败.
+        """
+        try:
+            from huginn.telemetry import get_telemetry_collector
+            from huginn.tools.adapter import _truncate_for_trajectory
+
+            ok = not (
+                isinstance(output, dict)
+                and (output.get("success") is False or output.get("error"))
+            )
+            with get_telemetry_collector().span("tool_call", tool=tool_name) as span:
+                span.metadata["success"] = ok
+                span.metadata["stage"] = "internal"
+                span.metadata["args"] = _truncate_for_trajectory(input_params)
+                span.metadata["result"] = _truncate_for_trajectory(output)
+                if not ok and isinstance(output, dict):
+                    span.metadata["error"] = str(
+                        output.get("error") or "internal execution failed"
+                    )[:2000]
+        except Exception:  # 遥测 fail-open, 绝不阻断执行
+            logger.debug("internal tool_call span failed (fail-open)", exc_info=True)
 
     def _record_provenance(
         self, tool_name: str, input_params: dict[str, Any], output: Any
@@ -1338,6 +1382,10 @@ Please modify the code to address this task."""
                 lab["fallback_from"] = "coder"
                 logger.info("coder 未产出可用结果 → 回落 code_lab 真实执行成功")
                 return lab
+            # 失败尝试也要可见 (成功路径由 _execute 末尾统一补 span).
+            self._record_internal_tool_call(
+                "code_lab", {"fallback_from": "coder"}, lab
+            )
             reasons.append("code_lab: " + str((lab or {}).get("error", "no evidence")))
         except Exception as exc:  # 防御: 回落本身失败不能带挂 execute
             logger.warning("coder→code_lab fallback failed", exc_info=True)

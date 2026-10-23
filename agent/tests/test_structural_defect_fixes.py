@@ -83,6 +83,41 @@ def test_pre_execution_failure_emits_tool_call_span():
     assert spans[0].metadata["error"] == "invalid_tool_args"
 
 
+def test_internal_fast_path_counts_as_tool_call_in_trajectory():
+    """code_lab / probe_exec 不经 adapter, 但必须出现在 trajectory.tool_calls.
+
+    否则"真跑了实验"在遥测里仍是 0 次工具调用, 利用率被系统性低估,
+    G31 审计还会把它误判成空转.
+    """
+    from huginn.telemetry import _extract_tool_calls, get_telemetry_collector
+
+    previous = get_telemetry_collector()
+    collector = TelemetryCollector()
+    set_telemetry_collector(collector)
+    try:
+        with collector.span("phase:execute"):
+            EngineAct._record_internal_tool_call(
+                object(),
+                "code_lab",
+                {"mode": "code_lab"},
+                {"status": "completed", "success": True, "result": {"score": 1.0}},
+            )
+            EngineAct._record_internal_tool_call(
+                object(),
+                "probe_exec",
+                {"mode": "probe_exec"},
+                {"status": "failed", "success": False, "error": "syntax error"},
+            )
+    finally:
+        set_telemetry_collector(previous)
+
+    calls = _extract_tool_calls(collector.to_dict())
+    assert [c["tool"] for c in calls] == ["code_lab", "probe_exec"]
+    assert calls[0]["success"] is True
+    assert calls[1]["success"] is False
+    assert calls[1]["error"] == "syntax error"
+
+
 # ── P0-2: coder success is derived, not hardcoded ──────────────────────────
 
 
