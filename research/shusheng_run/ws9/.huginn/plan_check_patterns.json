@@ -1,0 +1,28 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "4098521e9d1a",
+    "reason": "PLAN 意图与假设 C 对齐（用相位对齐的对称性适应误差 vs 朴素 L2 对比），但当前 DESCRIPTION 仅为文字方案，未含可直接落地的数值脚本/公式/打印语句，违反已知失败模式中的硬性要求（必须先产生可执行 python 片段并带回数值）。同时 method family 只有数值积分+收敛测试一族，未达 min_method_families=3；未排除等价性陷阱（'误差容限<1e-6'与'L2 校验要求'可能只是同一度量的重命名），因此判定为无效。",
+    "missing_steps": [
+      "提供可执行的 Python 片段：import numpy 等、sech 型精确孤子初显式、SSFM 与 Crank–Nicolson 实现、相位对齐 L2 误差定义、能量/动量守恒量定义、网格/时间步收敛循环、print 输出具体数值",
+      "真实运行并带回 t=10 处的相位对齐相对 L2 误差、朴素 L2 误差、能量漂移、动量漂移的具体数值，再进入 execute→validate",
+      "扩展方法族至 ≥3（例如增加谱空间误差度量、守恒量残差作为独立误差指标、或 Richardson 外推/对偶问题后验估计），以满足 families_explored 下限",
+      "显式论证'对称性适应误差'与'朴素 L2 容限'不是同一度量的换名，排除等价性陷阱"
+    ],
+    "mode": "coder",
+    "description": "[auto-routed: 代码实验走真实执行] Build and run a 1-D NLSE soliton validation pipeline (split-step Fourier method + independent Crank–Nicolson finite-difference cross-check) that: (1) constructs the correct se"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "4098521e9d1a",
+    "reason": "DESCRIPTION 覆盖四族方法（谱方法 + Crank–Nicolson、naive L2 与相位对齐 L2、守恒量漂移、Richardson 外推），与 hypothesis 的关键要求基本对应；PREDICTION 中大部分数值断言可验证。但 Richardson 外推项不可验证：未给出参考真解（解析解或极细网格基准），无法定义 '与相位对齐误差在因子 3 内一致'。同时，'方法族' 实际上只含两类积分器（谱 + CN）与两类误差度量，是否满足 min_method_families=3 存疑。历史失败模式要求先产生可运行 Python 片段并带回数值，当前 plan 未落地该前置步骤。",
+    "missing_steps": [
+      "提供可立即执行的 nlse_hypothesis_c.py 片段（import + NLSE 离散化 + 误差/守恒量输出）并实际运行带回数值",
+      "明确定义 Richardson 外推的参考真解（解析单孤子解或极细网格基准解）及其收敛阶假设",
+      "补充第三类独立方法族（例如分裂步傅里叶方法、或对角隐式 Runge–Kutta、或不同空间离散化以排除等价性陷阱）",
+      "给出初值、边界条件、网格序列与 t=10 的采样协议，确保 naive/aligned 比较可复现"
+    ],
+    "mode": "coder",
+    "description": "Write and execute a single self-contained Python script (`nlse_hypothesis_c.py`) that implements **four distinct method families** to test Hypothesis C (symmetry-adapted error metric) on the 1-D cubic"
+  }
+]
