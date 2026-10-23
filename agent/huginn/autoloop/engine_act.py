@@ -94,11 +94,20 @@ class EngineAct:
         即跳过; 适配失败也跳过. 全部失效时返回 [], 调用方退化为无工具调用.
         """
         try:
+            from huginn.core_types import PermissionMode
+            from huginn.permissions import PermissionConfig
             from huginn.tools.adapter import ToolAdapter
             from huginn.tools.registry import ToolRegistry
         except Exception:  # 防御: 工具子系统不可用时不阻塞 plan/validate
             logger.debug("readonly tool import failed", exc_info=True)
             return []
+
+        # 显式授权: 默认权限表把多数工具判成 ASK, 而阶段内没有审批人 → 每次调用
+        # 都恒拒 (实测回执 "recall 工具需要授权"). 这里按**最小权限**只给白名单
+        # 内这 7 个只读工具 AUTO, 其余仍走 plan_mode 的 ASK/写工具降级.
+        perm = PermissionConfig(plan_mode=True)
+        for name in self._READONLY_PHASE_TOOLS:
+            perm.set_mode(name, PermissionMode.AUTO)
 
         adapter = ToolAdapter()
         out: list[Any] = []
@@ -114,7 +123,7 @@ class EngineAct:
             except Exception:  # 防御: 可用性探测异常按不可用处理
                 continue
             try:
-                out.append(adapter.adapt(tool))
+                out.append(adapter.adapt(tool, permission_config=perm))
             except Exception:  # 防御: 单个工具适配失败不影响其余工具
                 logger.debug("adapt readonly tool %s failed", name, exc_info=True)
         return out
@@ -1344,7 +1353,9 @@ Please modify the code to address this task."""
         else:
             reasons.append("probe_exec: 目标非确定性数值, 跳过")
 
-        logger.info("coder 回落链已耗尽: %s", "; ".join(reasons))
+        # warning 级: 回落全失败是"本可修但没修成"的信号, 必须在默认日志级别可见,
+        # 否则又回到"失败静默"的老问题.
+        logger.warning("coder 回落链已耗尽: %s", "; ".join(reasons))
         return None
 
     # domain → 默认模板名; get_template 拿不到就 fallback standard_dft
