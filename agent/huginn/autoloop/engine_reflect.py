@@ -113,13 +113,32 @@ _NUM_TOKEN_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 # 把纯排版指数记成"报告里编造的数值" —— ws8 实测 3/4 未溯源全是 -10/-12/-18,
 # 而正文引用的 6.32e-12 在台账里原文可查. 归一到 1e-18 后按数值口径比对.
 _LATEX_TEN_POW_RE = re.compile(r"10\s*\^\s*\{?\s*([-+]?\d+)\s*\}?")
+# 带 mantissa 的科学计数: 3.1\times10^{16} / 2.5 × 10^{-9} / 1.0*10^6.
+# 必须先于裸 10^n 折叠, 否则 mantissa 变成孤立 token.
+_LATEX_TIMES_TEN_POW_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:\\times|×|\*)\s*10\s*\^\s*\{?\s*([-+]?\d+)\s*\}?"
+)
 _CITATION_MIN_UNTRACED = 3
 _CITATION_MIN_RATIO = 0.5
 _CITATION_MIN_MAGNITUDE = 10.0
 
 
 def _normalize_exponents(text: str) -> str:
-    """把 LaTeX 上标 ``10^{-18}`` 归一成 ``1e-18``, 避免指数被拆成独立数值."""
+    """把 LaTeX 科学计数归一成 Python 写法, 避免一个数被拆成两个 token.
+
+    - ``3.1\\times10^{16}`` → ``3.1e16`` (mantissa+exponent 必须合并: 只把 ``10^{16}``
+      换成 ``1e16`` 会留下孤立的 mantissa ``3.1``, 台账里的 ``3.1e+16`` 反而比不中,
+      ws9 实测 4/6 未溯源里 2 个就是这种"把真数写成两个 token"造成的);
+    - 裸 ``10^{-18}`` → ``1e-18``.
+    """
+
+    def _fold_mantissa(m: re.Match) -> str:
+        try:
+            return f"{m.group(1)}e{int(m.group(2))}"
+        except (TypeError, ValueError):
+            return m.group(0)
+
+    folded = _LATEX_TIMES_TEN_POW_RE.sub(_fold_mantissa, text or "")
 
     def _sub(m: re.Match) -> str:
         try:
@@ -127,7 +146,7 @@ def _normalize_exponents(text: str) -> str:
         except (TypeError, ValueError):
             return m.group(0)
 
-    return _LATEX_TEN_POW_RE.sub(_sub, text or "")
+    return _LATEX_TEN_POW_RE.sub(_sub, folded)
 
 
 def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
@@ -149,15 +168,23 @@ def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
 
 
 def _results_section(report_text: str) -> str:
-    """取 '## Results' 到下一个二级标题之间的正文; 找不到标题返回空 (fail-open).
+    """取 '## Results' 到下一个**同级或更高级**标题之间的正文; 找不到标题返回空 (fail-open).
 
     只审 Results 节: Methods 里的超参 (epochs=1000 等) 本就不该在台账里, 拿全文
     比对会把正常方法描述误判成"编造数值". 缺标题时不审 (不误伤).
+
+    终止符按起始标题层级算, 不能写死 ``^##+``: ws9 报告在 ``## Results`` 下分了
+    ``### Four-method benchmark`` 等小节, 写死的终止符把节体切成 2 字节空串 →
+    citation / 判别两门同时静默 fail-open, 一个数值都没审 (ws9/ws 两份报告均如此).
     """
-    m = re.search(
-        r"^##+\s*Results\b(.*?)(?=^##+\s|\Z)", report_text or "", re.S | re.M
-    )
-    return m.group(1) if m else ""
+    text = report_text or ""
+    head = re.search(r"^(#+)\s*Results\b", text, re.M)
+    if not head:
+        return ""
+    depth = len(head.group(1))
+    rest = text[head.end():]
+    end = re.search(rf"^#{{1,{depth}}}\s", rest, re.M)
+    return rest[: end.start()] if end else rest
 
 
 def _citation_gap(report_text: str, evidence_text: str) -> tuple[int, int]:

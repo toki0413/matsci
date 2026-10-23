@@ -38,7 +38,11 @@ from typing import Any
 # with_retry: autoloop 的 LLM 调用此前**绕开**了统一重试层 (agent/streaming.py 有,
 # 这条路径没有), 一次限流/网络抖动就被当成"阶段无产出" → redirect→pivot→停机
 # (run74). 这里接上.
-from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+from huginn.autoloop.engine_reflect import (
+    _CITATION_MIN_MAGNITUDE,
+    _REPEAT_HARD_STREAK,
+    _numeric_tokens,
+)
 from huginn.autoloop.exec_observation import classify_exit_class
 from huginn.llm_retry import with_retry
 
@@ -978,7 +982,19 @@ class EngineAct:
             }
             text = json.dumps(slim, ensure_ascii=False, default=str)
             if len(text) > _EXEC_LEDGER_ENTRY_CHARS:
-                text = text[:_EXEC_LEDGER_ENTRY_CHARS]
+                # 硬截断会把"真实存在但落在窗口外"的数值从证据面抹掉: ws9 的
+                # ev5 在 600 字符后才写 max_l2_err / score, 报告如实抄了这些数,
+                # 审计门却在台账里查不到 → 判成编造. 截在词边界, 再把窗口外的
+                # **数值面**补成紧凑后缀 —— 报告面照样短, 证据面不失真.
+                cut = text.rfind(" ", 0, _EXEC_LEDGER_ENTRY_CHARS)
+                if cut < _EXEC_LEDGER_ENTRY_CHARS // 2:
+                    cut = _EXEC_LEDGER_ENTRY_CHARS
+                tail_nums = sorted(
+                    _numeric_tokens(text[cut:], _CITATION_MIN_MAGNITUDE)
+                )
+                text = text[:cut] + (
+                    " nums_after_cut=" + " ".join(tail_nums) if tail_nums else ""
+                )
             ledger.append(
                 {
                     "idx": len(ledger) + 1,

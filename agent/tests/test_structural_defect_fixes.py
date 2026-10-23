@@ -466,3 +466,68 @@ def test_undecided_counts_as_binary_verdict():
     binary, hedge = _decisive_gap("This gives partial support for the hypothesis.")
     assert hedge is True
     assert binary is False
+
+
+# ── D13: Results 下的 ### 小节不能把节体切空 ──────────────────────────────
+
+
+def test_results_section_keeps_subsections():
+    """ws9: ``## Results`` 后紧跟 ``### 小节``, 旧终止符把节体切成 2 字节 → 静默不审."""
+    from huginn.autoloop.engine_reflect import _results_section
+
+    report = (
+        "## Results\n\n### Bench\n\n| a | 6061.85 |\n\n"
+        "### Probe\n\nL2 = 365.7\n\n## Discussion\n\nnot audited"
+    )
+    section = _results_section(report)
+    assert "6061.85" in section
+    assert "365.7" in section
+    assert "not audited" not in section
+
+
+def test_results_section_stops_at_same_level_heading():
+    from huginn.autoloop.engine_reflect import _results_section
+
+    report = "### Results\n\nx = 12.5\n\n## Discussion\n\ny = 1e6"
+    section = _results_section(report)
+    assert "12.5" in section
+    assert "1e6" not in section
+
+
+# ── D14/D15: 证据面不得因截断/排版而丢真实数值 ─────────────────────────────
+
+
+def test_latex_times_ten_pow_folds_into_one_token():
+    """``3.1\\times10^{16}`` 必须整体成一个 token, 否则台账里的 3.1e+16 比不中."""
+    from huginn.autoloop.engine_reflect import _citation_gap, _numeric_tokens
+
+    assert _numeric_tokens("3.1\\times10^{16}") == {"3.1e+16"}
+    assert _numeric_tokens("$3.1079993676828742\\times10^{16}$") == {
+        "3.108e+16"
+    }
+    report = (
+        "## Results\n\nmomentum drift was "
+        "$3.1079993676828742\\times10^{16}$ in the symplectic run."
+    )
+    assert _citation_gap(report, "symplectic_split_mom_rel = 3.1079993676828742e+16") == (
+        0,
+        1,
+    )
+
+
+def test_ledger_truncation_keeps_numbers_beyond_cut():
+    """600 字符硬截断会把窗口外的真实数值从证据面抹掉 (ws9 ev5 的 max_l2_err)."""
+    from huginn.autoloop.engine_act import EngineAct
+
+    payload = {
+        "note": "x" * 700,
+        "nums": {"max_l2_err": 17.3727438097543, "score": 365909.82451349},
+    }
+    host = type("H", (), {"_execution_ledger": []})()
+    EngineAct._append_execution_ledger(host, "code_lab", payload)
+
+    entry = host._execution_ledger[-1]
+    assert len(entry["result"]) < 1000
+    assert "17.3727" in entry["result"]
+    assert "365910" in entry["result"]
+
