@@ -109,9 +109,25 @@ def _non_finite_objective_keys(execution_result: Any) -> list[str]:
 # 且占比 >= _CITATION_MIN_RATIO 时, 在报告末尾附一条诚实告示 (C 族允许硬, 但只
 # **标注**不改结论、不终止任何东西); 同时每轮落一条 report_citation trace 供触发率统计.
 _NUM_TOKEN_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+# LaTeX 上标: 10^{-18} / 10^12. 不归一的话分词器会拆成 "10" 和 "-18" 两个 token,
+# 把纯排版指数记成"报告里编造的数值" —— ws8 实测 3/4 未溯源全是 -10/-12/-18,
+# 而正文引用的 6.32e-12 在台账里原文可查. 归一到 1e-18 后按数值口径比对.
+_LATEX_TEN_POW_RE = re.compile(r"10\s*\^\s*\{?\s*([-+]?\d+)\s*\}?")
 _CITATION_MIN_UNTRACED = 3
 _CITATION_MIN_RATIO = 0.5
 _CITATION_MIN_MAGNITUDE = 10.0
+
+
+def _normalize_exponents(text: str) -> str:
+    """把 LaTeX 上标 ``10^{-18}`` 归一成 ``1e-18``, 避免指数被拆成独立数值."""
+
+    def _sub(m: re.Match) -> str:
+        try:
+            return f"1e{int(m.group(1))}"
+        except (TypeError, ValueError):
+            return m.group(0)
+
+    return _LATEX_TEN_POW_RE.sub(_sub, text or "")
 
 
 def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
@@ -121,7 +137,7 @@ def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
     过滤章节号、指数下标等与"报告结论数值"无关的结构小整数.
     """
     out: set[str] = set()
-    for m in _NUM_TOKEN_RE.findall(text or ""):
+    for m in _NUM_TOKEN_RE.findall(_normalize_exponents(text)):
         try:
             v = float(m)
         except (TypeError, ValueError):
@@ -169,7 +185,18 @@ _HEDGE_EN = (
 )
 
 _BINARY_CJK = ("满足", "未满足", "判定", "未判定", "不可判别", "无判别", "违反", "可达", "不可达")
-_BINARY_EN = ("satisfied", "violated", "indiscriminat", "not met")
+# undecided/undetermined/inconclusive 是"证据不足 → 未判定"的合法闭环, 与
+# "partial support" 这类模糊措辞不是一回事. 漏收会冤枉诚实报告 (ws8 实际写了
+# **Undecided.** 仍被判"未给二元判定").
+_BINARY_EN = (
+    "satisfied",
+    "violated",
+    "indiscriminat",
+    "not met",
+    "undecided",
+    "undetermined",
+    "inconclusive",
+)
 
 
 def _has_lang_marker(text: str, cjk: tuple[str, ...], en: tuple[str, ...]) -> bool:

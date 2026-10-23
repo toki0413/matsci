@@ -435,3 +435,34 @@ def test_arxiv_search_uses_https(monkeypatch):
     assert captured["url"].startswith("https://export.arxiv.org/")
     assert result is not None
     assert result.data["search_engine"] == "arxiv"
+
+
+# ── D11/D12: 审计不能冤枉诚实报告 ──────────────────────────────────────────
+
+
+def test_latex_exponents_are_not_counted_as_data_values():
+    """10^{-18} 是排版指数, 不是"报告里编造的数值"."""
+    from huginn.autoloop.engine_reflect import _citation_gap, _numeric_tokens
+
+    assert _numeric_tokens("10^{-18}") == {"1e-18"}
+    assert _numeric_tokens("10^{-18}", 10.0) == set()
+    assert _numeric_tokens("3\\times10^{-12}", 10.0) == set()
+
+    report = "## Results\n\nL2 = 12.5 while the phase floor 10^{-18} is negligible."
+    assert _citation_gap(report, "L2 = 12.5") == (0, 1)
+
+
+def test_undecided_counts_as_binary_verdict():
+    """证据不足时写 Undecided 是合法闭环, 不该判成"未给判定"."""
+    from huginn.autoloop.engine_reflect import _decisive_gap
+
+    has_binary, has_hedge = _decisive_gap(
+        "**Verdict on the hard criterion. Undecided.** The data suggest a floor."
+    )
+    assert has_binary is True
+    assert has_hedge is True
+    assert not (has_hedge and not has_binary)
+
+    binary, hedge = _decisive_gap("This gives partial support for the hypothesis.")
+    assert hedge is True
+    assert binary is False

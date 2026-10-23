@@ -1,0 +1,89 @@
+{
+  "pde": "i u_t + u_xx + 2 |u|^2 u = 0  (1-D focusing NLSE, normalized)",
+  "pde_classify": {
+    "A": "1",
+    "B": "0",
+    "C": "0",
+    "discriminant": "0",
+    "discriminant_value": "0j",
+    "classification": "parabolic",
+    "canonical_form": "Heat: u_t - k u_xx = 0",
+    "note": "The NLSE is first order in time and second order in space, so the standard B^2-4AC discriminant (defined for A u_xx + 2B u_xy + C u_yy) sees only the u_xx term: A=1, B=0, C=0 -> discriminant 0 -> 'parabolic'. This is the canonical signature of Schrodinger/dispersive type: the principal symbol is i d_t + d_x^2, which is elliptic in the spatial variable (no real characteristic directions in x) and generates dispersive rather than diffusive propagation.  For the discrete scheme this means: (i) no CFL restriction from the dispersive term, (ii) the scheme must resolve the phase rotation exp(i k^2 dt) accurately, i.e. dt << 1/k_max^2, and (iii) a unitary/energy-preserving integrator (Crank-Nicolson or Strang split) is the natural choice."
+  },
+  "noether_tool": {
+    "translation": {
+      "symmetry_description": "spatial translation  x -> x + eps  (eta = 1)",
+      "success": false,
+      "error": "Need symbols [u, x]",
+      "data": null
+    },
+    "scaling": {
+      "symmetry_description": "field scaling  psi -> (1+eps) psi  (eta = psi)",
+      "success": false,
+      "error": "Need symbols [u, x]",
+      "data": null
+    },
+    "note": "The tool's noether() is a 1-D (mechanical) Noether theorem: it computes J = eta * dL/du' for a Lagrangian depending on a single independent variable.  The NLSE is a field theory over (t,x) with a COMPLEX field, so the true conserved currents require the spacetime Noether theorem with independent variations of psi and psi*.  Those are derived below."
+  },
+  "field_theoretic_noether": {
+    "lagrangian_density": "I*(-psi(x, t)*Derivative(psi_star(x, t), t) + psi_star(x, t)*Derivative(psi(x, t), t))/2 + psi(x, t)**2*psi_star(x, t)**2 - Derivative(psi(x, t), x)*Derivative(psi_star(x, t), x)",
+    "lagrangian_density_latex": "\\frac{i \\left(- \\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial t} \\psi_{star}{\\left(x,t \\right)} + \\psi_{star}{\\left(x,t \\right)} \\frac{\\partial}{\\partial t} \\psi{\\left(x,t \\right)}\\right)}{2} + \\psi^{2}{\\left(x,t \\right)} \\psi_{star}^{2}{\\left(x,t \\right)} - \\frac{\\partial}{\\partial x} \\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi_{star}{\\left(x,t \\right)}",
+    "euler_lagrange_psi_star": "2*psi(x, t)**2*psi_star(x, t) + I*Derivative(psi(x, t), t) + Derivative(psi(x, t), (x, 2)) = 0",
+    "euler_lagrange_psi_star_latex": "2 \\psi^{2}{\\left(x,t \\right)} \\psi_{star}{\\left(x,t \\right)} + i \\frac{\\partial}{\\partial t} \\psi{\\left(x,t \\right)} + \\frac{\\partial^{2}}{\\partial x^{2}} \\psi{\\left(x,t \\right)}",
+    "particle_number": {
+      "density": "-psi(x, t)*psi_star(x, t)",
+      "density_latex": "- \\psi{\\left(x,t \\right)} \\psi_{star}{\\left(x,t \\right)}",
+      "current": "I*(-psi(x, t)*Derivative(psi_star(x, t), x) + psi_star(x, t)*Derivative(psi(x, t), x))",
+      "current_latex": "i \\left(- \\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi_{star}{\\left(x,t \\right)} + \\psi_{star}{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi{\\left(x,t \\right)}\\right)",
+      "charge": "N = int |psi|^2 dx",
+      "conservation": "dN/dt = 0  (L2 norm preserved)"
+    },
+    "momentum": {
+      "density": "I*(psi(x, t)*Derivative(psi_star(x, t), x) - psi_star(x, t)*Derivative(psi(x, t), x))/2",
+      "density_latex": "\\frac{i \\left(\\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi_{star}{\\left(x,t \\right)} - \\psi_{star}{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi{\\left(x,t \\right)}\\right)}{2}",
+      "simplified_form": "I*(psi(x, t)*Derivative(psi_star(x, t), x) - psi_star(x, t)*Derivative(psi(x, t), x))/2",
+      "simplified_form_latex": "\\frac{i \\left(\\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi_{star}{\\left(x,t \\right)} - \\psi_{star}{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi{\\left(x,t \\right)}\\right)}{2}",
+      "charge": "P = int Im(psi* psi_x) dx",
+      "conservation": "dP/dt = 0"
+    },
+    "energy": {
+      "density": "-psi(x, t)**2*psi_star(x, t)**2 + Derivative(psi(x, t), x)*Derivative(psi_star(x, t), x)",
+      "density_latex": "- \\psi^{2}{\\left(x,t \\right)} \\psi_{star}^{2}{\\left(x,t \\right)} + \\frac{\\partial}{\\partial x} \\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi_{star}{\\left(x,t \\right)}",
+      "hamiltonian_density": "-psi(x, t)**2*psi_star(x, t)**2 + Derivative(psi(x, t), x)*Derivative(psi_star(x, t), x)",
+      "hamiltonian_density_latex": "- \\psi^{2}{\\left(x,t \\right)} \\psi_{star}^{2}{\\left(x,t \\right)} + \\frac{\\partial}{\\partial x} \\psi{\\left(x,t \\right)} \\frac{\\partial}{\\partial x} \\psi_{star}{\\left(x,t \\right)}",
+      "charge": "H = int (|psi_x|^2 - |psi|^4) dx",
+      "conservation": "dH/dt = 0"
+    }
+  },
+  "soliton_derivation": {
+    "residual_collected": "2*A**2/cosh(B*t*v - B*x)**2 + 2*B**2*tanh(B*t*v - B*x)**2 - B**2 + 2*I*B*C*tanh(B*t*v - B*x) - I*B*v*tanh(B*t*v - B*x) - C**2 + Omega",
+    "coeff_1": "(2*A**2 + (2*B**2*tanh(B*(t*v - x))**2 - B**2 + I*B*(2*C - v)*tanh(B*(t*v - x)) - C**2 + Omega)*cosh(B*(t*v - x))**2)/cosh(B*(t*v - x))**2",
+    "coeff_T": "0",
+    "coeff_T2": "0",
+    "solutions": [
+      {
+        "B": "0",
+        "Omega": "-2*A**2 + C**2"
+      },
+      {
+        "Omega": "(-8*A**2*exp(2*B*(2*C*t - x)) - 2*B**2*(1 - exp(2*B*(2*C*t - x)))**2 + (B**2 + C**2)*(exp(2*B*(2*C*t - x)) + 1)**2)/(exp(2*B*(2*C*t - x)) + 1)**2",
+        "v": "2*C"
+      },
+      {
+        "Omega": "-2*A**2 + B**2 + C**2",
+        "v": "x/t"
+      }
+    ]
+  },
+  "soliton_relations": {
+    "B_eq_A": "B = A   (width = 1/amplitude; dispersion-nonlinearity balance)",
+    "v_eq_2C": "v = 2C  (velocity = 2 * wavenumber)",
+    "Omega": "Omega = C^2 - A^2  (temporal phase frequency)",
+    "note": "If the initial data uses B != A the dispersion and nonlinearity do not balance: the packet breathes and emits radiation.  This is the 'dispersion-nonlinearity mismatch' the decision step diagnoses."
+  },
+  "reference_ic": {
+    "u(x,0)": "A * sech(B x) * exp(i C x)",
+    "exact_soliton_condition": "B = A",
+    "example": "A=1, B=1, C=0.5  ->  v=1, Omega=0.25-1=-0.75"
+  }
+}
