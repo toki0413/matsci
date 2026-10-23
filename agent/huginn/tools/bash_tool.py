@@ -235,7 +235,7 @@ class BashTool(HuginnTool):
     ) -> ToolResult:
         input_data = BashToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
         )
 
         # status/cancel: 复用 scheduler 查询/取消后台 job, 不执行命令.

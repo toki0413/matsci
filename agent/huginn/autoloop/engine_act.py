@@ -52,6 +52,32 @@ logger = logging.getLogger(__name__)
 _EXEC_LEDGER_MAX = 24
 _EXEC_LEDGER_ENTRY_CHARS = 600
 
+# code_lab 超时后的最小重试预算 (秒): 低于此值的沙箱跑不出任何有意义的实验.
+_CODELAB_MIN_TIMEOUT_S = 60.0
+# 未拿到显式超时时的兜底 (与 HUGINN_CODELAB_TIMEOUT_S 的默认档一致).
+_CODELAB_FALLBACK_TIMEOUT_S = 600.0
+
+
+def _next_timeout_cap(
+    current_cap: float | None,
+    effective_timeout: float | None,
+    timed_out: bool,
+) -> tuple[float | None, bool]:
+    """超时后的下一轮超时预算: ``(新上限, 是否还允许再试)``.
+
+    超时是**算力预算**问题而非代码 bug: 代码不变时按原超时重跑只会再烧一遍
+    (ws9 iteration 3 实测 600s x 4). 首次超时把上限减半再给一次机会; 连续
+    第二次超时就停 —— 继续重试的期望收益为零, 挂钟代价是线性的.
+    """
+    if not timed_out:
+        return current_cap, True
+    if current_cap is not None:
+        return current_cap, False
+    base = effective_timeout if effective_timeout and effective_timeout > 0 else (
+        _CODELAB_FALLBACK_TIMEOUT_S
+    )
+    return max(_CODELAB_MIN_TIMEOUT_S, base / 2.0), True
+
 
 class EngineAct:
     """plan / execute 阶段方法族协作对象.
@@ -561,6 +587,8 @@ class EngineAct:
         #   可选 slice (修复重写 attempt>=1) 启动前查可负担性, 门槛自校准 = max(下限,
         #   上一片实测挂钟). 非长程/关开关时两函数 fail-open → 逐字节等价旧行为.
         _prev_slice_cost = 0.0  # 上一片 (上一次尝试: 沙箱 + 其后作者 LLM) 的实测挂钟
+        # 超时是算力问题: 首次超时减半预算, 连续超时直接停.
+        _timeout_cap: float | None = None
         # D6 钩子: 长程宿主 (Engine/engine_control) 提供预算切片三函数; 短程宿主 /
         # 离线 stub 无这三个属性 → None, 门与封顶整体 fail-open, 行为 100% 不变
         # (与 branch_incubator 的 fail-open 一致). getattr 兜底避免 stub 上 AttributeError.
@@ -593,10 +621,16 @@ class EngineAct:
                 )
                 break
             _t_slice = time.monotonic()
-            res, reason = self._run_code_lab(
-                code,
-                timeout_s=_attempt_timeout() if callable(_attempt_timeout) else None,
+            _effective_timeout = (
+                _attempt_timeout() if callable(_attempt_timeout) else None
             )
+            if _timeout_cap is not None:
+                _effective_timeout = (
+                    min(_effective_timeout, _timeout_cap)
+                    if _effective_timeout
+                    else _timeout_cap
+                )
+            res, reason = self._run_code_lab(code, timeout_s=_effective_timeout)
             _prev_slice_cost = time.monotonic() - _t_slice  # D6 自校准: 实测本片
             if res is not None:
                 return {
@@ -617,6 +651,16 @@ class EngineAct:
                     f"attempt={attempt + 1}/{max_repairs + 1} {str(reason)[:120]}",
                     action="advisory_hint",
                 )
+                _timeout_cap, _allow_more = _next_timeout_cap(
+                    _timeout_cap, _effective_timeout, True
+                )
+                if not _allow_more:
+                    logger.warning(
+                        "code_lab 连续超时, 停止重试 (超时属算力预算, "
+                        "按原超时重跑只会空转): 本轮已用 %d 次尝试",
+                        attempt + 1,
+                    )
+                    break
             if attempt < max_repairs:
                 # D6 自校准: 修复重写的作者 LLM 调用也是下一个 slice 的成本, 计入
                 # 实测 —— 否则低估下一片 (run79 超支主要来自作者调用, 非沙箱).

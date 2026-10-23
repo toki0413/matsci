@@ -98,7 +98,7 @@ class GithubTool(HuginnTool):
     ) -> ToolResult:
         input_data = GithubToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
         )
 
         # ── 0. gh 可用性检查 ──

@@ -28,6 +28,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -121,6 +122,15 @@ _LATEX_TIMES_TEN_POW_RE = re.compile(
 _CITATION_MIN_UNTRACED = 3
 _CITATION_MIN_RATIO = 0.5
 _CITATION_MIN_MAGNITUDE = 10.0
+# 结果表格里的整数 (Nc=12) 是观测值, 必须审; 正文里的 "10 steps"/"3 seeds"
+# 是实验描述, 不是结论数值. 只按数值大小分不开这两类, 按"数字+量词"语境剔除.
+_QUANTITY_NOISE_RE = re.compile(
+    r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?\s*"
+    r"(?:steps?|seeds?|epochs?|iterations?|iters?|threads?|workers?|"
+    r"repeats?|trials?|samples?|runs?|layers?|nodes?|"
+    r"步|次|轮|层|维|个|组|份)",
+    re.IGNORECASE,
+)
 
 
 def _normalize_exponents(text: str) -> str:
@@ -149,6 +159,11 @@ def _normalize_exponents(text: str) -> str:
     return _LATEX_TEN_POW_RE.sub(_sub, folded)
 
 
+def _strip_quantity_noise(text: str) -> str:
+    """剔除 "10 steps" / "3 seeds" 这类**实验描述**数值, 保留表格观测值."""
+    return _QUANTITY_NOISE_RE.sub(" ", text or "")
+
+
 def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
     """抽取文本里的数字并归一到统一写法 (12 / 12.0 / 1.2e1 → '12').
 
@@ -165,6 +180,24 @@ def _numeric_tokens(text: str, min_magnitude: float = 0.0) -> set[str]:
             continue
         out.add(f"{v:g}")
     return out
+
+
+def _significant_digits(token: str) -> int:
+    """归一化 token 的有效数字位数 (``6061`` → 4, ``1.93e+14`` → 3)."""
+    mantissa = token.split("e")[0].split("E")[0].lstrip("+-").replace(".", "")
+    return max(1, len(mantissa.lstrip("0")))
+
+
+def _ulp(token: str) -> float:
+    """token 最后一位有效数字的步长 (``6061`` → 1.0, ``1.93e+14`` → 1e12).
+
+    用途: 报告把 ``6061.85`` 复述成 ``6061`` 属于诚实的舍入, 不该记成编造.
+    """
+    value = abs(float(token))
+    if value == 0.0:
+        return 0.0
+    exponent = math.floor(math.log10(value))
+    return 10.0 ** (exponent - _significant_digits(token) + 1)
 
 
 def _results_section(report_text: str) -> str:
@@ -188,12 +221,71 @@ def _results_section(report_text: str) -> str:
 
 
 def _citation_gap(report_text: str, evidence_text: str) -> tuple[int, int]:
-    """报告 citation 口径: 返回 (未溯源数值数, Results 里候选数值总数)."""
-    rep = _numeric_tokens(_results_section(report_text), _CITATION_MIN_MAGNITUDE)
+    """报告 citation 口径: 返回 (未溯源数值数, Results 里候选数值总数).
+
+    比对允许**一个 ulp 的舍入**: 台账 ``6061.85`` 在报告里复述成 ``6061`` 是诚实
+    舍入而非编造 (ws9 的 6061 就是这样被判未溯源的). 超出 1 个最后有效位的差异
+    仍算未溯源.
+    """
+    rep = _numeric_tokens(
+        _strip_quantity_noise(_results_section(report_text)),
+        _CITATION_MIN_MAGNITUDE,
+    )
     if not rep:
         return 0, 0
     ev = _numeric_tokens(evidence_text, 0.0)
-    return len(rep - ev), len(rep)
+    ev_values = [float(t) for t in ev]
+    untraced = 0
+    for token in rep:
+        if token in ev:
+            continue
+        value = float(token)
+        tol = _ulp(token)
+        if any(abs(value - e) <= tol for e in ev_values):
+            continue
+        untraced += 1
+    return untraced, len(rep)
+
+
+def _magnitude_typos(report_text: str, evidence_text: str) -> list[tuple[str, str]]:
+    """未溯源数值里疑似**量纲/符号笔误**的 (报告值, 台账值) 配对.
+
+    只靠计数阈值抓不到单点笔误: ``1.93e-14`` 写成 ``1.93e14`` 只是 1 个未溯源值,
+    低于 "3 个未溯源" 的告警门 (ws9 实测). 这里单独识别两类: 符号相反, 或量级
+    差恰为 10 的整数次幂 (>= 1 个数量级) —— 两者都不是舍入能解释的差异.
+    """
+    rep = _numeric_tokens(
+        _strip_quantity_noise(_results_section(report_text)),
+        _CITATION_MIN_MAGNITUDE,
+    )
+    ev = _numeric_tokens(evidence_text, 0.0)
+    ev_values = [float(t) for t in ev]
+    pairs: list[tuple[str, str]] = []
+    for token in sorted(rep):
+        if token in ev:
+            continue
+        value = float(token)
+        if value == 0.0:
+            continue
+        tol = _ulp(token)
+        hit: float | None = None
+        for candidate in ev_values:
+            if candidate == 0.0:
+                continue
+            if abs(value + candidate) <= tol:  # 符号笔误
+                hit = candidate
+                break
+            ratio = abs(value / candidate)
+            if ratio <= 0.0:
+                continue
+            exponent = math.log10(ratio)
+            # 容差收紧到 0.05 个数量级: 只认"差整十次幂", 不舍入解释
+            if abs(exponent - round(exponent)) < 0.05 and abs(round(exponent)) >= 1:
+                hit = candidate
+                break
+        if hit is not None:
+            pairs.append((token, f"{hit:g}"))
+    return pairs
 
 
 # ── 判别性 / 决定性纪律 (控制面审计 C 族续: 只标注, 不改写结论, 不终止) ──
@@ -4055,15 +4147,25 @@ class EngineReflect:
         # 纯观测 + 条件标注: 只判"这条证据算不算数", 不替书生下任何科学判断,
         # 也不终止任何东西 (符合控制面预算原则).
         _gap, _total = _citation_gap(report_narrative, evidence_text)
-        _cite_flagged = (
-            _total > 0
-            and _gap >= _CITATION_MIN_UNTRACED
-            and _gap / _total >= _CITATION_MIN_RATIO
+        # 单点量纲/符号笔误 (1.93e-14 → 1.93e14) 永远达不到"3 个未溯源"的计数
+        # 阈值, 但这类错比 3 个孤立未溯源值更危险 —— 把它单独作为触发条件.
+        _typos = _magnitude_typos(report_narrative, evidence_text)
+        _cite_flagged = _total > 0 and (
+            (
+                _gap >= _CITATION_MIN_UNTRACED
+                and _gap / _total >= _CITATION_MIN_RATIO
+            )
+            or bool(_typos)
         )
         if _total > 0:
+            _detail = f"untraceable={_gap}/{_total}"
+            if _typos:
+                _detail += " magnitude_typos=" + ",".join(
+                    f"{a}~{b}" for a, b in _typos[:3]
+                )
             self._emit_control_trace(
                 "report_citation",
-                f"untraceable={_gap}/{_total}",
+                _detail,
                 action="annotate" if _cite_flagged else "advisory_hint",
             )
 

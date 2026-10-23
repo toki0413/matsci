@@ -417,6 +417,39 @@ from huginn.autoloop.cognitive_guard import (  # noqa: F401,E402  (晚于类定�
 )
 
 
+def _provenance_from_tool_calls(
+    calls: list[dict[str, Any]], workspace: str
+) -> list[dict[str, Any]]:
+    """把 trajectory 的 tool_calls 转成 provenance ``tool_chain`` 快照.
+
+    provenance 以前只由 ``_record_provenance`` (code_lab/probe/closed_form 三条
+    内建快路) 填充, adapter 的真实工具调用不留快照 —— ws9 跑了 147 次工具,
+    jsonl 里只有 5 条. spans 是权威调用序列, run 结束时据此重建 tool_chain,
+    让"这个结果怎么一步步算出来的"对全部工具成立. 纯函数, 不抛.
+    """
+    chain: list[dict[str, Any]] = []
+    stamp = datetime.now().isoformat(timespec="seconds")
+    for call in calls or []:
+        if not isinstance(call, dict):
+            continue
+        args = call.get("args")
+        chain.append(
+            {
+                "timestamp": stamp,
+                "tool_name": str(call.get("tool") or "unknown"),
+                "tool_version": "",
+                "input_params": args if isinstance(args, dict) else {"value": args},
+                "random_seed": None,
+                "software_versions": {},
+                "input_hash": "",
+                "output_hash": None,
+                "workspace": workspace,
+                "user": "unknown",
+            }
+        )
+    return chain
+
+
 def _inject_failed_direction_lessons(
     objective: str,
     memory,
@@ -1624,6 +1657,10 @@ class CognitiveRunner:
         run_id = f"loop_{uuid.uuid4().hex[:8]}"
         self._run_start_time = time.time()
         self._objective = objective
+        # 工作区收敛: 工具/沙箱的缺省 work_dir 由 cwd 改为本 run 的 workspace.
+        # engine.workspace 是权威值 (构造时已解析 env), 每个 run 显式覆盖 —— 不
+        # 用 setdefault: 同进程连跑多个 run 时会被上一轮的 workspace 钉住.
+        os.environ["HUGINN_WORKSPACE"] = str(self.workspace)
         # PMK 时序结合: run 开始时间作为 since 窗口, 让 PMK 的 M/K 路只看
         # 本 run 写入的新知识, 避免旧文献值跟新实验冲突被误判.
         self._run_start_iso = datetime.now().isoformat()
@@ -2266,6 +2303,14 @@ Respond JSON only:
         # provenance
         provenance_path = None
         try:
+            # 工具级快照补齐: adapter 路径不经过 _record_provenance, 只有内建快路
+            # 会在 tool_chain 留痕. 用 trajectory 的权威 tool_calls 重建, 覆盖全部
+            # 工具 (含内建快路, P2-3 之后它们也在 spans 里).
+            _calls = (trajectory_data or {}).get("tool_calls") or []
+            if _calls:
+                provenance_record.tool_chain = _provenance_from_tool_calls(
+                    _calls, str(self.workspace)
+                )
             provenance_record.timestamps["end"] = datetime.now().isoformat()
             self._provenance_logger.log(provenance_record)
             provenance_path = str(self._provenance_logger.path)
