@@ -1441,39 +1441,88 @@ class CognitiveRunner:
         返 True + 注入 counterexample hint. 升级: LLM 把 hypothesis 翻译成
         z3 表达式跑 SMT.
         """
-        # P0 Task 3: per-hyp budget 检查 — ce 轮数上限, toggle off 时不检查
-        if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1":
-            try:
-                _ce_hyp = getattr(self, "_current_hyp_id_for_plan", None)
-                if _ce_hyp:
-                    _ce_node = self.hypothesis_graph._nodes.get(_ce_hyp)
-                    if _ce_node is not None:
-                        _ce_vb = _ce_node.evidence.get("verification_budget")
-                        if _ce_vb is not None:
-                            _ce_used = _ce_node.evidence.get("ce_rounds_used", 0)
-                            if _ce_used >= _ce_vb.get("ce_rounds", 0):
-                                _ce_node.evidence["budget_exhausted"] = True
-                                logger.debug(
-                                    "counterexample hunt skipped: budget_exhausted (hyp=%s)",
-                                    _ce_hyp,
-                                )
-                                return
-                            _ce_node.evidence["ce_rounds_used"] = _ce_used + 1
-            except Exception:  # 防御: 单假设预算检查失败忽略
-                logger.debug("per-hyp ce budget check failed", exc_info=True)
+        # 类限定调用: 支持测试用裸 stub 调本方法 (self 非 CognitiveRunner 实例)
+        if CognitiveRunner._ce_budget_exhausted(self):
+            return
         # 强制开 imagination (override _should_imaginate 的判断)
         self._force_imaginate = True
-        # 注入 counterexample hint 给下轮 hypothesize
+        _stmt = CognitiveRunner._current_hypothesis_statement(self)
+        _hint = CognitiveRunner._build_counterexample_hint(_stmt)
+        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入.
+        # 注意: 该 directive 在本方法末尾才 append, 因为 prompt 侧只保留尾部
+        # [-500:], 若先 append 会被后续的 failure traces / verifier weakness
+        # 顶出窗口 → 反例搜索指令到不了 LLM.
+        _traces = CognitiveRunner._historical_failure_traces(self)
+        if _traces:
+            self._speculator_hint = (
+                (getattr(self, "_speculator_hint", "") or "") + "\n" + _traces
+            )
+        _weak = CognitiveRunner._verifier_weakness_block(self)
+        if _weak:
+            self._speculator_hint = (
+                (getattr(self, "_speculator_hint", "") or "") + _weak
+            )
+        # 关键 directive 最后 append: prompt 侧只保留尾部 [-500:], 落在最尾部
+        # 才能保证反例搜索指令一定进入下一轮 hypothesize 的 prompt.
+        self._speculator_hint = (
+            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
+        )
+        # warning 级 (非 info): CLI autoloop 默认 root logger 无 handler, INFO 被静默
+        # 吞掉, 该"循环改变方向"机制会**触发过却离线不可见**(run65 实测: renamed-reduction
+        # 触发 4 次 → 反例搜索必已 fire, 但 run.log 里 `counterexample hunt triggered` 计 0).
+        # run.log 一定捕获 WARNING, 故升到 warning 让 replay_audit 的 hunt 计数可观测.
+        logger.warning("counterexample hunt triggered, hint injected")
+
+    def _ce_budget_exhausted(self) -> bool:
+        """P0 Task 3: per-hyp budget 检查 — ce 轮数上限, toggle off 时不检查."""
+        if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") != "1":
+            return False
+        try:
+            _ce_hyp = getattr(self, "_current_hyp_id_for_plan", None)
+            if not _ce_hyp:
+                return False
+            _ce_node = self.hypothesis_graph._nodes.get(_ce_hyp)
+            if _ce_node is None:
+                return False
+            return self._consume_ce_round(_ce_hyp, _ce_node)
+        except Exception:  # 防御: 单假设预算检查失败忽略
+            logger.debug("per-hyp ce budget check failed", exc_info=True)
+            return False
+
+    @staticmethod
+    def _consume_ce_round(_ce_hyp: Any, _ce_node: Any) -> bool:
+        """消耗一轮 ce 预算; 已耗尽返回 True (并标记 budget_exhausted)."""
+        _ce_vb = _ce_node.evidence.get("verification_budget")
+        if _ce_vb is None:
+            return False
+        _ce_used = _ce_node.evidence.get("ce_rounds_used", 0)
+        if _ce_used >= _ce_vb.get("ce_rounds", 0):
+            _ce_node.evidence["budget_exhausted"] = True
+            logger.debug(
+                "counterexample hunt skipped: budget_exhausted (hyp=%s)",
+                _ce_hyp,
+            )
+            return True
+        _ce_node.evidence["ce_rounds_used"] = _ce_used + 1
+        return False
+
+    def _current_hypothesis_statement(self) -> str:
+        """取当前假设陈述前 200 字符; 读不到返回空串."""
         _cur_hyp = getattr(self, "_current_hyp_id_for_plan", None)
-        _stmt = ""
-        if _cur_hyp:
-            try:
-                _node = self.hypothesis_graph._nodes.get(_cur_hyp)
-                if _node:
-                    _stmt = _node.statement[:200]
-            except Exception:  # 防御: 假设陈述查找失败跳过
-                logger.debug("hypothesis statement lookup skipped", exc_info=True)
-        _hint = (
+        if not _cur_hyp:
+            return ""
+        try:
+            _node = self.hypothesis_graph._nodes.get(_cur_hyp)
+            if _node:
+                return _node.statement[:200]
+        except Exception:  # 防御: 假设陈述查找失败跳过
+            logger.debug("hypothesis statement lookup skipped", exc_info=True)
+        return ""
+
+    @staticmethod
+    def _build_counterexample_hint(_stmt: str) -> str:
+        """构造"设计判别性实验而非单纯反例"的 directive."""
+        return (
             f"Stagnation classified as evidence_against. "
             f"Current hypothesis may be wrong.\n"
             f"Hypothesis: {_stmt}\n"
@@ -1485,75 +1534,70 @@ class CognitiveRunner:
             f"tell them apart. Refute the prediction that loses and pivot to the "
             f"hypothesis whose prediction survives."
         )
-        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入.
-        # 注意: 该 directive 在本方法末尾才 append, 因为 prompt 侧只保留尾部
-        # [-500:], 若先 append 会被后续的 failure traces / verifier weakness
-        # 顶出窗口 → 反例搜索指令到不了 LLM.
-        # Task 4: 拉历史 failure trace exemplar 给 LLM 参考.
-        # 复用 recall_failed_directions; 只挑 reason 含 [FAILURE TRACE]/[BREAK POINT]
-        # 标记的 (Task 3 反推产物), 旧数据 (简短 error 串) 跳过 — 没推理链, 当 exemplar
-        # 没价值. ponytail: recall 接口本身不接受 query, 只返最近 N 条; 用 persona 过滤.
+
+    def _historical_failure_traces(self) -> str:
+        """Task 4: 拉历史 failure trace exemplar 给 LLM 参考, 返回 block 或空串."""
         try:
-            _hist_traces: list[str] = []
-            _mem = getattr(self, "memory", None)
-            if _mem is not None and hasattr(_mem, "recall_failed_directions"):
-                _failed = _mem.recall_failed_directions(
-                    limit=5,
-                    persona_id=getattr(self, "_last_persona", None),
-                )
-                for _h, _reason, _mc in _failed:
-                    if not _reason:
-                        continue
-                    if "[FAILURE TRACE]" not in _reason and "[BREAK POINT]" not in _reason:
-                        continue  # 旧数据: 简短 error 串, 当 exemplar 没价值
-                    _hist_traces.append(_reason[:500])
-                    if len(_hist_traces) >= 2:
-                        break
-            if _hist_traces:
-                _block = "[HISTORICAL FAILURE TRACES]"
-                for _i, _t in enumerate(_hist_traces, 1):
-                    _block += f"\n--- {_i} ---\n{_t}"
-                self._speculator_hint = (
-                    (getattr(self, "_speculator_hint", "") or "") + "\n" + _block
-                )
+            _hist_traces = self._collect_failure_traces()
+            if not _hist_traces:
+                return ""
+            _block = "[HISTORICAL FAILURE TRACES]"
+            for _i, _t in enumerate(_hist_traces, 1):
+                _block += f"\n--- {_i} ---\n{_t}"
+            return _block
         except Exception:  # 防御: 失败方向召回失败跳过
             logger.debug("recall failed directions for exemplar failed", exc_info=True)
-        # P1 Task 8: inject [VERIFIER WEAKNESS] from past blind mismatches
+            return ""
+
+    def _collect_failure_traces(self) -> list[str]:
+        """复用 recall_failed_directions, 只挑带 [FAILURE TRACE]/[BREAK POINT] 标注的."""
+        _hist_traces: list[str] = []
+        _mem = getattr(self, "memory", None)
+        if _mem is None or not hasattr(_mem, "recall_failed_directions"):
+            return _hist_traces
+        _failed = _mem.recall_failed_directions(
+            limit=5,
+            persona_id=getattr(self, "_last_persona", None),
+        )
+        for _h, _reason, _mc in _failed:
+            if not _reason:
+                continue
+            if "[FAILURE TRACE]" not in _reason and "[BREAK POINT]" not in _reason:
+                continue  # 旧数据: 简短 error 串, 当 exemplar 没价值
+            _hist_traces.append(_reason[:500])
+            if len(_hist_traces) >= 2:
+                break
+        return _hist_traces
+
+    def _verifier_weakness_block(self) -> str:
+        """P1 Task 8: inject [VERIFIER WEAKNESS] from past blind mismatches."""
         try:
             _mm = self.memory.recall_typed("verification_mismatch", limit=3)
-            if _mm:
-                _wl: list[str] = []
-                for _m in _mm:
-                    _mc = _m.get("content", "") if isinstance(_m, dict) else str(_m)
-                    try:
-                        _md = json.loads(_mc)
-                        _wl.append(
-                            f"- hyp: {str(_md.get('hypothesis', '?'))[:100]} "
-                            f"(blind={_md.get('blind_holds')}, orig={_md.get('orig_holds')})"
-                        )
-                    except Exception:  # 防御: 单词匹配失败跳过该条
-                        _wl.append(f"- {_mc[:100]}")
-                if _wl:
-                    _wb = (
-                        "\n[VERIFIER WEAKNESS] Past cases where blind "
-                        "reconstruction disagreed with original reasoning:\n"
-                        + "\n".join(_wl[:3]) + "\n"
-                    )
-                    self._speculator_hint = (
-                        (getattr(self, "_speculator_hint", "") or "") + _wb
-                    )
+            if not _mm:
+                return ""
+            _wl = [self._weakness_line(_m) for _m in _mm]
+            return (
+                "\n[VERIFIER WEAKNESS] Past cases where blind "
+                "reconstruction disagreed with original reasoning:\n"
+                + "\n".join(_wl[:3]) + "\n"
+            )
         except Exception:  # 防御: 验证器弱点提示失败忽略
             logger.debug("verifier weakness hint failed", exc_info=True)
-        # 关键 directive 最后 append: prompt 侧只保留尾部 [-500:], 落在最尾部
-        # 才能保证反例搜索指令一定进入下一轮 hypothesize 的 prompt.
-        self._speculator_hint = (
-            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
-        )
-        # warning 级 (非 info): CLI autoloop 默认 root logger 无 handler, INFO 被静默
-        # 吞掉, 该"循环改变方向"机制会**触发过却离线不可见**(run65 实测: renamed-reduction
-        # 触发 4 次 → 反例搜索必已 fire, 但 run.log 里 `counterexample hunt triggered` 计 0).
-        # run.log 一定捕获 WARNING, 故升到 warning 让 replay_audit 的 hunt 计数可观测.
-        logger.warning("counterexample hunt triggered, hint injected")
+            return ""
+
+    @staticmethod
+    def _weakness_line(_m: Any) -> str:
+        """单条 verification_mismatch 摘要行; JSON 解析失败退回原文前 100 字符."""
+        _mc = _m.get("content", "") if isinstance(_m, dict) else str(_m)
+        try:
+            _md = json.loads(_mc)
+            return (
+                f"- hyp: {str(_md.get('hypothesis', '?'))[:100]} "
+                f"(blind={_md.get('blind_holds')}, orig={_md.get('orig_holds')})"
+            )
+        except Exception:  # 防御: 单词匹配失败跳过该条
+            return f"- {_mc[:100]}"
+
     def _control_trace(
         self,
         name: str,

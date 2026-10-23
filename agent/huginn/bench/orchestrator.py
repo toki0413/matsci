@@ -248,64 +248,17 @@ class BenchmarkOrchestrator:
                         f"\n\n[budget] tool_calls: {tool_count}/{self.max_total_calls} "
                         f"({self.max_total_calls - tool_count} remaining)"
                     )
-                    async for chunk in self.agent.chat(current_msg + budget_hint, budget_override=budget):
-                        msgs = chunk.get("messages", []) if isinstance(chunk, dict) else []
-                        if msgs:
-                            last = msgs[-1]
-                            content = getattr(last, "content", "")
-                            if content:
-                                final = str(content)
-                            msg_type = getattr(last, "type", "")
-                            if msg_type == "tool":
-                                tool_count += 1
-                                made_tool_call = True
-                                tool_name = getattr(last, "name", "unknown")
-                                self._log(f"tool #{tool_count}: {tool_name}")
-                            elif msg_type == "ai" and content:
-                                if getattr(last, "tool_calls", None):
-                                    made_tool_call = True
-                                preview = content[:200].replace("\n", " ")
-                                self._log(f"AI: {preview}...")
-                        # C8: 检测 compaction 事件 (chunk 里带 compaction 标记)
-                        if isinstance(chunk, dict) and chunk.get("compaction_triggered"):
-                            self.compaction_count += 1
-
-                    # 四档分流: sanity_fail > triage > continue
-                    # sanity gate fail 时 _is_done 返回 False, 优先注入 fix_prompt
-                    if self._last_sanity and not self._last_sanity["passed"]:
-                        current_msg = self._last_sanity["fix_prompt"]
-                        self._log(f"Sanity FAIL: {self._last_sanity['reason']}")
-                    elif not made_tool_call and not self._is_done(tool_count):
-                        missing = self.deliverable_spec.missing(self.workspace)
-                        if not missing:
-                            # 全齐但 agent 自停 → 继续优化
-                            current_msg = CONTINUE_MSG
-                        elif self._has_code_no_output(missing):
-                            current_msg = _execution_prompt()
-                            self._log("Triage: code ready, no outputs -> execution loop")
-                        else:
-                            current_msg = _triage_prompt(missing)
-                            self._log(f"Triage: missing {len(missing)} -> minimal skeleton")
-                    else:
-                        current_msg = CONTINUE_MSG
+                    async for chunk in self.agent.chat(
+                        current_msg + budget_hint, budget_override=budget
+                    ):
+                        final, tool_count, made_tool_call = self._consume_chunk(
+                            chunk, final, tool_count, made_tool_call
+                        )
+                    current_msg = self._next_prompt(tool_count, made_tool_call)
         except TimeoutError:
             final = f"[TIMEOUT after {self.timeout}s]"
         except Exception as exc:
-            # C8: 捕获 crash traceback + 检测 context overflow
-            import traceback as _tb
-            self.crash_traceback = _tb.format_exc()
-            try:
-                from huginn.agent.streaming import _is_context_overflow
-                if _is_context_overflow(exc):
-                    self.context_overflow_count += 1
-                    final = f"[CONTEXT_OVERFLOW: {exc}]"
-                    self._log(f"Context overflow detected: {exc}")
-                else:
-                    final = f"[CRASH: {type(exc).__name__}: {exc}]"
-                    self._log(f"Crash: {self.crash_traceback[-500:]}")
-            except Exception:
-                final = f"[CRASH: {type(exc).__name__}: {exc}]"
-                self._log(f"Crash: {self.crash_traceback[-500:]}")
+            final = self._crash_result(exc)
 
         self._log(f"Agent finished. Tool calls: {tool_count}, turns: {turn}")
         # P1-C8: 暴露可观测性字段给外部适配器写 meta
@@ -316,6 +269,68 @@ class BenchmarkOrchestrator:
             self._enforce_checkpoint_size_limit()
         except Exception as _e:
             self._log(f"checkpoint size enforcement failed: {_e}")
+        return final
+
+    def _consume_chunk(self, chunk, final: str, tool_count: int,
+                       made_tool_call: bool) -> tuple[str, int, bool]:
+        """把一条 chat() chunk 折进 run 的可观测计数."""
+        msgs = chunk.get("messages", []) if isinstance(chunk, dict) else []
+        if msgs:
+            last = msgs[-1]
+            content = getattr(last, "content", "")
+            if content:
+                final = str(content)
+            msg_type = getattr(last, "type", "")
+            if msg_type == "tool":
+                tool_count += 1
+                made_tool_call = True
+                self._log(f"tool #{tool_count}: {getattr(last, 'name', 'unknown')}")
+            elif msg_type == "ai" and content:
+                if getattr(last, "tool_calls", None):
+                    made_tool_call = True
+                preview = content[:200].replace("\n", " ")
+                self._log(f"AI: {preview}...")
+        # C8: 检测 compaction 事件 (chunk 里带 compaction 标记)
+        if isinstance(chunk, dict) and chunk.get("compaction_triggered"):
+            self.compaction_count += 1
+        return final, tool_count, made_tool_call
+
+    def _next_prompt(self, tool_count: int, made_tool_call: bool) -> str:
+        """四档分流: sanity_fail > triage > continue.
+
+        sanity gate fail 时 _is_done 返回 False, 优先注入 fix_prompt.
+        """
+        if self._last_sanity and not self._last_sanity["passed"]:
+            self._log(f"Sanity FAIL: {self._last_sanity['reason']}")
+            return self._last_sanity["fix_prompt"]
+        if not made_tool_call and not self._is_done(tool_count):
+            missing = self.deliverable_spec.missing(self.workspace)
+            if not missing:
+                # 全齐但 agent 自停 → 继续优化
+                return CONTINUE_MSG
+            if self._has_code_no_output(missing):
+                self._log("Triage: code ready, no outputs -> execution loop")
+                return _execution_prompt()
+            self._log(f"Triage: missing {len(missing)} -> minimal skeleton")
+            return _triage_prompt(missing)
+        return CONTINUE_MSG
+
+    def _crash_result(self, exc: Exception) -> str:
+        """C8: 捕获 crash traceback 并区分 context overflow."""
+        import traceback as _tb
+
+        self.crash_traceback = _tb.format_exc()
+        try:
+            from huginn.agent.streaming import _is_context_overflow
+
+            if _is_context_overflow(exc):
+                self.context_overflow_count += 1
+                self._log(f"Context overflow detected: {exc}")
+                return f"[CONTEXT_OVERFLOW: {exc}]"
+        except Exception:
+            logger.debug("context overflow probe failed", exc_info=True)
+        final = f"[CRASH: {type(exc).__name__}: {exc}]"
+        self._log(f"Crash: {self.crash_traceback[-500:]}")
         return final
 
     def _has_code_no_output(self, missing: set[str]) -> bool:

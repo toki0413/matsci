@@ -20,6 +20,46 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 
 logger = logging.getLogger(__name__)
 
+def _convergence_diff_script(f1: Any, f2: Any) -> str:
+    """生成一对解文件的 L2 差 (errornorm, 失败退回相对 L2) 脚本."""
+    return textwrap.dedent(f"""
+        import sys
+        from dolfin import (
+            Mesh, Function, FunctionSpace, XDMFFile,
+            errornorm, norm,
+        )
+
+        def _load(path):
+            mesh = Mesh()
+            with XDMFFile(path) as f:
+                f.read(mesh)
+            V = FunctionSpace(mesh, "P", 1)
+            u = Function(V)
+            with XDMFFile(path) as f:
+                f.read_checkpoint(V, u, "u")
+            return mesh, V, u
+
+        f1_path = {str(f1)!r}
+        f2_path = {str(f2)!r}
+        try:
+            m1, V1, u1 = _load(f1_path)
+            m2, V2, u2 = _load(f2_path)
+        except Exception as e:
+            print("error", str(e))
+            sys.exit(0)
+
+        try:
+            d = errornorm(u1, u2, "L2")
+            print("diff", d)
+        except Exception as exc:
+            n1 = norm(u1, "L2")
+            n2 = norm(u2, "L2")
+            denom = max(n1, n2, 1e-15)
+            d = abs(n1 - n2) / denom
+            print("diff_rel", d)
+    """)
+
+
 
 class FenicsToolInput(BaseModel):
     action: Literal["solve_pde", "mesh_info", "convergence_check"] = Field(...)
@@ -251,91 +291,83 @@ class FenicsTool(HuginnTool):
         sol_files = input_data.solution_files
         diffs: list[float] = []
         method_used = "errornorm"
-        for i in range(len(sol_files) - 1):
-            script = textwrap.dedent(f"""
-                import sys
-                from dolfin import (
-                    Mesh, Function, FunctionSpace, XDMFFile,
-                    errornorm, norm,
-                )
-
-                def _load(path):
-                    mesh = Mesh()
-                    with XDMFFile(path) as f:
-                        f.read(mesh)
-                    V = FunctionSpace(mesh, "P", 1)
-                    u = Function(V)
-                    with XDMFFile(path) as f:
-                        f.read_checkpoint(V, u, "u")
-                    return mesh, V, u
-
-                f1_path = {str(sol_files[i])!r}
-                f2_path = {str(sol_files[i + 1])!r}
-                try:
-                    m1, V1, u1 = _load(f1_path)
-                    m2, V2, u2 = _load(f2_path)
-                except Exception as e:
-                    print("error", str(e))
-                    sys.exit(0)
-
-                try:
-                    d = errornorm(u1, u2, "L2")
-                    print("diff", d)
-                except Exception as exc:
-                    n1 = norm(u1, "L2")
-                    n2 = norm(u2, "L2")
-                    denom = max(n1, n2, 1e-15)
-                    d = abs(n1 - n2) / denom
-                    print("diff_rel", d)
-            """)
-            try:
-                result = self.sandbox.run(
-                    ["python", "-c", script],
-                    cwd=str(work_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=60.0,
-                )
-                parsed = False
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) == 2:
-                        try:
-                            val = float(parts[1])
-                            if parts[0] == "diff_rel":
-                                method_used = "relative_l2"
-                            diffs.append(val)
-                            parsed = True
-                        except ValueError:
-                            logger.debug("best-effort op failed", exc_info=True)
-                    elif parts and parts[0] == "error":
-                        diffs.append(float("nan"))
-                        parsed = True
-                if not parsed:
-                    diffs.append(float("nan"))
-            except subprocess.TimeoutExpired:
-                diffs.append(float("nan"))
-            except Exception:  # 防御: 收敛解析失败记 NaN 继续
-                diffs.append(float("nan"))
+        for f1, f2 in zip(sol_files, sol_files[1:]):
+            pair_diffs, used_rel = self._run_convergence_pair(f1, f2, work_dir)
+            if used_rel:
+                method_used = "relative_l2"
+            diffs.extend(pair_diffs)
 
         valid = [d for d in diffs if d == d]
         converged = len(valid) > 0 and all(d < 0.01 for d in valid)
-        data = {
+        data: dict[str, Any] = {
             "action": "convergence_check",
             "n_solutions": len(sol_files),
             "differences": diffs,
             "method": method_used,
             "converged": converged,
-            "message": (
-                "Convergence check complete — all L2 differences < 1e-2."
-                if converged
-                else "Convergence check complete — some differences exceed tolerance."
-                if valid
-                else "No valid differences computed (check solution file format)."
-            ),
+            "message": self._convergence_message(converged, bool(valid)),
         }
 
         # Physics audit — mesh convergence, NaN in differences
+        self._attach_physics_audit(data)
+        return ToolResult(data=data, success=True)
+
+    def _run_convergence_pair(
+        self, f1: Any, f2: Any, work_dir: Path
+    ) -> tuple[list[float], bool]:
+        """跑一对解文件的 L2 差脚本, 返回 (differences, 是否用了相对 L2)."""
+        script = _convergence_diff_script(f1, f2)
+        try:
+            result = self.sandbox.run(
+                ["python", "-c", script],
+                cwd=str(work_dir),
+                capture_output=True,
+                text=True,
+                timeout=60.0,
+            )
+        except subprocess.TimeoutExpired:
+            return [float("nan")], False
+        except Exception:  # 防御: 收敛解析失败记 NaN 继续
+            return [float("nan")], False
+        diffs, used_rel, parsed = self._parse_convergence_output(result.stdout)
+        if not parsed:
+            diffs.append(float("nan"))
+        return diffs, used_rel
+
+    @staticmethod
+    def _parse_convergence_output(stdout: str) -> tuple[list[float], bool, bool]:
+        """从脚本 stdout 解析 (differences, 是否用 diff_rel, 是否有有效行)."""
+        diffs: list[float] = []
+        used_rel = False
+        parsed = False
+        for line in stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                try:
+                    val = float(parts[1])
+                except ValueError:
+                    logger.debug("best-effort op failed", exc_info=True)
+                    continue
+                if parts[0] == "diff_rel":
+                    used_rel = True
+                diffs.append(val)
+                parsed = True
+            elif parts and parts[0] == "error":
+                diffs.append(float("nan"))
+                parsed = True
+        return diffs, used_rel, parsed
+
+    @staticmethod
+    def _convergence_message(converged: bool, has_valid: bool) -> str:
+        if converged:
+            return "Convergence check complete — all L2 differences < 1e-2."
+        if has_valid:
+            return "Convergence check complete — some differences exceed tolerance."
+        return "No valid differences computed (check solution file format)."
+
+    @staticmethod
+    def _attach_physics_audit(data: dict[str, Any]) -> None:
+        """物理审计: 网格收敛 / difference 里的 NaN; 失败不阻断结果返回."""
         try:
             from huginn.execution.physics_auditor import PhysicsAuditor
 
@@ -345,4 +377,3 @@ class FenicsTool(HuginnTool):
         except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
-        return ToolResult(data=data, success=True)

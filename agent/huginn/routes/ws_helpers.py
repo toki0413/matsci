@@ -267,17 +267,10 @@ async def _stream_agent_response(
 
     Returns the concatenated assistant response text.
     """
-    # Late import so monkeypatch on huginn.routes.ws takes effect
-    from huginn.routes.ws import get_context
-
-    full_response = ""
-    seen_tool_calls: set[str] = set()
-    _tool_names_used: set[str] = set()
-    seen_tool_results: set[str] = set()
-    auto_cp_id: str | None = None
-    workspace_path = Path(cfg_chat.workspace).resolve() if auto_checkpoint else None
-    _clarify_sent = False
-    _token_streamed = False
+    st = _WsStreamState(
+        thread_id=thread_id,
+        workspace_path=Path(cfg_chat.workspace).resolve() if auto_checkpoint else None,
+    )
 
     _ws_closed = [False]  # mutable holder so nested fn can update
 
@@ -301,448 +294,26 @@ async def _stream_agent_response(
         # let tools push progress events back through the same WS
         progress_cb.set(_ws_send)
 
-        _auto_continue_count = 0
-        _MAX_AUTO_CONTINUES = 3  # max auto-continue iterations per turn
-        _pending_auto = False
-
         async for state in agent.chat(content, thread_id):
-            # Record task step for long-horizon tracking
-            try:
-                from huginn.memory.task_state import get_tracker
-                _ts = get_tracker()
-                _ts_state = _ts.get(thread_id)
-                if not _ts_state.goal:
-                    _ts_state.goal = content[:200]
-                    _ts_state.mode = getattr(agent, "mode", "chat")
-                    _ts.save(thread_id)
-            except Exception:
-                logger.debug("task state record skipped", exc_info=True)
-
-            # Typed side-channel events yielded by the agent loop (e.g.
-            # mode_banner / trust_update / budget_update / budget_escalation /
-            # suggest_code / risk_threshold). These are emitted as
-            # {"type": ...} dicts with no _token/_reasoning/messages, so the
-            # branches below would drop them. Forward them verbatim so the
-            # frontend's HRI trust/budget/suggest UI actually receives data.
-            if isinstance(state, dict) and "type" in state:
-                await _ws_send(dict(state))
-                continue
-
-            if "_token" in state:
-                _token_streamed = True
-                text = state["_token"]
-                if text:
-                    full_response += text
-                    await _ws_send(
-                        {"type": "text_delta", "text": text}
-                    )
-                continue
-            if "_reasoning" in state:
-                reasoning = state["_reasoning"]
-                if reasoning:
-                    await _ws_send(
-                        {"type": "reasoning_delta", "text": reasoning}
-                    )
-                continue
-
-            if "_compacted" in state:
-                c = state["_compacted"]
-                await _ws_send({
-                    "type": "context_compacted",
-                    "before_pct": c.get("before_pct", 0),
-                    "after_pct": c.get("after_pct", 0),
-                })
-                # Event-source the compaction so the block model can render a
-                # `── compacted ──` divider in recovered history (T-BCSE-06).
-                try:
-                    from huginn.events.session_writer import record_compaction
-                    record_compaction(thread_id, c.get("summary", ""))
-                except Exception:
-                    logger.debug("session compaction record skipped", exc_info=True)
-                continue
-
-            if state.get("_auto_continue"):
-                # Pipeline/proactive suggestions injected — trigger another
-                # agent.chat() iteration automatically instead of waiting for
-                # the user to send a new message.
-                if _auto_continue_count < _MAX_AUTO_CONTINUES:
-                    _auto_continue_count += 1
-                    _pending_auto = True
-                    logger.info(
-                        "Auto-continue %d/%d (pipeline suggestions pending)",
-                        _auto_continue_count, _MAX_AUTO_CONTINUES,
-                    )
-                    await _ws_send({
-                        "type": "text_delta",
-                        "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
-                    })
-                else:
-                    logger.warning(
-                        "Auto-continue limit (%d) reached, stopping",
-                        _MAX_AUTO_CONTINUES,
-                    )
-                continue
-
-            if handle_clarification and state.get("thought_loop_terminated"):
-                await _ws_send({
-                    "type": "text_delta",
-                    "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
-                })
-                await _ws_send({"type": "done"})
+            action = await _forward_stream_state(
+                state,
+                st,
+                _ws_send,
+                content=content,
+                agent=agent,
+                handle_clarification=handle_clarification,
+                auto_checkpoint=auto_checkpoint,
+            )
+            if action == "break":
                 break
 
-            if (
-                handle_clarification
-                and not _clarify_sent
-                and state.get("needs_clarification")
-                and state.get("clarify_questions")
-            ):
-                questions = state["clarify_questions"]
-                await _ws_send(
-                    {
-                        "type": "clarification_request",
-                        "thread_id": thread_id,
-                        "questions": questions,
-                    }
-                )
-                _clarify_sent = True
-                messages = state.get("messages", [])
-                if messages:
-                    last_msg = messages[-1]
-                    text = (
-                        last_msg.content
-                        if hasattr(last_msg, "content")
-                        else str(last_msg)
-                    )
-                    if text:
-                        full_response = text
-                        await _ws_send(
-                            {"type": "text_delta", "text": text}
-                        )
-                await _ws_send({"type": "done"})
-                break
-
-            messages = state.get("messages", [])
-            if not messages:
-                continue
-            last_msg = messages[-1]
-
-            if isinstance(last_msg, AIMessage):
-                for tc in getattr(last_msg, "tool_calls", []) or []:
-                    tid = tc.get("id")
-                    name = tc.get("name", "unknown")
-                    if tid and tid not in seen_tool_calls:
-                        seen_tool_calls.add(tid)
-                        _tool_names_used.add(name)
-                        if (
-                            auto_checkpoint
-                            and name in _EDIT_TOOLS
-                            and auto_cp_id is None
-                        ):
-                            try:
-                                snapshot = _snapshot_directory(
-                                    workspace_path
-                                )
-                                auto_cp_id = uuid.uuid4().hex[:8]
-                                with _state_lock:
-                                    _checkpoints[auto_cp_id] = (
-                                        workspace_path,
-                                        snapshot,
-                                    )
-                                await _ws_send(
-                                    {
-                                        "type": "auto_checkpoint",
-                                        "id": auto_cp_id,
-                                        "base": str(workspace_path),
-                                        "files": len(snapshot),
-                                    }
-                                )
-                            except Exception as e:
-                                logger.debug("[auto-cp] failed: %s", e)
-                        await _ws_send(
-                            {
-                                "type": "tool_call",
-                                "id": tid,
-                                "name": name,
-                                "args": tc.get("args", {}),
-                            }
-                        )
-                        # Event-source the tool call (T-BCSE closed loop).
-                        try:
-                            from huginn.events.session_writer import record_tool_call
-                            record_tool_call(thread_id, tid, name, tc.get("args", {}))
-                        except Exception:
-                            logger.debug("session tool_call record skipped", exc_info=True)
-
-                        # Emit governance event for this tool call
-                        try:
-                            from huginn.governance import get_governance
-                            gov = get_governance()
-                            ctx = {"tool_name": name, "args": tc.get("args", {})}
-                            decision = gov.can_execute(name, ctx)
-                            # Map tool name to action category heuristically
-                            _cat = "query"
-                            if any(k in name for k in ("vasp", "qe", "cp2k", "lammps", "abaqus", "comsol", "openfoam")):
-                                _cat = "simulate"
-                            elif any(k in name for k in ("file_edit", "file_write", "file_delete")):
-                                _cat = "file_ops"
-                            elif "code" in name or "bash" in name:
-                                _cat = "code"
-                            elif any(k in name for k in ("rag", "literature", "web_search", "database")):
-                                _cat = "network"
-                            elif "remember" in name or "recall" in name:
-                                _cat = "learn"
-                            await _ws_send({
-                                "type": "governance",
-                                "action_name": name,
-                                "category": _cat,
-                                "risk_level": decision.risk_level,
-                                "allowed": decision.allowed,
-                                "reasons": decision.reasons,
-                                "requires_approval": decision.requires_approval,
-                                "predictability": decision.predictability,
-                        })
-                        except Exception:
-                            logger.debug("ws governance decision send failed", exc_info=True)
-
-            if isinstance(last_msg, ToolMessage):
-                tid = getattr(last_msg, "tool_call_id", None)
-                if tid and tid not in seen_tool_results:
-                    seen_tool_results.add(tid)
-                    tool_content = str(
-                        getattr(last_msg, "content", "")
-                    )
-                    tool_result_msg = {
-                        "type": "tool_result",
-                        "id": tid,
-                        "content": tool_content,
-                    }
-                    _tool_name = getattr(last_msg, "name", "") or tid
-                    _warnings = _extract_tool_warnings(tool_content)
-                    if _warnings:
-                        tool_result_msg["warnings"] = _warnings
-                        # 前端有专门的 hook_warning UI 渲染, 单独发一个事件
-                        await _ws_send({
-                            "type": "hook_warning",
-                            "tool_name": _tool_name,
-                            "warnings": _warnings,
-                        })
-                    await _ws_send(tool_result_msg)
-                    # Event-source the tool result (T-BCSE closed loop).
-                    try:
-                        from huginn.events.session_writer import record_tool_result
-                        record_tool_result(thread_id, tid, tool_content)
-                    except Exception:
-                        logger.debug("session tool_result record skipped", exc_info=True)
-
-                    # Record step in task state tracker
-                    try:
-                        from huginn.memory.task_state import get_tracker
-                        # ponytail: naive finding extraction — first non-empty
-                        # line of tool output. Good enough for short results;
-                        # upgrade to LLM summarization when long outputs pile up.
-                        _finding = ""
-                        for _line in tool_content.split("\n"):
-                            _line = _line.strip()
-                            if len(_line) > 10 and not _line.startswith("{") and not _line.startswith("["):
-                                _finding = _line[:120]
-                                break
-                        get_tracker().record_step(
-                            thread_id,
-                            action=f"Tool: {_tool_name}",
-                            tool=_tool_name,
-                            result=tool_content[:200],
-                            findings=_finding,
-                        )
-                    except Exception:
-                        logger.debug("tool step record skipped", exc_info=True)
-
-                    # Emit governance verification result
-                    try:
-                        from huginn.governance import get_governance
-                        gov = get_governance()
-                        v_ok, v_msg = gov.verify(
-                            _tool_name,
-                            {"tool_name": _tool_name},
-                            {"result": tool_content[:500]},
-                        )
-                        await _ws_send({
-                            "type": "governance",
-                            "action_name": _tool_name,
-                            "category": "",
-                            "risk_level": "",
-                            "allowed": True,
-                            "reasons": [],
-                            "requires_approval": False,
-                            "predictability": 1.0 if v_ok else 0.5,
-                            "audit_id": "",
-                            "status": "verified" if v_ok else "failed",
-                            "verification_passed": v_ok,
-                            "verification_message": v_msg,
-                            "rollback_available": False,
-                        })
-                    except Exception:
-                        logger.debug("ws governance verification send failed", exc_info=True)
-
-                    _progress = _extract_task_progress(
-                        tool_content
-                    )
-                    if _progress:
-                        await _ws_send({
-                            "type": "task_progress",
-                            **_progress,
-                        })
-
-            if isinstance(last_msg, AIMessage):
-                if _token_streamed:
-                    full_response = last_msg.content
-                elif isinstance(last_msg.content, str):
-                    delta = last_msg.content[len(full_response) :]
-                    if delta:
-                        full_response = last_msg.content
-                        await _ws_send(
-                            {
-                                "type": "text_delta",
-                                "text": delta,
-                            }
-                        )
-                else:
-                    full_response = last_msg.content
-
-        if plan_result and plan_result.get("acceptance_criteria"):
-            criteria_results = []
-            for ac in plan_result["acceptance_criteria"]:
-                criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
-                criteria_results.append({
-                    "criterion": criterion,
-                    "passed": True,
-                    "note": "Verified after execution",
-                })
-            await _ws_send({
-                "type": "plan_result",
-                "plan_id": plan_result.get("plan_id", ""),
-                "criteria": criteria_results,
-                "all_passed": all(c["passed"] for c in criteria_results),
-            })
-
-        if citations:
-            await _ws_send({
-                "type": "citations",
-                "sources": citations,
-            })
-
-        if (
-            sediment_question
-            and cfg_chat.rag_enabled
-            and full_response
-            and len(full_response) > 50
-            and get_context().kb is not None
-        ):
-            try:
-                import time as _time
-
-                sediment_text = (
-                    f"Q: {sediment_question[:500]}\n\n"
-                    f"A: {full_response[:2000]}"
-                )
-                get_context().kb.add_text(
-                    text=sediment_text,
-                    metadata={
-                        "type": sediment_type,
-                        "thread_id": thread_id,
-                        "timestamp": _time.time(),
-                        "source": "auto_sediment",
-                    },
-                )
-                await _ws_send({
-                    "type": "sediment",
-                    "stored": True,
-                    "kind": sediment_type,
-                    "preview": sediment_text[:200],
-                })
-                # 沉淀也发到全局 EventBus, 让审计视图(/events/recent|stream)能回放明细
-                try:
-                    from huginn.events.integration import publish_event_sync
-                    publish_event_sync(
-                        "sediment",
-                        {
-                            "stored": True,
-                            "kind": sediment_type,
-                            "preview": sediment_text[:200],
-                        },
-                        thread_id=thread_id,
-                        source="auto_sediment",
-                    )
-                except Exception:
-                    logger.debug("sediment event publish failed", exc_info=True)
-            except Exception:
-                logger.debug(
-                    "plan auto-sediment failed"
-                    if sediment_type == "plan_execution"
-                    else "auto-sediment failed",
-                    exc_info=True,
-                )
-
-        # Auto-continue: if pipeline suggestions were injected during the
-        # stream, trigger additional chat() iterations to consume them
-        # immediately instead of waiting for the user's next message.
-        while _pending_auto and _auto_continue_count <= _MAX_AUTO_CONTINUES:
-            _pending_auto = False
-            _token_streamed = False
-            async for state in agent.chat("Continue", thread_id):
-                if "_token" in state:
-                    _token_streamed = True
-                    text = state["_token"]
-                    if text:
-                        full_response += text
-                        await _ws_send({"type": "text_delta", "text": text})
-                    continue
-                if "_reasoning" in state:
-                    reasoning = state["_reasoning"]
-                    if reasoning:
-                        await _ws_send({"type": "reasoning_delta", "text": reasoning})
-                    continue
-                if state.get("_auto_continue"):
-                    if _auto_continue_count < _MAX_AUTO_CONTINUES:
-                        _auto_continue_count += 1
-                        _pending_auto = True
-                        await _ws_send({
-                            "type": "text_delta",
-                            "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
-                        })
-                    continue
-                msgs = state.get("messages", [])
-                if msgs:
-                    lm = msgs[-1]
-                    if isinstance(lm, AIMessage):
-                        if _token_streamed:
-                            full_response = lm.content
-                        elif isinstance(lm.content, str):
-                            delta = lm.content[len(full_response):]
-                            if delta:
-                                full_response = lm.content
-                                await _ws_send({"type": "text_delta", "text": delta})
-
-        if not full_response:
-            if _tool_names_used:
-                names_str = ", ".join(sorted(_tool_names_used))
-                fallback = f"（Agent 调用了工具 [{names_str}] 但未生成文字回复。请查看上方的工具调用结果，或换一种问法重试。）"
-            else:
-                fallback = "（Agent 未能生成回复，可能是内部处理超时或出错。请尝试换一种问法，或稍后重试。）"
-            full_response = fallback
-            await _ws_send({
-                "type": "text_delta",
-                "text": fallback,
-            })
-
-        if full_response:
-            # Event-source the completed assistant turn (T-BCSE closed loop).
-            try:
-                from huginn.events.session_writer import record_assistant_message
-                record_assistant_message(thread_id, full_response)
-            except Exception:
-                logger.debug("session assistant-message record skipped", exc_info=True)
-
+        await _emit_plan_and_citations(_ws_send, plan_result, citations)
+        await _sediment_if_enabled(
+            _ws_send, st, cfg_chat, sediment_question, sediment_type
+        )
+        await _stream_auto_continues(agent, st, _ws_send)
+        await _emit_fallback_if_empty(_ws_send, st)
+        _record_completed_turn(thread_id, st.full_response)
         await _ws_send({"type": "done"})
 
     except Exception as e:
@@ -751,7 +322,533 @@ async def _stream_agent_response(
             {"type": "error", "error": f"{error_label}: {str(e)}"}
         )
 
-    return full_response
+    return st.full_response
+
+
+# Maximum auto-continue iterations per turn.
+_MAX_AUTO_CONTINUES = 3
+
+
+@dataclass
+class _WsStreamState:
+    """Mutable per-turn state shared by the WS streaming helpers."""
+
+    thread_id: str
+    workspace_path: Path | None = None
+    full_response: str = ""
+    seen_tool_calls: set[str] = field(default_factory=set)
+    tool_names_used: set[str] = field(default_factory=set)
+    seen_tool_results: set[str] = field(default_factory=set)
+    auto_cp_id: str | None = None
+    clarify_sent: bool = False
+    token_streamed: bool = False
+    auto_continue_count: int = 0
+    pending_auto: bool = False
+
+
+async def _forward_stream_state(
+    state, st, send, *, content, agent, handle_clarification, auto_checkpoint
+) -> str:
+    """Forward one ``agent.chat()`` state; return ``"break"`` to stop the loop."""
+    _record_task_goal(st.thread_id, content, agent)
+
+    # Typed side-channel events yielded by the agent loop (e.g.
+    # mode_banner / trust_update / budget_update / budget_escalation /
+    # suggest_code / risk_threshold). These are emitted as
+    # {"type": ...} dicts with no _token/_reasoning/messages, so the
+    # branches below would drop them. Forward them verbatim so the
+    # frontend's HRI trust/budget/suggest UI actually receives data.
+    if isinstance(state, dict) and "type" in state:
+        await send(dict(state))
+        return "continue"
+
+    if "_token" in state:
+        st.token_streamed = True
+        text = state["_token"]
+        if text:
+            st.full_response += text
+            await send({"type": "text_delta", "text": text})
+        return "continue"
+
+    if "_reasoning" in state:
+        reasoning = state["_reasoning"]
+        if reasoning:
+            await send({"type": "reasoning_delta", "text": reasoning})
+        return "continue"
+
+    if "_compacted" in state:
+        await _emit_compacted(state, st.thread_id, send)
+        return "continue"
+
+    if state.get("_auto_continue"):
+        await _emit_auto_continue(st, send)
+        return "continue"
+
+    if handle_clarification and state.get("thought_loop_terminated"):
+        await send({
+            "type": "text_delta",
+            "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
+        })
+        await send({"type": "done"})
+        return "break"
+
+    if (
+        handle_clarification
+        and not st.clarify_sent
+        and state.get("needs_clarification")
+        and state.get("clarify_questions")
+    ):
+        await _emit_clarification(state, st, send)
+        return "break"
+
+    messages = state.get("messages", [])
+    if not messages:
+        return "continue"
+    await _emit_message_events(
+        messages[-1], st, send, auto_checkpoint=auto_checkpoint
+    )
+    return "continue"
+
+
+def _record_task_goal(thread_id: str, content: str, agent) -> None:
+    """Record the task goal for long-horizon tracking (first success wins)."""
+    try:
+        from huginn.memory.task_state import get_tracker
+
+        _ts = get_tracker()
+        _ts_state = _ts.get(thread_id)
+        if not _ts_state.goal:
+            _ts_state.goal = content[:200]
+            _ts_state.mode = getattr(agent, "mode", "chat")
+            _ts.save(thread_id)
+    except Exception:
+        logger.debug("task state record skipped", exc_info=True)
+
+
+async def _emit_compacted(state, thread_id: str, send) -> None:
+    """Forward a compaction event and event-source it."""
+    c = state["_compacted"]
+    await send({
+        "type": "context_compacted",
+        "before_pct": c.get("before_pct", 0),
+        "after_pct": c.get("after_pct", 0),
+    })
+    # Event-source the compaction so the block model can render a
+    # `── compacted ──` divider in recovered history (T-BCSE-06).
+    try:
+        from huginn.events.session_writer import record_compaction
+
+        record_compaction(thread_id, c.get("summary", ""))
+    except Exception:
+        logger.debug("session compaction record skipped", exc_info=True)
+
+
+async def _emit_auto_continue(st, send) -> None:
+    """Bump the auto-continue counter and tell the client a new round started."""
+    # Pipeline/proactive suggestions injected — trigger another agent.chat()
+    # iteration automatically instead of waiting for the user to send a message.
+    if st.auto_continue_count < _MAX_AUTO_CONTINUES:
+        st.auto_continue_count += 1
+        st.pending_auto = True
+        logger.info(
+            "Auto-continue %d/%d (pipeline suggestions pending)",
+            st.auto_continue_count, _MAX_AUTO_CONTINUES,
+        )
+        await send({
+            "type": "text_delta",
+            "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+        })
+    else:
+        logger.warning(
+            "Auto-continue limit (%d) reached, stopping", _MAX_AUTO_CONTINUES
+        )
+
+
+async def _emit_clarification(state, st, send) -> None:
+    """Send the clarification request plus the accompanying assistant text."""
+    questions = state["clarify_questions"]
+    await send({
+        "type": "clarification_request",
+        "thread_id": st.thread_id,
+        "questions": questions,
+    })
+    st.clarify_sent = True
+    messages = state.get("messages", [])
+    if messages:
+        last_msg = messages[-1]
+        text = (
+            last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+        )
+        if text:
+            st.full_response = text
+            await send({"type": "text_delta", "text": text})
+    await send({"type": "done"})
+
+
+async def _emit_message_events(last_msg, st, send, *, auto_checkpoint: bool) -> None:
+    """Forward the tool-call / tool-result / text events for one graph message."""
+    if isinstance(last_msg, AIMessage):
+        await _emit_ai_tool_calls(last_msg, st, send, auto_checkpoint)
+        await _emit_ai_text(last_msg, st, send)
+    if isinstance(last_msg, ToolMessage):
+        await _emit_tool_result(last_msg, st, send)
+
+
+async def _emit_ai_tool_calls(msg, st, send, auto_checkpoint: bool) -> None:
+    """Emit unseen tool_calls from one assistant message."""
+    for tc in getattr(msg, "tool_calls", []) or []:
+        tid = tc.get("id")
+        name = tc.get("name", "unknown")
+        if not tid or tid in st.seen_tool_calls:
+            continue
+        st.seen_tool_calls.add(tid)
+        st.tool_names_used.add(name)
+        if auto_checkpoint and name in _EDIT_TOOLS and st.auto_cp_id is None:
+            await _maybe_auto_checkpoint(st, send)
+        await send({
+            "type": "tool_call",
+            "id": tid,
+            "name": name,
+            "args": tc.get("args", {}),
+        })
+        _record_session_tool_call(st.thread_id, tid, name, tc.get("args", {}))
+        await _emit_governance_decision(name, tc.get("args", {}), send)
+
+
+async def _maybe_auto_checkpoint(st, send) -> None:
+    """Take one pre-edit workspace snapshot per turn (best effort)."""
+    try:
+        snapshot = _snapshot_directory(st.workspace_path)
+        st.auto_cp_id = uuid.uuid4().hex[:8]
+        with _state_lock:
+            _checkpoints[st.auto_cp_id] = (st.workspace_path, snapshot)
+        await send({
+            "type": "auto_checkpoint",
+            "id": st.auto_cp_id,
+            "base": str(st.workspace_path),
+            "files": len(snapshot),
+        })
+    except Exception as e:
+        logger.debug("[auto-cp] failed: %s", e)
+
+
+def _record_session_tool_call(thread_id, tid, name, args) -> None:
+    """Event-source a tool call (T-BCSE closed loop)."""
+    try:
+        from huginn.events.session_writer import record_tool_call
+
+        record_tool_call(thread_id, tid, name, args)
+    except Exception:
+        logger.debug("session tool_call record skipped", exc_info=True)
+
+
+def _tool_category(name: str) -> str:
+    """Map a tool name to an action category heuristically."""
+    if any(k in name for k in ("vasp", "qe", "cp2k", "lammps", "abaqus", "comsol", "openfoam")):
+        return "simulate"
+    if any(k in name for k in ("file_edit", "file_write", "file_delete")):
+        return "file_ops"
+    if "code" in name or "bash" in name:
+        return "code"
+    if any(k in name for k in ("rag", "literature", "web_search", "database")):
+        return "network"
+    if "remember" in name or "recall" in name:
+        return "learn"
+    return "query"
+
+
+async def _emit_governance_decision(name, args, send) -> None:
+    """Emit the governance pre-check decision for a tool call."""
+    try:
+        from huginn.governance import get_governance
+
+        gov = get_governance()
+        ctx = {"tool_name": name, "args": args}
+        decision = gov.can_execute(name, ctx)
+        await send({
+            "type": "governance",
+            "action_name": name,
+            "category": _tool_category(name),
+            "risk_level": decision.risk_level,
+            "allowed": decision.allowed,
+            "reasons": decision.reasons,
+            "requires_approval": decision.requires_approval,
+            "predictability": decision.predictability,
+        })
+    except Exception:
+        logger.debug("ws governance decision send failed", exc_info=True)
+
+
+async def _emit_tool_result(msg, st, send) -> None:
+    """Emit one unseen tool result plus its warnings / governance / progress."""
+    tid = getattr(msg, "tool_call_id", None)
+    if not tid or tid in st.seen_tool_results:
+        return
+    st.seen_tool_results.add(tid)
+    tool_content = str(getattr(msg, "content", ""))
+    tool_name = getattr(msg, "name", "") or tid
+    tool_result_msg = {
+        "type": "tool_result",
+        "id": tid,
+        "content": tool_content,
+    }
+    warnings = _extract_tool_warnings(tool_content)
+    if warnings:
+        tool_result_msg["warnings"] = warnings
+        # 前端有专门的 hook_warning UI 渲染, 单独发一个事件
+        await send({
+            "type": "hook_warning",
+            "tool_name": tool_name,
+            "warnings": warnings,
+        })
+    await send(tool_result_msg)
+    _record_session_tool_result(st.thread_id, tid, tool_content)
+    _record_tool_step(st.thread_id, tool_name, tool_content)
+    await _emit_governance_verification(tool_name, tool_content, send)
+    progress = _extract_task_progress(tool_content)
+    if progress:
+        await send({"type": "task_progress", **progress})
+
+
+def _record_session_tool_result(thread_id, tid, tool_content) -> None:
+    """Event-source a tool result (T-BCSE closed loop)."""
+    try:
+        from huginn.events.session_writer import record_tool_result
+
+        record_tool_result(thread_id, tid, tool_content)
+    except Exception:
+        logger.debug("session tool_result record skipped", exc_info=True)
+
+
+def _first_finding_line(tool_content: str) -> str:
+    # ponytail: naive finding extraction — first non-empty line of tool
+    # output. Good enough for short results; upgrade to LLM summarization
+    # when long outputs pile up.
+    for line in tool_content.split("\n"):
+        line = line.strip()
+        if len(line) > 10 and not line.startswith("{") and not line.startswith("["):
+            return line[:120]
+    return ""
+
+
+def _record_tool_step(thread_id: str, tool_name: str, tool_content: str) -> None:
+    """Record one tool step in the task state tracker."""
+    try:
+        from huginn.memory.task_state import get_tracker
+
+        get_tracker().record_step(
+            thread_id,
+            action=f"Tool: {tool_name}",
+            tool=tool_name,
+            result=tool_content[:200],
+            findings=_first_finding_line(tool_content),
+        )
+    except Exception:
+        logger.debug("tool step record skipped", exc_info=True)
+
+
+async def _emit_governance_verification(tool_name, tool_content, send) -> None:
+    """Emit the governance post-execution verification result."""
+    try:
+        from huginn.governance import get_governance
+
+        gov = get_governance()
+        v_ok, v_msg = gov.verify(
+            tool_name,
+            {"tool_name": tool_name},
+            {"result": tool_content[:500]},
+        )
+        await send({
+            "type": "governance",
+            "action_name": tool_name,
+            "category": "",
+            "risk_level": "",
+            "allowed": True,
+            "reasons": [],
+            "requires_approval": False,
+            "predictability": 1.0 if v_ok else 0.5,
+            "audit_id": "",
+            "status": "verified" if v_ok else "failed",
+            "verification_passed": v_ok,
+            "verification_message": v_msg,
+            "rollback_available": False,
+        })
+    except Exception:
+        logger.debug("ws governance verification send failed", exc_info=True)
+
+
+async def _emit_ai_text(msg, st, send) -> None:
+    """Emit the non-streamed remainder of an assistant message as a delta."""
+    if st.token_streamed:
+        st.full_response = msg.content
+    elif isinstance(msg.content, str):
+        delta = msg.content[len(st.full_response):]
+        if delta:
+            st.full_response = msg.content
+            await send({"type": "text_delta", "text": delta})
+    else:
+        st.full_response = msg.content
+
+
+async def _emit_plan_and_citations(send, plan_result, citations) -> None:
+    """Emit the post-run plan acceptance report and citation list."""
+    if plan_result and plan_result.get("acceptance_criteria"):
+        criteria_results = []
+        for ac in plan_result["acceptance_criteria"]:
+            criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
+            criteria_results.append({
+                "criterion": criterion,
+                "passed": True,
+                "note": "Verified after execution",
+            })
+        await send({
+            "type": "plan_result",
+            "plan_id": plan_result.get("plan_id", ""),
+            "criteria": criteria_results,
+            "all_passed": all(c["passed"] for c in criteria_results),
+        })
+
+    if citations:
+        await send({
+            "type": "citations",
+            "sources": citations,
+        })
+
+
+async def _sediment_if_enabled(
+    send, st, cfg_chat, sediment_question, sediment_type
+) -> None:
+    """Auto-sediment the completed Q/A into the knowledge base when enabled."""
+    from huginn.routes.ws import get_context
+
+    if not (
+        sediment_question
+        and cfg_chat.rag_enabled
+        and st.full_response
+        and len(st.full_response) > 50
+        and get_context().kb is not None
+    ):
+        return
+    try:
+        import time as _time
+
+        sediment_text = (
+            f"Q: {sediment_question[:500]}\n\n"
+            f"A: {st.full_response[:2000]}"
+        )
+        get_context().kb.add_text(
+            text=sediment_text,
+            metadata={
+                "type": sediment_type,
+                "thread_id": st.thread_id,
+                "timestamp": _time.time(),
+                "source": "auto_sediment",
+            },
+        )
+        await send({
+            "type": "sediment",
+            "stored": True,
+            "kind": sediment_type,
+            "preview": sediment_text[:200],
+        })
+        _publish_sediment_event(st.thread_id, sediment_type, sediment_text)
+    except Exception:
+        logger.debug(
+            "plan auto-sediment failed"
+            if sediment_type == "plan_execution"
+            else "auto-sediment failed",
+            exc_info=True,
+        )
+
+
+def _publish_sediment_event(thread_id, sediment_type, sediment_text) -> None:
+    """沉淀也发到全局 EventBus, 让审计视图(/events/recent|stream)能回放明细."""
+    try:
+        from huginn.events.integration import publish_event_sync
+
+        publish_event_sync(
+            "sediment",
+            {
+                "stored": True,
+                "kind": sediment_type,
+                "preview": sediment_text[:200],
+            },
+            thread_id=thread_id,
+            source="auto_sediment",
+        )
+    except Exception:
+        logger.debug("sediment event publish failed", exc_info=True)
+
+
+async def _stream_auto_continues(agent, st, send) -> None:
+    """Run extra chat() iterations while pipeline suggestions are pending."""
+    while st.pending_auto and st.auto_continue_count <= _MAX_AUTO_CONTINUES:
+        st.pending_auto = False
+        st.token_streamed = False
+        async for state in agent.chat("Continue", st.thread_id):
+            if "_token" in state:
+                st.token_streamed = True
+                text = state["_token"]
+                if text:
+                    st.full_response += text
+                    await send({"type": "text_delta", "text": text})
+                continue
+            if "_reasoning" in state:
+                reasoning = state["_reasoning"]
+                if reasoning:
+                    await send({"type": "reasoning_delta", "text": reasoning})
+                continue
+            if state.get("_auto_continue"):
+                if st.auto_continue_count < _MAX_AUTO_CONTINUES:
+                    st.auto_continue_count += 1
+                    st.pending_auto = True
+                    await send({
+                        "type": "text_delta",
+                        "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+                    })
+                continue
+            msgs = state.get("messages", [])
+            if msgs and isinstance(msgs[-1], AIMessage):
+                await _apply_auto_continue_text(msgs[-1], st, send)
+
+
+async def _apply_auto_continue_text(last, st, send) -> None:
+    """Emit the non-streamed remainder during auto-continue iterations."""
+    if st.token_streamed:
+        st.full_response = last.content
+    elif isinstance(last.content, str):
+        delta = last.content[len(st.full_response):]
+        if delta:
+            st.full_response = last.content
+            await send({"type": "text_delta", "text": delta})
+
+
+async def _emit_fallback_if_empty(send, st) -> None:
+    """Emit a human-readable fallback when the agent produced no text."""
+    if st.full_response:
+        return
+    if st.tool_names_used:
+        names_str = ", ".join(sorted(st.tool_names_used))
+        fallback = f"（Agent 调用了工具 [{names_str}] 但未生成文字回复。请查看上方的工具调用结果，或换一种问法重试。）"
+    else:
+        fallback = "（Agent 未能生成回复，可能是内部处理超时或出错。请尝试换一种问法，或稍后重试。）"
+    st.full_response = fallback
+    await send({
+        "type": "text_delta",
+        "text": fallback,
+    })
+
+
+def _record_completed_turn(thread_id: str, full_response: str) -> None:
+    """Event-source the completed assistant turn (T-BCSE closed loop)."""
+    if not full_response:
+        return
+    try:
+        from huginn.events.session_writer import record_assistant_message
+
+        record_assistant_message(thread_id, full_response)
+    except Exception:
+        logger.debug("session assistant-message record skipped", exc_info=True)
 
 
 async def _dispatch_user_spec(

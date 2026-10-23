@@ -623,6 +623,57 @@ def _make_pmk_feedback(
 # === 对外接口 ===
 
 
+def _record_in_step(rec: dict[str, Any], step_id: int) -> bool:
+    """判断审计记录是否属于目标 step; 无 step 字段时全收 (向后兼容)."""
+    rec_step = rec.get("step_id")
+    if rec_step is None:
+        rec_step = rec.get("iteration")
+    if rec_step is None:
+        return True
+    try:
+        return int(rec_step) == step_id
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return True
+
+
+def _parse_tool_event(line: str, step_id: int) -> dict[str, Any] | None:
+    """解析一行 audit.jsonl 为归一化工具事件; 非工具事件/坏行返回 None."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+    # schema 没有 step_id 就全收; 有了就按 step_id 过滤
+    if not _record_in_step(rec, step_id):
+        return None
+    etype = rec.get("type", "")
+    if etype not in ("tool.call", "tool.result", "tool.error"):
+        return None
+    data = rec.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    tool_name = data.get("tool") or rec.get("tool_name") or rec.get("tool") or "?"
+    return {
+        "etype": etype,
+        "tool_name": tool_name,
+        "data": data,
+        "error": str(data.get("error") or rec.get("error_type") or "").lower(),
+    }
+
+
+def _classify_tool_error(err: str) -> str:
+    """把 tool.error 文本归类为 timeout / param / ''."""
+    if "timeout" in err or "timed out" in err:
+        return "timeout"
+    if "param" in err or "typeerror" in err or "validation" in err:
+        return "param"
+    return ""
+
+
 def compute_tool_call_health(
     audit_log_path: Any,
     step_id: int,
@@ -655,52 +706,22 @@ def compute_tool_call_health(
     try:
         with path.open("r", encoding="utf-8") as f:
             for line in f:
-                line = line.strip()
-                if not line:
+                event = _parse_tool_event(line, step_id)
+                if event is None:
                     continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    continue
-                # schema 没有 step_id 就全收; 有了就按 step_id 过滤
-                rec_step = rec.get("step_id")
-                if rec_step is None:
-                    rec_step = rec.get("iteration")
-                if rec_step is not None:
-                    try:
-                        if int(rec_step) != step_id:
-                            continue
-                    except (TypeError, ValueError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                etype = rec.get("type", "")
-                if etype not in ("tool.call", "tool.result", "tool.error"):
-                    continue
-                data = rec.get("data") or {}
-                if not isinstance(data, dict):
-                    data = {}
-                tool_name = (
-                    data.get("tool") or rec.get("tool_name") or rec.get("tool") or "?"
-                )
-                if etype == "tool.call":
+                if event["etype"] == "tool.call":
                     total += 1
-                    sig = f"{tool_name}:{str(data.get('input', ''))[:64]}"
+                    sig = f"{event['tool_name']}:{str(event['data'].get('input', ''))[:64]}"
                     if sig in seen_calls:
                         retry += 1
                     seen_calls.append(sig)
-                elif etype == "tool.result":
+                elif event["etype"] == "tool.result":
                     success += 1
-                elif etype == "tool.error":
-                    err = str(
-                        data.get("error") or rec.get("error_type") or ""
-                    ).lower()
-                    if "timeout" in err or "timed out" in err:
+                elif event["etype"] == "tool.error":
+                    kind = _classify_tool_error(event["error"])
+                    if kind == "timeout":
                         timeout += 1
-                    elif (
-                        "param" in err
-                        or "typeerror" in err
-                        or "validation" in err
-                    ):
+                    elif kind == "param":
                         param_err += 1
     except Exception as exc:
         logger.debug("compute_tool_call_health failed: %s", exc)
@@ -717,6 +738,7 @@ def compute_tool_call_health(
         timeout_count=timeout,
         param_error_count=param_err,
     )
+
 
 
 def evaluate_step(

@@ -20,6 +20,19 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+_SCROLL_TEMPLATES = {
+    "down": "window.scrollBy(0, {amount})",
+    "up": "window.scrollBy(0, -{amount})",
+    "left": "window.scrollBy(-{amount}, 0)",
+    "right": "window.scrollBy({amount}, 0)",
+}
+
+
+def _scroll_js(direction: str, amount: int) -> str:
+    """Build the JS scroll expression shared by the Playwright/Selenium paths."""
+    return _SCROLL_TEMPLATES[direction].format(amount=amount)
+
+
 class BrowserAction(StrEnum):
     NAVIGATE = "navigate"
     CLICK = "click"
@@ -162,6 +175,24 @@ class BrowserTool(HuginnTool):
         self._connection_mode = "mock"
         return False
 
+    _PW_HANDLERS = {
+        BrowserAction.NAVIGATE: "_pw_navigate",
+        BrowserAction.CLICK: "_pw_click",
+        BrowserAction.TYPE: "_pw_type",
+        BrowserAction.FILL_FORM: "_pw_fill_form",
+        BrowserAction.SCROLL: "_pw_scroll",
+        BrowserAction.SCREENSHOT: "_pw_screenshot",
+        BrowserAction.EXTRACT: "_pw_extract",
+        BrowserAction.STATE: "_pw_state",
+        BrowserAction.LOGIN: "_pw_login",
+        BrowserAction.WAIT: "_pw_wait",
+        BrowserAction.CLOSE: "_pw_close",
+    }
+
+    _USERNAME_SELECTORS = ['input[name="username"]', 'input[type="email"]', '#username', 'input[name="user"]']
+    _PASSWORD_SELECTORS = ['input[name="password"]', 'input[type="password"]', '#password']
+    _SUBMIT_SELECTORS = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")']
+
     async def call(self, args: BrowserToolInput, context: ToolContext) -> ToolResult:
         has_browser = await self._ensure_browser(args)
 
@@ -173,266 +204,271 @@ class BrowserTool(HuginnTool):
             return await self._call_selenium(args)
 
         # Playwright path
-        try:
-            if args.action == BrowserAction.NAVIGATE:
-                await self._page.goto(args.url, timeout=args.timeout_ms)
-                title = await self._page.title()
-                return ToolResult(data={"status": "navigated", "url": args.url, "title": title, "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.CLICK:
-                await self._page.click(args.selector, timeout=args.timeout_ms)
-                return ToolResult(data={"status": "clicked", "selector": args.selector, "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.TYPE:
-                await self._page.fill(args.selector, "", timeout=args.timeout_ms)
-                await self._page.type(args.selector, args.text, delay=50)
-                return ToolResult(data={"status": "typed", "selector": args.selector, "length": len(args.text), "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.FILL_FORM:
-                filled = []
-                for sel, val in args.form_data.items():
-                    await self._page.fill(sel, val, timeout=args.timeout_ms)
-                    filled.append(sel)
-                return ToolResult(data={"status": "form_filled", "fields": filled, "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.SCROLL:
-                scroll_js = {
-                    "down": f"window.scrollBy(0, {args.scroll_amount})",
-                    "up": f"window.scrollBy(0, -{args.scroll_amount})",
-                    "left": f"window.scrollBy(-{args.scroll_amount}, 0)",
-                    "right": f"window.scrollBy({args.scroll_amount}, 0)",
-                }
-                await self._page.evaluate(scroll_js[args.direction])
-                return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.SCREENSHOT:
-                screenshot_bytes = await self._page.screenshot(full_page=True)
-                import base64
-                b64 = base64.b64encode(screenshot_bytes).decode()
-                return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(screenshot_bytes), "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.EXTRACT:
-                if args.extract_selector:
-                    elements = await self._page.query_selector_all(args.extract_selector)
-                    extracted = []
-                    for el in elements:
-                        item = {}
-                        if args.extract_attributes:
-                            for attr in args.extract_attributes:
-                                item[attr] = await el.get_attribute(attr)
-                        else:
-                            item["text"] = await el.inner_text()
-                            item["tag"] = await el.evaluate("el => el.tagName")
-                        extracted.append(item)
-                    return ToolResult(data={"status": "extracted", "count": len(extracted), "elements": extracted, "mode": self._connection_mode}, success=True)
-                else:
-                    content = await self._page.content()
-                    return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.STATE:
-                # 索引化页面状态 (BrowserAct 风格)
-                # 返回可交互元素的索引列表, agent 用 click(index) / type(index) 操作
-                js_state = """() => {
-                    const interactive = [];
-                    const els = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]');
-                    for (let i = 0; i < els.length && i < 50; i++) {
-                        const el = els[i];
-                        const tag = el.tagName.toLowerCase();
-                        const text = (el.innerText || el.value || el.placeholder || '').trim().substring(0, 80);
-                        const id = el.id || '';
-                        const cls = el.className || '';
-                        const href = el.href || '';
-                        const type = el.type || '';
-                        let selector = '';
-                        if (id) selector = '#' + id;
-                        else if (cls) selector = tag + '.' + cls.split(' ')[0];
-                        else selector = tag;
-                        interactive.push({
-                            index: i, tag, text, selector,
-                            is_link: tag === 'a',
-                            is_input: ['input','textarea','select'].includes(tag),
-                            is_button: tag === 'button' || type === 'submit',
-                            href: href ? href.substring(0, 100) : '',
-                        });
-                    }
-                    return {url: location.href, title: document.title, interactive};
-                }"""
-                state = await self._page.evaluate(js_state)
-                # 生成索引化文本输出 (token 高效)
-                lines = []
-                for item in state.get("interactive", []):
-                    tag = item["tag"]
-                    text = item["text"]
-                    idx = item["index"]
-                    hint = ""
-                    if item["is_link"]:
-                        hint = f" → {item['href']}"
-                    elif item["is_input"]:
-                        hint = " [input]"
-                    elif item["is_button"]:
-                        hint = " [button]"
-                    lines.append(f"[{idx}] <{tag}> {text}{hint}")
-                return ToolResult(
-                    data={
-                        "status": "state",
-                        "url": state.get("url", ""),
-                        "title": state.get("title", ""),
-                        "interactive_count": len(state.get("interactive", [])),
-                        "interactive": state.get("interactive", []),
-                        "indexed": "\n".join(lines),
-                        "mode": self._connection_mode,
-                    },
-                    success=True,
-                )
-
-            elif args.action == BrowserAction.LOGIN:
-                await self._page.goto(args.url, timeout=args.timeout_ms)
-                username = args.credentials["username"]
-                password = args.credentials["password"]
-                for user_sel in ['input[name="username"]', 'input[type="email"]', '#username', 'input[name="user"]']:
-                    try:
-                        await self._page.fill(user_sel, username, timeout=3000)
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                for pass_sel in ['input[name="password"]', 'input[type="password"]', '#password']:
-                    try:
-                        await self._page.fill(pass_sel, password, timeout=3000)
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                for submit_sel in ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")']:
-                    try:
-                        await self._page.click(submit_sel, timeout=3000)
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                await asyncio.sleep(1)
-                title = await self._page.title()
-                return ToolResult(data={"status": "login_attempted", "url": args.url, "title": title, "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.WAIT:
-                await asyncio.sleep(args.wait_ms / 1000)
-                return ToolResult(data={"status": "waited", "ms": args.wait_ms, "mode": self._connection_mode}, success=True)
-
-            elif args.action == BrowserAction.CLOSE:
-                await self._close_all()
-                return ToolResult(data={"status": "closed", "mode": self._connection_mode}, success=True)
-
+        handler_name = self._PW_HANDLERS.get(args.action)
+        if handler_name is None:
             return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
-
+        try:
+            return await getattr(self, handler_name)(args)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Browser error: {e}")
 
+    async def _pw_navigate(self, args: BrowserToolInput) -> ToolResult:
+        await self._page.goto(args.url, timeout=args.timeout_ms)
+        title = await self._page.title()
+        return ToolResult(data={"status": "navigated", "url": args.url, "title": title, "mode": self._connection_mode}, success=True)
+
+    async def _pw_click(self, args: BrowserToolInput) -> ToolResult:
+        await self._page.click(args.selector, timeout=args.timeout_ms)
+        return ToolResult(data={"status": "clicked", "selector": args.selector, "mode": self._connection_mode}, success=True)
+
+    async def _pw_type(self, args: BrowserToolInput) -> ToolResult:
+        await self._page.fill(args.selector, "", timeout=args.timeout_ms)
+        await self._page.type(args.selector, args.text, delay=50)
+        return ToolResult(data={"status": "typed", "selector": args.selector, "length": len(args.text), "mode": self._connection_mode}, success=True)
+
+    async def _pw_fill_form(self, args: BrowserToolInput) -> ToolResult:
+        filled = []
+        for sel, val in args.form_data.items():
+            await self._page.fill(sel, val, timeout=args.timeout_ms)
+            filled.append(sel)
+        return ToolResult(data={"status": "form_filled", "fields": filled, "mode": self._connection_mode}, success=True)
+
+    async def _pw_scroll(self, args: BrowserToolInput) -> ToolResult:
+        await self._page.evaluate(_scroll_js(args.direction, args.scroll_amount))
+        return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": self._connection_mode}, success=True)
+
+    async def _pw_screenshot(self, args: BrowserToolInput) -> ToolResult:
+        screenshot_bytes = await self._page.screenshot(full_page=True)
+        import base64
+        b64 = base64.b64encode(screenshot_bytes).decode()
+        return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(screenshot_bytes), "mode": self._connection_mode}, success=True)
+
+    async def _pw_extract(self, args: BrowserToolInput) -> ToolResult:
+        if args.extract_selector:
+            elements = await self._page.query_selector_all(args.extract_selector)
+            extracted = []
+            for el in elements:
+                item = {}
+                if args.extract_attributes:
+                    for attr in args.extract_attributes:
+                        item[attr] = await el.get_attribute(attr)
+                else:
+                    item["text"] = await el.inner_text()
+                    item["tag"] = await el.evaluate("el => el.tagName")
+                extracted.append(item)
+            return ToolResult(data={"status": "extracted", "count": len(extracted), "elements": extracted, "mode": self._connection_mode}, success=True)
+        content = await self._page.content()
+        return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": self._connection_mode}, success=True)
+
+    async def _pw_state(self, args: BrowserToolInput) -> ToolResult:
+        # 索引化页面状态 (BrowserAct 风格)
+        # 返回可交互元素的索引列表, agent 用 click(index) / type(index) 操作
+        js_state = """() => {
+            const interactive = [];
+            const els = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]');
+            for (let i = 0; i < els.length && i < 50; i++) {
+                const el = els[i];
+                const tag = el.tagName.toLowerCase();
+                const text = (el.innerText || el.value || el.placeholder || '').trim().substring(0, 80);
+                const id = el.id || '';
+                const cls = el.className || '';
+                const href = el.href || '';
+                const type = el.type || '';
+                let selector = '';
+                if (id) selector = '#' + id;
+                else if (cls) selector = tag + '.' + cls.split(' ')[0];
+                else selector = tag;
+                interactive.push({
+                    index: i, tag, text, selector,
+                    is_link: tag === 'a',
+                    is_input: ['input','textarea','select'].includes(tag),
+                    is_button: tag === 'button' || type === 'submit',
+                    href: href ? href.substring(0, 100) : '',
+                });
+            }
+            return {url: location.href, title: document.title, interactive};
+        }"""
+        state = await self._page.evaluate(js_state)
+        # 生成索引化文本输出 (token 高效)
+        lines = []
+        for item in state.get("interactive", []):
+            tag = item["tag"]
+            text = item["text"]
+            idx = item["index"]
+            hint = ""
+            if item["is_link"]:
+                hint = f" → {item['href']}"
+            elif item["is_input"]:
+                hint = " [input]"
+            elif item["is_button"]:
+                hint = " [button]"
+            lines.append(f"[{idx}] <{tag}> {text}{hint}")
+        return ToolResult(
+            data={
+                "status": "state",
+                "url": state.get("url", ""),
+                "title": state.get("title", ""),
+                "interactive_count": len(state.get("interactive", [])),
+                "interactive": state.get("interactive", []),
+                "indexed": "\n".join(lines),
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
+
+    async def _pw_login(self, args: BrowserToolInput) -> ToolResult:
+        await self._page.goto(args.url, timeout=args.timeout_ms)
+        username = args.credentials["username"]
+        password = args.credentials["password"]
+        await self._fill_first(self._USERNAME_SELECTORS, username)
+        await self._fill_first(self._PASSWORD_SELECTORS, password)
+        await self._click_first(self._SUBMIT_SELECTORS)
+        await asyncio.sleep(1)
+        title = await self._page.title()
+        return ToolResult(data={"status": "login_attempted", "url": args.url, "title": title, "mode": self._connection_mode}, success=True)
+
+    async def _fill_first(self, selectors: list[str], value: str) -> None:
+        for sel in selectors:
+            try:
+                await self._page.fill(sel, value, timeout=3000)
+                break
+            except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+
+    async def _click_first(self, selectors: list[str]) -> None:
+        for sel in selectors:
+            try:
+                await self._page.click(sel, timeout=3000)
+                break
+            except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+
+    async def _pw_wait(self, args: BrowserToolInput) -> ToolResult:
+        await asyncio.sleep(args.wait_ms / 1000)
+        return ToolResult(data={"status": "waited", "ms": args.wait_ms, "mode": self._connection_mode}, success=True)
+
+    async def _pw_close(self, args: BrowserToolInput) -> ToolResult:
+        await self._close_all()
+        return ToolResult(data={"status": "closed", "mode": self._connection_mode}, success=True)
+
+    _SELENIUM_HANDLERS = {
+        BrowserAction.NAVIGATE: "_sel_navigate",
+        BrowserAction.CLICK: "_sel_click",
+        BrowserAction.TYPE: "_sel_type",
+        BrowserAction.FILL_FORM: "_sel_fill_form",
+        BrowserAction.SCROLL: "_sel_scroll",
+        BrowserAction.SCREENSHOT: "_sel_screenshot",
+        BrowserAction.EXTRACT: "_sel_extract",
+        BrowserAction.LOGIN: "_sel_login",
+        BrowserAction.WAIT: "_sel_wait",
+        BrowserAction.CLOSE: "_sel_close",
+    }
+
+    _SEL_SUBMIT_SELECTORS = ['button[type="submit"]', 'input[type="submit"]']
+    _SEL_MODE = "remote_selenium"
+
     async def _call_selenium(self, args: BrowserToolInput) -> ToolResult:
         """Execute actions via Selenium WebDriver."""
-        from selenium.webdriver.common.by import By
-
-        try:
-            driver = self._driver
-            if args.action == BrowserAction.NAVIGATE:
-                driver.get(args.url)
-                return ToolResult(data={"status": "navigated", "url": args.url, "title": driver.title, "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.CLICK:
-                el = driver.find_element(By.CSS_SELECTOR, args.selector)
-                el.click()
-                return ToolResult(data={"status": "clicked", "selector": args.selector, "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.TYPE:
-                el = driver.find_element(By.CSS_SELECTOR, args.selector)
-                el.clear()
-                el.send_keys(args.text)
-                return ToolResult(data={"status": "typed", "selector": args.selector, "length": len(args.text), "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.FILL_FORM:
-                filled = []
-                for sel, val in args.form_data.items():
-                    el = driver.find_element(By.CSS_SELECTOR, sel)
-                    el.clear()
-                    el.send_keys(val)
-                    filled.append(sel)
-                return ToolResult(data={"status": "form_filled", "fields": filled, "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.SCROLL:
-                scroll_js = {
-                    "down": f"window.scrollBy(0, {args.scroll_amount})",
-                    "up": f"window.scrollBy(0, -{args.scroll_amount})",
-                    "left": f"window.scrollBy(-{args.scroll_amount}, 0)",
-                    "right": f"window.scrollBy({args.scroll_amount}, 0)",
-                }
-                driver.execute_script(scroll_js[args.direction])
-                return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.SCREENSHOT:
-                b64 = driver.get_screenshot_as_base64()
-                return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(b64), "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.EXTRACT:
-                if args.extract_selector:
-                    elements = driver.find_elements(By.CSS_SELECTOR, args.extract_selector)
-                    extracted = []
-                    for el in elements:
-                        item = {}
-                        if args.extract_attributes:
-                            for attr in args.extract_attributes:
-                                item[attr] = el.get_attribute(attr)
-                        else:
-                            item["text"] = el.text
-                            item["tag"] = el.tag_name
-                        extracted.append(item)
-                    return ToolResult(data={"status": "extracted", "count": len(extracted), "elements": extracted, "mode": "remote_selenium"}, success=True)
-                else:
-                    content = driver.page_source
-                    return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.LOGIN:
-                driver.get(args.url)
-                username = args.credentials["username"]
-                password = args.credentials["password"]
-                for user_sel in ['input[name="username"]', 'input[type="email"]', '#username', 'input[name="user"]']:
-                    try:
-                        el = driver.find_element(By.CSS_SELECTOR, user_sel)
-                        el.clear()
-                        el.send_keys(username)
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                for pass_sel in ['input[name="password"]', 'input[type="password"]', '#password']:
-                    try:
-                        el = driver.find_element(By.CSS_SELECTOR, pass_sel)
-                        el.clear()
-                        el.send_keys(password)
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                for submit_sel in ['button[type="submit"]', 'input[type="submit"]']:
-                    try:
-                        driver.find_element(By.CSS_SELECTOR, submit_sel).click()
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                await asyncio.sleep(1)
-                return ToolResult(data={"status": "login_attempted", "url": args.url, "title": driver.title, "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.WAIT:
-                await asyncio.sleep(args.wait_ms / 1000)
-                return ToolResult(data={"status": "waited", "ms": args.wait_ms, "mode": "remote_selenium"}, success=True)
-
-            elif args.action == BrowserAction.CLOSE:
-                await self._close_all()
-                return ToolResult(data={"status": "closed", "mode": "remote_selenium"}, success=True)
-
+        handler_name = self._SELENIUM_HANDLERS.get(args.action)
+        if handler_name is None:
             return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
-
+        try:
+            return await getattr(self, handler_name)(args)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Selenium error: {e}")
+
+    def _sel_find(self, selector: str):
+        from selenium.webdriver.common.by import By
+        return self._driver.find_element(By.CSS_SELECTOR, selector)
+
+    def _sel_find_all(self, selector: str):
+        from selenium.webdriver.common.by import By
+        return self._driver.find_elements(By.CSS_SELECTOR, selector)
+
+    def _sel_type_first(self, selectors: list[str], value: str) -> None:
+        for sel in selectors:
+            try:
+                el = self._sel_find(sel)
+                el.clear()
+                el.send_keys(value)
+                break
+            except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+
+    async def _sel_navigate(self, args: BrowserToolInput) -> ToolResult:
+        driver = self._driver
+        driver.get(args.url)
+        return ToolResult(data={"status": "navigated", "url": args.url, "title": driver.title, "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_click(self, args: BrowserToolInput) -> ToolResult:
+        self._sel_find(args.selector).click()
+        return ToolResult(data={"status": "clicked", "selector": args.selector, "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_type(self, args: BrowserToolInput) -> ToolResult:
+        el = self._sel_find(args.selector)
+        el.clear()
+        el.send_keys(args.text)
+        return ToolResult(data={"status": "typed", "selector": args.selector, "length": len(args.text), "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_fill_form(self, args: BrowserToolInput) -> ToolResult:
+        filled = []
+        for sel, val in args.form_data.items():
+            el = self._sel_find(sel)
+            el.clear()
+            el.send_keys(val)
+            filled.append(sel)
+        return ToolResult(data={"status": "form_filled", "fields": filled, "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_scroll(self, args: BrowserToolInput) -> ToolResult:
+        self._driver.execute_script(_scroll_js(args.direction, args.scroll_amount))
+        return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_screenshot(self, args: BrowserToolInput) -> ToolResult:
+        b64 = self._driver.get_screenshot_as_base64()
+        return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(b64), "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_extract(self, args: BrowserToolInput) -> ToolResult:
+        if args.extract_selector:
+            elements = self._sel_find_all(args.extract_selector)
+            extracted = []
+            for el in elements:
+                item = {}
+                if args.extract_attributes:
+                    for attr in args.extract_attributes:
+                        item[attr] = el.get_attribute(attr)
+                else:
+                    item["text"] = el.text
+                    item["tag"] = el.tag_name
+                extracted.append(item)
+            return ToolResult(data={"status": "extracted", "count": len(extracted), "elements": extracted, "mode": self._SEL_MODE}, success=True)
+        content = self._driver.page_source
+        return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_login(self, args: BrowserToolInput) -> ToolResult:
+        driver = self._driver
+        driver.get(args.url)
+        self._sel_type_first(self._USERNAME_SELECTORS, args.credentials["username"])
+        self._sel_type_first(self._PASSWORD_SELECTORS, args.credentials["password"])
+        for submit_sel in self._SEL_SUBMIT_SELECTORS:
+            try:
+                self._sel_find(submit_sel).click()
+                break
+            except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+        await asyncio.sleep(1)
+        return ToolResult(data={"status": "login_attempted", "url": args.url, "title": driver.title, "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_wait(self, args: BrowserToolInput) -> ToolResult:
+        await asyncio.sleep(args.wait_ms / 1000)
+        return ToolResult(data={"status": "waited", "ms": args.wait_ms, "mode": self._SEL_MODE}, success=True)
+
+    async def _sel_close(self, args: BrowserToolInput) -> ToolResult:
+        await self._close_all()
+        return ToolResult(data={"status": "closed", "mode": self._SEL_MODE}, success=True)
 
     async def _close_all(self):
         """Close all browser resources."""

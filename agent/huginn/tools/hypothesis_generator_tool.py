@@ -123,6 +123,60 @@ class HypothesisGeneratorInput(BaseModel):
     )
 
 
+def _lit_papers_from_hits(hits: list[Any]) -> list[dict[str, Any]]:
+    """literature_tool 的 papers → 统一 paper dict (丢弃无 title 项)."""
+    papers: list[dict[str, Any]] = []
+    for h in hits:
+        if isinstance(h, dict) and h.get("title"):
+            papers.append({
+                "title": h.get("title", ""),
+                "authors": h.get("authors", []),
+                "year": h.get("year"),
+                "venue": h.get("venue", ""),
+                "doi": h.get("doi"),
+                "abstract": h.get("abstract", "") or "",
+                "url": h.get("url", ""),
+                "citations": h.get("citations"),
+            })
+    return papers
+
+
+def _lit_papers_from_web(results: list[Any]) -> list[dict[str, Any]]:
+    """web_search 的 results → paper dict (snippet 当 abstract)."""
+    papers: list[dict[str, Any]] = []
+    for h in results:
+        if isinstance(h, dict):
+            papers.append({
+                "title": h.get("title", ""),
+                "authors": [],
+                "year": None,
+                "venue": "",
+                "doi": None,
+                "abstract": h.get("snippet", h.get("content", "")),
+                "url": h.get("url", ""),
+                "citations": None,
+            })
+    return papers
+
+
+def _lit_papers_from_rag(docs: list[Any]) -> list[dict[str, Any]]:
+    """rag_tool 的 results/documents → paper dict (content 前 500 字符)."""
+    papers: list[dict[str, Any]] = []
+    for d in docs:
+        if isinstance(d, dict):
+            papers.append({
+                "title": d.get("title", d.get("doc_id", "")),
+                "authors": [],
+                "year": None,
+                "venue": "",
+                "doi": None,
+                "abstract": str(d.get("content", d.get("text", "")))[:500],
+                "url": "",
+                "citations": None,
+            })
+    return papers
+
+
 class HypothesisGeneratorTool(HuginnTool):
     """文献综述 → 科学假设 → 可执行 workflow 的编排工具.
 
@@ -349,122 +403,17 @@ class HypothesisGeneratorTool(HuginnTool):
         abstract/url/citations), 比 web_search 的 snippet 质量高得多, 能撑起
         真正的文献综述. web_search/rag 只作 fallback.
         """
-        from huginn.tools.registry import ToolRegistry
-
         ctx = self._fallback_context(context)
-        papers: list[dict[str, Any]] = []
         summary_parts: list[str] = []
 
         # 1. 优先 literature_tool: 学术三路并发, 拿结构化论文
-        lit = ToolRegistry.get("literature_tool")
-        if lit is not None:
-            try:
-                res = await self._invoke_tool(
-                    lit,
-                    {"action": "search", "query": query, "max_results": 8},
-                    ctx,
-                )
-                if res and res.success and isinstance(res.data, dict):
-                    hits = res.data.get("papers", []) or []
-                    for h in hits:
-                        if isinstance(h, dict) and h.get("title"):
-                            papers.append({
-                                "title": h.get("title", ""),
-                                "authors": h.get("authors", []),
-                                "year": h.get("year"),
-                                "venue": h.get("venue", ""),
-                                "doi": h.get("doi"),
-                                "abstract": h.get("abstract", "") or "",
-                                "url": h.get("url", ""),
-                                "citations": h.get("citations"),
-                            })
-                    src_status = res.data.get("source_status", {}) or {}
-                    ok_sources = [
-                        s for s, st in src_status.items()
-                        if isinstance(st, dict) and st.get("ok")
-                    ]
-                    summary_parts.append(
-                        f"literature_tool: {len(papers)} 篇 "
-                        f"(sources: {','.join(ok_sources) or 'none'})"
-                    )
-                else:
-                    # 调了但失败 (disabled/网络/空), 记一笔方便排查 fallback 链路
-                    err = (res.error if res else "no result") or ""
-                    summary_parts.append(
-                        f"literature_tool: 无结果 ({err[:80]})"
-                    )
-            except Exception as exc:
-                logger.warning("literature_tool 调用失败: %s", exc)
-                summary_parts.append(f"literature_tool 失败: {exc}")
-
+        papers = await self._lit_via_literature_tool(query, ctx, summary_parts)
         # 2. literature_tool 没拿到, 退回 web_search_tool (snippet 当 abstract)
         if not papers:
-            web = ToolRegistry.get("web_search_tool")
-            if web is not None:
-                try:
-                    res = await self._invoke_tool(
-                        web, {"query": query, "max_results": 8}, ctx
-                    )
-                    if res and res.success and isinstance(res.data, dict):
-                        hits = res.data.get("results", []) or []
-                        for h in hits:
-                            if isinstance(h, dict):
-                                papers.append({
-                                    "title": h.get("title", ""),
-                                    "authors": [],
-                                    "year": None,
-                                    "venue": "",
-                                    "doi": None,
-                                    "abstract": h.get("snippet", h.get("content", "")),
-                                    "url": h.get("url", ""),
-                                    "citations": None,
-                                })
-                        summary_parts.append(
-                            f"web_search fallback: {len(papers)} 条 (query='{query}')"
-                        )
-                    else:
-                        err = (res.error if res else "no result") or ""
-                        summary_parts.append(
-                            f"web_search fallback: 无结果 ({err[:80]})"
-                        )
-                except Exception as exc:
-                    logger.warning("web_search_tool 调用失败: %s", exc)
-                    summary_parts.append(f"web_search 失败: {exc}")
-
+            papers = await self._lit_via_web_search(query, ctx, summary_parts)
         # 3. 还没拿到, 退回本地 RAG
         if not papers:
-            rag = ToolRegistry.get("rag_tool")
-            if rag is not None:
-                try:
-                    res = await self._invoke_tool(
-                        rag,
-                        {"action": "search", "query": query, "top_k": 8},
-                        ctx,
-                    )
-                    if res and res.success and isinstance(res.data, dict):
-                        # rag_tool 返回 results 字段, 兼容 documents
-                        docs = res.data.get("results") or res.data.get("documents") or []
-                        for d in docs:
-                            if isinstance(d, dict):
-                                papers.append({
-                                    "title": d.get("title", d.get("doc_id", "")),
-                                    "authors": [],
-                                    "year": None,
-                                    "venue": "",
-                                    "doi": None,
-                                    "abstract": str(
-                                        d.get("content", d.get("text", ""))
-                                    )[:500],
-                                    "url": "",
-                                    "citations": None,
-                                })
-                        summary_parts.append(f"rag fallback: {len(papers)} 条本地文档")
-                    else:
-                        err = (res.error if res else "no result") or ""
-                        summary_parts.append(f"rag fallback: 无结果 ({err[:80]})")
-                except Exception as exc:
-                    logger.warning("rag_tool 调用失败: %s", exc)
-                    summary_parts.append(f"rag 失败: {exc}")
+            papers = await self._lit_via_rag(query, ctx, summary_parts)
 
         if not papers:
             summary_parts.append(
@@ -473,6 +422,96 @@ class HypothesisGeneratorTool(HuginnTool):
             )
 
         return papers, "; ".join(summary_parts)
+
+    async def _lit_via_literature_tool(
+        self, query: str, ctx: Any, summary_parts: list[str]
+    ) -> list[dict[str, Any]]:
+        """1. 优先 literature_tool: 学术三路并发, 拿结构化论文."""
+        from huginn.tools.registry import ToolRegistry
+
+        lit = ToolRegistry.get("literature_tool")
+        if lit is None:
+            return []
+        papers: list[dict[str, Any]] = []
+        try:
+            res = await self._invoke_tool(
+                lit,
+                {"action": "search", "query": query, "max_results": 8},
+                ctx,
+            )
+            if res and res.success and isinstance(res.data, dict):
+                papers = _lit_papers_from_hits(res.data.get("papers", []) or [])
+                src_status = res.data.get("source_status", {}) or {}
+                ok_sources = [
+                    s for s, st in src_status.items()
+                    if isinstance(st, dict) and st.get("ok")
+                ]
+                summary_parts.append(
+                    f"literature_tool: {len(papers)} 篇 "
+                    f"(sources: {','.join(ok_sources) or 'none'})"
+                )
+            else:
+                # 调了但失败 (disabled/网络/空), 记一笔方便排查 fallback 链路
+                err = (res.error if res else "no result") or ""
+                summary_parts.append(f"literature_tool: 无结果 ({err[:80]})")
+        except Exception as exc:
+            logger.warning("literature_tool 调用失败: %s", exc)
+            summary_parts.append(f"literature_tool 失败: {exc}")
+        return papers
+
+    async def _lit_via_web_search(
+        self, query: str, ctx: Any, summary_parts: list[str]
+    ) -> list[dict[str, Any]]:
+        """2. 退回 web_search_tool (snippet 当 abstract)."""
+        from huginn.tools.registry import ToolRegistry
+
+        web = ToolRegistry.get("web_search_tool")
+        if web is None:
+            return []
+        try:
+            res = await self._invoke_tool(
+                web, {"query": query, "max_results": 8}, ctx
+            )
+            if res and res.success and isinstance(res.data, dict):
+                papers = _lit_papers_from_web(res.data.get("results", []) or [])
+                summary_parts.append(
+                    f"web_search fallback: {len(papers)} 条 (query='{query}')"
+                )
+                return papers
+            err = (res.error if res else "no result") or ""
+            summary_parts.append(f"web_search fallback: 无结果 ({err[:80]})")
+        except Exception as exc:
+            logger.warning("web_search_tool 调用失败: %s", exc)
+            summary_parts.append(f"web_search 失败: {exc}")
+        return []
+
+    async def _lit_via_rag(
+        self, query: str, ctx: Any, summary_parts: list[str]
+    ) -> list[dict[str, Any]]:
+        """3. 退回本地 RAG."""
+        from huginn.tools.registry import ToolRegistry
+
+        rag = ToolRegistry.get("rag_tool")
+        if rag is None:
+            return []
+        try:
+            res = await self._invoke_tool(
+                rag,
+                {"action": "search", "query": query, "top_k": 8},
+                ctx,
+            )
+            if res and res.success and isinstance(res.data, dict):
+                # rag_tool 返回 results 字段, 兼容 documents
+                docs = res.data.get("results") or res.data.get("documents") or []
+                papers = _lit_papers_from_rag(docs)
+                summary_parts.append(f"rag fallback: {len(papers)} 条本地文档")
+                return papers
+            err = (res.error if res else "no result") or ""
+            summary_parts.append(f"rag fallback: 无结果 ({err[:80]})")
+        except Exception as exc:
+            logger.warning("rag_tool 调用失败: %s", exc)
+            summary_parts.append(f"rag 失败: {exc}")
+        return []
 
     async def _identify_gaps(
         self,

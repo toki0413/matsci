@@ -271,7 +271,7 @@ class SymmetryTool(HuginnTool):
         天花板: 只验证群公理, 不验证整个空间群结构 (如 Wyckoff 位置一致性).
         """
         try:
-            from sympy import Matrix, eye
+            from sympy import eye
         except ImportError:
             return ToolResult(
                 data=None, success=False,
@@ -281,113 +281,17 @@ class SymmetryTool(HuginnTool):
             ops = sga.get_symmetry_operations()
             if not ops:
                 return ToolResult(data=None, success=False, error="No symmetry operations found")
-            # 转成 sympy Matrix (rotation + translation 合成 4x4 仿射矩阵)
-            affines = []
-            for op in ops:
-                R = Matrix(op.rotation_matrix)
-                t = Matrix(op.translation_vector)
-                # 4x4 仿射: [R t; 0 1]
-                A = eye(4)
-                for i in range(3):
-                    for j in range(3):
-                        A[i, j] = R[i, j]
-                    A[i, 3] = t[i]
-                affines.append(A)
+            affines = self._affine_ops(ops)
             n = len(affines)
             identity = eye(4)
             # 1. 单位元检查
             has_identity = any(identity == A for A in affines)
             # 2. 逆元检查 — 每个操作有逆元在集合里
-            inverses_ok = True
-            missing_inverse = None
-            for i, A in enumerate(affines):
-                A_inv = A.inv()
-                found = False
-                for B in affines:
-                    # 比较时容许小数值误差 (Rational 精确)
-                    if A_inv == B:
-                        found = True
-                        break
-                if not found:
-                    inverses_ok = False
-                    missing_inverse = i
-                    break
+            inverses_ok, missing_inverse = self._inverse_status(affines)
             # 3. 封闭性检查 — 任意两操作的复合还在集合里 (mod 1 平移)
-            # B4 增强: 小群 (n<=24) 全检查, 大群用随机采样 + 生成元阶检查
-            closure_ok = True
-            closure_failure = None
-            if n <= 24:
-                # 小群全检查
-                check_n = n
-                for i in range(check_n):
-                    for j in range(check_n):
-                        AB = affines[i] * affines[j]
-                        # 平移分量 mod 1 (晶格周期性)
-                        for k in range(3):
-                            val = AB[k, 3]
-                            if val != 0:
-                                frac = val - int(val) if val != int(val) else 0
-                                if frac < 0:
-                                    frac += 1
-                                AB[k, 3] = frac
-                        found = any(AB == B for B in affines)
-                        if not found:
-                            closure_ok = False
-                            closure_failure = (i, j)
-                            break
-                    if not closure_ok:
-                        break
-            else:
-                # B4: 大群 — 随机采样 + 生成元阶检查
-                # B8: check_n 自适应 — n=48 立方群 100 对够, n=192 大群 100/36864≈0.27% 太稀.
-                # 用 max(100, n) 保证采样率至少 ~1/n, n=192 采 192 对 (~0.5%).
-                # ponytail: 不上 n*sqrt(n) — 大群 O(n*sqrt(n)) 仍 10^4 量级, 慢.
-                # 升级路径: 生成元集合 + Schreier-Sims (能精确判封闭性, 不需采样).
-                import random
-                random.seed(42)  # 确定性采样, 可复现
-                check_n = max(100, n)
-                for _ in range(check_n):
-                    i = random.randrange(n)
-                    j = random.randrange(n)
-                    AB = affines[i] * affines[j]
-                    for k in range(3):
-                        val = AB[k, 3]
-                        if val != 0:
-                            frac = val - int(val) if val != int(val) else 0
-                            if frac < 0:
-                                frac += 1
-                            AB[k, 3] = frac
-                    found = any(AB == B for B in affines)
-                    if not found:
-                        closure_ok = False
-                        closure_failure = (i, j)
-                        break
-                # 生成元阶检查: 每个操作的 R^k 应该还在集合里 (k=1..order)
-                # 群论保证: 如果每个元素的幂都在集合里, 且采样复合通过, 封闭性大概率成立
-                if closure_ok:
-                    for i in range(n):
-                        A = affines[i]
-                        # 算 A 的阶 (R^k = I 的最小 k)
-                        Ak = A
-                        for k in range(1, 13):  # 晶体学旋转阶最大 6
-                            Ak = Ak * A if k > 1 else A
-                            # mod 1 平移
-                            for r in range(3):
-                                val = Ak[r, 3]
-                                if val != 0:
-                                    frac = val - int(val) if val != int(val) else 0
-                                    if frac < 0:
-                                        frac += 1
-                                    Ak[r, 3] = frac
-                            if Ak == identity:
-                                break  # 找到阶
-                            # Ak 应该在集合里
-                            if not any(Ak == B for B in affines):
-                                closure_ok = False
-                                closure_failure = (i, -1)
-                                break
-                        if not closure_ok:
-                            break
+            closure_ok, closure_failure, check_n = self._closure_status(
+                affines, identity
+            )
             is_group = has_identity and inverses_ok and closure_ok
             return ToolResult(
                 data={
@@ -409,6 +313,95 @@ class SymmetryTool(HuginnTool):
             )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Group verification failed: {e}")
+
+    @staticmethod
+    def _affine_ops(ops) -> list:
+        """把对称操作转成 sympy 4x4 仿射矩阵 [R t; 0 1]."""
+        from sympy import Matrix, eye
+
+        affines = []
+        for op in ops:
+            R = Matrix(op.rotation_matrix)
+            t = Matrix(op.translation_vector)
+            A = eye(4)
+            for i in range(3):
+                for j in range(3):
+                    A[i, j] = R[i, j]
+                A[i, 3] = t[i]
+            affines.append(A)
+        return affines
+
+    @staticmethod
+    def _inverse_status(affines) -> tuple[bool, int | None]:
+        """每个操作是否都有逆元在集合里 (容许 Rational 精确比较)."""
+        for i, A in enumerate(affines):
+            A_inv = A.inv()
+            if not any(A_inv == B for B in affines):
+                return False, i
+        return True, None
+
+    @staticmethod
+    def _wrap_translation(matrix):
+        """把仿射矩阵的平移分量折回 [0, 1) (晶格周期性)."""
+        for k in range(3):
+            val = matrix[k, 3]
+            if val == 0:
+                continue
+            frac = val - int(val) if val != int(val) else 0
+            if frac < 0:
+                frac += 1
+            matrix[k, 3] = frac
+        return matrix
+
+    def _closure_status(self, affines, identity) -> tuple[bool, tuple[int, int] | None, int]:
+        """封闭性检查: 小群全检查, 大群随机采样 + 生成元阶检查 (B4/B8)."""
+        n = len(affines)
+        if n <= 24:
+            ok, failure = self._closure_full(affines)
+            return ok, failure, n
+        ok, failure = self._closure_sampled(affines)
+        if ok:
+            ok, failure = self._check_generator_orders(affines, identity)
+        return ok, failure, max(100, n)
+
+    def _closure_full(self, affines) -> tuple[bool, tuple[int, int] | None]:
+        """小群全检查: 所有有序对复合都在集合里."""
+        n = len(affines)
+        for i in range(n):
+            for j in range(n):
+                AB = self._wrap_translation(affines[i] * affines[j])
+                if not any(AB == B for B in affines):
+                    return False, (i, j)
+        return True, None
+
+    def _closure_sampled(self, affines) -> tuple[bool, tuple[int, int] | None]:
+        """B4: 大群随机采样 (确定性 seed=42)."""
+        import random
+
+        random.seed(42)  # 确定性采样, 可复现
+        n = len(affines)
+        for _ in range(max(100, n)):
+            i = random.randrange(n)
+            j = random.randrange(n)
+            AB = self._wrap_translation(affines[i] * affines[j])
+            if not any(AB == B for B in affines):
+                return False, (i, j)
+        return True, None
+
+    def _check_generator_orders(
+        self, affines, identity
+    ) -> tuple[bool, tuple[int, int] | None]:
+        """生成元阶检查: 每个操作的 A^k 都应还在集合里 (k=1..12)."""
+        for i, A in enumerate(affines):
+            Ak = A
+            for k in range(1, 13):  # 晶体学旋转阶最大 6
+                Ak = Ak * A if k > 1 else A
+                Ak = self._wrap_translation(Ak)
+                if Ak == identity:
+                    break  # 找到阶
+                if not any(Ak == B for B in affines):
+                    return False, (i, -1)
+        return True, None
 
     def _primitive(self, sga) -> ToolResult:
         """Get the primitive cell."""

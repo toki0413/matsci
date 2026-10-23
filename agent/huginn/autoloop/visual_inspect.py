@@ -24,6 +24,47 @@ import logging
 import re
 from typing import Any
 
+
+def _to_pixel_box(
+    x1: int, y1: int, x2: int, y2: int, w: int, h: int
+) -> tuple[int, int, int, int]:
+    """0-999 归一化视觉原语坐标 → pixel coordinates."""
+    return (
+        int(x1 / 999 * w),
+        int(y1 / 999 * h),
+        int(x2 / 999 * w),
+        int(y2 / 999 * h),
+    )
+
+
+def _apply_zoom_consistency(
+    img: Any,
+    crop1_bytes: bytes,
+    box: tuple[int, int, int, int],
+    size: tuple[int, int],
+    action_result: dict[str, Any],
+) -> None:
+    """A3: re-crop with +5px offset and record the histogram correlation.
+
+    PerceptionBench 启发: 同区域微偏移再 crop, 直方图相关性低 → 视觉提取不稳定.
+    ponytail: 不依赖 image_analysis_tool, consistency 只需 crop+直方图.
+    """
+    px1, py1, px2, py2 = box
+    w, h = size
+    px1b = max(0, px1 + 5)
+    py1b = max(0, py1 + 5)
+    px2b = min(w, px2 + 5)
+    py2b = min(h, py2 + 5)
+    cropped2 = img.crop((px1b, py1b, px2b, py2b))
+    buf2 = io.BytesIO()
+    cropped2.save(buf2, format="PNG")
+    corr = _histogram_correlation(crop1_bytes, buf2.getvalue())
+    action_result["consistency_score"] = corr
+    if corr < 0.8:
+        action_result["low_confidence"] = True
+        action_result["note"] += f" (low consistency: {corr:.2f})"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -158,8 +199,6 @@ class VisualInspect:
         直方图相关性 <0.8 标 low_confidence. PerceptionBench 启发: 重复检查
         暴露视觉提取不稳定的区域.
         """
-        import re
-
         result: dict[str, Any] = {
             "mode": "visual_inspect",
             "description": description,
@@ -167,13 +206,7 @@ class VisualInspect:
         }
 
         # 获取上一轮的视觉基元和 base64 图片
-        visual_ctx = getattr(self, "_last_visual_context", "")
-        # _visual_base64 是 selfcheck 路径设的; 生产路径由 ToolAdapter 把工具
-        # 产出的图表 base64 存到 _last_visual_base64, 这里 fallback 读取.
-        visual_base64 = (
-            getattr(self, "_visual_base64", "")
-            or getattr(self, "_last_visual_base64", "")
-        )
+        visual_ctx, visual_base64 = self._gather_visual_inputs()
 
         if not visual_ctx and not visual_base64:
             return {
@@ -182,142 +215,203 @@ class VisualInspect:
                 "error": "No visual data from previous iteration to inspect",
             }
 
-        # 解析 description 中的动作
-        desc_lower = description.lower()
+        action = await self._dispatch_visual_action(
+            description,
+            description.lower(),
+            visual_ctx,
+            visual_base64,
+            consistency_check,
+        )
+        if action is not None:
+            result["actions"].append(action)
 
-        # 动作 1: zoom — 放大某区域
+        self._finalize_visual_inspect(result)
+        return result
+
+    def _gather_visual_inputs(self) -> tuple[str, str]:
+        """Read the previous iteration's visual primitives and chart base64."""
+        visual_ctx = getattr(self, "_last_visual_context", "")
+        # _visual_base64 是 selfcheck 路径设的; 生产路径由 ToolAdapter 把工具
+        # 产出的图表 base64 存到 _last_visual_base64, 这里 fallback 读取.
+        visual_base64 = (
+            getattr(self, "_visual_base64", "")
+            or getattr(self, "_last_visual_base64", "")
+        )
+        return visual_ctx, visual_base64
+
+    async def _dispatch_visual_action(
+        self,
+        description: str,
+        desc_lower: str,
+        visual_ctx: str,
+        visual_base64: str,
+        consistency_check: bool,
+    ) -> dict[str, Any] | None:
+        """Route the description keyword to the matching inspection action.
+
+        Returns None when the action needs coordinates the description omits.
+        """
         if "zoom" in desc_lower:
-            # 提取坐标 [x1,y1,x2,y2] 或 [x,y]
-            coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
-            if len(coords) >= 2:
-                x1, y1 = int(coords[0][0]), int(coords[0][1])
-                x2, y2 = int(coords[1][0]), int(coords[1][1])
-                # 把 0-999 坐标转成数据索引 (如果有上一轮的原始数据)
-                action_result = {
-                    "action": "zoom",
-                    "region": [x1, y1, x2, y2],
-                    "note": f"Zoomed into region [{x1},{y1}]-[{x2},{y2}]",
-                }
-                # 如果有 visual_base64, 调用 image_analysis_tool 做真正的区域分析
-                if visual_base64:
-                    try:
-                        import base64 as b64
-                        import io as _io
+            return await self._visual_action_zoom(
+                description, visual_base64, consistency_check
+            )
+        if "measure" in desc_lower:
+            return self._visual_action_measure(description, visual_ctx)
+        if "annotate" in desc_lower:
+            return await self._visual_action_annotate(
+                description, visual_base64, visual_ctx
+            )
+        if "compare" in desc_lower:
+            return self._visual_action_compare(description, visual_ctx)
+        # 默认: 记录检查请求
+        return {
+            "action": "inspect",
+            "description": description,
+            "visual_context": visual_ctx[:500] if visual_ctx else "",
+        }
 
-                        from PIL import Image
+    async def _visual_action_zoom(
+        self, description: str, visual_base64: str, consistency_check: bool
+    ) -> dict[str, Any] | None:
+        """动作 1: zoom — 放大某区域."""
+        # 提取坐标 [x1,y1,x2,y2] 或 [x,y]
+        coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
+        if len(coords) < 2:
+            return None
+        x1, y1 = int(coords[0][0]), int(coords[0][1])
+        x2, y2 = int(coords[1][0]), int(coords[1][1])
+        action_result: dict[str, Any] = {
+            "action": "zoom",
+            "region": [x1, y1, x2, y2],
+            "note": f"Zoomed into region [{x1},{y1}]-[{x2},{y2}]",
+        }
+        # 如果有 visual_base64, 调用 image_analysis_tool 做真正的区域分析
+        if visual_base64:
+            await self._zoom_analyze_region(
+                description, visual_base64, (x1, y1, x2, y2),
+                consistency_check, action_result,
+            )
+        return action_result
 
-                        img_data = b64.b64decode(visual_base64)
-                        img = Image.open(_io.BytesIO(img_data))
-                        w, h = img.size
-                        # 0-999 → pixel coordinates
-                        px1 = int(x1 / 999 * w)
-                        py1 = int(y1 / 999 * h)
-                        px2 = int(x2 / 999 * w)
-                        py2 = int(y2 / 999 * h)
-                        cropped = img.crop((px1, py1, px2, py2))
-                        buf = _io.BytesIO()
-                        cropped.save(buf, format="PNG")
-                        crop1_bytes = buf.getvalue()
-                        action_result["cropped_image"] = b64.b64encode(crop1_bytes).decode()[:10000]
-                        action_result["crop_size"] = [px2 - px1, py2 - py1]
+    async def _zoom_analyze_region(
+        self,
+        description: str,
+        visual_base64: str,
+        box: tuple[int, int, int, int],
+        consistency_check: bool,
+        action_result: dict[str, Any],
+    ) -> None:
+        """Crop the requested region, re-check consistency, then annotate it."""
+        try:
+            import base64 as b64
 
-                        # A3: re-ask consistency — 第二次 crop 坐标 +5 pixel
-                        # PerceptionBench 启发: 同区域微偏移再 crop,
-                        # 直方图相关性低 → 视觉提取不稳定.
-                        # ponytail: 不依赖 image_analysis_tool, consistency 只需 crop+直方图.
-                        if consistency_check:
-                            px1b = max(0, px1 + 5)
-                            py1b = max(0, py1 + 5)
-                            px2b = min(w, px2 + 5)
-                            py2b = min(h, py2 + 5)
-                            cropped2 = img.crop((px1b, py1b, px2b, py2b))
-                            buf2 = _io.BytesIO()
-                            cropped2.save(buf2, format="PNG")
-                            corr = _histogram_correlation(crop1_bytes, buf2.getvalue())
-                            action_result["consistency_score"] = corr
-                            if corr < 0.8:
-                                action_result["low_confidence"] = True
-                                action_result["note"] += f" (low consistency: {corr:.2f})"
+            from PIL import Image
+        except ImportError:
+            action_result["note"] += " (PIL not available, coordinates only)"
+            return
+        try:
+            x1, y1, x2, y2 = box
+            img_data = b64.b64decode(visual_base64)
+            img = Image.open(io.BytesIO(img_data))
+            w, h = img.size
+            px1, py1, px2, py2 = _to_pixel_box(x1, y1, x2, y2, w, h)
+            cropped = img.crop((px1, py1, px2, py2))
+            buf = io.BytesIO()
+            cropped.save(buf, format="PNG")
+            crop1_bytes = buf.getvalue()
+            action_result["cropped_image"] = (
+                b64.b64encode(crop1_bytes).decode()[:10000]
+            )
+            action_result["crop_size"] = [px2 - px1, py2 - py1]
 
-                        # 真正区域分析: crop 区域送 image_analysis_tool.
-                        # 视觉验证闭环: zoom 不只是裁剪, 裁剪后的区域要结构化标注
-                        # (defect/phase/sem), 结果写回 action_result.
-                        region_analysis = await self._call_image_analysis_tool(
-                            crop1_bytes,
-                            self._pick_image_action(description),
-                            {"region": [px1, py1, px2, py2]},
-                        )
-                        if region_analysis:
-                            action_result["region_analysis"] = region_analysis
-                            note = region_analysis.get("note") or region_analysis.get("summary")
-                            if note:
-                                action_result["note"] += f" | region: {str(note)[:120]}"
-                    except ImportError:
-                        action_result["note"] += " (PIL not available, coordinates only)"
-                    except Exception as e:
-                        action_result["note"] += f" (crop failed: {e})"
-                result["actions"].append(action_result)
-
-        # 动作 2: measure — 测量某点或区域的数据值
-        # v8 补全: 解析 visual_ctx 里的 <point>[x,y]</point> 原语, 找最接近的数据点
-        elif "measure" in desc_lower:
-            coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
-            if coords:
-                x, y = int(coords[0][0]), int(coords[0][1])
-                # 从 visual_ctx 解析所有 <point>[x,y]</point>=value 原语, 找最近的
-                measured = self._measure_nearest_primitive(x, y, visual_ctx)
-                result["actions"].append(
-                    {
-                        "action": "measure",
-                        "coordinate": [x, y],
-                        "note": f"Measured at <point>[{x},{y}]</point>",
-                        "nearest_primitive": measured,
-                        "visual_context_snippet": (
-                            visual_ctx[:300] if visual_ctx else ""
-                        ),
-                    }
+            if consistency_check:
+                _apply_zoom_consistency(
+                    img, crop1_bytes, (px1, py1, px2, py2), (w, h), action_result
                 )
 
-        # 动作 3: annotate — 标注结构特征
+            # 真正区域分析: crop 区域送 image_analysis_tool.
+            await self._annotate_zoom_region(
+                description, crop1_bytes, (px1, py1, px2, py2), action_result
+            )
+        except Exception as e:
+            action_result["note"] += f" (crop failed: {e})"
+
+    async def _annotate_zoom_region(
+        self,
+        description: str,
+        crop1_bytes: bytes,
+        pixel_box: tuple[int, int, int, int],
+        action_result: dict[str, Any],
+    ) -> None:
+        """视觉验证闭环: zoom 不只是裁剪, 裁剪后的区域要结构化标注.
+
+        (defect/phase/sem), 结果写回 action_result.
+        """
+        region_analysis = await self._call_image_analysis_tool(
+            crop1_bytes,
+            self._pick_image_action(description),
+            {"region": list(pixel_box)},
+        )
+        if not region_analysis:
+            return
+        action_result["region_analysis"] = region_analysis
+        note = region_analysis.get("note") or region_analysis.get("summary")
+        if note:
+            action_result["note"] += f" | region: {str(note)[:120]}"
+
+    def _visual_action_measure(
+        self, description: str, visual_ctx: str
+    ) -> dict[str, Any] | None:
+        """动作 2: measure — 测量某点或区域的数据值."""
+        # v8 补全: 解析 visual_ctx 里的 <point>[x,y]</point> 原语, 找最接近的数据点
+        coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
+        if not coords:
+            return None
+        x, y = int(coords[0][0]), int(coords[0][1])
+        measured = self._measure_nearest_primitive(x, y, visual_ctx)
+        return {
+            "action": "measure",
+            "coordinate": [x, y],
+            "note": f"Measured at <point>[{x},{y}]</point>",
+            "nearest_primitive": measured,
+            "visual_context_snippet": (visual_ctx[:300] if visual_ctx else ""),
+        }
+
+    async def _visual_action_annotate(
+        self, description: str, visual_base64: str, visual_ctx: str
+    ) -> dict[str, Any]:
+        """动作 3: annotate — 标注结构特征."""
         # v8 补全: 有图片时调 image_analysis_tool 做真正结构标注, 无图片用文本特征
-        elif "annotate" in desc_lower:
-            annotation = await self._annotate_visual_features(description, visual_base64, visual_ctx)
-            result["actions"].append(
-                {
-                    "action": "annotate",
-                    "description": description,
-                    "note": annotation["note"],
-                    "features": annotation.get("features", []),
-                    "visual_context": visual_ctx[:500] if visual_ctx else "",
-                }
-            )
-            if annotation.get("tool_output"):
-                result["actions"][-1]["tool_output"] = annotation["tool_output"]
+        annotation = await self._annotate_visual_features(
+            description, visual_base64, visual_ctx
+        )
+        payload: dict[str, Any] = {
+            "action": "annotate",
+            "description": description,
+            "note": annotation["note"],
+            "features": annotation.get("features", []),
+            "visual_context": visual_ctx[:500] if visual_ctx else "",
+        }
+        if annotation.get("tool_output"):
+            payload["tool_output"] = annotation["tool_output"]
+        return payload
 
-        # 动作 4: compare — 比较两组数据
+    def _visual_action_compare(
+        self, description: str, visual_ctx: str
+    ) -> dict[str, Any]:
+        """动作 4: compare — 比较两组数据."""
         # v8 补全: 用 extract_comparative_primitives 做真正差分
-        elif "compare" in desc_lower:
-            comparison = self._compare_visual_data(description, visual_ctx)
-            result["actions"].append(
-                {
-                    "action": "compare",
-                    "description": description,
-                    "visual_context": visual_ctx[:500] if visual_ctx else "",
-                    "note": comparison["note"],
-                    "diff": comparison.get("diff", {}),
-                }
-            )
+        comparison = self._compare_visual_data(description, visual_ctx)
+        return {
+            "action": "compare",
+            "description": description,
+            "visual_context": visual_ctx[:500] if visual_ctx else "",
+            "note": comparison["note"],
+            "diff": comparison.get("diff", {}),
+        }
 
-        # 默认: 记录检查请求
-        else:
-            result["actions"].append(
-                {
-                    "action": "inspect",
-                    "description": description,
-                    "visual_context": visual_ctx[:500] if visual_ctx else "",
-                }
-            )
-
+    def _finalize_visual_inspect(self, result: dict[str, Any]) -> None:
+        """Build summary primitives, mark success, consume the base64 cache."""
         # 生成新的视觉基元 (基于检查动作的输出)
         new_primitives = []
         for action in result["actions"]:
@@ -340,7 +434,7 @@ class VisualInspect:
         except Exception:  # 防御: 视觉增强失败跳过
             logger.debug("visual enrich skipped", exc_info=True)
 
-        return result
+
 
     def _measure_nearest_primitive(
         self, x: int, y: int, visual_ctx: str

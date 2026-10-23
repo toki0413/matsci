@@ -267,171 +267,14 @@ class VaspTool(HuginnTool):
         """Execute real VASP calculation, 自动诊断+改 INCAR 重试."""
         autoheal_log: list[dict[str, Any]] = []
         try:
-            cmd = [self.vasp_executable]
-            result: Any = None
-            max_retries = args.max_auto_retries
-            # 软失败原因. returncode=0 但 SCF 没收敛 / 物理审计报错都属于软失败,
-            # 这种情况 result.returncode==0, 不能让最终 success 判定当成成功.
-            soft_failure_msg: str | None = None
-            audit_report = None
-
-            for attempt in range(max_retries + 1):
-                sb_result = self.sandbox.run(
-                    cmd,
-                    cwd=str(work_dir),
-                    timeout=args.walltime_hours * 3600,
-                    queue=args.queue,
-                    walltime=f"{args.walltime_hours}:00:00",
-                )
-                result = sb_result
-
-                # 判断这次跑完到底算成功还是失败:
-                # - returncode != 0 → 硬失败, 用 stderr 诊断
-                # - returncode == 0 但 SCF 没收敛 → 软失败, VASP 经常静默返回 0
-                # - returncode == 0 且 SCF 收敛, 但物理审计报错 → 软失败
-                error: str | None = None
-                soft_failure_msg = None
-                if result.returncode != 0:
-                    error = result.stderr or ""
-                else:
-                    # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
-                    parsed_now = (
-                        self._parse_outcar(work_dir / "OUTCAR", action=args.action)
-                        if (work_dir / "OUTCAR").exists()
-                        else {}
-                    )
-                    vasprun_now = work_dir / "vasprun.xml"
-                    if vasprun_now.exists():
-                        parsed_now.update(self._parse_vasprun_quick(vasprun_now))
-                    if not parsed_now.get("converged", True):
-                        # SCF 没收敛 (NELM 撑满), 软失败走重试
-                        error = (
-                            "SCF did not converge — "
-                            "electronic convergence not reached (NELM)"
-                        )
-                        soft_failure_msg = error
-                    else:
-                        # SCF 收敛了, 再过一遍物理审计,
-                        # 抓 unbound energy / 负 gap 之类的 "成功但不可信"
-                        try:
-                            from huginn.execution.physics_auditor import (
-                                PhysicsAuditor,
-                            )
-
-                            auditor = PhysicsAuditor()
-                            audit_report = auditor.audit(
-                                "vasp_tool",
-                                args.action,
-                                parsed_now,
-                                args.model_dump(),
-                            )
-                            if audit_report.has_errors:
-                                errs = [
-                                    f.message
-                                    for f in audit_report.findings
-                                    if f.severity == "error"
-                                ]
-                                error = f"Physics audit found errors: {errs}"
-                                soft_failure_msg = error
-                        except Exception:  # 防御: 审计异常不阻断重试流程
-                            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
-
-                if error is None:
-                    break  # 真正成功
-
-                # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
-                if attempt < max_retries:
-                    fixed = self._try_autofix(work_dir, error)
-                    if fixed:
-                        autoheal_log.append(
-                            {
-                                "attempt": attempt + 1,
-                                "error": error[:300],
-                                "fixes_applied": fixed["fixes"],
-                                "reasoning": fixed["reasoning"],
-                            }
-                        )
-                        continue
-                break  # 没修动或重试耗尽
-
-            # Parse OUTCAR for comprehensive results
-            outcar = work_dir / "OUTCAR"
-            parsed = (
-                self._parse_outcar(outcar, action=args.action)
-                if outcar.exists() else {}
+            result, soft_failure_msg, audit_report = self._run_retry_loop(
+                args, work_dir, autoheal_log
             )
-
-            # Also try vasprun.xml for structured data
-            vasprun = work_dir / "vasprun.xml"
-            if vasprun.exists():
-                parsed.update(self._parse_vasprun_quick(vasprun))
-
-            # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
-            ok = result.returncode == 0 and soft_failure_msg is None
-            output = VaspToolOutput(
-                status="completed" if ok else "failed",
-                energy=parsed.get("energy"),
-                converged=parsed.get("converged", False),
-                output_files=[
-                    f.name
-                    for f in work_dir.iterdir()
-                    if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
-                ],
+            parsed = self._collect_parsed(args, work_dir)
+            return self._build_result(
+                args, work_dir, result, soft_failure_msg, audit_report,
+                autoheal_log, parsed,
             )
-
-            # Include parsed details in result
-            data = output.model_dump()
-            data["parsed"] = parsed
-            if autoheal_log:
-                data["autoheal_attempts"] = autoheal_log
-
-            # Physics audit — check if results are physically reasonable.
-            # AutoFixLoop only handles hard failures; this catches results that
-            # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
-            # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
-            if audit_report is not None:
-                data["physics_audit"] = audit_report.to_dict()
-            else:
-                try:
-                    from huginn.execution.physics_auditor import PhysicsAuditor
-
-                    auditor = PhysicsAuditor()
-                    audit_report = auditor.audit(
-                        "vasp_tool", args.action, parsed, args.model_dump()
-                    )
-                    data["physics_audit"] = audit_report.to_dict()
-                except Exception:  # 防御: 审计失败不阻断结果返回
-                    logger.debug("audit failure can't block result delivery", exc_info=True)
-
-            # 带上 provenance 快照, 事后能追溯参数/版本/环境
-            try:
-                from huginn.provenance import capture
-
-                data["provenance"] = capture(
-                    "vasp_tool", args.model_dump(), output=dict(data)
-                ).to_dict()
-            except Exception:  # 防御: 溯源失败不阻断结果返回
-                logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
-
-            # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
-            data["uq_hint"] = self._uq_hint()
-            # 告知下游工具 (xrd_sim/descriptor/symmetry) 可以从哪里读优化结构
-            data["structure_file_hint"] = self._structure_file_hint(work_dir)
-
-            return ToolResult(
-                data=data,
-                success=ok,
-                error=(
-                    None
-                    if ok
-                    else (
-                        result.stderr[:500]
-                        if result.returncode != 0
-                        else soft_failure_msg
-                    )
-                ),
-            )
-
         except subprocess.TimeoutExpired:
             return ToolResult(
                 data=None,
@@ -442,6 +285,194 @@ class VaspTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error=f"VASP execution failed: {e}"
             )
+
+    def _run_retry_loop(self, args: VaspToolInput, work_dir: Path,
+                        autoheal_log: list[dict[str, Any]]) -> tuple:
+        """跑 ``max_auto_retries+1`` 次, 硬/软失败都尝试自动修 INCAR.
+
+        返回 ``(result, soft_failure_msg, audit_report)``.
+        """
+        cmd = [self.vasp_executable]
+        result: Any = None
+        soft_failure_msg: str | None = None
+        audit_report = None
+
+        for attempt in range(args.max_auto_retries + 1):
+            sb_result = self.sandbox.run(
+                cmd,
+                cwd=str(work_dir),
+                timeout=args.walltime_hours * 3600,
+                queue=args.queue,
+                walltime=f"{args.walltime_hours}:00:00",
+            )
+            result = sb_result
+
+            error, soft_failure_msg, audit_report = self._classify_attempt(
+                args, work_dir, result, audit_report
+            )
+            if error is None:
+                break  # 真正成功
+
+            # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
+            if attempt < args.max_auto_retries:
+                fixed = self._try_autofix(work_dir, error)
+                if fixed:
+                    autoheal_log.append(
+                        {
+                            "attempt": attempt + 1,
+                            "error": error[:300],
+                            "fixes_applied": fixed["fixes"],
+                            "reasoning": fixed["reasoning"],
+                        }
+                    )
+                    continue
+            break  # 没修动或重试耗尽
+
+        return result, soft_failure_msg, audit_report
+
+    def _classify_attempt(self, args: VaspToolInput, work_dir: Path,
+                          result: Any, audit_report: Any) -> tuple:
+        """判断这次跑完到底算成功还是失败.
+
+        - returncode != 0 → 硬失败, 用 stderr 诊断
+        - returncode == 0 但 SCF 没收敛 → 软失败, VASP 经常静默返回 0
+        - returncode == 0 且 SCF 收敛, 但物理审计报错 → 软失败
+        """
+        soft_failure_msg: str | None = None
+        if result.returncode != 0:
+            return result.stderr or "", soft_failure_msg, audit_report
+
+        # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
+        parsed_now = (
+            self._parse_outcar(work_dir / "OUTCAR", action=args.action)
+            if (work_dir / "OUTCAR").exists()
+            else {}
+        )
+        vasprun_now = work_dir / "vasprun.xml"
+        if vasprun_now.exists():
+            parsed_now.update(self._parse_vasprun_quick(vasprun_now))
+        if not parsed_now.get("converged", True):
+            # SCF 没收敛 (NELM 撑满), 软失败走重试
+            error = (
+                "SCF did not converge — "
+                "electronic convergence not reached (NELM)"
+            )
+            return error, error, audit_report
+
+        # SCF 收敛了, 再过一遍物理审计,
+        # 抓 unbound energy / 负 gap 之类的 "成功但不可信"
+        audit_report, error = self._audit_parsed(args, parsed_now, audit_report)
+        return error, (error if error else soft_failure_msg), audit_report
+
+    def _audit_parsed(self, args: VaspToolInput, parsed: dict,
+                      audit_report: Any) -> tuple:
+        """跑物理审计; 审计自身异常不阻断重试流程."""
+        try:
+            from huginn.execution.physics_auditor import (
+                PhysicsAuditor,
+            )
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit(
+                "vasp_tool",
+                args.action,
+                parsed,
+                args.model_dump(),
+            )
+            if audit_report.has_errors:
+                errs = [
+                    f.message
+                    for f in audit_report.findings
+                    if f.severity == "error"
+                ]
+                return audit_report, f"Physics audit found errors: {errs}"
+        except Exception:  # 防御: 审计异常不阻断重试流程
+            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+        return audit_report, None
+
+    def _collect_parsed(self, args: VaspToolInput, work_dir: Path) -> dict:
+        """读 OUTCAR + vasprun.xml 汇总解析结果."""
+        outcar = work_dir / "OUTCAR"
+        parsed = (
+            self._parse_outcar(outcar, action=args.action)
+            if outcar.exists() else {}
+        )
+        vasprun = work_dir / "vasprun.xml"
+        if vasprun.exists():
+            parsed.update(self._parse_vasprun_quick(vasprun))
+        return parsed
+
+    def _build_result(self, args: VaspToolInput, work_dir: Path, result: Any,
+                      soft_failure_msg: str | None, audit_report: Any,
+                      autoheal_log: list[dict[str, Any]], parsed: dict) -> ToolResult:
+        """组装最终 ToolResult (含审计 / provenance / 提示字段)."""
+        # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
+        ok = result.returncode == 0 and soft_failure_msg is None
+        output = VaspToolOutput(
+            status="completed" if ok else "failed",
+            energy=parsed.get("energy"),
+            converged=parsed.get("converged", False),
+            output_files=[
+                f.name
+                for f in work_dir.iterdir()
+                if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
+            ],
+        )
+
+        data = output.model_dump()
+        data["parsed"] = parsed
+        if autoheal_log:
+            data["autoheal_attempts"] = autoheal_log
+
+        # Physics audit — check if results are physically reasonable.
+        # AutoFixLoop only handles hard failures; this catches results that
+        # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
+        # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
+        try:
+            data["physics_audit"] = self._final_audit(args, parsed, audit_report)
+        except Exception:  # 防御: 审计失败不阻断结果返回
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        # 带上 provenance 快照, 事后能追溯参数/版本/环境
+        try:
+            from huginn.provenance import capture
+
+            data["provenance"] = capture(
+                "vasp_tool", args.model_dump(), output=dict(data)
+            ).to_dict()
+        except Exception:  # 防御: 溯源失败不阻断结果返回
+            logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+
+        # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
+        data["uq_hint"] = self._uq_hint()
+        # 告知下游工具 (xrd_sim/descriptor/symmetry) 可以从哪里读优化结构
+        data["structure_file_hint"] = self._structure_file_hint(work_dir)
+
+        return ToolResult(
+            data=data,
+            success=ok,
+            error=self._result_error(ok, result, soft_failure_msg),
+        )
+
+    @staticmethod
+    def _final_audit(args: VaspToolInput, parsed: dict, audit_report: Any) -> dict:
+        """循环里跑过审计就复用其 dict, 否则补跑一次."""
+        if audit_report is not None:
+            return audit_report.to_dict()
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        return PhysicsAuditor().audit(
+            "vasp_tool", args.action, parsed, args.model_dump()
+        ).to_dict()
+
+    @staticmethod
+    def _result_error(ok: bool, result: Any, soft_failure_msg: str | None) -> str | None:
+        """成功返回 None; 硬失败取 stderr 前 500 字; 软失败取软失败原因."""
+        if ok:
+            return None
+        if result.returncode != 0:
+            return result.stderr[:500]
+        return soft_failure_msg
 
     def _read_incar_params(self, work_dir: Path) -> dict[str, Any]:
         """读 INCAR 解析成 dict, 给 AutoFixLoop 判断当前参数用."""

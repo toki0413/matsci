@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sympy as sp
 
@@ -52,6 +52,95 @@ def _christoffel(g: list[list[sp.Expr]], coords: list[sp.Symbol]) -> list[list[l
     return Gamma
 
 
+def _metric_base(g: Any, coords: Any, n: int) -> dict:
+    """度规结果公共字段: metric / coords / dim."""
+    return {
+        "metric": [[str(c) for c in row] for row in g],
+        "coords": [str(c) for c in coords],
+        "dim": n,
+    }
+
+
+def _christoffel_nonzero(Gamma: Any, coords: Any, n: int) -> list[dict]:
+    """输出非零 Christoffel 记号."""
+    nonzero = []
+    for k in range(n):
+        for i in range(n):
+            for j in range(i, n):
+                val = Gamma[k][i][j]
+                if val != 0:
+                    nonzero.append({
+                        "index": f"\u0393^{coords[k]}_{{{coords[i]}{coords[j]}}}",
+                        "value": str(val),
+                        "latex": sp.latex(val),
+                    })
+    return nonzero
+
+
+def _riemann_tensor(Gamma: Any, coords: Any, n: int) -> Any:
+    """Riemann 张量 R^\u03c1_{\u03c3\u03bc\u03bd} =
+    \u2202_\u03bc \u0393^\u03c1_{\u03bd\u03c3} - \u2202_\u03bd \u0393^\u03c1_{\u03bc\u03c3}
+    + \u0393^\u03c1_{\u03bc\u03bb} \u0393^\u03bb_{\u03bd\u03c3}
+    - \u0393^\u03c1_{\u03bd\u03bb} \u0393^\u03bb_{\u03bc\u03c3}."""
+    Riemann = [[[[sp.Integer(0) for _ in range(n)] for _ in range(n)] for _ in range(n)] for _ in range(n)]
+    for rho in range(n):
+        for sigma in range(n):
+            for mu in range(n):
+                for nu in range(n):
+                    val = (
+                        sp.diff(Gamma[rho][nu][sigma], coords[mu])
+                        - sp.diff(Gamma[rho][mu][sigma], coords[nu])
+                    )
+                    for lam in range(n):
+                        val += (
+                            Gamma[rho][mu][lam] * Gamma[lam][nu][sigma]
+                            - Gamma[rho][nu][lam] * Gamma[lam][mu][sigma]
+                        )
+                    Riemann[rho][sigma][mu][nu] = sp.simplify(val)
+    return Riemann
+
+
+def _ricci_tensor(Riemann: Any, n: int) -> Any:
+    """Ricci 张量 R_{\u03c3\u03bd} = R^\u03c1_{\u03c3\u03c1\u03bd}."""
+    Ricci = [[sp.Integer(0) for _ in range(n)] for _ in range(n)]
+    for sigma in range(n):
+        for nu in range(n):
+            s = sp.Integer(0)
+            for rho in range(n):
+                s += Riemann[rho][sigma][rho][nu]
+            Ricci[sigma][nu] = sp.simplify(s)
+    return Ricci
+
+
+def _scalar_curvature(g_inv: Any, Ricci: Any, n: int) -> Any:
+    """标量曲率 R = g^{\u03c3\u03bd} R_{\u03c3\u03bd}."""
+    scalar = sp.Integer(0)
+    for sigma in range(n):
+        for nu in range(n):
+            scalar += g_inv[sigma, nu] * Ricci[sigma][nu]
+    return sp.simplify(scalar)
+
+
+def _curvature_data(g: Any, coords: Any, n: int, Gamma: Any, target: str) -> dict:
+    """Ricci / 标量曲率 (target == all 时附 Christoffel 全矩阵)."""
+    Riemann = _riemann_tensor(Gamma, coords, n)
+    Ricci = _ricci_tensor(Riemann, n)
+    g_inv = sp.Matrix(g).inv()
+    scalar = _scalar_curvature(g_inv, Ricci, n)
+    data: dict = {
+        **_metric_base(g, coords, n),
+        "ricci_tensor": [[str(Ricci[i][j]) for j in range(n)] for i in range(n)],
+        "ricci_scalar": str(scalar),
+        "ricci_scalar_latex": sp.latex(scalar),
+    }
+    if target == "all":
+        data["christoffel"] = [
+            [[str(Gamma[k][i][j]) for j in range(n)] for i in range(n)]
+            for k in range(n)
+        ]
+    return data
+
+
 def metric(args: SymbolicMathInput) -> ToolResult:
     """从度规矩阵计算 Christoffel 记号、Ricci 张量、标量曲率.
 
@@ -69,82 +158,21 @@ def metric(args: SymbolicMathInput) -> ToolResult:
     Gamma = _christoffel(g, coords)
 
     if target == "christoffel":
-        # 输出非零 Christoffel 记号
-        nonzero = []
-        for k in range(n):
-            for i in range(n):
-                for j in range(i, n):
-                    val = Gamma[k][i][j]
-                    if val != 0:
-                        nonzero.append({
-                            "index": f"Γ^{coords[k]}_{{{coords[i]}{coords[j]}}}",
-                            "value": str(val),
-                            "latex": sp.latex(val),
-                        })
-        return ToolResult(
-            data={
-                "metric": [[str(c) for c in row] for row in g],
-                "coords": [str(c) for c in coords],
-                "dim": n,
-                "christoffel_nonzero": nonzero,
-                "n_nonzero": len(nonzero),
-            },
-            success=True,
-        )
+        nonzero = _christoffel_nonzero(Gamma, coords, n)
+        data = _metric_base(g, coords, n)
+        data["christoffel_nonzero"] = nonzero
+        data["n_nonzero"] = len(nonzero)
+        return ToolResult(data=data, success=True)
 
     if target in ("ricci", "scalar", "all"):
-        # Riemann 张量 R^ρ_{σμν} = ∂_μ Γ^ρ_{νσ} - ∂_ν Γ^ρ_{μσ} + Γ^ρ_{μλ} Γ^λ_{νσ} - Γ^ρ_{νλ} Γ^λ_{μσ}
-        Riemann = [[[[sp.Integer(0) for _ in range(n)] for _ in range(n)] for _ in range(n)] for _ in range(n)]
-        for rho in range(n):
-            for sigma in range(n):
-                for mu in range(n):
-                    for nu in range(n):
-                        val = (
-                            sp.diff(Gamma[rho][nu][sigma], coords[mu])
-                            - sp.diff(Gamma[rho][mu][sigma], coords[nu])
-                        )
-                        for lam in range(n):
-                            val += (
-                                Gamma[rho][mu][lam] * Gamma[lam][nu][sigma]
-                                - Gamma[rho][nu][lam] * Gamma[lam][mu][sigma]
-                            )
-                        Riemann[rho][sigma][mu][nu] = sp.simplify(val)
-
-        # Ricci 张量 R_{σν} = R^ρ_{σρν}
-        Ricci = [[sp.Integer(0) for _ in range(n)] for _ in range(n)]
-        for sigma in range(n):
-            for nu in range(n):
-                s = sp.Integer(0)
-                for rho in range(n):
-                    s += Riemann[rho][sigma][rho][nu]
-                Ricci[sigma][nu] = sp.simplify(s)
-
-        # 标量曲率 R = g^{σν} R_{σν}
-        g_inv = sp.Matrix(g).inv()
-        scalar = sp.Integer(0)
-        for sigma in range(n):
-            for nu in range(n):
-                scalar += g_inv[sigma, nu] * Ricci[sigma][nu]
-        scalar = sp.simplify(scalar)
-
-        data: dict = {
-            "metric": [[str(c) for c in row] for row in g],
-            "coords": [str(c) for c in coords],
-            "dim": n,
-            "ricci_tensor": [[str(Ricci[i][j]) for j in range(n)] for i in range(n)],
-            "ricci_scalar": str(scalar),
-            "ricci_scalar_latex": sp.latex(scalar),
-        }
-        if target == "all":
-            data["christoffel"] = [
-                [[str(Gamma[k][i][j]) for j in range(n)] for i in range(n)]
-                for k in range(n)
-            ]
-        return ToolResult(data=data, success=True)
+        return ToolResult(
+            data=_curvature_data(g, coords, n, Gamma, target), success=True
+        )
 
     return ToolResult(
         data=None, success=False, error=f"Unknown metric target: {target}"
     )
+
 
 
 def geodesic(args: SymbolicMathInput) -> ToolResult:

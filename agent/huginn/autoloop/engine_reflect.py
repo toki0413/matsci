@@ -2355,8 +2355,16 @@ class EngineReflect:
             return str(execution_result)
 
         parts: list[str] = []
-        # 顶层文本键 — 覆盖各 execute mode 的主输出:
-        # coder→final_answer / workflow→outputs·stage_results / 通用 result·message
+        EngineReflect._collect_top_level_text(execution_result, parts)
+        EngineReflect._collect_nested_text(execution_result, parts)
+        return " ".join(parts)
+
+    @staticmethod
+    def _collect_top_level_text(execution_result: dict, parts: list[str]) -> None:
+        """顶层文本键 — 覆盖各 execute mode 的主输出.
+
+        coder→final_answer / workflow→outputs·stage_results / 通用 result·message.
+        """
         for key in (
             "summary",
             "description",
@@ -2380,21 +2388,29 @@ class EngineReflect:
                 EngineReflect._append_container_text(v, parts)
             else:
                 parts.append(str(v))
-        # 嵌套的 steps / tool_calls / actions / stage_results 里的文本也抽出来
+
+    @staticmethod
+    def _collect_nested_text(execution_result: dict, parts: list[str]) -> None:
+        """嵌套的 steps / tool_calls / actions / stage_results 里的文本也抽出来."""
         for key in ("steps", "tool_calls", "actions", "stage_results"):
             items = execution_result.get(key)
-            if isinstance(items, list):
-                for item in items:
-                    if isinstance(item, dict):
-                        for sk in ("description", "output", "outputs", "result", "error"):
-                            sv = item.get(sk)
-                            if sv is None:
-                                continue
-                            if isinstance(sv, dict | list):
-                                EngineReflect._append_container_text(sv, parts)
-                            else:
-                                parts.append(str(sv))
-        return " ".join(parts)
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict):
+                    EngineReflect._append_item_text(item, parts)
+
+    @staticmethod
+    def _append_item_text(item: dict, parts: list[str]) -> None:
+        """抽单个 step/tool_call item 里的文本字段."""
+        for sk in ("description", "output", "outputs", "result", "error"):
+            sv = item.get(sk)
+            if sv is None:
+                continue
+            if isinstance(sv, dict | list):
+                EngineReflect._append_container_text(sv, parts)
+            else:
+                parts.append(str(sv))
 
     @staticmethod
     def _append_container_text(value: Any, parts: list[str]) -> None:
@@ -3243,7 +3259,7 @@ class EngineReflect:
         # H4: importance 公式常量从 PhaseRegistry extra 取
         from huginn.harness.phase_spec import get_phase_extra
         _imp_default = get_phase_extra("_learn", "importance_default", 0.6)
-        _imp_max = get_phase_extra("_learn", "importance_max", 0.9)
+        imp_max = get_phase_extra("_learn", "importance_max", 0.9)
         r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
         # Anti-Hacking ①: 越界改动 → 整轨奖励清零。折在 r_phys 进入 memory /
         # evolution 回流 / meta 层真实 r_phys 门控**之前**, 只改本方法用的局部
@@ -3265,6 +3281,52 @@ class EngineReflect:
             },
         )
 
+        persona_name = getattr(self, "_last_persona", "unknown")
+        self._learn_long_term_memory(
+            hypothesis, validation, r_phys, persona_name, _imp_default, imp_max
+        )
+        await self._learn_surprise_bridge(hypothesis)
+        self._learn_reward_evolution(hypothesis, plan, validation, r_phys)
+        self._learn_update_patch_beta(validation)
+        await self._learn_meta_backfill(r_phys)
+        self._learn_record_joint_bandit(hypothesis, validation)
+        self._learn_merge_forest()
+        self._learn_kb_writeback(hypothesis, plan, validation, r_phys)
+        self._learn_kb_cleanup()
+        self._learn_kg_writeback(hypothesis, plan, validation, r_phys, persona_name)
+        await self._learn_benchmark_failure(hypothesis, validation)
+        await self._learn_feynman(hypothesis, plan, validation, r_phys)
+        self._learn_plan_progress(plan)
+        await self._learn_next_directive(hypothesis, plan, validation, r_phys)
+        self._learn_summary_record(hypothesis, validation, r_phys)
+        self._learn_evolution_outcome(hypothesis, plan, validation)
+        principles_added = self._learn_distill_principles()
+        self._learn_self_model_tick()
+        await self._learn_abstract_skill()
+        await self._learn_self_goal()
+        self._learn_trajectory_confidence(validation)
+
+        # D2: 返回 summary, 让 caller 写 cog["last_learn_summary"]
+        return {
+            "persona": getattr(self, "_last_persona", "unknown"),
+            "r_phys": r_phys,
+            "tests_passed": bool(
+                validation.get("tests_passed")
+                if isinstance(validation, dict) else False
+            ),
+            "principles_added": principles_added,
+        }
+
+    def _learn_long_term_memory(
+        self,
+        hypothesis: str,
+        validation: dict[str, Any],
+        r_phys: Any,
+        persona_name: str,
+        imp_default: float,
+        imp_max: float,
+    ) -> None:
+        """C4/C5: 迭代结果写入 long-term memory (iteration_result + persona_history)."""
         # Long-term memory: 把关键迭代写入 long-term, 下次 RAG 能检索到
         # 包含 visual primitives 和 surprise 分数, 跨会话完整恢复上下文
         try:
@@ -3316,7 +3378,7 @@ class EngineReflect:
                     run_id=getattr(self, "_run_id", None),
                     persona_id=persona_name,
                     status=_typed_status,
-                    importance=_imp_default if r_phys is None else min(_imp_max, float(r_phys)),
+                    importance=imp_default if r_phys is None else min(imp_max, float(r_phys)),
                     tier="mid",
                     tags=_tags,
                 )
@@ -3332,7 +3394,7 @@ class EngineReflect:
                     run_id=getattr(self, "_run_id", None),
                     persona_id=persona_name,
                     status=_typed_status,
-                    importance=_imp_default if r_phys is None else min(_imp_max, float(r_phys)),
+                    importance=imp_default if r_phys is None else min(imp_max, float(r_phys)),
                     tier="mid",
                     tags=_tags,
                 )
@@ -3344,7 +3406,7 @@ class EngineReflect:
                 self.memory.remember(
                     content=mem_content,
                     category="autoloop_iteration",
-                    importance=_imp_default if r_phys is None else min(_imp_max, float(r_phys)),
+                    importance=imp_default if r_phys is None else min(imp_max, float(r_phys)),
                     tier="mid",
                     tags=_tags,
                 )
@@ -3353,6 +3415,8 @@ class EngineReflect:
                 "error in _learn: memory.remember iteration failed", exc_info=True
             )
 
+    async def _learn_surprise_bridge(self, hypothesis: str) -> None:
+        """桥 A: 高 surprise → 触发对齐假设 (flag 默认 off, 失败非致命)."""
         # 桥 A: surprise → hypothesis 触发. 高 surprise 说明结构预测跟实际对不上,
         # 喂回 _hypothesize 生成解释差异的新假设 (接通 trigger_alignment_surprise_hypothesis).
         # flag HUGINN_ALIGNMENT_SURPRISE_TRIGGER 默认 off, off 时行为不变. 失败非致命.
@@ -3374,6 +3438,14 @@ class EngineReflect:
                         exc_info=True,
                     )
 
+    def _learn_reward_evolution(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        """奖励回流: R_phys 喂给 evolution engine, 驱动基于奖励的进化."""
         # 奖励回流: 把 R_phys 喂给 evolution engine, 驱动基于奖励的进化
         # 这是阶段4 单轨的核心闭环——物理校验分数真正影响 agent 后续行为
         if r_phys is not None:
@@ -3423,6 +3495,8 @@ class EngineReflect:
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)
 
+    def _learn_update_patch_beta(self, validation: dict[str, Any]) -> None:
+        """H1: 给本轮 apply 过的 prompt patch 更新 Beta 信念."""
         # H1: 给本轮 apply 过的 prompt patch 更新 Beta 信念. tests_passed 决定
         # success/fail. _apply_block_patches 在 _build_hypothesis_prompt /
         # _build_plan_prompt 里记录了 _last_applied_patches = (phase, [ids]).
@@ -3444,6 +3518,8 @@ class EngineReflect:
         except Exception:  # 防御: 补丁贝塔更新失败忽略
             logger.debug("H1 patch Beta update failed", exc_info=True)
 
+    async def _learn_meta_backfill(self, r_phys: Any) -> None:
+        """M-R1: meta 层真实 r_phys 回填 + GREEN 候选换件."""
         # M-R1: meta 层真实 r_phys 回填 — 把本轮真实 r_phys 归因到「生成该 patch 的臂」
         # (champion / canary 候选 / baseline). 攒够样本后 evaluate, 仅 GREEN(显著+OOD)
         # 才换 champion. task_id 用 _run_id: 同 run 内两臂共享一桶, 跨 run 累积 >=5 桶
@@ -3475,6 +3551,10 @@ class EngineReflect:
         except Exception:  # 防御: meta 回填/换件失败不影响主循环
             logger.debug("meta r_phys backfill failed", exc_info=True)
 
+    def _learn_record_joint_bandit(
+        self, hypothesis: str, validation: dict[str, Any]
+    ) -> None:
+        """H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit."""
         # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
         # block_subset 从 _last_hypothesis_blocks / _last_plan_blocks 拿 block 名;
         # workflow_params 留空 dict (reasoning-only 没 workflow stage 参数).
@@ -3504,50 +3584,60 @@ class EngineReflect:
         except Exception:  # 防御: 联合记录失败忽略
             logger.debug("H3 joint record failed", exc_info=True)
 
-        # Forest 回流: 如果是森林模式运行, 把 merged_graph 合并到本地假设图
-        # 并写入 memory, 供后续迭代接续探索多树共识的结论.
-        if self._merged_graph is not None:
-            try:
-                # 合并到本地 hypothesis_graph
-                for node_id in self._merged_graph.nodes:
-                    node = self._merged_graph.nodes.get(node_id)
-                    if node and hasattr(node, "statement") and not any(
-                        existing.statement == node.statement
-                        for existing in self.hypothesis_graph.nodes.values()
-                    ):
-                            nid = self.hypothesis_graph.add_hypothesis(
-                                statement=node.statement,
-                                rationale=getattr(node, "rationale", ""),
-                                testable_prediction=getattr(
-                                    node, "testable_prediction", ""
-                                ),
-                            )
-                            if nid is not None:
-                                if getattr(node, "status", "") == "supported":
-                                    self.hypothesis_graph.support(
-                                        nid, getattr(node, "evidence", {})
-                                    )
-                                elif getattr(node, "status", "") == "refuted":
-                                    self.hypothesis_graph.refute(
-                                        nid, getattr(node, "evidence", {})
-                                    )
-                # 写入 memory
-                graph_summary = f"Forest merged: {len(self._merged_graph.nodes)} nodes"
-                self.memory.add_message(
-                    "system",
-                    {
-                        "iteration": self._iteration,
-                        "type": "forest_merge",
-                        "graph_summary": graph_summary,
-                    },
-                )
-                logger.info(
-                    "Forest merged %d nodes into hypothesis_graph",
-                    len(self._merged_graph.nodes),
-                )
-            except Exception:  # 防御: 森林合并失败忽略
-                logger.warning("Forest merge failed", exc_info=True)
+    def _learn_merge_forest(self) -> None:
+        """Forest 回流: 把 merged_graph 合入本地假设图并写 memory."""
+        if self._merged_graph is None:
+            return
+        try:
+            for node_id in self._merged_graph.nodes:
+                self._merge_forest_node(self._merged_graph.nodes.get(node_id))
+            # 写入 memory
+            graph_summary = f"Forest merged: {len(self._merged_graph.nodes)} nodes"
+            self.memory.add_message(
+                "system",
+                {
+                    "iteration": self._iteration,
+                    "type": "forest_merge",
+                    "graph_summary": graph_summary,
+                },
+            )
+            logger.info(
+                "Forest merged %d nodes into hypothesis_graph",
+                len(self._merged_graph.nodes),
+            )
+        except Exception:  # 防御: 森林合并失败忽略
+            logger.warning("Forest merge failed", exc_info=True)
 
+    def _merge_forest_node(self, node: Any) -> None:
+        """把森林里的单个节点合入假设图 (同 statement 去重, 继承状态)."""
+        if not node or not hasattr(node, "statement"):
+            return
+        if any(
+            existing.statement == node.statement
+            for existing in self.hypothesis_graph.nodes.values()
+        ):
+            return
+        nid = self.hypothesis_graph.add_hypothesis(
+            statement=node.statement,
+            rationale=getattr(node, "rationale", ""),
+            testable_prediction=getattr(node, "testable_prediction", ""),
+        )
+        if nid is None:
+            return
+        _status = getattr(node, "status", "")
+        if _status == "supported":
+            self.hypothesis_graph.support(nid, getattr(node, "evidence", {}))
+        elif _status == "refuted":
+            self.hypothesis_graph.refute(nid, getattr(node, "evidence", {}))
+
+    def _learn_kb_writeback(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        """KB 回写: 本轮结论 + JEPA 预测误差存入知识库."""
         # KB 回写: 把本次实验结论存入知识库, 下次同类问题能从 KB 召回.
         # 不存原始数据 (太大), 只存 hypothesis + validation 摘要.
         # JEPA: 预测误差也写入, 下次同类任务能从 KB 检索到"这类任务
@@ -3573,6 +3663,8 @@ class EngineReflect:
         except Exception:  # 防御: 知识库回写失败忽略
             logger.warning("error in _learn: KB writeback failed", exc_info=True)
 
+    def _learn_kb_cleanup(self) -> None:
+        """KB 自动清理: 每 10 轮清理旧文档, 防 KB 无限增长."""
         # KB 自动清理: 每 10 轮迭代清理一次旧文档, 防止 KB 无限增长.
         # autoloop_iter_ 文档只保留最近 50 轮, 总文档上限 200.
         # 这解决了"每轮写入但永不删除"的内存泄漏问题.
@@ -3586,6 +3678,15 @@ class EngineReflect:
             except Exception:  # 防御: 知识库清理失败跳过
                 logger.debug("kb cleanup skipped", exc_info=True)
 
+    def _learn_kg_writeback(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+        persona_name: str,
+    ) -> None:
+        """KG 回写: experiment / Method / Fact / hyperedge / persona_use 实体."""
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
         # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
         # 视觉基元 + surprise 都写入实体属性, 下次 KG 查询能检索到.
@@ -3689,6 +3790,10 @@ class EngineReflect:
         except Exception:  # 防御: 知识图写入失败忽略
             logger.warning("error in _learn: KG add_entity failed", exc_info=True)
 
+    async def _learn_benchmark_failure(
+        self, hypothesis: str, validation: dict[str, Any]
+    ) -> None:
+        """Benchmark 失败回写 + failed_direction (可选 failure inversion)."""
         # Benchmark 失败回写: 把验证失败写入 memory, 下次 _plan 能读到.
         if isinstance(validation, dict) and not validation.get("tests_passed", True):
             try:
@@ -3748,6 +3853,14 @@ class EngineReflect:
                     exc_info=True,
                 )
 
+    async def _learn_feynman(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        """Feynman learning: 高 surprise / 高奖励时重述发现, 缺口入 GoalStore."""
         # Feynman learning: 高 surprise 或高奖励时, 让 agent 用通俗语言重新解释本轮发现.
         # 解释不出来的部分就是知识缺口, 写入 GoalStore 作为下轮子目标.
         # 触发条件: surprise > 0.5 (预测错误大) 或 r_phys > 0.7 (值得总结的成功)
@@ -3776,6 +3889,8 @@ class EngineReflect:
                     "error in _learn: feynman note generation failed", exc_info=True
                 )
 
+    def _learn_plan_progress(self, plan: dict[str, Any]) -> None:
+        """把 plan 进度存进 long-term memory, 下次会话能接续."""
         # 把 plan 进度存进 long-term memory, 下次会话能接续
         _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
         if _plan_id:
@@ -3799,6 +3914,14 @@ class EngineReflect:
                     exc_info=True,
                 )
 
+    async def _learn_next_directive(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        """RSI 入门: 反思本轮, 给下一轮的自己写一条指令."""
         # RSI 入门: 让 agent 反思本轮, 给下一轮的自己写一条指令.
         # 借鉴 Inkling self-finetune loop: agent 改的不是自己的权重, 是自己下一轮的 prompt.
         # directive 写进 memory (不走 prompt 注入), 下轮 _build_hypothesis_prompt
@@ -3815,6 +3938,10 @@ class EngineReflect:
                 exc_info=True,
             )
 
+    def _learn_summary_record(
+        self, hypothesis: str, validation: dict[str, Any], r_phys: Any
+    ) -> None:
+        """收尾: 落一条 autoloop_summary, chat agent recall 时能拉到."""
         # 收尾: 把本轮结果落一条 autoloop_summary, chat agent recall 时能拉到.
         # ponytail: 只落 summary 不共享 SessionContext; 升级路径是共享 SessionContext
         # 或加 autoloop_result 专用 category (目前先复用 memory.remember 通用通道).
@@ -3845,6 +3972,10 @@ class EngineReflect:
                 exc_info=True,
             )
 
+    def _learn_evolution_outcome(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
+    ) -> None:
+        """P14: EvolutionManager.record_outcome 统一记录 outcome."""
         # P14: EvolutionManager.record_outcome — 默认 ON, 把 outcome 统一记到
         # FailedDirectionStore + SkillEvolutionLayer. flag off 回退分散路径.
         if os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") == "1":
@@ -3872,6 +4003,8 @@ class EngineReflect:
                     "EvolutionManager.record_outcome failed", exc_info=True
                 )
 
+    def _learn_distill_principles(self) -> int:
+        """H0: 触发 episodic → procedural 蒸馏, 返回新增原则数."""
         # H0: 触发 episodic → procedural 蒸馏 (修死代码, 让 stable_principles
         # 真有产出). 触发条件由 distill_episodic_to_procedural 内部判断
         # (连续 3 次同 skill 成功), 不降低阈值. ponytail: 失败不阻塞主循环.
@@ -3887,7 +4020,10 @@ class EngineReflect:
             logger.debug(
                 "distill_episodic_to_procedural failed", exc_info=True
             )
+        return _principles_added
 
+    def _learn_self_model_tick(self) -> None:
+        """P0 Task 4: 每 10 次实验周期更新 self_model 缓存."""
         # P0 Task 4: 周期更新 self_model 缓存. 每 10 次实验 (成功+失败都算)
         # 触发 _compute_self_model + _store_self_model_cached. toggle
         # HUGINN_SELF_MODEL 默认 off, off 时不触发 (向后兼容). 失败 try/except
@@ -3909,6 +4045,8 @@ class EngineReflect:
         except Exception:  # 防御: 自模型周期更新失败忽略
             logger.debug("self_model periodic update failed", exc_info=True)
 
+    async def _learn_abstract_skill(self) -> None:
+        """P0 Task 1: 实验成功后扫 trace clusters, 触发 skill 抽象."""
         # P0 Task 1: 实验成功后扫 trace clusters, ≥3 条同簇 + 无 skill 时
         # 触发 skill 抽象 (Voyager-style). toggle HUGINN_SKILL_ABSTRACTION 默认 off,
         # 失败不阻塞主流程. ponytail: 接在 _learn 末尾是最低侵入的接入点 —
@@ -3918,12 +4056,16 @@ class EngineReflect:
         except Exception:  # 防御: 技能归纳钩子失败忽略
             logger.debug("skill abstraction hook failed", exc_info=True)
 
+    async def _learn_self_goal(self) -> None:
+        """P1 Task 7: 扫 self_model weak clusters, 合成 self-goal."""
         # P1 Task 7: scan self_model weak clusters, synthesize self-goal.
         try:
             await self._synthesize_self_goal_if_ready()
         except Exception:  # 防御: 自目标合成失败忽略
             logger.debug("self-goal synthesis hook failed", exc_info=True)
 
+    def _learn_trajectory_confidence(self, validation: dict[str, Any]) -> None:
+        """C3 闭环: 命中 trajectory_match 时按 validation 结果 ±ε."""
         # C3 闭环: 本轮如果命中过 trajectory_match, 按 validation 结果做 ±ε.
         # spec (layered_memory_spec.md:124) 设计的闭环, 之前只开了一半
         # (extract_and_store_pattern 在 goal_achieved 时 +ε), 缺 -ε 反馈.
@@ -3957,16 +4099,7 @@ class EngineReflect:
             self._last_traj_match_run_id = None
             self._last_traj_match_doc_id = None
 
-        # D2: 返回 summary, 让 caller 写 cog["last_learn_summary"]
-        return {
-            "persona": getattr(self, "_last_persona", "unknown"),
-            "r_phys": r_phys,
-            "tests_passed": bool(
-                validation.get("tests_passed")
-                if isinstance(validation, dict) else False
-            ),
-            "principles_added": _principles_added,
-        }
+
 
 
 

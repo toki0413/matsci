@@ -250,122 +250,22 @@ class HintCoordinator:
           [progress audit]    — curl 族, last_verdict != "pass" 时合并
           [topology probe]    — harmonic 族, β_1>0 或 stagnation 时合并
 
-        Meta-Trace top-k 块由调用方用 build_meta_trace_text 拼, 这块不管.
-
-        cross_task_prior (v14 Task 15): 同 domain 历史 high darwin entry,
-        用来 boost 当前 hint 中关键词重叠 >0.5 的块. 调用方必须传同 domain
-        的 entry, 跨 domain 隔离在 CrossTaskStore.query_high_darwin(domain=...)
-        层实现 — 这里不重复过滤.
-
-        v15 Task 4 升级: manifold 可用时, boost 权重从 keyword overlap 改为
-        posterior lift (log_posterior - log_prior). entry 缺 v15 字段时降级
-        到 keyword overlap. posterior_hint 是预构造的核心+探索 hint 段,
-        注入到 blocks 最前面 (最高优先级), 不参与 boost 重排.
-
-        ponytail: 调用方一次拿全 3 块, 自己决定是否再拼 Meta-Trace.
+        cross_task_prior / manifold / posterior_hint 的 v14→v15 升级语义见
+        ``_apply_cross_task_boost`` 与 ``_posterior_lift``. Meta-Trace top-k 块
+        由调用方用 build_meta_trace_text 拼, 这块不管.
         """
         events: list[str] = []
-        blocks: list[str] = []
-
-        # --- gradient 族 (必需) ---
-        # iter_prompt 是 iter>0 的 "continue execution" 文本, 跟 step2_prompt
-        # 在 benchmark runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
-        _grad = iter_prompt if (iter_prompt and iter_prompt != step2_prompt) else (step2_prompt or "")
-        # scan_hint deprecated: 合并进 step2_prompt (spec §deprecated)
-        if scan_text:
-            _grad = (_grad + "\n\n" + scan_text).strip() if _grad else scan_text
-        # fcm_winner reminder deprecated: spec "iter>0 不重复", 只 iter 0 注入
-        if fcm_winner and iter_n == 0:
-            _fcw = fcm_winner[:1200]
-            _grad = (
-                _grad + "\n\n## Selected Execution Plan (FCM winner)\n" + _fcw
-            ).strip() if _grad else f"## Selected Execution Plan (FCM winner)\n{_fcw}"
-        if _grad:
-            blocks.append("[gradient block]\n" + _grad)
-
-        # --- curl 族 (条件触发): verdict != pass 时合并 progress audit ---
-        # 首轮 verdict=None 不触发; pass 不触发; 其他 (fix_needed / blocked) 触发
-        _verdict_triggers = last_verdict is not None and last_verdict.lower() != "pass"
-        _curl_parts = [p for p in (compass, step_eval, drift_info) if p]
-        if _curl_parts and _verdict_triggers:
-            blocks.append("[progress audit]\n" + "\n\n".join(_curl_parts))
-
-        # --- harmonic 族 (条件触发): β_1>0 或 stagnation 时合并 topology probe ---
-        _beta_1 = beta[1] if beta and len(beta) >= 2 else 0
-        # stagnation 代理: spec 签名没单独参数, 复用 csm_state / last_verdict
-        # 任一含 "stagnation" 关键词视为停滞信号. 调用方按需传.
-        _stagnation = any(
-            s and "stagnation" in s.lower() for s in (csm_state, last_verdict)
+        blocks = self._build_base_blocks(
+            iter_n, csm_state, beta, last_verdict, fcm_winner, scan_text,
+            step2_prompt, iter_prompt, compass, step_eval, drift_info,
+            imagination, meta_agent, events,
         )
-        _harm_parts = [p for p in (imagination, meta_agent) if p]
-        _harm_trigger = (_beta_1 > 0 or _stagnation) and bool(_harm_parts)
-
-        # 冲突仲裁 (spec §"冲突仲裁"): gradient (FCM winner) 跟 harmonic (imagination)
-        # 冲突时按族优先级保留 gradient, harmonic 块标注 "deferred", 事件入 list
-        if _harm_trigger:
-            _probe = "\n\n".join(_harm_parts)
-            if fcm_winner and self._detect_conflict(fcm_winner, imagination):
-                _probe = "FCM winner active, imagination deferred\n\n" + _probe
-                events.append("cochain_conflict:fcm_vs_imagination")
-            blocks.append("[topology probe]\n" + _probe)
 
         # --- v14 Task 15 / v15 Task 4: 跨 task prior boost ---
-        # 选择条件不变 (v14 keyword overlap > 0.5), boost marker 升级:
-        # entry 有 hypothesis_id + log_posterior 且 manifold 能查到时, marker
-        # 用 posterior lift (log_posterior - log_prior) 替代 darwin_score.
-        # ponytail: lift=log_lik_sum, Gaussian 下 ≤0, 越接近 0 说明数据越支持
-        # 该 hypothesis. 用 lift 当 weight 是相对比较 (越高的 entry 越值得借势),
-        # 不要求 lift>0. 失败降级: 无 manifold / entry 缺 v15 字段 → v14 darwin.
         if cross_task_prior:
-            _boosted: list[str] = []
-            _rest: list[str] = []
-            for _blk in blocks:
-                # 剥掉 "[gradient block]\n" header, 只用正文算重叠
-                _hint_text = _blk.split("\n", 1)[1] if "\n" in _blk else _blk
-                _best_overlap = 0.0
-                _best_darwin = 0.0
-                _best_lift = 0.0
-                _best_entry_v15 = False
-                for _entry in cross_task_prior:
-                    _att = _entry.get("attempted") or ""
-                    _ov = self._keyword_overlap(_hint_text, _att)
-                    if _ov <= _best_overlap:
-                        continue
-                    # 找到更高 overlap 的 entry, 更新所有字段
-                    _best_overlap = _ov
-                    _best_darwin = float(_entry.get("darwin_score") or 0.0)
-                    _best_entry_v15 = False
-                    _h_id = _entry.get("hypothesis_id")
-                    _log_post = float(_entry.get("log_posterior", 0.0) or 0.0)
-                    if (manifold is not None and _h_id
-                            and _log_post != 0.0):
-                        try:
-                            _h = manifold._hyp.get(_h_id)
-                            if _h is not None:
-                                _best_lift = _log_post - _h.log_prior()
-                                _best_entry_v15 = True
-                        except Exception:  # 非致命: manifold 假设查询失败则忽略该样本
-                            logger.debug("manifold hypothesis lookup failed", exc_info=True)
-                if _best_overlap > 0.5:
-                    if _best_entry_v15:
-                        _boosted.append(
-                            f"[prior validated: lift={_best_lift:.2f}]\n" + _blk
-                        )
-                        events.append(
-                            f"posterior_lift_boost:lift={_best_lift:.2f},"
-                            f"overlap={_best_overlap:.2f}"
-                        )
-                    else:
-                        _boosted.append(
-                            f"[prior validated: darwin={_best_darwin:.2f}]\n"
-                            + _blk
-                        )
-                        events.append(
-                            f"cross_task_prior_boost:overlap={_best_overlap:.2f}"
-                        )
-                else:
-                    _rest.append(_blk)
-            blocks = _boosted + _rest
+            blocks = self._apply_cross_task_boost(
+                blocks, cross_task_prior, manifold, events
+            )
 
         # --- v15 Task 4: posterior-guided hint 注入 (最高优先级, 不参与 boost) ---
         # 核心 hint (abduction best) + 探索 hint (next exploration) 拼好的串,
@@ -374,6 +274,203 @@ class HintCoordinator:
             blocks.insert(0, posterior_hint)
 
         return "\n\n".join(blocks), events
+
+    def _build_base_blocks(
+        self,
+        iter_n: int,
+        csm_state: str | None,
+        beta: tuple[int, int],
+        last_verdict: str | None,
+        fcm_winner: str | None,
+        scan_text: str | None,
+        step2_prompt: str,
+        iter_prompt: str | None,
+        compass: str | None,
+        step_eval: str | None,
+        drift_info: str | None,
+        imagination: str | None,
+        meta_agent: str | None,
+        events: list[str],
+    ) -> list[str]:
+        """Hodge 三分量块: gradient (必需) + curl / harmonic (条件触发)."""
+        blocks: list[str] = []
+
+        # --- gradient 族 (必需) ---
+        _grad = self._build_gradient_block(
+            iter_n, fcm_winner, scan_text, step2_prompt, iter_prompt
+        )
+        if _grad:
+            blocks.append("[gradient block]\n" + _grad)
+
+        # --- curl 族 (条件触发): verdict != pass 时合并 progress audit ---
+        _curl = self._build_curl_block(last_verdict, compass, step_eval, drift_info)
+        if _curl:
+            blocks.append("[progress audit]\n" + _curl)
+
+        # --- harmonic 族 (条件触发): β_1>0 或 stagnation 时合并 topology probe ---
+        _probe = self._build_harmonic_block(
+            beta, csm_state, last_verdict, imagination, meta_agent, fcm_winner, events
+        )
+        if _probe:
+            blocks.append("[topology probe]\n" + _probe)
+        return blocks
+
+    def _build_gradient_block(
+        self,
+        iter_n: int,
+        fcm_winner: str | None,
+        scan_text: str | None,
+        step2_prompt: str,
+        iter_prompt: str | None,
+    ) -> str:
+        """gradient 族 (必需): step2_prompt / iter_prompt / scan_hint / fcm_winner."""
+        # iter_prompt 是 iter>0 的 "continue execution" 文本, 跟 step2_prompt
+        # 在 benchmark runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
+        grad = iter_prompt if (iter_prompt and iter_prompt != step2_prompt) else (step2_prompt or "")
+        # scan_hint deprecated: 合并进 step2_prompt (spec §deprecated)
+        if scan_text:
+            grad = (grad + "\n\n" + scan_text).strip() if grad else scan_text
+        # fcm_winner reminder deprecated: spec "iter>0 不重复", 只 iter 0 注入
+        if fcm_winner and iter_n == 0:
+            fc = fcm_winner[:1200]
+            grad = (
+                grad + "\n\n## Selected Execution Plan (FCM winner)\n" + fc
+            ).strip() if grad else f"## Selected Execution Plan (FCM winner)\n{fc}"
+        return grad
+
+    @staticmethod
+    def _build_curl_block(
+        last_verdict: str | None,
+        compass: str | None,
+        step_eval: str | None,
+        drift_info: str | None,
+    ) -> str:
+        """curl 族: 仅 verdict != pass 时合并 progress audit."""
+        # 首轮 verdict=None 不触发; pass 不触发; 其他 (fix_needed / blocked) 触发
+        triggers = last_verdict is not None and last_verdict.lower() != "pass"
+        parts = [p for p in (compass, step_eval, drift_info) if p]
+        if not (parts and triggers):
+            return ""
+        return "\n\n".join(parts)
+
+    def _build_harmonic_block(
+        self,
+        beta: tuple[int, int],
+        csm_state: str | None,
+        last_verdict: str | None,
+        imagination: str | None,
+        meta_agent: str | None,
+        fcm_winner: str | None,
+        events: list[str],
+    ) -> str:
+        """harmonic 族: β_1>0 或 stagnation 时合并 topology probe; 冲突仲裁."""
+        beta_1 = beta[1] if beta and len(beta) >= 2 else 0
+        # stagnation 代理: spec 签名没单独参数, 复用 csm_state / last_verdict
+        # 任一含 "stagnation" 关键词视为停滞信号. 调用方按需传.
+        stagnation = any(
+            s and "stagnation" in s.lower() for s in (csm_state, last_verdict)
+        )
+        parts = [p for p in (imagination, meta_agent) if p]
+        if not ((beta_1 > 0 or stagnation) and bool(parts)):
+            return ""
+
+        probe = "\n\n".join(parts)
+        # 冲突仲裁 (spec §"冲突仲裁"): gradient (FCM winner) 跟 harmonic
+        # (imagination) 冲突时按族优先级保留 gradient, harmonic 块标注 "deferred".
+        if fcm_winner and self._detect_conflict(fcm_winner, imagination):
+            probe = "FCM winner active, imagination deferred\n\n" + probe
+            events.append("cochain_conflict:fcm_vs_imagination")
+        return probe
+
+    def _apply_cross_task_boost(
+        self,
+        blocks: list[str],
+        cross_task_prior: list[dict],
+        manifold: Any,
+        events: list[str],
+    ) -> list[str]:
+        """跨 task prior boost: 关键词重叠 >0.5 的块加 marker 并前移.
+
+        v14 Task 15: entry 是同 domain 历史 high darwin 记录, 调用方必须传同
+        domain 的 entry; 跨 domain 隔离在 CrossTaskStore.query_high_darwin 层实现,
+        这里不重复过滤.
+        v15 Task 4: manifold 可查时用 posterior lift (log_posterior - log_prior)
+        替代 darwin_score, entry 缺 v15 字段时降级到 keyword overlap.
+        """
+        boosted: list[str] = []
+        rest: list[str] = []
+        for blk in blocks:
+            overlap, darwin, lift, is_v15 = self._best_prior_match(
+                blk, cross_task_prior, manifold
+            )
+            if overlap > 0.5:
+                boosted.append(
+                    self._annotate_boosted_block(
+                        blk, overlap, darwin, lift, is_v15, events
+                    )
+                )
+            else:
+                rest.append(blk)
+        return boosted + rest
+
+    def _best_prior_match(
+        self,
+        block: str,
+        cross_task_prior: list[dict],
+        manifold: Any,
+    ) -> tuple[float, float, float, bool]:
+        """在 prior 里找与 block 关键词重叠最高的 entry.
+
+        返回 (overlap, darwin, lift, is_v15). v15 字段缺失时降级 v14 darwin.
+        """
+        # 剥掉 "[gradient block]\n" header, 只用正文算重叠
+        hint_text = block.split("\n", 1)[1] if "\n" in block else block
+        best: tuple[float, float, float, bool] = (0.0, 0.0, 0.0, False)
+        for entry in cross_task_prior:
+            attempted = entry.get("attempted") or ""
+            overlap = self._keyword_overlap(hint_text, attempted)
+            if overlap <= best[0]:
+                continue
+            # 找到更高 overlap 的 entry, 更新所有字段
+            darwin = float(entry.get("darwin_score") or 0.0)
+            lift, is_v15 = self._posterior_lift(entry, manifold)
+            best = (overlap, darwin, lift, is_v15)
+        return best
+
+    @staticmethod
+    def _posterior_lift(entry: dict, manifold: Any) -> tuple[float, bool]:
+        """v15 posterior lift; entry 缺字段或 manifold 不可用时返回 (0.0, False)."""
+        h_id = entry.get("hypothesis_id")
+        log_post = float(entry.get("log_posterior", 0.0) or 0.0)
+        if manifold is None or not h_id or log_post == 0.0:
+            return 0.0, False
+        try:
+            hyp = manifold._hyp.get(h_id)
+            if hyp is None:
+                return 0.0, False
+            return log_post - hyp.log_prior(), True
+        except Exception:  # 非致命: manifold 假设查询失败则忽略该样本
+            logger.debug("manifold hypothesis lookup failed", exc_info=True)
+            return 0.0, False
+
+    @staticmethod
+    def _annotate_boosted_block(
+        block: str,
+        overlap: float,
+        darwin: float,
+        lift: float,
+        is_v15: bool,
+        events: list[str],
+    ) -> str:
+        """给命中的块加 prior marker, 并写 trace 事件."""
+        if is_v15:
+            events.append(
+                f"posterior_lift_boost:lift={lift:.2f},overlap={overlap:.2f}"
+            )
+            return f"[prior validated: lift={lift:.2f}]\n" + block
+        events.append(f"cross_task_prior_boost:overlap={overlap:.2f}")
+        return f"[prior validated: darwin={darwin:.2f}]\n" + block
+
 
     def _detect_conflict(self, hint_a: str | None, hint_b: str | None) -> bool:
         """简单关键词检测: gradient 跟 harmonic 冲突.
