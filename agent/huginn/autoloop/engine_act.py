@@ -96,11 +96,23 @@ class EngineAct:
         try:
             from huginn.core_types import PermissionMode
             from huginn.permissions import PermissionConfig
+            from huginn.tools import register_all_tools
             from huginn.tools.adapter import ToolAdapter
             from huginn.tools.registry import ToolRegistry
         except Exception:  # 防御: 工具子系统不可用时不阻塞 plan/validate
             logger.debug("readonly tool import failed", exc_info=True)
             return []
+
+        # 注册时机修正: run_cognitive_driver 只构造 AutoloopEngine, 从不调用
+        # register_all_tools(); 工具要到 execute/coder 内部才被懒注册. 于是 plan
+        # (execute 之前) 看到的 ToolRegistry 是空的 → 白名单过滤后恒为 [].
+        # register_all_tools 自带 "非空即返回" 幂等门, 这里按需补一次, 代价只在
+        # 首次 (~秒级), 之后是常数返回.
+        if not ToolRegistry.list_tools():
+            try:
+                register_all_tools()
+            except Exception:  # 防御: 注册失败按无工具处理, 不阻塞阶段推进
+                logger.debug("register_all_tools failed", exc_info=True)
 
         # 显式授权: 默认权限表把多数工具判成 ASK, 而阶段内没有审批人 → 每次调用
         # 都恒拒 (实测回执 "recall 工具需要授权"). 这里按**最小权限**只给白名单
@@ -126,6 +138,12 @@ class EngineAct:
                 out.append(adapter.adapt(tool, permission_config=perm))
             except Exception:  # 防御: 单个工具适配失败不影响其余工具
                 logger.debug("adapt readonly tool %s failed", name, exc_info=True)
+        if out:
+            # info 级: 触发率评估需要"这一阶段到底给了模型哪些工具"的可见证据.
+            logger.info(
+                "readonly phase tools available: %s",
+                [getattr(t, "name", "?") for t in out],
+            )
         return out
 
     async def _plan(
