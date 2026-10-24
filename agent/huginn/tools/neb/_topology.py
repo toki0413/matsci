@@ -205,6 +205,20 @@ def find_extrema(
     return minima, saddles
 
 
+def _neighbors_in_mask(
+    cur: tuple, grid_shape: tuple, mask: np.ndarray
+) -> list[tuple]:
+    """返回 cur 的各轴 ±1 邻域里落在 mask 内的点."""
+    out: list[tuple] = []
+    for ax in range(len(grid_shape)):
+        for off in (-1, 1):
+            nb = list(cur)
+            nb[ax] += off
+            if 0 <= nb[ax] < grid_shape[ax] and mask[tuple(nb)]:
+                out.append(tuple(nb))
+    return out
+
+
 def count_connected_basins(
     grid: np.ndarray, threshold: float
 ) -> int:
@@ -213,22 +227,17 @@ def count_connected_basins(
     visited = np.zeros_like(mask, dtype=bool)
     n_comp = 0
     for start in np.ndindex(*grid.shape):
-        if mask[start] and not visited[start]:
-            # BFS
-            queue = [start]
-            visited[start] = True
-            while queue:
-                cur = queue.pop()
-                for ax in range(grid.ndim):
-                    for off in (-1, 1):
-                        nb = list(cur)
-                        nb[ax] += off
-                        if (
-                            0 <= nb[ax] < grid.shape[ax]
-                            and mask[tuple(nb)]
-                            and not visited[tuple(nb)]
-                        ):
-                            visited[tuple(nb)] = True
-                            queue.append(tuple(nb))
-            n_comp += 1
+        if not (mask[start] and not visited[start]):
+            continue
+        # BFS
+        queue = [start]
+        visited[start] = True
+        while queue:
+            cur = queue.pop()
+            for nb in _neighbors_in_mask(cur, grid.shape, mask):
+                if visited[nb]:
+                    continue
+                visited[nb] = True
+                queue.append(nb)
+        n_comp += 1
     return n_comp

@@ -2060,59 +2060,85 @@ def _get_engine() -> DeliAutoResearch:
     return _engine
 
 
+def _rag_fn_from_tools(tools: list[Any]) -> Any | None:
+    """在一组 tool 对象里找 RAGTool, 返回绑定好的 search 函数."""
+    for t in tools:
+        if hasattr(t, "_search") or t.__class__.__name__ == "RAGTool":
+            if not hasattr(t, "_search"):
+                return lambda q: []  # noqa: ARG005
+            return lambda q, _t=t: _t._search.__func__(_t, type(_t).__mro__[0]())
+    return None
+
+
+def _rag_fn_from_context(context: Any) -> Any | None:
+    """从 ToolContext 的 rag_tool / _rag / tools 属性里找 search 函数."""
+    for attr in ("rag_tool", "_rag", "tools"):
+        obj = getattr(context, attr, None)
+        if obj is None:
+            continue
+        if isinstance(obj, list):
+            fn = _rag_fn_from_tools(obj)
+            if fn is not None:
+                return fn
+        elif hasattr(obj, "search"):
+            return lambda q, _o=obj: _o.search(q)
+    return None
+
+
+def _make_sync_rag_search(rag: Any) -> Any:
+    """把 RAGTool 的异步 call 包成同步 search(query)."""
+
+    async def _rag_search(query: str) -> list[dict]:
+        params = (
+            type(rag.input_schema)(action="search", query=query, top_k=5)
+            if hasattr(rag, "input_schema")
+            else {"action": "search", "query": query, "top_k": 5}
+        )
+        result = await rag.call(params, None)
+        if result.success and result.data:
+            return result.data.get("results", [])
+        return []
+
+    def _sync_search(query: str) -> list[dict]:
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.debug("best-effort op failed", exc_info=True)
+                loop = None
+            if loop and loop.is_running():
+                # 在 async 上下文里, 创建 task
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(asyncio.run, _rag_search(query)).result(
+                        timeout=30
+                    )
+            return asyncio.run(_rag_search(query))
+        except Exception:
+            return []
+
+    return _sync_search
+
+
 def _get_rag_search_fn(context: ToolContext | None) -> Any | None:
     """从 ToolContext 或全局 registry 里拿到 RAG 搜索函数."""
     # 先试 ToolContext (如果传了的话)
     if context is not None:
-        # 看看 context 里有没有 RAGTool 实例
-        for attr in ("rag_tool", "_rag", "tools"):
-            obj = getattr(context, attr, None)
-            if obj is not None:
-                # 如果是列表, 找 RAGTool
-                if isinstance(obj, list):
-                    for t in obj:
-                        if hasattr(t, "_search") or t.__class__.__name__ == "RAGTool":
-                            return lambda q: t._search.__func__(t, type(t).__mro__[0]()) if hasattr(t, "_search") else []
-                elif hasattr(obj, "search"):
-                    return lambda q: obj.search(q)
+        fn = _rag_fn_from_context(context)
+        if fn is not None:
+            return fn
     # 退到全局 registry
     try:
         from huginn.tools.registry import ToolRegistry
+
         rag = ToolRegistry.get("rag_tool")
-        if rag is not None:
-            # 调 RAGTool._search 的简化版
-            async def _rag_search(query: str) -> list[dict]:
-                result = await rag.call(
-                    type(rag.input_schema)(action="search", query=query, top_k=5)
-                    if hasattr(rag, "input_schema")
-                    else {"action": "search", "query": query, "top_k": 5},
-                    None,
-                )
-                if result.success and result.data:
-                    return result.data.get("results", [])
-                return []
-            # 同步包装
-            def _sync_search(query: str) -> list[dict]:
-                try:
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        loop = None
-                    if loop and loop.is_running():
-                        # 在 async 上下文里, 创建 task
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            return pool.submit(
-                                asyncio.run, _rag_search(query)
-                            ).result(timeout=30)
-                    return asyncio.run(_rag_search(query))
-                except Exception:
-                    return []
-            return _sync_search
     except Exception:
         logger.debug("RAG search fn unavailable", exc_info=True)
-    return None
+        return None
+    if rag is None:
+        return None
+    return _make_sync_rag_search(rag)
 
 
 class DeliResearchInput(BaseModel):

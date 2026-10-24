@@ -23,6 +23,39 @@ from huginn.tools.sim._packing import load_packing_objects
 logger = logging.getLogger(__name__)
 
 
+def _of_parse_time(line: str, result: dict[str, Any]) -> None:
+    """从 `Time = ...` 行更新 final_time."""
+    parts = line.split("=")
+    if len(parts) > 1:
+        with contextlib.suppress(ValueError, IndexError):
+            result["final_time"] = float(parts[-1].strip())
+
+
+def _of_parse_continuity(line: str, result: dict[str, Any]) -> None:
+    """从 continuity errors 行抓 global 值, e.g.
+    'time step continuity errors : sum local = 1.2e-06, global = -4.3e-08'.
+    """
+    parts = line.split("global =")
+    if len(parts) > 1:
+        with contextlib.suppress(ValueError, IndexError):
+            result["continuity_errors"].append(
+                float(parts[-1].strip().split(",")[0].split()[0])
+            )
+
+
+def _of_parse_residuals(line: str, result: dict[str, Any]) -> None:
+    """从 'Solving for Ux, ... Final residual = ...' 行更新 final_residuals."""
+    parts = line.split(",")
+    var_part = parts[0].split("for")[-1].strip()
+    for part in parts:
+        if "Final residual" not in part:
+            continue
+        try:
+            result["final_residuals"][var_part] = float(part.split("=")[-1].strip())
+        except (ValueError, IndexError):
+            logger.debug("best-effort op failed", exc_info=True)
+
+
 class BoundaryCondition(BaseModel):
     patch: str = Field(..., description="Patch name")
     type: Literal["wall", "inlet", "outlet", "symmetry", "empty"] = Field(...)
@@ -968,32 +1001,14 @@ boundaryField
 
         for line in lines:
             if "Time =" in line:
-                parts = line.split("=")
-                if len(parts) > 1:
-                    with contextlib.suppress(ValueError, IndexError):
-                        result["final_time"] = float(parts[-1].strip())
+                _of_parse_time(line, result)
 
             if "continuity errors" in line.lower():
-                # Extract the "global" continuity error value, e.g.
-                # "time step continuity errors : sum local = 1.2e-06, global = -4.3e-08"
-                parts = line.split("global =")
-                if len(parts) > 1:
-                    with contextlib.suppress(ValueError, IndexError):
-                        result["continuity_errors"].append(
-                            float(parts[-1].strip().split(",")[0].split()[0])
-                        )
+                _of_parse_continuity(line, result)
 
             # Final residuals: "Solving for Ux, Initial residual = ..., Final residual = ..."
             if "Solving for" in line and "Final residual" in line:
-                parts = line.split(",")
-                var_part = parts[0].split("for")[-1].strip()
-                for part in parts:
-                    if "Final residual" in part:
-                        try:
-                            val = float(part.split("=")[-1].strip())
-                            result["final_residuals"][var_part] = val
-                        except (ValueError, IndexError):
-                            logger.debug("best-effort op failed", exc_info=True)
+                _of_parse_residuals(line, result)
 
         result["converged"] = "End" in content or "Finalising parallel run" in content
         return result

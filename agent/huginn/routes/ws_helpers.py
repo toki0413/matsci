@@ -903,42 +903,87 @@ async def _handle_user_input(
     msg: WSMessage,
     ctx: WSCtx,
 ) -> None:
-    """Handle a user_input message: create agent, route, stream response.
+    """Handle a user_input message: create agent, route, stream response."""
+    from huginn.routes.ws import get_or_create_thread
 
-    This is the largest handler — persona routing, team/plan/research mode
-    detection, RAG augmentation, and the streaming call all live here.
-    """
-    # Late import so monkeypatch on huginn.routes.ws takes effect
-    from huginn.routes.ws import (
-        get_agent_factory,
-        get_config,
-        get_context,
-        get_or_create_thread,
+    prepared = await _resolve_turn_config(websocket)
+    if prepared is None:
+        return
+    cfg_chat, factory = prepared
+
+    agent = await _create_turn_agent(websocket, msg, factory, ctx.ws_approval)
+    if agent is None:
+        return
+
+    content = msg.content
+    thread_id = msg.thread_id
+    get_or_create_thread(thread_id, user_id=ctx.user_id)
+    _record_user_turn(thread_id, content)
+
+    agent, content, handled = await _route_mentions(
+        websocket, factory, agent, content, thread_id, ctx.ws_approval
     )
+    if handled:
+        return
+    _attach_team_ref(agent)
 
-    ws_approval = ctx.ws_approval
-    last_user_context = ctx.last_user_context
-    pending_plan_contexts = ctx.pending_plan_contexts
-    user_id = ctx.user_id
+    use_team, use_fusion = _detect_chat_modes(content, cfg_chat)
+    plan_mode = _apply_plan_mode(agent, content)
+    _apply_research_mode(agent, content)
+    if await _dispatch_special_modes(
+        websocket, factory, agent, content, thread_id, cfg_chat,
+        plan_mode, use_team, use_fusion, ctx.pending_plan_contexts,
+    ):
+        return
+
+    content, rag_sources = await _augment_with_rag(content, cfg_chat)
+    ctx.last_user_context.update({
+        "content": content, "thread_id": thread_id,
+        "cfg_chat": cfg_chat, "agent": agent,
+    })
+    await _stream_agent_response(
+        websocket,
+        agent,
+        content,
+        thread_id,
+        cfg_chat,
+        auto_checkpoint=True,
+        handle_clarification=True,
+        plan_result=None,
+        citations=rag_sources,
+        sediment_question=content,
+        error_log="unexpected error",
+        error_label="Agent error",
+    )
+    await _drain_side_questions(websocket)
+
+
+async def _resolve_turn_config(websocket: WebSocket) -> tuple[Any, Any] | None:
+    """取 config 与 agent factory; 失败发错误并返回 None."""
+    from huginn.routes.ws import get_agent_factory, get_config
 
     try:
         cfg_chat = get_config()
     except Exception as exc:
         logger.error("unexpected error", exc_info=True)
         await _send_error(websocket, f"Config error: {exc}")
-        return
+        return None
     try:
         factory = get_agent_factory()
     except Exception as exc:
         logger.error("unexpected error", exc_info=True)
         await _send_error(websocket, f"Factory error: {exc}")
-        return
+        return None
+    return cfg_chat, factory
+
+
+async def _create_turn_agent(
+    websocket: WebSocket, msg: WSMessage, factory: Any, ws_approval: Any
+) -> Any | None:
+    """按 thinking/max_tokens/persona 创建 lead agent; 失败或无模型返回 None."""
     thinking = msg.thinking
     max_tokens = msg.max_tokens
-
-    requested_persona = msg.persona
-
-    if thinking is not None or max_tokens is not None or requested_persona:
+    if thinking is not None or max_tokens is not None or msg.persona:
         try:
             agent = factory.create_lead(
                 thread_id=msg.thread_id,
@@ -948,7 +993,7 @@ async def _handle_user_input(
             )
         except Exception as e:
             await _send_error(websocket, f"Cannot create agent: {e}")
-            return
+            return None
     else:
         try:
             agent = factory.create_lead(
@@ -958,29 +1003,34 @@ async def _handle_user_input(
         except Exception as exc:
             logger.error("unexpected error", exc_info=True)
             await _send_error(websocket, f"Failed to init agent: {exc}")
-            return
-
+            return None
     if agent.model is None:
         await websocket.send_json(
             {"type": "text_delta", "text": "⚠️ No LLM model configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"}
         )
         await websocket.send_json({"type": "done"})
-        return
+        return None
+    return agent
 
-    content = msg.content
-    thread_id = msg.thread_id
 
-    get_or_create_thread(thread_id, user_id=user_id)
-
-    # Event-source the user turn (T-BCSE: closed loop). Guarded — a write
-    # failure must not block the conversation.
+def _record_user_turn(thread_id: str, content: str) -> None:
+    """Event-source the user turn (T-BCSE closed loop); 写失败不阻塞对话."""
     try:
         from huginn.events.session_writer import record_user_message
         record_user_message(thread_id, content)
     except Exception:
         logger.debug("session user-message record skipped", exc_info=True)
 
-    # @agent routing
+
+async def _route_mentions(
+    websocket: WebSocket,
+    factory: Any,
+    agent: Any,
+    content: str,
+    thread_id: str,
+    ws_approval: Any,
+) -> tuple[Any, str, bool]:
+    """@agent 切换 + @spec 子代理 dispatch; 返回 (agent, content, 是否已接管)."""
     if content.startswith("@"):
         parts = content[1:].split(None, 1)
         if len(parts) == 2:
@@ -1003,7 +1053,6 @@ async def _handle_user_input(
                     logger.warning("Failed to create agent %s: %s", agent_cfg, e)
 
     # @spec subagent routing — 仅用户显式 @点名 的子代理才 dispatch.
-    # 主 agent 不会自主调 subagent_tool; 只有用户输入 @explore/... 才走这里.
     if content.startswith("@"):
         parts = content[1:].split(None, 1)
         if len(parts) == 2:
@@ -1011,451 +1060,491 @@ async def _handle_user_input(
             spec_token = spec_token.lower()
             from huginn.agents.subagent import SubagentDispatch
 
-            _specs = list(SubagentDispatch.BUILTIN_SPECS.keys())
-            if spec_token in _specs:
+            if spec_token in SubagentDispatch.BUILTIN_SPECS:
                 await _dispatch_user_spec(
                     websocket, factory, spec_token, task_text,
                     thread_id, ws_approval,
                 )
-                return
+                return agent, content, True
+    return agent, content, False
 
-    # Build a ModelTeam reference for cross-agent vision delegation.
-    # The team is lazily constructed from config; the agent can use it
-    # to delegate image analysis to a local vision model when the
-    # primary model doesn't support vision.
+
+def _attach_team_ref(agent: Any) -> None:
+    """给 agent 挂 ModelTeam 引用, 供跨 agent 视觉委派; 无团队配置则忽略."""
     try:
         from huginn.routes.team import _build_model_team
-        _team = _build_model_team()
-        agent._team_ref = _team
+        agent._team_ref = _build_model_team()
     except Exception:
-        logger.debug("best-effort op failed", exc_info=True)  # No team config or team module — fine, just no vision delegation
+        logger.debug("best-effort op failed", exc_info=True)
 
-    # Team mode trigger — keyword OR config flag
-    use_team = False
-    if any(kw in content.lower() for kw in ("/team", "delegate", "collaborate")) or getattr(cfg_chat, "team_mode_enabled", False):
-        use_team = True
 
-    # Fusion mode trigger — parallel multi-model + synthesis
-    use_fusion = "/fusion" in content.lower()
+def _detect_chat_modes(content: str, cfg_chat: Any) -> tuple[bool, bool]:
+    """Team mode (关键字或 config flag) 与 Fusion mode (关键字) 触发."""
+    lowered = content.lower()
+    use_team = (
+        any(kw in lowered for kw in ("/team", "delegate", "collaborate"))
+        or getattr(cfg_chat, "team_mode_enabled", False)
+    )
+    return use_team, "/fusion" in lowered
 
-    # Plan mode trigger — explicit command or auto-detect planning intent
-    plan_mode = False
-    plan_data: dict = {}
-    _content_lower = content.lower()
-    if any(kw in _content_lower for kw in ("/plan", "plan mode")):
-        plan_mode = True
+
+def _apply_plan_mode(agent: Any, content: str) -> bool:
+    """显式 /plan 或自动规划意图 → set_mode('plan'), 返回是否进入 plan 模式."""
+    lowered = content.lower()
+    if any(kw in lowered for kw in ("/plan", "plan mode")):
         if hasattr(agent, "set_mode"):
             agent.set_mode("plan")
-    elif not any(kw in _content_lower for kw in ("/research", "research mode", "/chat")):
-        # Auto-detect: planning keywords without explicit /plan
-        _plan_signals = (
-            "design a", "design an", "propose a", "propose an",
-            "plan how", "step by step", "workflow for",
-            "strategy for", "roadmap", "outline a",
-        )
-        if any(s in _content_lower for s in _plan_signals) and len(content) > 30:
-            plan_mode = True
-            if hasattr(agent, "set_mode"):
-                agent.set_mode("plan")
+        return True
+    if any(kw in lowered for kw in ("/research", "research mode", "/chat")):
+        return False
+    signals = (
+        "design a", "design an", "propose a", "propose an",
+        "plan how", "step by step", "workflow for",
+        "strategy for", "roadmap", "outline a",
+    )
+    if any(s in lowered for s in signals) and len(content) > 30:
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("plan")
+        return True
+    return False
 
-    # Research mode trigger — explicit command or auto-detect research intent
-    _research_signals = (
+
+def _apply_research_mode(agent: Any, content: str) -> None:
+    """显式 /research 或自动研究意图 → set_mode('research')."""
+    lowered = content.lower()
+    signals = (
         "/research", "research mode",
         "literature review", "survey the", "systematically review",
         "state of the art", "recent advances in",
-        "compare.*methods", "benchmark.*approaches",
     )
-    if (any(kw in _content_lower for kw in ("/research", "research mode")) or any(s in _content_lower for s in _research_signals[:6]) and len(content) > 40) and hasattr(agent, "set_mode"):
+    explicit = any(kw in lowered for kw in ("/research", "research mode"))
+    auto = any(s in lowered for s in signals[:6]) and len(content) > 40
+    if (explicit or auto) and hasattr(agent, "set_mode"):
         agent.set_mode("research")
 
-    # ── Research mode ──
-    if hasattr(agent, "is_research_mode") and agent.is_research_mode():
-        with contextlib.suppress(ImportError):
-            from huginn.research_workflow import (
-                ResearchWorkflow,
-                ResearchWorkflowConfig,
-            )
-        try:
-            research_config = ResearchWorkflowConfig(
-                max_concurrent_branches=3,
-                enable_hypothesis_generation=True,
-            )
-            workflow = ResearchWorkflow(agent=agent, config=research_config)
-            await websocket.send_json(
-                {"type": "text_delta", "text": "🔬 Research mode activated.\n\n"}
-            )
-            _research_output = ""  # final deliverable (draft) for event-sourcing
-            async for result in workflow.run(content, thread_id=thread_id):
-                evt_type = result.get("type")
-                if evt_type == "status":
-                    # 透传结构化进度事件, 前端 PipelineProgressCard 可渲染
-                    await websocket.send_json({
-                        "type": "task_progress",
-                        "task_type": "pipeline",
-                        "pipeline": "deli_research",
-                        "stage": result.get("stage", ""),
-                        "message": result.get("message", ""),
-                        "stage_index": result.get("stage_index"),
-                        "total_stages": result.get("total_stages"),
-                        "progress_pct": result.get("progress_pct"),
-                        "status": result.get("status", "running"),
-                        "topic": result.get("topic", ""),
-                    })
-                elif evt_type == "hypothesis":
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"📋 Hypothesis: {result.get('hypothesis', '')}\n",
-                    })
-                elif evt_type == "experiment":
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"🧪 Experiment: {result.get('description', '')}\n",
-                    })
-                elif evt_type == "result":
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"📊 Result: {result.get('summary', '')}\n",
-                    })
-                elif evt_type == "draft":
-                    # 最终草稿作为文本发送
-                    draft = result.get("content", "")
-                    if draft:
-                        _research_output = draft
-                        await websocket.send_json({
-                            "type": "text_delta",
-                            "text": f"\n{'='*40}\n📝 Draft:\n{'='*40}\n{draft}\n",
-                        })
-                elif evt_type == "error":
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"❌ Error: {result.get('message', '')}\n",
-                    })
-            # Event-source the research result (T-BCSE closed loop).
-            try:
-                from huginn.events.session_writer import record_assistant_message
-                record_assistant_message(thread_id, _research_output or "Research complete.")
-            except Exception:
-                logger.debug("session research record skipped", exc_info=True)
-            await websocket.send_json({"type": "done"})
-            return
-        except Exception as e:
-            logger.error("Research mode failed, falling back to chat: %s", e, exc_info=True)
 
-    # ── Team mode ──
+async def _dispatch_special_modes(
+    websocket: WebSocket,
+    factory: Any,
+    agent: Any,
+    content: str,
+    thread_id: str,
+    cfg_chat: Any,
+    plan_mode: bool,
+    use_team: bool,
+    use_fusion: bool,
+    pending_plan_contexts: dict,
+) -> bool:
+    """research/team/fusion/plan 四个特殊模式, 返回是否已接管本轮."""
+    if await _run_research_mode(websocket, agent, content, thread_id):
+        return True
     if use_team:
-        # ponytail: fusion/team 走 set_mode('research') 复用 CSM S3；升级路径是加 S_FUSION 独立状态
-        try:
-            if hasattr(agent, "set_mode"):
-                agent.set_mode("research")
-        except Exception as e:
-            logger.warning("set_mode('research') for team failed: %s", e)
-        try:
-            from huginn.agents.orchestrator import Orchestrator
-            orch = Orchestrator(factory=factory)
-            await websocket.send_json(
-                {"type": "text_delta", "text": "👥 Team mode activated.\n\n"}
-            )
-            # Stream progress as the orchestrator runs
-            async def _team_status(msg: str):
-                await websocket.send_json({"type": "text_delta", "text": f"  → {msg}\n"})
-
-            result = await orch.run(content, on_status=_team_status, auto_confirm=True)
-            summary = result.summary if hasattr(result, "summary") else str(result)
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": f"\n{summary}\n",
-            })
-            # Event-source the team result (T-BCSE closed loop).
-            try:
-                from huginn.events.session_writer import record_assistant_message
-                record_assistant_message(thread_id, summary)
-            except Exception:
-                logger.debug("session team record skipped", exc_info=True)
-            await websocket.send_json({"type": "done"})
-            return
-        except Exception as e:
-            logger.error("Team mode failed, falling back to single agent: %s", e, exc_info=True)
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": f"⚠️ Team mode unavailable ({e}), using single agent.\n\n",
-            })
-
-    # ── Fusion mode ──
-    if use_fusion and not use_team:
-        # ponytail: fusion/team 走 set_mode('research') 复用 CSM S3；升级路径是加 S_FUSION 独立状态
-        try:
-            if hasattr(agent, "set_mode"):
-                agent.set_mode("research")
-        except Exception as e:
-            logger.warning("set_mode('research') for fusion failed: %s", e)
-        try:
-            from huginn.routes.team import _build_model_team
-
-            team = _build_model_team()
-            # Strip the /fusion keyword from the query
-            fusion_query = content.replace("/fusion", "").strip()
-            if not fusion_query:
-                fusion_query = content
-
-            await websocket.send_json(
-                {"type": "text_delta", "text": "⚡ Fusion mode activated.\n"}
-            )
-            await websocket.send_json(
-                {"type": "text_delta", "text": f"Panel: {len(team.members)} members\n"}
-            )
-
-            # Show panel members
-            for m in team.list_members():
-                await websocket.send_json({
-                    "type": "text_delta",
-                    "text": f"  • [{m['role']}] {m['name']} ({m['model']})\n",
-                })
-
-            # Parse /fusionN suffix for rounds (e.g. /fusion3 = 3 rounds)
-            fusion_rounds = 1
-            for tag in ["/fusion1", "/fusion2", "/fusion3"]:
-                if tag in content.lower():
-                    fusion_rounds = int(tag[-1])
-                    break
-
-            result = await team.fusion_query(fusion_query, rounds=fusion_rounds)
-
-            # Stream all rounds
-            all_rounds = result.get("all_rounds", [])
-            for round_idx, round_responses in enumerate(all_rounds):
-                if len(all_rounds) > 1:
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"\n{'='*40}\n📝 Round {round_idx + 1}/{len(all_rounds)}\n{'='*40}\n",
-                    })
-                for r in round_responses:
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"\n--- [{r['role']} ({r['model']})] ({r['duration_ms']}ms) ---\n",
-                    })
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": r["answer"] + "\n",
-                    })
-
-            # Stream consensus
-            if result.get("consensus"):
-                await websocket.send_json({
-                    "type": "text_delta",
-                    "text": "\n## 共识\n" + result["consensus"] + "\n",
-                })
-            if result.get("dissent"):
-                await websocket.send_json({
-                    "type": "text_delta",
-                    "text": "\n## 分歧\n" + result["dissent"] + "\n",
-                })
-
-            # Stream final answer
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
-            })
-            # Event-source the fusion result (T-BCSE closed loop).
-            try:
-                from huginn.events.session_writer import record_assistant_message
-                record_assistant_message(thread_id, result.get("final_answer", ""))
-            except Exception:
-                logger.debug("session fusion record skipped", exc_info=True)
-
-            await websocket.send_json({"type": "done"})
-            return
-        except Exception as e:
-            logger.error("Fusion mode failed, falling back to single agent: %s", e, exc_info=True)
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": f"⚠️ Fusion mode unavailable ({e}), using single agent.\n\n",
-            })
-
-    # ── Plan mode ──
-    if plan_mode and not use_team:
-        try:
-            plan_objective = content.replace("/plan", "").replace("plan mode", "").strip()
-            if not plan_objective:
-                plan_objective = content
-
-            # 注入知识库上下文，让计划生成有据可依
-            plan_context_hint = ""
-            try:
-                _ctx = get_context()
-                if _ctx.kb is not None and _ctx.kb.count() > 0:
-                    _chunks = await asyncio.to_thread(_ctx.kb.query, plan_objective, 3)
-                    if _chunks:
-                        plan_context_hint = "\n\nRelevant context from knowledge base:\n" + "\n".join(
-                            f"- {(c.get('text') or '')[:200]}" for c in _chunks[:3]
-                        )
-            except Exception:
-                logger.debug("plan kb context query skipped", exc_info=True)
-
-            plan_prompt = (
-                f"Break down the following task into a structured plan.\n\n"
-                f"Task: {plan_objective}\n\n"
-                f"Return a JSON object with:\n"
-                f'  "steps": [{{"name": "...", "description": "...", "tool": "...", "estimated_time": "..."}}]\n'
-                f'  "acceptance_criteria": [{{"criterion": "...", "how_to_verify": "..."}}]\n'
-                f'  "tools_needed": ["tool1", "tool2", ...]\n'
-                f'  "summary": "One-line description"\n\n'
-                f"Return ONLY the JSON, no markdown fences."
-                f"{plan_context_hint}"
-            )
-
-            plan_response = await agent.model.ainvoke(plan_prompt)
-            plan_text = (
-                plan_response.content
-                if hasattr(plan_response, "content")
-                else str(plan_response)
-            )
-
-            import json as _json
-
-            try:
-                plan_data = _json.loads(plan_text)
-            except Exception:
-                import re
-
-                if not isinstance(plan_text, str):
-                    plan_text = str(plan_text)
-                try:
-                    match = re.search(r"\{[\s\S]*\}", plan_text)
-                    if match:
-                        plan_data = _json.loads(match.group())
-                    else:
-                        plan_data = {
-                            "steps": [
-                                {
-                                    "name": "Execute task",
-                                    "description": plan_objective,
-                                    "tool": "agent",
-                                }
-                            ],
-                            "acceptance_criteria": [],
-                            "tools_needed": [],
-                            "summary": plan_objective[:100],
-                        }
-                except Exception:
-                    plan_data = {
-                        "steps": [
-                            {
-                                "name": "Execute task",
-                                "description": plan_objective,
-                                "tool": "agent",
-                            }
-                        ],
-                        "acceptance_criteria": [],
-                        "tools_needed": [],
-                        "summary": plan_objective[:100],
-                    }
-
-            plan_id = uuid.uuid4().hex[:8]
-            pending_plan_contexts[plan_id] = {
-                "plan_data": plan_data,
-                "plan_objective": plan_objective,
-                "thread_id": thread_id,
-                "agent": agent,
-                "websocket": websocket,
-                "cfg_chat": cfg_chat,
-                "rag_sources": [],
-            }
-
-            # 持久化到 PlanStore，支持跨会话恢复
-            try:
-                from huginn.autoloop.plan_store import PlanStep, PlanStore
-                _store = PlanStore()
-                _steps = [
-                    PlanStep(
-                        id=f"step_{i}",
-                        description=s.get("description") or s.get("name", ""),
-                        tool=s.get("tool"),
-                    )
-                    for i, s in enumerate(plan_data.get("steps", []))
-                ]
-                _store.create_plan(
-                    objective=plan_objective,
-                    steps=_steps,
-                    auto_confirm=False,
-                )
-            except Exception:
-                logger.debug("plan store create skipped", exc_info=True)
-
-            await websocket.send_json({
-                "type": "plan",
-                "plan_id": plan_id,
-                "plan": plan_data,
-            })
-
-            return
-
-        except Exception as e:
-            logger.error("plan mode error", exc_info=True)
-            await _send_error(websocket, f"Plan generation failed: {e}")
-            return
-
-    # ── RAG augmentation ──
-    _rag_sources: list = []
-    if (
-        cfg_chat.rag_enabled
-        and get_context().kb is not None
-        and get_context().kb.count() > 0
+        return await _run_team_mode(
+            websocket, factory, agent, content, thread_id
+        )
+    if use_fusion and await _run_fusion_mode(
+        websocket, agent, content, thread_id
     ):
-        try:
-            chunks = await asyncio.to_thread(
-                get_context().kb.query, content, 5
-            )
-            context = ""  # ponytail: defensive init, not all branches assign
-            if chunks:
-                context = "\n\n".join(
-                    f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)
-                )
-                content = (
-                    "Use the following retrieved context to answer the question. "
-                    "Cite the source numbers when appropriate.\n\n"
-                    f"{context}\n\n"
-                    f"Question: {content}"
-                )
-                for i, c in enumerate(chunks):
-                    _rag_sources.append({
-                        "ref": i + 1,
-                        "filename": c.get("filename") or c.get("source") or "unknown",
-                        "text": (c.get("text") or "")[:200],
-                        "distance": c.get("distance"),
-                    })
-        except Exception as e:
-            logger.warning("[RAG] query failed: %s", e)
+        return True
+    if plan_mode:
+        await _run_plan_mode(
+            websocket, agent, content, thread_id, cfg_chat, pending_plan_contexts
+        )
+        return True
+    return False
 
-    # ── Stream agent response ──
-    _plan_result = None
-    if plan_mode and not use_team and plan_data.get("acceptance_criteria"):
-        _plan_result = {
-            "plan_id": plan_data.get("summary", "")[:50],
-            "acceptance_criteria": plan_data["acceptance_criteria"],
-        }
-    last_user_context.update({
-        "content": content, "thread_id": thread_id,
-        "cfg_chat": cfg_chat, "agent": agent,
+
+async def _emit_research_event(websocket: WebSocket, result: dict) -> str:
+    """把一个 research 事件转成 WS 消息; 返回 draft 内容 (可能空串)."""
+    evt_type = result.get("type")
+    if evt_type == "status":
+        await websocket.send_json({
+            "type": "task_progress",
+            "task_type": "pipeline",
+            "pipeline": "deli_research",
+            "stage": result.get("stage", ""),
+            "message": result.get("message", ""),
+            "stage_index": result.get("stage_index"),
+            "total_stages": result.get("total_stages"),
+            "progress_pct": result.get("progress_pct"),
+            "status": result.get("status", "running"),
+            "topic": result.get("topic", ""),
+        })
+    elif evt_type == "hypothesis":
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"📋 Hypothesis: {result.get('hypothesis', '')}\n",
+        })
+    elif evt_type == "experiment":
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"🧪 Experiment: {result.get('description', '')}\n",
+        })
+    elif evt_type == "result":
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"📊 Result: {result.get('summary', '')}\n",
+        })
+    elif evt_type == "draft":
+        draft = result.get("content", "")
+        if draft:
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"\n{'='*40}\n📝 Draft:\n{'='*40}\n{draft}\n",
+            })
+            return draft
+    elif evt_type == "error":
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"❌ Error: {result.get('message', '')}\n",
+        })
+    return ""
+
+
+async def _run_research_mode(
+    websocket: WebSocket, agent: Any, content: str, thread_id: str
+) -> bool:
+    """Research 模式: 跑 workflow 并流式转发事件; 返回是否已接管."""
+    if not (hasattr(agent, "is_research_mode") and agent.is_research_mode()):
+        return False
+    try:
+        from huginn.research_workflow import (
+            ResearchWorkflow,
+            ResearchWorkflowConfig,
+        )
+        research_config = ResearchWorkflowConfig(
+            max_concurrent_branches=3,
+            enable_hypothesis_generation=True,
+        )
+        workflow = ResearchWorkflow(agent=agent, config=research_config)
+        await websocket.send_json(
+            {"type": "text_delta", "text": "🔬 Research mode activated.\n\n"}
+        )
+        output = ""
+        async for result in workflow.run(content, thread_id=thread_id):
+            draft = await _emit_research_event(websocket, result)
+            output = draft or output
+        try:
+            from huginn.events.session_writer import record_assistant_message
+            record_assistant_message(thread_id, output or "Research complete.")
+        except Exception:
+            logger.debug("session research record skipped", exc_info=True)
+        await websocket.send_json({"type": "done"})
+        return True
+    except Exception as e:
+        logger.error(
+            "Research mode failed, falling back to chat: %s", e, exc_info=True
+        )
+        return False
+
+
+async def _run_team_mode(
+    websocket: WebSocket, factory: Any, agent: Any, content: str, thread_id: str
+) -> bool:
+    """Team 模式: Orchestrator 多 agent 协作; 返回是否已接管."""
+    try:
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("research")
+    except Exception as e:
+        logger.warning("set_mode('research') for team failed: %s", e)
+    try:
+        from huginn.agents.orchestrator import Orchestrator
+        orch = Orchestrator(factory=factory)
+        await websocket.send_json(
+            {"type": "text_delta", "text": "👥 Team mode activated.\n\n"}
+        )
+
+        async def _team_status(status_msg: str) -> None:
+            await websocket.send_json(
+                {"type": "text_delta", "text": f"  → {status_msg}\n"}
+            )
+
+        result = await orch.run(content, on_status=_team_status, auto_confirm=True)
+        summary = result.summary if hasattr(result, "summary") else str(result)
+        await websocket.send_json({"type": "text_delta", "text": f"\n{summary}\n"})
+        try:
+            from huginn.events.session_writer import record_assistant_message
+            record_assistant_message(thread_id, summary)
+        except Exception:
+            logger.debug("session team record skipped", exc_info=True)
+        await websocket.send_json({"type": "done"})
+        return True
+    except Exception as e:
+        logger.error(
+            "Team mode failed, falling back to single agent: %s", e, exc_info=True
+        )
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"⚠️ Team mode unavailable ({e}), using single agent.\n\n",
+        })
+        return False
+
+
+async def _setup_fusion_panel(
+    websocket: WebSocket, content: str
+) -> tuple[Any, str, int]:
+    """建团队面板 + 发激活消息 + 解析 /fusionN 轮数."""
+    from huginn.routes.team import _build_model_team
+
+    team = _build_model_team()
+    query = content.replace("/fusion", "").strip() or content
+    await websocket.send_json(
+        {"type": "text_delta", "text": "⚡ Fusion mode activated.\n"}
+    )
+    await websocket.send_json(
+        {"type": "text_delta", "text": f"Panel: {len(team.members)} members\n"}
+    )
+    for member in team.list_members():
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"  • [{member['role']}] {member['name']} ({member['model']})\n",
+        })
+    rounds = 1
+    for tag in ("/fusion1", "/fusion2", "/fusion3"):
+        if tag in content.lower():
+            rounds = int(tag[-1])
+            break
+    return team, query, rounds
+
+
+async def _emit_fusion_result(websocket: WebSocket, result: dict) -> None:
+    """流式发多轮回答 + 共识/分歧 + 综合答案."""
+    all_rounds = result.get("all_rounds", [])
+    for idx, responses in enumerate(all_rounds):
+        if len(all_rounds) > 1:
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": (
+                    f"\n{'='*40}\n📝 Round {idx + 1}/{len(all_rounds)}"
+                    f"\n{'='*40}\n"
+                ),
+            })
+        for r in responses:
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"\n--- [{r['role']} ({r['model']})] ({r['duration_ms']}ms) ---\n",
+            })
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": r["answer"] + "\n",
+            })
+    if result.get("consensus"):
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": "\n## 共识\n" + result["consensus"] + "\n",
+        })
+    if result.get("dissent"):
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": "\n## 分歧\n" + result["dissent"] + "\n",
+        })
+    await websocket.send_json({
+        "type": "text_delta",
+        "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
     })
-    await _stream_agent_response(
-        websocket,
-        agent,
-        content,
-        thread_id,
-        cfg_chat,
-        auto_checkpoint=True,
-        handle_clarification=True,
-        plan_result=_plan_result,
-        citations=_rag_sources,
-        sediment_question=content,
-        error_log="unexpected error",
-        error_label="Agent error",
+
+
+async def _run_fusion_mode(
+    websocket: WebSocket, agent: Any, content: str, thread_id: str
+) -> bool:
+    """Fusion 模式: 多模型并行 + 综合; 返回是否已接管."""
+    try:
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("research")
+    except Exception as e:
+        logger.warning("set_mode('research') for fusion failed: %s", e)
+    try:
+        team, query, rounds = await _setup_fusion_panel(websocket, content)
+        result = await team.fusion_query(query, rounds=rounds)
+        await _emit_fusion_result(websocket, result)
+        try:
+            from huginn.events.session_writer import record_assistant_message
+            record_assistant_message(thread_id, result.get("final_answer", ""))
+        except Exception:
+            logger.debug("session fusion record skipped", exc_info=True)
+        await websocket.send_json({"type": "done"})
+        return True
+    except Exception as e:
+        logger.error(
+            "Fusion mode failed, falling back to single agent: %s", e, exc_info=True
+        )
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"⚠️ Fusion mode unavailable ({e}), using single agent.\n\n",
+        })
+        return False
+
+
+async def _plan_context_hint(objective: str) -> str:
+    """从知识库取 3 条相关上下文拼成提示; 失败返回空串."""
+    from huginn.routes.ws import get_context
+
+    try:
+        ctx = get_context()
+        if ctx.kb is not None and ctx.kb.count() > 0:
+            chunks = await asyncio.to_thread(ctx.kb.query, objective, 3)
+            if chunks:
+                context = "\n".join(
+                    f"- {(c.get('text') or '')[:200]}" for c in chunks[:3]
+                )
+                return "\n\nRelevant context from knowledge base:\n" + context
+    except Exception:
+        logger.debug("plan kb context query skipped", exc_info=True)
+    return ""
+
+
+def _build_plan_prompt(objective: str, context_hint: str) -> str:
+    """构造要求 LLM 只返回 JSON 的 plan prompt."""
+    return (
+        "Break down the following task into a structured plan.\n\n"
+        f"Task: {objective}\n\n"
+        "Return a JSON object with:\n"
+        '  "steps": [{"name": "...", "description": "...", "tool": "...", "estimated_time": "..."}]\n'
+        '  "acceptance_criteria": [{"criterion": "...", "how_to_verify": "..."}]\n'
+        '  "tools_needed": ["tool1", "tool2", ...]\n'
+        '  "summary": "One-line description"\n\n'
+        "Return ONLY the JSON, no markdown fences."
+        f"{context_hint}"
     )
 
-    # Drain pending side-channel questions
+
+def _fallback_plan(objective: str) -> dict:
+    """LLM 输出无法解析时的单步兜底计划."""
+    return {
+        "steps": [
+            {
+                "name": "Execute task",
+                "description": objective,
+                "tool": "agent",
+            }
+        ],
+        "acceptance_criteria": [],
+        "tools_needed": [],
+        "summary": objective[:100],
+    }
+
+
+def _parse_plan_response(plan_text: Any, objective: str) -> dict:
+    """解析 plan JSON; 失败则正则抽 {...}; 再失败给单步兜底."""
+    import json as _json
+    import re
+
+    if not isinstance(plan_text, str):
+        plan_text = str(plan_text)
+    try:
+        return _json.loads(plan_text)
+    except Exception:
+        logger.debug("plan json parse failed, retry with regex", exc_info=True)
+    try:
+        match = re.search(r"\{[\s\S]*\}", plan_text)
+        if match:
+            return _json.loads(match.group())
+    except Exception:
+        logger.debug("plan regex parse failed, fallback plan", exc_info=True)
+    return _fallback_plan(objective)
+
+
+def _persist_plan(plan_data: dict, objective: str) -> None:
+    """持久化到 PlanStore, 支持跨会话恢复; 失败忽略."""
+    try:
+        from huginn.autoloop.plan_store import PlanStep, PlanStore
+        _store = PlanStore()
+        _steps = [
+            PlanStep(
+                id=f"step_{i}",
+                description=s.get("description") or s.get("name", ""),
+                tool=s.get("tool"),
+            )
+            for i, s in enumerate(plan_data.get("steps", []))
+        ]
+        _store.create_plan(objective=objective, steps=_steps, auto_confirm=False)
+    except Exception:
+        logger.debug("plan store create skipped", exc_info=True)
+
+
+async def _run_plan_mode(
+    websocket: WebSocket,
+    agent: Any,
+    content: str,
+    thread_id: str,
+    cfg_chat: Any,
+    pending_plan_contexts: dict,
+) -> bool:
+    """Plan 模式: 生成结构化计划并发 plan 事件; 失败发错误."""
+    try:
+        objective = (
+            content.replace("/plan", "").replace("plan mode", "").strip()
+            or content
+        )
+        context_hint = await _plan_context_hint(objective)
+        plan_response = await agent.model.ainvoke(
+            _build_plan_prompt(objective, context_hint)
+        )
+        plan_text = (
+            plan_response.content
+            if hasattr(plan_response, "content")
+            else str(plan_response)
+        )
+        plan_data = _parse_plan_response(plan_text, objective)
+        plan_id = uuid.uuid4().hex[:8]
+        pending_plan_contexts[plan_id] = {
+            "plan_data": plan_data,
+            "plan_objective": objective,
+            "thread_id": thread_id,
+            "agent": agent,
+            "websocket": websocket,
+            "cfg_chat": cfg_chat,
+            "rag_sources": [],
+        }
+        _persist_plan(plan_data, objective)
+        await websocket.send_json({
+            "type": "plan",
+            "plan_id": plan_id,
+            "plan": plan_data,
+        })
+        return True
+    except Exception as e:
+        logger.error("plan mode error", exc_info=True)
+        await _send_error(websocket, f"Plan generation failed: {e}")
+        return False
+
+
+async def _augment_with_rag(content: str, cfg_chat: Any) -> tuple[str, list]:
+    """RAG 增强: 检索 5 条上下文拼进 content, 返回 (content, sources)."""
+    from huginn.routes.ws import get_context
+
+    sources: list = []
+    try:
+        kb = get_context().kb
+        if not (cfg_chat.rag_enabled and kb is not None and kb.count() > 0):
+            return content, sources
+        chunks = await asyncio.to_thread(kb.query, content, 5)
+        if chunks:
+            context_text = "\n\n".join(
+                f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)
+            )
+            content = (
+                "Use the following retrieved context to answer the question. "
+                "Cite the source numbers when appropriate.\n\n"
+                f"{context_text}\n\n"
+                f"Question: {content}"
+            )
+            for i, c in enumerate(chunks):
+                sources.append({
+                    "ref": i + 1,
+                    "filename": c.get("filename") or c.get("source") or "unknown",
+                    "text": (c.get("text") or "")[:200],
+                    "distance": c.get("distance"),
+                })
+    except Exception as e:
+        logger.warning("[RAG] query failed: %s", e)
+    return content, sources
+
+
+async def _drain_side_questions(websocket: WebSocket) -> None:
+    """Drain pending side-channel questions."""
     try:
         from huginn.side_conversation import get_shared_side_channel
-
         for sq in get_shared_side_channel().drain():
             await websocket.send_json({
                 "type": "side_question_pending",

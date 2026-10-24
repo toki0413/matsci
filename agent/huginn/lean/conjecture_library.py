@@ -18,6 +18,7 @@ import ast
 import json
 import logging
 import sqlite3
+import tempfile
 import threading
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
@@ -898,10 +899,9 @@ class ConjectureLibrary:
 
 # ── self-check ────────────────────────────────────────────────────
 
-def _self_check() -> int:
-    """assert-based demo: 验证 verify_conjecture + evolve + library + gaps + classify_sorry."""
-    import tempfile
 
+def _sc_verify_good_and_sorry() -> tuple[Conjecture, Conjecture]:
+    """1-3: good 命题通过, sorry/admit 标记 placeholder."""
     # 1. verify 通过正确命题 — 返回 (True, "none")
     good = _template_variants("seed", 1, 0, None)[0]
     ok, status = verify_conjecture(good)
@@ -922,7 +922,10 @@ def _self_check() -> int:
     )
     ok, status = verify_conjecture(bad_admit)
     assert ok is False and status == "placeholder"
+    return good, bad_sorry
 
+def _sc_verify_rejects() -> None:
+    """4-7: import os / return False / 无 prove / getattr 链全部拒绝."""
     # 4. verify 拒绝 import os — 真失败 (none)
     bad_import = Conjecture(
         id="bad-import", statement="bad", sympy_expr="x",
@@ -959,10 +962,14 @@ def _self_check() -> int:
     ok, status = verify_conjecture(bad_getattr)
     assert ok is False and status == "none"
 
+def _sc_verify_bool_wrapper(good: Conjecture, bad_sorry: Conjecture) -> None:
+    """8: verify_conjecture_bool 兼容包装."""
     # 8. verify_conjecture_bool 兼容包装 — 老调用方要 bool
     assert verify_conjecture_bool(good) is True
     assert verify_conjecture_bool(bad_sorry) is False
 
+def _sc_evolve_template() -> list[Conjecture]:
+    """9: evolve_conjectures 模板模式跑通."""
     # 9. evolve_conjectures 模板模式跑通
     passed = evolve_conjectures(
         "bulk modulus", n_variants=3, max_gen=2, model=None,
@@ -970,7 +977,10 @@ def _self_check() -> int:
     assert len(passed) > 0, "should have passed conjectures"
     assert all(c.fitness == 1.0 for c in passed)
     assert all(c.sorry_status == "none" for c in passed)
+    return passed
 
+def _sc_library_accumulate(passed: list[Conjecture]) -> None:
+    """10: ConjectureLibrary 累积 / 去重 / JSONL 落盘."""
     # 10. ConjectureLibrary 累积
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -992,6 +1002,8 @@ def _self_check() -> int:
             lines = [_l for _l in f if _l.strip()]
         assert len(lines) == len(passed)
 
+def _sc_library_wiring() -> None:
+    """11: evolve + library 联动 — 通过的进 library."""
     # 11. evolve + library 联动 — 通过的进 library
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -1003,6 +1015,8 @@ def _self_check() -> int:
             f"library {lib.count()} != passed {len(passed3)}"
         )
 
+def _sc_gaps_table() -> None:
+    """12: conjecture_gaps 表 — sorry 命题进 gaps 而非淘汰."""
     # 12. v6 G45: conjecture_gaps 表 — sorry 命题进 gaps 而非淘汰
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -1044,6 +1058,8 @@ def _self_check() -> int:
         assert len(impossibles) == 1
         assert impossibles[0]["counterexample"] == "z<0 violates phi_c>0"
 
+def _sc_classify_sorry() -> None:
+    """13: classify_sorry 规则分类."""
     # 13. v6 G45: classify_sorry 规则分类
     # unreachable: 含 conservation
     c_unreachable = Conjecture(
@@ -1074,6 +1090,8 @@ def _self_check() -> int:
     )
     assert classify_sorry(c_new) == "unexplored"
 
+def _sc_evolve_gaps_empty() -> None:
+    """14: 模板变体无 sorry → gaps 表为空."""
     # 14. evolve + library + sorry: sorry 命题进 gaps 表
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -1084,6 +1102,8 @@ def _self_check() -> int:
         )
         assert len(lib.get_research_gaps()) == 0, "template variants have no sorry"
 
+def _sc_fill_success() -> None:
+    """15: fill_sorry_gaps 模板路径 — 填充成功."""
     # 15. v6 G48: fill_sorry_gaps 模板路径 — 填充成功
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -1115,6 +1135,8 @@ def _self_check() -> int:
         filled_gaps = lib.get_research_gaps(status="filled")
         assert len(filled_gaps) == 1
 
+def _sc_fill_failure() -> None:
+    """16: fill_sorry_gaps 模板路径 — sorry 在 return 里."""
     # 16. v6 G48: fill_sorry_gaps 模板路径 — 填充失败 (sorry 在 return 里)
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -1139,6 +1161,8 @@ def _self_check() -> int:
             f"unexpected action: {action}"
         )
 
+def _sc_three_dim_fitness() -> None:
+    """17: 三维适应度 default_three_dim_fitness."""
     # 17. v6 G48: 三维适应度 default_three_dim_fitness
     good2 = _template_variants("seed", 1, 0, None)[0]
     fitness = default_three_dim_fitness(good2, was_verified=True, sorry_status="none")
@@ -1151,6 +1175,8 @@ def _self_check() -> int:
     )
     assert sorry_fitness < fitness, "placeholder should score lower than verified"
 
+def _sc_evolve_fitness_fn() -> None:
+    """18: evolve 带 fitness_fn."""
     # 18. v6 G48: evolve 带 fitness_fn
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
@@ -1163,12 +1189,30 @@ def _self_check() -> int:
         # 三维适应度应给通过命题非零分
         assert all(c.fitness > 0 for c in passed)
 
+def _sc_fill_empty() -> None:
+    """19: fill_sorry_gaps 空 gaps 表."""
     # 19. v6 G48: fill_sorry_gaps 空 gaps 表
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
         results = fill_sorry_gaps(lib, model=None, max_fill=5)
         assert results == []
 
+def _self_check() -> int:
+    """assert-based demo: 验证 verify_conjecture + evolve + library + gaps + classify_sorry."""
+    good, bad_sorry = _sc_verify_good_and_sorry()
+    _sc_verify_rejects()
+    _sc_verify_bool_wrapper(good, bad_sorry)
+    passed = _sc_evolve_template()
+    _sc_library_accumulate(passed)
+    _sc_library_wiring()
+    _sc_gaps_table()
+    _sc_classify_sorry()
+    _sc_evolve_gaps_empty()
+    _sc_fill_success()
+    _sc_fill_failure()
+    _sc_three_dim_fitness()
+    _sc_evolve_fitness_fn()
+    _sc_fill_empty()
     print("[CONJLIB] self-check OK (incl G48 fill_sorry_gaps + 3D fitness)")
     return 0
 

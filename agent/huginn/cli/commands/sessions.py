@@ -307,6 +307,34 @@ def show_session(ctx: CliContext, thread_id: str) -> None:
         ctx.console.print(f"[bold]Messages:[/bold]          {msg_count}")
 
 
+def _decode_typed_messages(saver: Any, messages: Any) -> list | None:
+    """messages 可能是序列化的 (type, blob) 元组, 尝试用 serde 解码."""
+    if not (isinstance(messages, tuple) and len(messages) == 2):
+        return None
+    serde = getattr(saver, "serde", None) or getattr(saver, "jsonplus_serde", None)
+    if serde is None:
+        return None
+    try:
+        decoded = serde.loads_typed(messages)
+    except Exception:
+        return None
+    return decoded if isinstance(decoded, list) else None
+
+
+def _count_checkpoint_messages(saver: Any, thread_id: str) -> int | None:
+    """从 saver 的 checkpoint channel_values 里数消息条数."""
+    config = {"configurable": {"thread_id": thread_id}}
+    tup = saver.get_tuple(config)
+    if tup is None or tup.checkpoint is None:
+        return None
+    channel_values = tup.checkpoint.get("channel_values") or {}
+    messages = channel_values.get("messages")
+    if isinstance(messages, list):
+        return len(messages)
+    decoded = _decode_typed_messages(saver, messages)
+    return len(decoded) if decoded is not None else None
+
+
 def _try_count_messages(db_path: Path, thread_id: str) -> int | None:
     """用 SqliteSaver 的 API 拿 channel_values 里的消息条数。
 
@@ -321,27 +349,7 @@ def _try_count_messages(db_path: Path, thread_id: str) -> int | None:
         cm = SqliteSaver.from_conn_string(str(db_path))
         saver = cm.__enter__()
         try:
-            config = {"configurable": {"thread_id": thread_id}}
-            tup = saver.get_tuple(config)
-            if tup is None or tup.checkpoint is None:
-                return None
-            channel_values = tup.checkpoint.get("channel_values") or {}
-            messages = channel_values.get("messages")
-            if isinstance(messages, list):
-                return len(messages)
-            # messages 可能是序列化的 (type, blob) 元组
-            if isinstance(messages, tuple) and len(messages) == 2:
-                try:
-                    serde = getattr(saver, "serde", None) or getattr(
-                        saver, "jsonplus_serde", None
-                    )
-                    if serde is not None:
-                        decoded = serde.loads_typed(messages)
-                        if isinstance(decoded, list):
-                            return len(decoded)
-                except Exception:
-                    return None
-            return None
+            return _count_checkpoint_messages(saver, thread_id)
         finally:
             cm.__exit__(None, None, None)
     except Exception:

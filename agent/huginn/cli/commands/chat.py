@@ -255,6 +255,72 @@ def _run_one_turn(
     _run_blocking_turn(ctx, agent, message, ds, thread_id)
 
 
+def _unwrap_control_state(state: Any) -> Any:
+    """单步 / 思考循环终止标记: 拆出真实 state 再继续."""
+    if isinstance(state, dict) and (
+        state.get("tool_break") or state.get("thought_loop_terminated")
+    ):
+        return state.get("state") or {}
+    return state
+
+
+def _render_thought(console: Any, text: str, tool_names: list[str]) -> None:
+    """推理 / 计划: dim 显示, 不进 Live."""
+    if text.strip():
+        console.print(f"[dim italic]{text}[/dim italic]")
+    for name in tool_names:
+        console.print(f"[dim]→ 调用 [bold]{name}[/bold][/dim]")
+
+
+def _render_tool_message(console: Any, msg: Any) -> None:
+    """工具消息: 一行 ✓/✗ + 工具名."""
+    name = getattr(msg, "name", None) or "tool"
+    ok = not (isinstance(msg.content, str) and msg.content.startswith("Error"))
+    mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+    console.print(f"{mark} {name}")
+
+
+def _render_message(
+    console: Any, msg: Any, assistant_parts: list[str], live: Any
+) -> None:
+    """渲染一条新增消息: AI 正文进 Live, 思考/工具消息走 console."""
+    if isinstance(msg, AIMessage):
+        kind, text, tool_names = _ai_message_view(msg)
+        if kind == "thought":
+            _render_thought(console, text, tool_names)
+        elif text:
+            assistant_parts.append(text)
+            live.update(Text(text, style="magenta"))
+    elif isinstance(msg, ToolMessage):
+        _render_tool_message(console, msg)
+
+
+async def _drive_streaming_turn(
+    console: Any, agent: Any, message: str, thread_id: str
+) -> tuple[str, list]:
+    """驱动一轮流式对话, 返回 (正文, 最终 messages)."""
+    shown = 0
+    assistant_parts: list[str] = []
+    final_messages: list = []
+    with Live(
+        Text("Thinking…", style="dim italic"),
+        console=console,
+        refresh_per_second=12,
+        transient=True,
+    ) as live:
+        async for state in agent.chat(message, thread_id=thread_id):
+            state = _unwrap_control_state(state)
+            if isinstance(state, dict):
+                final_messages = state.get("messages", [])
+
+            new_msgs = final_messages[shown:]
+            shown = len(final_messages)
+            for msg in new_msgs:
+                _render_message(console, msg, assistant_parts, live)
+
+    return "".join(assistant_parts), final_messages
+
+
 def _run_streaming_turn(
     ctx: CliContext,
     agent: Any,
@@ -271,54 +337,9 @@ def _run_streaming_turn(
     """
     console = ctx.console
 
-    async def _drive() -> tuple[str, list]:
-        shown = 0
-        assistant_parts: list[str] = []
-        final_messages: list = []
-        with Live(
-            Text("Thinking…", style="dim italic"),
-            console=console,
-            refresh_per_second=12,
-            transient=True,
-        ) as live:
-            async for state in agent.chat(message, thread_id=thread_id):
-                # 单步 / 思考循环终止标记: 拆出真实 state 再继续
-                if isinstance(state, dict) and (
-                    state.get("tool_break") or state.get("thought_loop_terminated")
-                ):
-                    state = state.get("state") or {}
-
-                if isinstance(state, dict):
-                    final_messages = state.get("messages", [])
-
-                new_msgs = final_messages[shown:]
-                shown = len(final_messages)
-                for msg in new_msgs:
-                    if isinstance(msg, AIMessage):
-                        kind, text, tool_names = _ai_message_view(msg)
-                        if kind == "thought":
-                            # 推理 / 计划: dim 显示, 不进 Live
-                            if text.strip():
-                                console.print(f"[dim italic]{text}[/dim italic]")
-                            for name in tool_names:
-                                console.print(
-                                    f"[dim]→ 调用 [bold]{name}[/bold][/dim]"
-                                )
-                        elif text:
-                            assistant_parts.append(text)
-                            live.update(Text(text, style="magenta"))
-                    elif isinstance(msg, ToolMessage):
-                        name = getattr(msg, "name", None) or "tool"
-                        ok = not (
-                            isinstance(msg.content, str)
-                            and msg.content.startswith("Error")
-                        )
-                        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
-                        console.print(f"{mark} {name}")
-
-        return "".join(assistant_parts), final_messages
-
-    final_text, final_messages = asyncio.run(_drive())
+    final_text, final_messages = asyncio.run(
+        _drive_streaming_turn(console, agent, message, thread_id)
+    )
 
     # 工具产生的文件改动以 diff 形式预览, 方便用户审阅
     diff_text = _extract_diff_from_messages(final_messages)

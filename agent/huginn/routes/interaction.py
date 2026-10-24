@@ -38,6 +38,63 @@ router = APIRouter(tags=["interaction"])
 logger = logging.getLogger(__name__)
 
 
+def _handle_interrupt_event(evt: Any, interceptor: StreamInterceptor) -> bool:
+    """处理一次中断事件; 返回 True 表示本轮应中止."""
+    if evt is None:
+        return False
+    if evt.type == "cancel":
+        interceptor.on_error(f"cancelled by user: {evt.message}")
+        return True
+    if evt.type == "modify":
+        # modify: 把用户的新消息当 token 喂回去, 让前端看到 agent 收到了修改意见
+        interceptor.on_thought(f"[用户修改] {evt.message}")
+    return False
+
+
+def _push_state_messages(
+    state: Any, interceptor: StreamInterceptor, final_text: str
+) -> str:
+    """把一个 state 里的消息推进 interceptor; 返回最新 final_text."""
+    msgs = state.get("messages", []) if isinstance(state, dict) else []
+    for msg in msgs:
+        # AIMessage 的 content 当 token 流推
+        content = getattr(msg, "content", "")
+        msg_type = getattr(msg, "type", "")
+        if msg_type == "ai" and isinstance(content, str) and content:
+            interceptor.on_llm_token(content)
+            final_text = content
+        # ToolMessage 当 tool_end 推 (简化: 不拦截 start)
+        elif msg_type == "tool":
+            name = getattr(msg, "name", "unknown")
+            interceptor.on_tool_end(name, content, 0.0)
+    return final_text
+
+
+async def _stream_agent_chat(
+    agent: Any,
+    message: str,
+    thread_id: str,
+    interceptor: StreamInterceptor,
+    interrupt_mgr: Any,
+) -> None:
+    """跑 agent.chat, 把中断事件与 state 消息喂给 interceptor."""
+    final_text = ""
+    try:
+        # agent.chat 是 async generator, 每轮 yield 一个 state
+        async for state in agent.chat(message, thread_id=thread_id):
+            # 命中中断就停
+            if _handle_interrupt_event(interrupt_mgr.check_interrupt(thread_id), interceptor):
+                return
+            # 暂停态: 阻塞到 resume
+            await interrupt_mgr.wait_if_paused(thread_id)
+            final_text = _push_state_messages(state, interceptor, final_text)
+        interceptor.on_done(final_text)
+    except InterruptCancelled:
+        interceptor.on_error("cancelled by user")
+    except Exception as exc:
+        interceptor.on_error(str(exc))
+
+
 # ── 实时反馈: SSE 流式 chat ──────────────────────────────────────
 
 
@@ -93,46 +150,9 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
                 # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
                 # 会被拦下要求确认, 不受 auto_approve 影响.
                 apply_sse_read_only_policy(agent._permission_config)
-
-                final_text = ""
-                try:
-                    # agent.chat 是 async generator, 每轮 yield 一个 state
-                    # 把 state 里的 AIMessage 内容喂给 interceptor.on_llm_token
-                    async for state in agent.chat(message, thread_id=thread_id):
-                        # 命中中断就停
-                        evt = interrupt_mgr.check_interrupt(thread_id)
-                        if evt is not None:
-                            if evt.type == "cancel":
-                                interceptor.on_error(
-                                    f"cancelled by user: {evt.message}"
-                                )
-                                return
-                            if evt.type == "modify":
-                                # modify: 把用户的新消息当 token 喂回去,
-                                # 让前端看到 agent 收到了修改意见
-                                interceptor.on_thought(
-                                    f"[用户修改] {evt.message}"
-                                )
-                        # 暂停态: 阻塞到 resume
-                        await interrupt_mgr.wait_if_paused(thread_id)
-
-                        msgs = state.get("messages", []) if isinstance(state, dict) else []
-                        for msg in msgs:
-                            # AIMessage 的 content 当 token 流推
-                            content = getattr(msg, "content", "")
-                            msg_type = getattr(msg, "type", "")
-                            if msg_type == "ai" and isinstance(content, str) and content:
-                                interceptor.on_llm_token(content)
-                                final_text = content
-                            # ToolMessage 当 tool_end 推 (简化: 不拦截 start)
-                            elif msg_type == "tool":
-                                name = getattr(msg, "name", "unknown")
-                                interceptor.on_tool_end(name, content, 0.0)
-                    interceptor.on_done(final_text)
-                except InterruptCancelled:
-                    interceptor.on_error("cancelled by user")
-                except Exception as exc:
-                    interceptor.on_error(str(exc))
+                await _stream_agent_chat(
+                    agent, message, thread_id, interceptor, interrupt_mgr
+                )
             else:
                 interceptor.on_error("empty message")
         except Exception as exc:

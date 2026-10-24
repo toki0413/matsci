@@ -5,6 +5,7 @@ A read-only tool for structural analysis. Safe to auto-execute.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any, Literal
 
@@ -71,6 +72,52 @@ class StructureToolOutput(BaseModel):
     volume: float | None = None
     density: float | None = None
     warnings: list[str] = []
+
+
+def _spacegroup_symbol(structure: Any) -> Any:
+    """优先用 SpacegroupAnalyzer, 失败回退 get_space_group_info."""
+    try:
+        from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+        return SpacegroupAnalyzer(structure).get_space_group_symbol()
+    except Exception:
+        # Fall back to direct method if analyzer fails
+        if hasattr(structure, "get_space_group_info"):
+            return structure.get_space_group_info()[0]
+        return None
+
+
+def _output_from_pymatgen(structure: Any) -> StructureToolOutput:
+    """把 pymatgen Structure 转成 StructureToolOutput."""
+    lat = structure.lattice
+    return StructureToolOutput(
+        formula=structure.formula,
+        spacegroup=_spacegroup_symbol(structure),
+        lattice_params={
+            "a": lat.a,
+            "b": lat.b,
+            "c": lat.c,
+            "alpha": lat.alpha,
+            "beta": lat.beta,
+            "gamma": lat.gamma,
+        },
+        num_atoms=len(structure),
+        volume=structure.volume,
+        density=structure.density,
+    )
+
+
+def _basic_structure_info(path: Path) -> StructureToolOutput:
+    """pymatgen 不可用时的兜底: 文件基本信息 + POSCAR 原子数探测."""
+    lines = path.read_text(encoding="utf-8", errors="ignore").strip().split("\n")
+    output = StructureToolOutput(
+        warnings=["pymatgen not installed — providing basic file info only"]
+    )
+    is_poscar = path.name.upper().startswith("POSCAR") or path.suffix == ".vasp"
+    with contextlib.suppress(ValueError):
+        if is_poscar and len(lines) >= 6:
+            output.num_atoms = sum(int(x) for x in lines[5].split())
+    return output
 
 
 class StructureTool(HuginnTool):
@@ -248,65 +295,15 @@ class StructureTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"File not found: {path}")
 
         try:
-            # Try to use pymatgen if available
             try:
+                # Try to use pymatgen if available
                 from pymatgen.core import Structure
 
-                structure = Structure.from_file(str(path))
-
-                # Use SpacegroupAnalyzer for robust symmetry detection.
-                # The raw get_space_group_info() can misidentify spacegroups
-                # when the cell is in a non-standard setting.
-                spacegroup = None
-                try:
-                    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-
-                    sga = SpacegroupAnalyzer(structure)
-                    spacegroup = sga.get_space_group_symbol()
-                except Exception:
-                    # Fall back to direct method if analyzer fails
-                    if hasattr(structure, "get_space_group_info"):
-                        spacegroup = structure.get_space_group_info()[0]
-
-                output = StructureToolOutput(
-                    formula=structure.formula,
-                    spacegroup=spacegroup,
-                    lattice_params={
-                        "a": structure.lattice.a,
-                        "b": structure.lattice.b,
-                        "c": structure.lattice.c,
-                        "alpha": structure.lattice.alpha,
-                        "beta": structure.lattice.beta,
-                        "gamma": structure.lattice.gamma,
-                    },
-                    num_atoms=len(structure),
-                    volume=structure.volume,
-                    density=structure.density,
-                )
-
-                return ToolResult(data=output.model_dump(), success=True)
-
+                output = _output_from_pymatgen(Structure.from_file(str(path)))
             except ImportError:
                 # Fallback: basic file info
-                content = path.read_text(encoding="utf-8", errors="ignore")
-                lines = content.strip().split("\n")
-
-                output = StructureToolOutput(
-                    warnings=["pymatgen not installed — providing basic file info only"]
-                )
-
-                # Simple POSCAR detection
-                if (
-                    path.name.upper().startswith("POSCAR") or path.suffix == ".vasp"
-                ) and len(lines) >= 6:
-                    try:
-                        num_atoms = sum(int(x) for x in lines[5].split())
-                        output.num_atoms = num_atoms
-                    except ValueError:
-                        pass
-
-                return ToolResult(data=output.model_dump(), success=True)
-
+                output = _basic_structure_info(path)
+            return ToolResult(data=output.model_dump(), success=True)
         except Exception as e:
             return ToolResult(
                 data=None, success=False, error=f"Failed to parse structure: {e}"

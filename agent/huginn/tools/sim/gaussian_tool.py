@@ -34,6 +34,23 @@ _GAUSSIAN_KEYWORD_MAP = {
 }
 
 
+def _parse_route_tokens(rest: str) -> dict[str, Any]:
+    """把 route 行按空白切分成 key=value / method/basis / 裸关键字."""
+    params: dict[str, Any] = {}
+    for token in rest.split():
+        if "=" in token:
+            key, val = token.split("=", 1)
+            params[key.lower()] = val.strip("()")
+        elif "/" in token:
+            parts = token.split("/")
+            params["method"] = parts[0]
+            if len(parts) > 1:
+                params["basis"] = parts[1]
+        else:
+            params[token.lower()] = True
+    return params
+
+
 class GaussianToolInput(BaseModel):
     action: Literal["sp", "opt", "freq", "parse"] = Field(
         ...,
@@ -340,28 +357,16 @@ class GaussianTool(HuginnTool):
 
     def _read_route_params(self, gjf_path: Path) -> dict[str, Any]:
         """Parse the route line (starts with #) into a keyword dict."""
-        params: dict[str, Any] = {}
         try:
             for line in gjf_path.read_text(encoding="utf-8").splitlines():
                 s = line.strip()
                 if s.startswith("#"):
                     # strip leading # and print-level letter (N/T/P)
                     rest = re.sub(r"^#+[nNtTpP]?\s*", "", s)
-                    for token in rest.split():
-                        if "=" in token:
-                            key, val = token.split("=", 1)
-                            params[key.lower()] = val.strip("()")
-                        elif "/" in token:
-                            parts = token.split("/")
-                            params["method"] = parts[0]
-                            if len(parts) > 1:
-                                params["basis"] = parts[1]
-                        else:
-                            params[token.lower()] = True
-                    break
+                    return _parse_route_tokens(rest)
         except Exception:  # 防御: 参数读取失败返回空配置
             logger.debug("read text failed", exc_info=True)
-        return params
+        return {}
 
     def _apply_route_overrides(self, gjf_path: Path, overrides: dict) -> None:
         """Append or replace keywords in the route section."""

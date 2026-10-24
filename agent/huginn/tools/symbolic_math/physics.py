@@ -489,318 +489,332 @@ def unified(args: SymbolicMathInput) -> ToolResult:
     # 注意: 不要在此导入 solve_and_plot —— 它经 huginn.unified.__getattr__
     # 惰性加载, 会触发 matplotlib 导入. 仅在 target == "solve_and_plot" 分支内
     # 再按需导入, 保证无 matplotlib 环境下其他 target 可正常使用.
-    from huginn.unified import derive_equations, discretize, solve
-    from huginn.unified.bridge import (
-        ConstitutiveModel,
-        cauchy_born_elasticity,
-        dft_potential_to_md,
-        md_stress_to_continuum,
-    )
-    from huginn.unified.models import get_model, list_models
-
     target = (args.target or "derive").lower()
-
     if target == "list":
+        from huginn.unified.models import list_models
+
         return ToolResult(data={"models": list_models()}, success=True)
-
     if target == "derive":
-        model_name = args.expression
-        if not model_name:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="expression must be a unified model name for target=derive",
-            )
-        factory = get_model(model_name)
-        if factory is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
-            )
-        problem = factory()
-        result = derive_equations(problem)
-
-        def _serialize(obj: Any) -> Any:
-            if isinstance(obj, dict):
-                return {k: _serialize(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [_serialize(v) for v in obj]
-            if hasattr(obj, "lhs") and hasattr(obj, "rhs"):  # Eq
-                return {"lhs": str(obj.lhs), "rhs": str(obj.rhs)}
-            return str(obj)
-
-        equations = _serialize(result.get("equations", {}))
-        energy_expr = None
-        energy_latex = None
-        if problem.energy is not None:
-            energy_expr = str(problem.energy.expression)
-            energy_latex = sp.latex(problem.energy.expression)
-
-        return ToolResult(
-            data={
-                "model": model_name,
-                "principle": result.get("principle"),
-                "energy_expression": energy_expr,
-                "energy_latex": energy_latex,
-                "equations": equations,
-            },
-            success=True,
-        )
-
+        return _unified_derive(args)
     if target == "bridge":
-        bridge_name = args.expression
-        if not bridge_name:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="expression must be a bridge name for target=bridge",
-            )
-        bridge_name = bridge_name.lower().replace("-", "_")
-
-        if bridge_name == "dft_to_md":
-            from huginn.unified.models import one_d_kohn_sham_dft
-
-            dft_problem = one_d_kohn_sham_dft()
-            bridge_result = dft_potential_to_md(dft_problem)
-            potential = bridge_result.get("potential")
-            return ToolResult(
-                data={
-                    "bridge": "dft_to_md",
-                    "potential_name": potential.name if potential else None,
-                    "parameters": potential.parameters if potential else {},
-                },
-                success=True,
-            )
-
-        if bridge_name == "cauchy_born":
-            potential_expr = args.free_energy or args.expression
-            if not potential_expr:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="For cauchy-born bridge, free_energy must be the potential expression",
-                )
-            sym_dict = {s: sp.Symbol(s) for s in args.symbols}
-            sym_dict.update(
-                {
-                    "sin": sp.sin,
-                    "cos": sp.cos,
-                    "tan": sp.tan,
-                    "exp": sp.exp,
-                    "log": sp.log,
-                    "sqrt": sp.sqrt,
-                    "pi": sp.pi,
-                }
-            )
-            try:
-                expr = sp.sympify(potential_expr, locals=sym_dict)
-            except Exception as e:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Failed to parse potential expression: {e}",
-                )
-            potential = ConstitutiveModel(
-                name="user_potential",
-                expression=expr,
-                parameters={
-                    s: str(sym_dict[s]) for s in args.symbols if s in sym_dict
-                },
-            )
-            bridge_result = cauchy_born_elasticity(potential)
-            return ToolResult(
-                data={
-                    "bridge": "cauchy_born",
-                    "result": {k: str(v) for k, v in bridge_result.items()},
-                },
-                success=True,
-            )
-
-        if bridge_name == "md_to_stress":
-            bridge_result = md_stress_to_continuum()
-            return ToolResult(
-                data={
-                    "bridge": "md_to_stress",
-                    "result": {k: str(v) for k, v in bridge_result.items()},
-                },
-                success=True,
-            )
-
-        if bridge_name == "md_to_elasticity":
-            # cauchy_born 的别名, 用原子对势
-            potential_expr = args.free_energy or args.expression
-            if not args.symbols or "r" not in args.symbols or not potential_expr:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="md_to_elasticity requires symbols including 'r' and free_energy containing the potential expression",
-                )
-            sym_dict = {s: sp.Symbol(s) for s in args.symbols}
-            sym_dict.update(
-                {
-                    "sin": sp.sin,
-                    "cos": sp.cos,
-                    "tan": sp.tan,
-                    "exp": sp.exp,
-                    "log": sp.log,
-                    "sqrt": sp.sqrt,
-                    "pi": sp.pi,
-                }
-            )
-            try:
-                expr = sp.sympify(potential_expr, locals=sym_dict)
-            except Exception as e:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Failed to parse potential expression: {e}",
-                )
-            potential = ConstitutiveModel(
-                name="user_pair_potential",
-                expression=expr,
-                parameters={
-                    s: str(sym_dict[s]) for s in args.symbols if s in sym_dict
-                },
-            )
-            bridge_result = cauchy_born_elasticity(potential)
-            return ToolResult(
-                data={
-                    "bridge": "md_to_elasticity",
-                    "result": {k: str(v) for k, v in bridge_result.items()},
-                },
-                success=True,
-            )
-
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"Unknown bridge: {bridge_name}. Supported: dft_to_md, md_to_stress, md_to_elasticity",
-        )
-
+        return _unified_bridge(args)
     if target == "discretize":
-        model_name = args.expression
-        if not model_name:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="expression must be a unified model name for target=discretize",
-            )
-        factory = get_model(model_name)
-        if factory is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
-            )
-        problem = factory()
-        method = (args.variable or "fem").lower()
-        n = args.order if args.order >= 1 else 10
-        try:
-            disc = discretize(problem, method=method, n=n)
-        except Exception as e:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Discretization failed: {e}",
-            )
-        return ToolResult(
-            data={
-                "model": model_name,
-                "method": disc["method"],
-                "n": n,
-                "n_dof": disc["n_dof"],
-                "stiffness_matrix": disc["stiffness_matrix"],
-                "load_vector": disc["load_vector"],
-                "mesh": disc["mesh"],
-            },
-            success=True,
-        )
-
+        return _unified_discretize(args)
     if target == "solve":
-        model_name = args.expression
-        if not model_name:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="expression must be a unified model name for target=solve",
-            )
-        factory = get_model(model_name)
-        if factory is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
-            )
-        problem = factory()
-        method = (args.variable or "fem").lower()
-        n = args.order if args.order >= 1 else 10
-        try:
-            sol = solve(problem, method=method, n=n)
-        except Exception as e:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Solve failed: {e}",
-            )
-        return ToolResult(
-            data={
-                "model": model_name,
-                "method": sol["method"],
-                "n": n,
-                "n_dof": sol["n_dof"],
-                "mesh": sol["mesh"],
-                "solution": sol["solution"],
-                "residual": sol["residual"],
-            },
-            success=True,
-        )
-
+        return _unified_solve(args)
     if target == "solve_and_plot":
-        model_name = args.expression
-        if not model_name:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="expression must be a unified model name for target=solve_and_plot",
-            )
-        factory = get_model(model_name)
-        if factory is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
-            )
-        problem = factory()
-        method = (args.variable or "fem").lower()
-        n = args.order if args.order >= 1 else 10
-        output_path = args.output_path or "unified_solution.png"
-        try:
-            from huginn.unified import solve_and_plot  # 惰性: 触发 matplotlib
-
-            sol = solve_and_plot(
-                problem, method=method, n=n, output_path=output_path
-            )
-        except Exception as e:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"solve_and_plot failed: {e}",
-            )
-        return ToolResult(
-            data={
-                "model": model_name,
-                "method": sol["method"],
-                "n": n,
-                "plot_path": sol["plot_path"],
-                "n_dof": sol["n_dof"],
-                "residual": sol["residual"],
-            },
-            success=True,
-        )
-
+        return _unified_solve_and_plot(args)
     return ToolResult(
         data=None,
         success=False,
-        error=f"Unknown unified target: {target}. Supported: list, derive, bridge, discretize, solve, solve_and_plot",
+        error=(
+            f"Unknown unified target: {target}. "
+            "Supported: list, derive, bridge, discretize, solve, solve_and_plot"
+        ),
+    )
+
+
+def _serialize_unified(obj: Any) -> Any:
+    """把推导结果递归转成可 JSON 序列化的结构 (sympy Eq → lhs/rhs)."""
+    if isinstance(obj, dict):
+        return {k: _serialize_unified(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_serialize_unified(v) for v in obj]
+    if hasattr(obj, "lhs") and hasattr(obj, "rhs"):  # Eq
+        return {"lhs": str(obj.lhs), "rhs": str(obj.rhs)}
+    return str(obj)
+
+
+def _unified_load_problem(model_name: str) -> tuple[Any, ToolResult | None]:
+    """按名称取 unified 模型实例; 未知模型返回 (None, 错误结果)."""
+    from huginn.unified.models import get_model, list_models
+
+    factory = get_model(model_name)
+    if factory is None:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error=(
+                f"Unknown unified model: {model_name}. "
+                f"Available: {', '.join(list_models())}"
+            ),
+        )
+    return factory(), None
+
+
+def _unified_require_model(
+    args: SymbolicMathInput, target: str,
+) -> tuple[Any, ToolResult | None]:
+    """target 需要 expression 是模型名: 校验非空并加载模型."""
+    model_name = args.expression
+    if not model_name:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error=f"expression must be a unified model name for target={target}",
+        )
+    return _unified_load_problem(model_name)
+
+
+def _unified_derive(args: SymbolicMathInput) -> ToolResult:
+    """target=derive: 从命名模型推导控制方程 (含能量表达式)."""
+    from huginn.unified import derive_equations
+
+    problem, error = _unified_require_model(args, "derive")
+    if error is not None:
+        return error
+    result = derive_equations(problem)
+    energy_expr = None
+    energy_latex = None
+    if problem.energy is not None:
+        energy_expr = str(problem.energy.expression)
+        energy_latex = sp.latex(problem.energy.expression)
+    return ToolResult(
+        data={
+            "model": args.expression,
+            "principle": result.get("principle"),
+            "energy_expression": energy_expr,
+            "energy_latex": energy_latex,
+            "equations": _serialize_unified(result.get("equations", {})),
+        },
+        success=True,
+    )
+
+
+def _unified_bridge(args: SymbolicMathInput) -> ToolResult:
+    """target=bridge: 按桥名分发多尺度桥."""
+    bridge_name = args.expression
+    if not bridge_name:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="expression must be a bridge name for target=bridge",
+        )
+    bridge_name = bridge_name.lower().replace("-", "_")
+    handlers = {
+        "dft_to_md": _bridge_dft_to_md,
+        "cauchy_born": _bridge_cauchy_born,
+        "md_to_stress": _bridge_md_to_stress,
+        "md_to_elasticity": _bridge_md_to_elasticity,
+    }
+    handler = handlers.get(bridge_name)
+    if handler is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=(
+                f"Unknown bridge: {bridge_name}. "
+                "Supported: dft_to_md, md_to_stress, md_to_elasticity"
+            ),
+        )
+    return handler(args)
+
+
+def _bridge_dft_to_md(_args: SymbolicMathInput) -> ToolResult:
+    """dft_to_md: 一维 Kohn-Sham DFT 势 → MD 势."""
+    from huginn.unified.bridge import dft_potential_to_md
+    from huginn.unified.models import one_d_kohn_sham_dft
+
+    bridge_result = dft_potential_to_md(one_d_kohn_sham_dft())
+    potential = bridge_result.get("potential")
+    return ToolResult(
+        data={
+            "bridge": "dft_to_md",
+            "potential_name": potential.name if potential else None,
+            "parameters": potential.parameters if potential else {},
+        },
+        success=True,
+    )
+
+
+def _unified_parse_potential(
+    potential_expr: str, symbols: list[str],
+) -> tuple[Any, dict[str, Any], str | None]:
+    """把势函数表达式 sympify; 返回 (expr, sym_dict, 错误信息)."""
+    sym_dict: dict[str, Any] = {s: sp.Symbol(s) for s in symbols}
+    sym_dict.update(
+        {
+            "sin": sp.sin,
+            "cos": sp.cos,
+            "tan": sp.tan,
+            "exp": sp.exp,
+            "log": sp.log,
+            "sqrt": sp.sqrt,
+            "pi": sp.pi,
+        }
+    )
+    try:
+        expr = sp.sympify(potential_expr, locals=sym_dict)
+    except Exception as e:
+        return None, sym_dict, f"Failed to parse potential expression: {e}"
+    return expr, sym_dict, None
+
+
+def _unified_constitutive(
+    expr: Any, sym_dict: dict[str, Any], symbols: list[str], name: str,
+) -> Any:
+    """用解析后的势函数构造本构模型."""
+    from huginn.unified.bridge import ConstitutiveModel
+
+    return ConstitutiveModel(
+        name=name,
+        expression=expr,
+        parameters={s: str(sym_dict[s]) for s in symbols if s in sym_dict},
+    )
+
+
+def _bridge_cauchy_born(args: SymbolicMathInput) -> ToolResult:
+    """cauchy_born: 用户势表达式 → Cauchy-Born 弹性常数."""
+    from huginn.unified.bridge import cauchy_born_elasticity
+
+    potential_expr = args.free_energy or args.expression
+    if not potential_expr:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="For cauchy-born bridge, free_energy must be the potential expression",
+        )
+    expr, sym_dict, error = _unified_parse_potential(potential_expr, args.symbols)
+    if error is not None:
+        return ToolResult(data=None, success=False, error=error)
+    potential = _unified_constitutive(expr, sym_dict, args.symbols, "user_potential")
+    bridge_result = cauchy_born_elasticity(potential)
+    return ToolResult(
+        data={
+            "bridge": "cauchy_born",
+            "result": {k: str(v) for k, v in bridge_result.items()},
+        },
+        success=True,
+    )
+
+
+def _bridge_md_to_stress(_args: SymbolicMathInput) -> ToolResult:
+    """md_to_stress: MD 应力 → 连续介质应力."""
+    from huginn.unified.bridge import md_stress_to_continuum
+
+    bridge_result = md_stress_to_continuum()
+    return ToolResult(
+        data={
+            "bridge": "md_to_stress",
+            "result": {k: str(v) for k, v in bridge_result.items()},
+        },
+        success=True,
+    )
+
+
+def _bridge_md_to_elasticity(args: SymbolicMathInput) -> ToolResult:
+    """md_to_elasticity: cauchy_born 的别名, 用原子对势."""
+    from huginn.unified.bridge import cauchy_born_elasticity
+
+    potential_expr = args.free_energy or args.expression
+    if not args.symbols or "r" not in args.symbols or not potential_expr:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=(
+                "md_to_elasticity requires symbols including 'r' and "
+                "free_energy containing the potential expression"
+            ),
+        )
+    expr, sym_dict, error = _unified_parse_potential(potential_expr, args.symbols)
+    if error is not None:
+        return ToolResult(data=None, success=False, error=error)
+    potential = _unified_constitutive(
+        expr, sym_dict, args.symbols, "user_pair_potential")
+    bridge_result = cauchy_born_elasticity(potential)
+    return ToolResult(
+        data={
+            "bridge": "md_to_elasticity",
+            "result": {k: str(v) for k, v in bridge_result.items()},
+        },
+        success=True,
+    )
+
+
+def _unified_discretize(args: SymbolicMathInput) -> ToolResult:
+    """target=discretize: 模型 → 刚度矩阵/载荷向量/网格."""
+    from huginn.unified import discretize
+
+    problem, error = _unified_require_model(args, "discretize")
+    if error is not None:
+        return error
+    method = (args.variable or "fem").lower()
+    n = args.order if args.order >= 1 else 10
+    try:
+        disc = discretize(problem, method=method, n=n)
+    except Exception as e:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Discretization failed: {e}",
+        )
+    return ToolResult(
+        data={
+            "model": args.expression,
+            "method": disc["method"],
+            "n": n,
+            "n_dof": disc["n_dof"],
+            "stiffness_matrix": disc["stiffness_matrix"],
+            "load_vector": disc["load_vector"],
+            "mesh": disc["mesh"],
+        },
+        success=True,
+    )
+
+
+def _unified_solve(args: SymbolicMathInput) -> ToolResult:
+    """target=solve: 模型 → 离散求解 (解 + 残差)."""
+    from huginn.unified import solve
+
+    problem, error = _unified_require_model(args, "solve")
+    if error is not None:
+        return error
+    method = (args.variable or "fem").lower()
+    n = args.order if args.order >= 1 else 10
+    try:
+        sol = solve(problem, method=method, n=n)
+    except Exception as e:
+        return ToolResult(data=None, success=False, error=f"Solve failed: {e}")
+    return ToolResult(
+        data={
+            "model": args.expression,
+            "method": sol["method"],
+            "n": n,
+            "n_dof": sol["n_dof"],
+            "mesh": sol["mesh"],
+            "solution": sol["solution"],
+            "residual": sol["residual"],
+        },
+        success=True,
+    )
+
+
+def _unified_solve_and_plot(args: SymbolicMathInput) -> ToolResult:
+    """target=solve_and_plot: 求解并落图 (惰性导入 matplotlib)."""
+    problem, error = _unified_require_model(args, "solve_and_plot")
+    if error is not None:
+        return error
+    method = (args.variable or "fem").lower()
+    n = args.order if args.order >= 1 else 10
+    output_path = args.output_path or "unified_solution.png"
+    try:
+        from huginn.unified import solve_and_plot  # 惰性: 触发 matplotlib
+
+        sol = solve_and_plot(problem, method=method, n=n, output_path=output_path)
+    except Exception as e:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"solve_and_plot failed: {e}",
+        )
+    return ToolResult(
+        data={
+            "model": args.expression,
+            "method": sol["method"],
+            "n": n,
+            "plot_path": sol["plot_path"],
+            "n_dof": sol["n_dof"],
+            "residual": sol["residual"],
+        },
+        success=True,
     )

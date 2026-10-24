@@ -22,6 +22,24 @@ from huginn.tools.sim._packing import load_packing_objects
 logger = logging.getLogger(__name__)
 
 
+def _parse_table(lines: list[str]) -> tuple[list[str], list[dict[str, Any]]]:
+    """解析首行表头 + 逗号/空格分隔的数值表."""
+    header = lines[0].replace(",", " ").split()
+    rows: list[dict[str, Any]] = []
+    for line in lines[1:]:
+        parts = line.replace(",", " ").split()
+        if len(parts) < len(header):
+            continue
+        row: dict[str, Any] = {}
+        for h, p in zip(header, parts):
+            try:
+                row[h] = float(p)
+            except ValueError:
+                row[h] = p
+        rows.append(row)
+    return header, rows
+
+
 class BoundaryCondition(BaseModel):
     type: Literal["fixed", "force", "pressure", "temperature", "velocity"] = Field(
         ..., description="Boundary condition type"
@@ -467,18 +485,7 @@ public class {prefix} {{
                 continue
 
             # Simple CSV/space-delimited parser
-            header = lines[0].replace(",", " ").split()
-            rows = []
-            for line in lines[1:]:
-                parts = line.replace(",", " ").split()
-                if len(parts) >= len(header):
-                    row = {}
-                    for h, p in zip(header, parts):
-                        try:
-                            row[h] = float(p)
-                        except ValueError:
-                            row[h] = p
-                    rows.append(row)
+            header, rows = _parse_table(lines)
 
             parsed[file_name] = {
                 "header": header,

@@ -272,6 +272,110 @@ def _snapshot_from_record(rec: dict) -> FileSnapshot:
     )
 
 
+# ── discard_layer 的分步实现 ─────────────────────────────────────
+
+
+def _discard_delete_new_files(
+    ws: Path, entries: dict[str, dict], cur_files_map: dict[str, Path]
+) -> list[str]:
+    """删掉建层后新建的文件 (清单里没有的), 返回受影响的相对路径."""
+    affected: list[str] = []
+    for rel in cur_files_map:
+        if rel in entries:
+            continue
+        try:
+            (ws / rel).unlink()
+            affected.append(rel)
+        except OSError as exc:
+            logger.warning("discard delete %s failed: %s", rel, exc)
+    return affected
+
+
+def _discard_restore_mode(
+    target: Path, rel: str, mode: object, affected: list[str]
+) -> list[str]:
+    """按清单校权限位; 与内容恢复共用 affected 列表 (幂等)."""
+    if not mode:
+        return affected
+    try:
+        if stat.S_IMODE(target.stat().st_mode) != mode:
+            os.chmod(target, mode)
+            if rel not in affected:
+                affected.append(rel)
+    except OSError:
+        logger.debug("discard chmod %s failed", rel, exc_info=True)
+    return affected
+
+
+def _discard_restore_entry(
+    ws: Path, rel: str, info: dict, backup_dir: Path
+) -> list[str]:
+    """按清单恢复单个路径, 返回受影响的相对路径.
+
+    符号链接按目标重建; 内容已和清单一致则跳过回写 (让 discard 幂等),
+    未备份内容 (超过 max_file_bytes) 的文件记日志跳过, 不动现场.
+    """
+    affected: list[str] = []
+    target = ws / rel
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if info.get("kind") == "symlink":
+            want = info.get("target")
+            if want is None:
+                return affected
+            if target.is_symlink() and os.readlink(target) == want:
+                return affected
+            target.unlink(missing_ok=True)
+            os.symlink(want, target)
+            return [rel]
+        if not info.get("backed_up"):
+            logger.info("discard skip %s: content not backed up", rel)
+            return affected
+        want_hash = info.get("hash")
+        same = (
+            not target.is_symlink()
+            and target.is_file()
+            and bool(want_hash)
+            and _hash_file(target) == want_hash
+        )
+        if not same:
+            src = backup_dir / _safe_backup_name(rel)
+            if not src.exists():
+                logger.info("discard skip %s: backup missing", rel)
+                return affected
+            shutil.copyfile(src, target)
+            affected.append(rel)
+        return _discard_restore_mode(target, rel, info.get("mode"), affected)
+    except OSError as exc:
+        logger.warning("discard restore %s failed: %s", rel, exc)
+        return affected
+
+
+def _discard_restore_all(
+    ws: Path, entries: dict[str, dict], backup_dir: Path
+) -> list[str]:
+    """按清单逐个恢复, 汇总受影响的相对路径."""
+    affected: list[str] = []
+    for rel, info in entries.items():
+        affected.extend(_discard_restore_entry(ws, rel, info, backup_dir))
+    return affected
+
+
+def _discard_remove_new_dirs(
+    ws: Path, cur_dirs: list[str], layer_dirs: set[str]
+) -> list[str]:
+    """清掉建层后新建的目录 (最深优先; rmdir 只删空目录)."""
+    affected: list[str] = []
+    new_dirs = set(cur_dirs) - layer_dirs
+    for rel in sorted(new_dirs, key=lambda p: p.count("/"), reverse=True):
+        try:
+            (ws / rel).rmdir()
+            affected.append(rel)
+        except OSError:
+            logger.debug("discard: dir not empty, skip %s", rel)
+    return affected
+
+
 # ── 管理器 ───────────────────────────────────────────────────────
 
 
@@ -712,72 +816,9 @@ class SnapshotManager:
         backup_dir = self._layer_files_dir(layer_id)
 
         cur_dirs, cur_files = _walk_tree(ws)
-        cur_files_map = dict(cur_files)
-        affected: list[str] = []
-
-        # 1) 删掉建层后新建的文件 (清单里没有的)
-        for rel in cur_files_map:
-            if rel in entries:
-                continue
-            try:
-                (ws / rel).unlink()
-                affected.append(rel)
-            except OSError as exc:
-                logger.warning("discard delete %s failed: %s", rel, exc)
-
-        # 2) 按清单恢复
-        for rel, info in entries.items():
-            target = ws / rel
-            try:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if info.get("kind") == "symlink":
-                    want = info.get("target")
-                    if want is None:
-                        continue
-                    if target.is_symlink() and os.readlink(target) == want:
-                        continue
-                    target.unlink(missing_ok=True)
-                    os.symlink(want, target)
-                    affected.append(rel)
-                    continue
-                if not info.get("backed_up"):
-                    logger.info("discard skip %s: content not backed up", rel)
-                    continue
-                # 内容已经和清单一致就不重写 (让 discard 幂等); 权限位仍要校.
-                want_hash = info.get("hash")
-                same = (
-                    not target.is_symlink()
-                    and target.is_file()
-                    and bool(want_hash)
-                    and _hash_file(target) == want_hash
-                )
-                if not same:
-                    src = backup_dir / _safe_backup_name(rel)
-                    if not src.exists():
-                        logger.info("discard skip %s: backup missing", rel)
-                        continue
-                    shutil.copyfile(src, target)
-                    affected.append(rel)
-                mode = info.get("mode")
-                if mode:
-                    try:
-                        if stat.S_IMODE(target.stat().st_mode) != mode:
-                            os.chmod(target, mode)
-                            if rel not in affected:
-                                affected.append(rel)
-                    except OSError:
-                        logger.debug("discard chmod %s failed", rel, exc_info=True)
-            except OSError as exc:
-                logger.warning("discard restore %s failed: %s", rel, exc)
-
-        # 3) 清掉建层后新建的目录 (最深优先; rmdir 只删空目录, 非空自动跳过)
-        new_dirs = set(cur_dirs) - layer_dirs
-        for rel in sorted(new_dirs, key=lambda p: p.count("/"), reverse=True):
-            try:
-                (ws / rel).rmdir()
-                affected.append(rel)
-            except OSError:
-                logger.debug("discard: dir not empty, skip %s", rel)
+        affected = _discard_delete_new_files(ws, entries, dict(cur_files))
+        affected += _discard_restore_all(ws, entries, backup_dir)
+        affected += _discard_remove_new_dirs(ws, cur_dirs, layer_dirs)
 
         logger.info("layer discard %s: %d paths", layer_id, len(affected))
         return affected

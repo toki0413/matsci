@@ -392,6 +392,20 @@ class ModelTeam:
             return ""
         return await self._run_member(member, task, ctx, traces, run_id)
 
+    async def _publish_member_tool_calls(self, base: dict[str, Any], tcs: Any) -> None:
+        """把一个 state 里的全部 tool_call 逐条发布成 team.member.tool 事件."""
+        for tc in tcs:
+            if isinstance(tc, dict):
+                name = tc.get("name") or (tc.get("function") or {}).get("name", "?")
+                args = tc.get("args") or (tc.get("function") or {}).get("arguments", "")
+            else:
+                name = getattr(tc, "name", "?")
+                args = ""
+            await self._publish(
+                "team.member.tool",
+                {**base, "tool": str(name), "args": str(args)[:300]},
+            )
+
     async def _run_member(
         self,
         member: TeamMember,

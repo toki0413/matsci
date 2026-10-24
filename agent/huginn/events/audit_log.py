@@ -152,6 +152,56 @@ def write_sharded_jsonl(state: _ShardState, record: dict, iter_n: int | None) ->
         logger.debug("sharded jsonl write failed (iter=%s)", iter_n, exc_info=True)
 
 
+def _shard_paths(state: _ShardState) -> list[Path]:
+    """列出本次扫描要读的分片文件 (归档 .gz 在前, 当前分片在后)."""
+    paths: list[Path] = []
+    if state.task_id:
+        arch_dir = state.base_dir / "archive" / state.task_id
+        if arch_dir.exists():
+            paths.extend(sorted(arch_dir.glob(f"{state.filename_prefix}_*_*.jsonl.gz")))
+        if state.current_shard_path and state.current_shard_path.exists():
+            paths.append(state.current_shard_path)
+        return paths
+    single = state.default_path or (state.base_dir / f"{state.filename_prefix}.jsonl")
+    if single.exists():
+        paths.append(single)
+    return paths
+
+
+def _record_iteration(rec: dict) -> int | None:
+    """取记录的 iteration 字段并转 int, 缺失或非法返回 None."""
+    it = (rec.get("data") or {}).get("iteration")
+    if it is None:
+        it = rec.get("iteration")
+    if it is None:
+        return None
+    try:
+        return int(it)
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+
+def _iter_records_in_range(p: Path, start_iter: int, end_iter: int) -> list[dict]:
+    """读一个分片文件, 返回 iteration 落在 [start_iter, end_iter] 的记录."""
+    out: list[dict] = []
+    opener = gzip.open if p.suffix == ".gz" else open
+    with opener(p, "rt", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+            it = _record_iteration(rec)
+            if it is not None and start_iter <= it <= end_iter:
+                out.append(rec)
+    return out
+
+
 def shard_iter_range(
     state: _ShardState,
     start_iter: int,
@@ -164,44 +214,9 @@ def shard_iter_range(
     无关, 不该出现在 iter_range 结果里.
     """
     records: list[dict] = []
-    paths: list[Path] = []
-    if state.task_id:
-        arch_dir = state.base_dir / "archive" / state.task_id
-        if arch_dir.exists():
-            paths.extend(sorted(arch_dir.glob(f"{state.filename_prefix}_*_*.jsonl.gz")))
-        if state.current_shard_path and state.current_shard_path.exists():
-            paths.append(state.current_shard_path)
-    else:
-        single = state.default_path or (state.base_dir / f"{state.filename_prefix}.jsonl")
-        if single.exists():
-            paths.append(single)
-
-    for p in paths:
+    for p in _shard_paths(state):
         try:
-            with (gzip.open(p, "rt", encoding="utf-8")
-                      if p.suffix == ".gz"
-                      else open(p, encoding="utf-8")) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                    it = (rec.get("data") or {}).get("iteration")
-                    if it is None:
-                        it = rec.get("iteration")
-                    if it is None:
-                        continue
-                    try:
-                        it = int(it)
-                    except (TypeError, ValueError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                    if start_iter <= it <= end_iter:
-                        records.append(rec)
+            records.extend(_iter_records_in_range(p, start_iter, end_iter))
         except Exception:
             logger.debug("shard scan failed for %s", p, exc_info=True)
             continue

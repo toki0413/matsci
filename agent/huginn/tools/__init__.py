@@ -223,6 +223,22 @@ def _make_tool_kwargs(resolved_config, executor):
     return _tool_kwargs
 
 
+def _inject_rag_kb(cls: type, kwargs: dict[str, Any]) -> None:
+    """RAGTool 若支持 kb 参数, 就把 server_context 的 KB 共用给它."""
+    import inspect
+
+    if "kb" not in inspect.signature(cls.__init__).parameters:
+        return
+    try:
+        from huginn import server_context as _sc
+
+        _ctx = _sc._server_context
+        if _ctx is not None and _ctx.kb is not None:
+            kwargs["kb"] = _ctx.kb
+    except Exception:
+        logger.debug("tool kwargs failed", exc_info=True)
+
+
 def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
     """Import and register a list of (module, class) tuples."""
     import importlib
@@ -238,18 +254,7 @@ def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
 
             # RAGTool shares the KB collection if available
             if class_name == "RAGTool":
-                import inspect
-
-                sig = inspect.signature(cls.__init__)
-                if "kb" in sig.parameters:
-                    try:
-                        from huginn import server_context as _sc
-
-                        _ctx = _sc._server_context
-                        if _ctx is not None and _ctx.kb is not None:
-                            kwargs["kb"] = _ctx.kb
-                    except Exception:
-                        logger.debug("tool kwargs failed", exc_info=True)
+                _inject_rag_kb(cls, kwargs)
 
             ToolRegistry.register(cls(**kwargs))
             registered.append(class_name)

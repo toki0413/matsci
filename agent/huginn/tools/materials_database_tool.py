@@ -35,6 +35,50 @@ def _formula_to_elements(formula: str) -> list[str]:
     return symbols
 
 
+def _aflow_float_or_str(v: str) -> float | str:
+    """能转 float 就转, 否则原样返回 (AFLOW 字段可能是 'N/A')."""
+    try:
+        return float(v)
+    except ValueError:
+        return v
+
+
+def _aflow_text_record(block: str) -> dict[str, Any]:
+    """解析一个 AFLUX `>>>` 文本块, 空块返回 {}."""
+    rec: dict[str, Any] = {}
+    for line in block.strip().splitlines():
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if k in ("compound", "formula"):
+            rec["formula"] = v
+        elif k in ("aflow_id", "auid"):
+            rec["entry_id"] = v
+        elif k in ("spacegroup", "sg"):
+            rec["spacegroup"] = v
+        elif k == "Egap":
+            rec["band_gap"] = _aflow_float_or_str(v)
+        elif k in ("enthalpy", "enthalpy_atom"):
+            rec["energy"] = _aflow_float_or_str(v)
+    if rec:
+        rec["source"] = "aflow"
+    return rec
+
+
+def _aflow_item_record(item: dict[str, Any]) -> dict[str, Any]:
+    """把一个 AFLOW JSON 记录归一成内部字段名."""
+    return {
+        "formula": item.get("compound") or item.get("formula"),
+        "entry_id": item.get("aflow_id") or item.get("auid"),
+        "spacegroup": item.get("spacegroup") or item.get("sg"),
+        "band_gap": item.get("Egap"),
+        "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+        "source": "aflow",
+    }
+
+
 class MaterialsDatabaseInput(BaseModel):
     action: Literal[
         "mp_summary",
@@ -666,54 +710,14 @@ class MaterialsDatabaseTool(HuginnTool):
         """AFLOW responses are heterogeneous: list / dict / AFLUX text."""
         records: list[dict[str, Any]] = []
         if isinstance(raw, str):
-            for block in raw.split(">>>"):
-                rec: dict[str, Any] = {}
-                for line in block.strip().splitlines():
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip()
-                        if k in ("compound", "formula"):
-                            rec["formula"] = v
-                        elif k in ("aflow_id", "auid"):
-                            rec["entry_id"] = v
-                        elif k in ("spacegroup", "sg"):
-                            rec["spacegroup"] = v
-                        elif k == "Egap":
-                            try:
-                                rec["band_gap"] = float(v)
-                            except ValueError:
-                                rec["band_gap"] = v
-                        elif k in ("enthalpy", "enthalpy_atom"):
-                            try:
-                                rec["energy"] = float(v)
-                            except ValueError:
-                                rec["energy"] = v
-                if rec:
-                    rec["source"] = "aflow"
-                    records.append(rec)
+            records = [_aflow_text_record(b) for b in raw.split(">>>")]
+            records = [r for r in records if r]
         elif isinstance(raw, list):
-            for item in raw:
-                if not isinstance(item, dict):
-                    continue
-                records.append({
-                    "formula": item.get("compound") or item.get("formula"),
-                    "entry_id": item.get("aflow_id") or item.get("auid"),
-                    "spacegroup": item.get("spacegroup") or item.get("sg"),
-                    "band_gap": item.get("Egap"),
-                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
-                    "source": "aflow",
-                })
+            records = [_aflow_item_record(i) for i in raw if isinstance(i, dict)]
         elif isinstance(raw, dict) and "data" in raw:
-            for item in raw["data"]:
-                records.append({
-                    "formula": item.get("compound") or item.get("formula"),
-                    "entry_id": item.get("aflow_id") or item.get("auid"),
-                    "spacegroup": item.get("spacegroup") or item.get("sg"),
-                    "band_gap": item.get("Egap"),
-                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
-                    "source": "aflow",
-                })
+            records = [
+                _aflow_item_record(i) for i in raw["data"] if isinstance(i, dict)
+            ]
         return records[:50]
 
     # ── NOMAD ───────────────────────────────────────────────────────

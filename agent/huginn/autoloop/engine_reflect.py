@@ -547,81 +547,117 @@ class EngineReflect:
 
     async def _validate(self, execution_result: Any) -> dict[str, Any]:
         """Validate execution results using benchmarks and constraints."""
-        # H4: reviewer 阈值 + MatWorldBench 白名单 + needs_retry 阈值从 PhaseRegistry extra 取
+        # H4: reviewer 阈值 + MatWorldBench 白名单从 PhaseRegistry extra 取
         from huginn.harness.phase_spec import get_phase_extra
-        _reviewer_threshold = get_phase_extra("_validate", "reviewer_threshold", 0.5)
-        _mwb_categories = get_phase_extra("_validate", "matworldbench_categories", [
+
+        reviewer_threshold = get_phase_extra("_validate", "reviewer_threshold", 0.5)
+        mwb_categories = get_phase_extra("_validate", "matworldbench_categories", [
             "structure", "thermo", "electronic",
         ])
-        _needs_retry_threshold = get_phase_extra("_validate", "needs_retry_threshold", 0.5)
-        results = {
+        _needs_retry_threshold = get_phase_extra(
+            "_validate", "needs_retry_threshold", 0.5
+        )
+        results: dict[str, Any] = {
             "tests_passed": False,
             "constraints_satisfied": False,
             "benchmarks": {},
         }
 
         if isinstance(execution_result, dict):
-            # Extract visual primitives from tool output — the deictic pointers
-            # that let the next iteration's hypothesis/plan reason about data
-            # shape without needing image input (Mirage + Visual Primitives).
-            visual_hint = execution_result.get("_visual_hint")
-            if visual_hint:
-                results["visual_primitives"] = visual_hint
-                self._last_visual_context = visual_hint
+            self._validate_visual_primitives(execution_result, results)
+            await self._validate_physics(execution_result, results)
+        self._validate_collapse(execution_result, results)
+        await self._validate_gather(execution_result, results)
+        await self._validate_math_evidence(execution_result, results)
+        await self._validate_generative_review(
+            execution_result, results, reviewer_threshold
+        )
+        await self._validate_side_checks(execution_result, results)
+        await self._validate_graders(execution_result, results)
+        self._validate_matworld_bench(execution_result, results, mwb_categories)
+        self._validate_prediction_error(execution_result, results)
+        self._validate_effort_floor(execution_result, results)
+        self._detect_repeat_execution(execution_result, results)
+        self._validate_bandit(execution_result, results)
+        self._validate_record_outcome(results)
+        await self._validate_blind_reconstruct(execution_result, results)
+        self._validate_epistemic(execution_result, results)
+        return results
 
-            # 比较性视觉原语: 把本轮结果和上轮做差分, 突出变化.
-            # 峰值位移/新异常/趋势反转 — 这些是 agent 最关心的信号.
-            prev_exec = getattr(self, "_last_execution_result", None)
-            if prev_exec and isinstance(prev_exec.get("result"), dict):
+    def _validate_visual_primitives(
+        self, execution_result: dict, results: dict
+    ) -> None:
+        """视觉原语 + 与上轮结果的比较性原语 (Mirage + Visual Primitives)."""
+        # Extract visual primitives from tool output — the deictic pointers
+        # that let the next iteration's hypothesis/plan reason about data
+        # shape without needing image input.
+        visual_hint = execution_result.get("_visual_hint")
+        if visual_hint:
+            results["visual_primitives"] = visual_hint
+            self._last_visual_context = visual_hint
+
+        # 比较性视觉原语: 把本轮结果和上轮做差分, 突出变化.
+        # 峰值位移/新异常/趋势反转 — 这些是 agent 最关心的信号.
+        prev_exec = getattr(self, "_last_execution_result", None)
+        if not (prev_exec and isinstance(prev_exec.get("result"), dict)):
+            return
+        try:
+            from huginn.tools.visual_hook import extract_comparative_primitives
+
+            comp = extract_comparative_primitives(
+                prev_exec.get("result", {}), execution_result
+            )
+            if comp:
+                results["comparative_primitives"] = comp
+                # 也拼进 visual_context, 下轮 hypothesis 能看到
+                self._last_visual_context = (
+                    f"{self._last_visual_context}\n{comp}".strip()
+                    if self._last_visual_context
+                    else comp
+                )
+        except Exception:  # 防御: 对比基元提取失败跳过
+            logger.debug(
+                "comparative primitives extraction skipped", exc_info=True
+            )
+
+    async def _validate_physics(
+        self, execution_result: dict, results: dict
+    ) -> None:
+        """r_phys 直接取用, 缺失时走 ValidateTool 现算."""
+        r_phys = execution_result.get("r_phys")
+        if r_phys is None:
+            result_type = execution_result.get("result_type")
+            result_data = execution_result.get("result_data")
+            if result_type and result_data:
                 try:
-                    from huginn.tools.visual_hook import extract_comparative_primitives
-
-                    comp = extract_comparative_primitives(
-                        prev_exec.get("result", {}), execution_result
+                    from huginn.tools.validate_tool import (
+                        ValidateTool,
+                        ValidateToolInput,
                     )
-                    if comp:
-                        results["comparative_primitives"] = comp
-                        # 也拼进 visual_context, 下轮 hypothesis 能看到
-                        self._last_visual_context = (
-                            f"{self._last_visual_context}\n{comp}".strip()
-                            if self._last_visual_context
-                            else comp
-                        )
-                except Exception:  # 防御: 对比基元提取失败跳过
-                    logger.debug("comparative primitives extraction skipped", exc_info=True)
 
-            r_phys = execution_result.get("r_phys")
-            if r_phys is None:
-                result_type = execution_result.get("result_type")
-                result_data = execution_result.get("result_data")
-                if result_type and result_data:
-                    try:
-                        from huginn.tools.validate_tool import (
-                            ValidateTool,
-                            ValidateToolInput,
-                        )
+                    validator = ValidateTool()
+                    tool_ctx = ToolContext(
+                        session_id=f"validate_{uuid.uuid4().hex[:8]}",
+                        workspace=str(self.workspace),
+                        config=self.settings,
+                    )
+                    vr = await validator.call(
+                        ValidateToolInput(
+                            result_type=result_type,
+                            result_data=result_data,
+                        ),
+                        tool_ctx,
+                    )
+                    if vr.success and vr.data:
+                        r_phys = vr.data.get("r_phys")
+                        results["physics_validation"] = vr.data
+                except Exception as e:
+                    results["physics_validation_error"] = str(e)
+        if r_phys is not None:
+            results["r_phys"] = r_phys
 
-                        validator = ValidateTool()
-                        tool_ctx = ToolContext(
-                            session_id=f"validate_{uuid.uuid4().hex[:8]}",
-                            workspace=str(self.workspace),
-                            config=self.settings,
-                        )
-                        vr = await validator.call(
-                            ValidateToolInput(
-                                result_type=result_type,
-                                result_data=result_data,
-                            ),
-                            tool_ctx,
-                        )
-                        if vr.success and vr.data:
-                            r_phys = vr.data.get("r_phys")
-                            results["physics_validation"] = vr.data
-                    except Exception as e:
-                        results["physics_validation_error"] = str(e)
-            if r_phys is not None:
-                results["r_phys"] = r_phys
-
+    def _validate_collapse(self, execution_result: Any, results: dict) -> None:
+        """思维坍缩检测."""
         try:
             collapse = self._detect_thinking_collapse(execution_result)
             if collapse:
@@ -629,14 +665,16 @@ class EngineReflect:
         except Exception as e:
             results["thinking_collapse_error"] = str(e)
 
-        # pytest, benchmark, math validation — sync, offload to thread
+    async def _validate_gather(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """pytest / benchmark / math validation 三路并发 (sync 走线程池)."""
         py_test, bench_report, math_val = await asyncio.gather(
             self._run_pytest(),
             self._run_benchmark(),
             self._run_math_validation(execution_result),
             return_exceptions=True,
         )
-
         if isinstance(py_test, dict):
             results.update(py_test)
         elif isinstance(py_test, Exception):
@@ -652,20 +690,24 @@ class EngineReflect:
         elif isinstance(math_val, Exception):
             results["math_validation_error"] = str(math_val)
 
+    async def _validate_math_evidence(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """数学证据收集 (会修改 results, 必须在 generative_verify 之前跑)."""
         try:
             math_ev = await self._collect_math_evidence(
                 execution_result, results.get("math_validation", {})
             )
-            for _k, _v in math_ev.items():
-                results[_k] = _v
+            results.update(math_ev)
         except Exception as e:
             results["math_evidence_error"] = str(e)
 
-        # Conditional verification: run cheap generative_verify first,
-        # only call expensive reviewer critique when score < 0.5.
+    async def _validate_generative_review(
+        self, execution_result: Any, results: dict, reviewer_threshold: float
+    ) -> None:
+        """Conditional verification: 便宜的 generative_verify 先行, 低分才叫 reviewer."""
         # ponytail: _generative_verify 依赖 results (被 math_evidence 修改过),
-        # 不能和 _collect_math_evidence 并行. 但可以和 emergent_complexity/
-        # literature_comparison 并行 — 它们在下面已经 gather 了.
+        # 不能和 _collect_math_evidence 并行.
         gen_verify = None
         try:
             gen_verify = await self._generative_verify(execution_result, results)
@@ -674,26 +716,33 @@ class EngineReflect:
         except Exception as e:
             results["generative_verify_error"] = str(e)
 
-        needs_review = gen_verify is None or gen_verify.get("score", 0.5) < _reviewer_threshold
-        if needs_review:
-            try:
-                reviewer_kb = self._build_kb_text(
-                    query=self._summarize_for_kb(execution_result, results)
-                )
-                critique = await self._llm_chat(
-                    self._build_reviewer_prompt(execution_result, results, reviewer_kb),
-                    persona_name="reviewer",
-                    model=self.verification_model,
-                    # P2-1: 审稿人可查文献/翻记忆/看自己的执行 trace, 不再只凭
-                    # 已拼好的 kb 文本空口批评 (只读工具, 无副作用).
-                    tools=self._resolve_readonly_tools(),
-                )
-                if critique and critique.strip():
-                    results["reviewer_critique"] = critique.strip()
-            except Exception as e:
-                results["reviewer_critique_error"] = str(e)
+        needs_review = (
+            gen_verify is None
+            or gen_verify.get("score", 0.5) < reviewer_threshold
+        )
+        if not needs_review:
+            return
+        try:
+            reviewer_kb = self._build_kb_text(
+                query=self._summarize_for_kb(execution_result, results)
+            )
+            critique = await self._llm_chat(
+                self._build_reviewer_prompt(execution_result, results, reviewer_kb),
+                persona_name="reviewer",
+                model=self.verification_model,
+                # P2-1: 审稿人可查文献/翻记忆/看自己的执行 trace, 不再只凭
+                # 已拼好的 kb 文本空口批评 (只读工具, 无副作用).
+                tools=self._resolve_readonly_tools(),
+            )
+            if critique and critique.strip():
+                results["reviewer_critique"] = critique.strip()
+        except Exception as e:
+            results["reviewer_critique_error"] = str(e)
 
-        # emergent complexity + literature + grader + eval — independent
+    async def _validate_side_checks(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """emergent complexity + literature comparison (独立, 并发)."""
         ec_task = asyncio.create_task(
             self._safe_emergent_complexity(execution_result, results)
         )
@@ -702,11 +751,44 @@ class EngineReflect:
         )
         await asyncio.gather(ec_task, lit_task)
 
+    def _grader_conversation_log(self) -> str | None:
+        """从 memory 取最近对话供 ValidityJudge post-hoc 审查; 失败返回 None."""
+        try:
+            recent = self.memory.get_recent_messages(n=20)
+            conv_snippets = []
+            for m in recent:
+                role = getattr(m, "role", "?")
+                content = getattr(m, "content", "")
+                if isinstance(content, (dict, list)):
+                    content = str(content)[:500]
+                conv_snippets.append(f"[{role}] {str(content)[:500]}")
+            return "\n".join(conv_snippets)
+        except Exception:  # 防御: 对话日志抽取失败忽略
+            logger.debug(
+                "conversation_log extract for judge failed", exc_info=True
+            )
+            return None
+
+    @staticmethod
+    def _grader_agent_code(execution_result: dict) -> str:
+        """agent_code: execution_result 里可能带 code/parsed/script."""
+        for k in ("code", "script", "generated_code", "final_answer"):
+            v = execution_result.get(k)
+            if v and isinstance(v, str) and len(v) > 50:
+                return v
+        # 退而求其次: tool_input 里的 description 可能含代码片段
+        ti = execution_result.get("_tool_input") or {}
+        if isinstance(ti, dict):
+            return str(ti.get("description", ""))[:5000]
+        return ""
+
+    async def _validate_graders(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """ValidityJudge: NatureBench judge.py 启发 — r_phys 高不代表真算."""
         try:
             from huginn.validation.grader import default_registry
 
-            # ValidityJudge 需要 model + 对话日志/代码做 post-hoc 审查
-            # NatureBench judge.py 启发: r_phys 高不代表真算, 可能 gaming grader
             reg = default_registry(
                 model=getattr(self, "verification_model", None) or self.model
             )
@@ -714,31 +796,11 @@ class EngineReflect:
             if isinstance(execution_result, dict):
                 merged.update(execution_result)
             merged.update(results)
-            # 喂给 ValidityJudge: 从 memory 取最近对话 + execution_result 里的 code
-            try:
-                recent = self.memory.get_recent_messages(n=20)
-                conv_snippets = []
-                for m in recent:
-                    role = getattr(m, "role", "?")
-                    content = getattr(m, "content", "")
-                    if isinstance(content, dict | list):
-                        content = str(content)[:500]
-                    conv_snippets.append(f"[{role}] {str(content)[:500]}")
-                merged["conversation_log"] = "\n".join(conv_snippets)
-            except Exception:  # 防御: 对话日志抽取失败忽略
-                logger.debug("conversation_log extract for judge failed", exc_info=True)
-            # agent_code: execution_result 里可能带 code/parsed/script
+            conv_log = self._grader_conversation_log()
+            if conv_log is not None:
+                merged["conversation_log"] = conv_log
             if isinstance(execution_result, dict):
-                for k in ("code", "script", "generated_code", "final_answer"):
-                    v = execution_result.get(k)
-                    if v and isinstance(v, str) and len(v) > 50:
-                        merged["agent_code"] = v
-                        break
-                else:
-                    # 退而求其次: tool_input 里的 description 可能含代码片段
-                    ti = execution_result.get("_tool_input") or {}
-                    if isinstance(ti, dict):
-                        merged["agent_code"] = str(ti.get("description", ""))[:5000]
+                merged["agent_code"] = self._grader_agent_code(execution_result)
             grader_list = reg.evaluate_all(merged)
             results["grader_scores"] = {
                 gr.name: {
@@ -765,26 +827,35 @@ class EngineReflect:
         except Exception as e:
             results["grader_error"] = str(e)
 
+    def _validate_matworld_bench(
+        self, execution_result: Any, results: dict, categories: list
+    ) -> None:
+        """MatWorldBench 白名单类别评测."""
         try:
             from huginn.evaluation.matworld_bench import MatWorldBench
 
             bench = MatWorldBench()
-            exec_data = execution_result if isinstance(execution_result, dict) else {}
+            exec_data = (
+                execution_result if isinstance(execution_result, dict) else {}
+            )
             eval_scores: list[dict] = []
             for task in bench.tasks:
-                if task.category in tuple(_mwb_categories):
-                    try:
-                        br = bench.evaluate(task.id, exec_data)
-                        eval_scores.append(
-                            {
-                                "task_id": task.id,
-                                "category": task.category,
-                                "passed": br.passed,
-                                "score": br.score,
-                            }
-                        )
-                    except Exception:  # 防御: 基准结果收集失败跳过
-                        logger.debug("benchmark result collect skipped", exc_info=True)
+                if task.category not in tuple(categories):
+                    continue
+                try:
+                    br = bench.evaluate(task.id, exec_data)
+                    eval_scores.append(
+                        {
+                            "task_id": task.id,
+                            "category": task.category,
+                            "passed": br.passed,
+                            "score": br.score,
+                        }
+                    )
+                except Exception:  # 防御: 基准结果收集失败跳过
+                    logger.debug(
+                        "benchmark result collect skipped", exc_info=True
+                    )
             if eval_scores:
                 passed = sum(1 for e in eval_scores if e["passed"])
                 results["eval_summary"] = {
@@ -796,234 +867,224 @@ class EngineReflect:
         except Exception as e:
             logger.debug(f"[validate] eval bench failed: {e}")
 
-        # JEPA 式预测误差: 对比 plan 阶段的预测 vs 实际结果.
-        # 预测误差高 = surprise = 值得探索的方向 (intrinsic motivation).
-        # 低误差 = agent 对这类任务已有良好心智模型.
+    def _validate_prediction_error(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """JEPA 式预测误差: plan 预测 vs 实际结果 (高误差 = surprise)."""
         prediction = getattr(self, "_current_prediction", "")
-        if prediction:
-            actual_text = self._extract_text(execution_result)[:500]
-            robust = self._compute_surprise_robust(prediction, actual_text)
-            # 阶段2-A: predictor 冻结前向作相对/排名信号; 缺失回落 robust.
-            pred_surprise = self._predictor_surprise(prediction, actual_text)
-            if pred_surprise is not None:
-                surprise, source = pred_surprise
-            elif self._semantic_distance(prediction, actual_text) is not None:
-                surprise = robust["worst"]
-                source = "semantic"
-            else:
-                surprise = robust["worst"]
-                source = "jaccard"
-            # per-domain 相对化(秩→[0,1])供 encounter_space / 探索排名; 单调于原始值.
-            # predictor 按 source(span/句子)分桶, span 秩在其自身分布内计算, 免跨信号量纲污染.
-            try:
-                surprise_rel = self._relative_surprise(surprise, source)
-            except Exception:  # noqa: BLE001 — 相对化失败回落原值域, 不阻塞探索
-                surprise_rel = max(0.0, min(1.0, surprise))
-            # 量纲收口 (阶段2-B): predictor 前向 surprise 坍缩在 ~0.2-0.45 (绝对阈值经证实不可分离),
-            # 与下游 legacy 阈值预期的 [0,1] (jaccard/semantic) 不同量纲, 直接透传会误触发/失效.
-            # 因此 predictor 激活时交给下游的 _last_surprise 一律用相对秩 surprise_rel ([0,1], 域归一),
-            # 原始前向值保留在 surprise_raw / surprise_abs 供审计; 其余 source 行为不变.
-            surprise_exposed = (
-                surprise_rel if source.startswith("jepa_") else surprise
-            )
-            results["prediction_error"] = {
-                "predicted": prediction[:200],
-                "actual": actual_text[:200],
-                "surprise": round(surprise_exposed, 3),
-                "surprise_mean": round(robust["mean"], 3),
-                "surprise_worst": round(robust["worst"], 3),
-                "surprise_std": round(robust["std"], 3),
-                "surprise_source": source,
-                "surprise_rel": round(surprise_rel, 4),
-                "surprise_abs": (
-                    round(surprise, 4) if source.startswith("jepa_") else None
-                ),
-            }
-            self._last_surprise_rel = surprise_rel
-            self._last_surprise = surprise_exposed
-            self._surprise_history.append((surprise_exposed, robust["std"]))
-
-            # 阶段2-0: 采集 plan 预测 ↔ validate 实际 配对语料 (供离线训练 predictor).
-            # 纯数据采集, 不训练不更新权重; 失败静默不阻塞探索循环.
-            self._record_jepa_pair(prediction, actual_text, surprise)
-
-        # AV7: 最小努力下限硬阻断. _metacog_check_completion 已封装
-        # families/live_components/UNEXPLORED 自白收集, 这里复用.
-        # 不达标时: 强制 tests_passed=False → run loop 走失败分支; 设 failure_kind=
-        # effort_floor_retry → _classify_failure 归 tool_error(不 refute, 下轮重试扩方法族).
-        # ponytail: 复用现成 refine/retry 控制流, 不新写迭代触发逻辑.
-        #
-        # 方案1·收敛类型分流 (2026-09-11 A线根因): 反过早收敛审计是为"开放探索型"科研设计
-        # (要求 effort_floor + 至少 1 条 UNEXPLORED 自白)。对"闭式/确定性可验证"问题, 正确
-        # 行为就是立刻收敛——审计强判"过早收敛"是错配, 导致算对了也被勒死 (基线 5/5 goal=False)。
-        # 分流: 这类问题若已通过"真实执行一段可运行数值脚本并打印数字"给出结论, 视为已求解,
-        # 不再被 effort-floor 硬阻断; 开放探索型保持原守卫不变。
+        if not prediction:
+            return
+        actual_text = self._extract_text(execution_result)[:500]
+        robust = self._compute_surprise_robust(prediction, actual_text)
+        # 阶段2-A: predictor 冻结前向作相对/排名信号; 缺失回落 robust.
+        pred_surprise = self._predictor_surprise(prediction, actual_text)
+        if pred_surprise is not None:
+            surprise, source = pred_surprise
+        elif self._semantic_distance(prediction, actual_text) is not None:
+            surprise = robust["worst"]
+            source = "semantic"
+        else:
+            surprise = robust["worst"]
+            source = "jaccard"
+        # per-domain 相对化(秩→[0,1])供 encounter_space / 探索排名.
         try:
-            _cf_solved = self._is_closed_form_solved(execution_result)
-            _lab_solved = self._is_code_lab_solved(execution_result)
-            # 非有限数值 (inf/nan 哨兵) → 不算证据, 且必须**明说原因**: 否则 execute
-            # 报 success、validate 默默判未解, 书生只看到"没通过"却不知为何 —
-            # 与 run52 "execute 被跳过却只看到 validate 复用旧结果" 同类的静默失败.
-            _bad_num = _non_finite_objective_keys(execution_result)
-            if _bad_num and not (_cf_solved or _lab_solved):
-                results["non_finite_objectives"] = _bad_num
-                _nan_hint = (
-                    f"[非有限数值] objectives 里 {_bad_num} 是 inf/nan, 不是测到的数, "
+            surprise_rel = self._relative_surprise(surprise, source)
+        except Exception:  # noqa: BLE001 — 相对化失败回落原值域, 不阻塞探索
+            surprise_rel = max(0.0, min(1.0, surprise))
+        # 量纲收口 (阶段2-B): predictor 前向值坍缩在 ~0.2-0.45, 交给下游的
+        # _last_surprise 一律用相对秩 surprise_rel；原始值保留在 surprise_abs。
+        surprise_exposed = surprise_rel if source.startswith("jepa_") else surprise
+        results["prediction_error"] = {
+            "predicted": prediction[:200],
+            "actual": actual_text[:200],
+            "surprise": round(surprise_exposed, 3),
+            "surprise_mean": round(robust["mean"], 3),
+            "surprise_worst": round(robust["worst"], 3),
+            "surprise_std": round(robust["std"], 3),
+            "surprise_source": source,
+            "surprise_rel": round(surprise_rel, 4),
+            "surprise_abs": (
+                round(surprise, 4) if source.startswith("jepa_") else None
+            ),
+        }
+        self._last_surprise_rel = surprise_rel
+        self._last_surprise = surprise_exposed
+        self._surprise_history.append((surprise_exposed, robust["std"]))
+        # 阶段2-0: 采集 plan 预测 ↔ validate 实际 配对语料 (供离线训练 predictor).
+        self._record_jepa_pair(prediction, actual_text, surprise)
+
+    def _append_speculator_hint(self, hint: str, limit: int | None = None) -> None:
+        """把提示追加到 _speculator_hint (可选尾部截断)."""
+        self._speculator_hint = (
+            (self._speculator_hint + "\n" + hint).strip()
+            if self._speculator_hint
+            else hint
+        )
+        if limit and len(self._speculator_hint) > limit:
+            self._speculator_hint = self._speculator_hint[-limit:]
+
+    def _validate_effort_floor(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """AV7: 最小努力下限硬阻断 (闭式/Code Lab 已解则放行)."""
+        # 方案1·收敛类型分流: 对"闭式/确定性可验证"问题, 正确行为就是立刻收敛,
+        # 审计强判"过早收敛"是错配. 开放探索型保持原守卫不变。
+        try:
+            cf_solved = self._is_closed_form_solved(execution_result)
+            lab_solved = self._is_code_lab_solved(execution_result)
+            # 非有限数值 (inf/nan 哨兵) → 不算证据, 且必须**明说原因**.
+            bad_num = _non_finite_objective_keys(execution_result)
+            if bad_num and not (cf_solved or lab_solved):
+                results["non_finite_objectives"] = bad_num
+                self._append_speculator_hint(
+                    f"[非有限数值] objectives 里 {bad_num} 是 inf/nan, 不是测到的数, "
                     "不算真实执行证据. 达不到阈值的行须如实报**有限的**回退数值"
                     "(如扫描上限处的最小留出误差), 用布尔/计数目标表达'未达标', "
                     "禁止用 inf/nan/None 当哨兵."
                 )
-                self._speculator_hint = (
-                    (self._speculator_hint + "\n" + _nan_hint).strip()
-                    if self._speculator_hint else _nan_hint
+                logger.warning(
+                    "validate: 非有限 objectives 不计为证据 (keys=%s)", bad_num,
+                )
+            if os.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                mode = (
+                    execution_result.get("mode")
+                    if isinstance(execution_result, dict)
+                    else type(execution_result).__name__
+                )
+                succ = (
+                    execution_result.get("success")
+                    if isinstance(execution_result, dict) else None
+                )
+                nobj = (
+                    len(execution_result.get("objectives", {}) or {})
+                    if isinstance(execution_result, dict) else -1
                 )
                 logger.warning(
-                    "validate: 非有限 objectives 不计为证据 (keys=%s)", _bad_num,
+                    "[validate] mode=%r success=%r nobj=%d cf=%s lab=%s",
+                    mode, succ, nobj, cf_solved, lab_solved,
                 )
-            import os as _osv
-            if _osv.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
-                _mode = execution_result.get("mode") if isinstance(execution_result, dict) else type(execution_result).__name__
-                _succ = execution_result.get("success") if isinstance(execution_result, dict) else None
-                _nobj = len(execution_result.get("objectives", {}) or {}) if isinstance(execution_result, dict) else -1
-                logger.warning("[validate] mode=%r success=%r nobj=%d cf=%s lab=%s",
-                               _mode, _succ, _nobj, _cf_solved, _lab_solved)
-            if _cf_solved or _lab_solved:
-                results["completion_mode"] = "closed_form" if _cf_solved else "code_lab"
-                results["effort_floor_passed"] = True
-                # 可执行→已执行→产出数值的证据: 不是文本断言, 是真实计算.
-                # pytest 在无测试文件的 workspace 本是空跑(exit 5), 故以"真实执行数值证据"为准.
-                # code_lab 同源: 书生亲写实验在沙箱真跑通并产出 objectives, 即已执行证据.
-                results["tests_passed"] = True
-                results["constraints_satisfied"] = True
-                results["validation_evidence"] = (
-                    "executed_numeric_snippet" if _cf_solved else "code_lab_objectives"
-                )
-                # RSI 入口: _learn 的奖励回流(evolve_from_rewards)必需 r_phys 非 None.
-                # 真实执行数值证据 (Code Lab 实验 / 闭式 probe) 都算一次可复现的执行
-                # 成功, 都回流执行奖励 —— 否则 learn 阶段拿不到 r_phys, 奖励记录永远
-                # 攒不到 evolve_from_rewards 要求的 ≥2 条同组高奖励记录, RSI 无产物.
-                # code_lab(书生亲写完整实验) 给 1.0; 闭式 probe(平凡数值片段) 略低 0.75,
-                # 二者都 >=0.7 视为高质量执行, 供技能提取.
-                if results.get("r_phys") is None:
-                    results["r_phys"] = 1.0 if _lab_solved else 0.75
-                logger.info(
-                    "solved via executed numeric evidence → completion_mode=%s",
-                    results["completion_mode"],
-                )
-            else:
-                _eff_blk, _eff_why = self._metacog_check_completion()
-                results["effort_floor_passed"] = not _eff_blk
-                if _eff_blk:
-                    results["effort_floor_deficits"] = _eff_why
-                    results["failure_kind"] = "effort_floor_retry"
-                    results["tests_passed"] = False
-                    results["constraints_satisfied"] = False
-                    _hint = (
-                        f"[effort floor] 探索未达硬下限, 不算通过: {_eff_why}. "
-                        "下轮必须扩方法族或保留更多假设, 不要再收敛."
-                    )
-                    self._speculator_hint = (
-                        (self._speculator_hint + "\n" + _hint).strip()
-                        if self._speculator_hint else _hint
-                    )
-                    if len(self._speculator_hint) > 2000:
-                        self._speculator_hint = self._speculator_hint[-2000:]
-                    # 控制面观测 B4: effort floor 是**诚实/证据门**(C 族)的提示面,
-                    #   每轮都可能触发. 加 trace 以便统计触发率 (长期 0 触发或长期
-                    #   误杀 → 删或降). 纯观测, 不改行为 (它本就只写 hint, 不终止).
-                    self._emit_control_trace(
-                        "effort_floor",
-                        _eff_why[:200],
-                        action="advisory_hint",
-                    )
+            if cf_solved or lab_solved:
+                self._validate_mark_solved(results, cf_solved, lab_solved)
+                return
+            self._validate_effort_floor_block(results)
         except Exception:  # 防御: 努力下限检查失败忽略
             logger.debug("AV7 effort floor check in _validate failed", exc_info=True)
 
-        # 通用防停滞: "重复实验"检测 (命题无关).
-        # 现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}),
-        # 且"实验作者"提示恒为研究目标全文 —— 当局势僵持时 LLM 极易反复产出
-        # 同一段 family 代码, 于是 code_lab 的输出 (objectives/summary) 逐轮完全一致.
-        # 但 _is_code_lab_solved 只要求 objectives 非空且全有限, 每轮都被判 "已解决",
-        # 循环因而拿不到任何"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
-        # 这里只比较执行结果的**代码结构指纹**(无代码时退回内容指纹), 不解读语义,
-        # 因此对任何命题通用.
-        # 命中即注入强纠偏提示 (取尾部 [-500:], 保证进下一轮 prompt).
-        # 逻辑抽到 _detect_repeat_execution, 便于对"检测→软提示→硬指令→收敛判定"
-        # 这条链做定点验证 (埋在 _validate 里就只能靠整轮 LLM 长跑间接观察).
-        self._detect_repeat_execution(execution_result, results)
+    def _validate_mark_solved(
+        self, results: dict, cf_solved: bool, lab_solved: bool
+    ) -> None:
+        """真实执行数值证据 → 视为已解, 写 r_phys 供 RSI 奖励回流."""
+        results["completion_mode"] = "closed_form" if cf_solved else "code_lab"
+        results["effort_floor_passed"] = True
+        # 可执行→已执行→产出数值的证据: 不是文本断言, 是真实计算.
+        results["tests_passed"] = True
+        results["constraints_satisfied"] = True
+        results["validation_evidence"] = (
+            "executed_numeric_snippet" if cf_solved else "code_lab_objectives"
+        )
+        # RSI 入口: _learn 的奖励回流(evolve_from_rewards)必需 r_phys 非 None.
+        # code_lab(书生亲写完整实验) 给 1.0; 闭式 probe(平凡数值片段) 略低 0.75.
+        if results.get("r_phys") is None:
+            results["r_phys"] = 1.0 if lab_solved else 0.75
+        logger.info(
+            "solved via executed numeric evidence → completion_mode=%s",
+            results["completion_mode"],
+        )
 
-        # H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)
-        # 只对 dynamic_workflow bandit 路径生效 (execution_result 带 _variant_id)
-        if isinstance(execution_result, dict) and execution_result.get("_variant_id"):
-            try:
-                from huginn.autoloop.bandit import (
-                    VariantArchive,
-                    WorkflowBandit,
-                )
-                _vid = execution_result["_variant_id"]
-                _obj_hash = execution_result.get("_objective_hash", "")
-                _obj = execution_result.get("_objective", "")
-                _novelty = float(execution_result.get("_novelty", 0.0))
-                _eff = float(execution_result.get("_efficiency", 0.0))
-                _r_phys = float(results.get("r_phys", 0.0) or 0.0)
-                _success = bool(results.get("tests_passed", False))
-                _script_dict = execution_result.get("_script_dict", {})
-                bandit = WorkflowBandit.get_instance()
-                bandit.record_variant_outcome(
-                    _vid, _obj_hash, _success,
-                    r_phys=_r_phys, efficiency=_eff, novelty=_novelty,
-                )
-                # archive: fitness = [r_phys, efficiency, novelty]
-                archive = VariantArchive.get_instance()
-                b = bandit.get_belief(_vid, _obj_hash)
-                archive.add_variant(
-                    _obj_hash, _obj, _vid, _script_dict,
-                    fitness=[_r_phys, _eff, _novelty],
-                    alpha=b.successes if b else 1,
-                    beta=b.failures if b else 1,
-                )
-            except Exception:  # 防御: 变体结果记录失败忽略
-                logger.debug("H2 bandit record in _validate failed", exc_info=True)
+    def _validate_effort_floor_block(self, results: dict) -> None:
+        """未解: 跑最小努力下限审计, 不达标则强制 tests_passed=False."""
+        eff_blk, eff_why = self._metacog_check_completion()
+        results["effort_floor_passed"] = not eff_blk
+        if not eff_blk:
+            return
+        results["effort_floor_deficits"] = eff_why
+        results["failure_kind"] = "effort_floor_retry"
+        results["tests_passed"] = False
+        results["constraints_satisfied"] = False
+        self._append_speculator_hint(
+            f"[effort floor] 探索未达硬下限, 不算通过: {eff_why}. "
+            "下轮必须扩方法族或保留更多假设, 不要再收敛.",
+            limit=2000,
+        )
+        # 控制面观测 B4: effort floor 是**诚实/证据门**(C 族)的提示面.
+        self._emit_control_trace(
+            "effort_floor",
+            eff_why[:200],
+            action="advisory_hint",
+        )
 
-        self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[
-            :1000
-        ]
-        # Store failure_mode for next hypothesis loop (Dream Layer: crash = discovery)
-        _gv = results.get("generative_verify", {})
-        if isinstance(_gv, dict):
-            self._last_failure_mode = _gv.get("failure_mode", "")
-        # P1: 盲重建 verification + support/refute 闭环.
-        # 之前 _validate 算出分数但不调 hypothesis_graph.support/refute, 图全 untested.
-        # 现在开 toggle 时: (1) fresh subagent 从 statement 独立推导 (2) 比对盲重建
-        # vs execution_result (3) mismatch→refute / match→support, 写 FAILED/PROVED.md.
-        # 门控: HUGINN_BLIND_RECONSTRUCTION=auto 时按预算档位开 (medium/open).
-        # 每轮先清空差分读数 —— 只有本轮真正观测到才刷新, 否则上一轮的分歧会一直
-        # 压低 strength (陈旧观测). 具体读数在 _blind_reconstruct_verify 内写回.
+    def _validate_bandit(self, execution_result: Any, results: dict) -> None:
+        """H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)."""
+        if not (
+            isinstance(execution_result, dict)
+            and execution_result.get("_variant_id")
+        ):
+            return
+        try:
+            from huginn.autoloop.bandit import VariantArchive, WorkflowBandit
+
+            vid = execution_result["_variant_id"]
+            obj_hash = execution_result.get("_objective_hash", "")
+            obj = execution_result.get("_objective", "")
+            novelty = float(execution_result.get("_novelty", 0.0))
+            eff = float(execution_result.get("_efficiency", 0.0))
+            r_phys = float(results.get("r_phys", 0.0) or 0.0)
+            success = bool(results.get("tests_passed", False))
+            script_dict = execution_result.get("_script_dict", {})
+            bandit = WorkflowBandit.get_instance()
+            bandit.record_variant_outcome(
+                vid, obj_hash, success,
+                r_phys=r_phys, efficiency=eff, novelty=novelty,
+            )
+            # archive: fitness = [r_phys, efficiency, novelty]
+            archive = VariantArchive.get_instance()
+            b = bandit.get_belief(vid, obj_hash)
+            archive.add_variant(
+                obj_hash, obj, vid, script_dict,
+                fitness=[r_phys, eff, novelty],
+                alpha=b.successes if b else 1,
+                beta=b.failures if b else 1,
+            )
+        except Exception:  # 防御: 变体结果记录失败忽略
+            logger.debug("H2 bandit record in _validate failed", exc_info=True)
+
+    def _validate_record_outcome(self, results: dict) -> None:
+        """落 _last_validation 摘要 + failure_mode 供下一轮 hypothesis 用."""
+        self._last_validation = json.dumps(
+            results, ensure_ascii=False, default=str
+        )[:1000]
+        gv = results.get("generative_verify", {})
+        if isinstance(gv, dict):
+            self._last_failure_mode = gv.get("failure_mode", "")
+
+    async def _validate_blind_reconstruct(
+        self, execution_result: Any, results: dict
+    ) -> None:
+        """P1: 盲重建 verification + support/refute 闭环."""
+        # 每轮先清空差分读数 —— 只有本轮真正观测到才刷新, 否则陈旧观测会
+        # 一直压低 strength.
         self._last_reconstruct_disagree = None
         self._last_blind_confidence = 0.0
-        if self._blind_reconstruct_enabled():
-            try:
-                await self._blind_reconstruct_verify(execution_result, results)
-            except Exception:  # 防御: 盲重建失败忽略
-                logger.debug("P1 blind reconstruct failed", exc_info=True)
+        if not self._blind_reconstruct_enabled():
+            return
+        try:
+            await self._blind_reconstruct_verify(execution_result, results)
+        except Exception:  # 防御: 盲重建失败忽略
+            logger.debug("P1 blind reconstruct failed", exc_info=True)
 
-        # Epistemic gate (IOED 兜底): 强断言 + 证据缺失 → 暴露知识缺口.
-        # 纯启发式, 零 LLM 成本; 只报告不改 tests_passed, 永不抛异常.
-        # 与 prompts.py Epistemic Honesty 指令配合, 模型失灵时兜底暴露缺口.
+    def _validate_epistemic(self, execution_result: Any, results: dict) -> None:
+        """Epistemic gate (IOED 兜底): 强断言 + 证据缺失 → 暴露知识缺口."""
         try:
             from huginn.validation.epistemic import detect_epistemic_gap
 
-            _gap = detect_epistemic_gap(execution_result, results)
-            if _gap:
-                results["epistemic_gap"] = _gap
+            gap = detect_epistemic_gap(execution_result, results)
+            if gap:
+                results["epistemic_gap"] = gap
                 logger.warning(
-                    "epistemic_gap: %s", _gap.get("advice", "")[:120]
+                    "epistemic_gap: %s", gap.get("advice", "")[:120]
                 )
         except Exception:  # 防御: 认知缺口检查失败忽略
             logger.debug("epistemic gate check failed (non-fatal)", exc_info=True)
-
-        return results
-
 
 
     def _blind_reconstruct_enabled(self) -> bool:
