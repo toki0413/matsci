@@ -788,58 +788,56 @@ class LiteratureTool(HuginnTool):
     async def _do_benchmark_lookup(
         self, args: LiteratureInput, context: ToolContext
     ) -> ToolResult:
-        if not args.system or not args.property:
-            return ToolResult(
-                data=None, success=False,
-                error="system and property are required for benchmark_lookup",
-            )
+        err = _bl_validate(args)
+        if err is not None:
+            return err
 
         # search query 优先用用户给的, 没给就拼 system+property
         query = args.query or f"{args.system} {args.property}"
+        papers, err = await self._bl_collect_papers(args, query)
+        if err is not None:
+            return err
+        if not papers:
+            return _bl_empty_result(args, query)
+
+        model, err = self._mr_get_model(context)
+        if err is not None:
+            return err
+
+        reported = await self._bl_extract_reported(papers, args, model)
+        consensus, spread = _bl_consensus(reported)
+        consistency = _annotate_value_consistency(reported)
+        compat, completion = await self._bl_completion(args, reported, model)
+        kb_written = _bl_write_kb(args, reported)
+        return _bl_build_result(
+            args, query, papers, reported, consensus, spread,
+            consistency, compat, completion, kb_written,
+        )
+
+    async def _bl_collect_papers(self, args: LiteratureInput, query: str):
+        """拿 papers: 直接传了就用传的, 否则 search. 返回 (papers, error)."""
         # 如果直接传了 papers (可能带 full_text), 就用传的, 不重新 search.
         # 典型场景: 先 fetch_pdf 拿全文, 再喂给 benchmark_lookup 抽精确值
         if args.papers:
-            papers = args.papers
-        else:
-            search_res = await self._do_search(LiteratureInput(
-                action="search",
-                query=query,
-                max_results=max(args.max_results, 15),
-                sources=args.sources,
-                year_from=args.year_from,
-                year_to=args.year_to,
-            ))
-            if not search_res.success:
-                return search_res
-            papers = (search_res.data or {}).get("papers", [])
-        if not papers:
-            return ToolResult(
-                data={
-                    "action": "benchmark_lookup",
-                    "system": args.system,
-                    "property": args.property,
-                    "query": query,
-                    "reported_values": [],
-                    "consensus": None,
-                    "spread": None,
-                    "n_papers_searched": 0,
-                    "n_papers_with_values": 0,
-                    "kb_written": 0,
-                    "message": "没搜到相关文献",
-                },
-                success=True,
-            )
+            return args.papers, None
+        search_res = await self._do_search(LiteratureInput(
+            action="search",
+            query=query,
+            max_results=max(args.max_results, 15),
+            sources=args.sources,
+            year_from=args.year_from,
+            year_to=args.year_to,
+        ))
+        if not search_res.success:
+            return None, search_res
+        return (search_res.data or {}).get("papers", []), None
 
-        try:
-            model = self._get_model(context)
-        except Exception as exc:
-            return ToolResult(
-                data=None, success=False,
-                error=f"LLM 初始化失败: {exc}",
-            )
-
+    async def _bl_extract_reported(self, papers, args: LiteratureInput, model):
+        """抽取报道值 + 对象级取证."""
         # 抽取报道值 — 复用 _llm_extract_reported (缺度补全检索的二次抽取也走它)
-        reported = await self._llm_extract_reported(papers, args.system, args.property, model)
+        reported = await self._llm_extract_reported(
+            papers, args.system, args.property, model,
+        )
         # 对象级取证 (#1): 给每条值绑定来源论文的强引用证据标签 (fid + sha256 快照),
         # 让 "这条值来自哪段原文" 随结果流动、可独立核实, 而非事后声明.
         try:
@@ -848,115 +846,56 @@ class LiteratureTool(HuginnTool):
             reported = attach_evidence(reported, papers)
         except Exception:
             logger.debug("attach_evidence skipped (non-fatal)", exc_info=True)
+        return reported
 
-        # 共识 + 离散度
-        consensus = None
-        spread = None
-        if reported:
-            vals = [r["value"] for r in reported]
-            mean = sum(vals) / len(vals)
-            consensus = {
-                "mean": round(mean, 6),
-                "median": round(sorted(vals)[len(vals) // 2], 6),
-                "unit": reported[0]["unit"],
-                "n_sources": len(reported),
-            }
-            if len(vals) >= 2:
-                spread = {
-                    "min": round(min(vals), 6),
-                    "max": round(max(vals), 6),
-                    "range": round(max(vals) - min(vals), 6),
-                }
-
-        # L2a: 跨源数值一致性标注 — 每个值打标签 + 整体一致性判定
-        consistency = _annotate_value_consistency(reported)
-
-        # 缺度追问 (对接1): 局部-整体实验 + 缺失自由度 → 补全查询
-        # 对接2: 对关键缺度发起实际补全检索, 再跑一轮局部-整体 → 自我完备闭环
+    async def _bl_completion(self, args: LiteratureInput, reported, model):
+        """缺度追问 (对接1) + 实际补全检索 (对接2). 返回 (compat, completion)."""
         compat = None
         completion = None
-        if reported:
-            from huginn.experimental.local_global_compat import run_compat_experiment
+        if not reported:
+            return compat, completion
 
-            from .query_completion import build_followup_input, summarize_missing
-            try:
-                known = _infer_known_conditions(reported)
-                compat = run_compat_experiment(reported)
-                missing_dims = compat.get("missing_dims", [])
-                unit = (reported[0].get("unit") or "") if reported else ""
-                followup = build_followup_input(
+        from huginn.experimental.local_global_compat import run_compat_experiment
+
+        from .query_completion import build_followup_input, summarize_missing
+        try:
+            known = _infer_known_conditions(reported)
+            compat = run_compat_experiment(reported)
+            missing_dims = compat.get("missing_dims", [])
+            unit = (reported[0].get("unit") or "") if reported else ""
+            followup = build_followup_input(
+                args.system,
+                args.property,
+                unit,
+                missing_dims,
+                method_family=known.get("method_family"),
+                functional=known.get("functional"),
+                temperature=known.get("temperature"),
+            )
+            completion = {
+                "missing_dims": missing_dims,
+                "missing_summaries": summarize_missing(missing_dims),
+                "known_conditions": known,
+                "local": compat["local"],
+                "global_compat": compat["global_compat"],
+                "flat_confounding": compat["flat_confounding"],
+                "overall_verdict": compat["overall_verdict"],
+                "followup": followup,
+            }
+            # 对接2: 只对"应发起且关键"的补全查询跑实际检索
+            if followup.get("fills"):
+                completion["complement_retrieval"] = await self._do_complement_retrieval(
+                    reported,
+                    compat,
+                    followup,
                     args.system,
                     args.property,
-                    unit,
-                    missing_dims,
-                    method_family=known.get("method_family"),
-                    functional=known.get("functional"),
-                    temperature=known.get("temperature"),
+                    model,
+                    args,
                 )
-                completion = {
-                    "missing_dims": missing_dims,
-                    "missing_summaries": summarize_missing(missing_dims),
-                    "known_conditions": known,
-                    "local": compat["local"],
-                    "global_compat": compat["global_compat"],
-                    "flat_confounding": compat["flat_confounding"],
-                    "overall_verdict": compat["overall_verdict"],
-                    "followup": followup,
-                }
-                # 对接2: 只对"应发起且关键"的补全查询跑实际检索
-                if followup.get("fills"):
-                    complement = await self._do_complement_retrieval(
-                        reported,
-                        compat,
-                        followup,
-                        args.system,
-                        args.property,
-                        model,
-                        args,
-                    )
-                    completion["complement_retrieval"] = complement
-            except Exception as exc:
-                logger.warning("benchmark_lookup 缺度追问失败: %s", exc)
-
-        # 把抽到的文献报道值写回知识库，下次同体系查询能直接命中
-        kb_written = 0
-        try:
-            from huginn.knowledge.store import get_knowledge_base
-            kb = get_knowledge_base()
-            for rv in reported:
-                doi = rv.get("doi") or ""
-                title = rv.get("source_paper") or ""
-                text = (
-                    f"{args.system} | {args.property} = {rv['value']} {rv['unit']}\n"
-                    f"method: {rv.get('method', '')}\n"
-                    f"source: {title}\n"
-                    f"doi: {doi}\n"
-                    f"year: {rv.get('year', '')}\n"
-                )
-                meta = {"doi": doi, "title": title, "source": "benchmark_lookup"}
-                kb.add_text(text, filename="benchmark_lookup", metadata=meta)
-                kb_written += 1
         except Exception as exc:
-            logger.warning("benchmark_lookup KB 写回失败: %s", exc)
-
-        return ToolResult(
-            data={
-                "action": "benchmark_lookup",
-                "system": args.system,
-                "property": args.property,
-                "query": query,
-                "reported_values": reported,
-                "consensus": consensus,
-                "spread": spread,
-                "consistency": consistency,
-                "compat": compat,
-                "completion": completion,
-                "n_papers_searched": len(papers),
-                "n_papers_with_values": len(reported),
-                "kb_written": kb_written,
-            },
-            success=True,
-        )
+            logger.warning("benchmark_lookup 缺度追问失败: %s", exc)
+        return compat, completion
 
     # ── 缺度追问: 抽取 + 实际补全检索 (对接1/对接2) ─────────────
 
@@ -2135,51 +2074,81 @@ class LiteratureTool(HuginnTool):
         V1 检测 claim 跨多个极大单纯形 → 跨域复现.
         调和分量 (β₁>0) 对应"研究孤岛" — 共享概念但无引用连接的论文群.
         """
-        # 1. 拿 papers: 优先用显式传入, 没有就 search
+        papers, err = await self._mr_collect_papers(args, context)
+        if err is not None:
+            return err
+
+        lens_names, err = self._mr_select_lenses(args)
+        if err is not None:
+            return err
+
+        paper_block = self._build_paper_block(papers)
+        model, err = self._mr_get_model(context)
+        if err is not None:
+            return err
+
+        lenses_ok, lenses_failed = await self._mr_run_lenses(
+            model, papers, args.query, lens_names, paper_block,
+        )
+        all_claims = self._mr_collect_claims(lenses_ok)
+        verified_claims = self._mr_verify_claims(args, all_claims, len(papers))
+        by_lens, high_conf_claims, lens_summaries = self._mr_summarize(
+            verified_claims, lenses_ok,
+        )
+        claim_audit_result = self._audit_verified_claims(
+            verified_claims, papers, workspace=getattr(context, "workspace", "") or ""
+        )
+        return self._mr_build_result(
+            args, papers, lens_names, lenses_ok, lenses_failed,
+            lens_summaries, by_lens, high_conf_claims, verified_claims,
+            claim_audit_result,
+        )
+
+    async def _mr_collect_papers(self, args: LiteratureInput, context: ToolContext):
+        """拿 papers: 优先用显式传入, 没有就 search. 返回 (papers, error)."""
         papers = args.papers
         if not papers and args.query:
             search_res = await self._do_search(args, context)
             if not search_res.success:
-                return search_res
+                return None, search_res
             papers = (search_res.data or {}).get("papers", [])
         if not papers:
-            return ToolResult(
+            return None, ToolResult(
                 data=None, success=False,
                 error="no papers to review (provide papers or a query)",
             )
         # 截断, 避免每个透镜的 LLM context 爆掉
-        papers = papers[:12]
+        return papers[:12], None
 
-        # 2. 选透镜
+    def _mr_select_lenses(self, args: LiteratureInput):
+        """过滤掉不认识的透镜名, 避免传垃圾进 _LENS_PROMPTS."""
         lens_names = args.lenses if args.lenses else _DEFAULT_LENSES
-        # 过滤掉不认识的透镜名, 避免传垃圾进 _LENS_PROMPTS
         lens_names = [ln for ln in lens_names if ln in _LENS_PROMPTS]
         if not lens_names:
-            return ToolResult(
+            return None, ToolResult(
                 data=None, success=False,
                 error=f"no valid lenses in {args.lenses}, valid: {list(_LENS_PROMPTS.keys())}",
             )
+        return lens_names, None
 
-        # 3. 构造论文清单 (各透镜共用同一份)
-        paper_block = self._build_paper_block(papers)
-
-        # 4. 拿 LLM model
+    def _mr_get_model(self, context: ToolContext):
+        """初始化 LLM model. 返回 (model, error)."""
         try:
-            model = self._get_model(context)
+            return self._get_model(context), None
         except Exception as exc:
-            return ToolResult(
+            return None, ToolResult(
                 data=None, success=False,
                 error=f"LLM 初始化失败: {exc}",
             )
 
-        # 5. 并行跑 N 个透镜 (nuwa 6-way agent swarm)
-        # ponytail: 每个透镜独立 LLM 调用, 用 asyncio.gather 并行.
-        # 同步 invoke 包 asyncio.to_thread 才能真并行. 失败透镜返回 None,
-        # 后续过滤掉, 不阻塞其他 — 这是 nuwa 的 failure degradation 路径.
+    async def _mr_run_lenses(
+        self, model, papers, query: str, lens_names: list[str], paper_block: str,
+    ):
+        """并行跑 N 个透镜. 返回 (lenses_ok, lenses_failed)."""
         async def _run_lens(lens_name: str) -> dict[str, Any] | None:
             system_prompt = _LENS_PROMPTS[lens_name]
             user_prompt = (
-                f"研究 query: {args.query or '(未指定)'}\n\n"
+                f"研究 query: {query or '(未指定)'}\n\n"
                 f"论文列表 ({len(papers)} 篇):\n\n{paper_block}\n\n"
                 f"请用 '{lens_name}' 透镜分析, 按 JSON 格式输出."
             )
@@ -2196,14 +2165,14 @@ class LiteratureTool(HuginnTool):
                 return None
 
         lens_results = await asyncio.gather(*[_run_lens(ln) for ln in lens_names])
-        # 过滤掉失败的透镜
         lenses_ok: list[dict[str, Any]] = [r for r in lens_results if r is not None]
         lenses_failed: list[str] = [
             ln for ln, r in zip(lens_names, lens_results) if r is None
         ]
+        return lenses_ok, lenses_failed
 
-        # 6. 三重验证 (cangjie V1/V2/V3)
-        # 收集所有 claims, 每条带 lens + paper_idx
+    def _mr_collect_claims(self, lenses_ok: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """收集所有 claims, 每条带 lens + paper_idx."""
         all_claims: list[dict[str, Any]] = []
         for lens_out in lenses_ok:
             for finding in (lens_out.get("findings") or []):
@@ -2218,36 +2187,40 @@ class LiteratureTool(HuginnTool):
                     "paper_idx": finding.get("paper_idx", []) or [],
                     "llm_confidence": finding.get("confidence", "medium"),
                 })
+        return all_claims
 
-        verified_claims: list[dict[str, Any]] = []
-        if args.verify_claims and all_claims:
-            n_papers = len(papers)
-            for c in all_claims:
-                v1, v2, v3 = self._triple_verify(c, n_papers)
-                score = sum([v1, v2, v3])
-                if score >= 2:
-                    final_conf = "high"
-                elif score == 1:
-                    final_conf = "medium"
-                else:
-                    final_conf = "low"
-                verified_claims.append({
-                    **c,
-                    "v1_cross_domain": v1,
-                    "v2_generative": v2,
-                    "v3_exclusive": v3,
-                    "verification_score": score,
-                    "final_confidence": final_conf,
-                })
-        else:
-            # 不验证时, 直接用 LLM 自报置信度
-            verified_claims = [
+    def _mr_verify_claims(
+        self, args: LiteratureInput, all_claims: list[dict[str, Any]], n_papers: int,
+    ) -> list[dict[str, Any]]:
+        """三重验证 (cangjie V1/V2/V3); 不验证时用 LLM 自报置信度."""
+        if not (args.verify_claims and all_claims):
+            return [
                 {**c, "final_confidence": c.get("llm_confidence", "medium")}
                 for c in all_claims
             ]
 
-        # 7. 汇总
-        # 按透镜分组 findings 方便阅读
+        verified_claims: list[dict[str, Any]] = []
+        for c in all_claims:
+            v1, v2, v3 = self._triple_verify(c, n_papers)
+            score = sum([v1, v2, v3])
+            if score >= 2:
+                final_conf = "high"
+            elif score == 1:
+                final_conf = "medium"
+            else:
+                final_conf = "low"
+            verified_claims.append({
+                **c,
+                "v1_cross_domain": v1,
+                "v2_generative": v2,
+                "v3_exclusive": v3,
+                "verification_score": score,
+                "final_confidence": final_conf,
+            })
+        return verified_claims
+
+    def _mr_summarize(self, verified_claims: list[dict[str, Any]], lenses_ok: list[dict[str, Any]]):
+        """按透镜分组 findings + 高置信 claims + 透镜 summary."""
         by_lens: dict[str, list[dict[str, Any]]] = {}
         for vc in verified_claims:
             by_lens.setdefault(vc.get("lens", ""), []).append(vc)
@@ -2257,20 +2230,21 @@ class LiteratureTool(HuginnTool):
             vc for vc in verified_claims
             if vc.get("final_confidence") == "high"
         ]
-
-        # 透镜 summary 汇总
         lens_summaries = {
             (lo.get("lens") or ""): (lo.get("summary") or "")
             for lo in lenses_ok
         }
+        return by_lens, high_conf_claims, lens_summaries
 
-        # 8. 结论审计 (best-effort): 高/中置信 claims 登记进 claim 层.
-        # 复用 ClaimAuditor.ingest_findings — 触发 sheaf 冲突检测 + KG/超图
-        # 登记 + 状态回写. 失败降级为 {"registered": 0}, 不阻塞 multi_review.
-        claim_audit_result = self._audit_verified_claims(
-            verified_claims, papers, workspace=getattr(context, "workspace", "") or ""
-        )
-
+    def _mr_build_result(
+        self, args: LiteratureInput, papers: list[dict[str, Any]],
+        lens_names: list[str], lenses_ok: list[dict[str, Any]],
+        lenses_failed: list[str], lens_summaries: dict[str, str],
+        by_lens: dict[str, list[dict[str, Any]]],
+        high_conf_claims: list[dict[str, Any]],
+        verified_claims: list[dict[str, Any]], claim_audit_result: dict[str, Any],
+    ) -> ToolResult:
+        """组装 multi_review ToolResult."""
         return ToolResult(
             data={
                 "action": "multi_review",
@@ -2490,3 +2464,108 @@ class LiteratureTool(HuginnTool):
             n_lenses = len(args.lenses) if args.lenses else 6
             return {"cpu_hours": 0.0, "walltime_hours": 0.05 * n_lenses / 6}
         return {"cpu_hours": 0.0, "walltime_hours": 0.02}  # summarize/benchmark_lookup 调 LLM
+
+
+# ── benchmark_lookup 分阶段 helper ──────────────────────────────────
+
+def _bl_validate(args) -> ToolResult | None:
+    """校验 system/property 必填."""
+    if not args.system or not args.property:
+        return ToolResult(
+            data=None, success=False,
+            error="system and property are required for benchmark_lookup",
+        )
+    return None
+
+
+def _bl_empty_result(args, query: str) -> ToolResult:
+    """没搜到文献时的空结果."""
+    return ToolResult(
+        data={
+            "action": "benchmark_lookup",
+            "system": args.system,
+            "property": args.property,
+            "query": query,
+            "reported_values": [],
+            "consensus": None,
+            "spread": None,
+            "n_papers_searched": 0,
+            "n_papers_with_values": 0,
+            "kb_written": 0,
+            "message": "没搜到相关文献",
+        },
+        success=True,
+    )
+
+
+def _bl_consensus(reported: list[dict[str, Any]]):
+    """共识 (mean/median) + 离散度 (min/max/range)."""
+    consensus = None
+    spread = None
+    if not reported:
+        return consensus, spread
+    vals = [r["value"] for r in reported]
+    mean = sum(vals) / len(vals)
+    consensus = {
+        "mean": round(mean, 6),
+        "median": round(sorted(vals)[len(vals) // 2], 6),
+        "unit": reported[0]["unit"],
+        "n_sources": len(reported),
+    }
+    if len(vals) >= 2:
+        spread = {
+            "min": round(min(vals), 6),
+            "max": round(max(vals), 6),
+            "range": round(max(vals) - min(vals), 6),
+        }
+    return consensus, spread
+
+
+def _bl_write_kb(args, reported: list[dict[str, Any]]) -> int:
+    """把抽到的文献报道值写回知识库. 返回写入条数."""
+    kb_written = 0
+    try:
+        from huginn.knowledge.store import get_knowledge_base
+        kb = get_knowledge_base()
+        for rv in reported:
+            doi = rv.get("doi") or ""
+            title = rv.get("source_paper") or ""
+            text = (
+                f"{args.system} | {args.property} = {rv['value']} {rv['unit']}\n"
+                f"method: {rv.get('method', '')}\n"
+                f"source: {title}\n"
+                f"doi: {doi}\n"
+                f"year: {rv.get('year', '')}\n"
+            )
+            meta = {"doi": doi, "title": title, "source": "benchmark_lookup"}
+            kb.add_text(text, filename="benchmark_lookup", metadata=meta)
+            kb_written += 1
+    except Exception as exc:
+        logger.warning("benchmark_lookup KB 写回失败: %s", exc)
+    return kb_written
+
+
+def _bl_build_result(
+    args, query: str, papers: list[dict[str, Any]],
+    reported: list[dict[str, Any]], consensus, spread,
+    consistency: dict[str, Any], compat, completion, kb_written: int,
+) -> ToolResult:
+    """组装 benchmark_lookup ToolResult."""
+    return ToolResult(
+        data={
+            "action": "benchmark_lookup",
+            "system": args.system,
+            "property": args.property,
+            "query": query,
+            "reported_values": reported,
+            "consensus": consensus,
+            "spread": spread,
+            "consistency": consistency,
+            "compat": compat,
+            "completion": completion,
+            "n_papers_searched": len(papers),
+            "n_papers_with_values": len(reported),
+            "kb_written": kb_written,
+        },
+        success=True,
+    )

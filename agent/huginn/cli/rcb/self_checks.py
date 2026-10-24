@@ -726,6 +726,132 @@ def self_check_v14_task8() -> None:
     print("v14 Task 8 self-check PASSED")
 
 
+def _v15t3_check_collect_observations(_collect_observations):
+    """Step 1: mock step_result 抓 MAE / R² / accuracy."""
+    obs = _collect_observations(
+        step_result="Final MAE = 0.45, R²: 0.82, accuracy=0.91",
+        report_text="",
+        checklist="",
+    )
+    assert obs, f"_collect_observations returned empty: {obs}"
+    obs_names = {o.name for o in obs}
+    assert "mae" in obs_names, f"mae not captured: {obs_names}"
+    assert "r2" in obs_names or "r²" in obs_names, f"r2 not captured: {obs_names}"
+    print(f"[CHECK v15 Task 3] _collect_observations: {len(obs)} obs from mock text OK")
+    return obs
+
+
+def _v15t3_init_manifold(_init_hypothesis_manifold, ws):
+    """Step 2: temp workspace + checklist 创建 manifold 并持久化."""
+    manifold = _init_hypothesis_manifold(
+        ws=ws,
+        task_id="Test_000",
+        checklist="Paper claims MAE = 0.5, R²: 0.85, accuracy = 0.90",
+        instructions="",
+        scan_text="",
+    )
+    assert manifold is not None, "manifold should not be None"
+    assert len(manifold._hyp) >= 3, (
+        f"expected >=3 hypotheses, got {len(manifold._hyp)}")
+    h_ids = set(manifold._hyp.keys())
+    assert "h_paper_repro" in h_ids, f"missing h_paper_repro: {h_ids}"
+    assert "h_partial_repro" in h_ids, f"missing h_partial_repro: {h_ids}"
+    assert "h_null_baseline" in h_ids, f"missing h_null_baseline: {h_ids}"
+    # 持久化文件存在
+    path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
+    assert path.exists(), f"manifold file not persisted: {path}"
+    print(
+        f"[CHECK v15 Task 3] _init_hypothesis_manifold: "
+        f"{len(manifold._hyp)} hypotheses, persisted OK")
+    return manifold, path
+
+
+def _v15t3_check_load(_load_manifold, path, manifold):
+    """Step 3: 重启后能加载."""
+    loaded = _load_manifold(path)
+    assert loaded is not None, "loaded manifold should not be None"
+    assert len(loaded._hyp) == len(manifold._hyp), (
+        f"loaded {len(loaded._hyp)} != original {len(manifold._hyp)}")
+    print(f"[CHECK v15 Task 3] _load_manifold: reload {len(loaded._hyp)} hypotheses OK")
+
+
+def _v15t3_check_abduction(_collect_observations, _compute_v15_fields, manifold):
+    """Step 4: observations 接近 paper targets → 选 h_paper_repro."""
+    obs_paper = _collect_observations(
+        step_result="MAE = 0.50, R²: 0.84, accuracy = 0.89",
+        report_text="",
+        checklist="",
+    )
+    best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, obs_paper)
+    assert best_h_id == "h_paper_repro", (
+        f"expected h_paper_repro, got {best_h_id}")
+    # log_posterior 可能为负 (log of prob ≤ 0), 只要非零就说明计算路径走通
+    assert log_post != 0.0 or not obs_paper, (
+        f"log_posterior should not be 0 with obs, got {log_post}")
+    print(
+        f"[CHECK v15 Task 3] abductive_inference: best={best_h_id} "
+        f"log_post={log_post:.3f} fisher_info={fisher_info:.3f} OK")
+    return obs_paper
+
+
+def _v15t3_check_record_abduction(_record_abduction, manifold, obs_paper, trace_path, ts):
+    """Step 5: 写 abduction entry 到 trace."""
+    _record_abduction(
+        manifold,
+        obs_paper,
+        trace_path=trace_path,
+        task_id="Test_000",
+        iteration=1,
+        ts=ts,
+    )
+    assert trace_path.exists(), "abduction entry not written"
+    lines = trace_path.read_text(encoding="utf-8").strip().split("\n")
+    abd_lines = [
+        json.loads(_l) for _l in lines
+        if _l.strip() and json.loads(_l).get("role") == "abductive_inference"
+    ]
+    assert len(abd_lines) == 1, f"expected 1 abduction entry, got {len(abd_lines)}"
+    abd = abd_lines[0]
+    assert abd["hypothesis_id"] == "h_paper_repro", (
+        f"abduction entry hypothesis_id wrong: {abd['hypothesis_id']}")
+    assert "log_posterior" in abd, "abduction entry missing log_posterior"
+    assert "fisher_info" in abd, "abduction entry missing fisher_info"
+    assert abd["imagination_parent"] is None, "imagination_parent should be None"
+    print("[CHECK v15 Task 3] _record_abduction: abduction entry written OK")
+
+
+def _v15t3_check_upgrade_entry():
+    """Step 6: v14 entry 自动补 v15 字段, v14 darwin_score 保留."""
+    from huginn.metacog.trace_topology import upgrade_entry
+
+    v14_entry = {
+        "simplex_id": "trace:Test_000:iter_1:rcb_exec",
+        "attempted": "test",
+        "evidence": ["x"],
+        "darwin_score": 0.5,
+        "cochain_type": "gradient",
+    }
+    upgrade_entry(v14_entry)
+    assert v14_entry["hypothesis_id"] is None
+    assert v14_entry["log_posterior"] == 0.0
+    assert v14_entry["fisher_info"] == 0.0
+    assert v14_entry["imagination_parent"] is None
+    assert v14_entry["darwin_score"] == 0.5, "v14 darwin_score must preserve"
+    print("[CHECK v15 Task 3] upgrade_entry: v14 entry gets v15 defaults OK")
+
+
+def _v15t3_check_degradation(_compute_v15_fields, manifold, obs_paper):
+    """Step 7: manifold=None / 空 obs 时返回默认值."""
+    h_id, lp, fi = _compute_v15_fields(None, obs_paper)
+    assert h_id is None and lp == 0.0 and fi == 0.0, (
+        f"manifold=None should return defaults, got ({h_id}, {lp}, {fi})")
+    # observations 为空时也返回默认值
+    h_id2, lp2, fi2 = _compute_v15_fields(manifold, [])
+    assert h_id2 is None and lp2 == 0.0 and fi2 == 0.0, (
+        f"empty obs should return defaults, got ({h_id2}, {lp2}, {fi2})")
+    print("[CHECK v15 Task 3] failure degradation: None manifold / empty obs OK")
+
+
 def self_check_v15_task3() -> None:
     """v15 Phase 2 Task 3 self-check: HypothesisManifold 接入 rcb_runner.
 
@@ -748,119 +874,23 @@ def self_check_v15_task3() -> None:
     print("[v15 Task 3] running HypothesisManifold integration self-check...")
 
     # 1. _collect_observations: mock step_result 抓 MAE / R² / accuracy
-    obs = _collect_observations(
-        step_result="Final MAE = 0.45, R²: 0.82, accuracy=0.91",
-        report_text="",
-        checklist="",
-    )
-    assert obs, f"_collect_observations returned empty: {obs}"
-    obs_names = {o.name for o in obs}
-    assert "mae" in obs_names, f"mae not captured: {obs_names}"
-    assert "r2" in obs_names or "r²" in obs_names, f"r2 not captured: {obs_names}"
-    print(f"[CHECK v15 Task 3] _collect_observations: {len(obs)} obs from mock text OK")
+    _v15t3_check_collect_observations(_collect_observations)
 
     # 2. _init_hypothesis_manifold: temp workspace + checklist 创建 manifold
     with tempfile.TemporaryDirectory() as td:
         ws = Path(td)
-        manifold = _init_hypothesis_manifold(
-            ws=ws,
-            task_id="Test_000",
-            checklist="Paper claims MAE = 0.5, R²: 0.85, accuracy = 0.90",
-            instructions="",
-            scan_text="",
-        )
-        assert manifold is not None, "manifold should not be None"
-        assert len(manifold._hyp) >= 3, (
-            f"expected >=3 hypotheses, got {len(manifold._hyp)}")
-        h_ids = set(manifold._hyp.keys())
-        assert "h_paper_repro" in h_ids, f"missing h_paper_repro: {h_ids}"
-        assert "h_partial_repro" in h_ids, f"missing h_partial_repro: {h_ids}"
-        assert "h_null_baseline" in h_ids, f"missing h_null_baseline: {h_ids}"
-        # 持久化文件存在
-        path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
-        assert path.exists(), f"manifold file not persisted: {path}"
-        print(
-            f"[CHECK v15 Task 3] _init_hypothesis_manifold: "
-            f"{len(manifold._hyp)} hypotheses, persisted OK")
-
-        # 3. _load_manifold: 重启后能加载
-        loaded = _load_manifold(path)
-        assert loaded is not None, "loaded manifold should not be None"
-        assert len(loaded._hyp) == len(manifold._hyp), (
-            f"loaded {len(loaded._hyp)} != original {len(manifold._hyp)}")
-        print(f"[CHECK v15 Task 3] _load_manifold: reload {len(loaded._hyp)} hypotheses OK")
-
-        # 4. abductive_inference: observations 接近 paper targets → 选 h_paper_repro
-        obs_paper = _collect_observations(
-            step_result="MAE = 0.50, R²: 0.84, accuracy = 0.89",
-            report_text="",
-            checklist="",
-        )
-        best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, obs_paper)
-        assert best_h_id == "h_paper_repro", (
-            f"expected h_paper_repro, got {best_h_id}")
-        # log_posterior 可能为负 (log of prob ≤ 0), 只要非零就说明计算路径走通
-        assert log_post != 0.0 or not obs_paper, (
-            f"log_posterior should not be 0 with obs, got {log_post}")
-        print(
-            f"[CHECK v15 Task 3] abductive_inference: best={best_h_id} "
-            f"log_post={log_post:.3f} fisher_info={fisher_info:.3f} OK")
-
-        # 5. _record_abduction: 写 abduction entry 到 trace
+        manifold, manifold_path = _v15t3_init_manifold(_init_hypothesis_manifold, ws)
+        _v15t3_check_load(_load_manifold, manifold_path, manifold)
+        obs_paper = _v15t3_check_abduction(
+            _collect_observations, _compute_v15_fields, manifold)
         trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
-        _record_abduction(
-            manifold,
-            obs_paper,
-            trace_path=trace_path,
-            task_id="Test_000",
-            iteration=1,
-            ts=_time_t3.time(),
-        )
-        assert trace_path.exists(), "abduction entry not written"
-        lines = trace_path.read_text(encoding="utf-8").strip().split("\n")
-        abd_lines = [
-            json.loads(_l) for _l in lines
-            if _l.strip() and json.loads(_l).get("role") == "abductive_inference"
-        ]
-        assert len(abd_lines) == 1, f"expected 1 abduction entry, got {len(abd_lines)}"
-        abd = abd_lines[0]
-        assert abd["hypothesis_id"] == "h_paper_repro", (
-            f"abduction entry hypothesis_id wrong: {abd['hypothesis_id']}")
-        assert "log_posterior" in abd, "abduction entry missing log_posterior"
-        assert "fisher_info" in abd, "abduction entry missing fisher_info"
-        assert abd["imagination_parent"] is None, "imagination_parent should be None"
-        print("[CHECK v15 Task 3] _record_abduction: abduction entry written OK")
-
-        # 6. upgrade_entry: v14 entry 自动补 v15 字段, v14 darwin_score 保留
-        from huginn.metacog.trace_topology import upgrade_entry
-        v14_entry = {
-            "simplex_id": "trace:Test_000:iter_1:rcb_exec",
-            "attempted": "test",
-            "evidence": ["x"],
-            "darwin_score": 0.5,
-            "cochain_type": "gradient",
-        }
-        upgrade_entry(v14_entry)
-        assert v14_entry["hypothesis_id"] is None
-        assert v14_entry["log_posterior"] == 0.0
-        assert v14_entry["fisher_info"] == 0.0
-        assert v14_entry["imagination_parent"] is None
-        assert v14_entry["darwin_score"] == 0.5, "v14 darwin_score must preserve"
-        print("[CHECK v15 Task 3] upgrade_entry: v14 entry gets v15 defaults OK")
-
-        # 7. 失败降级: manifold=None 时 _compute_v15_fields 返回默认值
-        h_id, lp, fi = _compute_v15_fields(None, obs_paper)
-        assert h_id is None and lp == 0.0 and fi == 0.0, (
-            f"manifold=None should return defaults, got ({h_id}, {lp}, {fi})")
-        # observations 为空时也返回默认值
-        h_id2, lp2, fi2 = _compute_v15_fields(manifold, [])
-        assert h_id2 is None and lp2 == 0.0 and fi2 == 0.0, (
-            f"empty obs should return defaults, got ({h_id2}, {lp2}, {fi2})")
-        print("[CHECK v15 Task 3] failure degradation: None manifold / empty obs OK")
+        _v15t3_check_record_abduction(
+            _record_abduction, manifold, obs_paper, trace_path, _time_t3.time())
+        _v15t3_check_upgrade_entry()
+        _v15t3_check_degradation(_compute_v15_fields, manifold, obs_paper)
 
     print("v15 Task 3 self-check PASSED")
-
 
 def self_check_v15_task4() -> None:
     """v15 Phase 2 Task 4 self-check: HintCoordinator posterior-guided hint.
@@ -883,7 +913,29 @@ def self_check_v15_task4() -> None:
 
     print("[v15 Task 4] running HintCoordinator posterior-guided hint self-check...")
 
-    # 1. _build_posterior_guided_hint: 正常路径
+    manifold, obs = _v15t4_manifold_and_obs(Hypothesis, HypothesisManifold, Observation)
+    hint = _v15t4_check_build_hint(_build_posterior_guided_hint, manifold, obs)
+    _v15t4_check_degradation(_build_posterior_guided_hint, manifold, obs, HypothesisManifold)
+
+    hc = HintCoordinator()
+    step2_base = _V15T4_STEP2_BASE
+    iter_base = "Continue execution. Iteration 2/4."
+    _v15t4_check_coordinate_injection(hc, hint, step2_base, iter_base)
+    _v15t4_check_lift_boost(hc, manifold, obs, step2_base)
+    _v15t4_check_v14_fallback(hc, manifold, step2_base)
+    _v15t4_check_token_control(_build_posterior_guided_hint, Hypothesis, HypothesisManifold, Observation)
+
+    print("v15 Task 4 self-check PASSED")
+
+
+_V15T4_STEP2_BASE = (
+    "Now execute the task following your methodology checklist. "
+    "Implement each [EXACT] component as-specified in the paper."
+)
+
+
+def _v15t4_manifold_and_obs(Hypothesis, HypothesisManifold, Observation):
+    """构造 3 假设 + 3 观测的 mock manifold."""
     manifold = HypothesisManifold()
     manifold.add(Hypothesis(
         h_id="h_paper_repro",
@@ -908,31 +960,32 @@ def self_check_v15_task4() -> None:
         Observation("r2", 0.83, sigma=0.1),
         Observation("accuracy", 0.88, sigma=0.1),
     ]
-    hint = _build_posterior_guided_hint(manifold, obs)
+    return manifold, obs
+
+
+def _v15t4_check_build_hint(build_fn, manifold, obs) -> str:
+    """1. _build_posterior_guided_hint: 正常路径."""
+    hint = build_fn(manifold, obs)
     assert hint, f"hint should not be empty:\n{hint}"
     assert "[posterior core hint]" in hint, f"missing core hint:\n{hint}"
     assert "[posterior explore hint]" in hint, f"missing explore hint:\n{hint}"
     assert "posterior_lift:" in hint, f"missing lift:\n{hint}"
     assert len(hint) <= 1500, f"hint {len(hint)} > 1500 chars:\n{hint}"
     print(f"[CHECK v15 Task 4] _build_posterior_guided_hint OK ({len(hint)} chars)")
+    return hint
 
-    # 2. 失败降级: manifold=None / 空 obs / 空 manifold
-    assert _build_posterior_guided_hint(None, obs) == "", \
-        "manifold=None should return ''"
-    assert _build_posterior_guided_hint(manifold, []) == "", \
-        "empty obs should return ''"
+
+def _v15t4_check_degradation(build_fn, manifold, obs, HypothesisManifold) -> None:
+    """2. 失败降级: manifold=None / 空 obs / 空 manifold."""
+    assert build_fn(None, obs) == "", "manifold=None should return ''"
+    assert build_fn(manifold, []) == "", "empty obs should return ''"
     empty_m = HypothesisManifold()
-    assert _build_posterior_guided_hint(empty_m, obs) == "", \
-        "empty manifold should return ''"
+    assert build_fn(empty_m, obs) == "", "empty manifold should return ''"
     print("[CHECK v15 Task 4] failure degradation OK")
 
-    # 3. coordinate() 注入 posterior_hint
-    hc = HintCoordinator()
-    step2_base = (
-        "Now execute the task following your methodology checklist. "
-        "Implement each [EXACT] component as-specified in the paper."
-    )
-    iter_base = "Continue execution. Iteration 2/4."
+
+def _v15t4_check_coordinate_injection(hc, hint: str, step2_base: str, iter_base: str) -> None:
+    """3. coordinate() 注入 posterior_hint."""
     prompt, events = hc.coordinate(
         iter_n=1,
         csm_state="S4_CONSTRUCT",
@@ -949,13 +1002,14 @@ def self_check_v15_task4() -> None:
         meta_agent=None,
         posterior_hint=hint,
     )
-    assert "[posterior core hint]" in prompt, \
-        f"posterior_hint not injected:\n{prompt}"
+    assert "[posterior core hint]" in prompt, f"posterior_hint not injected:\n{prompt}"
     assert prompt.index("[posterior core hint]") < prompt.index("[gradient block]"), \
         f"posterior_hint should be before gradient block:\n{prompt}"
     print("[CHECK v15 Task 4] coordinate injection OK")
 
-    # 4. posterior lift boost: v15 entry (有 hypothesis_id + log_posterior) + manifold
+
+def _v15t4_check_lift_boost(hc, manifold, obs, step2_base: str) -> None:
+    """4. posterior lift boost: v15 entry (有 hypothesis_id + log_posterior) + manifold."""
     best_h = manifold.abductive_inference(obs)
     log_post = manifold.log_posterior(obs).get(best_h.h_id, 0.0)
     prior_v15 = [{
@@ -984,11 +1038,12 @@ def self_check_v15_task4() -> None:
     )
     assert any(e.startswith("posterior_lift_boost:") for e in events_b), \
         f"posterior_lift_boost event missing: {events_b}"
-    assert "[prior validated: lift=" in prompt_b, \
-        f"lift marker missing:\n{prompt_b}"
+    assert "[prior validated: lift=" in prompt_b, f"lift marker missing:\n{prompt_b}"
     print(f"[CHECK v15 Task 4] posterior lift boost OK (events={events_b})")
 
-    # 5. 失败降级到 v14 keyword overlap: entry 无 v15 字段
+
+def _v15t4_check_v14_fallback(hc, manifold, step2_base: str) -> None:
+    """5. 失败降级到 v14 keyword overlap: entry 无 v15 字段."""
     prior_v14 = [{
         "attempted": "compute band gap",
         "darwin_score": 0.9,
@@ -1015,7 +1070,9 @@ def self_check_v15_task4() -> None:
         f"v14 entry should not trigger posterior_lift: {events_c}"
     print("[CHECK v15 Task 4] v14 keyword overlap fallback OK")
 
-    # 6. token 控制: 极长 description 时仍 ≤1500 chars
+
+def _v15t4_check_token_control(build_fn, Hypothesis, HypothesisManifold, Observation) -> None:
+    """6. token 控制: 极长 description 时仍 ≤1500 chars."""
     m_long = HypothesisManifold()
     m_long.add(Hypothesis(
         h_id="h_long_core",
@@ -1029,15 +1086,11 @@ def self_check_v15_task4() -> None:
         predictions={"mae": 0.0},
         n_params=1,
     ))
-    hint_long = _build_posterior_guided_hint(
-        m_long, [Observation("mae", 0.5, sigma=0.1)])
-    assert len(hint_long) <= 1500, \
-        f"long hint {len(hint_long)} > 1500:\n{hint_long}"
+    hint_long = build_fn(m_long, [Observation("mae", 0.5, sigma=0.1)])
+    assert len(hint_long) <= 1500, f"long hint {len(hint_long)} > 1500:\n{hint_long}"
     assert "[posterior core hint]" in hint_long, \
         f"core must survive truncation:\n{hint_long}"
     print(f"[CHECK v15 Task 4] token control OK (truncated to {len(hint_long)} chars)")
-
-    print("v15 Task 4 self-check PASSED")
 
 
 def self_check_v14_comprehensive() -> None:

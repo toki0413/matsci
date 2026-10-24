@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -749,9 +750,34 @@ class VaspTool(HuginnTool):
         self, outcar_path: Path, action: str | None = None
     ) -> dict[str, Any]:
         """Pure-Python OUTCAR parser (baseline/fallback)."""
-        import re
+        result = self._vasp_parse_defaults()
 
-        result = {
+        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底.
+        result.update(self._vasp_parse_pymatgen(outcar_path))
+
+        try:
+            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+            result.update(
+                self._vasp_parse_energy(
+                    content, action, result["energy"], result["converged"]
+                )
+            )
+            result.update(self._vasp_parse_run_params(content))
+            result.update(self._vasp_parse_cell(content))
+            result.update(self._vasp_parse_forces(content, result["forces"]))
+            result.update(
+                self._vasp_parse_moments(content, result["magnetic_moments"])
+            )
+            result.update(self._vasp_parse_efermi(content))
+        except Exception as e:
+            result["parse_error"] = str(e)
+
+        return result
+
+    @staticmethod
+    def _vasp_parse_defaults() -> dict[str, Any]:
+        """解析结果的默认字段 (缺失字段的兜底值)."""
+        return {
             "energy": None,
             "converged": False,
             "forces": [],
@@ -766,151 +792,177 @@ class VaspTool(HuginnTool):
             "ispin": None,
         }
 
-        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底.
-        # 注意 pymatgen 的 Outcar.converged 也是用离子收敛标记,
-        # 对 scf/band/dos 同样误判 — 下面 action-aware 检查会覆盖它.
+    @staticmethod
+    def _vasp_parse_pymatgen(outcar_path: Path) -> dict[str, Any]:
+        """优先用 pymatgen 解析, 拿不到的字段留给 regex 兜底.
+
+        注意 pymatgen 的 Outcar.converged 也是用离子收敛标记,
+        对 scf/band/dos 同样误判 — 后续 action-aware 检查会覆盖它.
+        """
+        parsed: dict[str, Any] = {}
         try:
             from pymatgen.io.vasp import Outcar
 
             oc = Outcar(str(outcar_path))
             if oc.final_energy is not None:
-                result["energy"] = float(oc.final_energy)
+                parsed["energy"] = float(oc.final_energy)
             if oc.forces:
-                result["forces"] = [
+                parsed["forces"] = [
                     {"position": [0.0, 0.0, 0.0], "force": list(f)}
                     for f in oc.forces[-1]
                 ]
             if oc.magnetizations:
-                result["magnetic_moments"] = list(oc.magnetizations[-1])
-            result["converged"] = bool(oc.converged)
-            result["parse_source"] = "pymatgen"
+                parsed["magnetic_moments"] = list(oc.magnetizations[-1])
+            parsed["converged"] = bool(oc.converged)
+            parsed["parse_source"] = "pymatgen"
         except Exception:  # 防御: pymatgen 失败走正则降级
             logger.debug("pymatgen 没装或解析失败, 走下面的 regex", exc_info=True)
+        return parsed
 
-        try:
-            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+    @staticmethod
+    def _vasp_parse_energy(
+        content: str,
+        action: str | None,
+        energy: float | None,
+        converged: bool,
+    ) -> dict[str, Any]:
+        """能量 (TOTEN) + action-aware 收敛判定.
 
-            # Energy — pymatgen 已经填了就不覆盖
-            if result["energy"] is None:
-                energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
-                if energy_matches:
-                    result["energy"] = float(energy_matches[-1])
+        - relax/md/phonon: "reached required accuracy" 是离子步收敛标记.
+        - scf: NSW=0, 检查电子步是否达到 EDIFF ("EDIFF is reached").
+        - band/dos: 非自洽无 SCF 循环, 输出存在即算成功.
+        """
+        parsed: dict[str, Any] = {"energy": energy, "converged": converged}
 
-            # Convergence — action-aware (audit_20260717/14 P1-5):
-            # - relax/md/phonon: "reached required accuracy" 是 VASP 的
-            #   离子步收敛标记 (NSW>1 时出现).
-            # - scf: NSW=0, OUTCAR 永远不会有 "reached required accuracy";
-            #   应当检查电子步是否达到 EDIFF. VASP 在 SCF 收敛时打印
-            #   "EDIFF is reached" 串, 撑满 NELM 时不打印.
-            # - band/dos: 非自洽 (ICHARG=11), 完全没有 SCF 循环, OUTCAR 里
-            #   只有 Kohn-Sham 本征值; 输出存在就算成功.
-            if action in ("scf", "band", "dos"):
-                if "EDIFF is reached" in content:
-                    result["converged"] = True
-                elif action in ("band", "dos") and (
-                    "E-fermi" in content or "free  energy" in content
-                ):
-                    # 非自洽计算无 SCF, 输出存在即可
-                    result["converged"] = True
-                else:
-                    # NELM 撑满 = 未收敛
-                    result["converged"] = False
-                result["convergence_criterion"] = f"electronic (action={action})"
-            else:
-                # relax/md/phonon: 离子收敛标记
-                if not result["converged"] or "reached required accuracy" in content:
-                    result["converged"] = "reached required accuracy" in content
-                result["convergence_criterion"] = "ionic (reached required accuracy)"
-
-            # ENCUT
-            encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
-            if encut_match:
-                result["encut"] = float(encut_match.group(1))
-
-            # ISPIN
-            ispin_match = re.search(r"ISPIN\s*=\s*(\d+)", content)
-            if ispin_match:
-                result["ispin"] = int(ispin_match.group(1))
-
-            # NELM / NELMIN
-            nelm_match = re.search(r"NELM\s*=\s*(\d+)", content)
-            if nelm_match:
-                result["nelm"] = int(nelm_match.group(1))
-            nelmin_match = re.search(r"NELMIN\s*=\s*(\d+)", content)
-            if nelmin_match:
-                result["nelmin"] = int(nelmin_match.group(1))
-
-            # K-points
-            kpoint_match = re.search(
-                r"k-points in units of 2pi/SCALE and weight:.*\n.*\n.*", content
+        # Energy — pymatgen 已经填了就不覆盖
+        if energy is None:
+            energy_matches = re.findall(
+                r"free  energy   TOTEN  =\s+([-\d.]+)", content
             )
-            if kpoint_match:
-                result["kpoints"] = "found"  # Simplified
+            if energy_matches:
+                parsed["energy"] = float(energy_matches[-1])
 
-            # Lattice vectors (last occurrence)
-            lattice_pattern = r"direct lattice vectors\s+reciprocal lattice vectors\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*"
-            lattice_matches = re.findall(lattice_pattern, content)
-            if lattice_matches:
-                last = lattice_matches[-1]
-                result["lattice_vectors"] = [
-                    [float(last[0]), float(last[1]), float(last[2])],
-                    [float(last[3]), float(last[4]), float(last[5])],
-                    [float(last[6]), float(last[7]), float(last[8])],
-                ]
+        if action in ("scf", "band", "dos"):
+            if "EDIFF is reached" in content:
+                parsed["converged"] = True
+            elif action in ("band", "dos") and (
+                "E-fermi" in content or "free  energy" in content
+            ):
+                # 非自洽计算无 SCF, 输出存在即可
+                parsed["converged"] = True
+            else:
+                # NELM 撑满 = 未收敛
+                parsed["converged"] = False
+            parsed["convergence_criterion"] = f"electronic (action={action})"
+        else:
+            # relax/md/phonon: 离子收敛标记
+            if not converged or "reached required accuracy" in content:
+                parsed["converged"] = "reached required accuracy" in content
+            parsed["convergence_criterion"] = "ionic (reached required accuracy)"
+        return parsed
 
-            # Volume
-            vol_match = re.findall(r"volume of cell :\s+([\d.]+)", content)
-            if vol_match:
-                result["volume"] = float(vol_match[-1])
+    @staticmethod
+    def _vasp_parse_run_params(content: str) -> dict[str, Any]:
+        """ENCUT / ISPIN / NELM / NELMIN / KPOINTS."""
+        parsed: dict[str, Any] = {}
 
-            # Final forces — pymatgen 已填就不覆盖
-            if not result["forces"]:
-                force_section = re.findall(
-                    r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+        encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
+        if encut_match:
+            parsed["encut"] = float(encut_match.group(1))
+
+        ispin_match = re.search(r"ISPIN\s*=\s*(\d+)", content)
+        if ispin_match:
+            parsed["ispin"] = int(ispin_match.group(1))
+
+        nelm_match = re.search(r"NELM\s*=\s*(\d+)", content)
+        if nelm_match:
+            parsed["nelm"] = int(nelm_match.group(1))
+        nelmin_match = re.search(r"NELMIN\s*=\s*(\d+)", content)
+        if nelmin_match:
+            parsed["nelmin"] = int(nelmin_match.group(1))
+
+        kpoint_match = re.search(
+            r"k-points in units of 2pi/SCALE and weight:.*\n.*\n.*", content
+        )
+        if kpoint_match:
+            parsed["kpoints"] = "found"  # Simplified
+        return parsed
+
+    @staticmethod
+    def _vasp_parse_cell(content: str) -> dict[str, Any]:
+        """晶格矢量 (最后一次出现) 与晶胞体积."""
+        parsed: dict[str, Any] = {}
+        lattice_pattern = r"direct lattice vectors\s+reciprocal lattice vectors\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*"
+        lattice_matches = re.findall(lattice_pattern, content)
+        if lattice_matches:
+            last = lattice_matches[-1]
+            parsed["lattice_vectors"] = [
+                [float(last[0]), float(last[1]), float(last[2])],
+                [float(last[3]), float(last[4]), float(last[5])],
+                [float(last[6]), float(last[7]), float(last[8])],
+            ]
+
+        vol_match = re.findall(r"volume of cell :\s+([\d.]+)", content)
+        if vol_match:
+            parsed["volume"] = float(vol_match[-1])
+        return parsed
+
+    def _vasp_parse_forces(
+        self, content: str, existing: list
+    ) -> dict[str, Any]:
+        """最终 TOTAL-FORCE 块 — pymatgen 已填就不覆盖."""
+        if existing:
+            return {}
+        force_section = re.findall(
+            r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+        )
+        if not force_section:
+            return {}
+        forces = []
+        for line in force_section[-1].strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
+                forces.append(
+                    {
+                        "position": [
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]),
+                        ],
+                        "force": [
+                            float(parts[3]),
+                            float(parts[4]),
+                            float(parts[5]),
+                        ],
+                    }
                 )
-                if force_section:
-                    forces = []
-                    for line in force_section[-1].strip().split("\n"):
-                        parts = line.split()
-                        if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
-                            forces.append(
-                                {
-                                    "position": [
-                                        float(parts[0]),
-                                        float(parts[1]),
-                                        float(parts[2]),
-                                    ],
-                                    "force": [
-                                        float(parts[3]),
-                                        float(parts[4]),
-                                        float(parts[5]),
-                                    ],
-                                }
-                            )
-                    result["forces"] = forces
+        return {"forces": forces}
 
-            # Magnetic moments — pymatgen 已填就不覆盖
-            if not result["magnetic_moments"]:
-                mag_matches = re.findall(
-                    r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
-                )
-                if mag_matches:
-                    mag_moments = []
-                    for line in mag_matches[-1].strip().split("\n"):
-                        parts = line.split()
-                        if len(parts) >= 5 and self._is_float(parts[-1]):
-                            mag_moments.append(float(parts[-1]))
-                    result["magnetic_moments"] = mag_moments
+    def _vasp_parse_moments(
+        self, content: str, existing: list
+    ) -> dict[str, Any]:
+        """磁矩 — pymatgen 已填就不覆盖."""
+        if existing:
+            return {}
+        mag_matches = re.findall(
+            r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+        )
+        if not mag_matches:
+            return {}
+        mag_moments = []
+        for line in mag_matches[-1].strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 5 and self._is_float(parts[-1]):
+                mag_moments.append(float(parts[-1]))
+        return {"magnetic_moments": mag_moments}
 
-            # Band gap — OUTCAR 里没有直接值, 只记 efermi, 真值靠 vasprun.xml
-            efermi_match = re.search(r"E-fermi\s*:\s*([-\d.]+)", content)
-            if efermi_match:
-                result["efermi"] = float(efermi_match.group(1))
-
-        except Exception as e:
-            result["parse_error"] = str(e)
-
-        return result
+    @staticmethod
+    def _vasp_parse_efermi(content: str) -> dict[str, Any]:
+        """Fermi 能 — OUTCAR 里没有 band gap, 真值靠 vasprun.xml."""
+        efermi_match = re.search(r"E-fermi\s*:\s*([-\d.]+)", content)
+        if efermi_match:
+            return {"efermi": float(efermi_match.group(1))}
+        return {}
 
     def _parse_vasprun_quick(self, vasprun_path: Path) -> dict[str, Any]:
         """Quick-parse vasprun.xml for structured data."""

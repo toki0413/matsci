@@ -249,47 +249,59 @@ class AbaqusTool(HuginnTool):
             if input_data.action == "import_packing":
                 return self._import_packing(input_data, work_dir)
             if input_data.action == "run":
-                script_path = (
-                    Path(input_data.script_path) if input_data.script_path else None
-                )
-                if script_path is None or not script_path.exists():
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error="run action requires an existing script_path.",
-                    )
-                return self._execute_script(script_path, work_dir, action="run")
-
-            # 6 个新 action: 生成脚本 + 可选执行
-            script_generators = {
-                "static_general": self._generate_static_general_script,
-                "modal": self._generate_modal_script,
-                "buckling": self._generate_buckling_script,
-                "fatigue": self._generate_fatigue_script,
-                "fracture": self._generate_fracture_script,
-                "explicit_dynamic": self._generate_explicit_dynamic_script,
-            }
-            gen = script_generators.get(input_data.action)
-            if gen is None:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Unknown action: {input_data.action}",
-                )
-            script = gen(input_data)
-            prefix = input_data.output_prefix or f"abaqus_{input_data.action}"
-            script_path = work_dir / f"{prefix}.py"
-            script_path.write_text(script, encoding="utf-8")
-
-            exec_result = self._execute_script(script_path, work_dir, action=input_data.action)
-            data = exec_result.data or {}
-            data["script_path"] = str(script_path)
-            data["action"] = input_data.action
-            return ToolResult(data=data, success=exec_result.success)
+                return self._run_existing_script(input_data, work_dir)
+            return self._generate_and_run(input_data, work_dir)
         except Exception as e:
             return ToolResult(
                 data=None, success=False, error=f"Abaqus tool failed: {e}"
             )
+
+    def _run_existing_script(
+        self, input_data: AbaqusToolInput, work_dir: Path
+    ) -> ToolResult:
+        """run action: 只执行已有脚本."""
+        script_path = (
+            Path(input_data.script_path) if input_data.script_path else None
+        )
+        if script_path is None or not script_path.exists():
+            return ToolResult(
+                data=None,
+                success=False,
+                error="run action requires an existing script_path.",
+            )
+        return self._execute_script(script_path, work_dir, action="run")
+
+    def _generate_and_run(
+        self, input_data: AbaqusToolInput, work_dir: Path
+    ) -> ToolResult:
+        """6 个生成型 action: 生成脚本 + 可选执行."""
+        script_generators = {
+            "static_general": self._generate_static_general_script,
+            "modal": self._generate_modal_script,
+            "buckling": self._generate_buckling_script,
+            "fatigue": self._generate_fatigue_script,
+            "fracture": self._generate_fracture_script,
+            "explicit_dynamic": self._generate_explicit_dynamic_script,
+        }
+        gen = script_generators.get(input_data.action)
+        if gen is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Unknown action: {input_data.action}",
+            )
+        script = gen(input_data)
+        prefix = input_data.output_prefix or f"abaqus_{input_data.action}"
+        script_path = work_dir / f"{prefix}.py"
+        script_path.write_text(script, encoding="utf-8")
+
+        exec_result = self._execute_script(
+            script_path, work_dir, action=input_data.action
+        )
+        data = exec_result.data or {}
+        data["script_path"] = str(script_path)
+        data["action"] = input_data.action
+        return ToolResult(data=data, success=exec_result.success)
 
     def _import_packing(self, args: AbaqusToolInput, work_dir: Path) -> ToolResult:
         objects = load_packing_objects(args.packing_data, work_dir)
@@ -449,36 +461,8 @@ from caeModules import *
         nlgeom = "ON" if s.nlgeom else "OFF"
         niter = s.max_iterations
 
-        loads_lines = []
-        for i, load in enumerate(s.loads):
-            ltype = load.get("type", "pressure")
-            val = float(load.get("value", 0.0))
-            if ltype == "pressure":
-                loads_lines.append(
-                    f"    model.Pressure(name='Load-{i}', createStepName='Step-1', "
-                    f"region=region, magnitude={val})"
-                )
-            elif ltype == "concentrated":
-                loads_lines.append(
-                    f"    model.ConcentratedForce(name='Load-{i}', createStepName='Step-1', "
-                    f"region=region, cf3={val})"
-                )
-            elif ltype == "gravity":
-                loads_lines.append(
-                    f"    model.Gravity(name='Load-{i}', createStepName='Step-1', "
-                    f"comp3={val})"
-                )
-
-        bc_lines = []
-        for i, bc in enumerate(s.boundary_conditions):
-            val = float(bc.get("value", 0.0))
-            bc_lines.append(
-                f"    model.DisplacementBC(name='BC-{i}', createStepName='Initial', "
-                f"region=region, u1={val}, u2={val}, u3={val})"
-            )
-
-        loads_code = "\n".join(loads_lines) if loads_lines else "    pass"
-        bc_code = "\n".join(bc_lines) if bc_lines else "    pass"
+        loads_code = self._sgs_loads(s)
+        bc_code = self._sgs_bcs(s)
 
         return f"""# Abaqus Python script: static_general
 # Run with: abaqus cae noGUI={args.output_prefix}.py
@@ -514,6 +498,40 @@ job = mdb.Job(name='{args.output_prefix}', model='{args.base_model}',
 job.submit()
 job.waitForCompletion()
 """
+
+    def _sgs_loads(self, s: StaticGeneralSpec) -> str:
+        """静力载荷行."""
+        loads_lines = []
+        for i, load in enumerate(s.loads):
+            ltype = load.get("type", "pressure")
+            val = float(load.get("value", 0.0))
+            if ltype == "pressure":
+                loads_lines.append(
+                    f"    model.Pressure(name='Load-{i}', createStepName='Step-1', "
+                    f"region=region, magnitude={val})"
+                )
+            elif ltype == "concentrated":
+                loads_lines.append(
+                    f"    model.ConcentratedForce(name='Load-{i}', createStepName='Step-1', "
+                    f"region=region, cf3={val})"
+                )
+            elif ltype == "gravity":
+                loads_lines.append(
+                    f"    model.Gravity(name='Load-{i}', createStepName='Step-1', "
+                    f"comp3={val})"
+                )
+        return "\n".join(loads_lines) if loads_lines else "    pass"
+
+    def _sgs_bcs(self, s: StaticGeneralSpec) -> str:
+        """静力边界条件行."""
+        bc_lines = []
+        for i, bc in enumerate(s.boundary_conditions):
+            val = float(bc.get("value", 0.0))
+            bc_lines.append(
+                f"    model.DisplacementBC(name='BC-{i}', createStepName='Initial', "
+                f"region=region, u1={val}, u2={val}, u3={val})"
+            )
+        return "\n".join(bc_lines) if bc_lines else "    pass"
 
     def _generate_modal_script(self, args: AbaqusToolInput) -> str:
         """生成模态分析脚本 (*FREQUENCY, Lanczos)."""
@@ -695,7 +713,16 @@ job.waitForCompletion()
         dt_est = 1e-3 / c_wave  # 1mm 特征长度
         dt_est / (mass_scale ** 0.5)
 
-        # 材料模型代码
+        mat_code = self._eds_material(s, E, nu, mat_model)
+        return self._eds_render_a(
+            args, c_wave, mass_scale, mat_model, mat_code, rho, t_total,
+            self._eds_contacts(s), self._eds_velocity(s),
+        ) + self._eds_render_b(args, self._eds_loads(s), self._eds_bcs(s))
+
+    def _eds_material(
+        self, s: ExplicitDynamicSpec, E: float, nu: float, mat_model: str
+    ) -> str:
+        """材料行: Elastic 基础 + plastic / johnson_cook 追加."""
         mat_lines = [
             f"model.materials['Material-1'].Elastic(table=(({E!r}, {nu!r}), ))",
         ]
@@ -718,9 +745,10 @@ job.waitForCompletion()
                 f"model.materials['Material-1'].JohnsonCook("
                 f"table=(({A}, {B}, {n}, {C}, {m}, {T_ref}, {T_melt}), ))"
             )
-        mat_code = "\n".join(mat_lines)
+        return "\n".join(mat_lines)
 
-        # 接触定义
+    def _eds_contacts(self, s: ExplicitDynamicSpec) -> str:
+        """接触定义行."""
         contact_lines = []
         for i, cp in enumerate(s.contact_pairs):
             master = cp.get("master", "")
@@ -739,20 +767,22 @@ job.waitForCompletion()
                     f"# *SURFACE INTERACTION, NAME=Interaction-{i}\n"
                     f"# friction coefficient = {friction}"
                 )
-        contact_code = "\n".join(contact_lines) if contact_lines else "# 无接触定义"
+        return "\n".join(contact_lines) if contact_lines else "# 无接触定义"
 
-        # 初速度
-        vel_code = ""
-        if s.initial_velocity:
-            vx, vy, vz = s.initial_velocity
-            vel_code = (
-                f"# 初始速度: vx={vx} m/s, vy={vy} m/s, vz={vz} m/s\n"
-                f"model.Field(name='InitialVelocity', "
-                f"region=model.rootAssembly.sets['SET-IMPACT'], "
-                f"velocity=({vx}, {vy}, {vz}))"
-            )
+    def _eds_velocity(self, s: ExplicitDynamicSpec) -> str:
+        """初速度场行."""
+        if not s.initial_velocity:
+            return ""
+        vx, vy, vz = s.initial_velocity
+        return (
+            f"# 初始速度: vx={vx} m/s, vy={vy} m/s, vz={vz} m/s\n"
+            f"model.Field(name='InitialVelocity', "
+            f"region=model.rootAssembly.sets['SET-IMPACT'], "
+            f"velocity=({vx}, {vy}, {vz}))"
+        )
 
-        # 载荷
+    def _eds_loads(self, s: ExplicitDynamicSpec) -> str:
+        """载荷行."""
         loads_lines = []
         for i, load in enumerate(s.loads):
             ltype = load.get("type", "pressure")
@@ -767,9 +797,10 @@ job.waitForCompletion()
                     f"model.Gravity(name='Load-{i}', createStepName='Step-1', "
                     f"comp3={val})"
                 )
-        loads_code = "\n".join(loads_lines) if loads_lines else "    pass"
+        return "\n".join(loads_lines) if loads_lines else "    pass"
 
-        # 边界条件
+    def _eds_bcs(self, s: ExplicitDynamicSpec) -> str:
+        """边界条件行."""
         bc_lines = []
         for i, bc in enumerate(s.boundary_conditions):
             val = float(bc.get("value", 0.0))
@@ -777,8 +808,14 @@ job.waitForCompletion()
                 f"model.DisplacementBC(name='BC-{i}', createStepName='Initial', "
                 f"region=region, u1={val}, u2={val}, u3={val})"
             )
-        bc_code = "\n".join(bc_lines) if bc_lines else "    pass"
+        return "\n".join(bc_lines) if bc_lines else "    pass"
 
+    def _eds_render_a(
+        self, args: AbaqusToolInput, c_wave: float, mass_scale: float,
+        mat_model: str, mat_code: str, rho: float, t_total: float,
+        contact_code: str, vel_code: str,
+    ) -> str:
+        """渲染脚本前半段 (头部/材料/分析步/接触/初速)."""
         return f"""# Abaqus Python script: explicit_dynamic (collision/impact)
 # Run with: abaqus cae noGUI={args.output_prefix}.py
 # 物理场景: 碰撞/冲击/跌落测试
@@ -809,7 +846,13 @@ model.ExplicitDynamicsStep(name='Step-1', previous='Initial',
 
 # 初始速度
 {vel_code}
+"""
 
+    def _eds_render_b(
+        self, args: AbaqusToolInput, loads_code: str, bc_code: str
+    ) -> str:
+        """渲染脚本后半段 (载荷/边界/输出/作业)."""
+        return f"""
 # 载荷 (region 需按实际模型指定)
 region = model.rootAssembly.sets.get('SET-LOAD')
 {loads_code}

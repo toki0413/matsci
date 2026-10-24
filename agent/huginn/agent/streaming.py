@@ -542,6 +542,11 @@ class _TurnStream:
     last_reasoning: str = ""
     stopped: bool = False
     final_ai_content: str = ""
+    include_history: bool | None = None
+    vision_content: Any = None
+    cv_hints: Any = None
+    capture_turn_id: str = ""
+    budget_override: Any = None
 
 
 class StreamingMixin:
@@ -1427,34 +1432,56 @@ class StreamingMixin:
         into input messages. Used by Step 3 retry — fresh thread 的 prompt
         已结构化注入所有必要 state, 不需要 Step 2 的 1M+ tokens 历史累积.
         """
-        # ── 超长用户粘贴文本自动落盘 (paste-to-file) ──────────────────
-        # 复用 compress.py 的 offload 目录. 超长纯文本不再内联进 prompt,
-        # 落盘后替换成"已保存"提示, 需要全文时由 file_read_tool 读取.
+        # 超长纯文本落盘, prompt 里只留"已保存"提示 (全文由 file_read_tool 读).
         from huginn.tools.paste_offload import maybe_offload_pasted_text
-
         message, _ = maybe_offload_pasted_text(message)
+
+        state: dict[str, Any] = {}
 
         # ponytail: CodeAct 早返回 — 不走 langgraph / vision / cognitive engine,
         # 直接进 code_act_loop. CodeAct 模式下 LLM 输出 Python 代码块替代 JSON
         # tool_call, 工具作为 namespace 函数注入. 连续 3 次代码异常自动降级回
         # tool_call (走下面的原逻辑). 见 huginn/agent/code_act_loop.py.
         if getattr(self, "mode", "tool_call") == "code_act":
-            from huginn.agent.code_act_loop import run_code_act_turn
-
-            degraded = False
-            async for ev in run_code_act_turn(self, message, thread_id):
-                if ev.get("type") == "code_act_degraded":
-                    degraded = True
-                    break
+            async for ev in self._chat_code_act(state, message, thread_id):
                 yield ev
-            if not degraded:
+            if not state.get("degraded"):
                 return
+
+        async for event in self._chat_preamble(
+            state, message, thread_id, image_path, include_history
+        ):
+            yield event
+        if state.get("stop"):
+            return
+
+        turn = self._chat_make_turn(state, thread_id, budget_override)
+        async for event in self._chat_streaming_turn(turn):
+            yield event
+
+    async def _chat_code_act(self, state: dict[str, Any], message: str, thread_id: str):
+        """CodeAct 早返回路径. state['degraded'] 标记是否降级继续."""
+        from huginn.agent.code_act_loop import run_code_act_turn
+
+        degraded = False
+        async for ev in run_code_act_turn(self, message, thread_id):
+            if ev.get("type") == "code_act_degraded":
+                degraded = True
+                break
+            yield ev
+        state["degraded"] = degraded
+        if degraded:
             # 降级路径: 切回 tool_call 并继续执行下面的原 chat 逻辑
             self.mode = "tool_call"
             logger.warning(
                 "CodeAct degraded to tool_call after repeated code errors"
             )
 
+    async def _chat_preamble(
+        self, state: dict[str, Any], message: str, thread_id: str,
+        image_path: str | None, include_history: bool | None,
+    ):
+        """turn 前置阶段: 会话上下文 / mode banner / 澄清 / 视觉路由 / 隐私扫描."""
         set_thread_id(thread_id)
         set_user_message(message)
         # ponytail: 不写 self.thread_id / self._current_user_message 实例属性,
@@ -1483,11 +1510,24 @@ class StreamingMixin:
             yield clarification_event
             # 不 return — yield 完继续走 agent loop, 用户可以选择回答或忽略
 
+        async for event in self._chat_route_and_scrub(
+            state, message, thread_id, image_path
+        ):
+            yield event
+        if state.get("stop"):
+            return
+        state["include_history"] = include_history
+
+    async def _chat_route_and_scrub(
+        self, state: dict[str, Any], message: str, thread_id: str,
+        image_path: str | None,
+    ):
+        """事件总线启动 → 视觉路由 → 隐私扫描 → turn 副作用."""
         # 统一事件总线: 桥接 HookManager + 内部EventBus + 插件EventBus + PetBus
-        _ubus = await self._begin_cognitive_turn(message, thread_id)
+        ubus = await self._begin_cognitive_turn(message, thread_id)
 
         # Vision routing
-        message, _vision_content, _cv_hints = await self._resolve_vision_route(
+        message, vision_content, cv_hints = await self._resolve_vision_route(
             message, image_path
         )
 
@@ -1495,24 +1535,34 @@ class StreamingMixin:
         message, privacy_block = self._scrub_user_message(message)
         if privacy_block is not None:
             yield privacy_block
+            state["stop"] = True
             return
 
-        await self._start_turn_side_effects(message, thread_id, _ubus)
+        await self._start_turn_side_effects(message, thread_id, ubus)
 
+        state.update(
+            message=message,
+            ubus=ubus,
+            vision_content=vision_content,
+            cv_hints=cv_hints,
+        )
+
+    def _chat_make_turn(
+        self, state: dict[str, Any], thread_id: str, budget_override: Any,
+    ) -> _TurnStream:
+        """构造本轮可变状态容器 (TPS/TTFT 计时 + completion capture)."""
         # TPS / TTFT 实时监控: t0=turn 起点, t_first_token=首个 chunk 时间.
         # 在 turn_span 作用域外初始化, finally 块里算 tps.
         # ponytail: chunk_chars/4 ≈ tokens (latin). 升级: 用 response_metadata.usage.output_tokens 校准.
-        _tps_t0 = time.monotonic()
+        tps_t0 = time.monotonic()
         # wire-level completion capture: 收集 prompt/response/tool_call/tool_result
         # 给 red_team 提供结构化输入 + 未来 RL 训练留数据.
         # 借鉴 Polar: 不在 harness 里手写 logger, 在 stream 层统一抓.
         # ponytail: 只覆盖 langgraph 路径 (chat 主流程). CodeAct/plan-mode 直调
         # 漏掉, 升级路径: 在 model.ainvoke 处再包一层 (monkeypatch BaseChatModel).
-        _completion_records: list[dict[str, Any]] = []
-        _capture_turn_id = f"{thread_id}_{int(time.time() * 1000)}"
-
-        # 本轮可变状态集中在一个对象里, 供下面拆出去的 helper 共享.
-        turn = _TurnStream(
+        completion_records: list[dict[str, Any]] = []
+        capture_turn_id = f"{thread_id}_{int(time.time() * 1000)}"
+        return _TurnStream(
             graph=None,
             inputs={},
             config={},
@@ -1520,68 +1570,79 @@ class StreamingMixin:
             turn_span=None,
             thread_id=thread_id,
             pet=get_pet_bus(),
-            completion_records=_completion_records,
-            ubus=_ubus,
-            message=message,
+            completion_records=completion_records,
+            ubus=state["ubus"],
+            message=state["message"],
             primary_idle=0.0,
-            tps_t0=_tps_t0,
+            tps_t0=tps_t0,
+            include_history=state["include_history"],
+            vision_content=state["vision_content"],
+            cv_hints=state["cv_hints"],
+            capture_turn_id=capture_turn_id,
+            budget_override=budget_override,
         )
 
+    async def _chat_streaming_turn(self, turn: _TurnStream):
+        """在 telemetry span 内跑完整一轮: 建 prompt → compact → runtime → stream."""
         with self._telemetry_collector.span(
-            "agent_turn", thread_id=thread_id
+            "agent_turn", thread_id=turn.thread_id
         ) as turn_span:
             turn.turn_span = turn_span
             turn.graph = self.build_graph()
 
             # 统一事件总线: ON_MESSAGE_RECEIVED
-            await _ubus.publish_message_received(thread_id, message[:2000])
+            await turn.ubus.publish_message_received(
+                turn.thread_id, turn.message[:2000]
+            )
 
             prompt_guidance, clarify_event = await self._await_prompt_submit(
-                message, thread_id
+                turn.message, turn.thread_id
             )
             if clarify_event is not None:
                 yield clarify_event
                 return
 
-            messages = await self._build_turn_messages(
-                message,
-                include_history=include_history,
-                vision_content=_vision_content,
-                cv_hints=_cv_hints,
-                prompt_guidance=prompt_guidance,
-            )
-            # 隐私守卫可能切到本地模型, 需要重建 graph.
-            messages, turn.graph = self._apply_privacy_guard(messages, turn.graph)
+            messages = await self._chat_build_messages(turn, prompt_guidance)
+            turn.inputs = {"messages": messages}
 
-            # M2: 事件驱动认知纪律守护 — event 档位下, 若对话尾部出现工具失败
-            # 等纪律偏离, 发送前即时注入一条紧凑提醒 (平时不占常驻 prompt).
-            messages = self._inject_discipline_reminder(messages)
-            inputs = {"messages": messages}
-            turn.inputs = inputs
-
-            await self._compact_turn_inputs(inputs, _ubus)
+            await self._compact_turn_inputs(turn.inputs, turn.ubus)
             runtime = self._prepare_turn_runtime(
-                budget_override, turn.graph, inputs, thread_id
+                turn.budget_override, turn.graph, turn.inputs, turn.thread_id
             )
             turn.config = runtime["config"]
             turn.use_sync_stream = runtime["use_sync_stream"]
 
             # 统一事件总线: ON_LLM_REQUEST + ON_BEFORE_MESSAGE_SENT
-            await _ubus.publish_llm_request(thread_id, len(messages))
-            await _ubus.publish_before_message_sent(thread_id, len(messages))
+            await turn.ubus.publish_llm_request(turn.thread_id, len(messages))
+            await turn.ubus.publish_before_message_sent(turn.thread_id, len(messages))
 
             # 主流空闲阈值 (随 thinking 档位放宽). 提到循环外, 使降级告警能如实
             # 报告"实际用的阈值", 而不是模块默认常量 _STREAM_IDLE_TIMEOUT.
             turn.primary_idle = _thinking_stream_idle()
-
 
             try:
                 async for event in self._stream_turn(turn):
                     yield event
             finally:
                 await self._finish_turn(
-                    turn, _completion_records, _capture_turn_id
+                    turn, turn.completion_records, turn.capture_turn_id
                 )
+
+    async def _chat_build_messages(self, turn: _TurnStream, prompt_guidance: Any):
+        """构造本轮 messages: 历史 + 视觉 + 隐私守卫 graph 重建 + 纪律提醒."""
+        messages = await self._build_turn_messages(
+            turn.message,
+            include_history=turn.include_history,
+            vision_content=turn.vision_content,
+            cv_hints=turn.cv_hints,
+            prompt_guidance=prompt_guidance,
+        )
+        # 隐私守卫可能切到本地模型, 需要重建 graph.
+        messages, turn.graph = self._apply_privacy_guard(messages, turn.graph)
+
+        # M2: 事件驱动认知纪律守护 — event 档位下, 若对话尾部出现工具失败
+        # 等纪律偏离, 发送前即时注入一条紧凑提醒 (平时不占常驻 prompt).
+        return self._inject_discipline_reminder(messages)
 
     # ── chat() split helpers ──────────────────────────────────────
 

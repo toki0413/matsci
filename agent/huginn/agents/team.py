@@ -637,60 +637,15 @@ class ModelTeam:
         max_panel: int = 5,
         rounds: int = 1,
     ) -> dict[str, Any]:
-        """Fusion 模式: 并行分发 → 多轮讨论 → 裁判合成.
-
-        灵感来自 OpenRouter Fusion (2026.06):
-        1. 将用户 query 并行分发给 panel 成员 (默认所有 tools-capable 成员)
-        2. 每个成员独立推理, 可以调工具
-        3. rounds > 1 时, 后续轮次每个成员能看到其他人的回答, 进行补充/修正
-        4. 所有轮次结束后, 由 synthesizer 成员做差异驱动的信息蒸馏:
-           - 共识提取: 多个模型一致的结论
-           - 分歧标注: 矛盾的观点 + 证据判断
-           - 盲区补全: 单一模型独有的有效信息
-
-        和 ModelTeam.run() 的区别:
-        - run() 是串行流水线 (plan → execute → review)
-        - fusion_query() 是并行 fan-out + (可选)多轮讨论 + 合成 fan-in
-        - fusion 适合开放性研究问题, run 适合有明确步骤的执行任务
-
-        参数:
-            panel_roles: 参与并行回答的角色, 默认所有 tools-capable 成员
-            synthesizer_role: 负责合成的角色, 默认 critic
-            max_panel: 最多并行成员数 (成本控制)
-            rounds: 讨论轮数, 1=单轮(纯并行), 2+=多轮讨论(协作)
-
-        返回:
-            dict 包含 final_answer, panel_responses, all_rounds, consensus, dissent
-        """
+        """Fusion 模式: 并行分发 → 多轮讨论 → 裁判合成."""
         traces: list[TeamTrace] = []
         ctx = dict(context or {})
         ctx["original_task"] = query
 
-        # 1. 选择 panel 成员
-        if panel_roles is None:
-            # 默认: 所有有 tools 能力的成员 (不含 synthesizer)
-            panel_roles = [
-                role for role, member in self.members.items()
-                if role != synthesizer_role and member.caps.tools
-            ]
+        panel_roles = self._tq_select_panel(panel_roles, synthesizer_role, max_panel)
         if not panel_roles:
-            # 退化为所有非 synthesizer 成员
-            panel_roles = [
-                role for role in self.members if role != synthesizer_role
-            ]
+            return self._tq_no_panel_result(query)
 
-        # 限制 panel 大小
-        panel_roles = panel_roles[:max_panel]
-        if not panel_roles:
-            return {
-                "task": query,
-                "final_answer": "No panel members available for fusion.",
-                "panel_responses": [],
-                "consensus": "",
-                "dissent": "",
-            }
-
-        # 2. 并行分发 (多轮讨论)
         import uuid as _uuid
         fusion_run_id = (context or {}).get("team_run_id") or _uuid.uuid4().hex[:12]
         await self._publish("team.run.start", {
@@ -699,80 +654,159 @@ class ModelTeam:
             "members": [r.value for r in panel_roles],
         })
 
-        async def _parallel_delegate(
-            role: TeamRole, task: str
-        ) -> tuple[TeamRole, str, float]:
-            start = time.time()
-            output = await self._delegate(role, task, ctx, traces, fusion_run_id)
-            duration = round((time.time() - start) * 1000, 2)
-            return role, output, duration
+        all_rounds, panel_responses = await self._tq_run_rounds(
+            query, panel_roles, rounds, ctx, traces, fusion_run_id
+        )
 
-        all_rounds: list[list[dict]] = []
-        panel_responses: list[dict] = []
-
-        for round_idx in range(rounds):
-            if round_idx == 0:
-                # 第一轮: 原始 query
-                task_for_round = query
-            else:
-                # 后续轮次: 把上一轮所有回答作为同侪上下文
-                peer_text = "\n\n".join(
-                    f"[{r['role']} ({r['model']})]\n{r['answer']}"
-                    for r in panel_responses
-                )
-                task_for_round = (
-                    f"{query}\n\n"
-                    f"=== 同侪回答 (第 {round_idx} 轮) ===\n"
-                    f"{peer_text}\n\n"
-                    f"=== 你的任务 ===\n"
-                    f"请审视其他模型的回答, 补充遗漏的信息, "
-                    f"修正错误, 或坚持你的观点并给出理由."
-                )
-
-            round_results = await asyncio.gather(
-                *(_parallel_delegate(role, task_for_round) for role in panel_roles)
-            )
-
-            panel_responses = []
-            for role, output, duration in round_results:
-                member = self.members.get(role)
-                panel_responses.append({
-                    "role": role.value,
-                    "model": member.model_name if member else "?",
-                    "answer": output,
-                    "duration_ms": duration,
-                    "round": round_idx + 1,
-                })
-            all_rounds.append(list(panel_responses))
-
-        # panel_responses 现在是最后一轮的结果
-
-        # 3. 裁判合成
         synthesizer_member = self.members.get(synthesizer_role)
         if synthesizer_member is None:
-            # 没有 synthesizer, 退化为拼接
-            combined = "\n\n---\n\n".join(
-                f"[{r['role']} ({r['model']})]\n{r['answer']}"
-                for r in panel_responses
+            return self._tq_no_synthesizer_result(
+                query, panel_responses, all_rounds, rounds, traces
             )
-            return {
-                "task": query,
-                "final_answer": combined,
-                "panel_responses": panel_responses,
-                "all_rounds": all_rounds,
-                "rounds": rounds,
-                "consensus": "No synthesizer available — raw concatenation.",
-                "dissent": "",
-                "trace": [self._trace_to_dict(t) for t in traces],
-            }
 
-        # 构建合成 prompt
+        synthesis_prompt = self._tq_build_synthesis_prompt(query, panel_responses)
+        synth_output = await self._delegate(
+            synthesizer_role, synthesis_prompt, ctx, traces, fusion_run_id
+        )
+        consensus, dissent, final_answer = self._tq_parse_synthesis(synth_output)
+        return self._tq_synthesized_result(
+            query, final_answer, panel_responses, all_rounds, rounds,
+            consensus, dissent, synthesizer_role, synthesizer_member, traces,
+        )
+
+    def _tq_select_panel(
+        self,
+        panel_roles: list[TeamRole] | None,
+        synthesizer_role: TeamRole,
+        max_panel: int,
+    ) -> list[TeamRole]:
+        """选择 panel 成员: 默认 tools-capable, 空则退化为非 synthesizer."""
+        if panel_roles is None:
+            panel_roles = [
+                role for role, member in self.members.items()
+                if role != synthesizer_role and member.caps.tools
+            ]
+        if not panel_roles:
+            panel_roles = [role for role in self.members if role != synthesizer_role]
+        return panel_roles[:max_panel]
+
+    @staticmethod
+    def _tq_no_panel_result(query: str) -> dict[str, Any]:
+        """panel 为空时的早退结果."""
+        return {
+            "task": query,
+            "final_answer": "No panel members available for fusion.",
+            "panel_responses": [],
+            "consensus": "",
+            "dissent": "",
+        }
+
+    async def _tq_delegate_one(
+        self,
+        role: TeamRole,
+        task: str,
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        run_id: str,
+    ) -> tuple[TeamRole, str, float]:
+        """分发单个 panel 成员, 返回 (role, output, duration_ms)."""
+        start = time.time()
+        output = await self._delegate(role, task, ctx, traces, run_id)
+        duration = round((time.time() - start) * 1000, 2)
+        return role, output, duration
+
+    @staticmethod
+    def _tq_round_task(
+        query: str, panel_responses: list[dict], round_idx: int
+    ) -> str:
+        """首轮用原 query, 后续轮拼接上一轮回答作为同侪上下文."""
+        if round_idx == 0:
+            return query
+        peer_text = "\n\n".join(
+            f"[{r['role']} ({r['model']})]\n{r['answer']}"
+            for r in panel_responses
+        )
+        return (
+            f"{query}\n\n"
+            f"=== 同侪回答 (第 {round_idx} 轮) ===\n"
+            f"{peer_text}\n\n"
+            f"=== 你的任务 ===\n"
+            f"请审视其他模型的回答, 补充遗漏的信息, "
+            f"修正错误, 或坚持你的观点并给出理由."
+        )
+
+    def _tq_collect_round(
+        self, round_results: list[tuple[TeamRole, str, float]], round_idx: int
+    ) -> list[dict]:
+        """把一轮的调用结果收集为 panel 响应字典列表."""
+        panel_responses = []
+        for role, output, duration in round_results:
+            member = self.members.get(role)
+            panel_responses.append({
+                "role": role.value,
+                "model": member.model_name if member else "?",
+                "answer": output,
+                "duration_ms": duration,
+                "round": round_idx + 1,
+            })
+        return panel_responses
+
+    async def _tq_run_rounds(
+        self,
+        query: str,
+        panel_roles: list[TeamRole],
+        rounds: int,
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        run_id: str,
+    ) -> tuple[list[list[dict]], list[dict]]:
+        """按轮次并行分发, 返回 (all_rounds, 最后一轮 panel_responses)."""
+        all_rounds: list[list[dict]] = []
+        panel_responses: list[dict] = []
+        for round_idx in range(rounds):
+            task_for_round = self._tq_round_task(query, panel_responses, round_idx)
+            round_results = await asyncio.gather(
+                *(
+                    self._tq_delegate_one(role, task_for_round, ctx, traces, run_id)
+                    for role in panel_roles
+                )
+            )
+            panel_responses = self._tq_collect_round(round_results, round_idx)
+            all_rounds.append(list(panel_responses))
+        return all_rounds, panel_responses
+
+    def _tq_no_synthesizer_result(
+        self,
+        query: str,
+        panel_responses: list[dict],
+        all_rounds: list[list[dict]],
+        rounds: int,
+        traces: list[TeamTrace],
+    ) -> dict[str, Any]:
+        """没有 synthesizer 时退化为原始拼接."""
+        combined = "\n\n---\n\n".join(
+            f"[{r['role']} ({r['model']})]\n{r['answer']}"
+            for r in panel_responses
+        )
+        return {
+            "task": query,
+            "final_answer": combined,
+            "panel_responses": panel_responses,
+            "all_rounds": all_rounds,
+            "rounds": rounds,
+            "consensus": "No synthesizer available — raw concatenation.",
+            "dissent": "",
+            "trace": [self._trace_to_dict(t) for t in traces],
+        }
+
+    @staticmethod
+    def _tq_build_synthesis_prompt(query: str, panel_responses: list[dict]) -> str:
+        """构造 synthesizer 的差异驱动合成 prompt."""
         panel_text = "\n\n".join(
             f"=== [{r['role']} ({r['model']})] ===\n{r['answer']}"
             for r in panel_responses
         )
-
-        synthesis_prompt = f"""以下是多个独立模型对同一问题的回答:
+        return f"""以下是多个独立模型对同一问题的回答:
 
 原始问题: {query}
 
@@ -796,11 +830,9 @@ class ModelTeam:
 (最终结论)
 """
 
-        synth_output = await self._delegate(
-            synthesizer_role, synthesis_prompt, ctx, traces, fusion_run_id
-        )
-
-        # 解析合成结果
+    @staticmethod
+    def _tq_parse_synthesis(synth_output: str) -> tuple[str, str, str]:
+        """解析合成输出, 返回 (consensus, dissent, final_answer)."""
         consensus = ""
         dissent = ""
         final_answer = synth_output
@@ -821,7 +853,22 @@ class ModelTeam:
                     consensus = rest.replace("## 共识", "").strip()
         elif "## 综合答案" in synth_output:
             final_answer = synth_output.split("## 综合答案", 1)[-1].strip()
+        return consensus, dissent, final_answer
 
+    def _tq_synthesized_result(
+        self,
+        query: str,
+        final_answer: str,
+        panel_responses: list[dict],
+        all_rounds: list[list[dict]],
+        rounds: int,
+        consensus: str,
+        dissent: str,
+        synthesizer_role: TeamRole,
+        synthesizer_member: TeamMember,
+        traces: list[TeamTrace],
+    ) -> dict[str, Any]:
+        """组装最终 fusion 返回值."""
         return {
             "task": query,
             "final_answer": final_answer,

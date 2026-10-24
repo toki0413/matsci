@@ -394,18 +394,8 @@ def compute_H1(sheaf: Sheaf) -> int:  # noqa: N802
 
 # ---------- Self-check ----------
 
-def _selfcheck() -> None:
-    """验证 4 个 test case + Phase 1-6 行为一致性 + 数学层 sanity.
-
-    Test 1: Core 跟 Support 一致 -> H^1 = 0
-    Test 2: 数值冲突 (Core Tc=100K, Support Tc=50K) -> H^1 != 0
-    Test 3: 语义冲突 (Core altermagnetism, Support ferromagnetism) -> H^1 != 0
-    Test 4: 跟 Phase 1-6 hint_coordinator 行为一致
-            (H^1=0 时不冲突, H^1!=0 时冲突; sheaf 严格更强 — 检出 Phase 1-6 漏检的语义冲突)
-    """
-    print("=== Phase 7 Open Problem 7.2: Sheaf Cohomology self-check ===\n")
-
-    # Test 1: Core 跟 Support 一致 — 全部 claim 对齐
+def _sc_test_consistent():
+    """Test 1: Core 跟 Support 一致 — 全部 claim 对齐."""
     sheaf1 = build_sheaf_from_findings(
         core_context="Task: reproduce altermagnetism paper, Tc=100K reported",
         support_findings=[
@@ -418,8 +408,11 @@ def _selfcheck() -> None:
     print(f"  Core claims:    {sheaf1.stalks[0].claims}")
     print(f"  Support claims: {sheaf1.stalks[1].claims}")
     print(f"  Overlap keys: {sheaf1.overlap_keys(0, 1)}")
+    return sheaf1, h1_1
 
-    # Test 2: 数值冲突 — Core Tc=100K, Support Tc=50K
+
+def _sc_test_numerical():
+    """Test 2: 数值冲突 — Core Tc=100K, Support Tc=50K."""
     sheaf2 = build_sheaf_from_findings(
         core_context="Task: reproduce Tc=100K altermagnetism paper",
         support_findings=[
@@ -432,8 +425,11 @@ def _selfcheck() -> None:
     print(f"  Core claims:    {sheaf2.stalks[0].claims}")
     print(f"  Support claims: {sheaf2.stalks[1].claims}")
     print(f"  Restriction failures: {_count_restriction_failures(sheaf2)}")
+    return sheaf2, h1_2
 
-    # Test 3: 语义冲突 — Core altermagnetism, Support ferromagnetism
+
+def _sc_test_semantic():
+    """Test 3: 语义冲突 — Core altermagnetism, Support ferromagnetism."""
     sheaf3 = build_sheaf_from_findings(
         core_context="Task: study altermagnetism ordering in MnTe",
         support_findings=[
@@ -447,7 +443,9 @@ def _selfcheck() -> None:
     print(f"  Support claims: {sheaf3.stalks[1].claims}")
     print(f"  Restriction failures: {_count_restriction_failures(sheaf3)}")
 
-    # Test 4: 跟 Phase 1-6 hint_coordinator 行为一致性
+
+def _sc_test_phase_compat(h1_1, h1_2) -> None:
+    """Test 4: 跟 Phase 1-6 hint_coordinator 行为一致性."""
     # Phase 1-6 _detect_conflict 只能检测特定 keyword 冲突
     # ("按选定方案执行" + "换数学结构"); _keyword_overlap 是 Jaccard.
     # Sheaf H^1 是严格更强的检测器 — 检出 Phase 1-6 漏检的语义/数值冲突.
@@ -490,7 +488,9 @@ def _selfcheck() -> None:
     print(f"PASS Test 4c (Phase 1-6 keyword + numerical conflict): "
           f"Phase 1-6 _detect_conflict={_kw_conflict}, sheaf H^1={h1_4c} - 双方都检出")
 
-    # 数学层 sanity: 验证 Čech complex 结构
+
+def _sc_math_sanity(sheaf1) -> None:
+    """数学层 sanity: 验证 Čech complex 结构."""
     print("\n--- 数学层 sanity ---")
     delta0_1, delta1_1 = _build_cech_matrices(sheaf1)
     rank_d0_1 = _matrix_rank(delta0_1)
@@ -506,6 +506,9 @@ def _selfcheck() -> None:
     # nullity(δ^1) = 2 (no C^2 -> δ^1 trivial), H^1 = 2 - 2 = 0 (consistent)
     assert cech_h1_1 == 0, f"Čech H^1 for consistent 2-source should be 0, got {cech_h1_1}"
 
+
+def _sc_bonus_3source() -> None:
+    """Bonus 1/2: 3 source 一致 + pair (0,1) 冲突."""
     # Bonus 1: 3 source 全一致 — 验证 Čech 三 source 复合形
     sheaf_3 = build_sheaf_from_findings(
         core_context="Tc=100K altermagnetism",
@@ -539,7 +542,9 @@ def _selfcheck() -> None:
     print(f"    Restriction failures: {_count_restriction_failures(sheaf_twist)}")
     # Čech H^1 仍 = 0 (constant sheaf), 但 restriction failure = 1 -> 总 H^1 = 1
 
-    # Bonus 3: dict 输入 (预提取 claims, 跳过 regex)
+
+def _sc_bonus_dict() -> None:
+    """Bonus 3: dict 输入 (预提取 claims, 跳过 regex)."""
     sheaf_dict = build_sheaf_from_findings(
         core_context={"tc": 100.0, "magnetic_order": "altermagnetism"},
         support_findings=[{"tc": 100.0, "magnetic_order": "altermagnetism"}],
@@ -552,11 +557,32 @@ def _selfcheck() -> None:
     assert compute_H1(sheaf_dict_conflict) > 0, "dict-input conflict should give H^1>0"
     print("\n  Bonus 3 (dict input): consistent H^1=0, conflict H^1>0 - OK")
 
+
+def _selfcheck() -> None:
+    """验证 4 个 test case + Phase 1-6 行为一致性 + 数学层 sanity.
+
+    Test 1: Core 跟 Support 一致 -> H^1 = 0
+    Test 2: 数值冲突 (Core Tc=100K, Support Tc=50K) -> H^1 != 0
+    Test 3: 语义冲突 (Core altermagnetism, Support ferromagnetism) -> H^1 != 0
+    Test 4: 跟 Phase 1-6 hint_coordinator 行为一致
+            (H^1=0 时不冲突, H^1!=0 时冲突; sheaf 严格更强 — 检出 Phase 1-6 漏检的语义冲突)
+    """
+    print("=== Phase 7 Open Problem 7.2: Sheaf Cohomology self-check ===\n")
+
+    sheaf1, h1_1 = _sc_test_consistent()
+    _, h1_2 = _sc_test_numerical()
+    _sc_test_semantic()
+    _sc_test_phase_compat(h1_1, h1_2)
+    _sc_math_sanity(sheaf1)
+    _sc_bonus_3source()
+    _sc_bonus_dict()
+
     print("\n=== Phase 7 Open Problem 7.2 self-check PASSED ===")
     print("  Sheaf 建模: Core/Support -> open sets + stalks + restriction maps")
     print("  H^1 计算: Čech coboundary δ^0,δ^1 + nullity-rank + restriction failure proxy")
     print("  成功判据: H^1=0 一致, H^1!=0 检出数值+语义冲突, 跟 Phase 1-6 行为一致 (no false positive, 严格更强)")
     print("  -> Open Problem 7.2 探索成功")
+
 
 
 if __name__ == "__main__":

@@ -7396,140 +7396,188 @@ def _load_findings_baseline(path: Path) -> set[str]:
     return {ln.strip() for ln in text.splitlines() if ln.strip()}
 
 
-def find_issues(snap: dict) -> list[str]:
-    """汇总 MECE 违例 (供 --check). 只报客观事实, 语义判定留人工."""
-    issues: list[str] = []
-    rw = snap["reward"]
+def _ca_reward_issues(rw: dict) -> list[str]:
+    """奖励面: 零调用者 / 同轴惩罚 / 跨模块同名."""
+    out: list[str] = []
     for t in rw["terms"]:
         if t["status"] == "dead":
-            issues.append(f"奖励项零调用者: {t['name']}")
+            out.append(f"奖励项零调用者: {t['name']}")
     for ax in rw["penalty_axes"]:
         if ax["overlap"]:
-            issues.append(f"同轴惩罚候选 ({ax['axis']}): {', '.join(ax['terms'])}")
+            out.append(f"同轴惩罚候选 ({ax['axis']}): {', '.join(ax['terms'])}")
     for d in rw["cross_module_dupes"]:
-        issues.append(f"跨模块同名: {d['name']} @ {', '.join(d['modules'])}")
-    for s in snap["scope"]["sources"]:
+        out.append(f"跨模块同名: {d['name']} @ {', '.join(d['modules'])}")
+    return out
+
+
+def _ca_scope_issues(sc: dict) -> list[str]:
+    """授权面: 零消费点."""
+    out: list[str] = []
+    for s in sc["sources"]:
         if s["status"] == "dead":
-            issues.append(f"授权口径零消费点: {s['name']}")
-    wf = snap["workflow"]
+            out.append(f"授权口径零消费点: {s['name']}")
+    return out
+
+
+def _ca_workflow_issues(wf: dict) -> list[str]:
+    """工作流面: 分支不一致 / 提示不一致 / mode 未暴露."""
+    out: list[str] = []
     if not wf["branch_matches_dispatch"]:
-        issues.append("工作流: dispatch_table 与 engine_act 硬编码分支不一致")
+        out.append("工作流: dispatch_table 与 engine_act 硬编码分支不一致")
     if wf["prompt_inconsistent"]:
-        issues.append("工作流: planner 多处 MODE 提示互相不一致")
+        out.append("工作流: planner 多处 MODE 提示互相不一致")
     for m in wf["missing_from_prompt"]:
-        issues.append(f"工作流 mode 未在 planner 提示暴露: {m}")
-    md = snap["modes"]
+        out.append(f"工作流 mode 未在 planner 提示暴露: {m}")
+    return out
+
+
+def _ca_mode_issues(md: dict) -> list[str]:
+    """模式面: prompt 段与 set_mode 生产者缺口."""
+    out: list[str] = []
     for m in md["prompt_only"]:
-        issues.append(f"模式有 prompt 段却无 set_mode 生产者: {m}")
+        out.append(f"模式有 prompt 段却无 set_mode 生产者: {m}")
     for m in md["runtime_only"]:
-        issues.append(f"模式被 set_mode 却无 prompt 段: {m}")
+        out.append(f"模式被 set_mode 却无 prompt 段: {m}")
     if not md["consistent"]:
-        issues.append("模式: 各来源词表互相不一致")
-    vc = snap["vocabulary"]
+        out.append("模式: 各来源词表互相不一致")
+    return out
+
+
+def _ca_vocabulary_issues(vc: dict) -> list[str]:
+    """词汇面: 同名定义值域不一致 / 词表漂移 / 映射往返丢信息."""
+    out: list[str] = []
     # 簇内已按"词表漂移"报过的名字不再按"同名定义"重复报一次.
     drift_names = {m["name"] for d in vc["divergence"] for m in d["members"]}
     for d in vc["duplicate_defs"]:
         if d["same_values"] or d["name"] in drift_names:
             continue
         sites = ", ".join(f"{s['rel']}:{s['line']}" for s in d["sites"])
-        issues.append(f"词汇: 同名跨模块定义值域不一致: {d['name']} @ {sites}")
+        out.append(f"词汇: 同名跨模块定义值域不一致: {d['name']} @ {sites}")
     for d in vc["divergence"]:
         members = ", ".join(f"{m['rel']}::{m['name']}" for m in d["members"])
-        issues.append(f"词汇: 词表漂移 (簇 {d['cluster']}, 并集 {len(d['union'])} 词): {members}")
+        out.append(f"词汇: 词表漂移 (簇 {d['cluster']}, 并集 {len(d['union'])} 词): {members}")
     for m in vc["mappings"]:
         if m["injective"] or not m["reverse_present"]:
             continue
         coll = ", ".join(f"{v}←{ks}" for v, ks in m["collisions"].items())
-        issues.append(f"词汇: 映射往返丢信息: {m['name']} 共像 [{coll}] 且有反向表 {m['reverse_name']}")
-    tl = snap["tools"]
-    for s in tl["unresolved_specs"]:
-        issues.append(f"工具: 注册清单引用的类静态解析不到: {s['class']} @ {s['module']}")
-    for d in tl["duplicate_names"]:
-        issues.append(
-            f"工具: 同名工具名由多类声明: {d['name']} ← {', '.join(d['classes'])}"
+        out.append(
+            f"词汇: 映射往返丢信息: {m['name']} 共像 [{coll}] 且有反向表 {m['reverse_name']}"
         )
+    return out
+
+
+def _ca_tool_issues(tl: dict) -> list[str]:
+    """工具面: 解析不到的类 / 同名多类声明 / 允许表死项."""
+    out: list[str] = []
+    for s in tl["unresolved_specs"]:
+        out.append(f"工具: 注册清单引用的类静态解析不到: {s['class']} @ {s['module']}")
+    for d in tl["duplicate_names"]:
+        out.append(f"工具: 同名工具名由多类声明: {d['name']} ← {', '.join(d['classes'])}")
     for a in tl["allowlists"]:
         if not a["phantoms"]:
             continue
         preview = ", ".join(a["phantoms"][:6])
         if len(a["phantoms"]) > 6:
             preview += " …"
-        issues.append(
+        out.append(
             f"工具: 允许表死项 (无同名注册工具, 永不命中): {a['name']} @ {a['rel']} → {preview}"
         )
-    hk = snap["hooks"]
-    _hook_issue = {
+    return out
+
+
+def _ca_hook_issues(hk: dict) -> list[str]:
+    """钩子面: 触发/注册缺口 / 常量撞值 / 登记缺口 / 字面量接线."""
+    out: list[str] = []
+    prefix_of = {
         "trigger-only": "钩子: 事件有生产触发点但零生产注册 (触发无人接): ",
         "register-only": "钩子: 事件有注册但零生产触发: ",
         "dead": "钩子: 事件声明零触发零注册: ",
     }
     for e in hk["events"]:
-        prefix = _hook_issue.get(e["status"])
+        prefix = prefix_of.get(e["status"])
         if prefix:
-            issues.append(prefix + e["const"])
+            out.append(prefix + e["const"])
     for c in hk["collisions"]:
-        issues.append(
-            f"钩子: 事件常量撞值 {c['value']}: {', '.join(c['consts'])}"
-        )
+        out.append(f"钩子: 事件常量撞值 {c['value']}: {', '.join(c['consts'])}")
     for name in hk["not_in_all_events"]:
-        issues.append(f"钩子: 事件常量未登记进 ALL_EVENTS: {name}")
+        out.append(f"钩子: 事件常量未登记进 ALL_EVENTS: {name}")
     for name in hk["unresolved_members"]:
-        issues.append(f"钩子: ALL_EVENTS 成员无常量定义: {name}")
+        out.append(f"钩子: ALL_EVENTS 成员无常量定义: {name}")
     for w in hk["literal_wiring"]:
-        issues.append(
+        out.append(
             f"钩子: 触发/注册用字面量而非常量: {w['value']} @ {w['rel']}:{w['line']}"
         )
-    ev = snap["events"]
-    _event_issue = {
+    return out
+
+
+def _ca_event_issues(ev: dict) -> list[str]:
+    """事件面: 订阅/发布缺口 / 常量撞值 / 登记缺口 / 未声明类型."""
+    out: list[str] = []
+    prefix_of = {
         "subscribed-only": "事件: 类型有 .subscribe 却零生产发布 (订阅永不发生): ",
         "dead": "事件: 类型声明零生产发布零订阅: ",
     }
     for e in ev["events"]:
-        prefix = _event_issue.get(e["status"])
+        prefix = prefix_of.get(e["status"])
         if prefix:
-            issues.append(prefix + e["const"])
+            out.append(prefix + e["const"])
     for c in ev["collisions"]:
-        issues.append(f"事件: 类型常量撞值 {c['value']}: {', '.join(c['consts'])}")
+        out.append(f"事件: 类型常量撞值 {c['value']}: {', '.join(c['consts'])}")
     for name in ev["not_in_all_types"]:
-        issues.append(f"事件: 类型常量未登记进 ALL_TYPES: {name}")
+        out.append(f"事件: 类型常量未登记进 ALL_TYPES: {name}")
     for name in ev["unresolved_members"]:
-        issues.append(f"事件: ALL_TYPES 成员无常量定义: {name}")
+        out.append(f"事件: ALL_TYPES 成员无常量定义: {name}")
     for u in ev["undeclared"]:
         used = []
         if u["prod_publish"]:
             used.append("发布")
         if u["prod_subscribe"]:
             used.append("订阅")
-        issues.append(
+        out.append(
             f"事件: {'+'.join(used)}了未声明类型 (设计允许非穷尽, 候选登记): {u['value']}"
         )
-    sse = snap["sse"]
+    return out
+
+
+def _ca_sse_issues(sse: dict) -> list[str]:
+    """SSE 消费面: 监听挂错通道 / 后端无此帧名."""
+    out: list[str] = []
     for s in sse["listeners"]:
         if s["status"] == "channel-mismatch":
-            issues.append(
+            out.append(
                 f"SSE: 监听挂错通道 (该 EventSource 不发此帧名, 永不触发): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — {s['note']}"
             )
         elif s["status"] == "no-source":
-            issues.append(
+            out.append(
                 f"SSE: 监听的后端无此帧名 (三通道都不发): {s['frame']} "
                 f"@ {s['rel']}:{s['line']}"
             )
-    ws = snap["ws"]
+    return out
+
+
+def _ca_ws_issues(ws: dict) -> list[str]:
+    """WS 消费面: 前端判别无源 / 入站类型不可分发."""
+    out: list[str] = []
     for s in ws["consumers"]:
         if s["status"] == "no-source":
-            issues.append(
+            out.append(
                 f"WS: 前端 type 判别的后端不发此帧名 (该通道 case 永不命中): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
             )
     for s in ws["sends"]:
         if s["status"] == "unhandled":
-            issues.append(
+            out.append(
                 f"WS: 前端发送的入站类型后端分发面不认 (回 error 帧): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
             )
-    http = snap["http"]
-    _http_issue = {
+    return out
+
+
+def _ca_http_issues(http: dict) -> list[str]:
+    """HTTP API 消费面: 死链/405 / 未挂路由器 / 路由遮蔽."""
+    out: list[str] = []
+    prefix_of = {
         "no-source": "HTTP: 前端调用的路径后端未注册 (404 死链): ",
         "method-mismatch": "HTTP: 前端调用的方法与后端注册不符 (405): ",
     }
@@ -7538,42 +7586,57 @@ def find_issues(snap: dict) -> list[str]:
             mark = " 待分诊"
         else:
             mark = " " + _HTTP_TRIAGE_DOC[c["triage"]]
-        issues.append(
-            f"{_http_issue[c['status']]}{c['method']} {c['path']} @ "
+        out.append(
+            f"{prefix_of[c['status']]}{c['method']} {c['path']} @ "
             f"{c['rel']}:{c['line']} — {c['note']};{mark}"
         )
     for name in http["registration"]["unmounted"]:
-        issues.append(f"HTTP: 定义了 APIRouter 却未挂进 ALL_ROUTERS (端点永不生效): {name}")
+        out.append(f"HTTP: 定义了 APIRouter 却未挂进 ALL_ROUTERS (端点永不生效): {name}")
     for name in http["registration"]["dangling"]:
-        issues.append(f"HTTP: ALL_ROUTERS 引用了未 import 的别名: {name}")
+        out.append(f"HTTP: ALL_ROUTERS 引用了未 import 的别名: {name}")
     for d in http["duplicates"]:
-        issues.append(
+        out.append(
             f"HTTP: 同一 {d['method']} {d['path']} 被多模块注册 (路由遮蔽): "
             f"{', '.join(d['modules'])}"
         )
-    payload = snap["payload"]
+    return out
+
+
+def _ca_payload_issues(payload: dict) -> list[str]:
+    """请求负载面: 前端漏发后端必填."""
+    out: list[str] = []
     for v in payload["violations"]:
         mark = " 待分诊" if v["triage"] == "untriaged" else " " + _PAYLOAD_TRIAGE_DOC[v["triage"]]
-        issues.append(
+        out.append(
             f"负载: 前端漏发后端必填 ({_PAYLOAD_KIND_DOC[v['kind']]}): "
             f"{v['method']} {v['path']} → 后端 {v['endpoint']} @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
-    resp = snap["response"]
+    return out
+
+
+def _ca_response_issues(resp: dict) -> list[str]:
+    """响应结构面: 前端要读的字段后端从不返回."""
+    out: list[str] = []
     for v in resp["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _RESP_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"响应: 前端声明要读的响应字段后端从不返回 "
             f"({_RESP_KIND_DOC[v['kind']]}): {v['method']} {v['path']} → 后端 "
             f"{v['endpoint']} @ {v['rel']}:{v['line']} — 缺 "
             f"{', '.join(v['missing'])};{mark}"
         )
-    wsp = snap["ws_payload"]
-    _wsp_issue = {
+    return out
+
+
+def _ca_ws_payload_issues(wsp: dict) -> list[str]:
+    """WS 请求负载面: 未声明字段 / 无人接字段."""
+    out: list[str] = []
+    prefix_of = {
         "handler-undeclared": (
             "WS 负载: 后端 handler 读 `msg.<字段>` 而 WSMessage 未声明 "
             "(AttributeError 死帧): "
@@ -7588,50 +7651,88 @@ def find_issues(snap: dict) -> list[str]:
             if v["triage"] == "untriaged"
             else " " + _WS_PAYLOAD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
-            f"{_wsp_issue[v['kind']]}{v['type']}.{v['field']} @ "
+        out.append(
+            f"{prefix_of[v['kind']]}{v['type']}.{v['field']} @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
     for f in wsp["dead_fields"]:
-        issues.append(
+        out.append(
             f"WS 负载: WSMessage 声明字段既无 handler 读取也零前端发送 (宣称却无人接): {f}"
         )
-    sp = snap["sse_payload"]
+    return out
+
+
+def _ca_sse_payload_issues(sp: dict) -> list[str]:
+    """SSE 事件负载面: 前端读的 payload 顶层字段后端从不发."""
+    out: list[str] = []
     for v in sp["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _SSE_PAYLOAD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"SSE 负载: 前端读的帧 payload 顶层字段后端从不发 "
             f"({_SSE_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
             f"`t.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
         )
-    wep = snap["ws_ev_payload"]
+    return out
+
+
+def _ca_ws_ev_payload_issues(wep: dict) -> list[str]:
+    """WS 事件负载面: 前端读的 payload 顶层字段后端从不发."""
+    out: list[str] = []
     for v in wep["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _WS_EV_PAYLOAD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"WS 事件负载: 前端读的帧 payload 顶层字段后端从不发 "
             f"({_WS_EV_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
             f"`data.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
         )
-    hf = snap["http_field"]
+    return out
+
+
+def _ca_http_field_issues(hf: dict) -> list[str]:
+    """HTTP 请求字段面: 前端传的字段与后端读取不符."""
+    out: list[str] = []
     for v in hf["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _HTTP_FIELD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"HTTP 请求字段: {_HTTP_FIELD_KIND_DOC[v['kind']]}: "
             f"{v['method']} {v['endpoint']} → `{v['field']}` @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
+    return out
+
+
+def find_issues(snap: dict) -> list[str]:
+    """汇总 MECE 违例 (供 --check). 只报客观事实, 语义判定留人工."""
+    issues: list[str] = []
+    issues.extend(_ca_reward_issues(snap["reward"]))
+    issues.extend(_ca_scope_issues(snap["scope"]))
+    issues.extend(_ca_workflow_issues(snap["workflow"]))
+    issues.extend(_ca_mode_issues(snap["modes"]))
+    issues.extend(_ca_vocabulary_issues(snap["vocabulary"]))
+    issues.extend(_ca_tool_issues(snap["tools"]))
+    issues.extend(_ca_hook_issues(snap["hooks"]))
+    issues.extend(_ca_event_issues(snap["events"]))
+    issues.extend(_ca_sse_issues(snap["sse"]))
+    issues.extend(_ca_ws_issues(snap["ws"]))
+    issues.extend(_ca_http_issues(snap["http"]))
+    issues.extend(_ca_payload_issues(snap["payload"]))
+    issues.extend(_ca_response_issues(snap["response"]))
+    issues.extend(_ca_ws_payload_issues(snap["ws_payload"]))
+    issues.extend(_ca_sse_payload_issues(snap["sse_payload"]))
+    issues.extend(_ca_ws_ev_payload_issues(snap["ws_ev_payload"]))
+    issues.extend(_ca_http_field_issues(snap["http_field"]))
     return issues
 
 

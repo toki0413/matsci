@@ -1081,6 +1081,304 @@ def _with_usage_cb(kwargs: dict, cb: Any = None) -> dict:
     return kwargs
 
 
+_MISSING: Any = object()
+
+
+def _mk_common_kwargs(
+    model: str,
+    api_key: str | None,
+    temperature: float,
+    base_url: Any = _MISSING,
+) -> dict[str, Any]:
+    """Build shared kwargs; ``base_url`` is omitted unless explicitly passed."""
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "temperature": temperature,
+    }
+    if base_url is not _MISSING:
+        kwargs["base_url"] = base_url
+    return kwargs
+
+
+def _mk_add_max_tokens(kwargs: dict[str, Any], max_tokens: int | None) -> None:
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+
+def _mk_require_model_name(provider: str, model_name: str | None) -> str:
+    if not model_name:
+        raise ValueError(
+            f"Provider '{provider}' requires an explicit model name. "
+            "Use --model / HUGINN_MODEL to set it."
+        )
+    return model_name
+
+
+def _apply_speculative_kwargs(kwargs: dict[str, Any]) -> None:
+    """Speculative decoding — vLLM only, passed through OpenAI extra_body.
+
+    create_langchain_model has no cfg handle, so we read the same env vars
+    that HuginnConfig.from_env uses (see config.py).
+    """
+    if os.environ.get("HUGINN_SPECULATIVE_ENABLED", "").lower() != "true":
+        return
+    extra_body = kwargs.get("extra_body") or {}
+    extra_body["speculative_model"] = (
+        os.environ.get("HUGINN_SPECULATIVE_MODEL", "") or "auto"
+    )
+    extra_body["num_speculative_tokens"] = int(
+        os.environ.get("HUGINN_SPECULATIVE_DRAFT_TOKENS", "5")
+    )
+    kwargs["extra_body"] = extra_body
+
+
+def _mk_anthropic_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_anthropic import ChatAnthropic
+    except ImportError as err:
+        raise ImportError("pip install langchain-anthropic") from err
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
+    kwargs = _mk_common_kwargs(model, key, temperature)
+    # A2: 5 项 2026 beta header. 不含互斥的 agent-memory/managed-agents.
+    kwargs["default_headers"] = {
+        "anthropic-beta": ",".join(_ANTHROPIC_BETA_2026),
+    }
+    # A4: 服务端 context management — clear_tool_results 让 Anthropic
+    # 自动 compaction, 与 huginn 客户端 compact_messages 的 tool_result_ttl 协同.
+    # 该字段需配合 beta header context-management-2025-06-27 才生效.
+    kwargs["context_management"] = {
+        "tools": [
+            {"type": "context_tool", "name": "clear_tool_results_20250818"}
+        ]
+    }
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatAnthropic(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_openai_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    key = api_key or os.environ.get("OPENAI_API_KEY")
+    if not key and not _is_local_url(base_url):
+        raise ValueError("OPENAI_API_KEY not set (required for non-local endpoints)")
+    kwargs = _mk_common_kwargs(model, key or "not-needed", temperature, base_url)
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    if provider == "vllm":
+        _apply_speculative_kwargs(kwargs)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_ollama_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError as err:
+        raise ImportError("pip install langchain-ollama") from err
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "base_url": base_url or "http://localhost:11434",
+        "temperature": temperature,
+    }
+    # 长思考: qwen3.8 这类推理模型的推理链会长, 而 Ollama 默认 num_ctx=2048
+    # 会把长推理/长输入直接截断, 输出也有上限. 本地模型尤其要放开, 否则
+    # enable 了 thinking 也白搭. 两个参数都走 env 可调, 服务端 Modfile 可兜底.
+    kwargs.setdefault("num_ctx", int(os.environ.get("OLLAMA_NUM_CTX", "16384")))
+    kwargs.setdefault(
+        "num_predict", int(os.environ.get("OLLAMA_NUM_PREDICT", "-1"))
+    )
+    # 调用方显式给了 max_tokens 才当作输出上限; 默认 -1(不截断)留给长思考.
+    if max_tokens is not None:
+        kwargs["num_predict"] = int(max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    if thinking and thinking != "off":
+        # 本地 OpenAI 兼容约定: 用 extra_body 开推理. 对 Ollama 推理模型
+        # 是提示, 不是强开关; 真正的硬约束在 num_ctx/num_predict.
+        kwargs["extra_body"] = {"enable_thinking": True}
+    return ChatOllama(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_deepseek_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    key = pick_api_key("deepseek", api_key)
+    if not key:
+        raise ValueError("DEEPSEEK_API_KEY not set")
+    kwargs = _mk_common_kwargs(
+        model, key, temperature, base_url or "https://api.deepseek.com"
+    )
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_google_genai_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as err:
+        raise ImportError("pip install langchain-google-genai") from err
+    key = api_key or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        raise ValueError("GOOGLE_API_KEY not set")
+    kwargs = _mk_common_kwargs(model, key, temperature)
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatGoogleGenerativeAI(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_openrouter_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise ValueError("OPENROUTER_API_KEY not set")
+    kwargs = _mk_common_kwargs(
+        model, key, temperature, base_url or "https://openrouter.ai/api/v1"
+    )
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_domestic_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    return _create_openai_compatible(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
+        thinking=thinking,
+        max_tokens=max_tokens,
+    )
+
+
+def _mk_local_preset_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    preset = _LOCAL_PRESETS[provider]
+    kwargs = {
+        "model": model,
+        "api_key": api_key or "not-needed",
+        "base_url": base_url or preset["base_url"],
+        "temperature": temperature,
+        "request_timeout": _llm_request_timeout(),
+    }
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_nvidia_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+    except ImportError as err:
+        raise ImportError("pip install langchain-nvidia-ai-endpoints") from err
+    key = api_key or os.environ.get("NVIDIA_API_KEY")
+    kwargs = _mk_common_kwargs(model, key, temperature)
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatNVIDIA(**_with_usage_cb(kwargs, usage_cb))
+
+
+_LANGCHAIN_MODEL_BUILDERS: dict[str, Any] = {
+    "anthropic": _mk_anthropic_model,
+    "openai": _mk_openai_model,
+    "vllm": _mk_openai_model,
+    "local": _mk_openai_model,
+    "ollama": _mk_ollama_model,
+    "deepseek": _mk_deepseek_model,
+    "google-genai": _mk_google_genai_model,
+    "openrouter": _mk_openrouter_model,
+    "nvidia": _mk_nvidia_model,
+}
+
+
 def create_langchain_model(
     provider: ProviderT,
     model_name: str | None = None,
@@ -1095,208 +1393,36 @@ def create_langchain_model(
 
     # UsageCallback: 挂在每个 model 上, on_llm_end 自动抽 token usage 计费.
     # 一处注入覆盖所有 call site (graph/CodeAct/reflection), 比手动调 track_llm_usage 可靠.
-    _usage_cb = _get_usage_cb()
+    usage_cb = _get_usage_cb()
 
     # openai-compatible requires explicit model + base_url.
     if provider == "openai-compatible":
-        if not model_name:
-            raise ValueError(
-                "Provider 'openai-compatible' requires an explicit model name. "
-                "Use --model / HUGINN_MODEL to set it."
-            )
-        return _create_openai_compatible(
-            provider=provider,
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=temperature,
-            thinking=thinking,
-            max_tokens=max_tokens,
+        model = _mk_require_model_name(provider, model_name)
+    else:
+        model = _mk_require_model_name(
+            provider, model_name or _PROVIDER_DEFAULTS.get(provider)
         )
 
-    model = model_name or _PROVIDER_DEFAULTS.get(provider)
-    if model is None:
+    builder = _LANGCHAIN_MODEL_BUILDERS.get(provider)
+    if builder is None and provider in _DOMESTIC_OPENAI_COMPATIBLE:
+        builder = _mk_domestic_model
+    if builder is None and provider in _LOCAL_PRESETS:
+        builder = _mk_local_preset_model
+    if builder is None:
         raise ValueError(
-            f"Provider '{provider}' requires an explicit model name. "
-            "Use --model / HUGINN_MODEL to set it."
+            f"Unsupported provider: {provider}. "
+            f"Supported: {', '.join(_PROVIDER_DEFAULTS)}"
         )
 
-    if provider == "anthropic":
-        try:
-            from langchain_anthropic import ChatAnthropic
-        except ImportError as err:
-            raise ImportError("pip install langchain-anthropic") from err
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "api_key": key,
-            "temperature": temperature,
-            # A2: 5 项 2026 beta header. 不含互斥的 agent-memory/managed-agents.
-            "default_headers": {
-                "anthropic-beta": ",".join(_ANTHROPIC_BETA_2026),
-            },
-            # A4: 服务端 context management — clear_tool_results 让 Anthropic
-            # 自动 compaction, 与 huginn 客户端 compact_messages 的 tool_result_ttl 协同.
-            # 该字段需配合 beta header context-management-2025-06-27 才生效.
-            "context_management": {
-                "tools": [
-                    {"type": "context_tool", "name": "clear_tool_results_20250818"}
-                ]
-            },
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatAnthropic(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider in ("openai", "vllm", "local"):
-        key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not key and not _is_local_url(base_url):
-            raise ValueError(
-                "OPENAI_API_KEY not set (required for non-local endpoints)"
-            )
-        kwargs = {
-            "model": model,
-            "api_key": key or "not-needed",
-            "temperature": temperature,
-            "base_url": base_url,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        # Speculative decoding — vLLM only, passed through OpenAI extra_body.
-        # create_langchain_model has no cfg handle, so we read the same env
-        # vars that HuginnConfig.from_env uses (see config.py).
-        if (
-            provider == "vllm"
-            and os.environ.get("HUGINN_SPECULATIVE_ENABLED", "").lower() == "true"
-        ):
-            extra_body = kwargs.get("extra_body") or {}
-            extra_body["speculative_model"] = (
-                os.environ.get("HUGINN_SPECULATIVE_MODEL", "") or "auto"
-            )
-            extra_body["num_speculative_tokens"] = int(
-                os.environ.get("HUGINN_SPECULATIVE_DRAFT_TOKENS", "5")
-            )
-            kwargs["extra_body"] = extra_body
-        kwargs["request_timeout"] = _llm_request_timeout()
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider == "ollama":
-        try:
-            from langchain_ollama import ChatOllama
-        except ImportError as err:
-            raise ImportError("pip install langchain-ollama") from err
-        _ollama_kwargs = {
-            "model": model,
-            "base_url": base_url or "http://localhost:11434",
-            "temperature": temperature,
-        }
-        # 长思考: qwen3.8 这类推理模型的推理链会长, 而 Ollama 默认 num_ctx=2048
-        # 会把长推理/长输入直接截断, 输出也有上限. 本地模型尤其要放开, 否则
-        # enable 了 thinking 也白搭. 两个参数都走 env 可调, 服务端 Modfile 可兜底.
-        _ollama_kwargs.setdefault(
-            "num_ctx", int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
-        )
-        _ollama_kwargs.setdefault(
-            "num_predict", int(os.environ.get("OLLAMA_NUM_PREDICT", "-1"))
-        )
-        # 调用方显式给了 max_tokens 才当作输出上限; 默认 -1(不截断)留给长思考.
-        if max_tokens is not None:
-            _ollama_kwargs["num_predict"] = int(max_tokens)
-        _ollama_kwargs["request_timeout"] = _llm_request_timeout()
-        if thinking and thinking != "off":
-            # 本地 OpenAI 兼容约定: 用 extra_body 开推理. 对 Ollama 推理模型
-            # 是提示, 不是强开关; 真正的硬约束在 num_ctx/num_predict.
-            _ollama_kwargs["extra_body"] = {"enable_thinking": True}
-        return ChatOllama(**_with_usage_cb(_ollama_kwargs, _usage_cb))
-
-    if provider == "deepseek":
-        key = pick_api_key("deepseek", api_key)
-        if not key:
-            raise ValueError("DEEPSEEK_API_KEY not set")
-        kwargs = {
-            "model": model,
-            "api_key": key,
-            "base_url": base_url or "https://api.deepseek.com",
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        kwargs["request_timeout"] = _llm_request_timeout()
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider == "google-genai":
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError as err:
-            raise ImportError("pip install langchain-google-genai") from err
-        key = api_key or os.environ.get("GOOGLE_API_KEY")
-        if not key:
-            raise ValueError("GOOGLE_API_KEY not set")
-        kwargs = {"model": model, "api_key": key, "temperature": temperature}
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatGoogleGenerativeAI(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider == "openrouter":
-        key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        if not key:
-            raise ValueError("OPENROUTER_API_KEY not set")
-        kwargs = {
-            "model": model,
-            "api_key": key,
-            "base_url": base_url or "https://openrouter.ai/api/v1",
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        kwargs["request_timeout"] = _llm_request_timeout()
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider in _DOMESTIC_OPENAI_COMPATIBLE:
-        return _create_openai_compatible(
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=temperature,
-            thinking=thinking,
-            max_tokens=max_tokens,
-        )
-
-    if provider in _LOCAL_PRESETS:
-        preset = _LOCAL_PRESETS[provider]
-        resolved_base_url = base_url or preset["base_url"]
-        _lmstudio_kwargs = {
-            "model": model,
-            "api_key": api_key or "not-needed",
-            "base_url": resolved_base_url,
-            "temperature": temperature,
-            "request_timeout": _llm_request_timeout(),
-        }
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(_lmstudio_kwargs, _usage_cb))
-
-    if provider == "nvidia":
-        try:
-            from langchain_nvidia_ai_endpoints import ChatNVIDIA
-        except ImportError as err:
-            raise ImportError("pip install langchain-nvidia-ai-endpoints") from err
-        key = api_key or os.environ.get("NVIDIA_API_KEY")
-        kwargs = {"model": model, "api_key": key, "temperature": temperature}
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatNVIDIA(**_with_usage_cb(kwargs, _usage_cb))
-
-    raise ValueError(
-        f"Unsupported provider: {provider}. "
-        f"Supported: {', '.join(_PROVIDER_DEFAULTS)}"
+    return builder(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
+        thinking=thinking,
+        max_tokens=max_tokens,
+        usage_cb=usage_cb,
     )
 
 

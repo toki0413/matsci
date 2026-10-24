@@ -2106,8 +2106,8 @@ def _render_current(current: int | tuple[int, ...] | list[int] | None) -> str:
     return str(current)
 
 
-def render_markdown(reg: dict) -> str:
-    """确定性渲染 (固定列序 + 门按测试路径字典序)."""
+def _ga_header() -> list[str]:
+    """报告标题与台账范围的说明段."""
     lines: list[str] = []
     lines.append("# 低熵治理台账 (governance state)")
     lines.append("")
@@ -2125,6 +2125,12 @@ def render_markdown(reg: dict) -> str:
         "只提示不判死; 硬判定在 `tests/test_arch_gate_registry.py`."
     )
     lines.append("")
+    return lines
+
+
+def _ga_workflows_section(reg: dict) -> list[str]:
+    """工作流清单小节."""
+    lines: list[str] = []
     lines.append(f"## 工作流 (workflows) — {len(reg['workflows'])}")
     lines.append("")
     lines.append(
@@ -2134,6 +2140,12 @@ def render_markdown(reg: dict) -> str:
     lines.append("")
     lines.append(", ".join(f"`{w}`" for w in reg["workflows"]))
     lines.append("")
+    return lines
+
+
+def _ga_workflow_triggers_section(reg: dict) -> list[str]:
+    """工作流期望/实际触发集比对小节."""
+    lines: list[str] = []
     lines.append("## 工作流触发器 (workflow triggers)")
     lines.append("")
     lines.append(
@@ -2152,6 +2164,12 @@ def render_markdown(reg: dict) -> str:
         act = ", ".join(f"`{a}`" for a in t["actual"]) or "—"
         lines.append(f"| `{t['workflow']}` | {exp} | {act} | {drift} |")
     lines.append("")
+    return lines
+
+
+def _ga_gates_section(reg: dict) -> list[str]:
+    """pytest 门小节."""
+    lines: list[str] = []
     lines.append("## 门 (gates)")
     lines.append("")
     lines.append("| 测试 | arch | 状态 | CI step |")
@@ -2162,6 +2180,12 @@ def render_markdown(reg: dict) -> str:
             step = f"{step} (悬空)"
         lines.append(f"| `{g['test']}` | {'是' if g['arch'] else '否'} | `{g['status']}` | {step} |")
     lines.append("")
+    return lines
+
+
+def _ga_cli_gates_section(reg: dict) -> list[str]:
+    """CLI 门小节."""
+    lines: list[str] = []
     lines.append("## CLI 门 (cli gates)")
     lines.append("")
     lines.append(
@@ -2176,6 +2200,12 @@ def render_markdown(reg: dict) -> str:
         mark = "是" if c["exists"] else "否 (悬空)"
         lines.append(f"| `{c['module']}` | `{c['workflow']}` | {step} | {mark} |")
     lines.append("")
+    return lines
+
+
+def _ga_precommit_gates_section(reg: dict) -> list[str]:
+    """pre-commit 本地门小节."""
+    lines: list[str] = []
     lines.append("## 本地门 (pre-commit local gates)")
     lines.append("")
     lines.append(
@@ -2192,6 +2222,12 @@ def render_markdown(reg: dict) -> str:
         cov = "是" if g.get("covered") else "否 (漏匹配)"
         lines.append(f"| `{g['source']}` | `{g['hook']}` | `{g['test']}` | {mark} | {cov} |")
     lines.append("")
+    return lines
+
+
+def _ga_engineer_gates_section(reg: dict) -> list[str]:
+    """非 pytest 工程门小节."""
+    lines: list[str] = []
     lines.append("## 工程门 (engineer gates)")
     lines.append("")
     lines.append(
@@ -2207,6 +2243,12 @@ def render_markdown(reg: dict) -> str:
         mark = "是" if e["exists"] else "否 (悬空)"
         lines.append(f"| `{e['id']}` | `{e['workflow']}` | {e['kind']} | {e['step']} | {mark} |")
     lines.append("")
+    return lines
+
+
+def _ga_capability_anchors_section(reg: dict) -> list[str]:
+    """能力锚点小节."""
+    lines: list[str] = []
     lines.append("## 能力锚点 (capability anchors)")
     lines.append("")
     lines.append(
@@ -2240,6 +2282,12 @@ def render_markdown(reg: dict) -> str:
             f"{c['expected_default']} | {c['actual_default']} | {flag} | {mods} | {tsts} |"
         )
     lines.append("")
+    return lines
+
+
+def _ga_prompt_segments_section(reg: dict) -> list[str]:
+    """prompt 段生效面小节."""
+    lines: list[str] = []
     lines.append("## prompt 段生效面 (prompt segments)")
     lines.append("")
     lines.append(
@@ -2258,20 +2306,28 @@ def render_markdown(reg: dict) -> str:
         paths = ", ".join(f"`{p}`" for p in seg["paths"]) or "—"
         lines.append(f"| `{seg['name']}` | {paths} |")
     lines.append("")
-    def _budget_rows(rows_budgets: list[dict]) -> list[str]:
-        out_rows = [
-            "| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |",
-            "|---|---|---|---|---|---|---|",
-        ]
-        for b in rows_budgets:
-            cur = _render_current(b["current"])
-            head = "—" if b["headroom"] is None else str(b["headroom"])
-            owner = b["owner_gate"] + (" · 全量" if b["owner_kind"] == "full_suite" else "")
-            out_rows.append(
-                f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {owner} |"
-            )
-        return out_rows
+    return lines
 
+
+def _ga_budget_rows(rows_budgets: list[dict]) -> list[str]:
+    """预算/闸位表格行 (表头 + 数据行)."""
+    out_rows = [
+        "| 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for b in rows_budgets:
+        cur = _render_current(b["current"])
+        head = "—" if b["headroom"] is None else str(b["headroom"])
+        owner = b["owner_gate"] + (" · 全量" if b["owner_kind"] == "full_suite" else "")
+        out_rows.append(
+            f"| {b['name']} | `{b['path']}` | {b['mode']} | {b['frozen']} | {cur} | {head} | {owner} |"
+        )
+    return out_rows
+
+
+def _ga_budgets_section(reg: dict) -> list[str]:
+    """预算 (非 loop 组) 小节."""
+    lines: list[str] = []
     lines.append("## 预算 (budgets)")
     lines.append("")
     lines.append(
@@ -2283,8 +2339,14 @@ def render_markdown(reg: dict) -> str:
         "`full_suite` 型 (仅全量套件跑, 不在工作流 step 里)。"
     )
     lines.append("")
-    lines.extend(_budget_rows([b for b in reg["budgets"] if b.get("group") != "loop"]))
+    lines.extend(_ga_budget_rows([b for b in reg["budgets"] if b.get("group") != "loop"]))
     lines.append("")
+    return lines
+
+
+def _ga_loop_caps_section(reg: dict) -> list[str]:
+    """循环闸位 (loop 组) 小节."""
+    lines: list[str] = []
     lines.append("## 循环闸位 (loop caps)")
     lines.append("")
     lines.append(
@@ -2295,10 +2357,14 @@ def render_markdown(reg: dict) -> str:
         "**模式=权威** 一行为闸位**数下限** (只减不增)。"
     )
     lines.append("")
-    lines.extend(_budget_rows([b for b in reg["budgets"] if b.get("group") == "loop"]))
+    lines.extend(_ga_budget_rows([b for b in reg["budgets"] if b.get("group") == "loop"]))
     lines.append("")
-    lines.append("## 缺口 (gaps)")
-    lines.append("")
+    return lines
+
+
+def _ga_gate_gap_lines(reg: dict) -> list[str]:
+    """缺口区: 孤儿门/悬空门/本地门覆盖/悬空工程门."""
+    lines: list[str] = []
     if reg["orphans"]:
         lines.append(f"- 孤儿门 ({len(reg['orphans'])}): " + ", ".join(f"`{t}`" for t in reg["orphans"]))
     else:
@@ -2337,6 +2403,12 @@ def render_markdown(reg: dict) -> str:
         lines.append(f"- 悬空工程门 ({len(reg['dangling_engineer'])}): {items}")
     else:
         lines.append("- 悬空工程门 (0): 无")
+    return lines
+
+
+def _ga_workflow_gap_lines(reg: dict) -> list[str]:
+    """缺口区: 触发器漂移/工作流登记漂移."""
+    lines: list[str] = []
     if reg["trigger_drift"]:
         items = ", ".join(
             f"`{d['workflow']}` (缺 {d['missing'] or '—'} / 多 {d['extra'] or '—'})"
@@ -2359,6 +2431,12 @@ def render_markdown(reg: dict) -> str:
         )
     else:
         lines.append("- 触发规格未落地的工作流 (0): 无")
+    return lines
+
+
+def _ga_capability_prompt_gap_lines(reg: dict) -> list[str]:
+    """缺口区: 能力锚点脱节与 prompt 段清单漂移."""
+    lines: list[str] = []
     if reg["capability_gaps"]:
         items = ", ".join(_capability_gap_desc(g) for g in reg["capability_gaps"])
         lines.append(f"- 能力锚点脱节 ({len(reg['capability_gaps'])}): {items}")
@@ -2379,7 +2457,36 @@ def render_markdown(reg: dict) -> str:
         )
     else:
         lines.append("- prompt 段源里有、清单无 (0): 无")
+    return lines
+
+
+def _ga_gaps_section(reg: dict) -> list[str]:
+    """缺口小节: 汇总孤儿门/悬空门/触发器漂移/能力与 prompt 脱节."""
+    lines: list[str] = []
+    lines.append("## 缺口 (gaps)")
     lines.append("")
+    lines.extend(_ga_gate_gap_lines(reg))
+    lines.extend(_ga_workflow_gap_lines(reg))
+    lines.extend(_ga_capability_prompt_gap_lines(reg))
+    lines.append("")
+    return lines
+
+
+def render_markdown(reg: dict) -> str:
+    """确定性渲染 (固定列序 + 门按测试路径字典序)."""
+    lines: list[str] = []
+    lines.extend(_ga_header())
+    lines.extend(_ga_workflows_section(reg))
+    lines.extend(_ga_workflow_triggers_section(reg))
+    lines.extend(_ga_gates_section(reg))
+    lines.extend(_ga_cli_gates_section(reg))
+    lines.extend(_ga_precommit_gates_section(reg))
+    lines.extend(_ga_engineer_gates_section(reg))
+    lines.extend(_ga_capability_anchors_section(reg))
+    lines.extend(_ga_prompt_segments_section(reg))
+    lines.extend(_ga_budgets_section(reg))
+    lines.extend(_ga_loop_caps_section(reg))
+    lines.extend(_ga_gaps_section(reg))
     return "\n".join(lines)
 
 

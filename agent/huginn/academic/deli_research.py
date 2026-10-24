@@ -798,6 +798,33 @@ class PeerReviewPipeline:
 # 完整管线编排
 # ──────────────────────────────────────────────────────────────────────
 
+
+def _load_autoloop_deps() -> tuple[Any, Any, Any] | None:
+    """懒加载 AutoloopEngine + 快照 IO; 不可用返回 None."""
+    try:
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.types import (
+            load_autoloop_snapshot,
+            save_autoloop_snapshot,
+        )
+    except ImportError:
+        return None
+    return AutoloopEngine, load_autoloop_snapshot, save_autoloop_snapshot
+
+
+def _read_report_excerpt(report_path: str | None) -> str | None:
+    """读报告前 3000 字符; 路径缺失/读取失败静默返回 None."""
+    if not report_path:
+        return None
+    try:
+        _rp = Path(report_path)
+        if _rp.exists():
+            return _rp.read_text(encoding="utf-8")[:3000]
+    except Exception:
+        logger.debug("compute report excerpt read skipped", exc_info=True)
+    return None
+
+
 class DeliAutoResearch:
     """编排四个子管线, 管理 integrity gate."""
 
@@ -881,6 +908,47 @@ class DeliAutoResearch:
             return
 
         # 用 LLM 判断哪些 gap 需要计算数据
+        comp_gaps = await self._classify_computational_gaps(state)
+        if not comp_gaps:
+            state.integrity_log.append("[compute] no computational gaps identified")
+            return
+
+        # 懒加载 AutoloopEngine — 不可用就跳过
+        deps = _load_autoloop_deps()
+        if deps is None:
+            state.integrity_log.append(
+                "[compute] AutoloopEngine unavailable, skipping computational loop"
+            )
+            return
+        engine_cls, load_snapshot, save_snapshot = deps
+
+        ws_path = workspace or "."
+        engine = engine_cls(workspace=ws_path)
+        total = len(comp_gaps)
+
+        for i, gap in enumerate(comp_gaps):
+            objective = gap["objective"]
+            await self._emit_comp_progress(
+                state, i, total, objective, "running",
+                f"[{i+1}/{total}] {objective[:60]}",
+            )
+
+            # 优先复用 CLI 或上一轮存下的快照, 避免重跑 autoloop
+            snapshot = load_snapshot(ws_path, objective)
+            if snapshot is not None:
+                await self._reuse_comp_snapshot(
+                    state, gap, i, total, objective, snapshot
+                )
+                continue
+
+            await self._run_comp_gap(
+                state, engine, save_snapshot, ws_path, gap, i, total, objective
+            )
+
+    async def _classify_computational_gaps(
+        self, state: ResearchState
+    ) -> list[dict[str, Any]]:
+        """LLM 判定哪些 gap 需要计算数据 (DFT/MD/仿真)."""
         gap_classifier = ResearchAgent(
             role="gap_classifier",
             system_prompt=(
@@ -896,147 +964,155 @@ class DeliAutoResearch:
         result = await gap_classifier.run(
             f"Research topic: {state.topic}\nGaps:\n{gaps_json}", None
         )
-        comp_gaps = []
         try:
             classified = _safe_json_load(result, [])
             if isinstance(classified, list):
-                comp_gaps = [
+                return [
                     g for g in classified
                     if g.get("needs_computation") and g.get("objective")
                 ]
         except Exception:
             logger.debug("compute gap classification skipped", exc_info=True)
+        return []
 
-        if not comp_gaps:
-            state.integrity_log.append("[compute] no computational gaps identified")
-            return
+    async def _emit_comp_progress(
+        self,
+        state: ResearchState,
+        i: int,
+        total: int,
+        objective: str,
+        status: str,
+        detail: str,
+    ) -> None:
+        """发 compute_gap 进度事件 (公共参数收敛)."""
+        await self._emit_progress(
+            state, "compute_gap", status, detail,
+            pipeline="computational_loop",
+            stage_label=objective[:60],
+            stage_index=i,
+            total_stages=total,
+        )
 
-        # 懒加载 AutoloopEngine — 不可用就跳过
+    async def _reuse_comp_snapshot(
+        self,
+        state: ResearchState,
+        gap: dict[str, Any],
+        i: int,
+        total: int,
+        objective: str,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """复用已有 autoloop 快照, 不重跑.
+
+        ponytail: 同一 workspace + 同一 objective 的结果可复用, 这是 autoloop
+        的不变量; 想强制重跑就删 .huginn/autoloop_results/{hash}.json.
+        """
+        comp_entry = self._comp_entry_from_snapshot(gap, objective, snapshot)
+        state.computational_data[objective] = comp_entry
+        state.gaps_filled.append(gap.get("gap", objective))
+        state.integrity_log.append(
+            f"[compute] gap '{gap.get('gap', '?')[:50]}' → reused snapshot"
+        )
+        await self._emit_comp_progress(
+            state, i, total, objective, "done",
+            f"[{i+1}/{total}] reused snapshot",
+        )
+
+    async def _run_comp_gap(
+        self,
+        state: ResearchState,
+        engine: Any,
+        save_snapshot: Any,
+        ws_path: str,
+        gap: dict[str, Any],
+        i: int,
+        total: int,
+        objective: str,
+    ) -> None:
+        """跑单个计算 gap 的 autoloop, 存快照并回填 state."""
         try:
-            from huginn.autoloop.engine import AutoloopEngine
-            from huginn.autoloop.types import (
-                load_autoloop_snapshot,
-                save_autoloop_snapshot,
+            result = await engine.run_cognitive(
+                objective=objective,
+                max_iterations=5,
             )
-        except ImportError:
+            comp_entry = self._comp_entry_from_result(gap, objective, result)
+
+            # 跑完存快照, 下次同一 objective 直接复用, 不再重跑 autoloop
+            save_snapshot(result, ws_path)
+
+            state.computational_data[objective] = comp_entry
+            state.gaps_filled.append(gap.get("gap", objective))
             state.integrity_log.append(
-                "[compute] AutoloopEngine unavailable, skipping computational loop"
+                f"[compute] gap '{gap.get('gap', '?')[:50]}' → "
+                f"{'success' if result.success else 'partial'}"
             )
-            return
-
-        ws_path = workspace or "."
-        engine = AutoloopEngine(workspace=ws_path)
-
-        for i, gap in enumerate(comp_gaps):
-            objective = gap["objective"]
-            await self._emit_progress(
-                state, "compute_gap", "running",
-                f"[{i+1}/{len(comp_gaps)}] {objective[:60]}",
-                pipeline="computational_loop",
-                stage_label=objective[:60],
-                stage_index=i,
-                total_stages=len(comp_gaps),
+            await self._emit_comp_progress(
+                state, i, total, objective, "done",
+                f"[{i+1}/{total}] {'success' if result.success else 'partial'}",
+            )
+        except Exception as e:
+            state.integrity_log.append(
+                f"[compute] gap '{gap.get('gap', '?')[:50]}' failed: {e}"
             )
 
-            # 优先复用 CLI 或上一轮存下的快照, 避免重跑 autoloop.
-            # ponytail: 同一 workspace + 同一 objective 的结果可复用, 这是 autoloop
-            # 的不变量; 想强制重跑就删 .huginn/autoloop_results/{hash}.json
-            snapshot = load_autoloop_snapshot(ws_path, objective)
-            if snapshot is not None:
-                comp_entry = {
-                    "gap": gap.get("gap", ""),
-                    "objective": objective,
-                    "success": snapshot.get("success", False),
-                    "goal_achieved": snapshot.get("goal_achieved"),
-                    "goal_judgment": snapshot.get("goal_judgment"),
-                    "report_path": snapshot.get("report_path"),
-                    "provenance_path": snapshot.get("provenance_path"),
-                    "trajectory_path": snapshot.get("trajectory_path"),
-                    "total_time_seconds": snapshot.get("total_time_seconds", 0.0),
-                    "phases_count": snapshot.get("phases_count", 0),
-                    "phases_summary": snapshot.get("phases_summary", []),
-                    "from_snapshot": True,
-                }
-                if comp_entry.get("report_path"):
-                    try:
-                        _rp = Path(comp_entry["report_path"])
-                        if _rp.exists():
-                            comp_entry["report_excerpt"] = _rp.read_text(
-                                encoding="utf-8"
-                            )[:3000]
-                    except Exception:
-                        logger.debug("compute report excerpt read skipped", exc_info=True)
-                state.computational_data[objective] = comp_entry
-                state.gaps_filled.append(gap.get("gap", objective))
-                state.integrity_log.append(
-                    f"[compute] gap '{gap.get('gap', '?')[:50]}' → reused snapshot"
-                )
-                await self._emit_progress(
-                    state, "compute_gap", "done",
-                    f"[{i+1}/{len(comp_gaps)}] reused snapshot",
-                    pipeline="computational_loop",
-                    stage_label=objective[:60],
-                    stage_index=i,
-                    total_stages=len(comp_gaps),
-                )
-                continue
+    def _comp_entry_from_snapshot(
+        self,
+        gap: dict[str, Any],
+        objective: str,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        """把 autoloop 快照整理成 computational_data 条目."""
+        comp_entry = {
+            "gap": gap.get("gap", ""),
+            "objective": objective,
+            "success": snapshot.get("success", False),
+            "goal_achieved": snapshot.get("goal_achieved"),
+            "goal_judgment": snapshot.get("goal_judgment"),
+            "report_path": snapshot.get("report_path"),
+            "provenance_path": snapshot.get("provenance_path"),
+            "trajectory_path": snapshot.get("trajectory_path"),
+            "total_time_seconds": snapshot.get("total_time_seconds", 0.0),
+            "phases_count": snapshot.get("phases_count", 0),
+            "phases_summary": snapshot.get("phases_summary", []),
+            "from_snapshot": True,
+        }
+        excerpt = _read_report_excerpt(comp_entry.get("report_path"))
+        if excerpt is not None:
+            comp_entry["report_excerpt"] = excerpt
+        return comp_entry
 
-            try:
-                result = await engine.run_cognitive(
-                    objective=objective,
-                    max_iterations=5,
-                )
-                # 结构化结果: 让下游 _draft_section 注入 methods/results 时拿到
-                # 不止是自然语言截断, 还有 goal 判定/轨迹/provenance
-                comp_entry = {
-                    "gap": gap.get("gap", ""),
-                    "objective": objective,
-                    "success": result.success,
-                    "goal_achieved": result.goal_achieved,
-                    "goal_judgment": result.goal_judgment,
-                    "report_path": result.report_path,
-                    "provenance_path": result.provenance_path,
-                    "trajectory_path": result.trajectory_path,
-                    "total_time_seconds": result.total_time_seconds,
-                    "phases_count": len(result.phases),
-                    "phases_summary": [
-                        {"name": p.name, "status": p.status}
-                        for p in result.phases
-                    ],
-                }
-                # report 内容截断保留向后兼容; 下游优先用上面的结构化字段
-                if result.report_path:
-                    try:
-                        report_path = Path(result.report_path)
-                        if report_path.exists():
-                            comp_entry["report_excerpt"] = report_path.read_text(
-                                encoding="utf-8"
-                            )[:3000]
-                    except Exception:
-                        logger.debug("compute report excerpt read skipped", exc_info=True)
+    def _comp_entry_from_result(
+        self,
+        gap: dict[str, Any],
+        objective: str,
+        result: Any,
+    ) -> dict[str, Any]:
+        """把 autoloop 实跑结果整理成 computational_data 条目.
 
-                # 跑完存快照, 下次同一 objective 直接复用, 不再重跑 autoloop
-                save_autoloop_snapshot(result, ws_path)
-
-                state.computational_data[objective] = comp_entry
-                state.gaps_filled.append(gap.get("gap", objective))
-                state.integrity_log.append(
-                    f"[compute] gap '{gap.get('gap', '?')[:50]}' → "
-                    f"{'success' if result.success else 'partial'}"
-                )
-                await self._emit_progress(
-                    state, "compute_gap", "done",
-                    f"[{i+1}/{len(comp_gaps)}] "
-                    f"{'success' if result.success else 'partial'}",
-                    pipeline="computational_loop",
-                    stage_label=objective[:60],
-                    stage_index=i,
-                    total_stages=len(comp_gaps),
-                )
-            except Exception as e:
-                state.integrity_log.append(
-                    f"[compute] gap '{gap.get('gap', '?')[:50]}' failed: {e}"
-                )
+        结构化结果: 让下游 _draft_section 注入 methods/results 时拿到
+        不止是自然语言截断, 还有 goal 判定/轨迹/provenance.
+        """
+        comp_entry = {
+            "gap": gap.get("gap", ""),
+            "objective": objective,
+            "success": result.success,
+            "goal_achieved": result.goal_achieved,
+            "goal_judgment": result.goal_judgment,
+            "report_path": result.report_path,
+            "provenance_path": result.provenance_path,
+            "trajectory_path": result.trajectory_path,
+            "total_time_seconds": result.total_time_seconds,
+            "phases_count": len(result.phases),
+            "phases_summary": [
+                {"name": p.name, "status": p.status}
+                for p in result.phases
+            ],
+        }
+        # report 内容截断保留向后兼容; 下游优先用上面的结构化字段
+        excerpt = _read_report_excerpt(result.report_path)
+        if excerpt is not None:
+            comp_entry["report_excerpt"] = excerpt
+        return comp_entry
 
     def _capture_research_intuition(
         self, raw: str
@@ -1330,171 +1406,263 @@ class DeliAutoResearch:
         if not data_gaps:
             return
 
+        ml = self._sr_load_ml_tool(state)
+        if ml is None:
+            return
+        ml_tool, ml_input_cls = ml
+
+        for gap_info in data_gaps:
+            await self._sr_process_gap(
+                state, gap_info, ml_tool, ml_input_cls, allow_empirical
+            )
+
+    def _sr_load_ml_tool(
+        self, state: ResearchState
+    ) -> tuple[Any, Any] | None:
+        """加载可解释 ML 工具; 不可用时记录日志并返回 None."""
         try:
             from huginn.tools.sci.interpretable_ml_tool import (
                 InterpretableMLInput,
                 InterpretableMLTool,
             )
 
-            ml_tool = InterpretableMLTool()
+            return InterpretableMLTool(), InterpretableMLInput
         except ImportError:
             state.integrity_log.append(
                 "[sr_gp] InterpretableMLTool not available"
             )
+            return None
+
+    async def _sr_process_gap(
+        self,
+        state: ResearchState,
+        gap_info: dict[str, Any],
+        ml_tool: Any,
+        ml_input_cls: Any,
+        allow_empirical: bool,
+    ) -> None:
+        """处理单个数据驱动 gap, 对应原循环体的一次迭代."""
+        gap_text = gap_info.get("gap", "")
+
+        data = await self._collect_gap_data(state, gap_info)
+        if not data or len(data.get("rows", [])) < 5:
+            state.integrity_log.append(
+                f"[sr_gp] insufficient data for gap: {gap_text[:60]}... "
+                f"(need >=5 rows, got {len(data.get('rows', [])) if data else 0})"
+            )
+            # 数据不足, 检查是否走迁移学习
+            await self._maybe_transfer_learning(state, gap_info)
             return
 
-        for gap_info in data_gaps:
-            gap_text = gap_info.get("gap", "")
+        prepared = self._sr_prepare_features(data)
+        if prepared is None:
+            return
+        features, target_key, feature_keys = prepared
 
-            data = await self._collect_gap_data(state, gap_info)
-            if not data or len(data.get("rows", [])) < 5:
-                state.integrity_log.append(
-                    f"[sr_gp] insufficient data for gap: {gap_text[:60]}... "
-                    f"(need >=5 rows, got {len(data.get('rows', [])) if data else 0})"
-                )
-                # 数据不足, 检查是否走迁移学习
-                await self._maybe_transfer_learning(state, gap_info)
-                continue
+        try:
+            await self._sr_discover_and_record(
+                state,
+                gap_info,
+                gap_text,
+                ml_tool,
+                ml_input_cls,
+                features,
+                target_key,
+                feature_keys,
+                allow_empirical,
+            )
+        except Exception as e:
+            state.integrity_log.append(
+                f"[sr_gp] error for gap '{gap_text[:40]}...': {e}"
+            )
 
-            rows = data["rows"]
-            # 从 rows 构造 data_json: {feature: [values], target: [values]}
-            features: dict[str, list[float]] = {}
-            for row in rows:
-                for k, v in row.items():
-                    if isinstance(v, int | float):
-                        features.setdefault(k, []).append(float(v))
-            if not features:
-                continue
-            # 只保留数据完整的列 (长度一致)
-            max_len = max(len(v) for v in features.values())
-            features = {k: v for k, v in features.items() if len(v) == max_len}
-            if len(features) < 2:
-                continue
+    def _sr_prepare_features(
+        self, data: dict[str, Any]
+    ) -> tuple[dict[str, list[float]], str, list[str]] | None:
+        """从 rows 构造特征列, 过滤长度不一致或不足 2 列的数据."""
+        rows = data["rows"]
+        # 从 rows 构造 data_json: {feature: [values], target: [values]}
+        features: dict[str, list[float]] = {}
+        for row in rows:
+            for k, v in row.items():
+                if isinstance(v, int | float):
+                    features.setdefault(k, []).append(float(v))
+        if not features:
+            return None
+        # 只保留数据完整的列 (长度一致)
+        max_len = max(len(v) for v in features.values())
+        features = {k: v for k, v in features.items() if len(v) == max_len}
+        if len(features) < 2:
+            return None
 
-            keys = list(features.keys())
-            target_key = keys[-1]
-            feature_keys = keys[:-1]
+        keys = list(features.keys())
+        target_key = keys[-1]
+        feature_keys = keys[:-1]
+        return features, target_key, feature_keys
 
-            try:
-                # SR discover — call 是 async, 直接 await
-                sr_args = InterpretableMLInput(
-                    action="sr_guided_gp",
-                    data_json={
-                        **{k: features[k] for k in feature_keys},
-                        target_key: features[target_key],
+    async def _sr_discover_and_record(
+        self,
+        state: ResearchState,
+        gap_info: dict[str, Any],
+        gap_text: str,
+        ml_tool: Any,
+        ml_input_cls: Any,
+        features: dict[str, list[float]],
+        target_key: str,
+        feature_keys: list[str],
+        allow_empirical: bool,
+    ) -> None:
+        """执行 SR 发现并把结果记录到 state."""
+        # SR discover — call 是 async, 直接 await
+        sr_args = ml_input_cls(
+            action="sr_guided_gp",
+            data_json={
+                **{k: features[k] for k in feature_keys},
+                target_key: features[target_key],
+            },
+            target_column=target_key,
+            feature_columns=feature_keys,
+            max_order=2,
+        )
+        result = await ml_tool.call(sr_args, None)
+
+        if not result or not result.success:
+            await self._sr_handle_failure(
+                state, gap_info, gap_text, features, target_key, allow_empirical
+            )
+            return
+
+        sr_data = result.data or {}
+        sr_eq = sr_data.get("sr_equation", {})
+        r2 = sr_eq.get("r2", 0.0)
+        equation = sr_eq.get("equation", "")
+
+        self._sr_record_success(
+            state, gap_text, sr_data, equation, r2, allow_empirical
+        )
+
+        # constraint_check — 物理约束验证
+        await self._sr_check_constraints(state, equation, features, feature_keys)
+
+        # 写回 KB — 发现的方程存入知识库
+        await self._write_discovery_to_kb(state, equation, gap_text, r2)
+
+    async def _sr_handle_failure(
+        self,
+        state: ResearchState,
+        gap_info: dict[str, Any],
+        gap_text: str,
+        features: dict[str, list[float]],
+        target_key: str,
+        allow_empirical: bool,
+    ) -> None:
+        """SR 失败时的日志与可选经验模型回退."""
+        state.integrity_log.append(
+            f"[sr_gp] SR failed for gap: {gap_text[:60]}..."
+        )
+        if allow_empirical:
+            await self._run_empirical_approach(
+                state, gap_info, features, target_key
+            )
+        else:
+            state.integrity_log.append(
+                "[sr_gp] Tip: set allow_empirical=True to try "
+                "GP-only or other data-driven methods for this gap"
+            )
+
+    def _sr_record_success(
+        self,
+        state: ResearchState,
+        gap_text: str,
+        sr_data: dict[str, Any],
+        equation: str,
+        r2: float,
+        allow_empirical: bool,
+    ) -> None:
+        """记录 SR 发现结果、低 R2 提示与回注数学结构."""
+        state.sr_gp_results.append(
+            {
+                "gap": gap_text,
+                "equation": equation,
+                "r2": r2,
+                "n_samples": sr_data.get("n_samples", 0),
+                "approach": "SR + GP residual",
+                "interpretation": sr_data.get("interpretation", ""),
+            }
+        )
+
+        state.integrity_log.append(
+            f"[sr_gp] gap '{gap_text[:40]}...' → equation: "
+            f"{equation[:80]} (R2={r2:.3f})"
+        )
+
+        # R2 不足时提示用户 — 不自动跳黑箱, 让用户决定
+        if r2 < 0.5 and not allow_empirical:
+            state.integrity_log.append(
+                f"[sr_gp] Low R2 ({r2:.3f}) — SR equation may be unreliable. "
+                f"Set allow_empirical=True for GP-only or other methods."
+            )
+
+        # 回注数学验证: 发现的方程作为一个新的 math_structure
+        state.math_structures.append(
+            {
+                "gap": gap_text,
+                "structure": "discovered",
+                "equation": equation,
+                "recommended_tool": "symbolic_math_tool",
+                "action": "dimensional_analysis",
+                "source": "sr_gp",
+                "r2": r2,
+            }
+        )
+
+    async def _sr_check_constraints(
+        self,
+        state: ResearchState,
+        equation: str,
+        features: dict[str, list[float]],
+        feature_keys: list[str],
+    ) -> None:
+        """对发现的方程做物理约束验证, 结果写回最后一条 sr_gp_result."""
+        try:
+            from huginn.tools.sci.symbolic_regression_tool import (
+                SymbolicRegressionInput,
+                SymbolicRegressionTool,
+            )
+
+            sr_tool = SymbolicRegressionTool()
+            cc_args = SymbolicRegressionInput(
+                action="constraint_check",
+                probe_expression=equation,
+                constraints={
+                    "bounds": {
+                        k: [min(features[k]), max(features[k])]
+                        for k in feature_keys
                     },
-                    target_column=target_key,
-                    feature_columns=feature_keys,
-                    max_order=2,
-                )
-                result = await ml_tool.call(sr_args, None)
-
-                if not result or not result.success:
+                    "dimensional_check": True,
+                },
+            )
+            cc_result = await sr_tool.call(cc_args, None)
+            if cc_result and cc_result.success:
+                cc_data = cc_result.data or {}
+                state.sr_gp_results[-1]["constraint_check"] = cc_data
+                failed = [
+                    c.get("name", "?")
+                    for c in cc_data.get("checks", [])
+                    if not c.get("passed")
+                ]
+                if cc_data.get("all_passed"):
                     state.integrity_log.append(
-                        f"[sr_gp] SR failed for gap: {gap_text[:60]}..."
+                        f"[sr_gp] constraint_check PASSED for: "
+                        f"{equation[:60]}"
                     )
-                    if allow_empirical:
-                        await self._run_empirical_approach(
-                            state, gap_info, features, target_key
-                        )
-                    else:
-                        state.integrity_log.append(
-                            "[sr_gp] Tip: set allow_empirical=True to try "
-                            "GP-only or other data-driven methods for this gap"
-                        )
-                    continue
-
-                sr_data = result.data or {}
-                sr_eq = sr_data.get("sr_equation", {})
-                r2 = sr_eq.get("r2", 0.0)
-                equation = sr_eq.get("equation", "")
-
-                state.sr_gp_results.append(
-                    {
-                        "gap": gap_text,
-                        "equation": equation,
-                        "r2": r2,
-                        "n_samples": sr_data.get("n_samples", 0),
-                        "approach": "SR + GP residual",
-                        "interpretation": sr_data.get("interpretation", ""),
-                    }
-                )
-
-                state.integrity_log.append(
-                    f"[sr_gp] gap '{gap_text[:40]}...' → equation: "
-                    f"{equation[:80]} (R2={r2:.3f})"
-                )
-
-                # R2 不足时提示用户 — 不自动跳黑箱, 让用户决定
-                if r2 < 0.5 and not allow_empirical:
+                else:
                     state.integrity_log.append(
-                        f"[sr_gp] Low R2 ({r2:.3f}) — SR equation may be unreliable. "
-                        f"Set allow_empirical=True for GP-only or other methods."
+                        f"[sr_gp] constraint_check ISSUES for: "
+                        f"{equation[:60]} — {failed}"
                     )
-
-                # 回注数学验证: 发现的方程作为一个新的 math_structure
-                state.math_structures.append(
-                    {
-                        "gap": gap_text,
-                        "structure": "discovered",
-                        "equation": equation,
-                        "recommended_tool": "symbolic_math_tool",
-                        "action": "dimensional_analysis",
-                        "source": "sr_gp",
-                        "r2": r2,
-                    }
-                )
-
-                # constraint_check — 物理约束验证
-                try:
-                    from huginn.tools.sci.symbolic_regression_tool import (
-                        SymbolicRegressionInput,
-                        SymbolicRegressionTool,
-                    )
-
-                    sr_tool = SymbolicRegressionTool()
-                    cc_args = SymbolicRegressionInput(
-                        action="constraint_check",
-                        probe_expression=equation,
-                        constraints={
-                            "bounds": {
-                                k: [min(features[k]), max(features[k])]
-                                for k in feature_keys
-                            },
-                            "dimensional_check": True,
-                        },
-                    )
-                    cc_result = await sr_tool.call(cc_args, None)
-                    if cc_result and cc_result.success:
-                        cc_data = cc_result.data or {}
-                        state.sr_gp_results[-1]["constraint_check"] = cc_data
-                        failed = [
-                            c.get("name", "?")
-                            for c in cc_data.get("checks", [])
-                            if not c.get("passed")
-                        ]
-                        if cc_data.get("all_passed"):
-                            state.integrity_log.append(
-                                f"[sr_gp] constraint_check PASSED for: "
-                                f"{equation[:60]}"
-                            )
-                        else:
-                            state.integrity_log.append(
-                                f"[sr_gp] constraint_check ISSUES for: "
-                                f"{equation[:60]} — {failed}"
-                            )
-                except Exception as e:
-                    logger.debug("constraint_check failed: %s", e)
-
-                # 写回 KB — 发现的方程存入知识库
-                await self._write_discovery_to_kb(
-                    state, equation, gap_text, r2
-                )
-
-            except Exception as e:
-                state.integrity_log.append(
-                    f"[sr_gp] error for gap '{gap_text[:40]}...': {e}"
-                )
+        except Exception as e:
+            logger.debug("constraint_check failed: %s", e)
 
     async def _run_empirical_approach(
         self,
@@ -1727,9 +1895,41 @@ class DeliAutoResearch:
         self._sessions[state.session_id] = state
 
         # 1. Deep Research (topic_analysis + literature_search + gap_analysis)
+        state = await self._dr_run_deep_research(state, rag_search_fn, config)
+
+        # 1.6 数学结构识别 — 结合研究直觉, advisory 而非强制
+        await self._dr_identify_structures(state, research_intuition)
+
+        # 1.5 内层循环: 对需要计算数据的 gap 跑 AutoloopEngine
+        # v6 G53: 改走 _fill_sorry_gaps 包装, 给每个 gap 加 sorry_status
+        await self._dr_fill_gaps(state)
+
+        # 1.8 SR+GP 数据驱动发现 — 对 statistical/none/exploratory 类型 gap
+        await self._dr_run_data_discovery(state, allow_empirical)
+
+        # 2. Paper Writing (outline + drafting)
+        state = await self._dr_write_paper(state, config)
+
+        # 3. Citation Verification
+        await self._dr_verify_citations(state, rag_search_fn, config)
+
+        # 4. Peer Review
+        state = await self._dr_peer_review(state, config)
+
+        # 5. Revision (简单版: 把 must-fix 注入草稿重写)
+        await self._dr_revise(state, config)
+
+        # 6. Final
+        await self._dr_finalize(state, target_journal)
+        return state
+
+    async def _dr_run_deep_research(
+        self, state: ResearchState, rag_search_fn: Any | None, config: Any
+    ) -> ResearchState:
+        """阶段 1: 深度研究 (主题分析 + 文献检索 + gap 分析)."""
         await self._emit_progress(
             state, ResearchStage.TOPIC_ANALYSIS, "running",
-            f"Analyzing topic: {topic[:80]}",
+            f"Analyzing topic: {state.topic[:80]}",
         )
         state = await self.deep_research.run(state, rag_search_fn, config)
         self._check_gate(state, ResearchStage.LITERATURE_SEARCH)
@@ -1738,8 +1938,12 @@ class DeliAutoResearch:
             state, ResearchStage.GAP_ANALYSIS, "done",
             f"Found {len(state.literature)} papers, {len(state.gaps)} gaps",
         )
+        return state
 
-        # 1.6 数学结构识别 — 结合研究直觉, advisory 而非强制
+    async def _dr_identify_structures(
+        self, state: ResearchState, research_intuition: str | None
+    ) -> None:
+        """阶段 1.6: 识别数学结构与物理结构."""
         if research_intuition:
             state.research_intuition = self._capture_research_intuition(
                 research_intuition
@@ -1757,41 +1961,50 @@ class DeliAutoResearch:
             f"{len(state.physical_structures)} physical structures",
         )
 
-        # 1.5 内层循环: 对需要计算数据的 gap 跑 AutoloopEngine
-        # v6 G53: 改走 _fill_sorry_gaps 包装, 给每个 gap 加 sorry_status
-        if state.gaps:
-            await self._emit_progress(
-                state, ResearchStage.GAP_ANALYSIS, "running",
-                "Filling computational gaps via AutoloopEngine...",
-            )
-            await self._fill_sorry_gaps(state)
-            await self._emit_progress(
-                state, ResearchStage.GAP_ANALYSIS, "done",
-                f"Sorry-driven gap fill: {len(state.gaps_filled)} filled, "
-                f"{sum(1 for g in state.gaps if isinstance(g, dict) and g.get('sorry_status') == 'placeholder')} placeholder",
-            )
+    async def _dr_fill_gaps(self, state: ResearchState) -> None:
+        """阶段 1.5: 对需要计算数据的 gap 跑 AutoloopEngine."""
+        if not state.gaps:
+            return
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "running",
+            "Filling computational gaps via AutoloopEngine...",
+        )
+        await self._fill_sorry_gaps(state)
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "done",
+            f"Sorry-driven gap fill: {len(state.gaps_filled)} filled, "
+            f"{sum(1 for g in state.gaps if isinstance(g, dict) and g.get('sorry_status') == 'placeholder')} placeholder",
+        )
 
-        # 1.8 SR+GP 数据驱动发现 — 对 statistical/none/exploratory 类型 gap
-        if state.math_structures:
-            data_gaps = [
-                s for s in state.math_structures
-                if s.get("structure") in ("statistical", "none", "exploratory")
-            ]
-            if data_gaps:
-                await self._emit_progress(
-                    state, ResearchStage.GAP_ANALYSIS, "running",
-                    f"Running SR+GP discovery for {len(data_gaps)} "
-                    f"data-driven gaps...",
-                )
-                await self._run_sr_gp_loop(state, allow_empirical=allow_empirical)
-                await self._emit_progress(
-                    state, ResearchStage.GAP_ANALYSIS, "done",
-                    f"SR+GP: {len(state.sr_gp_results)} equations "
-                    f"discovered, {len(state.empirical_results)} "
-                    f"empirical fits",
-                )
+    async def _dr_run_data_discovery(
+        self, state: ResearchState, allow_empirical: bool
+    ) -> None:
+        """阶段 1.8: 对数据驱动 gap 跑 SR+GP 发现."""
+        if not state.math_structures:
+            return
+        data_gaps = [
+            s for s in state.math_structures
+            if s.get("structure") in ("statistical", "none", "exploratory")
+        ]
+        if not data_gaps:
+            return
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "running",
+            f"Running SR+GP discovery for {len(data_gaps)} "
+            f"data-driven gaps...",
+        )
+        await self._run_sr_gp_loop(state, allow_empirical=allow_empirical)
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "done",
+            f"SR+GP: {len(state.sr_gp_results)} equations "
+            f"discovered, {len(state.empirical_results)} "
+            f"empirical fits",
+        )
 
-        # 2. Paper Writing (outline + drafting)
+    async def _dr_write_paper(
+        self, state: ResearchState, config: Any
+    ) -> ResearchState:
+        """阶段 2: 大纲与分节起草, 起草前做量纲一致性检查."""
         await self._emit_progress(
             state, ResearchStage.OUTLINE, "running",
             "Generating paper outline and drafting sections...",
@@ -1799,16 +2012,7 @@ class DeliAutoResearch:
 
         # 1.7 量纲一致性检查 — 在起草前验证数学结构
         if state.math_structures:
-            await self._emit_progress(
-                state, ResearchStage.OUTLINE, "running",
-                "Running dimensional consistency checks...",
-            )
-            await self._verify_math_consistency(state)
-            await self._emit_progress(
-                state, ResearchStage.OUTLINE, "done",
-                f"Math verification: {state.math_verification.get('verified_count', 0)}/"
-                f"{len(state.math_structures)} structures checked",
-            )
+            await self._dr_verify_math(state)
 
         # 把 SR+GP 发现注入 state, 供起草使用
         if state.sr_gp_results:
@@ -1824,8 +2028,25 @@ class DeliAutoResearch:
             f"Drafted {len(state.draft_sections)} sections, "
             f"{len(state.integrated_draft)} chars total",
         )
+        return state
 
-        # 3. Citation Verification
+    async def _dr_verify_math(self, state: ResearchState) -> None:
+        """起草前的量纲一致性检查 (原阶段 1.7)."""
+        await self._emit_progress(
+            state, ResearchStage.OUTLINE, "running",
+            "Running dimensional consistency checks...",
+        )
+        await self._verify_math_consistency(state)
+        await self._emit_progress(
+            state, ResearchStage.OUTLINE, "done",
+            f"Math verification: {state.math_verification.get('verified_count', 0)}/"
+            f"{len(state.math_structures)} structures checked",
+        )
+
+    async def _dr_verify_citations(
+        self, state: ResearchState, rag_search_fn: Any | None, config: Any
+    ) -> None:
+        """阶段 3: 引用验证."""
         state.stage = ResearchStage.CITATION_VERIFY
         state.touch()
         await self._emit_progress(
@@ -1851,7 +2072,10 @@ class DeliAutoResearch:
             f"{len(state.citation_issues)} citation issues found",
         )
 
-        # 4. Peer Review
+    async def _dr_peer_review(
+        self, state: ResearchState, config: Any
+    ) -> ResearchState:
+        """阶段 4: 同行评审模拟."""
         await self._emit_progress(
             state, ResearchStage.PEER_REVIEW, "running",
             "Running peer review simulation (EIC + reviewers + devil's advocate)...",
@@ -1862,8 +2086,10 @@ class DeliAutoResearch:
             state, ResearchStage.PEER_REVIEW, "done",
             f"{len(state.reviews)} reviews, {len(state.revision_notes)} must-fix items",
         )
+        return state
 
-        # 5. Revision (简单版: 把 must-fix 注入草稿重写)
+    async def _dr_revise(self, state: ResearchState, config: Any) -> None:
+        """阶段 5: 按审稿意见修订草稿."""
         state.stage = ResearchStage.REVISION
         state.touch()
         await self._emit_progress(
@@ -1893,36 +2119,44 @@ class DeliAutoResearch:
             "Draft revised per reviewer feedback",
         )
 
-        # 6. Final
+    async def _dr_finalize(
+        self, state: ResearchState, target_journal: str | None
+    ) -> None:
+        """阶段 6: 定稿, 可选期刊合规检查."""
         state.stage = ResearchStage.FINAL
         state.touch()
 
         # 如果有目标期刊, 跑合规检查
         if target_journal:
-            try:
-                from huginn.academic.standards_checker import StandardsChecker
-                checker = StandardsChecker()
-                results = checker.check_compliance(
-                    {
-                        "title": state.topic,
-                        "body": state.integrated_draft,
-                        "references": state.citations,
-                    },
-                    target_journal,
-                )
-                state.integrity_log.append(
-                    f"[final] compliance check: "
-                    f"{sum(1 for r in results if r.passed)}/{len(results)} passed"
-                )
-            except Exception:
-                logger.debug("compliance check failed", exc_info=True)
+            self._dr_check_compliance(state, target_journal)
 
         await self._emit_progress(
             state, ResearchStage.FINAL, "done",
             f"Pipeline complete: {len(state.integrated_draft)} chars, "
             f"{len(state.citations)} citations",
         )
-        return state
+
+    def _dr_check_compliance(
+        self, state: ResearchState, target_journal: str
+    ) -> None:
+        """目标期刊合规检查, 失败仅记录 debug 日志."""
+        try:
+            from huginn.academic.standards_checker import StandardsChecker
+            checker = StandardsChecker()
+            results = checker.check_compliance(
+                {
+                    "title": state.topic,
+                    "body": state.integrated_draft,
+                    "references": state.citations,
+                },
+                target_journal,
+            )
+            state.integrity_log.append(
+                f"[final] compliance check: "
+                f"{sum(1 for r in results if r.passed)}/{len(results)} passed"
+            )
+        except Exception:
+            logger.debug("compliance check failed", exc_info=True)
 
     async def run_stage(
         self,
@@ -2218,195 +2452,243 @@ class DeliAutoResearchTool(HuginnTool):
 
         if args.action == "list_sessions":
             return ToolResult(data={"sessions": engine.list_sessions()})
-
         if args.action == "start":
-            if not args.topic:
-                return ToolResult(
-                    data=None, success=False,
-                    error="start 需要 topic 参数",
-                )
-            state = ResearchState(
-                topic=args.topic,
-                target_journal=args.target_journal,
-            )
-            engine._sessions[state.session_id] = state
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "topic": state.topic,
-                    "stage": state.stage.value,
-                    "message": "Session created. Use full_run or next_stage to proceed.",
-                }
-            )
-
+            return self._ex_start(engine, args)
         if args.action == "full_run":
-            if not args.topic:
-                return ToolResult(
-                    data=None, success=False,
-                    error="full_run 需要 topic 参数",
-                )
-            rag_fn = _get_rag_search_fn(context)
-            state = await engine.run_full_pipeline(
-                topic=args.topic,
-                target_journal=args.target_journal,
-                rag_search_fn=rag_fn,
-                allow_empirical=args.allow_empirical,
-                research_intuition=args.research_intuition,
-            )
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "summary": state.to_summary(),
-                    "draft_excerpt": state.integrated_draft[:2000] if state.integrated_draft else None,
-                    "citations": state.citations[:10],
-                    "citation_issues": state.citation_issues,
-                    "reviews_count": len(state.reviews),
-                    "revision_notes": state.revision_notes,
-                    "integrity_log": state.integrity_log,
-                }
-            )
-
+            return await self._ex_full_run(engine, args, context)
         if args.action == "next_stage":
-            if not args.session_id:
-                return ToolResult(
-                    data=None, success=False,
-                    error="next_stage 需要 session_id 参数",
-                )
-            rag_fn = _get_rag_search_fn(context)
-            try:
-                state = await engine.run_stage(
-                    args.session_id, rag_search_fn=rag_fn
-                )
-            except ValueError as e:
-                return ToolResult(data=None, success=False, error=str(e))
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "summary": state.to_summary(),
-                    "stage_completed": state.stage.value,
-                    "integrity_log": state.integrity_log[-3:],
-                }
-            )
-
+            return await self._ex_next_stage(engine, args, context)
         if args.action == "status":
-            if not args.session_id:
-                return ToolResult(
-                    data=None, success=False,
-                    error="status 需要 session_id 参数",
-                )
-            state = engine.get_session(args.session_id)
-            if state is None:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"Session {args.session_id} not found",
-                )
-            return ToolResult(data=state.to_summary())
-
+            return self._ex_status(engine, args)
         if args.action == "get_draft":
-            if not args.session_id:
-                return ToolResult(
-                    data=None, success=False,
-                    error="get_draft 需要 session_id 参数",
-                )
-            state = engine.get_session(args.session_id)
-            if state is None:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"Session {args.session_id} not found",
-                )
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "stage": state.stage.value,
-                    "draft": state.integrated_draft,
-                    "sections": state.draft_sections,
-                    "outline": state.outline,
-                }
-            )
-
+            return self._ex_get_draft(engine, args)
         if args.action == "get_citations":
-            if not args.session_id:
-                return ToolResult(
-                    data=None, success=False,
-                    error="get_citations 需要 session_id 参数",
-                )
-            state = engine.get_session(args.session_id)
-            if state is None:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"Session {args.session_id} not found",
-                )
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "citations": state.citations,
-                    "issues": state.citation_issues,
-                    "total": len(state.citations),
-                    "issues_count": len(state.citation_issues),
-                }
-            )
-
+            return self._ex_get_citations(engine, args)
         if args.action == "get_reviews":
-            if not args.session_id:
-                return ToolResult(
-                    data=None, success=False,
-                    error="get_reviews 需要 session_id 参数",
-                )
-            state = engine.get_session(args.session_id)
-            if state is None:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"Session {args.session_id} not found",
-                )
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "reviews": state.reviews,
-                    "meta_review": state.meta_review,
-                    "revision_notes": state.revision_notes,
-                }
-            )
-
+            return self._ex_get_reviews(engine, args)
         if args.action == "verify":
-            if not args.session_id:
-                return ToolResult(
-                    data=None, success=False,
-                    error="verify 需要 session_id 参数",
-                )
-            state = engine.get_session(args.session_id)
-            if state is None:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"Session {args.session_id} not found",
-                )
-            if not state.citations:
-                return ToolResult(
-                    data=None, success=False,
-                    error="No citations to verify. Run drafting stage first.",
-                )
-            rag_fn = _get_rag_search_fn(context)
-            results = await engine.citation_verifier.verify(
-                state.citations, rag_fn
-            )
-            state.citation_issues = [
-                f"[{r['index']+1}] {r['status']}: {r['reason']}"
-                for r in results
-                if r and r.get("status") != "verified"
-            ]
-            return ToolResult(
-                data={
-                    "session_id": state.session_id,
-                    "verification_results": results,
-                    "issues": state.citation_issues,
-                    "total": len(results),
-                    "verified": sum(1 for r in results if r and r.get("status") == "verified"),
-                    "issues_count": len(state.citation_issues),
-                }
-            )
-
+            return await self._ex_verify(engine, args, context)
         return ToolResult(
             data=None, success=False,
             error=f"未知 action: {args.action}",
+        )
+
+    def _ex_start(
+        self, engine: DeliAutoResearch, args: DeliResearchInput
+    ) -> ToolResult:
+        """处理 action=start: 创建研究 session."""
+        if not args.topic:
+            return ToolResult(
+                data=None, success=False,
+                error="start 需要 topic 参数",
+            )
+        state = ResearchState(
+            topic=args.topic,
+            target_journal=args.target_journal,
+        )
+        engine._sessions[state.session_id] = state
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "topic": state.topic,
+                "stage": state.stage.value,
+                "message": "Session created. Use full_run or next_stage to proceed.",
+            }
+        )
+
+    async def _ex_full_run(
+        self,
+        engine: DeliAutoResearch,
+        args: DeliResearchInput,
+        context: ToolContext,
+    ) -> ToolResult:
+        """处理 action=full_run: 跑完整管线."""
+        if not args.topic:
+            return ToolResult(
+                data=None, success=False,
+                error="full_run 需要 topic 参数",
+            )
+        rag_fn = _get_rag_search_fn(context)
+        state = await engine.run_full_pipeline(
+            topic=args.topic,
+            target_journal=args.target_journal,
+            rag_search_fn=rag_fn,
+            allow_empirical=args.allow_empirical,
+            research_intuition=args.research_intuition,
+        )
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "summary": state.to_summary(),
+                "draft_excerpt": state.integrated_draft[:2000] if state.integrated_draft else None,
+                "citations": state.citations[:10],
+                "citation_issues": state.citation_issues,
+                "reviews_count": len(state.reviews),
+                "revision_notes": state.revision_notes,
+                "integrity_log": state.integrity_log,
+            }
+        )
+
+    async def _ex_next_stage(
+        self,
+        engine: DeliAutoResearch,
+        args: DeliResearchInput,
+        context: ToolContext,
+    ) -> ToolResult:
+        """处理 action=next_stage: 只跑下一阶段."""
+        if not args.session_id:
+            return ToolResult(
+                data=None, success=False,
+                error="next_stage 需要 session_id 参数",
+            )
+        rag_fn = _get_rag_search_fn(context)
+        try:
+            state = await engine.run_stage(
+                args.session_id, rag_search_fn=rag_fn
+            )
+        except ValueError as e:
+            return ToolResult(data=None, success=False, error=str(e))
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "summary": state.to_summary(),
+                "stage_completed": state.stage.value,
+                "integrity_log": state.integrity_log[-3:],
+            }
+        )
+
+    def _ex_status(
+        self, engine: DeliAutoResearch, args: DeliResearchInput
+    ) -> ToolResult:
+        """处理 action=status: 返回 session 摘要."""
+        if not args.session_id:
+            return ToolResult(
+                data=None, success=False,
+                error="status 需要 session_id 参数",
+            )
+        state = engine.get_session(args.session_id)
+        if state is None:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Session {args.session_id} not found",
+            )
+        return ToolResult(data=state.to_summary())
+
+    def _ex_get_draft(
+        self, engine: DeliAutoResearch, args: DeliResearchInput
+    ) -> ToolResult:
+        """处理 action=get_draft: 返回草稿与分节."""
+        if not args.session_id:
+            return ToolResult(
+                data=None, success=False,
+                error="get_draft 需要 session_id 参数",
+            )
+        state = engine.get_session(args.session_id)
+        if state is None:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Session {args.session_id} not found",
+            )
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "stage": state.stage.value,
+                "draft": state.integrated_draft,
+                "sections": state.draft_sections,
+                "outline": state.outline,
+            }
+        )
+
+    def _ex_get_citations(
+        self, engine: DeliAutoResearch, args: DeliResearchInput
+    ) -> ToolResult:
+        """处理 action=get_citations: 返回引用与问题列表."""
+        if not args.session_id:
+            return ToolResult(
+                data=None, success=False,
+                error="get_citations 需要 session_id 参数",
+            )
+        state = engine.get_session(args.session_id)
+        if state is None:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Session {args.session_id} not found",
+            )
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "citations": state.citations,
+                "issues": state.citation_issues,
+                "total": len(state.citations),
+                "issues_count": len(state.citation_issues),
+            }
+        )
+
+    def _ex_get_reviews(
+        self, engine: DeliAutoResearch, args: DeliResearchInput
+    ) -> ToolResult:
+        """处理 action=get_reviews: 返回评审意见."""
+        if not args.session_id:
+            return ToolResult(
+                data=None, success=False,
+                error="get_reviews 需要 session_id 参数",
+            )
+        state = engine.get_session(args.session_id)
+        if state is None:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Session {args.session_id} not found",
+            )
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "reviews": state.reviews,
+                "meta_review": state.meta_review,
+                "revision_notes": state.revision_notes,
+            }
+        )
+
+    async def _ex_verify(
+        self,
+        engine: DeliAutoResearch,
+        args: DeliResearchInput,
+        context: ToolContext,
+    ) -> ToolResult:
+        """处理 action=verify: 单独跑引用验证."""
+        if not args.session_id:
+            return ToolResult(
+                data=None, success=False,
+                error="verify 需要 session_id 参数",
+            )
+        state = engine.get_session(args.session_id)
+        if state is None:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Session {args.session_id} not found",
+            )
+        if not state.citations:
+            return ToolResult(
+                data=None, success=False,
+                error="No citations to verify. Run drafting stage first.",
+            )
+        rag_fn = _get_rag_search_fn(context)
+        results = await engine.citation_verifier.verify(
+            state.citations, rag_fn
+        )
+        state.citation_issues = [
+            f"[{r['index']+1}] {r['status']}: {r['reason']}"
+            for r in results
+            if r and r.get("status") != "verified"
+        ]
+        return ToolResult(
+            data={
+                "session_id": state.session_id,
+                "verification_results": results,
+                "issues": state.citation_issues,
+                "total": len(results),
+                "verified": sum(1 for r in results if r and r.get("status") == "verified"),
+                "issues_count": len(state.citation_issues),
+            }
         )
 
 

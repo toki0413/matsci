@@ -585,19 +585,12 @@ async def _mcp_health_monitor(manager: Any) -> None:
 # ── lifespan ────────────────────────────────────────────────────────
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Switch the root logger to structured JSON output early so every startup
-    # log line below is already correlated. Opt out with HUGINN_JSON_LOGS=0.
+def _ls_setup_runtime(app: FastAPI) -> None:
+    """Switch to structured logging early and size the default executor."""
     setup_json_logging()
-
-    # Expand the default ThreadPoolExecutor so concurrent LLM calls
-    # (each wrapped in asyncio.to_thread) don't exhaust the pool.
-    # Default is min(32, cpu+4); with 4+ simultaneous WS connections
-    # each holding a thread for 60-120s, the pool starves and new
-    # connections get refused. Bump to 64 or HUGINN_THREAD_POOL_SIZE.
     try:
         import concurrent.futures
+
         pool_size = int(os.environ.get("HUGINN_THREAD_POOL_SIZE", "64"))
         loop = asyncio.get_running_loop()
         loop.set_default_executor(
@@ -607,26 +600,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[startup] could not set thread pool size: {e}")
 
-    # Run pending schema migrations for every SQLite store up front, so
-    # backups + integrity checks happen in one place rather than lazily
-    # when each store is first touched. Failures are contained — a bad
-    # migration on one DB shouldn't stop the whole app from booting.
+
+async def _ls_run_migrations(app: FastAPI) -> None:
     try:
         from huginn.utils.migrations import run_all_migrations
+
         await asyncio.to_thread(run_all_migrations)
     except Exception as e:
         logger.warning(f"[migrations] startup sweep failed: {e}")
-    # Deps & dead-code probe: 一次性探测可选第三方依赖是否齐全, 缺失的
-    # 相关工具会在运行时静默降级 — 启动期就暴露出来, 而不是等用户踩到.
-    # find_spec 很轻 (~几十 ms), 不加载模块; 死代码扫描用
-    # HUGINN_STARTUP_DEADCODE=1 显式打开, 默认只在缺失依赖层面报告.
+
+
+async def _ls_run_startup_probe(app: FastAPI) -> None:
     try:
         from huginn.diagnostics.startup_validator import run_startup_check
+
         await asyncio.to_thread(run_startup_check)
     except Exception as e:
         logger.warning(f"[startup] dep/dead-code probe failed: {e}")
-    # Bootstrap QQ / WeChat bot bridge configs from env (one-click connect).
-    # 设了 BOT_QQ_API_URL / BOT_WECHAT_API_URL 才生效, 否则保持默认 disabled.
+
+
+def _ls_bootstrap_bot_bridge(app: FastAPI) -> None:
     try:
         from huginn.bot.bridge import bootstrap_qq_from_env
         from huginn.bot.wechat_bridge import bootstrap_wechat_from_env
@@ -636,176 +629,221 @@ async def lifespan(app: FastAPI):
         logger.info("[startup] bot bridge configs bootstrapped from env")
     except Exception as e:
         logger.warning(f"[startup] bot bridge bootstrap failed: {e}")
-    # Store the main event loop so sync code (tool adapter running in
-    # a thread) can schedule event publishes back on the main loop
+
+
+def _ls_set_main_loop(app: FastAPI) -> None:
     try:
         from huginn.events.integration import set_main_loop
+
         set_main_loop(asyncio.get_running_loop())
     except Exception:
         logger.debug("failed to set main event loop", exc_info=True)
-    # Register core tools synchronously (fast — ~35 essential tools),
-    # then kick off optional tools in the background so they don't block
-    # the server from accepting health checks.
+
+
+def _ls_register_tools(app: FastAPI) -> None:
     try:
         from huginn.tools import register_core_tools
+
         register_core_tools()
         logger.info("[startup] core tools registered")
-        # Background-register the remaining ~55 optional tools (heavy imports).
-        # 用 track_task 保留引用: 服务器刚启动就 shutdown 时, 裸 create_task
-        # 可能被 GC 中途取消, 工具注册静默失败.
         from huginn.utils.concurrency import track_task
+
         track_task(_bg_register_optional_tools(), name="bg-register-optional-tools")
     except Exception as e:
         logger.warning(f"[startup] tool registration failed: {e}")
-    # MCP 连接在后台进行, 不阻塞服务就绪: 本地 stdio 子进程冷导入要 15-25s,
-    # 逐个连接 5 个 server 可能再花近 1 分钟, 前台 await 会让健康检查迟迟不
-    # 就绪. 后台完成后 MCP 工具会注册进 ToolRegistry, 可随后续请求使用.
+
+
+def _ls_spawn_mcp_init(app: FastAPI) -> None:
     try:
         from huginn.utils.concurrency import track_task
+
         track_task(_init_mcp_tools(), name="init-mcp-tools")
     except Exception as e:
         logger.warning(f"[startup] MCP init task spawn failed: {e}")
-    if _KB_AVAILABLE and get_context().kb is None:
-        try:
-            cfg = get_config()
-            get_context().kb = get_knowledge_base(cfg.workspace)
-        except Exception as e:
-            logger.info(f"[KB] Warning: could not initialize knowledge base: {e}")
-    # 加密 RAG: encryption_enabled=True 时初始化 EncryptedRAGManager.
-    # ponytail: 失败不崩, 退化到普通 KB. 密码/密钥从 cfg 读, 没配就跳过.
-    if get_context().encrypted_rag is None:
-        try:
-            cfg = get_config()
-            if cfg.encryption_enabled and (cfg.encryption_password or cfg.encryption_key_file):
-                from huginn.rag.encrypted_rag import EncryptedRAGManager
 
-                persist_dir = str(Path(cfg.workspace) / ".huginn_encrypted_rag")
-                mgr = EncryptedRAGManager(
-                    password=cfg.encryption_password,
-                    key_file=cfg.encryption_key_file,
-                    persist_dir=persist_dir,
-                    doc_encryption=cfg.encrypt_rag_documents,
-                    meta_encryption=cfg.encrypt_rag_metadata,
-                )
-                get_context().encrypted_rag = mgr
-                logger.info("[EncryptedRAG] initialized (persist_dir=%s)", persist_dir)
-        except Exception as e:
-            logger.warning(f"[EncryptedRAG] could not initialize: {e}")
-    if _CODEBASE_AVAILABLE and get_context().codebase is None:
-        try:
-            cfg = get_config()
-            get_context().codebase = get_codebase_index(cfg.workspace)
-        except Exception as e:
-            logger.info(f"[Codebase] Warning: could not initialize codebase index: {e}")
+
+def _ls_init_knowledge_base(app: FastAPI, state: dict[str, Any]) -> Any | None:
+    if not (_KB_AVAILABLE and get_context().kb is None):
+        return None
     try:
         cfg = get_config()
-        # 先 load 恢复 gamification (level/xp/hunger), 再 configure 覆盖 name/personality/accessories
+        kb = get_knowledge_base(cfg.workspace)
+        get_context().kb = kb
+    except Exception as e:
+        logger.info(f"[KB] Warning: could not initialize knowledge base: {e}")
+        return None
+    state["kb"] = kb
+    return kb
+
+
+def _ls_init_encrypted_rag(app: FastAPI, state: dict[str, Any]) -> Any | None:
+    if get_context().encrypted_rag is not None:
+        return None
+    try:
+        cfg = get_config()
+        if not (
+            cfg.encryption_enabled
+            and (cfg.encryption_password or cfg.encryption_key_file)
+        ):
+            return None
+        from huginn.rag.encrypted_rag import EncryptedRAGManager
+
+        persist_dir = str(Path(cfg.workspace) / ".huginn_encrypted_rag")
+        mgr = EncryptedRAGManager(
+            password=cfg.encryption_password,
+            key_file=cfg.encryption_key_file,
+            persist_dir=persist_dir,
+            doc_encryption=cfg.encrypt_rag_documents,
+            meta_encryption=cfg.encrypt_rag_metadata,
+        )
+        get_context().encrypted_rag = mgr
+        logger.info("[EncryptedRAG] initialized (persist_dir=%s)", persist_dir)
+    except Exception as e:
+        logger.warning(f"[EncryptedRAG] could not initialize: {e}")
+        return None
+    state["encrypted_rag"] = mgr
+    return mgr
+
+
+def _ls_init_codebase(app: FastAPI, state: dict[str, Any]) -> Any | None:
+    if not (_CODEBASE_AVAILABLE and get_context().codebase is None):
+        return None
+    try:
+        cfg = get_config()
+        codebase = get_codebase_index(cfg.workspace)
+        get_context().codebase = codebase
+    except Exception as e:
+        logger.info(f"[Codebase] Warning: could not initialize codebase index: {e}")
+        return None
+    state["codebase"] = codebase
+    return codebase
+
+
+def _ls_configure_pet(app: FastAPI) -> None:
+    try:
+        cfg = get_config()
+        # load 先恢复 gamification (level/xp/hunger), configure 再覆盖其余字段
         get_pet_bus().load_state()
         configure_pet(cfg.pet_name, cfg.pet_personality, accessories=cfg.pet_accessories)
     except Exception as e:
         logger.info(f"[Pet] Warning: could not configure pet: {e}")
 
-    # Pre-warm embedding model in background
-    async def _warm_embeddings():
-        try:
-            from huginn.rag.vector_store import _embedding_model_cached
 
-            if _embedding_model_cached():
+async def _ls_warm_embeddings() -> None:
+    """Pre-warm the embedding model in the background."""
+    try:
+        from huginn.rag.vector_store import _embedding_model_cached
 
-                def _do_warm():
-                    from chromadb.utils.embedding_functions import (
-                        DefaultEmbeddingFunction,
-                    )
+        if _embedding_model_cached():
 
-                    fn = DefaultEmbeddingFunction()
-                    fn(["warmup"])
+            def _do_warm():
+                from chromadb.utils.embedding_functions import (
+                    DefaultEmbeddingFunction,
+                )
 
-                await asyncio.to_thread(_do_warm)
-                logger.info("[init] Embedding model pre-warmed")
-        except Exception as e:
-            logger.info(f"[init] Embedding pre-warm skipped: {e}")
+                fn = DefaultEmbeddingFunction()
+                fn(["warmup"])
 
-    warmup_task = asyncio.create_task(_warm_embeddings())
+            await asyncio.to_thread(_do_warm)
+            logger.info("[init] Embedding model pre-warmed")
+    except Exception as e:
+        logger.info(f"[init] Embedding pre-warm skipped: {e}")
 
-    # Start MCP health monitor (periodic ping + auto-reconnect)
-    monitor_task: asyncio.Task | None = None
+
+def _ls_start_embedding_warmup(app: FastAPI) -> asyncio.Task:
+    return asyncio.create_task(_ls_warm_embeddings())
+
+
+def _ls_start_mcp_monitor(app: FastAPI) -> asyncio.Task | None:
     mcp_mgr = get_context().mcp_manager
     if mcp_mgr and mcp_mgr._configs:
         monitor_task = asyncio.create_task(_mcp_health_monitor(mcp_mgr))
         logger.info("[MCP] Health monitor started")
+        return monitor_task
+    return None
 
-    # Start memory decay/dedup maintainer in background (hourly)
-    memory_maintainer = None
+
+def _ls_start_memory_maintainer(app: FastAPI) -> Any | None:
     try:
         from huginn.memory.maintainer import MemoryMaintainer
+
         memory_maintainer = MemoryMaintainer(interval_hours=1)
         memory_maintainer.start()
         logger.info("[startup] memory maintainer started")
+        return memory_maintainer
     except Exception as exc:
         logger.debug(f"[startup] memory maintainer skipped: {exc}")
+        return None
 
-    # Start persona-memory-knowledge loop — periodic background consolidation
-    # Runs every 5 min: scores recent memories, updates persona adaptive layer,
-    # indexes new KB docs, and logs task state summaries
-    pmk_task = None
-    try:
-        import asyncio as _aio
 
-        async def _pmk_loop():
-            """Background persona-memory-knowledge consolidation loop."""
-            from huginn.memory.task_state import get_tracker
-            interval = 300  # 5 min
-            while True:
+async def _ls_pmk_loop() -> None:
+    """Background persona-memory-knowledge consolidation loop."""
+    from huginn.memory.task_state import get_tracker
+
+    interval = 300  # 5 min
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            ctx = get_context()
+            # 1. Memory: run maintenance (decay + dedup)
+            if ctx.memory_manager:
                 try:
-                    await _aio.sleep(interval)
-                    ctx = get_context()
-                    # 1. Memory: run maintenance (decay + dedup)
-                    if ctx.memory_manager:
-                        try:
-                            ctx.memory_manager.maintenance()
-                            stats = ctx.memory_manager.stats()
-                            logger.debug(f"[PMK] memory maintenance done: {stats}")
-                        except Exception as e:
-                            logger.debug(f"[PMK] memory maintenance failed: {e}")
-                    # 2. KB: check for unindexed docs
-                    if ctx.kb:
-                        try:
-                            docs = ctx.kb.list_documents() if hasattr(ctx.kb, "list_documents") else []
-                            logger.debug(f"[PMK] KB has {len(docs)} docs")
-                        except Exception:
-                            logger.debug("KB document list failed", exc_info=True)
-                    # 3. Task state: log active threads
-                    tracker = get_tracker()
-                    if tracker._cache:
-                        logger.debug(f"[PMK] tracking {len(tracker._cache)} threads")
-                except _aio.CancelledError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    break
+                    ctx.memory_manager.maintenance()
+                    stats = ctx.memory_manager.stats()
+                    logger.debug(f"[PMK] memory maintenance done: {stats}")
                 except Exception as e:
-                    logger.debug(f"[PMK] loop error: {e}")
+                    logger.debug(f"[PMK] memory maintenance failed: {e}")
+            # 2. KB: check for unindexed docs
+            if ctx.kb:
+                try:
+                    docs = (
+                        ctx.kb.list_documents()
+                        if hasattr(ctx.kb, "list_documents")
+                        else []
+                    )
+                    logger.debug(f"[PMK] KB has {len(docs)} docs")
+                except Exception:
+                    logger.debug("KB document list failed", exc_info=True)
+            # 3. Task state: log active threads
+            tracker = get_tracker()
+            if tracker._cache:
+                logger.debug(f"[PMK] tracking {len(tracker._cache)} threads")
+        except asyncio.CancelledError:
+            logger.debug("best-effort op failed", exc_info=True)
+            break
+        except Exception as e:
+            logger.debug(f"[PMK] loop error: {e}")
 
-        pmk_task = _aio.create_task(_pmk_loop())
+
+def _ls_start_pmk_loop(app: FastAPI) -> asyncio.Task | None:
+    try:
+        pmk_task = asyncio.create_task(_ls_pmk_loop())
         logger.info("[startup] persona-memory-knowledge loop started (300s interval)")
+        return pmk_task
     except Exception as exc:
         logger.debug(f"[startup] PMK loop skipped: {exc}")
+        return None
 
-    # Start HPC job monitor — auto-tracks submitted remote jobs
-    job_monitor = None
+
+def _ls_start_job_monitor(app: FastAPI) -> Any | None:
     try:
         from huginn.hpc.monitor import JobMonitor
-        job_monitor = JobMonitor(
-            workspace=os.environ.get("HUGINN_WORKSPACE", ".")
-        )
+
+        job_monitor = JobMonitor(workspace=os.environ.get("HUGINN_WORKSPACE", "."))
         job_monitor.start()
         logger.info("[startup] HPC job monitor started")
+        return job_monitor
     except Exception as exc:
         logger.debug(f"[startup] HPC job monitor skipped: {exc}")
+        return None
 
-    # ON_HUGINN_LOADED: 引擎启动完成后 dispatch (best-effort, 失败不阻断启动).
-    # v23 Round 8: 已实际 dispatch, 监听引擎就绪的插件 handler 可收到.
+
+async def _ls_dispatch_loaded(app: FastAPI) -> None:
+    """Dispatch ON_HUGINN_LOADED once the engine is ready (best-effort)."""
     try:
         from huginn.api.event import Event, EventType
         from huginn.plugins.event_bus import EventBus as _PluginBus
+
         _bus = _PluginBus()
         await _bus.dispatch(Event(
             type=EventType.ON_HUGINN_LOADED,
@@ -814,40 +852,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.debug("ON_HUGINN_LOADED dispatch failed (non-fatal)", exc_info=True)
 
-    yield
 
-    # Shutdown: cancel background tasks first so they don't touch closing resources
-    if memory_maintainer:
+def _ls_stop_service(service: Any) -> None:
+    if service:
         with suppress(Exception):
-            memory_maintainer.stop()
+            service.stop()
 
-    if job_monitor:
-        with suppress(Exception):
-            job_monitor.stop()
 
-    if warmup_task and not warmup_task.done():
-        warmup_task.cancel()
+async def _ls_cancel_task(task: asyncio.Task | None, message: str) -> None:
+    if task and not task.done():
+        task.cancel()
         with suppress(asyncio.CancelledError):
-            await warmup_task
-        logger.info("[shutdown] embedding warmup task cancelled")
+            await task
+        logger.info(message)
 
-    if monitor_task and not monitor_task.done():
-        monitor_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await monitor_task
-        logger.info("[MCP] Health monitor stopped")
 
-    if pmk_task and not pmk_task.done():
-        pmk_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await pmk_task
-        logger.info("[shutdown] PMK loop cancelled")
-
-    await _shutdown_mcp()
-
-    # Flush any buffered OTLP/Telemetry traces before the process exits, so a
-    # configured observer (e.g. Langfuse) doesn't lose the final spans. No-op
-    # when no export endpoint is configured; never raises.
+async def _ls_shutdown_telemetry() -> None:
+    """Flush buffered OTLP traces; never raises."""
     try:
         from huginn.otel import get_default_exporter
 
@@ -858,8 +879,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"[shutdown] telemetry exporter flush skipped: {e}")
 
-    # Lock encrypted RAG vault: clear decrypted data from memory before
-    # SQLite teardown so nothing leaks into closed-handle errors.
+
+def _ls_lock_encrypted_rag() -> None:
     try:
         _rag = getattr(get_context(), "encrypted_rag", None)
         if _rag is not None:
@@ -868,9 +889,45 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[shutdown] failed to lock encrypted RAG: {e}")
 
-    # Close persistent SQLite connections so WAL checkpoints flush and the
-    # file handles drop cleanly. Done after MCP teardown so nothing new will
-    # try to touch the databases while we're tearing them down.
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    state: dict[str, Any] = {}
+
+    _ls_setup_runtime(app)
+    await _ls_run_migrations(app)
+    await _ls_run_startup_probe(app)
+    _ls_bootstrap_bot_bridge(app)
+    _ls_set_main_loop(app)
+    _ls_register_tools(app)
+    _ls_spawn_mcp_init(app)
+
+    _ls_init_knowledge_base(app, state)
+    _ls_init_encrypted_rag(app, state)
+    _ls_init_codebase(app, state)
+    _ls_configure_pet(app)
+
+    state["warmup_task"] = _ls_start_embedding_warmup(app)
+    state["monitor_task"] = _ls_start_mcp_monitor(app)
+    state["memory_maintainer"] = _ls_start_memory_maintainer(app)
+    state["pmk_task"] = _ls_start_pmk_loop(app)
+    state["job_monitor"] = _ls_start_job_monitor(app)
+    await _ls_dispatch_loaded(app)
+
+    yield
+
+    # Shutdown: cancel background tasks first so they don't touch closing resources
+    _ls_stop_service(state["memory_maintainer"])
+    _ls_stop_service(state["job_monitor"])
+    await _ls_cancel_task(
+        state["warmup_task"], "[shutdown] embedding warmup task cancelled"
+    )
+    await _ls_cancel_task(state["monitor_task"], "[MCP] Health monitor stopped")
+    await _ls_cancel_task(state["pmk_task"], "[shutdown] PMK loop cancelled")
+
+    await _shutdown_mcp()
+    await _ls_shutdown_telemetry()
+    _ls_lock_encrypted_rag()
     await _close_sqlite_stores()
 
 

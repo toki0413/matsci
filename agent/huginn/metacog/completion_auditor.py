@@ -211,10 +211,8 @@ class CompletionAuditor:
 
 # ── 自检 ─────────────────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    auditor = CompletionAuditor()
-
-    # ── parse_unexplored_declaration ──
+def _sc_parse_unexplored() -> None:
+    """parse_unexplored_declaration: 空/空白/已充分探索/n-a + 三种分隔."""
     assert parse_unexplored_declaration("") == 0, "空文本应返回 0"
     assert parse_unexplored_declaration("   ") == 0, "纯空白应返回 0"
     assert parse_unexplored_declaration("已充分探索") == 0, "'已充分探索'不算条目"
@@ -232,7 +230,9 @@ def _selfcheck() -> None:
     nl = "高压相图\ndefect tolerance\n动力学路径"
     assert parse_unexplored_declaration(nl) == 3, "换行分隔应数 3 条"
 
-    # ── CompletionChecklist.is_complete / block_reason ──
+
+def _sc_checklist() -> None:
+    """CompletionChecklist.is_complete / block_reason 五种状态."""
     # 全过的 checklist
     full = CompletionChecklist(
         effort_floor_passed=True,
@@ -279,7 +279,9 @@ def _selfcheck() -> None:
     assert "对抗 agent 否决" in veto.block_reason()
     assert "premature_convergence" in veto.block_reason()
 
-    # ── CompletionAuditor.audit 综合场景 ──
+
+def _sc_audit_pass(auditor) -> None:
+    """场景 A/G: 全过 + 无 candidate_finding 跳过等价审计."""
     # 场景 A: 全过 — 后期迭代, 多方法族, 有自白, 无陷阱, 无否决
     ok = auditor.audit(
         iteration=9, families_explored=4, live_components=2, total_iterations=9,
@@ -293,6 +295,19 @@ def _selfcheck() -> None:
     assert ok.equivalence_traps_remaining == []
     assert ok.unexplored_count == 2
 
+    # 场景 G: 无 candidate_finding → 跳过等价审计, 不应报陷阱
+    no_candidate = auditor.audit(
+        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        candidate_finding="",
+        original_problem="",
+        unexplored_declaration="- 高压相图",
+    )
+    assert no_candidate.equivalence_traps_remaining == [], "无候选发现不应触发等价审计"
+    assert no_candidate.is_complete, "其他都过时应 is_complete"
+
+
+def _sc_audit_effort_and_traps(auditor) -> None:
+    """场景 B/C: 努力下限未过 + 等价陷阱命中."""
     # 场景 B: 努力下限未过 — 早期迭代, 单方法族
     early = auditor.audit(
         iteration=0, families_explored=1, live_components=1, total_iterations=9,
@@ -318,6 +333,9 @@ def _selfcheck() -> None:
     assert "property_reduction" in trapped.equivalence_traps_remaining[0]
     assert "等价性陷阱" in trapped.block_reason()
 
+
+def _sc_audit_confession_and_veto(auditor) -> None:
+    """场景 D/E/F: 缺自白 / 假自白 / 对抗否决."""
     # 场景 D: 缺自白
     no_confession = auditor.audit(
         iteration=9, families_explored=4, live_components=2, total_iterations=9,
@@ -353,17 +371,9 @@ def _selfcheck() -> None:
     assert "对抗 agent 否决" in vetoed.block_reason()
     assert "缺陷容忍度" in vetoed.block_reason()
 
-    # 场景 G: 无 candidate_finding → 跳过等价审计, 不应报陷阱
-    no_candidate = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
-        candidate_finding="",
-        original_problem="",
-        unexplored_declaration="- 高压相图",
-    )
-    assert no_candidate.equivalence_traps_remaining == [], "无候选发现不应触发等价审计"
-    assert no_candidate.is_complete, "其他都过时应 is_complete"
 
-    # 场景 H: 多重失败 — block_reason 应拼多条
+def _sc_audit_multi_failure(auditor) -> None:
+    """场景 H: 多重失败 — block_reason 应拼多条."""
     multi = auditor.audit(
         iteration=0, families_explored=1, live_components=1, total_iterations=9,
         candidate_finding="我们解决了稳定性预测问题",
@@ -379,6 +389,19 @@ def _selfcheck() -> None:
     assert "等价性陷阱" in reason
     assert "对抗 agent 否决" in reason
     assert "不完整性自白" in reason
+
+
+def _selfcheck() -> None:
+    auditor = CompletionAuditor()
+
+    _sc_parse_unexplored()
+    _sc_checklist()
+
+    # ── CompletionAuditor.audit 综合场景 ──
+    _sc_audit_pass(auditor)
+    _sc_audit_effort_and_traps(auditor)
+    _sc_audit_confession_and_veto(auditor)
+    _sc_audit_multi_failure(auditor)
 
     print("completion_auditor selfcheck OK")
 

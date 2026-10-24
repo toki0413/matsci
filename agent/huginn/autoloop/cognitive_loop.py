@@ -37,6 +37,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -521,6 +522,20 @@ def _obs_stop_payload(state: LoopState, flag: str) -> dict[str, Any]:
         "last_action": state.last_action,
         flag: True,
     }
+
+
+@dataclass
+class _RcContext:
+    """run_cognitive 单次运行的显式上下文 — 替代原闭包捕获的局部状态."""
+    objective: str
+    max_iterations: int
+    goal: Goal | None
+    run_id: str
+    provenance_record: Any
+    run_collector: Any
+    tracker: Any
+    progress_task_id: str
+    cog: dict[str, Any]
 
 
 class CognitiveRunner:
@@ -2587,16 +2602,12 @@ Respond JSON only:
     ) -> dict[str, Any]:
         """单一完成判定出口 (控制面审计: 合并 F2/F17/Unified/CompletionGate).
 
-        此前循环里判"是否完成"有三套并行实现 —— 默认 F2+F17 散装、可选
-        Unified+Arbiter、可选 CompletionGate —— 各自独立重算、各自写
-        ``should_stop``, 且默认路径用的是**规则版** GoalJudge (关键词覆盖),
-        于是这条仅存的硬出口不可信. 这里收敛为**一次判定**: 产出一个 completion
-        signal 交给当前启用的决策变体, 但 stop 只有一个来源.
-
-        判定顺序: (1) GoalJudge (有模型走 LLM, 否则规则降级) 出 achieved/gaps;
-        (2) 可选变体 (统一决策 / 完成门) 消费同一 judge 结果, 只决定 stop 之外的
-        switch_tool/requery; (3) **统一验收门** ``_accept_completion`` 对任何
-        "完成"信号做证据门 + SKEPTIC 对抗审查.
+        此前"是否完成"有三套并行实现各自重算/各自写 should_stop, 且默认路径用
+        规则版 GoalJudge, 这条硬出口不可信. 这里收敛为一次判定: (1) GoalJudge
+        (有模型走 LLM, 否则规则降级) 出 achieved/gaps; (2) 可选变体 (统一决策 /
+        完成门) 消费同一 judge 结果, 只决定 stop 之外的 switch_tool/requery;
+        (3) 统一验收门 ``_accept_completion`` 对任何"完成"信号做证据门 + SKEPTIC
+        对抗审查.
 
         返回 ``{"ran", "stop", "reason", "hint"}``; 纯判定, 不写 state.should_stop
         (由调用方写一次, 便于审计与触发率观测).
@@ -2605,130 +2616,24 @@ Respond JSON only:
         if goal is None or getattr(state, "should_stop", False):
             return out
 
-        _every = 3
-        _due = (
-            state.iteration % _every == 2
-            or state.iteration >= max_iterations - 1
-        )
+        _due, _every = self._ec_due(state, max_iterations)
         if not _due or int(getattr(self, "_last_completion_iter", -1)) == state.iteration:
             return out
         self._last_completion_iter = state.iteration
         out["ran"] = True
 
-        from huginn.autoloop.engine_reflect import _ledger_evidence_text
-
-        _final_text = str(
-            (cog.get("validation") or {}).get("summary")
-            or (cog.get("validation") or {}).get("result_data")
-            or (cog.get("execution_result") or {}).get("summary", "")
-        )
-        _ledger = getattr(self, "_execution_ledger", None) or []
-        _claim_text = (_ledger_evidence_text(_ledger) + "\n" + _final_text).strip()
-
-        # (1) GoalJudge: 循环内口径对齐出口路径 (run() L2072) —— 用真模型判,
-        #     判据是证据台账 + 本轮产出, 而不是中间摘要上的关键词覆盖.
-        _judge_llm = getattr(self, "verification_model", None) or getattr(self, "model", None)
-        try:
-            from huginn.evaluation.goal_judge import GoalJudge
-
-            _gj = GoalJudge(llm=_judge_llm).judge(goal.objective, None, _claim_text)
-        except Exception:  # 防御: 判定失败按未达成处理
-            logger.debug("completion GoalJudge failed (non-fatal)", exc_info=True)
-            _gj = {"achieved": False, "score": 0.0, "evidence": [], "gaps": []}
-        _achieved = bool(_gj.get("achieved"))
-        self._control_trace(
-            "goal_judge",
-            f"achieved={_achieved} score={_gj.get('score')} "
-            f"llm={'1' if _judge_llm is not None else '0'}",
-            iteration=state.iteration,
-            action="stop_candidate" if _achieved else "advisory_hint",
-        )
-
-        _stop = _achieved
+        _claim_text, _judge_llm = self._ec_prepare_claim(cog)
+        _achieved, _gj = self._ec_judge(goal, state, _claim_text, _judge_llm)
         _reason = f"goal judge achieved (score={_gj.get('score')})"
 
         # (2) 可选变体: 消费**同一** judge 结果, 不重复判 goal.
-        if os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1":
-            try:
-                from huginn.evaluation.unified_evaluator import UnifiedEvaluator
-                from huginn.metacog.decision_arbiter import DecisionArbiter
-
-                _unified = UnifiedEvaluator().evaluate({
-                    "goal_judge": {
-                        "achieved": _achieved,
-                        "score": _gj.get("score", 0.0),
-                        "evidence": _gj.get("evidence", []),
-                        "gaps": _gj.get("gaps", []),
-                    },
-                })
-                _bandit = None
-                try:
-                    from huginn.agent.bandit_controller import EffortBandit
-
-                    _bandit = EffortBandit.get_instance()
-                except Exception:  # 防御: 老虎机不可用跳过仲裁
-                    logger.debug("bandit unavailable for arbiter", exc_info=True)
-                _arbiter = DecisionArbiter()
-                _dctx = _arbiter.build_context(
-                    csm_state=getattr(self, "_current_phase", "") or "",
-                    bandit=_bandit,
-                    iteration=state.iteration,
-                    max_iterations=max_iterations,
-                    turns_count=getattr(self, "_turn_count", 0),
-                    tool_calls_count=getattr(self, "_tool_calls_count", 0),
-                )
-                _dctx.gate_status = "pass" if _unified.achieved else "gaps_hint"
-                _dctx.gate_should_stop = _unified.achieved
-                _dctx.gate_reason = (
-                    "; ".join(_unified.gaps[:3])
-                    if _unified.gaps
-                    else f"score={_unified.score:.2f}"
-                )
-                _decision = _arbiter.evaluate(_dctx)
-                _stop = _decision.action == "stop"
-                _reason = f"unified: {_decision.reason}"
-                if _decision.action in ("switch_tool", "requery"):
-                    out["hint"] = f"[unified] {_decision.action}: {_decision.reason}"
-            except Exception:  # 防御: 统一决策失败回退单一出口
-                logger.debug("unified decision failed, fallback to single exit", exc_info=True)
-        elif os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1":
-            try:
-                from huginn.metacog.completion_gate import CompletionGate, GateContext
-
-                _families = 0
-                with contextlib.suppress(Exception):
-                    _families = len([
-                        f for f in self._get_metacog_method_registry().all()
-                        if f.member_agent_ids
-                    ])
-                _gate = CompletionGate(
-                    auditor_factory=self._get_metacog_completion_auditor,
-                    goal_judge_llm=_judge_llm,
-                    judge_every_n=_every,
-                )
-                _gctx = GateContext(
-                    iteration=state.iteration,
-                    max_iterations=max_iterations,
-                    families_explored=_families,
-                    live_components=(
-                        self.hypothesis_graph.component_count()
-                        if hasattr(self, "hypothesis_graph") else 0
-                    ),
-                    last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
-                    objective=goal.objective,
-                )
-                _gd = _gate.review(goal, cog.get("validation"), _gctx)
-                _stop = bool(_gd.should_stop)
-                _reason = f"completion gate: {getattr(_gd, 'reason', '')}"
-                if getattr(_gd, "status", "") == "block":
-                    out["hint"] = f"[completion gate] {getattr(_gd, 'reason', '')}"
-            except Exception:  # 防御: 完成门失败回退单一出口
-                logger.debug("completion gate failed, fallback to single exit", exc_info=True)
+        _stop, _reason, out["hint"] = self._ec_variant(
+            goal, cog, _gj, state, max_iterations, _judge_llm, _every,
+            _achieved, _reason, out["hint"],
+        )
 
         if not _stop:
-            if _gj.get("gaps"):
-                _gap_hint = "; ".join(str(g) for g in _gj["gaps"][:3])
-                out["hint"] = (out["hint"] + "\n" + _gap_hint).strip() if out["hint"] else _gap_hint
+            self._ec_append_gaps(out, _gj)
             return out
 
         # (3) 统一验收门: "完成" ≠ "验收".
@@ -2741,6 +2646,162 @@ Respond JSON only:
         out["stop"] = True
         out["reason"] = _reason
         return out
+
+    @staticmethod
+    def _ec_due(state: LoopState, max_iterations: int) -> tuple[bool, int]:
+        """每 3 轮判一次 + 最后一轮必判; 返回 (due, every)."""
+        every = 3
+        due = state.iteration % every == 2 or state.iteration >= max_iterations - 1
+        return due, every
+
+    def _ec_prepare_claim(self, cog: dict[str, Any]) -> tuple[str, Any]:
+        """拼证据台账 + 本轮产出为 claim 文本, 并取判定模型."""
+        from huginn.autoloop.engine_reflect import _ledger_evidence_text
+
+        _validation = cog.get("validation") or {}
+        _final_text = str(
+            _validation.get("summary")
+            or _validation.get("result_data")
+            or (cog.get("execution_result") or {}).get("summary", "")
+        )
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        _claim_text = (_ledger_evidence_text(_ledger) + "\n" + _final_text).strip()
+        _judge_llm = getattr(self, "verification_model", None) or getattr(self, "model", None)
+        return _claim_text, _judge_llm
+
+    def _ec_judge(
+        self, goal: Any, state: LoopState, claim_text: str, judge_llm: Any,
+    ) -> tuple[bool, dict[str, Any]]:
+        """(1) GoalJudge: 循环内口径对齐出口路径 (run() L2072) —— 用真模型判."""
+        try:
+            from huginn.evaluation.goal_judge import GoalJudge
+
+            _gj = GoalJudge(llm=judge_llm).judge(goal.objective, None, claim_text)
+        except Exception:  # 防御: 判定失败按未达成处理
+            logger.debug("completion GoalJudge failed (non-fatal)", exc_info=True)
+            _gj = {"achieved": False, "score": 0.0, "evidence": [], "gaps": []}
+        _achieved = bool(_gj.get("achieved"))
+        self._control_trace(
+            "goal_judge",
+            f"achieved={_achieved} score={_gj.get('score')} "
+            f"llm={'1' if judge_llm is not None else '0'}",
+            iteration=state.iteration,
+            action="stop_candidate" if _achieved else "advisory_hint",
+        )
+        return _achieved, _gj
+
+    def _ec_variant(
+        self, goal: Any, cog: dict[str, Any], gj: dict[str, Any], state: LoopState,
+        max_iterations: int, judge_llm: Any, judge_every: int,
+        achieved: bool, reason: str, hint: str,
+    ) -> tuple[bool, str, str]:
+        """按环境变量选可选变体; 未启用则透传 GoalJudge 结论."""
+        if os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1":
+            return self._ec_unified(gj, achieved, reason, state, max_iterations, hint)
+        if os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1":
+            return self._ec_completion_gate(
+                goal, cog, state, max_iterations, judge_llm, judge_every,
+                achieved, reason, hint,
+            )
+        return achieved, reason, hint
+
+    def _ec_unified(
+        self, gj: dict[str, Any], achieved: bool, reason: str,
+        state: LoopState, max_iterations: int, hint: str,
+    ) -> tuple[bool, str, str]:
+        """统一决策变体: 消费同一 judge 结果, 只决定 stop 之外的 switch/requery."""
+        stop = achieved
+        try:
+            from huginn.evaluation.unified_evaluator import UnifiedEvaluator
+            from huginn.metacog.decision_arbiter import DecisionArbiter
+
+            _unified = UnifiedEvaluator().evaluate({
+                "goal_judge": {
+                    "achieved": achieved,
+                    "score": gj.get("score", 0.0),
+                    "evidence": gj.get("evidence", []),
+                    "gaps": gj.get("gaps", []),
+                },
+            })
+            _bandit = None
+            try:
+                from huginn.agent.bandit_controller import EffortBandit
+
+                _bandit = EffortBandit.get_instance()
+            except Exception:  # 防御: 老虎机不可用跳过仲裁
+                logger.debug("bandit unavailable for arbiter", exc_info=True)
+            _arbiter = DecisionArbiter()
+            _dctx = _arbiter.build_context(
+                csm_state=getattr(self, "_current_phase", "") or "",
+                bandit=_bandit,
+                iteration=state.iteration,
+                max_iterations=max_iterations,
+                turns_count=getattr(self, "_turn_count", 0),
+                tool_calls_count=getattr(self, "_tool_calls_count", 0),
+            )
+            _dctx.gate_status = "pass" if _unified.achieved else "gaps_hint"
+            _dctx.gate_should_stop = _unified.achieved
+            _dctx.gate_reason = (
+                "; ".join(_unified.gaps[:3])
+                if _unified.gaps
+                else f"score={_unified.score:.2f}"
+            )
+            _decision = _arbiter.evaluate(_dctx)
+            stop = _decision.action == "stop"
+            reason = f"unified: {_decision.reason}"
+            if _decision.action in ("switch_tool", "requery"):
+                hint = f"[unified] {_decision.action}: {_decision.reason}"
+        except Exception:  # 防御: 统一决策失败回退单一出口
+            logger.debug("unified decision failed, fallback to single exit", exc_info=True)
+        return stop, reason, hint
+
+    def _ec_completion_gate(
+        self, goal: Any, cog: dict[str, Any], state: LoopState, max_iterations: int,
+        judge_llm: Any, judge_every: int, achieved: bool, reason: str, hint: str,
+    ) -> tuple[bool, str, str]:
+        """完成门变体: 同一 judge 结果; 门判 block 时给 hint, 失败回退单一出口."""
+        stop = achieved
+        try:
+            from huginn.metacog.completion_gate import CompletionGate, GateContext
+
+            _families = 0
+            with contextlib.suppress(Exception):
+                _families = len([
+                    f for f in self._get_metacog_method_registry().all()
+                    if f.member_agent_ids
+                ])
+            _gate = CompletionGate(
+                auditor_factory=self._get_metacog_completion_auditor,
+                goal_judge_llm=judge_llm,
+                judge_every_n=judge_every,
+            )
+            _gctx = GateContext(
+                iteration=state.iteration,
+                max_iterations=max_iterations,
+                families_explored=_families,
+                live_components=(
+                    self.hypothesis_graph.component_count()
+                    if hasattr(self, "hypothesis_graph") else 0
+                ),
+                last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
+                objective=goal.objective,
+            )
+            _gd = _gate.review(goal, cog.get("validation"), _gctx)
+            stop = bool(_gd.should_stop)
+            reason = f"completion gate: {getattr(_gd, 'reason', '')}"
+            if getattr(_gd, "status", "") == "block":
+                hint = f"[completion gate] {getattr(_gd, 'reason', '')}"
+        except Exception:  # 防御: 完成门失败回退单一出口
+            logger.debug("completion gate failed, fallback to single exit", exc_info=True)
+        return stop, reason, hint
+
+    @staticmethod
+    def _ec_append_gaps(out: dict[str, Any], gj: dict[str, Any]) -> None:
+        """未完成时把 judge 的 gaps 前 3 条拼进 hint."""
+        if not gj.get("gaps"):
+            return
+        _gap_hint = "; ".join(str(g) for g in gj["gaps"][:3])
+        out["hint"] = (out["hint"] + "\n" + _gap_hint).strip() if out["hint"] else _gap_hint
 
     async def _accept_completion(
         self, goal: Any, claim_text: str, state: LoopState
@@ -4206,6 +4267,25 @@ Respond JSON only:
 
         返回 AutoloopResult, 与 run() 接口一致, 调用方无需感知差异.
         """
+        ctx = self._rc_init(
+            objective, max_iterations, progressive_budget, goal, max_refines,
+            timeout_seconds,
+        )
+        loop = self._rc_build_loop(ctx)
+        state = await loop.run(LoopState(max_iterations=ctx.max_iterations))
+        await self._rc_post_run(ctx, state)
+        return await self._finalize_run(
+            objective,
+            ctx.cog["phases"],
+            ctx.run_id,
+            ctx.provenance_record,
+            ctx.run_collector,
+            ctx.tracker,
+            ctx.progress_task_id,
+            ctx.cog["completed_steps"],
+        )
+
+    def _rc_autowake(self) -> None:
         # P2-6 自动触发: WakeStore 有 pending wakes 时 lazy spawn scheduler.
         # runner 调 self.run_cognitive() 继续长跑循环 (wake 触发的 resume).
         if getattr(self, "_auto_wake_enabled", False) and self._wake_scheduler is None:
@@ -4234,12 +4314,14 @@ Respond JSON only:
             except Exception:  # 防御: 自动唤醒调度生成失败忽略
                 logger.debug("auto wake scheduler spawn failed", exc_info=True)
 
-        from huginn.autoloop.cognitive_loop import (
-            CognitiveLoop,
-            LoopState,
-            ReflectionResult,
-        )
-
+    def _rc_setup_state(
+        self,
+        objective: str,
+        max_iterations: int,
+        goal: Goal | None,
+        max_refines: int,
+        progressive_budget: bool,
+    ) -> tuple[int, str, Any, Any]:
         self._max_refines = max_refines
         self._refine_count = 0
         # 长程探索: 记住本 run 自己的 goal id. 早停守卫 _long_horizon_keep_going
@@ -4266,6 +4348,15 @@ Respond JSON only:
         self._parent_run_id = None
         # 目标持久化到 engine_state — 重启后 UI 能读回, 一键续跑不用重输.
         self._objective = objective
+        return max_iterations, run_id, provenance_record, run_collector
+
+    def _rc_start_progress(
+        self,
+        objective: str,
+        max_iterations: int,
+        run_id: str,
+        timeout_seconds: float | None,
+    ) -> tuple[Any, str]:
         from huginn.autoloop.engine import AUTOLOOP_PHASES
         from huginn.interaction.progress import get_progress_tracker
         tracker = get_progress_tracker()
@@ -4281,7 +4372,9 @@ Respond JSON only:
             timeout_seconds=timeout_seconds,
         )
         self._progress_task_id = progress_task_id
+        return tracker, progress_task_id
 
+    def _rc_progress_bridge(self, run_id: str) -> None:
         # P0-2: bridge progress_cb → _emit_campaign. autoloop 路径不走 _stream_agent_response,
         # progress_cb 默认 None, 导致 subagent_tool._on_state 早 return (cb is None).
         # 这里 set 一个桥: subagent_event / autoloop_thinking 等事件 → campaign SSE.
@@ -4299,8 +4392,10 @@ Respond JSON only:
 
             _progress_cb.set(_progress_bridge)
 
+    @staticmethod
+    def _rc_new_cog() -> dict[str, Any]:
         # phase 间传递的中间结果 — 不放 LoopState (那是控制流状态)
-        cog: dict[str, Any] = {
+        return {
             "context": {},
             "hypothesis": None,
             "plan": None,
@@ -4311,161 +4406,226 @@ Respond JSON only:
             "completed_steps": 0,
         }
 
-        async def observe_fn(state: LoopState) -> dict[str, Any]:
-            # v10: 外部 stop() 设 self._should_stop, 同步到 state.should_stop,
-            # 让 CognitiveLoop while guard 能感知. 否则 stop() 对 run_cognitive 无效.
-            if getattr(self, "_should_stop", False):
-                state.should_stop = True
-                return _obs_stop_payload(state, "external_stop")
-            # D1/D7: 每步刷新剩余挂钟预算 contextvar + 绝对 deadline.
-            self._obs_refresh_budget()
-            # P1.4: 每轮开头发 campaign.iteration — 前端按此渲染轮次进度.
-            self._emit_campaign(
-                "campaign.iteration",
-                {
-                    "iteration": state.iteration,
-                    "max": max_iterations,
-                    "objective": objective[:200],
-                },
+    def _rc_init(
+        self,
+        objective: str,
+        max_iterations: int,
+        progressive_budget: bool,
+        goal: Goal | None,
+        max_refines: int,
+        timeout_seconds: float | None,
+    ) -> _RcContext:
+        self._rc_autowake()
+        max_iterations, run_id, provenance_record, run_collector = (
+            self._rc_setup_state(
+                objective, max_iterations, goal, max_refines, progressive_budget
             )
-            # v10-F1+F7: goal 持久化 + budget 硬停 (increment 与 check 必须原子).
-            budget_payload = self._obs_goal_budget(state, goal)
-            if budget_payload is not None:
-                state.should_stop = True
-                return budget_payload
-            # v10-F6: goal 续跑提示拼到 speculator_hint.
-            self._obs_continuation_hint(state, goal)
-            # _perceive 是 sync (git subprocess + rglob), 丢线程池不阻塞.
-            perceived_empty = await self._obs_perceive(cog)
-            # v10-F15: G31 bypass — 首轮空感知 + objective → 强制注入 minimal context.
-            self._obs_force_context(state, cog, perceived_empty, objective)
-            # v10-F16: timeout 硬停 (observe 阶段), 让 timeout 更早触发.
-            if tracker.is_expired(progress_task_id):
-                logger.info("v10 F16 timeout expired in observe, stopping")
-                state.should_stop = True
-                return _obs_stop_payload(state, "timeout_expired")
-            # v10-F8: 空感知时顺手答 pending 侧边问题, 不跳过本轮.
-            if perceived_empty:
-                await self._obs_drain_side_questions()
-            # v10-F5: 每 5 轮做一次盲点传递.
-            await self._obs_blind_spot(state, cog)
-            return {
-                "context_summary": (cog["context"] or {}).get("summary", ""),
-                "redirect_reason": state.redirect_reason,
+        )
+        tracker, progress_task_id = self._rc_start_progress(
+            objective, max_iterations, run_id, timeout_seconds
+        )
+        self._rc_progress_bridge(run_id)
+        return _RcContext(
+            objective=objective,
+            max_iterations=max_iterations,
+            goal=goal,
+            run_id=run_id,
+            provenance_record=provenance_record,
+            run_collector=run_collector,
+            tracker=tracker,
+            progress_task_id=progress_task_id,
+            cog=self._rc_new_cog(),
+        )
+
+    async def _rc_observe(self, state: LoopState, objective: str, max_iterations: int,
+                          goal: Goal | None, tracker: Any, progress_task_id: str,
+                          cog: dict[str, Any]) -> dict[str, Any]:
+        # v10: 外部 stop() 设 self._should_stop, 同步到 state.should_stop,
+        # 让 CognitiveLoop while guard 能感知. 否则 stop() 对 run_cognitive 无效.
+        if getattr(self, "_should_stop", False):
+            state.should_stop = True
+            return _obs_stop_payload(state, "external_stop")
+        # D1/D7: 每步刷新剩余挂钟预算 contextvar + 绝对 deadline.
+        self._obs_refresh_budget()
+        # P1.4: 每轮开头发 campaign.iteration — 前端按此渲染轮次进度.
+        self._emit_campaign(
+            "campaign.iteration",
+            {
                 "iteration": state.iteration,
-                "last_action": state.last_action,
-            }
+                "max": max_iterations,
+                "objective": objective[:200],
+            },
+        )
+        # v10-F1+F7: goal 持久化 + budget 硬停 (increment 与 check 必须原子).
+        budget_payload = self._obs_goal_budget(state, goal)
+        if budget_payload is not None:
+            state.should_stop = True
+            return budget_payload
+        # v10-F6: goal 续跑提示拼到 speculator_hint.
+        self._obs_continuation_hint(state, goal)
+        # _perceive 是 sync (git subprocess + rglob), 丢线程池不阻塞.
+        perceived_empty = await self._obs_perceive(cog)
+        # v10-F15: G31 bypass — 首轮空感知 + objective → 强制注入 minimal context.
+        self._obs_force_context(state, cog, perceived_empty, objective)
+        # v10-F16: timeout 硬停 (observe 阶段), 让 timeout 更早触发.
+        if tracker.is_expired(progress_task_id):
+            logger.info("v10 F16 timeout expired in observe, stopping")
+            state.should_stop = True
+            return _obs_stop_payload(state, "timeout_expired")
+        # v10-F8: 空感知时顺手答 pending 侧边问题, 不跳过本轮.
+        if perceived_empty:
+            await self._obs_drain_side_questions()
+        # v10-F5: 每 5 轮做一次盲点传递.
+        await self._obs_blind_spot(state, cog)
+        return {
+            "context_summary": (cog["context"] or {}).get("summary", ""),
+            "redirect_reason": state.redirect_reason,
+            "iteration": state.iteration,
+            "last_action": state.last_action,
+        }
 
-        async def decide_fn(state: LoopState, obs: dict[str, Any]) -> ActionDecision:
-            # Step C: LLM 自主选 action (优先) → 规则版兜底.
-            # 顺序守卫必须逐个短路, 不能预先全部求值 (会破坏 stall/hint 的副作用序).
-            decision = self._dec_post_redirect(state, cog)
-            if decision is not None:
-                return decision
-            decision = self._dec_stall_action(state)
-            if decision is not None:
-                return decision
-            decision = self._dec_hint_action(cog)
-            if decision is not None:
-                return decision
-            decision = self._dec_progress_invariant(state, cog)
-            if decision is not None:
-                return decision
-            decision = self._dec_monitor_hold()
-            if decision is not None:
-                return decision
-            decision = await self._dec_llm(state, cog, obs)
-            if decision is not None:
-                return decision
-            return self._dec_rule_fallback(state, cog)
+    async def _rc_decide(
+        self, state: LoopState, obs: dict[str, Any], cog: dict[str, Any]
+    ) -> ActionDecision:
+        # Step C: LLM 自主选 action (优先) → 规则版兜底.
+        # 顺序守卫必须逐个短路, 不能预先全部求值 (会破坏 stall/hint 的副作用序).
+        decision = self._dec_post_redirect(state, cog)
+        if decision is not None:
+            return decision
+        decision = self._dec_stall_action(state)
+        if decision is not None:
+            return decision
+        decision = self._dec_hint_action(cog)
+        if decision is not None:
+            return decision
+        decision = self._dec_progress_invariant(state, cog)
+        if decision is not None:
+            return decision
+        decision = self._dec_monitor_hold()
+        if decision is not None:
+            return decision
+        decision = await self._dec_llm(state, cog, obs)
+        if decision is not None:
+            return decision
+        return self._dec_rule_fallback(state, cog)
 
-        async def execute_fn(state: LoopState, decision: ActionDecision) -> Any:
-            action = decision.action
-            ctx = cog["context"]
-            self._iteration = state.iteration
-            try:
-                if action == "observe":
-                    return await self._exec_observe(state, cog)
-                if action == "hypothesize":
-                    return await self._exec_hypothesize(state, cog, ctx)
-                if action == "plan":
-                    return await self._exec_plan(state, cog, ctx)
-                if action == "execute":
-                    return await self._exec_execute(state, cog, ctx)
-                if action == "validate":
-                    return await self._exec_validate(state, cog)
-                if action == "learn":
-                    return await self._exec_learn(state, cog)
-                if action == "pivot":
-                    return await self._exec_pivot(state, cog)
-                if action in ("skip", "stop", "report"):
-                    # report 由 _finalize_run 跑; stop/skip 是控制信号
-                    return action
-            except Exception as e:
-                logger.warning("cognitive execute '%s' failed: %s", action, e)
-                return None
-            return None
-
-        async def reflect_fn(
-            state: LoopState, decision: ActionDecision, result: Any
-        ) -> ReflectionResult:
-            action = decision.action
-            advice, redirect = self._reflect_empty_output_advice(action, cog, state)
-            advice = self._reflect_light_on_track(action, cog, advice)
-            advice, redirect = self._reflect_gate_redirect(
-                action, cog, redirect, advice
-            )
+    async def _rc_execute(
+        self, state: LoopState, decision: ActionDecision, cog: dict[str, Any]
+    ) -> Any:
+        action = decision.action
+        ctx = cog["context"]
+        self._iteration = state.iteration
+        try:
+            if action == "observe":
+                return await self._exec_observe(state, cog)
+            if action == "hypothesize":
+                return await self._exec_hypothesize(state, cog, ctx)
+            if action == "plan":
+                return await self._exec_plan(state, cog, ctx)
+            if action == "execute":
+                return await self._exec_execute(state, cog, ctx)
             if action == "validate":
-                stop = self._reflect_failure_budget(cog["validation"] or {}, state)
-                if stop is not None:
-                    return stop
-            advice, redirect = self._reflect_stuck_check(state, advice, redirect)
-            stop = self._reflect_budget_checks(
-                tracker, progress_task_id, state, action
-            )
+                return await self._exec_validate(state, cog)
+            if action == "learn":
+                return await self._exec_learn(state, cog)
+            if action == "pivot":
+                return await self._exec_pivot(state, cog)
+            if action in ("skip", "stop", "report"):
+                # report 由 _finalize_run 跑; stop/skip 是控制信号
+                return action
+        except Exception as e:
+            logger.warning("cognitive execute '%s' failed: %s", action, e)
+            return None
+        return None
+
+    async def _rc_reflect(
+        self,
+        state: LoopState,
+        decision: ActionDecision,
+        result: Any,
+        cog: dict[str, Any],
+        goal: Goal | None,
+        max_iterations: int,
+        tracker: Any,
+        progress_task_id: str,
+    ) -> ReflectionResult:
+        action = decision.action
+        advice, redirect = self._reflect_empty_output_advice(action, cog, state)
+        advice = self._reflect_light_on_track(action, cog, advice)
+        advice, redirect = self._reflect_gate_redirect(
+            action, cog, redirect, advice
+        )
+        if action == "validate":
+            stop = self._reflect_failure_budget(cog["validation"] or {}, state)
             if stop is not None:
                 return stop
-            self._next_phase_hint = None
-            self._refined_hypothesis = None
-            if len(self._speculator_hint) > 2000:
-                self._speculator_hint = self._speculator_hint[-2000:]
-            if action == "validate" and cog.get("validation") is not None:
-                drift = await self._reflect_validate_side_effects(
-                    goal, cog, state, max_iterations
-                )
-                if drift:
-                    advice = (advice + " | " + drift).strip(" |")
-            self._push_iteration_snapshot(state, action, cog, advice, redirect)
-            self._maybe_save_engine_state(reason="periodic")
-            self._maybe_expire_inbox()
-            return ReflectionResult(
-                should_continue=True,
-                should_redirect=redirect,
-                redirect_reason=advice if redirect else "",
-                advice=advice,
-                should_stop=state.should_stop,
+        advice, redirect = self._reflect_stuck_check(state, advice, redirect)
+        stop = self._reflect_budget_checks(
+            tracker, progress_task_id, state, action
+        )
+        if stop is not None:
+            return stop
+        self._next_phase_hint = None
+        self._refined_hypothesis = None
+        if len(self._speculator_hint) > 2000:
+            self._speculator_hint = self._speculator_hint[-2000:]
+        if action == "validate" and cog.get("validation") is not None:
+            drift = await self._reflect_validate_side_effects(
+                goal, cog, state, max_iterations
             )
+            if drift:
+                advice = (advice + " | " + drift).strip(" |")
+        self._push_iteration_snapshot(state, action, cog, advice, redirect)
+        self._maybe_save_engine_state(reason="periodic")
+        self._maybe_expire_inbox()
+        return ReflectionResult(
+            should_continue=True,
+            should_redirect=redirect,
+            redirect_reason=advice if redirect else "",
+            advice=advice,
+            should_stop=state.should_stop,
+        )
 
-        loop = CognitiveLoop(
+    def _rc_build_loop(self, ctx: _RcContext) -> CognitiveLoop:
+        observe_fn = partial(
+            self._rc_observe,
+            objective=ctx.objective,
+            max_iterations=ctx.max_iterations,
+            goal=ctx.goal,
+            tracker=ctx.tracker,
+            progress_task_id=ctx.progress_task_id,
+            cog=ctx.cog,
+        )
+        decide_fn = partial(self._rc_decide, cog=ctx.cog)
+        execute_fn = partial(self._rc_execute, cog=ctx.cog)
+        reflect_fn = partial(
+            self._rc_reflect,
+            cog=ctx.cog,
+            goal=ctx.goal,
+            max_iterations=ctx.max_iterations,
+            tracker=ctx.tracker,
+            progress_task_id=ctx.progress_task_id,
+        )
+        return CognitiveLoop(
             observe_fn=observe_fn,
             decide_fn=decide_fn,
             execute_fn=execute_fn,
             reflect_fn=reflect_fn,
             output_writer=None,  # provenance 走 _run_phase_async 内的 _record_provenance
-            max_iterations=max_iterations,
+            max_iterations=ctx.max_iterations,
             max_repeated_actions=3,
             on_execute_failure=self._rollback_on_execute_failure,
         )
-        state = await loop.run(LoopState(max_iterations=max_iterations))
 
+    async def _rc_post_run(self, ctx: _RcContext, state: LoopState) -> None:
         # P2: 跨 run 上下文持久化 — 存探索摘要, 让下 run decider 知道上 run 探索了什么.
         # ponytail: 复用 longterm, category="run_context" 跟 failure_pattern 分开存.
         # cog 此时包含完整 run 的 hypothesis/plan/validation, finalize 前快照.
         _prev_outcome_for_advisor = ""
         try:
-            self._persist_run_context(run_id, objective, cog, state)
+            self._persist_run_context(ctx.run_id, ctx.objective, ctx.cog, state)
             # 推断 outcome 给 advisor 用 — tests_passed=True → completed, 否则 inconclusive
-            _val = cog.get("validation") or {}
+            _val = ctx.cog.get("validation") or {}
             if isinstance(_val, dict):
                 _prev_outcome_for_advisor = (
                     "completed" if _val.get("tests_passed") else "inconclusive"
@@ -4478,23 +4638,11 @@ Respond JSON only:
         # 默认只写 memory (category=next_step_hint), HUMAN_PAUSE=1 才走 pause_for_decision.
         try:
             await self._advisor_post_task_recommend(
-                run_id, objective, cog, state,
+                ctx.run_id, ctx.objective, ctx.cog, state,
                 prev_outcome=_prev_outcome_for_advisor,
             )
         except Exception:  # 防御: 任务后建议失败忽略
             logger.debug("advisor_post_task_recommend failed (non-fatal)", exc_info=True)
-
-        # finalize — 复用 run() 的收尾 (含 _report)
-        return await self._finalize_run(
-            objective,
-            cog["phases"],
-            run_id,
-            provenance_record,
-            run_collector,
-            tracker,
-            progress_task_id,
-            cog["completed_steps"],
-        )
 
 
 def _selfcheck_rcb_feedback() -> None:
@@ -4665,42 +4813,8 @@ def _selfcheck() -> None:
 #   没有这些对象. 升级路径: RCB 实例化轻量 AutoloopEngine 后直接调 _learn.
 
 
-def learn_from_rcb(
-    mem_mgr: Any,
-    hypothesis: str,
-    validation: dict[str, Any],
-    persona_name: str = "default",
-    run_id: str | None = None,
-    cross_task_store: Any = None,
-    domain: str = "unknown",
-) -> dict[str, Any]:
-    """RCB Step 3 finalize 写长期记忆 + persona_history + cross_task_store.
-
-    AutoloopEngine._learn 的最小子集 — 只做 memory writes, 不接 evolution /
-    skill abstraction / Beta 信念更新 (那些依赖 engine 内部状态).
-
-    Args:
-        mem_mgr: MemoryManager 实例 (rcb_runner run() 创建). None 时跳过 memory 写.
-        hypothesis: 本轮 hypothesis / report 摘要 (str)
-        validation: dict, 至少含 tests_passed / r_phys / darwin_score
-        persona_name: persona id, 给 persona_history 聚合用
-        run_id: 通常 = ws.name, 给 cross-task db 索引用
-        cross_task_store: CrossTaskStore 实例, None 跳过 cross-task 写
-        domain: task domain, 给 cross-task 隔离用
-
-    Returns:
-        dict: {memory_written, persona_written, cross_task_written, summary}
-    """
-    result = {
-        "memory_written": False,
-        "persona_written": False,
-        "cross_task_written": False,
-        "summary": "",
-    }
-    if not hypothesis:
-        return result
-
-    # darwin_score / r_phys 从 validation 取, 没有就用默认
+def _rcb_derive_scores(validation: Any) -> tuple[Any, Any, Any, float, str]:
+    """从 validation 提取 r_phys / darwin / tests_passed + 计算 importance/status."""
     r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
     darwin = (
         validation.get("darwin_score", 0.5)
@@ -4717,96 +4831,99 @@ def learn_from_rcb(
     if r_phys is None and darwin is not None:
         importance = min(0.9, max(0.1, float(darwin)))
     status = "supported" if tests_passed else "refuted"
+    return r_phys, darwin, tests_passed, importance, status
 
-    # 1. long-term memory: iteration_result
-    if mem_mgr is not None:
-        try:
-            mem_content = f"RCB finalize: {hypothesis[:200]}"
-            if r_phys is not None:
-                mem_content += f"\nr_phys: {r_phys}"
-            mem_content += f"\ndarwin: {darwin}, status: {status}"
-            tags = [
-                "rcb",
-                "autoloop_learn",
-                f"persona:{persona_name}",
-                f"r_phys:{r_phys}" if r_phys is not None else "r_phys:none",
-            ]
-            try:
-                mem_mgr.remember_typed(
-                    content=mem_content,
-                    memory_type="iteration_result",
-                    run_id=run_id,
-                    persona_id=persona_name,
-                    status=status,
-                    importance=importance,
-                    tier="mid",
-                    tags=tags,
-                    source="rcb_learn_from_rcb",
-                )
-                result["memory_written"] = True
-            except Exception:  # 防御: 新接口缺失回退老接口
-                # 老接口 fallback
-                mem_mgr.remember(
-                    content=mem_content,
-                    category="autoloop_iteration",
-                    importance=importance,
-                    tier="mid",
-                    tags=tags,
-                )
-                result["memory_written"] = True
-        except Exception as exc:
-            logger.debug("learn_from_rcb memory write failed: %s", exc)
 
-        # 2. persona_history (给 _pick_hypothesis_persona 查)
-        try:
-            _ph_content = (
-                f"Persona: {persona_name}, r_phys: {r_phys}, "
-                f"darwin: {darwin}, status: {status}"
-            )
-            mem_mgr.remember_typed(
-                content=_ph_content,
-                memory_type="persona_history",
-                run_id=run_id,
-                persona_id=persona_name,
-                status=status,
-                importance=importance,
-                tier="mid",
-                tags=["rcb", f"persona:{persona_name}"],
-                source="rcb_learn_from_rcb",
-            )
-            result["persona_written"] = True
-        except Exception as exc:
-            logger.debug("learn_from_rcb persona_history write failed: %s", exc)
+def _rcb_write_memory(
+    mem_mgr: Any, hypothesis: str, r_phys: Any, darwin: Any, status: str,
+    importance: float, persona_name: str, run_id: str | None,
+) -> bool:
+    """写 iteration_result 到长期记忆. 新接口失败回退老接口; 异常向上抛."""
+    mem_content = f"RCB finalize: {hypothesis[:200]}"
+    if r_phys is not None:
+        mem_content += f"\nr_phys: {r_phys}"
+    mem_content += f"\ndarwin: {darwin}, status: {status}"
+    tags = [
+        "rcb",
+        "autoloop_learn",
+        f"persona:{persona_name}",
+        f"r_phys:{r_phys}" if r_phys is not None else "r_phys:none",
+    ]
+    try:
+        mem_mgr.remember_typed(
+            content=mem_content,
+            memory_type="iteration_result",
+            run_id=run_id,
+            persona_id=persona_name,
+            status=status,
+            importance=importance,
+            tier="mid",
+            tags=tags,
+            source="rcb_learn_from_rcb",
+        )
+    except Exception:  # 防御: 新接口缺失回退老接口
+        mem_mgr.remember(
+            content=mem_content,
+            category="autoloop_iteration",
+            importance=importance,
+            tier="mid",
+            tags=tags,
+        )
+    return True
 
-    # 3. cross_task_store: 高 darwin entry 给后续同 domain task 作 prior
-    if cross_task_store is not None and darwin is not None and darwin >= 0.5:
-        try:
-            cross_task_store.append({
-                "simplex_id": f"rcb:{run_id or 'unknown'}:finalize",
-                "task_id": run_id or "unknown",
-                "domain": domain,
-                "iteration": 0,
-                "ts": "",
-                "role": "rcb_finalize",
-                "attempted": hypothesis[:200],
-                "found": str(validation.get("found", ""))[:200],
-                "evidence": [],
-                "darwin_score": float(darwin),
-                "supported_ratio": 0.0,
-                "cochain_type": "legacy",
-            })
-            result["cross_task_written"] = True
-        except Exception as exc:
-            logger.debug("learn_from_rcb cross_task_store write failed: %s", exc)
 
-    result["summary"] = (
-        f"memory={result['memory_written']} "
-        f"persona={result['persona_written']} "
-        f"cross_task={result['cross_task_written']}"
+def _rcb_write_persona(
+    mem_mgr: Any, persona_name: str, r_phys: Any, darwin: Any, status: str,
+    importance: float, run_id: str | None,
+) -> bool:
+    """写 persona_history (给 _pick_hypothesis_persona 查)."""
+    _ph_content = (
+        f"Persona: {persona_name}, r_phys: {r_phys}, "
+        f"darwin: {darwin}, status: {status}"
     )
+    mem_mgr.remember_typed(
+        content=_ph_content,
+        memory_type="persona_history",
+        run_id=run_id,
+        persona_id=persona_name,
+        status=status,
+        importance=importance,
+        tier="mid",
+        tags=["rcb", f"persona:{persona_name}"],
+        source="rcb_learn_from_rcb",
+    )
+    return True
 
-    # P2 下沉: run_context 持久化 — 段 3 收敛到 cognitive_persist.persist_run_context,
-    # 与 autoloop _persist_run_context 共用同一 schema (writer 单一来源, 防漂移).
+
+def _rcb_write_cross_task(
+    cross_task_store: Any, hypothesis: str, validation: Any, darwin: Any,
+    run_id: str | None, domain: str,
+) -> bool:
+    """高 darwin entry 写 cross_task_store, 给后续同 domain task 作 prior."""
+    if cross_task_store is None or darwin is None or darwin < 0.5:
+        return False
+    cross_task_store.append({
+        "simplex_id": f"rcb:{run_id or 'unknown'}:finalize",
+        "task_id": run_id or "unknown",
+        "domain": domain,
+        "iteration": 0,
+        "ts": "",
+        "role": "rcb_finalize",
+        "attempted": hypothesis[:200],
+        "found": str(validation.get("found", ""))[:200],
+        "evidence": [],
+        "darwin_score": float(darwin),
+        "supported_ratio": 0.0,
+        "cochain_type": "legacy",
+    })
+    return True
+
+
+def _rcb_persist_context(
+    mem_mgr: Any, hypothesis: str, run_id: str | None, tests_passed: Any,
+    darwin: Any, status: str,
+) -> None:
+    """P2 下沉: run_context 持久化 (与 autoloop _persist_run_context 共用 schema)."""
     persist_run_context(
         mem_mgr,
         run_id=run_id or "unknown",
@@ -4823,6 +4940,56 @@ def learn_from_rcb(
         source="learn_from_rcb",
     )
 
+
+def learn_from_rcb(
+    mem_mgr: Any, hypothesis: str, validation: dict[str, Any],
+    persona_name: str = "default", run_id: str | None = None,
+    cross_task_store: Any = None, domain: str = "unknown",
+) -> dict[str, Any]:
+    """RCB Step 3 finalize 写长期记忆 + persona_history + cross_task_store.
+
+    AutoloopEngine._learn 的最小子集 — 只做 memory writes.
+    mem_mgr / cross_task_store 为 None 时跳过对应写.
+    """
+    result = {
+        "memory_written": False,
+        "persona_written": False,
+        "cross_task_written": False,
+        "summary": "",
+    }
+    if not hypothesis:
+        return result
+
+    r_phys, darwin, tests_passed, importance, status = _rcb_derive_scores(validation)
+
+    if mem_mgr is not None:
+        try:
+            result["memory_written"] = _rcb_write_memory(
+                mem_mgr, hypothesis, r_phys, darwin, status, importance,
+                persona_name, run_id,
+            )
+            result["persona_written"] = _rcb_write_persona(
+                mem_mgr, persona_name, r_phys, darwin, status, importance, run_id,
+            )
+        except Exception as exc:
+            logger.debug("learn_from_rcb memory write failed: %s", exc)
+
+    try:
+        result["cross_task_written"] = _rcb_write_cross_task(
+            cross_task_store, hypothesis, validation, darwin, run_id, domain,
+        )
+    except Exception as exc:
+        logger.debug("learn_from_rcb cross_task_store write failed: %s", exc)
+
+    result["summary"] = (
+        f"memory={result['memory_written']} "
+        f"persona={result['persona_written']} "
+        f"cross_task={result['cross_task_written']}"
+    )
+
+    _rcb_persist_context(
+        mem_mgr, hypothesis, run_id, tests_passed, darwin, status
+    )
     return result
 
 

@@ -522,18 +522,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             error=result.error,
         )
 
-    async def _dispatch_parallel(
-        self, args: SubagentToolInput, context: ToolContext
-    ) -> ToolResult:
-        """DAG-aware 并行 dispatch.
-
-        无 dependencies: 全部 asyncio.gather 并行.
-        有 dependencies: 用 TaskDAG 拓扑分层, 同层并行, 层间串行.
-
-        ponytail: 硬 cap 4 并行 (API 限速 + 调试可行性). DAG 调度复用 TaskDAG.
-        """
-        import asyncio
-
+    def _dp_validate_tasks(self, args: SubagentToolInput) -> ToolResult | None:
+        """校验 tasks 数量上限与必填字段; 通过返回 None."""
         if not args.tasks:
             return self._missing_field("tasks")
         if len(args.tasks) > 4:
@@ -556,7 +546,12 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
                     success=False,
                     error=f"tasks[{i}] missing spec_name or task",
                 )
+        return None
 
+    def _dp_build_ctx(
+        self, args: SubagentToolInput, context: ToolContext
+    ) -> tuple[dict, int]:
+        """构造 dispatch 上下文 + 当前递归深度."""
         dispatch_ctx = dict(args.context)
         dispatch_ctx.setdefault("agent_factory", context.agent_factory)
         dispatch_ctx.setdefault("session_id", context.session_id)
@@ -564,52 +559,30 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         dispatch_ctx.setdefault("approval_callback", context.approval_callback)
         # G1: 从 contextvar 读递归深度 (跟 _dispatch_subagent 一致)
         from huginn.agents.subagent import _current_depth
-        _depth = _current_depth.get()
+        return dispatch_ctx, _current_depth.get()
 
-        # 无 dependencies: 全并行
-        if not args.dependencies:
-            coros = [
-                self._dispatch.dispatch(
-                    t["spec_name"], t["task"], dispatch_ctx, _depth=_depth,
-                )
-                for t in args.tasks
-            ]
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            out_results = []
-            for r in results:
-                if isinstance(r, Exception):
-                    out_results.append({"success": False, "error": str(r)})
-                else:
-                    _d = r.to_dict()
-                    # P1-2: 注 ts (LWW 用). SubagentResult 默认无 ts, 用 now.
-                    _d.setdefault("ts", time.time())
-                    out_results.append(_d)
-            # P1-2: CRDT 合并 — 半格 join, 字段级无冲突.
-            # off 时回退原 list[dict] 行为 (回归测试安全).
-            if _crdt_merge_enabled() and len(out_results) > 1:
-                merged = _crdt_merge(out_results)
-                return ToolResult(
-                    data={"action": "dispatch_parallel", "results": out_results, "merged": merged, "n": len(out_results)},
-                    success=merged.get("success", True),
-                )
-            return ToolResult(
-                data={"action": "dispatch_parallel", "results": out_results, "n": len(out_results)},
-                success=True,
-            )
+    async def _dp_gather(self, coros: list) -> list[dict]:
+        """并行 gather 并把异常/结果统一成 dict list (含 ts)."""
+        import asyncio
 
-        # 有 dependencies: DAG 分层调度 (极限模式才开)
-        if not FeatureFlags.shared().is_enabled("extreme_dispatch"):
-            return ToolResult(
-                data=SubagentToolOutput(
-                    success=False, action="dispatch_parallel",
-                    error="DAG-aware dispatch 需开启极限模式 (HUGINN_EXTREME_DISPATCH=1)",
-                ).model_dump(),
-                success=False,
-                error="DAG dispatch requires HUGINN_EXTREME_DISPATCH=1",
-            )
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        out_results = []
+        for r in results:
+            if isinstance(r, Exception):
+                out_results.append({"success": False, "error": str(r)})
+            else:
+                _d = r.to_dict()
+                # P1-2: 注 ts (LWW 用). SubagentResult 默认无 ts, 用 now.
+                _d.setdefault("ts", time.time())
+                out_results.append(_d)
+        return out_results
+
+    def _dp_build_dag(
+        self, args: SubagentToolInput, task_ids: list[str]
+    ) -> tuple[ToolResult | None, list]:
+        """按 dependencies 建 TaskDAG 并返回拓扑分层; 失败返回 (err, [])."""
         from huginn.agents.task_dag import TaskDAG, build_dag_with_provenance
-        # task ID = spec_name + task 前 20 字符 (ponytail: 不引入显式 ID 字段)
-        task_ids = [f"{t['spec_name']}:{t['task'][:20]}" for t in args.tasks]
+
         try:
             # P4 Task 26.8: LLM 填的 dependencies 作为先验, provenance chain 作为后验补全.
             # provenance registry 可能没启用, 失败退化为纯 explicit_deps.
@@ -637,8 +610,72 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
                 ).model_dump(),
                 success=False,
                 error=str(e),
-            )
-        layers = dag.parallel_layers()
+            ), []
+        return None, dag.parallel_layers()
+
+    def _dp_make_result(self, results: list[dict], layers: list | None = None) -> ToolResult:
+        """组装 ToolResult; 多结果时按 CRDT 半格 join."""
+        data: dict[str, Any] = {"action": "dispatch_parallel", "results": results}
+        # P1-2: CRDT 合并 — 半格 join, 字段级无冲突.
+        # off 时回退原 list[dict] 行为 (回归测试安全).
+        merged = None
+        if _crdt_merge_enabled() and len(results) > 1:
+            merged = _crdt_merge(results)
+            data["merged"] = merged
+        data["n"] = len(results)
+        if layers is not None:
+            data["layers"] = layers
+        if merged is not None:
+            return ToolResult(data=data, success=merged.get("success", True))
+        return ToolResult(data=data, success=True)
+
+    def _dp_extreme_gate(self) -> ToolResult | None:
+        """DAG 路径需极限模式; 未开启返回错误 ToolResult."""
+        if FeatureFlags.shared().is_enabled("extreme_dispatch"):
+            return None
+        return ToolResult(
+            data=SubagentToolOutput(
+                success=False, action="dispatch_parallel",
+                error="DAG-aware dispatch 需开启极限模式 (HUGINN_EXTREME_DISPATCH=1)",
+            ).model_dump(),
+            success=False,
+            error="DAG dispatch requires HUGINN_EXTREME_DISPATCH=1",
+        )
+
+    async def _dispatch_parallel(
+        self, args: SubagentToolInput, context: ToolContext
+    ) -> ToolResult:
+        """DAG-aware 并行 dispatch.
+
+        无 dependencies: 全部 asyncio.gather 并行.
+        有 dependencies: 用 TaskDAG 拓扑分层, 同层并行, 层间串行.
+
+        ponytail: 硬 cap 4 并行 (API 限速 + 调试可行性). DAG 调度复用 TaskDAG.
+        """
+        bad = self._dp_validate_tasks(args)
+        if bad is not None:
+            return bad
+        dispatch_ctx, _depth = self._dp_build_ctx(args, context)
+
+        # 无 dependencies: 全并行
+        if not args.dependencies:
+            coros = [
+                self._dispatch.dispatch(
+                    t["spec_name"], t["task"], dispatch_ctx, _depth=_depth,
+                )
+                for t in args.tasks
+            ]
+            return self._dp_make_result(await self._dp_gather(coros))
+
+        # 有 dependencies: DAG 分层调度 (极限模式才开)
+        bad = self._dp_extreme_gate()
+        if bad is not None:
+            return bad
+        # task ID = spec_name + task 前 20 字符 (ponytail: 不引入显式 ID 字段)
+        task_ids = [f"{t['spec_name']}:{t['task'][:20]}" for t in args.tasks]
+        err, layers = self._dp_build_dag(args, task_ids)
+        if err is not None:
+            return err
         id_to_task = dict(zip(task_ids, args.tasks))
         all_results: list[dict] = []
         for layer in layers:
@@ -650,25 +687,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
                 )
                 for tid in layer
             ]
-            layer_results = await asyncio.gather(*coros, return_exceptions=True)
-            for r in layer_results:
-                if isinstance(r, Exception):
-                    all_results.append({"success": False, "error": str(r)})
-                else:
-                    _d = r.to_dict()
-                    _d.setdefault("ts", time.time())
-                    all_results.append(_d)
-        # P1-2: DAG 路径同样 CRDT 合并
-        if _crdt_merge_enabled() and len(all_results) > 1:
-            merged = _crdt_merge(all_results)
-            return ToolResult(
-                data={"action": "dispatch_parallel", "results": all_results, "merged": merged, "n": len(all_results), "layers": layers},
-                success=merged.get("success", True),
-            )
-        return ToolResult(
-            data={"action": "dispatch_parallel", "results": all_results, "n": len(all_results), "layers": layers},
-            success=True,
-        )
+            all_results.extend(await self._dp_gather(coros))
+        return self._dp_make_result(all_results, layers)
 
     # -- helpers -----------------------------------------------------------
 

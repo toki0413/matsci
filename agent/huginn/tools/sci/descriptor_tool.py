@@ -507,9 +507,8 @@ class DescriptorTool(HuginnTool):
     # ibp - Indian Buffet Process for nonparametric feature discovery
     # ------------------------------------------------------------------ #
 
-    def _ibp_features(
-        self, args: DescriptorInput
-    ) -> tuple[dict[str, Any], list[str]]:
+    def _ibp_prepare(self, args: DescriptorInput) -> dict[str, Any]:
+        """Validate input + initialize IBP sampler state."""
         if not args.data:
             raise ValueError("ibp action requires data (list of lists)")
 
@@ -550,75 +549,146 @@ class DescriptorTool(HuginnTool):
         # Harmonic number H_N shows up in the alpha posterior
         H_N = float(np.sum(1.0 / np.arange(1, N + 1)))
 
-        for _ in range(n_iter):
-            # -- Block sample W | Z via conjugate Gaussian --
-            ZtZ = Z.T @ Z
-            Sigma_inv = np.eye(K) / sigma_w2 + ZtZ / sigma_x2
-            Sigma_inv += 1e-6 * np.eye(K)  # jitter to dodge singular matrices
-            Sigma = np.linalg.inv(Sigma_inv)
-            L = np.linalg.cholesky(Sigma)
-            Mu = Sigma @ (Z.T @ X_norm) / sigma_x2
-            W = Mu + L @ rng.standard_normal(size=(K, D))
+        return {
+            "X_norm": X_norm, "N": N, "D": D, "rng": rng,
+            "alpha": alpha, "n_iter": n_iter, "K": K, "beta": beta,
+            "sigma_x2": sigma_x2, "sigma_w2": sigma_w2,
+            "a_prior": a_prior, "b_prior": b_prior,
+            "Z": Z, "W": W, "alpha_trace": alpha_trace, "H_N": H_N,
+        }
 
-            # -- Sample Z | W, one row at a time (vectorised over features) --
-            pred = Z @ W
-            for n in range(N):
-                # Residual with feature k removed: r_{n,-k} = x_n - pred_n + z_nk w_k
-                r = X_norm[n] - pred[n] + Z[n][:, None] * W  # (K, D)
+    def _ibp_sample_w(
+        self,
+        Z: np.ndarray,
+        X_norm: np.ndarray,
+        K: int,
+        D: int,
+        sigma_w2: float,
+        sigma_x2: float,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Block sample W | Z via conjugate Gaussian."""
+        ZtZ = Z.T @ Z
+        Sigma_inv = np.eye(K) / sigma_w2 + ZtZ / sigma_x2
+        Sigma_inv += 1e-6 * np.eye(K)  # jitter to dodge singular matrices
+        Sigma = np.linalg.inv(Sigma_inv)
+        L = np.linalg.cholesky(Sigma)
+        Mu = Sigma @ (Z.T @ X_norm) / sigma_x2
+        return Mu + L @ rng.standard_normal(size=(K, D))
 
-                log_lik1 = -0.5 * np.sum((r - W) ** 2, axis=1) / sigma_x2
-                log_lik0 = -0.5 * np.sum(r ** 2, axis=1) / sigma_x2
+    def _ibp_sample_z(
+        self,
+        Z: np.ndarray,
+        W: np.ndarray,
+        X_norm: np.ndarray,
+        N: int,
+        K: int,
+        beta: float,
+        sigma_x2: float,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Sample Z | W, one row at a time (vectorised over features)."""
+        pred = Z @ W
+        for n in range(N):
+            # Residual with feature k removed: r_{n,-k} = x_n - pred_n + z_nk w_k
+            r = X_norm[n] - pred[n] + Z[n][:, None] * W  # (K, D)
 
-                # IBP prior with Beta(beta, beta) smoothing on the activation prob
-                m_minus = Z.sum(axis=0) - Z[n]
-                p_prior1 = (m_minus + beta) / (N - 1 + 2 * beta)
-                p_prior1 = np.clip(p_prior1, 1e-10, 1 - 1e-10)
-                log_prior1 = np.log(p_prior1)
-                log_prior0 = np.log(1.0 - p_prior1)
+            log_lik1 = -0.5 * np.sum((r - W) ** 2, axis=1) / sigma_x2
+            log_lik0 = -0.5 * np.sum(r ** 2, axis=1) / sigma_x2
 
-                log_diff = (log_lik1 + log_prior1) - (log_lik0 + log_prior0)
-                log_diff = np.clip(log_diff, -500, 500)
-                p1 = 1.0 / (1.0 + np.exp(-log_diff))
+            # IBP prior with Beta(beta, beta) smoothing on the activation prob
+            m_minus = Z.sum(axis=0) - Z[n]
+            p_prior1 = (m_minus + beta) / (N - 1 + 2 * beta)
+            p_prior1 = np.clip(p_prior1, 1e-10, 1 - 1e-10)
+            log_prior1 = np.log(p_prior1)
+            log_prior0 = np.log(1.0 - p_prior1)
 
-                Z[n] = (rng.random(K) < p1).astype(float)
-                pred[n] = Z[n] @ W
+            log_diff = (log_lik1 + log_prior1) - (log_lik0 + log_prior0)
+            log_diff = np.clip(log_diff, -500, 500)
+            p1 = 1.0 / (1.0 + np.exp(-log_diff))
 
-            # -- Drop features that no sample owns --
-            non_empty = Z.sum(axis=0) > 0
-            if not non_empty.all():
-                Z = Z[:, non_empty]
-                W = W[non_empty]
-                K = Z.shape[1]
-                if K == 0:
-                    # Re-seed one feature so the sampler doesn't collapse
-                    K = 1
-                    Z = np.zeros((N, K))
-                    Z[0, 0] = 1.0
-                    W = rng.normal(0.0, np.sqrt(sigma_w2), size=(K, D))
+            Z[n] = (rng.random(K) < p1).astype(float)
+            pred[n] = Z[n] @ W
+        return Z
 
-            # -- Propose new features via the IBP Chinese restaurant process --
-            # Cap K so a runaway alpha can't blow up memory. The Z sweep
-            # above is what really decides which features survive.
-            max_features = 2 * N
-            for n in range(N):
-                if max_features <= K:
-                    break
-                n_new = rng.poisson(alpha / N)
-                if n_new <= 0:
-                    continue
-                # Don't overshoot the cap
-                n_new = min(n_new, max_features - K)
-                new_Z = np.zeros((N, n_new))
-                new_Z[n] = 1.0
-                # Sample weights from the prior, not the singleton posterior.
-                # Posterior-sampled weights fit the residual too well and the
-                # features never get pruned, which causes K to explode.
-                new_W = rng.normal(
-                    0.0, np.sqrt(sigma_w2), size=(n_new, D)
-                )
-                Z = np.hstack([Z, new_Z])
-                W = np.vstack([W, new_W])
-                K = Z.shape[1]
+    def _ibp_prune_and_grow(
+        self,
+        Z: np.ndarray,
+        W: np.ndarray,
+        K: int,
+        N: int,
+        D: int,
+        alpha: float,
+        sigma_w2: float,
+        rng: np.random.Generator,
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        """Drop empty features, then propose new ones via the IBP CRP."""
+        # -- Drop features that no sample owns --
+        non_empty = Z.sum(axis=0) > 0
+        if not non_empty.all():
+            Z = Z[:, non_empty]
+            W = W[non_empty]
+            K = Z.shape[1]
+            if K == 0:
+                # Re-seed one feature so the sampler doesn't collapse
+                K = 1
+                Z = np.zeros((N, K))
+                Z[0, 0] = 1.0
+                W = rng.normal(0.0, np.sqrt(sigma_w2), size=(K, D))
+
+        # -- Propose new features via the IBP Chinese restaurant process --
+        # Cap K so a runaway alpha can't blow up memory. The Z sweep
+        # above is what really decides which features survive.
+        max_features = 2 * N
+        for n in range(N):
+            if max_features <= K:
+                break
+            n_new = rng.poisson(alpha / N)
+            if n_new <= 0:
+                continue
+            # Don't overshoot the cap
+            n_new = min(n_new, max_features - K)
+            new_Z = np.zeros((N, n_new))
+            new_Z[n] = 1.0
+            # Sample weights from the prior, not the singleton posterior.
+            # Posterior-sampled weights fit the residual too well and the
+            # features never get pruned, which causes K to explode.
+            new_W = rng.normal(0.0, np.sqrt(sigma_w2), size=(n_new, D))
+            Z = np.hstack([Z, new_Z])
+            W = np.vstack([W, new_W])
+            K = Z.shape[1]
+        return Z, W, K
+
+    def _ibp_interpret(self, W: np.ndarray, K: int) -> list[list[dict[str, Any]]]:
+        """For each latent feature, list the top-3 observed features by |weight|."""
+        feature_interpretation: list[list[dict[str, Any]]] = []
+        for k in range(K):
+            top_idx = np.argsort(np.abs(W[k]))[-3:][::-1]
+            feature_interpretation.append(
+                [
+                    {"observed_feature_index": int(i), "weight": float(W[k, i])}
+                    for i in top_idx
+                ]
+            )
+        return feature_interpretation
+
+    def _ibp_features(
+        self, args: DescriptorInput
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Indian Buffet Process sampler for nonparametric feature discovery."""
+        st = self._ibp_prepare(args)
+        X_norm, rng = st["X_norm"], st["rng"]
+        N, D, K = st["N"], st["D"], st["K"]
+        alpha, beta = st["alpha"], st["beta"]
+        sigma_x2, sigma_w2 = st["sigma_x2"], st["sigma_w2"]
+        a_prior, b_prior = st["a_prior"], st["b_prior"]
+        Z, W = st["Z"], st["W"]
+        alpha_trace, H_N = st["alpha_trace"], st["H_N"]
+
+        for _ in range(st["n_iter"]):
+            W = self._ibp_sample_w(Z, X_norm, K, D, sigma_w2, sigma_x2, rng)
+            Z = self._ibp_sample_z(Z, W, X_norm, N, K, beta, sigma_x2, rng)
+            Z, W, K = self._ibp_prune_and_grow(Z, W, K, N, D, alpha, sigma_w2, rng)
 
             # -- Update alpha from its Gamma posterior --
             K_plus = int((Z.sum(axis=0) > 0).sum())
@@ -634,18 +704,7 @@ class DescriptorTool(HuginnTool):
         pred = Z @ W
         recon_error = float(np.mean((X_norm - pred) ** 2))
         feature_importance = Z.sum(axis=0).astype(int).tolist()
-
-        # For each latent feature, list the top-3 observed features by |weight|
-        # so the user has a rough idea what the feature encodes.
-        feature_interpretation: list[list[dict[str, Any]]] = []
-        for k in range(K):
-            top_idx = np.argsort(np.abs(W[k]))[-3:][::-1]
-            feature_interpretation.append(
-                [
-                    {"observed_feature_index": int(i), "weight": float(W[k, i])}
-                    for i in top_idx
-                ]
-            )
+        feature_interpretation = self._ibp_interpret(W, K)
 
         return {
             "n_samples": N,
@@ -659,10 +718,6 @@ class DescriptorTool(HuginnTool):
             "alpha_trace": alpha_trace,
             "alpha_final": float(alpha),
         }, []
-
-    # ------------------------------------------------------------------ #
-    # select — rank descriptors by external importance (SR / Sobol pipeline)
-    # ------------------------------------------------------------------ #
 
     def _select(self, args: DescriptorInput) -> ToolResult:
         """Rank descriptors by external importance scores.

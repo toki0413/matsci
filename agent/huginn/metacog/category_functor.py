@@ -749,15 +749,9 @@ def _parse_json(text: str) -> dict[str, Any]:
 # ── Self-check ──────────────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """验证 Phase 7.3 Open Problem: category functor + transfer.
 
-    Test 1: 3 个 category 定义正确 (objects / morphisms / commutative_diagrams 齐全)
-    Test 2: functor propose (mock LLM 返回合法 functor, 解析 + verify 通过)
-    Test 3: functor verify (保 structure; 反例 functor 检出 violation)
-    Test 4: hypothesis transfer (5 source hypothesis, functor vs keyword)
-    Test 5: 成功判据 — functor 5/5, keyword 2/5 (functor 严格更强)
-    """
+
+def _sc_categories() -> None:
     print("=== Phase 7 Open Problem 7.3: Category Functor self-check ===\n")
 
     # Test 1: 3 个 category 定义
@@ -785,6 +779,8 @@ def _selfcheck() -> None:
     print(f"  Phonon:         {PHONON.objects}")
     print(f"  Catalysis:      {CATALYSIS.objects}")
 
+
+def _sc_propose_functor_llm() -> None:
     # Test 2: functor propose (mock LLM)
     # mock 一个 langchain-style model: invoke 返回带 content 属性的对象
     class _MockResp:
@@ -825,6 +821,8 @@ def _selfcheck() -> None:
     assert verify_llm.is_valid, f"LLM functor should be valid: {verify_llm.violations}"
     print(f"  verify: VALID ({verify_llm.reason})")
 
+
+def _sc_verify_known_and_counterexamples() -> None:
     # Test 3: functor verify — 合法 + 反例
     # 3a: 已知 functor 全部 verify 通过
     for (src_name, tgt_name), functor in _KNOWN_FUNCTORS.items():
@@ -904,6 +902,8 @@ def _selfcheck() -> None:
     for v in result_diag.violations:
         print(f"    - {v}")
 
+
+def _sc_transfer_compare() -> None:
     # Test 4 + 5: hypothesis transfer — 5 source hypothesis, functor vs keyword
     print("\n--- Test 4+5: hypothesis transfer (functor vs keyword) ---")
 
@@ -983,6 +983,8 @@ def _selfcheck() -> None:
     print("  keyword 仅浅 hypothesis (单 morphism) 命中, 深 hypothesis 因 keyword")
     print("  替换 band→dispersion / symmetry→force_constant 等结构错位而失败.")
 
+
+def _sc_summary() -> None:
     print("\n=== Phase 7 Open Problem 7.3 self-check PASSED ===")
     print("  Category 定义: 3 个 domain (altermagnetism / phonon / catalysis),")
     print("    每个 4 objects + 5 morphisms + 2 commutative_diagrams, 结构同构")
@@ -990,6 +992,22 @@ def _selfcheck() -> None:
     print("  Functor verify: 4 层检查 (object_map 完整 / morphism_map 完整 / 合法性 / 保 diagram)")
     print("  Hypothesis transfer: functor vs keyword baseline, 5/5 vs 2/5 -> 成功判据达成")
     print("  -> Open Problem 7.3 探索成功")
+
+
+def _selfcheck() -> None:
+    """验证 Phase 7.3 Open Problem: category functor + transfer.
+
+    Test 1: 3 个 category 定义正确 (objects / morphisms / commutative_diagrams 齐全)
+    Test 2: functor propose (mock LLM 返回合法 functor, 解析 + verify 通过)
+    Test 3: functor verify (保 structure; 反例 functor 检出 violation)
+    Test 4: hypothesis transfer (5 source hypothesis, functor vs keyword)
+    Test 5: 成功判据 — functor 5/5, keyword 2/5 (functor 严格更强)
+    """
+    _sc_categories()
+    _sc_propose_functor_llm()
+    _sc_verify_known_and_counterexamples()
+    _sc_transfer_compare()
+    _sc_summary()
 
 
 if __name__ == "__main__":

@@ -901,11 +901,8 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
 
 # ── self-check ────────────────────────────────────────────────
 
-def _self_check() -> int:
-    """assert-based demo: 验证 DeliverableCoverageMiddleware 正则提取 + 覆盖检查."""
-    m = DeliverableCoverageMiddleware()
-
-    # 场景 1: Astronomy_000 真实 INSTRUCTIONS — 提取 "X and Y" 物理量
+def _sc_astronomy_quantities(m: DeliverableCoverageMiddleware) -> str:
+    """场景 1: Astronomy_000 真实 INSTRUCTIONS — 提取 "X and Y" 物理量."""
     inst = (
         "To constrain the properties of ultralight bosons by developing and "
         "applying a novel Bayesian statistical framework. This framework "
@@ -920,8 +917,13 @@ def _self_check() -> int:
     assert any("coupling" in q or "self-interaction" in q for q in quantities), \
         f"coupling not extracted: {quantities}"
     print(f"[CHECK] extracted quantities: {quantities}")
+    return inst
 
-    # 场景 2: report 缺 coupling (future work 段落无数值) — 应报 missing
+
+def _sc_missing_coupling_future_work(
+    m: DeliverableCoverageMiddleware, inst: str
+) -> None:
+    """场景 2: report 缺 coupling (future work 段落无数值) — 应报 missing."""
     report_missing_coupling = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Results\n"
@@ -936,7 +938,11 @@ def _self_check() -> int:
         f"coupling should be missing (future work, no numeric): {missing}"
     print(f"[CHECK] missing (coupling in future work): {missing}")
 
-    # 场景 3: report 全覆盖 (mass + coupling 都有数值) — 应返回空
+
+def _sc_full_coverage_report(
+    m: DeliverableCoverageMiddleware, inst: str
+) -> None:
+    """场景 3: report 全覆盖 (mass + coupling 都有数值) — 应返回空."""
     report_full = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Mass Constraints\n"
@@ -949,15 +955,21 @@ def _self_check() -> int:
     assert missing_full == [], f"should be fully covered: {missing_full}"
     print(f"[CHECK] missing (full coverage): {missing_full}")
 
-    # 场景 4: frontier message 格式
+
+def _sc_frontier_message(m: DeliverableCoverageMiddleware) -> None:
+    """场景 4: frontier message 格式."""
     msg = m._build_frontier_msg(["self-interaction coupling strengths"])
     assert "FRONTIER TASK" in msg
     assert "self-interaction coupling strengths" in msg
     assert "0 分" in msg
     print("[CHECK] frontier msg OK")
 
-    # 场景 5: Material_000 INSTRUCTIONS — "classifications such as X and Y" 模式
-    # X = metal/insulator (斜杠复合词), Y = d/g/i-wave anisotropy (连字符+斜杠)
+
+def _sc_material_quantities(m: DeliverableCoverageMiddleware) -> str:
+    """场景 5: Material_000 INSTRUCTIONS — "classifications such as X and Y" 模式.
+
+    X = metal/insulator (斜杠复合词), Y = d/g/i-wave anisotropy (连字符+斜杠)
+    """
     mat_inst = (
         "The output is a list of candidate materials predicted to be "
         "altermagnets with high probability, along with their electronic "
@@ -971,8 +983,13 @@ def _self_check() -> int:
     assert any("anisotropy" in q or "wave" in q for q in mat_q), \
         f"d/g/i-wave anisotropy not extracted: {mat_q}"
     print(f"[CHECK] Material_000 extracted: {mat_q}")
+    return mat_inst
 
-    # 场景 6: Material_000 report 缺分类 — 应报 missing
+
+def _sc_material_missing_categories(
+    m: DeliverableCoverageMiddleware, mat_inst: str
+) -> str:
+    """场景 6: Material_000 report 缺分类 — 应报 missing."""
     mat_report_missing = (
         "# Altermagnetic Materials Discovery\n\n"
         "## Results\n"
@@ -985,8 +1002,13 @@ def _self_check() -> int:
     assert len(mat_missing) >= 1, \
         f"should report missing classifications: {mat_missing}"
     print(f"[CHECK] Material_000 missing (no classification): {mat_missing}")
+    return mat_report_missing
 
-    # 场景 7: Material_000 report 有分类数值 — 应 covered
+
+def _sc_material_full_coverage(
+    m: DeliverableCoverageMiddleware, mat_inst: str
+) -> None:
+    """场景 7: Material_000 report 有分类数值 — 应 covered."""
     mat_report_full = (
         "# Altermagnetic Materials Discovery\n\n"
         "## Classification Results\n"
@@ -998,8 +1020,14 @@ def _self_check() -> int:
         f"should be fully covered: {mat_missing_full}"
     print(f"[CHECK] Material_000 full coverage: {mat_missing_full}")
 
-    # 场景 8 (v13): criterion 2 错位 — agent 给 dimensionless λ 而非 g (GeV⁻¹)
-    # 横向 covered (coupling + 数值都有), 纵向 Claim 层缺失 (无 GeV⁻¹ / 无 upper limit 声明)
+
+def _sc_claim_layer_gap(
+    m: DeliverableCoverageMiddleware, inst: str
+) -> None:
+    """场景 8 (v13): criterion 2 错位 — agent 给 dimensionless λ 而非 g (GeV⁻¹).
+
+    横向 covered (coupling + 数值都有), 纵向 Claim 层缺失 (无 GeV⁻¹ / 无 upper limit 声明)
+    """
     report_claim_mismatch = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Methodology\n"
@@ -1018,7 +1046,11 @@ def _self_check() -> int:
         f"criterion 2 错位应报 Claim 层缺失: {gaps}"
     print(f"[CHECK v13] criterion 2 Claim layer gap: {coupling_gaps}")
 
-    # 场景 9 (v13): 全覆盖 — report 五层齐全, 不应报任何 layer gap
+
+def _sc_full_layer_coverage(
+    m: DeliverableCoverageMiddleware, inst: str
+) -> None:
+    """场景 9 (v13): 全覆盖 — report 五层齐全, 不应报任何 layer gap."""
     report_full_with_claim = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Methodology\n"
@@ -1036,7 +1068,11 @@ def _self_check() -> int:
     assert gaps_full == [], f"五层齐全不应报 layer gap: {gaps_full}"
     print(f"[CHECK v13] full layer coverage: {gaps_full}")
 
-    # 场景 10 (v13): concept 缺 — Metal_000 report 没提 metal/insulator 分类
+
+def _sc_metal_concept_layer(
+    m: DeliverableCoverageMiddleware, mat_inst: str, mat_report_missing: str
+) -> None:
+    """场景 10 (v13): concept 缺 — Metal_000 report 没提 metal/insulator 分类."""
     mat_gaps = m._check_layer_gaps(mat_inst, mat_report_missing)
     # metal/insulator 应该报 concept 层缺失 (根本没出现)
     [layers for q, layers in mat_gaps
@@ -1049,7 +1085,9 @@ def _self_check() -> int:
         f"Metal_000 缺分类应报 Concept 层缺失: {direct_metal_layers}"
     print(f"[CHECK v13] Metal_000 Concept layer gap (direct): {direct_metal_layers}")
 
-    # 场景 11 (v13 wording): frontier msg 必须包含反 future-work + 数值要求
+
+def _sc_layer_frontier_wording(m: DeliverableCoverageMiddleware) -> None:
+    """场景 11 (v13 wording): frontier msg 必须包含反 future-work + 数值要求."""
     msg = m._build_layer_frontier_msg([("self-interaction coupling strengths",
                                         ["method", "data", "claim"])])
     assert "Future Work" in msg, "frontier msg 必须明确禁止 Future Work 模式"
@@ -1063,7 +1101,9 @@ def _self_check() -> int:
     assert "QCD axion" in msg, "frontier msg 必须给数值合理性自检参考量级"
     print("[CHECK v13] layer frontier msg wording OK")
 
-    # 场景 12 (v13 planning): planning hint 必须包含所有 required quantities
+
+def _sc_planning_wording(m: DeliverableCoverageMiddleware) -> None:
+    """场景 12 (v13 planning): planning hint 必须包含所有 required quantities."""
     planning = m._build_planning_msg(["ulb masses", "self-interaction coupling strengths"])
     assert "PLANNING HINT" in planning
     assert "ulb masses" in planning
@@ -1076,6 +1116,22 @@ def _self_check() -> int:
     assert "QCD axion" in planning, "planning hint 必须给数值合理性自检参考"
     print("[CHECK v13] planning hint wording OK")
 
+
+def _self_check() -> int:
+    """assert-based demo: 验证 DeliverableCoverageMiddleware 正则提取 + 覆盖检查."""
+    m = DeliverableCoverageMiddleware()
+    inst = _sc_astronomy_quantities(m)
+    _sc_missing_coupling_future_work(m, inst)
+    _sc_full_coverage_report(m, inst)
+    _sc_frontier_message(m)
+    mat_inst = _sc_material_quantities(m)
+    mat_report_missing = _sc_material_missing_categories(m, mat_inst)
+    _sc_material_full_coverage(m, mat_inst)
+    _sc_claim_layer_gap(m, inst)
+    _sc_full_layer_coverage(m, inst)
+    _sc_metal_concept_layer(m, mat_inst, mat_report_missing)
+    _sc_layer_frontier_wording(m)
+    _sc_planning_wording(m)
     print("[MIDDLEWARES] self-check OK")
     return 0
 

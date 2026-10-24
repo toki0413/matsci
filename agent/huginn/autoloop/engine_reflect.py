@@ -1112,19 +1112,33 @@ class EngineReflect:
             logger.debug("blind reconstruct tier gate failed", exc_info=True)
             return False
 
-    async def _blind_reconstruct_verify(
-        self, execution_result: Any, results: dict[str, Any],
-    ) -> None:
-        """P1: 盲重建 + support/refute 闭环 (Task 2 升级为三档交叉验证).
+    def _rv_check_budget(
+        self, hyp_id: str, node: Any, results: dict[str, Any],
+    ) -> bool:
+        if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") != "1":
+            return True
+        try:
+            _vb = node.evidence.get("verification_budget")
+            if _vb is not None:
+                _used = node.evidence.get("blind_rounds_used", 0)
+                if _used >= _vb.get("blind_rounds", 0):
+                    node.evidence["budget_exhausted"] = True
+                    results["blind_reconstruction"] = {
+                        "match": None, "skipped": "budget_exhausted",
+                    }
+                    logger.debug(
+                        "blind reconstruct skipped: budget_exhausted (hyp=%s)",
+                        hyp_id,
+                    )
+                    return False
+                node.evidence["blind_rounds_used"] = _used + 1
+        except Exception:  # 防御: 盲预算检查失败跳过
+            logger.debug("per-hyp blind budget check failed", exc_info=True)
+        return True
 
-        1. 拿当前 hypothesis statement (不传 proof/evidence)
-        2. SubagentDispatch("blind_reconstructor") 独立推导, 返 holds + derivation
-        3. 三档判定:
-           - holds match + derivation 一致 → strong support (写 PROVED.md)
-           - holds match + derivation 冲突 → weak (不调 support, further_verification)
-           - holds mismatch → refute (写 FAILED.md, evidence 含 blind derivation)
-           - 缺 derivation / 缺 orig reasoning → 走原两档 (legacy)
-        """
+    def _rv_prepare_target(
+        self, results: dict[str, Any],
+    ) -> tuple[str, str] | None:
         _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
         if not _hyp_id:
             # 观测: 未接线/无当前假设时此前是**静默 return** → 野外看不出开没开.
@@ -1133,19 +1147,19 @@ class EngineReflect:
                 "skip: no current_hyp_id_for_plan",
                 action="skip",
             )
-            return
+            return None
         try:
             _node = self.hypothesis_graph._nodes.get(_hyp_id)
         except Exception:  # 防御: 尽力操作失败直接返回
             logger.debug("best-effort op failed", exc_info=True)
-            return
+            return None
         if _node is None or _node.status != "untested":
             self._emit_control_trace(
                 "collab_blind_reconstruct",
                 f"skip: node status={getattr(_node, 'status', 'missing')}",
                 action="skip",
             )
-            return
+            return None
         _statement = _node.statement
         if not _statement or len(_statement) < 10:
             # 观测: 陈述过短此前是**静默 return** → 野外分不清"没跑"还是"跑了但陈述太短".
@@ -1154,26 +1168,10 @@ class EngineReflect:
                 f"skip: statement too short len={len(_statement or '')}",
                 action="skip",
             )
-            return
+            return None
         # P0 Task 3: per-hyp budget 检查 — toggle off 时不检查 (向后兼容)
-        if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1":
-            try:
-                _vb = _node.evidence.get("verification_budget")
-                if _vb is not None:
-                    _used = _node.evidence.get("blind_rounds_used", 0)
-                    if _used >= _vb.get("blind_rounds", 0):
-                        _node.evidence["budget_exhausted"] = True
-                        results["blind_reconstruction"] = {
-                            "match": None, "skipped": "budget_exhausted",
-                        }
-                        logger.debug(
-                            "blind reconstruct skipped: budget_exhausted (hyp=%s)",
-                            _hyp_id,
-                        )
-                        return
-                    _node.evidence["blind_rounds_used"] = _used + 1
-            except Exception:  # 防御: 盲预算检查失败跳过
-                logger.debug("per-hyp blind budget check failed", exc_info=True)
+        if not self._rv_check_budget(_hyp_id, _node, results):
+            return None
         if self._agent_factory is None:
             logger.debug("P1 blind reconstruct: no agent_factory, skip")
             self._emit_control_trace(
@@ -1181,13 +1179,16 @@ class EngineReflect:
                 "skip: no agent_factory (HUGINN_ENABLE_AGENT_COLLAB 未开)",
                 action="skip",
             )
-            return
+            return None
+        return _hyp_id, _statement
+
+    async def _rv_dispatch_blind(self, statement: str) -> Any | None:
         from huginn.agents.subagent import SubagentDispatch
         _dispatch = SubagentDispatch()
         _task = (
             f"Independently derive whether this statement holds, from first principles. "
             f"Do NOT assume any prior proof. Output JSON.\n\n"
-            f"Statement: {_statement}"
+            f"Statement: {statement}"
         )
         _ctx = {"agent_factory": self._agent_factory}
         try:
@@ -1197,7 +1198,7 @@ class EngineReflect:
             self._emit_control_trace(
                 "collab_blind_reconstruct", "skip: dispatch raised", action="skip"
             )
-            return
+            return None
         if not _res.success or not _res.summary:
             self._emit_control_trace(
                 "collab_blind_reconstruct",
@@ -1211,36 +1212,10 @@ class EngineReflect:
                 f"err={(getattr(_res, 'error', '') or '')[:200]!r}",
                 action="skip",
             )
-            return
-        # 解析盲重建结果 (JSON summary)
-        import json as _json
-        try:
-            _blind = _json.loads(_res.summary)
-        except Exception:  # 防御: 解析失败从文本推断
-            # LLM 没输出合法 JSON, 从 summary 文本推断
-            _blind = {"holds": "true" in _res.summary.lower(), "confidence": 0.5}
-        _blind_holds = bool(_blind.get("holds", False))
-        # 原 execution_result 是否支持 hypothesis (tests_passed / grader_reward)
-        _orig_holds = bool(
-            results.get("tests_passed")
-            or results.get("grader_reward", 0) > 0.5
-            or results.get("generative_verify", {}).get("score", 0) > 0.5
-        )
-        # 受控独立观察者: 记录**差分读数** (传感器, 不是 reward). 独立观察者不看
-        # 执行结果, 所以它与执行判据的分歧是真正独立的信号. 下一轮由 signals.
-        # hypothesis_strength 读它缩放探索强度 (分歧→降 strength→转探索);
-        # **不**并入 darwin / _last_task_perf, 避免把观测当成优化目标 (自指).
-        self._last_reconstruct_disagree = bool(_blind_holds != _orig_holds)
-        try:
-            self._last_blind_confidence = max(
-                0.0, min(1.0, float(_blind.get("confidence", 0.5)))
-            )
-        except (TypeError, ValueError):  # 防御: 置信度非数值 → 中性 0.5
-            self._last_blind_confidence = 0.5
-        # derivation 字段 (可能缺, 向后兼容)
-        _blind_derivation = str(_blind.get("derivation", "") or "").strip()
-        _has_derivation = bool(_blind_derivation)
-        # 取原始推理路径 (session.reasoning_trace 最近几条), 用于跟 blind derivation 比对
+            return None
+        return _res
+
+    def _rv_orig_reasoning(self) -> str:
         _orig_reasoning = ""
         try:
             _rt = getattr(self.memory.session, "reasoning_trace", None) or []
@@ -1248,21 +1223,69 @@ class EngineReflect:
                 _orig_reasoning = "\n".join(str(_x) for _x in _rt[-5:])[:2000]
         except Exception:  # 防御: 原推理轨迹提取失败忽略
             logger.debug("orig reasoning_trace extract failed", exc_info=True)
+        return _orig_reasoning
+
+    async def _rv_judge_consistency(
+        self, blind_derivation: str, orig_reasoning: str,
+    ) -> bool | None:
+        if not blind_derivation or not orig_reasoning:
+            return None
+        try:
+            return await self._judge_derivation_consistency(
+                blind_derivation, orig_reasoning,
+            )
+        except Exception:  # 防御: 一致性判定崩溃重置
+            logger.debug("derivation consistency judge crashed", exc_info=True)
+            return None
+
+    def _rv_parse_blind(
+        self, res: Any, results: dict[str, Any],
+    ) -> dict[str, Any]:
+        # 解析盲重建结果 (JSON summary)
+        import json as _json
+        try:
+            _blind = _json.loads(res.summary)
+        except Exception:  # 防御: 解析失败从文本推断
+            # LLM 没输出合法 JSON, 从 summary 文本推断
+            _blind = {"holds": "true" in res.summary.lower(), "confidence": 0.5}
+        _blind_holds = bool(_blind.get("holds", False))
+        # 原 execution_result 是否支持 hypothesis (tests_passed / grader_reward)
+        _orig_holds = bool(
+            results.get("tests_passed")
+            or results.get("grader_reward", 0) > 0.5
+            or results.get("generative_verify", {}).get("score", 0) > 0.5
+        )
+        # 受控独立观察者: 记录**差分读数** (传感器, 不是 reward).
+        self._last_reconstruct_disagree = bool(_blind_holds != _orig_holds)
+        try:
+            self._last_blind_confidence = max(
+                0.0, min(1.0, float(_blind.get("confidence", 0.5)))
+            )
+        except (TypeError, ValueError):  # 防御: 置信度非数值 → 中性 0.5
+            self._last_blind_confidence = 0.5
+        return {
+            "blind": _blind,
+            "blind_holds": _blind_holds,
+            "orig_holds": _orig_holds,
+        }
+
+    async def _rv_build_evidence(
+        self, res: Any, results: dict[str, Any], parsed: dict[str, Any],
+    ) -> dict[str, Any]:
+        _blind = parsed["blind"]
+        _blind_holds = parsed["blind_holds"]
+        _orig_holds = parsed["orig_holds"]
+        # derivation 字段 (可能缺, 向后兼容)
+        _blind_derivation = str(_blind.get("derivation", "") or "").strip()
+        # 取原始推理路径 (session.reasoning_trace 最近几条), 用于跟 blind derivation 比对
+        _orig_reasoning = self._rv_orig_reasoning()
         # derivation 语义一致性: 仅当 blind+orig 都有内容时才判
-        # ponytail: LLM zero-shot 判语义一致, 失败降级 token Jaccard heuristic
-        # ceiling: heuristic 抓不到同义改写; 升级换 embedding cosine > 0.85
-        _derivation_consistent: bool | None = None
-        if _has_derivation and _orig_reasoning:
-            try:
-                _derivation_consistent = await self._judge_derivation_consistency(
-                    _blind_derivation, _orig_reasoning,
-                )
-            except Exception:  # 防御: 一致性判定崩溃重置
-                logger.debug("derivation consistency judge crashed", exc_info=True)
-                _derivation_consistent = None
+        _derivation_consistent = await self._rv_judge_consistency(
+            _blind_derivation, _orig_reasoning,
+        )
         _evidence = {
             "modality": "blind_reconstruction",
-            "data_source": f"subagent:{_res.spec_name}",
+            "data_source": f"subagent:{res.spec_name}",
             "blind_holds": _blind_holds,
             "blind_confidence": float(_blind.get("confidence", 0.5)),
             "blind_derivation": _blind_derivation[:500],
@@ -1272,69 +1295,107 @@ class EngineReflect:
             "tests_passed": results.get("tests_passed"),
             "grader_reward": results.get("grader_reward"),
         }
-        if _blind_holds != _orig_holds:
-            # holds mismatch → refute (走原逻辑, evidence 含 blind derivation)
-            _evidence["errors"] = (
-                f"blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
-                f"mismatch — blind reconstruction disagrees with execution result"
+        return {
+            "blind_holds": _blind_holds,
+            "orig_holds": _orig_holds,
+            "blind_derivation": _blind_derivation,
+            "derivation_consistent": _derivation_consistent,
+            "evidence": _evidence,
+        }
+
+    def _rv_apply_outcome(
+        self,
+        hyp_id: str,
+        statement: str,
+        res: Any,
+        ctx: dict[str, Any],
+        results: dict[str, Any],
+    ) -> None:
+        if ctx["blind_holds"] != ctx["orig_holds"]:
+            self._rv_refute(hyp_id, statement, res, ctx, results)
+        else:
+            self._rv_support(hyp_id, res, ctx, results)
+
+    def _rv_refute(
+        self,
+        hyp_id: str,
+        statement: str,
+        res: Any,
+        ctx: dict[str, Any],
+        results: dict[str, Any],
+    ) -> None:
+        _evidence = ctx["evidence"]
+        _blind_holds = ctx["blind_holds"]
+        _orig_holds = ctx["orig_holds"]
+        # holds mismatch → refute (走原逻辑, evidence 含 blind derivation)
+        _evidence["errors"] = (
+            f"blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
+            f"mismatch — blind reconstruction disagrees with execution result"
+        )
+        _evidence["verification_level"] = "refute"
+        self.hypothesis_graph.refute(hyp_id, _evidence)
+        results["blind_reconstruction"] = {"match": False, **_evidence}
+        # P1 Task 8: record verification_mismatch for counterexample hint
+        try:
+            self.memory.remember_typed(
+                content=json.dumps({
+                    "hypothesis": statement[:300],
+                    "blind_holds": _blind_holds,
+                    "orig_holds": _orig_holds,
+                    "blind_derivation": ctx["blind_derivation"][:500],
+                    "hyp_id": hyp_id,
+                }, ensure_ascii=False),
+                memory_type="verification_mismatch",
+                tags=["verification_mismatch", f"hyp:{hyp_id}"],
+                source="blind_reconstruction",
+                importance=0.7,
+                tier="mid",
             )
-            _evidence["verification_level"] = "refute"
-            self.hypothesis_graph.refute(_hyp_id, _evidence)
-            results["blind_reconstruction"] = {"match": False, **_evidence}
-            # P1 Task 8: record verification_mismatch for counterexample hint
-            try:
-                self.memory.remember_typed(
-                    content=json.dumps({
-                        "hypothesis": _statement[:300],
-                        "blind_holds": _blind_holds,
-                        "orig_holds": _orig_holds,
-                        "blind_derivation": _blind_derivation[:500],
-                        "hyp_id": _hyp_id,
-                    }, ensure_ascii=False),
-                    memory_type="verification_mismatch",
-                    tags=["verification_mismatch", f"hyp:{_hyp_id}"],
-                    source="blind_reconstruction",
-                    importance=0.7,
-                    tier="mid",
-                )
-            except Exception:  # 防御: 不一致记录失败忽略
-                logger.debug("verification_mismatch record failed", exc_info=True)
-            logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
-            # 观测: 成功派发的结论此前**只落 logger.info**, control_trace 只记 skip →
-            # 野外看 run.log 只见到 "skip: node status=refuted", 会误判机制空转
-            # (run65 实测 3 次成功反证全靠 FAILED.md 才看出). 成功也落 trace, 让
-            # "派发→结论" 全在控制面上可见.
-            self._emit_control_trace(
-                "collab_blind_reconstruct",
-                f"refute: blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
-                f"summary_len={len(_res.summary or '')}",
-                action="refute",
-            )
-            return
+        except Exception:  # 防御: 不一致记录失败忽略
+            logger.debug("verification_mismatch record failed", exc_info=True)
+        logger.info("P1 blind reconstruct: mismatch → refute %s", hyp_id)
+        # 成功派发也落 trace, 让 "派发→结论" 全在控制面上可见.
+        self._emit_control_trace(
+            "collab_blind_reconstruct",
+            f"refute: blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
+            f"summary_len={len(res.summary or '')}",
+            action="refute",
+        )
+
+    def _rv_support(
+        self,
+        hyp_id: str,
+        res: Any,
+        ctx: dict[str, Any],
+        results: dict[str, Any],
+    ) -> None:
+        _evidence = ctx["evidence"]
+        _blind_holds = ctx["blind_holds"]
+        _derivation_consistent = ctx["derivation_consistent"]
         # holds match — 按 derivation 一致性分档
         if _derivation_consistent is None:
             # 缺 derivation 或缺 orig reasoning → 走原两档 (legacy, 向后兼容)
             _evidence["verification_level"] = "legacy"
-            self.hypothesis_graph.support(_hyp_id, _evidence)
+            self.hypothesis_graph.support(hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": True, **_evidence}
-            logger.info("P1 blind reconstruct: legacy match → support %s", _hyp_id)
+            logger.info("P1 blind reconstruct: legacy match → support %s", hyp_id)
             self._emit_control_trace(
                 "collab_blind_reconstruct",
                 f"support(legacy): blind_holds={_blind_holds} "
-                f"summary_len={len(_res.summary or '')}",
+                f"summary_len={len(res.summary or '')}",
                 action="support",
             )
         elif _derivation_consistent:
             # holds match + derivation 一致 → strong support
             _evidence["verification"] = "blind_strong"
             _evidence["verification_level"] = "strong"
-            self.hypothesis_graph.support(_hyp_id, _evidence)
+            self.hypothesis_graph.support(hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": True, **_evidence}
-            logger.info("P1 blind reconstruct: strong match → support %s", _hyp_id)
+            logger.info("P1 blind reconstruct: strong match → support %s", hyp_id)
             self._emit_control_trace(
                 "collab_blind_reconstruct",
                 f"support(strong): blind_holds={_blind_holds} "
-                f"summary_len={len(_res.summary or '')}",
+                f"summary_len={len(res.summary or '')}",
                 action="support",
             )
         else:
@@ -1342,15 +1403,37 @@ class EngineReflect:
             _evidence["verification_level"] = "weak"
             _evidence["further_verification_needed"] = True
             results["blind_reconstruction"] = {"match": True, **_evidence}
-            logger.info("P1 blind reconstruct: weak (derivation 冲突) %s", _hyp_id)
+            logger.info("P1 blind reconstruct: weak (derivation 冲突) %s", hyp_id)
             self._emit_control_trace(
                 "collab_blind_reconstruct",
                 f"weak: derivation 冲突 blind_holds={_blind_holds} "
-                f"summary_len={len(_res.summary or '')}",
+                f"summary_len={len(res.summary or '')}",
                 action="weak",
             )
 
+    async def _blind_reconstruct_verify(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        """P1: 盲重建 + support/refute 闭环 (Task 2 升级为三档交叉验证).
 
+        1. 拿当前 hypothesis statement (不传 proof/evidence)
+        2. SubagentDispatch("blind_reconstructor") 独立推导, 返 holds + derivation
+        3. 三档判定:
+           - holds match + derivation 一致 → strong support (写 PROVED.md)
+           - holds match + derivation 冲突 → weak (不调 support, further_verification)
+           - holds mismatch → refute (写 FAILED.md, evidence 含 blind derivation)
+           - 缺 derivation / 缺 orig reasoning → 走原两档 (legacy)
+        """
+        _target = self._rv_prepare_target(results)
+        if _target is None:
+            return
+        _hyp_id, _statement = _target
+        _res = await self._rv_dispatch_blind(_statement)
+        if _res is None:
+            return
+        _parsed = self._rv_parse_blind(_res, results)
+        _ctx = await self._rv_build_evidence(_res, results, _parsed)
+        self._rv_apply_outcome(_hyp_id, _statement, _res, _ctx, results)
 
     async def _judge_derivation_consistency(
         self, blind_derivation: str, orig_reasoning: str,
@@ -4256,20 +4339,12 @@ class EngineReflect:
 
 
 
-    async def _report(
-        self, objective: str, phases: list[LoopPhase], total_time: float
-    ) -> str | None:
-        """Generate a structured scientific research report.
-
-        RCBench expects y=(π, o, r) where r is a research report with
-        Introduction/Methods/Results/Discussion. We assemble execution data
-        from self and let the LLM write a proper report instead of a loop summary.
-        """
+    def _rp_build_report_data(
+        self, objective: str, phases: list[LoopPhase], total_time: float,
+    ) -> dict[str, Any]:
         # 证据链: 报告头/文件名必须用本轮真实 run_id, 与 trajectory 文件名、
-        # provenance、run_result.run_id 对得上. 此前这里另造了一个 uuid, 导致
-        # 6/6 轮报告自称的 Run ID 在 workspace 里根本找不到对应 trajectory (ws7:
-        # 报告 loop_14248d13 vs 真实 loop_4a965b85) —— 自证链条自己断一节.
-        report_data = {
+        # provenance、run_result.run_id 对得上.
+        return {
             "objective": objective,
             "run_id": str(
                 getattr(self, "_run_id", None) or f"loop_{uuid.uuid4().hex[:8]}"
@@ -4290,33 +4365,20 @@ class EngineReflect:
             ],
         }
 
-        # Collect scientific evidence from the engine instance for the report.
-        # This is the (π, o) data RCBench expects: what ran, what came out.
-        last_exec = getattr(self, "_last_execution_result", None)
-        exec_summary = ""
-        if last_exec and isinstance(last_exec, dict):
-            _tool = last_exec.get("_tool_name", "unknown")
-            _res = last_exec.get("result", last_exec)
-            exec_summary = json.dumps(_res, ensure_ascii=False, default=str)[:1500]
-            exec_summary = f"Tool: {_tool}\nResult: {exec_summary}"
-
-        # 报告 citation 门 (C2): 把本轮**每次** execute 的紧凑台账交给报告作者,
-        # 而不是只给末轮 —— 否则书生会把中间轮真实数值丢掉、凭印象编表 (run56).
-        _ledger = getattr(self, "_execution_ledger", None) or []
-        evidence_text = _ledger_evidence_text(_ledger)
-
-        visual_ctx = getattr(self, "_last_visual_context", "")
-        last_validation = getattr(self, "_last_validation", "")
-        # v31 统一: 报告面同 episodic / 路由, 用秩归一信号 —— 与下方 prompt
-        # "Surprise score ... (0=predicted, 1=unexpected)" 的 [0,1] 刻度一致.
-        last_surprise = routing_surprise(self)
-        last_hypothesis = getattr(self, "_last_hypothesis", "")
-
-        kb_text = self._build_kb_text(query=objective)
+    async def _rp_generate_narrative(
+        self,
+        report_data: dict[str, Any],
+        kb_text: str,
+        exec_summary: str,
+        visual_ctx: str,
+        last_validation: str,
+        last_hypothesis: str,
+        last_surprise: float,
+        evidence_text: str,
+    ) -> str:
         # H4: persona 从 PhaseRegistry 取, toggle off 回退 "tutor"
         from huginn.harness.phase_spec import get_phase_persona
         _report_persona = get_phase_persona("_report") or "tutor"
-        report_narrative = ""
         try:
             report_narrative = await self._llm_chat(
                 self._build_science_report_prompt(
@@ -4332,17 +4394,57 @@ class EngineReflect:
                 persona_name=_report_persona,
                 task="summarize",
             )
-            report_narrative = (report_narrative or "").strip()
+            return (report_narrative or "").strip()
         except Exception:  # 防御: 报告叙事生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
-            report_narrative = ""
+            return ""
 
+    async def _rp_collect_metrics(
+        self, objective: str, report_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        # Collect scientific evidence from the engine instance for the report.
+        # This is the (π, o) data RCBench expects: what ran, what came out.
+        last_exec = getattr(self, "_last_execution_result", None)
+        exec_summary = ""
+        if last_exec and isinstance(last_exec, dict):
+            _tool = last_exec.get("_tool_name", "unknown")
+            _res = last_exec.get("result", last_exec)
+            exec_summary = json.dumps(_res, ensure_ascii=False, default=str)[:1500]
+            exec_summary = f"Tool: {_tool}\nResult: {exec_summary}"
+
+        # 报告 citation 门 (C2): 把本轮**每次** execute 的紧凑台账交给报告作者.
+        _ledger = getattr(self, "_execution_ledger", None) or []
+        evidence_text = _ledger_evidence_text(_ledger)
+        visual_ctx = getattr(self, "_last_visual_context", "")
+        last_validation = getattr(self, "_last_validation", "")
+        # v31 统一: 报告面同 episodic / 路由, 用秩归一信号.
+        last_surprise = routing_surprise(self)
+        last_hypothesis = getattr(self, "_last_hypothesis", "")
+        kb_text = self._build_kb_text(query=objective)
+        report_narrative = await self._rp_generate_narrative(
+            report_data,
+            kb_text,
+            exec_summary,
+            visual_ctx,
+            last_validation,
+            last_hypothesis,
+            last_surprise,
+            evidence_text,
+        )
+        return {
+            "exec_summary": exec_summary,
+            "evidence_text": evidence_text,
+            "kb_text": kb_text,
+            "report_narrative": report_narrative,
+            "ledger": _ledger,
+        }
+
+    def _rp_citation_gate(
+        self, report_narrative: str, evidence_text: str,
+    ) -> dict[str, Any]:
         # 报告 citation 门 (C2): 统计 Results 节里无法溯源到执行台账的数值.
-        # 纯观测 + 条件标注: 只判"这条证据算不算数", 不替书生下任何科学判断,
-        # 也不终止任何东西 (符合控制面预算原则).
         _gap, _total = _citation_gap(report_narrative, evidence_text)
-        # 单点量纲/符号笔误 (1.93e-14 → 1.93e14) 永远达不到"3 个未溯源"的计数
-        # 阈值, 但这类错比 3 个孤立未溯源值更危险 —— 把它单独作为触发条件.
+        # 单点量纲/符号笔误 (1.93e-14 → 1.93e14) 单独作为触发条件.
         _typos = _magnitude_typos(report_narrative, evidence_text)
         _cite_flagged = _total > 0 and (
             (
@@ -4362,10 +4464,17 @@ class EngineReflect:
                 _detail,
                 action="annotate" if _cite_flagged else "advisory_hint",
             )
+        return {
+            "cite_flagged": _cite_flagged,
+            "cite_total": _total,
+            "cite_gap": _gap,
+            "cite_typos": _typos,
+        }
 
-        # 判别性 / 决定性纪律 (C 族续): 与 citation 门同一风格 —— 纯观测 + 条件标注,
-        # 不替书生下判断、不终止。每轮落 trace 供触发率统计 (run79: rigid==fat 无对照;
-        # 硬口径只给 partial support).
+    def _rp_discipline_gate(
+        self, report_narrative: str, evidence_text: str,
+    ) -> dict[str, Any]:
+        # 判别性 / 决定性纪律 (C 族续): 纯观测 + 条件标注.
         _has_contrast, _mag_n = _discrimination_gap(report_narrative, evidence_text)
         _disc_flagged = (not _has_contrast) and _mag_n >= _DISC_MIN_VALUES
         if _mag_n > 0:
@@ -4382,17 +4491,23 @@ class EngineReflect:
                 f"binary={_has_binary} hedge={_has_hedge}",
                 action="annotate" if _dec_flagged else "advisory_hint",
             )
+        return {
+            "disc_flagged": _disc_flagged,
+            "disc_mag_n": _mag_n,
+            "dec_flagged": _dec_flagged,
+        }
 
-        # 执行健康 + 自演探针 (只读, 零约束): RapidPen 式 exit_class 统计 +
-        # EnIGMA 式"声称执行却查无成功回执"提示. 与上面三条同一风格: 只落 trace 供
-        # 触发率统计 + 条件附诚实告示, 不改写结论、不终止任何东西.
-        _exit_counts = exit_class_counts(_ledger)
+    def _rp_exec_health_gate(
+        self, report_narrative: str, ledger: list[Any],
+    ) -> dict[str, Any]:
+        # 执行健康 + 自演探针 (只读, 零约束).
+        _exit_counts = exit_class_counts(ledger)
         self._emit_control_trace(
             "exec_exit_classes",
             " ".join(f"{k}={v}" for k, v in _exit_counts.items() if v) or "none",
             action="advisory_hint",
         )
-        _soli = detect_soliloquy(report_narrative, _ledger)
+        _soli = detect_soliloquy(report_narrative, ledger)
         if _soli["claimed"] or _soli["total"]:
             self._emit_control_trace(
                 "report_soliloquy",
@@ -4400,60 +4515,59 @@ class EngineReflect:
                 f"total={_soli['total']}",
                 action="annotate" if _soli["flagged"] else "advisory_hint",
             )
+        return {"soli": _soli}
 
-        report_path = (
-            self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
-        )
-        report_content = self._render_report(report_data)
-        # P0-5: 无数据硬门 — exec_summary 为空 = 本循环未执行任何计算.
-        # 禁止虚构 Results/Discussion, 强制声明零执行 (audit 06: 零执行仍虚构 Bader 电荷).
-        if not exec_summary.strip():
-            report_content += (
-                "\n\n## Execution Status\n\n"
-                "**本循环未执行任何计算。** 上述 Results/Discussion 无产物支撑, "
-                "不应作为结论引用。需要重新执行工具调用获取真实数据。\n"
-            )
-        else:
-            if kb_text:
-                report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
-            if evidence_text:
-                # 报告自包含证据台账: 让 Citation Audit 的 "[ev#]" 引用可被读者核对.
-                report_content += (
-                    "\n\n## Execution Evidence Ledger\n\n"
-                    "本循环每次真实 execute 的紧凑数值记录 (报告 Results 的数值须溯源至此):\n\n"
-                    "```\n" + evidence_text + "\n```\n"
-                )
-            if report_narrative:
-                report_content += "\n\n## Research Report\n\n" + report_narrative + "\n"
-        # 报告 citation 门 (C2): Results 里大部分数值在本轮执行台账中查无出处时,
-        # 附一条诚实告示 —— 与上面的 P0-5 同一风格 (只标注, 不改写书生结论).
-        if _cite_flagged and report_narrative:
+    def _rp_run_gates(
+        self, report_narrative: str, evidence_text: str, ledger: list[Any],
+    ) -> dict[str, Any]:
+        _flags = self._rp_citation_gate(report_narrative, evidence_text)
+        _flags.update(self._rp_discipline_gate(report_narrative, evidence_text))
+        _flags.update(self._rp_exec_health_gate(report_narrative, ledger))
+        return _flags
+
+    def _rp_append_citation_audit(
+        self, report_content: str, report_narrative: str, flags: dict[str, Any],
+    ) -> str:
+        if flags["cite_flagged"] and report_narrative:
             report_content += (
                 "\n\n## Citation Audit\n\n"
-                f"**Results 数值溯源告警：** 本节 {_total} 个候选数值中有 {_gap} 个"
+                f"**Results 数值溯源告警：** 本节 {flags['cite_total']} 个候选数值中有 "
+                f"{flags['cite_gap']} 个"
                 "无法在本轮真实 execution_result 台账中找到出处 (见上方 "
                 "`[ev#]` 记录)。这些数值不应作为结论引用, 需回到可复现的执行证据"
                 "重新核对。\n"
             )
-        # 判别性告警: 有足量报告数值却无任何对照/分离描述 → 提示证明探针判别 (只标注).
-        if _disc_flagged and report_narrative:
+        return report_content
+
+    def _rp_append_discrimination_audit(
+        self, report_content: str, report_narrative: str, flags: dict[str, Any],
+    ) -> str:
+        if flags["disc_flagged"] and report_narrative:
             report_content += (
                 "\n\n## Discrimination Audit\n\n"
-                f"**判别性告警：** Results 列出了 {_mag_n} 个候选数值, 但未见对**对照"
-                "条件之间分离性**的描述。若实验含对照/分组 (如 rigid vs fat), 必须证明"
-                "两组结果真分离; 若两组给出相同结果, 应显式声明该探针**不可判别**, "
-                "不得据此支持或反驳假设。\n"
+                f"**判别性告警：** Results 列出了 {flags['disc_mag_n']} 个候选数值, "
+                "但未见对**对照条件之间分离性**的描述。若实验含对照/分组 "
+                "(如 rigid vs fat), 必须证明两组结果真分离; 若两组给出相同结果, "
+                "应显式声明该探针**不可判别**, 不得据此支持或反驳假设。\n"
             )
-        # 决定性告警: 有模糊措辞却无二元判定 → 提示对硬口径给判定 (只标注).
-        if _dec_flagged and report_narrative:
+        return report_content
+
+    def _rp_append_decisive_audit(
+        self, report_content: str, report_narrative: str, flags: dict[str, Any],
+    ) -> str:
+        if flags["dec_flagged"] and report_narrative:
             report_content += (
                 "\n\n## Decisive Closure Audit\n\n"
                 "**决定性告警：** 报告未对命题的硬口径给出二元判定 (满足/未满足), "
                 "而是用了模糊措辞。应对硬口径给出明确的通过/未通过判定 + 方向/趋势; "
                 "证据不足时写\"未判定\"并说明缺口, 不要用部分支持/初步/可能代替判定。\n"
             )
-        # 自演告警: 正文声称"已执行/已观测", 但台账里没有任何成功回执 → 只标注提示
-        # 补跑或删除该主张 (不替书生改结论, 也不终止; 与上面几条同风格).
+        return report_content
+
+    def _rp_append_self_exec_audit(
+        self, report_content: str, report_narrative: str, flags: dict[str, Any],
+    ) -> str:
+        _soli = flags["soli"]
         if _soli["flagged"] and report_narrative:
             report_content += (
                 "\n\n## Self-Execution Audit\n\n"
@@ -4462,11 +4576,86 @@ class EngineReflect:
                 "\"观测到了\")。凡未绑定真实执行回执的环境观测不应作为结论依据, "
                 "需补跑工具获取真实结果, 或删除该主张。\n"
             )
+        return report_content
+
+    def _rp_append_audits(
+        self, report_content: str, report_narrative: str, flags: dict[str, Any],
+    ) -> str:
+        report_content = self._rp_append_citation_audit(
+            report_content, report_narrative, flags,
+        )
+        report_content = self._rp_append_discrimination_audit(
+            report_content, report_narrative, flags,
+        )
+        report_content = self._rp_append_decisive_audit(
+            report_content, report_narrative, flags,
+        )
+        report_content = self._rp_append_self_exec_audit(
+            report_content, report_narrative, flags,
+        )
+        return report_content
+
+    def _rp_assemble_content(
+        self,
+        metrics: dict[str, Any],
+        flags: dict[str, Any],
+        report_content: str,
+    ) -> str:
+        exec_summary = metrics["exec_summary"]
+        # P0-5: 无数据硬门 — exec_summary 为空 = 本循环未执行任何计算.
+        if not exec_summary.strip():
+            report_content += (
+                "\n\n## Execution Status\n\n"
+                "**本循环未执行任何计算。** 上述 Results/Discussion 无产物支撑, "
+                "不应作为结论引用。需要重新执行工具调用获取真实数据。\n"
+            )
+        else:
+            if metrics["kb_text"]:
+                report_content += (
+                    "\n\n## Domain Knowledge References\n\n"
+                    + metrics["kb_text"]
+                    + "\n"
+                )
+            if metrics["evidence_text"]:
+                # 报告自包含证据台账: 让 Citation Audit 的 "[ev#]" 引用可被读者核对.
+                report_content += (
+                    "\n\n## Execution Evidence Ledger\n\n"
+                    "本循环每次真实 execute 的紧凑数值记录 (报告 Results 的数值须溯源至此):\n\n"
+                    "```\n" + metrics["evidence_text"] + "\n```\n"
+                )
+            if metrics["report_narrative"]:
+                report_content += (
+                    "\n\n## Research Report\n\n"
+                    + metrics["report_narrative"]
+                    + "\n"
+                )
+        return self._rp_append_audits(
+            report_content, metrics["report_narrative"], flags,
+        )
+
+    async def _report(
+        self, objective: str, phases: list[LoopPhase], total_time: float
+    ) -> str | None:
+        """Generate a structured scientific research report.
+
+        RCBench expects y=(π, o, r) where r is a research report with
+        Introduction/Methods/Results/Discussion. We assemble execution data
+        from self and let the LLM write a proper report instead of a loop summary.
+        """
+        report_data = self._rp_build_report_data(objective, phases, total_time)
+        _metrics = await self._rp_collect_metrics(objective, report_data)
+        _flags = self._rp_run_gates(
+            _metrics["report_narrative"],
+            _metrics["evidence_text"],
+            _metrics["ledger"],
+        )
+        report_path = (
+            self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
+        )
+        report_content = self._render_report(report_data)
+        report_content = self._rp_assemble_content(_metrics, _flags, report_content)
         report_path.write_text(report_content, encoding="utf-8")
-
         return str(report_path)
-
-
 
     async def _feynman_learn(
         self,

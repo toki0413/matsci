@@ -491,67 +491,68 @@ def bootstrap_f1(cases, distance_fn, threshold, label_key, n_boot=1000, seed=42)
     return lo, hi
 
 
-def run_ablation():
-    cases = build_test_cases()
+def _geom_fisher(c):
+    m = HypothesisManifold()
+    m.add(c.a)
+    m.add(c.b)
+    return m.fisher_distance(c.a.h_id, c.b.h_id)
 
-    # 几何距离函数 (从 case 取对象)
-    def geom_fisher(c):
-        m = HypothesisManifold()
-        m.add(c.a)
-        m.add(c.b)
-        return m.fisher_distance(c.a.h_id, c.b.h_id)
-    def geom_complexity(c):
-        a, b = c.a.n_params, c.b.n_params
-        return 0.0 if (a==0 and b==0) else abs(a-b)/max(a,b)
-    def geom_fisher_complexity(c):
-        return max(geom_fisher(c), geom_complexity(c))
-    def geom_hodge(c):
-        na, ea = c.evidence_a
-        nb, eb = c.evidence_b
-        return hodge_distance_from_graphs(na, ea, nb, eb)
 
-    # 文本距离
-    def text_lev(c): return levenshtein_normalized(c.a.description, c.b.description)
-    def text_jac(c): return jaccard_word_distance(c.a.description, c.b.description)
-    def text_ngram(c): return char_ngram_distance(c.a.description, c.b.description)
+def _geom_complexity(c):
+    a, b = c.a.n_params, c.b.n_params
+    return 0.0 if (a == 0 and b == 0) else abs(a - b) / max(a, b)
 
-    # 文本阈值扫 (公平: 选最佳 F1)
-    text_methods = [
-        ("Levenshtein", text_lev),
-        ("Jaccard词集", text_jac),
-        ("char-3gram", text_ngram),
-    ]
-    text_thresholds = [0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.5]
 
+def _geom_fisher_complexity(c):
+    return max(_geom_fisher(c), _geom_complexity(c))
+
+
+def _geom_hodge(c):
+    na, ea = c.evidence_a
+    nb, eb = c.evidence_b
+    return hodge_distance_from_graphs(na, ea, nb, eb)
+
+
+def _text_lev(c):
+    return levenshtein_normalized(c.a.description, c.b.description)
+
+
+def _text_jac(c):
+    return jaccard_word_distance(c.a.description, c.b.description)
+
+
+def _text_ngram(c):
+    return char_ngram_distance(c.a.description, c.b.description)
+
+
+def _ablation_print_header(cases: list[TestCase]) -> None:
+    """打印标题、用例分布与双重 ground truth 一致性."""
     print("=" * 80)
     print("几何通信 vs 文本通信 Ablation v3 (三重独立 ground truth + bootstrap)")
     print("=" * 80)
-    cats = {}
+    cats: dict[str, int] = {}
     for c in cases:
         cats.setdefault(c.category, 0)
         cats[c.category] += 1
     print(f"测试用例: {len(cases)} 对, 6 场景")
     for cat, n in cats.items():
         print(f"  {cat}: {n}")
-    # ground truth 一致性
     agree = sum(1 for c in cases if c.human_label == c.hodge_label)
     print(f"\n双重 ground truth 一致性: {agree}/{len(cases)} ({agree/len(cases):.1%})")
     print("  (一致 = 高置信样本; 不一致 = 争议样本, 单独看)")
     print()
 
-    # ── 用 human_label 作 ground truth 跑所有方法 ──
+
+def _ablation_run_geometry(cases, results: list) -> None:
+    """human_label ground truth 下的几何方法 + bootstrap CI."""
     print("=" * 80)
     print("Ground truth = human_label (人工语义标注)")
     print("=" * 80)
-
-    results = []
-
-    # 几何方法
     for name, fn, thresh in [
-        ("Fisher (几何)", geom_fisher, 1e-6),
-        ("Complexity (几何)", geom_complexity, 1e-6),
-        ("Fisher+Complexity (几何)", geom_fisher_complexity, 1e-6),
-        ("Hodge (几何, 拓扑独立)", geom_hodge, 0.5),
+        ("Fisher (几何)", _geom_fisher, 1e-6),
+        ("Complexity (几何)", _geom_complexity, 1e-6),
+        ("Fisher+Complexity (几何)", _geom_fisher_complexity, 1e-6),
+        ("Hodge (几何, 拓扑独立)", _geom_hodge, 0.5),
     ]:
         r = evaluate_method(cases, fn, thresh, name, "human_label")
         lo, hi = bootstrap_f1(cases, fn, thresh, "human_label")
@@ -563,7 +564,15 @@ def run_ablation():
         print(f"  F1 95% CI: [{lo:.3f}, {hi:.3f}]")
         print(f"  TP={r.tp} FP={r.fp} FN={r.fn} TN={r.tn}")
 
-    # 文本方法 (扫阈值取最佳)
+
+def _ablation_run_text(cases, results: list) -> None:
+    """human_label ground truth 下的文本方法 (扫阈值取最佳) + bootstrap CI."""
+    text_methods = [
+        ("Levenshtein", _text_lev),
+        ("Jaccard词集", _text_jac),
+        ("char-3gram", _text_ngram),
+    ]
+    text_thresholds = [0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.5]
     print()
     for name, fn in text_methods:
         best_r = None
@@ -583,7 +592,9 @@ def run_ablation():
         print(f"  TP={best_r.tp} FP={best_r.fp} FN={best_r.fn} TN={best_r.tn}")
     print()
 
-    # ── 分场景对比 ──
+
+def _ablation_print_per_category(results: list) -> None:
+    """分场景正确率表."""
     print("=" * 80)
     print("分场景正确率 (Ground truth = human_label)")
     print("=" * 80)
@@ -601,45 +612,59 @@ def run_ablation():
         row = f"{cat:<30}"
         for r in results:
             c = r.per_category.get(cat, {})
-            correct = c.get("tp",0) + c.get("tn",0)
-            n = c.get("n",0)
+            correct = c.get("tp", 0) + c.get("tn", 0)
+            n = c.get("n", 0)
             row += f"{correct}/{n:>19}"
         print(row)
     print()
 
-    # ── blind spot ──
+
+def _ablation_print_blind_spot(results: list) -> None:
+    """各方法在哪些场景有失败."""
     print("=" * 80)
     print("blind spot 定位")
     print("=" * 80)
+    cat_order = [
+        "same_theory_diff_wording",
+        "same_pred_diff_structure",
+        "diff_theory_diff_pred",
+        "same_theory_same_wording",
+        "same_wording_diff_theory",
+        "same_structure_same_pred",
+    ]
     for r in results:
         fails = []
         for cat in cat_order:
             c = r.per_category.get(cat, {})
-            correct = c.get("tp",0) + c.get("tn",0)
-            n = c.get("n",0)
+            correct = c.get("tp", 0) + c.get("tn", 0)
+            n = c.get("n", 0)
             if n > 0 and correct < n:
                 fails.append(f"{cat}({correct}/{n})")
         print(f"  {r.method}: {'失败 @ ' + '; '.join(fails) if fails else '无失败'}")
     print()
 
-    # ── 用 hodge_label 作 ground truth (交叉验证) ──
+
+def _ablation_cross_validate(cases) -> None:
+    """hodge_label ground truth 交叉验证."""
     print("=" * 80)
     print("交叉验证: Ground truth = hodge_label (Hodge 拓扑独立判据)")
     print("=" * 80)
     print("(如果 fisher/complexity 用 hodge_label 仍高 → 不是循环论证)")
     print()
     for name, fn, thresh in [
-        ("Fisher", geom_fisher, 1e-6),
-        ("Complexity", geom_complexity, 1e-6),
-        ("Fisher+Complexity", geom_fisher_complexity, 1e-6),
-        ("Hodge", geom_hodge, 0.5),
-        ("Levenshtein best", text_lev, 0.01),
+        ("Fisher", _geom_fisher, 1e-6),
+        ("Complexity", _geom_complexity, 1e-6),
+        ("Fisher+Complexity", _geom_fisher_complexity, 1e-6),
+        ("Hodge", _geom_hodge, 0.5),
+        ("Levenshtein best", _text_lev, 0.01),
     ]:
         r = evaluate_method(cases, fn, thresh, name, "hodge_label")
         print(f"  {name:<25} F1={r.f1:.3f}  P={r.precision:.3f}  R={r.recall:.3f}")
     print()
 
-    # ── 争议样本分析 ──
+
+def _ablation_print_disputes(cases) -> None:
+    """human_label 与 hodge_label 不一致的争议样本."""
     print("=" * 80)
     print("争议样本 (human_label ≠ hodge_label)")
     print("=" * 80)
@@ -653,7 +678,9 @@ def run_ablation():
         print("  无争议样本 — 双重 ground truth 完全一致, 高置信")
     print()
 
-    # ── 结论 ──
+
+def _ablation_print_conclusion(results: list) -> None:
+    """最佳几何 vs 最佳文本 + CI 重叠判定."""
     print("=" * 80)
     print("结论")
     print("=" * 80)
@@ -664,8 +691,10 @@ def run_ablation():
     print(f"最佳几何: {best_geom.method} F1={best_geom.f1:.3f} CI=[{best_geom.f1_ci_low:.3f},{best_geom.f1_ci_high:.3f}]")
     print(f"最佳文本: {best_text.method} F1={best_text.f1:.3f} CI=[{best_text.f1_ci_low:.3f},{best_text.f1_ci_high:.3f}]")
     delta = best_geom.f1 - best_text.f1
-    # CI 是否重叠
-    ci_overlap = not (best_geom.f1_ci_low > best_text.f1_ci_high or best_text.f1_ci_low > best_geom.f1_ci_high)
+    ci_overlap = not (
+        best_geom.f1_ci_low > best_text.f1_ci_high
+        or best_text.f1_ci_low > best_geom.f1_ci_high
+    )
     print()
     print(f"ΔF1 = {delta:+.3f}")
     print(f"95% CI 重叠: {'是 (不能拒绝 H0: 两者相等)' if ci_overlap else '否 (差异统计显著)'}")
@@ -679,7 +708,20 @@ def run_ablation():
         print("  文本在 same_theory_diff_wording / same_structure_same_pred 有不可修 blind spot")
         print("  几何 Fisher 在 same_pred_diff_structure 有可修 blind spot (加 complexity/Hodge)")
 
+
+def run_ablation():
+    cases = build_test_cases()
+    _ablation_print_header(cases)
+    results = []
+    _ablation_run_geometry(cases, results)
+    _ablation_run_text(cases, results)
+    _ablation_print_per_category(results)
+    _ablation_print_blind_spot(results)
+    _ablation_cross_validate(cases)
+    _ablation_print_disputes(cases)
+    _ablation_print_conclusion(results)
     return results, cases
+
 
 
 if __name__ == "__main__":

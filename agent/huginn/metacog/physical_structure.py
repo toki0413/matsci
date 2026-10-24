@@ -485,10 +485,8 @@ def classify_implementation_gap(
 
 # ── self-check ────────────────────────────────────────────────────
 
-def _self_check() -> int:
-    """assert-based demo: 验证 PhysicalStructure + validate_structure_preservation + G58."""
-
-    # 1. 5 类预定义结构都存在
+def _sc_verify_predefined_structures() -> None:
+    """1. 5 类预定义结构都存在."""
     assert len(PREDEFINED_STRUCTURES) == 5
     for name, s in PREDEFINED_STRUCTURES.items():
         assert s.relation_type == name
@@ -498,7 +496,9 @@ def _self_check() -> int:
         # G58: 5 类预定义结构各有 relative_anchors
         assert s.relative_anchors, f"{name} missing relative_anchors"
 
-    # 2. 同构保持: 替换 CATALYTIC_GEOMETRY 的 active_site (Pt -> Pd)
+
+def _sc_build_isomorphic_mapping() -> PhysicalStructure:
+    """2. 同构保持: 替换 CATALYTIC_GEOMETRY 的 active_site (Pt -> Pd)."""
     src = CATALYTIC_GEOMETRY
     tgt = PhysicalStructure(
         relation_type="catalytic_geometry",
@@ -514,8 +514,11 @@ def _self_check() -> int:
     assert validate_structure_preservation(mapping) is True
     assert mapping.is_isomorphic is True
     assert not mapping.violation_detail
+    return src
 
-    # 3. 结构破坏: relation_type 不一致
+
+def _sc_verify_relation_type_mismatch(src: PhysicalStructure) -> None:
+    """3. 结构破坏: relation_type 不一致."""
     bad_type = PhysicalStructure(
         relation_type="interface_binding",  # 不一致
         relation_expr=src.relation_expr,
@@ -526,7 +529,9 @@ def _self_check() -> int:
     assert validate_structure_preservation(m2) is False
     assert "relation_type mismatch" in m2.violation_detail[0]
 
-    # 4. 结构破坏: 槽位不一致 (缺失槽位)
+
+def _sc_verify_missing_slots(src: PhysicalStructure) -> None:
+    """4. 结构破坏: 槽位不一致 (缺失槽位)."""
     bad_slots = PhysicalStructure(
         relation_type="catalytic_geometry",
         relation_expr=src.relation_expr,
@@ -537,7 +542,9 @@ def _self_check() -> int:
     assert validate_structure_preservation(m3) is False
     assert any("missing slots" in v for v in m3.violation_detail)
 
-    # 5. 结构破坏: 平凡映射 (无替换)
+
+def _sc_verify_trivial_mapping(src: PhysicalStructure) -> None:
+    """5. 结构破坏: 平凡映射 (无替换)."""
     trivial = PhysicalStructure(
         relation_type="catalytic_geometry",
         relation_expr=src.relation_expr,
@@ -548,7 +555,9 @@ def _self_check() -> int:
     assert validate_structure_preservation(m4) is False
     assert any("trivial" in v for v in m4.violation_detail)
 
-    # 6. 结构破坏: 约束不可解析
+
+def _sc_verify_unparseable_constraints(src: PhysicalStructure) -> None:
+    """6. 结构破坏: 约束不可解析."""
     bad_constraint = PhysicalStructure(
         relation_type="catalytic_geometry",
         relation_expr=src.relation_expr,
@@ -558,8 +567,12 @@ def _self_check() -> int:
     m5 = StructureMapping(source=src, target=bad_constraint, slot_replacements={})
     assert validate_structure_preservation(m5) is False
 
-    # ── G58: 相对结构同构测试 ──────────────────────────────────────
-    # 用 mock embedding 验证: 旋转保持角度 → 同构; 扰动破坏角度 → 非同构
+
+# ── G58: 相对结构同构测试 ──────────────────────────────────────
+# 用 mock embedding 验证: 旋转保持角度 → 同构; 扰动破坏角度 → 非同构
+
+def _sc_check_relative_representation() -> dict[str, Any]:
+    """G58 夹具 + 7. 相对表示形状 N×K = 4×4."""
     import numpy as np
 
     # 4 个实现者 + 4 个 anchor (anchor 是实现者子集)
@@ -568,54 +581,84 @@ def _self_check() -> int:
     source_embeddings = {n: rng.standard_normal(8) for n in impl_names}
     anchors = impl_names  # 全部当 anchor (最简情形)
 
-    # 7. 相对表示形状 N×K = 4×4
     source_repr = compute_relative_representation(source_embeddings, anchors)
     assert source_repr.shape == (4, 4), f"expected 4x4, got {source_repr.shape}"
     # 对角线应是 1 (自己跟自己 cosine = 1)
     assert np.allclose(np.diag(source_repr), 1.0, atol=1e-6)
 
-    # 8. 同构: source 旋转后作为 target — 角度保持, 相对表示不变
+    return {
+        "rng": rng,
+        "impl_names": impl_names,
+        "source_embeddings": source_embeddings,
+        "anchors": anchors,
+    }
+
+
+def _sc_verify_rotation_invariance(fixtures: dict[str, Any]) -> None:
+    """8. 同构: source 旋转后作为 target — 角度保持, 相对表示不变."""
+    import numpy as np
+
+    rng = fixtures["rng"]
+    impl_names = fixtures["impl_names"]
+    source_embeddings = fixtures["source_embeddings"]
     Q, _ = np.linalg.qr(rng.standard_normal((8, 8)))  # 正交矩阵 = 旋转/反射
     target_embeddings = {n: Q @ source_embeddings[n] for n in impl_names}
     is_iso, dist = compute_and_validate_relative(
-        source_embeddings, target_embeddings, anchors, tol=1e-6,
+        source_embeddings, target_embeddings, fixtures["anchors"], tol=1e-6,
     )
     assert is_iso, f"rotation should preserve relative repr (dist={dist})"
     assert dist < 1e-6, f"rotation distance too large: {dist}"
 
-    # 9. 非同构: target 加随机扰动 — 角度被破坏
+
+def _sc_verify_perturbation_breaks_isomorphism(
+    fixtures: dict[str, Any],
+) -> None:
+    """9. 非同构: target 加随机扰动 — 角度被破坏."""
+    source_embeddings = fixtures["source_embeddings"]
     perturbed_embeddings = {
-        n: source_embeddings[n] + 0.5 * rng.standard_normal(8)
-        for n in impl_names
+        n: source_embeddings[n] + 0.5 * fixtures["rng"].standard_normal(8)
+        for n in fixtures["impl_names"]
     }
     is_iso2, dist2 = compute_and_validate_relative(
-        source_embeddings, perturbed_embeddings, anchors, tol=1e-3,
+        source_embeddings, perturbed_embeddings, fixtures["anchors"], tol=1e-3,
     )
     assert not is_iso2, f"perturbation should break isomorphism (dist={dist2})"
     assert dist2 > 1e-3, f"perturbation distance too small: {dist2}"
 
-    # 10. anchor 不在 embeddings 里 → ValueError
+
+def _sc_verify_missing_anchor_raises(fixtures: dict[str, Any]) -> None:
+    """10. anchor 不在 embeddings 里 → ValueError."""
     try:
         compute_relative_representation(
-            source_embeddings, ["Pt", "nonexistent"],
+            fixtures["source_embeddings"], ["Pt", "nonexistent"],
         )
         raise AssertionError("should raise ValueError for missing anchor")
     except ValueError:
         logger.debug("best-effort op failed", exc_info=True)
 
-    # 11. 形状不一致 → (False, inf)
+
+def _sc_verify_shape_mismatch() -> None:
+    """11. 形状不一致 → (False, inf)."""
+    import numpy as np
+
     is_iso3, dist3 = validate_relative_isomorphism(
         np.zeros((4, 4)), np.zeros((3, 4)),
     )
     assert not is_iso3 and dist3 == float("inf")
 
-    # 12. G58 跟 G46 叠加: relative_anchors 非空时可做 relative 验证
+
+def _sc_verify_anchor_alignment() -> None:
+    """12. G58 跟 G46 叠加: relative_anchors 非空时可做 relative 验证."""
     assert CATALYTIC_GEOMETRY.relative_anchors["active_site"] == ["Pt", "Pd", "Ni", "Cu"]
     assert len(CATALYTIC_GEOMETRY.relative_anchors["adsorbate"]) == 4
 
-    # ── G47: 解耦搜索测试 ──────────────────────────────────────────
-    # 13. enumerate_implementors: CATALYTIC_GEOMETRY 当前 active_site="M",
-    #     候选池用 relative_anchors (Pt/Pd/Ni/Cu), 应枚举非平凡组合
+
+# ── G47: 解耦搜索测试 ──────────────────────────────────────────
+
+def _sc_verify_implementor_enumeration() -> None:
+    """13. enumerate_implementors: 用 relative_anchors 枚举非平凡组合."""
+    # CATALYTIC_GEOMETRY 当前 active_site="M",
+    # 候选池用 relative_anchors (Pt/Pd/Ni/Cu), 应枚举非平凡组合
     impls = enumerate_implementors(CATALYTIC_GEOMETRY)
     assert len(impls) > 0, "should enumerate non-trivial combinations"
     # 当前 active_site="M", adsorbate="X" 都不在 anchor 里, 全部组合非平凡
@@ -631,7 +674,9 @@ def _self_check() -> int:
     assert all(isinstance(c, dict) for c in impls)
     assert all(set(c.keys()) == {"active_site", "adsorbate"} for c in impls)
 
-    # 14. enumerate_implementors: 自定义候选池
+
+def _sc_verify_custom_candidate_pools() -> None:
+    """14. enumerate_implementors: 自定义候选池."""
     custom_pools = {
         "active_site": ["Pt", "Pd"],  # 只用 2 个
         "adsorbate": ["O"],            # 只用 1 个
@@ -640,7 +685,9 @@ def _self_check() -> int:
     # 2 × 1 = 2 组合 (都非平凡, 因为当前是 M/X)
     assert len(impls2) == 2, f"expected 2, got {len(impls2)}"
 
-    # 15. classify_implementation_gap: selected / unselected / impossible
+
+def _sc_verify_implementation_gap() -> None:
+    """15. classify_implementation_gap: selected / unselected / impossible."""
     known = [{"active_site": "Pt", "adsorbate": "O"}]
     # selected: 匹配已知
     assert classify_implementation_gap(
@@ -659,7 +706,9 @@ def _self_check() -> int:
         CATALYTIC_GEOMETRY, {"active_site": 123, "adsorbate": "O"}, known,
     ) == "impossible"
 
-    # 16. enumerate_implementors: 无槽位 → 空
+
+def _sc_verify_empty_structure() -> None:
+    """16. enumerate_implementors: 无槽位 → 空."""
     empty_struct = PhysicalStructure(
         relation_type="custom",
         relation_expr="And(Eq(x, Symbol('x')))",
@@ -667,6 +716,25 @@ def _self_check() -> int:
     )
     assert enumerate_implementors(empty_struct) == []
 
+
+def _self_check() -> int:
+    """assert-based demo: 验证 PhysicalStructure + validate_structure_preservation + G58."""
+    _sc_verify_predefined_structures()
+    src = _sc_build_isomorphic_mapping()
+    _sc_verify_relation_type_mismatch(src)
+    _sc_verify_missing_slots(src)
+    _sc_verify_trivial_mapping(src)
+    _sc_verify_unparseable_constraints(src)
+    fixtures = _sc_check_relative_representation()
+    _sc_verify_rotation_invariance(fixtures)
+    _sc_verify_perturbation_breaks_isomorphism(fixtures)
+    _sc_verify_missing_anchor_raises(fixtures)
+    _sc_verify_shape_mismatch()
+    _sc_verify_anchor_alignment()
+    _sc_verify_implementor_enumeration()
+    _sc_verify_custom_candidate_pools()
+    _sc_verify_implementation_gap()
+    _sc_verify_empty_structure()
     print("[PHYSTRUCT] self-check OK (incl G47 decoupled search + G58)")
     return 0
 

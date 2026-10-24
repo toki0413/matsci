@@ -689,196 +689,266 @@ class EngineAct:
         self._last_author_prompt_len = None
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
-        import os as _osd
-        if _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
-            try:
-                _obj = str(getattr(self, "_objective", "") or "")
-                logger.warning(
-                    "[exec-route] mode=%r desc[:80]=%r obj_len=%d "
-                    "is_exp_desc=%s is_exp_obj=%s is_det_desc=%s",
-                    mode, (description or "")[:80], len(_obj),
-                    self._is_code_experiment(description),
-                    self._is_code_experiment(_obj),
-                    self._is_deterministic_numeric(description),
-                )
-            except Exception:  # — 原因: 路由诊断日志失败不影响执行, 忽略
-                pass
+        self._act_log_route(mode, description)
 
-        # 方案1·攻 execute (2026-09-11 A线根因后半段 + 平衡点落地):
-        # ① plan 已带"可运行数值脚本片段" → 直接真实执行成证据;
-        # ② plan 无片段但目标是"确定性数值计算" → harness 主动请求一段最小 probe 并运行,
-        #    让"产出执行证据"从模型的 privilege 变成 execute 的内建动作 (执行 on-code,
-        #    裁决仍由 validate 的诚实层负责)。两步都 parse 不到可执行片段 → 回落原分派, 不回归。
         try:
-            _snip = self._extract_run_snippet(plan)
-            if _snip:
-                _cout = self._run_snippet_to_output(_snip)
-                if _cout:
-                    result = {
-                        "mode": "closed_form_exec",
-                        "status": "completed",
-                        "success": True,
-                        "result": _cout.strip(),
-                        "script": _snip,
-                        "reproducible": True,
-                    }
-                    self._record_provenance("closed_form_exec", plan, result)
-                    self._record_internal_tool_call("closed_form_exec", plan, result)
-                    self._last_execution_result = {
-                        "_tool_name": "closed_form_exec",
-                        "_tool_input": plan,
-                        "result": result,
-                    }
-                    logger.info(
-                        "execute closed-form fast-path: plan 内含可运行数值片段, 已真实执行 → evidence"
-                    )
-                    return result
-            # 方案2·接 Code Lab (2026-09-27 割裂感根因): 目标是"计算实验类"时, 让书生
-            # **亲手写**一段 run(cfg) 实验代码, 在 Code Lab 安全沙箱真跑 → 结构化
-            # objectives 作证据. 与闭式 probe 分层: 闭式只认平凡数值片段, 这里认开放
-            # 实验意图(训练/扫描/探针...), 允更长时/更多依赖. 命题无关: 只按目标的实验
-            # 意图词触发, 不绑定任何具体命题. 失败即回落原分派, 不回归.
-            # 顺序: 实验意图优先于平凡 probe —— 否则描述里的 "predict"/"(1)" 会让
-            # _is_deterministic_numeric 先命中, 把真实验目标塞进"抄一段闭式"的窄路,
-            # probe 跑不出数就再落到 coder 空转 (2026-09-27 run7 实测: 0 tool_calls).
-            # 二者级联(if 而非 elif): Code Lab 失败仍可退到 probe, 不互相遮蔽.
-            if self._is_code_experiment(description) or self._is_code_experiment(
-                str(getattr(self, "_objective", "") or "")
-            ):
-                _lab = await self._execute_code_lab(description, context)
-                # 成败都记: 失败的内建实验也占用了真实算力, 不能从遥测里消失.
-                self._record_internal_tool_call("code_lab", plan, _lab)
-                if _lab.get("success"):
-                    self._record_provenance("code_lab", plan, _lab)
-                    self._last_execution_result = {
-                        "_tool_name": "code_lab",
-                        "_tool_input": plan,
-                        "result": _lab,
-                    }
-                    logger.info(
-                        "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
-                    )
-                    return _lab
-            # 独立判定: plan 片段若没跑出数, 仍尝试 objective 探针(平凡确定性数值).
-            if self._is_deterministic_numeric(description) or self._is_deterministic_numeric(
-                str(getattr(self, "_objective", "") or "")
-            ):
-                # 以可靠文本源为准: plan.description 在 run_cognitive 路径可能为空,
-                # 用 objective(确定性全文本)兜底判定并生成 probe。
-                _src = description if self._is_deterministic_numeric(description) else str(
-                    getattr(self, "_objective", "") or ""
-                )
-                _probe = await self._request_numeric_probe(_src)
-                if _probe:
-                    _cout = self._run_snippet_to_output(_probe)
-                    if _cout:
-                        result = {
-                            "mode": "probe_exec",
-                            "status": "completed",
-                            "success": True,
-                            "result": _cout.strip(),
-                            "script": _probe,
-                            "reproducible": True,
-                        }
-                        self._record_provenance("probe_exec", plan, result)
-                        self._record_internal_tool_call("probe_exec", plan, result)
-                        self._last_execution_result = {
-                            "_tool_name": "probe_exec",
-                            "_tool_input": plan,
-                            "result": result,
-                        }
-                        logger.info(
-                            "execute builtin probe: 确定性数值目标 → harness 内建生成并执行 probe → evidence"
-                        )
-                        return result
+            result = await self._act_fast_paths(plan, description, context)
         except Exception:  # 防御: 探针快路失败转入通用执行
-            logger.debug("execute builtin-probe fast-path failed (fall through)", exc_info=True)
+            logger.debug(
+                "execute builtin-probe fast-path failed (fall through)", exc_info=True
+            )
+            result = None
+        if result is not None:
+            return result
 
-        # 非阻塞诊断(2026-09-11): real-loop 里 probe 屡不触发, 这里永久留一口子
-        # 记录判定输入, 便于定位为何没走内建执行(不等重跑才猜)。
+        # 非阻塞诊断: 记录判定输入, 便于定位为何没走内建执行.
+        self._act_log_probe_diagnostics(plan, description)
+
+        result, mode = await self._act_dispatch(mode, plan, description, context)
+        result, mode = await self._act_coder_fallback(mode, description, context, result)
+        return self._act_finalize(mode, plan, context, result)
+
+    def _act_log_route(self, mode: Any, description: Any) -> None:
+        """HUGINN_EXEC_ROUTE_DEBUG 开启时打印路由判定输入."""
+        import os as _osd
+
+        if not _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            return
+        try:
+            _obj = str(getattr(self, "_objective", "") or "")
+            logger.warning(
+                "[exec-route] mode=%r desc[:80]=%r obj_len=%d "
+                "is_exp_desc=%s is_exp_obj=%s is_det_desc=%s",
+                mode, (description or "")[:80], len(_obj),
+                self._is_code_experiment(description),
+                self._is_code_experiment(_obj),
+                self._is_deterministic_numeric(description),
+            )
+        except Exception:  # — 原因: 路由诊断日志失败不影响执行, 忽略
+            pass
+
+    async def _act_fast_paths(
+        self, plan: dict[str, Any], description: Any, context: dict[str, Any]
+    ) -> Any | None:
+        """内建执行快路: 闭式片段 → Code Lab → 数值 probe; 命中即返回."""
+        result = self._act_closed_form_fast_path(plan)
+        if result is not None:
+            return result
+        result = await self._act_code_lab_fast_path(plan, description, context)
+        if result is not None:
+            return result
+        return await self._act_numeric_probe_fast_path(plan, description)
+
+    def _act_closed_form_fast_path(self, plan: dict[str, Any]) -> Any | None:
+        """plan 已带可运行数值脚本片段 → 直接真实执行成证据."""
+        _snip = self._extract_run_snippet(plan)
+        if not _snip:
+            return None
+        _cout = self._run_snippet_to_output(_snip)
+        if not _cout:
+            return None
+        result = {
+            "mode": "closed_form_exec",
+            "status": "completed",
+            "success": True,
+            "result": _cout.strip(),
+            "script": _snip,
+            "reproducible": True,
+        }
+        self._record_provenance("closed_form_exec", plan, result)
+        self._record_internal_tool_call("closed_form_exec", plan, result)
+        self._last_execution_result = {
+            "_tool_name": "closed_form_exec",
+            "_tool_input": plan,
+            "result": result,
+        }
+        logger.info(
+            "execute closed-form fast-path: plan 内含可运行数值片段, 已真实执行 → evidence"
+        )
+        return result
+
+    async def _act_code_lab_fast_path(
+        self, plan: dict[str, Any], description: Any, context: dict[str, Any]
+    ) -> Any | None:
+        """目标是计算实验类 → 书生亲写 run(cfg), Code Lab 沙箱真跑."""
+        # 顺序: 实验意图优先于平凡 probe, 二者级联(if 而非 elif): 失败仍可退到 probe.
+        if not (
+            self._is_code_experiment(description)
+            or self._is_code_experiment(str(getattr(self, "_objective", "") or ""))
+        ):
+            return None
+        _lab = await self._execute_code_lab(description, context)
+        # 成败都记: 失败的内建实验也占用了真实算力, 不能从遥测里消失.
+        self._record_internal_tool_call("code_lab", plan, _lab)
+        if not _lab.get("success"):
+            return None
+        self._record_provenance("code_lab", plan, _lab)
+        self._last_execution_result = {
+            "_tool_name": "code_lab",
+            "_tool_input": plan,
+            "result": _lab,
+        }
+        logger.info(
+            "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
+        )
+        return _lab
+
+    async def _act_numeric_probe_fast_path(
+        self, plan: dict[str, Any], description: Any
+    ) -> Any | None:
+        """确定性数值目标 → harness 内建生成并执行最小 probe."""
+        if not (
+            self._is_deterministic_numeric(description)
+            or self._is_deterministic_numeric(str(getattr(self, "_objective", "") or ""))
+        ):
+            return None
+        # 以可靠文本源为准: plan.description 可能为空, 用 objective 兜底.
+        _src = (
+            description
+            if self._is_deterministic_numeric(description)
+            else str(getattr(self, "_objective", "") or "")
+        )
+        _probe = await self._request_numeric_probe(_src)
+        if not _probe:
+            return None
+        _cout = self._run_snippet_to_output(_probe)
+        if not _cout:
+            return None
+        result = {
+            "mode": "probe_exec",
+            "status": "completed",
+            "success": True,
+            "result": _cout.strip(),
+            "script": _probe,
+            "reproducible": True,
+        }
+        self._record_provenance("probe_exec", plan, result)
+        self._record_internal_tool_call("probe_exec", plan, result)
+        self._last_execution_result = {
+            "_tool_name": "probe_exec",
+            "_tool_input": plan,
+            "result": result,
+        }
+        logger.info(
+            "execute builtin probe: 确定性数值目标 → harness 内建生成并执行 probe → evidence"
+        )
+        return result
+
+    def _act_log_probe_diagnostics(
+        self, plan: dict[str, Any], description: Any
+    ) -> None:
+        """非阻塞诊断: 判定到确定性目标却没产出 probe 证据时留痕."""
         try:
             _det_desc = self._is_deterministic_numeric(description)
-            _det_obj = self._is_deterministic_numeric(str(getattr(self, "_objective", "") or ""))
-            if _det_desc or _det_obj:
-                logger.info(
-                    "[execute-probe] 判定到确定性目标但未产出探针证据: "
-                    "det_desc=%s det_obj=%s, desc[:40]=%r, obj[:40]=%r, _tool=%r",
-                    _det_desc, _det_obj,
-                    (description or "")[:40], (str(getattr(self, "_objective", "") or ""))[:40],
-                    plan.get("mode"),
-                )
+            _det_obj = self._is_deterministic_numeric(
+                str(getattr(self, "_objective", "") or "")
+            )
+            if not (_det_desc or _det_obj):
+                return
+            logger.info(
+                "[execute-probe] 判定到确定性目标但未产出探针证据: "
+                "det_desc=%s det_obj=%s, desc[:40]=%r, obj[:40]=%r, _tool=%r",
+                _det_desc, _det_obj,
+                (description or "")[:40],
+                (str(getattr(self, "_objective", "") or ""))[:40],
+                plan.get("mode"),
+            )
         except Exception:  # — execute 分流探针失败则继续走通用执行, 不阻断
             pass
 
-        # H4: toggle on 时从 PhaseRegistry 取 dispatch_table 替代 hardcode if/elif
+    async def _act_dispatch(
+        self, mode: str, plan: dict[str, Any], description: Any,
+        context: dict[str, Any],
+    ) -> tuple[Any, str]:
+        """按 mode 分派到对应执行器, 返回 (result, 生效 mode)."""
+        # H4: toggle on 时从 PhaseRegistry 取 dispatch_table 替代 hardcode if/elif.
         # ponytail: dispatch_table 存 [method_name, arg_mode], arg_mode 决定传
         # plan 还是 description (executor 签名不统一, 不改签名最小 diff).
-        # 升级路径: 统一所有 executor 签名为 (plan, context), 去掉 arg_mode.
         from huginn.harness.phase_spec import get_phase_dispatch_table
         dispatch = get_phase_dispatch_table()
         if dispatch is not None:
-            entry = dispatch.get(mode)
-            if entry is None:
-                raise ValueError(f"Unknown plan mode: {mode}")
-            method_name, arg_mode = entry[0], entry[1]
-            executor = getattr(self, method_name)
-            arg = plan if arg_mode == "plan" else description
-            result = await executor(arg, context)
-            # workflow 失败走 evolved_fix (原 hardcode 逻辑保留)
-            if mode == "workflow" and isinstance(result, dict) and not result.get("success", True):
-                result = (
-                    await self._try_evolved_fix(mode, description, result) or result
-                )
-        elif mode == "coder":
+            return await self._act_dispatch_from_table(
+                dispatch, mode, plan, description, context
+            )
+        if mode in ("coder", "workflow", "dynamic_workflow", "explore", "code_lab"):
+            return await self._act_dispatch_primary(mode, plan, description, context)
+        return await self._act_dispatch_inspect(mode, plan, description, context)
+
+    async def _act_dispatch_from_table(
+        self, dispatch: Any, mode: str, plan: dict[str, Any],
+        description: Any, context: dict[str, Any],
+    ) -> tuple[Any, str]:
+        """dispatch_table 路径: entry = [method_name, arg_mode]."""
+        entry = dispatch.get(mode)
+        if entry is None:
+            raise ValueError(f"Unknown plan mode: {mode}")
+        method_name, arg_mode = entry[0], entry[1]
+        executor = getattr(self, method_name)
+        arg = plan if arg_mode == "plan" else description
+        result = await executor(arg, context)
+        # workflow 失败走 evolved_fix (原 hardcode 逻辑保留)
+        if (
+            mode == "workflow"
+            and isinstance(result, dict)
+            and not result.get("success", True)
+        ):
+            result = await self._try_evolved_fix(mode, description, result) or result
+        return result, mode
+
+    async def _act_dispatch_primary(
+        self, mode: str, plan: dict[str, Any], description: Any,
+        context: dict[str, Any],
+    ) -> tuple[Any, str]:
+        """coder / workflow / dynamic_workflow / explore / code_lab."""
+        if mode == "coder":
             # Use CoderRunner to modify code
-            result = await self._execute_coder(description, context)
-        elif mode == "workflow":
+            return await self._execute_coder(description, context), mode
+        if mode == "workflow":
             # Use WorkflowEngine to run computational pipeline
             result = await self._execute_workflow(description, context)
             # On failure, try applying a learned heuristic fix before giving up
             if isinstance(result, dict) and not result.get("success", True):
-                result = (
-                    await self._try_evolved_fix(mode, description, result) or result
-                )
-        elif mode == "dynamic_workflow":
+                result = await self._try_evolved_fix(mode, description, result) or result
+            return result, mode
+        if mode == "dynamic_workflow":
             # A5: agent 写的并行 subtask 脚本, orchestrator 并发跑
-            result = await self._execute_dynamic_workflow(plan, context)
-        elif mode == "explore":
+            return await self._execute_dynamic_workflow(plan, context), mode
+        if mode == "explore":
             # Use ExplorationOrchestrator to search design space
             result = await self._execute_explore(description, context)
-            # 空转兜底: 未注册设计空间时 explore 只回一个 0-branch 空 pod
-            # (0.0s, n_explored=0, 无 result) — 无证据却有"成功"外形, report 遂把
-            # LLM 现编的数字当 Results 写出去. 目标是"确定性数值计算"(中英动词都认)
-            # 时回落 coder 真写码真执行 (Write+Bash), 不空转.
-            if (
-                isinstance(result, dict)
-                and (
-                    result.get("success") is False
-                    or (
-                        not result.get("result")
-                        and int(result.get("n_explored", 0) or 0) == 0
-                    )
-                )
-                and (
-                    self._is_deterministic_numeric(description)
-                    or self._is_deterministic_numeric(
-                        str(getattr(self, "_objective", "") or "")
-                    )
-                )
-            ):
+            # 空转兜底: 无证据却有"成功"外形 → 确定性数值目标回落 coder 真写码.
+            if self._act_explore_is_idle(result, description):
                 logger.info("explore 空转 (无证据) → 回落 coder 真实执行")
                 result = await self._execute_coder(description, context)
                 mode = "coder"
-        elif mode == "code_lab":
-            # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
-            result = await self._execute_code_lab(description, context)
-        elif mode == "skill":
+            return result, mode
+        # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
+        return await self._execute_code_lab(description, context), mode
+
+    def _act_explore_is_idle(self, result: Any, description: Any) -> bool:
+        """explore 是否无证据空转, 且目标是确定性数值计算."""
+        if not isinstance(result, dict):
+            return False
+        empty = (
+            result.get("success") is False
+            or (not result.get("result") and int(result.get("n_explored", 0) or 0) == 0)
+        )
+        deterministic = (
+            self._is_deterministic_numeric(description)
+            or self._is_deterministic_numeric(str(getattr(self, "_objective", "") or ""))
+        )
+        return empty and deterministic
+
+    async def _act_dispatch_inspect(
+        self, mode: str, plan: dict[str, Any], description: Any,
+        context: dict[str, Any],
+    ) -> tuple[Any, str]:
+        """skill / visual_inspect / trace_inspect / frame_inspect."""
+        if mode == "skill":
             # Run a pre-built composite skill pipeline
-            result = await self._execute_skill(plan, context)
-        elif mode == "visual_inspect":
-            # Path C: interactive visual inspection using existing visual tools
+            return await self._execute_skill(plan, context), mode
+        if mode == "visual_inspect":
             # A3 + 批次 D: consistency_check 默认开启 (闭环), 除非显式关闭.
-            # 精修闭环要求每次 zoom 都做 re-ask 稳定性自检, 不再依赖 agent 记得声明.
             consistency = not (
                 context.get("consistency_check") is False
                 or "no consistency" in plan.lower()
@@ -887,29 +957,32 @@ class EngineAct:
             result = await self._execute_visual_inspect(
                 description, context, consistency_check=consistency
             )
-        elif mode == "trace_inspect":
+            return result, mode
+        if mode == "trace_inspect":
             # VISTA 借鉴: 模型主动 recall 自己的过程级执行 trace (read-only).
-            # flag 关时执行体直接返回 disabled 说明, 不改控制流.
-            result = await self._execute_trace_inspect(description, context)
-        elif mode == "frame_inspect":
+            return await self._execute_trace_inspect(description, context), mode
+        if mode == "frame_inspect":
             # VISTA 借鉴: 无损帧回看 / 区域裁剪 / read_pixels (flag 关时返回 disabled).
-            result = await self._execute_frame_inspect(description, context)
-        else:
-            raise ValueError(f"Unknown plan mode: {mode}")
+            return await self._execute_frame_inspect(description, context), mode
+        raise ValueError(f"Unknown plan mode: {mode}")
 
-        # P1: coder 失败不再直接落盘成终态. 未产出可用结果时按 code_lab →
-        # probe_exec 的顺序自动回落 (两条快路都真实执行、产出可复算证据),
-        # 都不行才保留原始失败回执, 交给 validate 的诚实层判定.
-        if (
-            mode == "coder"
-            and isinstance(result, dict)
-            and not result.get("success", True)
-        ):
-            fallback = await self._fallback_from_coder(description, context)
-            if fallback is not None:
-                result = fallback
-                mode = str(fallback.get("mode", mode))
+    async def _act_coder_fallback(
+        self, mode: str, description: Any, context: dict[str, Any], result: Any
+    ) -> tuple[Any, str]:
+        """coder 未产出可用结果 → 按 code_lab → probe_exec 顺序自动回落."""
+        # P1: coder 失败不再直接落盘成终态, 都不行才保留原始失败回执.
+        if mode != "coder" or not isinstance(result, dict) or result.get("success", True):
+            return result, mode
+        fallback = await self._fallback_from_coder(description, context)
+        if fallback is not None:
+            result = fallback
+            mode = str(fallback.get("mode", mode))
+        return result, mode
 
+    def _act_finalize(
+        self, mode: str, plan: dict[str, Any], context: dict[str, Any], result: Any
+    ) -> Any:
+        """provenance / 内建 tool_call / 视觉帧入库 / alignment / 结果缓存."""
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
         # dispatch / 回落阶段的内建执行成功路径: 同样补 tool_call span,
@@ -917,7 +990,6 @@ class EngineAct:
         if mode in self._INTERNAL_EXEC_MODES:
             self._record_internal_tool_call(mode, plan, result)
         # VISTA 借鉴: 本轮若产出视觉帧, 原样落盘进无损观测记忆.
-        # flag (visual_frame_memory) 关时 capture_if_enabled 直返, 零成本零回归.
         # frame_inspect 本身是"回看已有帧", 不重复入库.
         if mode != "frame_inspect":
             self._recall_modes.capture_if_enabled(mode, result)
@@ -1727,136 +1799,131 @@ Please modify the code to address this task."""
     # P2 slim-down: visual_inspect 方法族已下沉到 VisualInspect 协作对象
     # (visual_inspect.py). 引擎组合持有 self._visual_inspector, 经薄委托调用.
 
-    async def _llm_chat(
-        self,
-        prompt: str,
-        persona_name: str | None = None,
-        model: Any = None,
-        task: str | None = None,
-        tools: list[Any] | None = None,
-        max_tool_rounds: int = 2,
-    ) -> str:
-        """Send a prompt to the LLM and return the response.
+    def _llm_chat_route(self, model: Any, task: str | None) -> Any:
+        """Team 模式 task→model 路由; 显式 model 不被覆盖.
 
-        persona_name 不为空时, 把对应 persona 的 system prompt 作为
-        SystemMessage 插在最前, 实现"每阶段开始注入 persona system prompt".
-        persona 找不到就退化为不注入, 行为跟改动前一致.
-
-        model 不为空时用传入的模型 (用于三槽 verification), 否则用默认 self.model.
-
-        task 不为空时, 优先从 model_router 路由 (team 模式):
         - "reasoning"/"science" → 强模型 (云端, 发散性假设)
-        - "planning" → 中档模型 (收敛, 把假设变步骤)  [OAK 三阶段角色]
+        - "planning" → 中档模型 (收敛, 把假设变步骤)
         - "summarize"/"format" → 便宜模型 (本地/小模型)
         - "verification" → 独立验证模型
-        model 参数优先于 task — 显式指定的模型不被路由覆盖.
         """
-        from langchain_core.messages import HumanMessage, SystemMessage
+        if model is not None or task is None:
+            return model
+        router = getattr(self, "model_router", None)
+        if router is None:
+            return model
+        try:
+            routed = router.select(
+                task,
+                prefer_cheap=(
+                    task in ("summarize", "format", "archival", "planning")
+                ),
+            )
+            if routed is not None:
+                return routed
+        except Exception:  # 防御: 路由选择失败用回退模型
+            logger.debug(
+                "model router select failed — using fallback model",
+                exc_info=True,
+            )
+        return model
 
-        # Team 模式: task 路由优先, 但显式 model 不被覆盖
-        if model is None and task is not None:
-            router = getattr(self, "model_router", None)
-            if router is not None:
-                try:
-                    routed = router.select(
-                        task,
-                        prefer_cheap=(
-                            task in ("summarize", "format", "archival", "planning")
-                        ),
-                    )
-                    if routed is not None:
-                        model = routed
-                except Exception:  # 防御: 路由选择失败用回退模型
-                    logger.debug(
-                        "model router select failed — using fallback model",
-                        exc_info=True,
-                    )
-
-        llm = model or self.model
-        messages: list[Any] = []
-        if persona_name:
-            sys_prompt = self._persona_system_prompt(persona_name)
-            # H4: GRILL 模式 active 时把 GRILL_SYSTEM_PROMPT_CN 追加到 system prompt.
-            # 之前 should_pause_for_decision 触发 GRILL 后只 auto-resume, LLM 看不到
-            # grill 约束, "一次一问" 形同虚设. 现在注入, LLM 自己负责流程.
-            if self._grill_active:
-                try:
-                    from huginn.runtime.pre_plan_grill import GRILL_SYSTEM_PROMPT_CN
-                    sys_prompt = (sys_prompt or "") + "\n\n" + GRILL_SYSTEM_PROMPT_CN
-                    self._grill_turns += 1
-                    # 退出检查: LLM 输出含 "shared understanding" 确认标记 → 退出.
-                    # 依赖上层 (run_cognitive) 把 LLM 输出回传后再判断, 这里只计数.
-                    # ceiling: 简单字符串匹配, 升级用 LLM judge.
-                    if self._grill_turns > 20:
-                        logger.warning(
-                            "GRILL 超过 20 轮, 强制退出 (可能 LLM 没理解确认标记)"
-                        )
-                        self._grill_active = False
-                except ImportError:
-                    logger.debug("pre_plan_grill import failed, GRILL prompt 跳过")
-            # 插件 prompt 段 (如 asd_ste100 的受控语言规则): autoloop 直接拼 persona
-            # system prompt, **绕过** agent.build_prompt, 故注册进 prompt_segments 的
-            # 插件段在这条路径上永不生效 (没通电). 这里显式消费只取插件段 (排除框架
-            # 骨架段, 避免与 persona/phase 重复注入). 组装失败不影响主 LLM 调用.
-            try:
-                from huginn.plugins.prompt_segments import (
-                    assemble_plugin_prompt_segments,
+    def _llm_chat_grill_prompt(self, sys_prompt: str | None) -> str | None:
+        """GRILL active 时把 GRILL_SYSTEM_PROMPT_CN 追加到 system prompt."""
+        if not self._grill_active:
+            return sys_prompt
+        try:
+            from huginn.runtime.pre_plan_grill import GRILL_SYSTEM_PROMPT_CN
+            sys_prompt = (sys_prompt or "") + "\n\n" + GRILL_SYSTEM_PROMPT_CN
+            self._grill_turns += 1
+            # 退出检查: 输出含确认标记由上层判断; ceiling: 简单计数.
+            if self._grill_turns > 20:
+                logger.warning(
+                    "GRILL 超过 20 轮, 强制退出 (可能 LLM 没理解确认标记)"
                 )
+                self._grill_active = False
+        except ImportError:
+            logger.debug("pre_plan_grill import failed, GRILL prompt 跳过")
+        return sys_prompt
 
-                _plugin_seg = assemble_plugin_prompt_segments(
-                    mode="default",
-                    phase=self._current_phase or "",
-                    metacog_state="",
-                    system_prompt=sys_prompt,
-                )
-                if _plugin_seg:
-                    sys_prompt = f"{sys_prompt}\n\n{_plugin_seg}" if sys_prompt else _plugin_seg
-            except Exception:  # 防御: 段组装失败退回 persona-only, 不阻塞主路径
-                logger.debug("plugin prompt segments failed", exc_info=True)
-            if sys_prompt:
-                sys_msg = SystemMessage(content=sys_prompt)
-                # 静态 system prompt 跨调用不变, 给 Anthropic 打 cache 标记.
-                # Kimi/Moonshot 走 OpenAI 协议, cache_control 无效, 不打标记.
-                _ident = f"{type(llm).__name__}{getattr(llm, 'model', '')}".lower()
-                if any(k in _ident for k in ("anthropic", "claude")):
-                    sys_msg.additional_kwargs["cache_control"] = {"type": "ephemeral"}
-                messages.append(sys_msg)
-        # Controllable thinking effort: 按 current phase 注入思考深度指令.
-        # Inkling 启发 — 连续旋钮, prompt 层实现, 对所有 provider 统一.
-        # 无 _current_phase (非 phase 上下文调用, 如 _feynman_learn) 时不注入.
-        from huginn.autoloop.engine import (
-            _PHASE_THINKING_EFFORT,
-            _autoloop_streaming_enabled,
-            _effort_to_prompt,
+    def _llm_chat_plugin_segment(self, sys_prompt: str | None) -> str | None:
+        """拼插件 prompt 段 (排除框架骨架段, 避免与 persona/phase 重复)."""
+        try:
+            from huginn.plugins.prompt_segments import (
+                assemble_plugin_prompt_segments,
+            )
+
+            _plugin_seg = assemble_plugin_prompt_segments(
+                mode="default",
+                phase=self._current_phase or "",
+                metacog_state="",
+                system_prompt=sys_prompt,
+            )
+            if _plugin_seg:
+                return f"{sys_prompt}\n\n{_plugin_seg}" if sys_prompt else _plugin_seg
+        except Exception:  # 防御: 段组装失败退回 persona-only, 不阻塞主路径
+            logger.debug("plugin prompt segments failed", exc_info=True)
+        return sys_prompt
+
+    def _llm_chat_system_message(self, llm: Any, persona_name: str | None) -> Any:
+        """persona system prompt + GRILL + 插件段 → SystemMessage (可 None).
+
+        persona 找不到就退化不注入; 组装失败不影响主 LLM 调用.
+        """
+        if not persona_name:
+            return None
+        from langchain_core.messages import SystemMessage
+
+        sys_prompt = self._persona_system_prompt(persona_name)
+        sys_prompt = self._llm_chat_grill_prompt(sys_prompt)
+        sys_prompt = self._llm_chat_plugin_segment(sys_prompt)
+        if not sys_prompt:
+            return None
+        sys_msg = SystemMessage(content=sys_prompt)
+        # 静态 system prompt 跨调用不变, 给 Anthropic 打 cache 标记.
+        # Kimi/Moonshot 走 OpenAI 协议, cache_control 无效, 不打标记.
+        _ident = f"{type(llm).__name__}{getattr(llm, 'model', '')}".lower()
+        if any(k in _ident for k in ("anthropic", "claude")):
+            sys_msg.additional_kwargs["cache_control"] = {"type": "ephemeral"}
+        return sys_msg
+
+    def _llm_chat_apply_effort(self, prompt: str) -> str:
+        """按 current phase 注入思考深度指令 (Inkling 启发, prompt 层)."""
+        from huginn.autoloop.engine import _PHASE_THINKING_EFFORT, _effort_to_prompt
+
+        if not self._current_phase:
+            return prompt
+        effort = _PHASE_THINKING_EFFORT.get(self._current_phase, 0.5)
+        directive = _effort_to_prompt(effort)
+        if not directive:
+            return prompt
+        return f"[Thinking effort: {directive}]\n\n{prompt}"
+
+    @staticmethod
+    def _llm_chat_should_stream(llm: Any, cb: Any) -> bool:
+        """有 progress 回调 + provider 支持 astream + 开关开启才流式."""
+        from huginn.autoloop.engine import _autoloop_streaming_enabled
+
+        if cb is None or not hasattr(llm, "astream"):
+            return False
+        return _autoloop_streaming_enabled()
+
+    async def _llm_chat_invoke(self, llm: Any, messages: list[Any]) -> str:
+        """非流式 ainvoke + usage 记账.
+
+        with_retry: 429/限流(含 400 包装)/529/网络抖动 分级退避重试, 不可重试
+        错误原样抛出 (语义与改动前一致, 只是多了瞬时错误的韧性).
+        """
+        response = await with_retry(
+            lambda: llm.ainvoke(messages), source="autoloop"
         )
-        effort_directive = ""
-        if self._current_phase:
-            effort = _PHASE_THINKING_EFFORT.get(self._current_phase, 0.5)
-            effort_directive = _effort_to_prompt(effort)
-        if effort_directive:
-            prompt = f"[Thinking effort: {effort_directive}]\n\n{prompt}"
-        messages.append(HumanMessage(content=prompt))
-        # P2-1: plan/validate 等"推理型"阶段可挂只读工具. 有工具时走有界工具循环
-        # (disable 流式: tool_calls 需完整 AIMessage, 增量 chunk 无法可靠拼装).
-        # 无工具时逐字节等价原路径.
-        if tools:
-            return await self._llm_chat_with_tools(
-                llm, messages, tools, max_tool_rounds=max_tool_rounds
-            )
-        # 700 万步场景: decider 思考过程实时可见, 不再黑盒. fail 回退 ainvoke.
-        # ponytail: 只在 progress_cb 存在时流式, 否则 ainvoke (兼容无 WS 场景).
-        from huginn.core_types import progress_cb as _progress_cb
+        await self._track_llm_usage(getattr(response, "usage_metadata", None))
+        return str(response.content)
 
-        _cb = _progress_cb.get(None)
-        if _cb is None or not hasattr(llm, "astream") or not _autoloop_streaming_enabled():
-            # with_retry: 429/限流(含 400 包装)/529/网络抖动 分级退避重试, 不可重试
-            # 错误原样抛出 (语义与改动前一致, 只是多了瞬时错误的韧性).
-            response = await with_retry(
-                lambda: llm.ainvoke(messages), source="autoloop"
-            )
-            await self._track_llm_usage(getattr(response, "usage_metadata", None))
-            return str(response.content)
-        # 流式: 累积 content, 同时推 thinking chunk 到 WS
+    async def _llm_chat_stream(
+        self, llm: Any, messages: list[Any], cb: Any
+    ) -> str:
+        """流式累积 content, 同时推 thinking chunk 到 WS; 失败回退 ainvoke."""
         parts: list[str] = []
         _usage_meta = None
         try:
@@ -1880,7 +1947,7 @@ Please modify the code to address this task."""
                     parts.append(_delta)
                     with contextlib.suppress(Exception):
                         # cb 失败不阻塞 LLM
-                        await _cb({
+                        await cb({
                             "type": "autoloop_thinking",
                             "phase": self._current_phase or "decider",
                             "delta": _delta[:200],  # 截断防超大 delta
@@ -1889,13 +1956,49 @@ Please modify the code to address this task."""
             return "".join(parts)
         except Exception as e:
             # 流式失败回退 ainvoke (某些 provider astream 实现有 bug).
-            # 回退同样走 with_retry — astream 抛限流时, 这一步是唯一的韧性出口.
             logger.debug("astream failed, fallback to ainvoke: %s", e)
-            response = await with_retry(
-                lambda: llm.ainvoke(messages), source="autoloop"
+            return await self._llm_chat_invoke(llm, messages)
+
+    async def _llm_chat(
+        self,
+        prompt: str,
+        persona_name: str | None = None,
+        model: Any = None,
+        task: str | None = None,
+        tools: list[Any] | None = None,
+        max_tool_rounds: int = 2,
+    ) -> str:
+        """Send a prompt to the LLM and return the response.
+
+        persona_name 非空时注入该 persona 的 system prompt; model 显式优先,
+        否则按 task 走 model_router; 有 tools 走有界工具循环, 否则流式/ainvoke.
+        """
+        from langchain_core.messages import HumanMessage
+
+        model = self._llm_chat_route(model, task)
+        llm = model or self.model
+        messages: list[Any] = []
+        sys_msg = self._llm_chat_system_message(llm, persona_name)
+        if sys_msg is not None:
+            messages.append(sys_msg)
+        # Controllable thinking effort: 按 current phase 注入思考深度指令.
+        # 无 _current_phase (非 phase 上下文调用, 如 _feynman_learn) 时不注入.
+        messages.append(HumanMessage(content=self._llm_chat_apply_effort(prompt)))
+        # P2-1: plan/validate 等"推理型"阶段可挂只读工具. 有工具时走有界工具循环
+        # (disable 流式: tool_calls 需完整 AIMessage, 增量 chunk 无法可靠拼装).
+        # 无工具时逐字节等价原路径.
+        if tools:
+            return await self._llm_chat_with_tools(
+                llm, messages, tools, max_tool_rounds=max_tool_rounds
             )
-            await self._track_llm_usage(getattr(response, "usage_metadata", None))
-            return str(response.content)
+        # 700 万步场景: decider 思考过程实时可见, 不再黑盒. fail 回退 ainvoke.
+        # ponytail: 只在 progress_cb 存在时流式, 否则 ainvoke (兼容无 WS 场景).
+        from huginn.core_types import progress_cb as _progress_cb
+
+        _cb = _progress_cb.get(None)
+        if not self._llm_chat_should_stream(llm, _cb):
+            return await self._llm_chat_invoke(llm, messages)
+        return await self._llm_chat_stream(llm, messages, _cb)
 
     async def _llm_chat_with_tools(
         self,

@@ -230,6 +230,16 @@ class BenchmarkSuite:
         degradation analysis, research design, and elastic properties.
         """
         # 1. structure query
+        self._msrc_basics()
+        self._msrc_computation()
+        self._msrc_thermo_phase()
+        self._msrc_design()
+        self._msrc_inverse()
+        return self
+
+    def _msrc_basics(self) -> None:
+        """Cases 1-3: structure query / band gap / DB retrieval."""
+        # 1. structure query
         self.add(BenchmarkCase(
             task="硅在室温下的晶体结构是什么？给出空间群和晶格常数。",
             expected_keywords=["diamond", "cubic", "fd-3m"],
@@ -252,6 +262,9 @@ class BenchmarkSuite:
             category="database",
             tags=["mp", "query"],
         ))
+
+    def _msrc_computation(self) -> None:
+        """Cases 4-6: symbolic math / literature review / multiscale modeling."""
         # 4. symbolic computation
         self.add(BenchmarkCase(
             task="用SymPy计算 x^2 在区间 [0, 1] 上的定积分。",
@@ -281,6 +294,9 @@ class BenchmarkSuite:
             category="multiscale",
             tags=["battery", "modeling"],
         ))
+
+    def _msrc_thermo_phase(self) -> None:
+        """Cases 7-9: phase diagram / thermodynamics / degradation."""
         # 7. phase diagram analysis
         self.add(BenchmarkCase(
             task="分析Fe-C二元相图中的共析反应，给出反应温度和产物。",
@@ -304,6 +320,9 @@ class BenchmarkSuite:
             category="degradation",
             tags=["polymer", "uv"],
         ))
+
+    def _msrc_design(self) -> None:
+        """Cases 10-11: research proposal design / elastic properties."""
         # 10. research proposal design
         self.add(BenchmarkCase(
             task="设计一个高通量计算筛选固态电解质的流程，包含描述符和筛选标准。",
@@ -326,6 +345,9 @@ class BenchmarkSuite:
             category="mechanical",
             tags=["elastic", "copper"],
         ))
+
+    def _msrc_inverse(self) -> None:
+        """Cases 12-13: inverse design via reverse reasoning."""
         # 12. inverse design: target property → candidate composition (reverse reasoning)
         self.add(BenchmarkCase(
             task="给定目标带隙为 1.5 eV 的直接带隙半导体，反推一个可能的钙钛矿组成，"
@@ -368,7 +390,6 @@ class BenchmarkSuite:
             category="inverse_design",
             tags=["reverse_reasoning", "thermoelectric", "thermal"],
         ))
-        return self
 
     def matscibench_cases(self) -> BenchmarkSuite:
         """MatSciBench: 31 subfields × 3 difficulty levels = 93 cases.
@@ -389,6 +410,14 @@ class BenchmarkSuite:
     def _msb_materials(self) -> None:
         """MatSciBench Materials domain."""
         # ═══ Materials domain ═══
+        self._msbm_classes()
+        self._msbm_ceramics()
+        self._msbm_polymers()
+        self._msbm_composites()
+        self._msbm_semiconductors()
+
+    def _msbm_classes(self) -> None:
+        """Material classes & bonding: metals/ceramics/polymers (001-003)."""
         self.add(BenchmarkCase(
             task="What are the three primary classes of engineering materials? Give one "
              "example of each.",
@@ -418,6 +447,9 @@ class BenchmarkSuite:
             category="materials", tags=["metals", "alloy_design", "hard"],
             case_id="matscibench_003",
         ))
+
+    def _msbm_ceramics(self) -> None:
+        """Ceramics: bonding/toughening/ZrO2 transformation (004-006)."""
         self.add(BenchmarkCase(
             task="What is a ceramic material? Describe the type of bonding (ionic vs "
              "covalent) and give two examples.",
@@ -453,6 +485,9 @@ class BenchmarkSuite:
             category="materials", tags=["ceramics", "zro2", "transformation", "hard"],
             case_id="matscibench_006",
         ))
+
+    def _msbm_polymers(self) -> None:
+        """Polymers: thermoplastic/Tg/Flory-Fox (007-009)."""
         self.add(BenchmarkCase(
             task="What is the difference between a thermoplastic and a thermoset polymer? "
              "Give one example of each.",
@@ -477,6 +512,9 @@ class BenchmarkSuite:
             category="materials", tags=["polymers", "molecular_weight", "flory_fox", "hard"],
             case_id="matscibench_009",
         ))
+
+    def _msbm_composites(self) -> None:
+        """Composites: rule of mixtures/fiber reinforcement/interface (010-012)."""
         self.add(BenchmarkCase(
             task="A composite contains 60% glass fiber (E = 72 GPa) and 40% epoxy matrix "
              "(E = 3.5 GPa) by volume. Calculate the longitudinal modulus using the "
@@ -514,6 +552,9 @@ class BenchmarkSuite:
             category="materials", tags=["composites", "carbon_fiber", "interface", "hard"],
             case_id="matscibench_012",
         ))
+
+    def _msbm_semiconductors(self) -> None:
+        """Semiconductors: doping/p-n junction/band gap engineering (013-015)."""
         self.add(BenchmarkCase(
             task="Explain the difference between n-type and p-type doping in "
              "semiconductors. Give one dopant example for each type in silicon.",
@@ -542,8 +583,17 @@ class BenchmarkSuite:
             case_id="matscibench_015",
         ))
 
-    def _msb_properties(self) -> None:
+    def _msb_properties(self):
         """MatSciBench Properties domain."""
+        self._msb_properties_mechanical()
+        self._msb_properties_thermal()
+        self._msb_properties_electrical()
+        self._msb_properties_magnetic()
+        self._msb_properties_optical()
+        self._msb_properties_dielectric()
+
+    def _msb_properties_mechanical(self) -> None:
+        """Mechanical properties: Hooke/stress-strain/strain hardening (016-018)."""
         # ═══ Properties domain ═══
         self.add(BenchmarkCase(
             task="A steel wire of length 2 m and cross-sectional area 1 mm² is subjected "
@@ -573,6 +623,9 @@ class BenchmarkSuite:
             category="properties", tags=["mechanical", "strain_hardening", "hard"],
             case_id="matscibench_018",
         ))
+
+    def _msb_properties_thermal(self) -> None:
+        """Thermal properties: expansion/composite conductivity/shock (019-021)."""
         self.add(BenchmarkCase(
             task="An aluminum rod (α = 23×10⁻⁶ /°C) is 1 m long at 20°C. Calculate its "
              "length at 120°C. Answer in m.",
@@ -599,6 +652,9 @@ class BenchmarkSuite:
             category="properties", tags=["thermal", "shock_resistance", "hard"],
             case_id="matscibench_021",
         ))
+
+    def _msb_properties_electrical(self) -> None:
+        """Electrical properties: conductivity/resistivity/Hall (022-024)."""
         self.add(BenchmarkCase(
             task="Calculate the electrical conductivity of copper with resistivity "
              "1.7×10⁻⁸ Ω·m. Answer in S/m.",
@@ -626,6 +682,9 @@ class BenchmarkSuite:
             category="properties", tags=["electrical", "hall_effect", "hard"],
             case_id="matscibench_024",
         ))
+
+    def _msb_properties_magnetic(self) -> None:
+        """Magnetic properties: ferromagnetism/hysteresis/Curie (025-027)."""
         self.add(BenchmarkCase(
             task="What is ferromagnetism? Name three ferromagnetic elements at room "
              "temperature and describe what happens above the Curie temperature.",
@@ -652,6 +711,9 @@ class BenchmarkSuite:
             category="properties", tags=["magnetic", "curie", "exchange", "hard"],
             case_id="matscibench_027",
         ))
+
+    def _msb_properties_optical(self) -> None:
+        """Optical properties: reflectance/absorption/PLQY (028-030)."""
         self.add(BenchmarkCase(
             task="A material has refractive index n = 1.5. Calculate the reflectance at "
              "normal incidence from air (n=1) using R = ((n-1)/(n+1))². Express as "
@@ -679,6 +741,9 @@ class BenchmarkSuite:
             category="properties", tags=["optical", "plqy", "quantum_yield", "hard"],
             case_id="matscibench_030",
         ))
+
+    def _msb_properties_dielectric(self) -> None:
+        """Dielectric properties: polarization/capacitance/ferroelectric (031-033)."""
         self.add(BenchmarkCase(
             task="Name the four types of polarization in dielectric materials. Which type "
              "is dominant at optical frequencies?",
@@ -713,6 +778,14 @@ class BenchmarkSuite:
     def _msb_structures(self) -> None:
         """MatSciBench Structures domain."""
         # ═══ Structures domain ═══
+        self._msbs_crystal()
+        self._msbs_amorphous()
+        self._msbs_defects()
+        self._msbs_surfaces()
+        self._msbs_grain_boundaries()
+
+    def _msbs_crystal(self) -> None:
+        """Crystal structure: Bragg/Miller indices/space group (034-036)."""
         self.add(BenchmarkCase(
             task="Using Bragg's law (nλ = 2d·sinθ), calculate the d-spacing for a first- "
              "order peak at 2θ = 28.4° using Cu Kα radiation (λ = 1.5406 Å). Answer in "
@@ -745,6 +818,9 @@ class BenchmarkSuite:
             category="structures", tags=["crystal", "space_group", "symmetry", "hard"],
             case_id="matscibench_036",
         ))
+
+    def _msbs_amorphous(self) -> None:
+        """Amorphous: crystalline vs amorphous/glass formation/SRO (037-039)."""
         self.add(BenchmarkCase(
             task="What is the difference between a crystalline and an amorphous material "
              "in terms of atomic arrangement? Give one example of each.",
@@ -779,6 +855,9 @@ class BenchmarkSuite:
             category="structures", tags=["amorphous", "metallic_glass", "sro", "hard"],
             case_id="matscibench_039",
         ))
+
+    def _msbs_defects(self) -> None:
+        """Defects: point defects/dislocations/stacking fault (040-042)."""
         self.add(BenchmarkCase(
             task="Describe the difference between a Schottky defect and a Frenkel defect. "
              "Which is more likely in a ceramic with large anions?",
@@ -804,6 +883,9 @@ class BenchmarkSuite:
             category="structures", tags=["defects", "stacking_fault", "partials", "hard"],
             case_id="matscibench_042",
         ))
+
+    def _msbs_surfaces(self) -> None:
+        """Surfaces: surface energy/grain boundary/interface (043-045)."""
         self.add(BenchmarkCase(
             task="What is surface energy? Why do liquids tend to minimize their surface "
              "area?",
@@ -835,6 +917,9 @@ class BenchmarkSuite:
             category="structures", tags=["surfaces", "interface", "coherent", "hard"],
             case_id="matscibench_045",
         ))
+
+    def _msbs_grain_boundaries(self) -> None:
+        """Grain boundaries: low/high angle/Hall-Petch/superplasticity (046-048)."""
         self.add(BenchmarkCase(
             task="What is the difference between a low-angle and a high-angle grain "
              "boundary? At what misorientation angle does the transition typically "
@@ -866,8 +951,16 @@ class BenchmarkSuite:
             case_id="matscibench_048",
         ))
 
-    def _msb_mechanisms(self) -> None:
+    def _msb_mechanisms(self):
         """MatSciBench Fundamental mechanisms domain."""
+        self._msb_mechanisms_thermodynamics()
+        self._msb_mechanisms_kinetics()
+        self._msb_mechanisms_diffusion()
+        self._msb_mechanisms_phase_transformations()
+        self._msb_mechanisms_electronic_structure()
+
+    def _msb_mechanisms_thermodynamics(self) -> None:
+        """Thermodynamics: Gibbs/phase rule/Ellingham (049-051)."""
         # ═══ Fundamental mechanisms domain ═══
         self.add(BenchmarkCase(
             task="Calculate ΔG for a process with ΔH = -100 kJ/mol and ΔS = -50 J/(mol·K) "
@@ -900,6 +993,9 @@ class BenchmarkSuite:
             category="fundamental_mechanisms", tags=["thermodynamics", "ellingham", "reduction", "hard"],
             case_id="matscibench_051",
         ))
+
+    def _msb_mechanisms_kinetics(self) -> None:
+        """Kinetics: Arrhenius/rate law/nucleation (052-054)."""
         self.add(BenchmarkCase(
             task="Calculate the activation energy for a reaction with k₁ = 1.0×10⁻³ at T₁ "
              "= 300 K and k₂ = 5.0×10⁻³ at T₂ = 350 K. Use ln(k₂/k₁) = Ea/R × (1/T₁ - "
@@ -927,6 +1023,9 @@ class BenchmarkSuite:
             category="fundamental_mechanisms", tags=["kinetics", "nucleation", "rate", "hard"],
             case_id="matscibench_054",
         ))
+
+    def _msb_mechanisms_diffusion(self) -> None:
+        """Diffusion: Fick I/Fick II/Kirkendall (055-057)."""
         self.add(BenchmarkCase(
             task="Using Fick's first law, calculate the diffusion flux through a membrane. "
              "D = 2×10⁻¹⁴ m²/s, dC/dx = -5×10²⁸ atoms/m⁴. J = -D(dC/dx). Answer in "
@@ -960,6 +1059,9 @@ class BenchmarkSuite:
             category="fundamental_mechanisms", tags=["diffusion", "kirkendall", "hard"],
             case_id="matscibench_057",
         ))
+
+    def _msb_mechanisms_phase_transformations(self) -> None:
+        """Phase transformations: nucleation/growth/martensite (058-060)."""
         self.add(BenchmarkCase(
             task="Explain the difference between homogeneous and heterogeneous nucleation. "
              "Why is heterogeneous nucleation more common in practice?",
@@ -995,6 +1097,9 @@ class BenchmarkSuite:
             category="fundamental_mechanisms", tags=["phase_transformations", "martensitic", "bain", "hard"],
             case_id="matscibench_060",
         ))
+
+    def _msb_mechanisms_electronic_structure(self) -> None:
+        """Electronic structure: band gap/DOS/Fermi level (061-063)."""
         self.add(BenchmarkCase(
             task="Calculate the maximum wavelength absorbed by Si (Eg = 1.12 eV). Use λ = "
              "hc/Eg, h = 6.626×10⁻³⁴ J·s, c = 3×10⁸ m/s. Answer in nm.",
@@ -1030,6 +1135,14 @@ class BenchmarkSuite:
     def _msb_processes(self) -> None:
         """MatSciBench Processes domain."""
         # ═══ Processes domain ═══
+        self._msb_processes_casting()
+        self._msb_processes_forming()
+        self._msb_processes_heat_treatment()
+        self._msb_processes_sintering()
+        self._msb_processes_deposition()
+
+    def _msb_processes_casting(self) -> None:
+        """Casting / solidification (064-066)."""
         self.add(BenchmarkCase(
             task="Describe the basic solidification process in metal casting. What are the "
              "three zones of a typical ingot structure?",
@@ -1065,6 +1178,9 @@ class BenchmarkSuite:
             category="processes", tags=["casting", "microsegregation", "coring", "hard"],
             case_id="matscibench_066",
         ))
+
+    def _msb_processes_forming(self) -> None:
+        """Metal forming: rolling/forging/cold work/FLD (067-069)."""
         self.add(BenchmarkCase(
             task="Compare rolling and forging as metal forming processes. What are the "
              "main differences in deformation mode and typical products?",
@@ -1095,6 +1211,9 @@ class BenchmarkSuite:
             category="processes", tags=["forming", "fld", "deep_drawing", "hard"],
             case_id="matscibench_069",
         ))
+
+    def _msb_processes_heat_treatment(self) -> None:
+        """Heat treatment: anneal/normalize/quench/TTT/TME (070-072)."""
         self.add(BenchmarkCase(
             task="Describe the difference between annealing, normalizing, and quenching of "
              "steel. What microstructure does each produce?",
@@ -1130,6 +1249,9 @@ class BenchmarkSuite:
             category="processes", tags=["heat_treatment", "tempering", "embrittlement", "hard"],
             case_id="matscibench_072",
         ))
+
+    def _msb_processes_sintering(self) -> None:
+        """Sintering: stages/mechanisms/liquid phase (073-075)."""
         self.add(BenchmarkCase(
             task="What is sintering? Describe the three stages and the driving force for "
              "each.",
@@ -1165,6 +1287,9 @@ class BenchmarkSuite:
             category="processes", tags=["sintering", "liquid_phase", "lps", "hard"],
             case_id="matscibench_075",
         ))
+
+    def _msb_processes_deposition(self) -> None:
+        """Deposition: PVD/CVD/sputter/ALD (076-078)."""
         self.add(BenchmarkCase(
             task="Compare PVD (physical vapor deposition) and CVD (chemical vapor "
              "deposition). How do they differ in mechanism and typical applications?",
@@ -1200,8 +1325,17 @@ class BenchmarkSuite:
             case_id="matscibench_078",
         ))
 
-    def _msb_failures(self) -> None:
+
+    def _msb_failures(self):
         """MatSciBench Failure mechanisms domain."""
+        self._msb_failures_fracture()
+        self._msb_failures_fatigue()
+        self._msb_failures_creep()
+        self._msb_failures_corrosion()
+        self._msb_failures_wear()
+
+    def _msb_failures_fracture(self) -> None:
+        """Fracture: ductile-brittle/Griffith/K_IC (079-081)."""
         # ═══ Failure mechanisms domain ═══
         self.add(BenchmarkCase(
             task="Explain the difference between ductile and brittle fracture. What "
@@ -1229,6 +1363,9 @@ class BenchmarkSuite:
             category="failure_mechanisms", tags=["fracture", "kic", "fracture_toughness", "hard"],
             case_id="matscibench_081",
         ))
+
+    def _msb_failures_fatigue(self) -> None:
+        """Fatigue: S-N/Paris law/notch (082-084)."""
         self.add(BenchmarkCase(
             task="Describe the S-N curve for a metal. What is the difference between the "
              "fatigue behavior of ferrous and non-ferrous metals regarding the "
@@ -1260,6 +1397,9 @@ class BenchmarkSuite:
             category="failure_mechanisms", tags=["fatigue", "notch", "kt", "hard"],
             case_id="matscibench_084",
         ))
+
+    def _msb_failures_creep(self) -> None:
+        """Creep: stages/Norton/Coble-Nabarro (085-087)."""
         self.add(BenchmarkCase(
             task="Describe the three stages of creep. What happens to the strain rate in "
              "each stage?",
@@ -1295,6 +1435,9 @@ class BenchmarkSuite:
             category="failure_mechanisms", tags=["creep", "coble", "nabarro_herring", "hard"],
             case_id="matscibench_087",
         ))
+
+    def _msb_failures_corrosion(self) -> None:
+        """Corrosion: galvanic/pitting/SCC (088-090)."""
         self.add(BenchmarkCase(
             task="Explain galvanic corrosion. Given Zn (E = -0.76 V) and Cu (E = +0.34 V) "
              "coupled together, which metal corrodes? Calculate the cell potential. "
@@ -1331,6 +1474,9 @@ class BenchmarkSuite:
             category="failure_mechanisms", tags=["corrosion", "scc", "stress_corrosion", "hard"],
             case_id="matscibench_090",
         ))
+
+    def _msb_failures_wear(self) -> None:
+        """Wear: abrasive-adhesive/Archard/fretting (091-093)."""
         self.add(BenchmarkCase(
             task="Describe abrasive wear and adhesive wear. How do they differ in "
              "mechanism? Give one strategy to reduce each.",
@@ -2055,7 +2201,7 @@ class BenchmarkSuite:
         ))
         return self
 
-    def multi_step_reasoning_cases(self) -> BenchmarkSuite:
+    def multi_step_reasoning_cases(self):
         """Multi-step reasoning benchmarks: 3+ step quantitative problems.
 
         10 cases that require chaining calculation steps (density, packing factor,
@@ -2063,6 +2209,10 @@ class BenchmarkSuite:
         rubric item maps to one reasoning step; expected_value records the target
         numeric answer as metadata.
         """
+        return self._msr_add_density()._msr_add_structure_property()._msr_add_thermo_electronic()._msr_add_property_trends()
+
+    def _msr_add_density(self):
+        """Density from crystal structure: Si/Cu/APF (msr_001-003)."""
         # Si diamond cubic density (~2.33 g/cm3)
         self.add(BenchmarkCase(
             case_id="msr_001",
@@ -2108,6 +2258,10 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["packing-factor", "fcc"],
         ))
+        return self
+
+    def _msr_add_structure_property(self):
+        """Structure-derived properties: Bragg/Hall-Petch/conductivity (msr_004-006)."""
         # Bragg diffraction angle
         self.add(BenchmarkCase(
             case_id="msr_004",
@@ -2153,6 +2307,10 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["conductivity", "semiconductor"],
         ))
+        return self
+
+    def _msr_add_thermo_electronic(self):
+        """Thermodynamics + doping: Gibbs/carrier concentration (msr_007-008)."""
         # Gibbs free energy and phase stability
         self.add(BenchmarkCase(
             case_id="msr_007",
@@ -2183,6 +2341,10 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["doping", "carrier-concentration", "silicon"],
         ))
+        return self
+
+    def _msr_add_property_trends(self):
+        """Property trends: thermal expansion/Curie-Weiss (msr_009-010)."""
         # thermal expansion lattice parameter
         self.add(BenchmarkCase(
             case_id="msr_009",
@@ -2224,6 +2386,16 @@ class BenchmarkSuite:
         Each rubric checks method selection, sample prep, parameters, and analysis.
         """
         # semiconductor band gap measurement
+        self._ed_spectroscopy()
+        self._ed_mechanical()
+        self._ed_thermal_electrochem()
+        self._ed_catalysis_polymer()
+        self._ed_nano_xrd()
+        return self
+
+    def _ed_spectroscopy(self) -> None:
+        """ed_001-002: optical band gap / ITO thin film characterization."""
+        # semiconductor band gap measurement
         self.add(BenchmarkCase(
             case_id="ed_001",
             category="experiment_design",
@@ -2251,6 +2423,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["thin-film", "ito", "characterization"],
         ))
+
+    def _ed_mechanical(self) -> None:
+        """ed_003-004: corrosion rate / fatigue S-N life."""
         # corrosion rate testing
         self.add(BenchmarkCase(
             case_id="ed_003",
@@ -2279,6 +2454,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["fatigue", "s-n-curve", "aluminum"],
         ))
+
+    def _ed_thermal_electrochem(self) -> None:
+        """ed_005-006: thermal conductivity / LiCoO2 electrochemistry."""
         # thermal conductivity measurement
         self.add(BenchmarkCase(
             case_id="ed_005",
@@ -2307,6 +2485,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["battery", "electrochemistry", "licoo2"],
         ))
+
+    def _ed_catalysis_polymer(self) -> None:
+        """ed_007-008: ORR catalyst screening / PLA degradation."""
         # catalyst activity screening
         self.add(BenchmarkCase(
             case_id="ed_007",
@@ -2335,6 +2516,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["polymer", "degradation", "pla"],
         ))
+
+    def _ed_nano_xrd(self) -> None:
+        """ed_009-010: nanoindentation / XRD phase identification."""
         # nanoindentation
         self.add(BenchmarkCase(
             case_id="ed_009",
@@ -2363,7 +2547,6 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["xrd", "phase-id", "pdf-database"],
         ))
-        return self
 
     def reverse_reasoning_cases(self) -> BenchmarkSuite:
         """Reverse-reasoning benchmarks: given an effect, infer the cause.
@@ -2374,6 +2557,16 @@ class BenchmarkSuite:
         corrosion type, eutectoid composition, and fracture mode.
         Each rubric checks identification + physical reasoning.
         """
+        # XRD d-spacing ratio → FCC vs BCC
+        self._rr_structure_id()
+        self._rr_transport_deformation()
+        self._rr_semiconductor_magnetic()
+        self._rr_strengthening_corrosion()
+        self._rr_phase_fracture()
+        return self
+
+    def _rr_structure_id(self) -> None:
+        """rr_001-002: XRD ratio → FCC/BCC / density → iron."""
         # XRD d-spacing ratio → FCC vs BCC
         self.add(BenchmarkCase(
             case_id="rr_001",
@@ -2402,6 +2595,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["density", "material-id", "iron"],
         ))
+
+    def _rr_transport_deformation(self) -> None:
+        """rr_003-004: phonon scattering / deformation mode."""
         # thermal conductivity trend → scattering mechanism
         self.add(BenchmarkCase(
             case_id="rr_003",
@@ -2429,6 +2625,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["stress-strain", "deformation", "fcc"],
         ))
+
+    def _rr_semiconductor_magnetic(self) -> None:
+        """rr_005-006: band gap → silicon / Curie → iron."""
         # band gap → semiconductor ID
         self.add(BenchmarkCase(
             case_id="rr_005",
@@ -2457,6 +2656,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["curie-temperature", "magnetism", "iron"],
         ))
+
+    def _rr_strengthening_corrosion(self) -> None:
+        """rr_007-008: heat-treatment strengthening / pitting."""
         # hardness change → strengthening mechanism
         self.add(BenchmarkCase(
             case_id="rr_007",
@@ -2485,6 +2687,9 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["corrosion", "pitting", "chloride"],
         ))
+
+    def _rr_phase_fracture(self) -> None:
+        """rr_009-010: eutectoid composition / ductile fracture."""
         # phase diagram microstructure → composition
         self.add(BenchmarkCase(
             case_id="rr_009",
@@ -2513,7 +2718,6 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["fracture", "ductile", "cup-cone"],
         ))
-        return self
 
     async def run(
         self,

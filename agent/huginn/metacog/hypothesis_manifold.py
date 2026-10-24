@@ -83,6 +83,25 @@ def _mdl_logprior(description: str, n_params: int = 0) -> float:
     return -(desc_penalty + bic_penalty)
 
 
+def _softmax_pick(
+    candidates: list[tuple[str, Any]], dists: list[float],
+    rng: random.Random, temperature: float,
+) -> str:
+    """softmax(-d/tau) 加权采样; 权重全零时均匀随机 (减 max 做数值稳定)."""
+    max_d = max(dists) if dists else 0.0
+    weights = [math.exp(-(d - max_d) / temperature) for d in dists]
+    total_w = sum(weights)
+    if total_w <= 0.0:
+        return rng.choice([hid for hid, _ in candidates])
+    r = rng.random() * total_w
+    cum = 0.0
+    for (hid, _), w in zip(candidates, weights):
+        cum += w
+        if r <= cum:
+            return hid
+    return candidates[-1][0]
+
+
 # ---------- B1: R 矩阵投影 ----------
 
 def _gram_schmidt_qr(vecs: list[list[float]]) -> tuple[list[list[float]], list[list[float]]]:
@@ -657,7 +676,18 @@ class HypothesisManifold:
             current_pred, _ = self._alignment_fn.predict(current_cmap)
         except Exception:
             return None
-        # 收集所有有 structure 的 candidate (排除 current), 预测各自 haptic
+        candidates = self._alignment_candidates(current_h_id, current_pred)
+        if not candidates:
+            return None
+        # d = ||pred_i - pred_current||, 纯 Python 遍历 numpy array 不引 numpy
+        dists = [math.sqrt(float(sum(x * x for x in (pred - current_pred))))
+                 for _, pred in candidates]
+        return _softmax_pick(candidates, dists, rng, temperature)
+
+    def _alignment_candidates(
+        self, current_h_id: str, current_pred: Any,
+    ) -> list[tuple[str, Any]]:
+        """收集所有有 structure 的 candidate (排除 current), 预测各自 haptic."""
         candidates: list[tuple[str, Any]] = []
         for hid, hh in self._hyp.items():
             if hid == current_h_id or hh.structure_id is None:
@@ -670,23 +700,7 @@ class HypothesisManifold:
             except Exception:
                 continue
             candidates.append((hid, pred))
-        if not candidates:
-            return None
-        # d = ||pred_i - pred_current||, 纯 Python 遍历 numpy array 不引 numpy
-        dists = [math.sqrt(float(sum(x * x for x in (pred - current_pred))))
-                 for _, pred in candidates]
-        max_d = max(dists) if dists else 0.0
-        weights = [math.exp(-(d - max_d) / temperature) for d in dists]
-        total_w = sum(weights)
-        if total_w <= 0.0:
-            return rng.choice([hid for hid, _ in candidates])
-        r = rng.random() * total_w
-        cum = 0.0
-        for (hid, _), w in zip(candidates, weights):
-            cum += w
-            if r <= cum:
-                return hid
-        return candidates[-1][0]
+        return candidates
 
     def _anchor_penalty(self, h_id: str) -> float:
         """h 到锚点的 Fisher 距离 (无锚 / 无公共 key → 0, 即无正则)."""
@@ -718,127 +732,56 @@ class HypothesisManifold:
                 if k in self._anchor_pred else a * v
             )
 
+    # ── mcmc_step 设计说明 ─────────────────────────────────────────
+    # P4-4: proposal kernel 用 fisher_distance 引导 — 距离近的 h 提议概率高;
+    #   SubspacePartition 的 R 矩阵投影经 fisher_distance 间接接入 (n > _SUBSPACE_K
+    #   时走投影路径, proposal kernel 自动加速).
+    # MH 接受比考虑 proposal 不对称性 A = min(1, P(h')q(h'|h) / P(h)q(h|h')), 其中
+    #   q(h'|h) ∝ exp(-d_F(h,h')/τ)/Z_h. Z_h 不易算, 用对称化近似 (距离项相消) →
+    #   接受步退化为标准 MH, 引导通过 proposal sampling 实现.
+    # Step 2 增量路径: 只算 current + proposal 两个 log_p; cached_log_p_current 由
+    #   调用方跨步传入, 拒绝时复用, 接受时返回 proposal 的 log_p 供下步复用.
+    # 7M 步 = 这个 step 跑 7M 次: 每步从 current_h 提议 neighbor 再按 ratio 接受/拒绝,
+    #   这才是有引导的搜索, 不是 random walk.
+    # Proposal kernel 分支 (alignment_enabled=False 时行为 100% 不变):
+    #   alignment+se3+haptic 33/33/34 几何/力学/对齐; alignment+se3 50/50 几何/对齐;
+    #   alignment+haptic 50/50 力学/对齐; 只 alignment 走 _alignment_proposal;
+    #   se3+haptic 50/50; 只 se3 走 _se3_proposal; 只 haptic 走 _haptic_proposal;
+    #   都不开走 _fisher_proposal; 任一引导返回 None (无 structure / 无 haptic /
+    #   对齐未 ready) 退化 fisher.
+    # gramian_enabled=True (默认 False, 行为 100% 不变): 给 fisher 提议加 Gramian
+    #   谱预条件 — 用局部假设位移构造经验 Gramian, 沿高可控/高信息主轴 (top-k
+    #   特征向量) 提议. 见 _gramian_precond / _fisher_proposal.
     def mcmc_step(
-        self,
-        obs: Iterable[Observation],
-        current_h_id: str,
-        *,
-        rng: random.Random | None = None,
-        temperature: float = 1.0,
-        cached_log_p_current: float | None = None,
-        se3_enabled: bool = False,
-        se3_angle_sigma: float = 30.0,
-        haptic_enabled: bool = False,
-        haptic_temperature: float = 1.0,
-        alignment_enabled: bool = False,
-        alignment_temperature: float = 1.0,
-        global_proposal_prob: float = 0.3,
-        gramian_enabled: bool = False,
-        gramian_k: int = 1,
+        self, obs: Iterable[Observation], current_h_id: str, *,
+        rng: random.Random | None = None, temperature: float = 1.0,
+        cached_log_p_current: float | None = None, se3_enabled: bool = False,
+        se3_angle_sigma: float = 30.0, haptic_enabled: bool = False,
+        haptic_temperature: float = 1.0, alignment_enabled: bool = False,
+        alignment_temperature: float = 1.0, global_proposal_prob: float = 0.3,
+        gramian_enabled: bool = False, gramian_k: int = 1,
         anchor_lambda: float = 0.0,
     ) -> tuple[str, float]:
-        """Metropolis-Hastings 一步在 posterior 上采样.
+        """Metropolis-Hastings 一步在 posterior 上采样 (设计说明见上方注释块).
 
-        P4-4: proposal kernel 用 fisher_distance 引导 — 距离近的 h 提议概率高.
-        SubspacePartition 的 R 矩阵投影通过 fisher_distance 间接接入:
-        n > _SUBSPACE_K 时 fisher_distance 走投影路径, proposal kernel 自动加速.
-
-        Metropolis-Hastings 接受比考虑 proposal 不对称性:
-            A = min(1, [P(h')·q(h'|h)] / [P(h)·q(h|h')])
-        其中 q(h'|h) ∝ exp(-d_F(h,h')/τ) / Z_h, Z_h 是 h 的归一化常数.
-        ponytail: Z_h 不易算, 用对称化近似 A ≈ min(1, P(h')/P(h) · exp(-(d-d')/τ)),
-        d = d_F(h,h'), d' = d_F(h,h') (对称) → 距离项相消, 退化为标准 MH.
-        实际引导通过 proposal sampling 实现 (距离近的被采到更多), 接受步保持标准 MH.
-
-        Step 2 增量路径: 不再调 log_posterior(obs) 全量, 只算 current + proposal.
-        cached_log_p_current 由调用方跨步传入, 拒绝时复用 (省一次 _log_lik 全遍历).
-        接受时返回 proposal 的 log_p, 调用方下步直接复用 — 永远只算 1 次新 log_p.
-
-        700万步 = 这个 step 跑 7M 次. 每步是从 current_h 提议一个 neighbor,
-        按 posterior ratio 接受/拒绝. 这才是有引导的搜索, 不是 random walk.
-
-        Proposal kernel 分支 (alignment_enabled=False 时行为 100% 不变):
-            - alignment + se3 + haptic 三开: 33/33/34 几何/力学/对齐
-            - alignment + se3: 50/50 几何/对齐
-            - alignment + haptic: 50/50 力学/对齐
-            - 只 alignment: 走 _alignment_proposal (预测 haptic 引导)
-            - se3 + haptic 都开: 50/50 在几何 (SE3) / 力学 (haptic) 间切
-            - 只开 se3: 走 _se3_proposal
-            - 只开 haptic: 走 _haptic_proposal
-            - 都不开: 走 _fisher_proposal (原逻辑)
-            - 任一引导返回 None (无 structure / 无 haptic / 对齐未 ready): 退化 fisher
-
-        gramian_enabled=True 时 (默认 False, 行为 100% 不变): 给 fisher 提议加
-        Gramian 谱预条件 — 用局部假设位移构造经验 Gramian, 沿高可控/高信息主轴
-        (top-k 特征向量) 提议. 见 _gramian_precond / _fisher_proposal.
-
-        Returns: (next_h_id, next_log_p) — 调用方下步传 cached_log_p_current=next_log_p.
+        Returns: (next_h_id, next_log_p) — 调用方下步传 cached_log_p_current.
         """
         rng = rng or random
         # 物化一次, current + proposal 两次 _log_posterior_single 都要遍历
         obs = list(obs)
         h_ids = list(self._hyp)
-        if len(h_ids) < 2:
-            if cached_log_p_current is None:
-                cached_log_p_current = self._log_posterior_single(obs, current_h_id)
-            return current_h_id, cached_log_p_current
-        others = [h for h in h_ids if h != current_h_id]
-        if not others:
-            if cached_log_p_current is None:
-                cached_log_p_current = self._log_posterior_single(obs, current_h_id)
-            return current_h_id, cached_log_p_current
+        guard = self._mcmc_step_guard(obs, current_h_id, cached_log_p_current, h_ids)
+        if guard is not None:
+            return guard
 
-        # Proposal kernel: se3 (几何) / haptic (力学) / alignment (预测力学) / fisher.
-        # alignment_enabled + ready 时走三通道, 否则走原 se3+haptic 逻辑.
-        # 任一引导返回 None (缺数据) 退化为 fisher.
-        proposal: str | None = None
-        _align_ok = (alignment_enabled and self._alignment_fn is not None
-                     and self._alignment_fn.ready)
-        if _align_ok:
-            if se3_enabled and haptic_enabled:
-                # 三通道 33/33/34 — 几何 / 力学 / 对齐预测
-                _r = rng.random()
-                if _r < 0.33:
-                    proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
-                elif _r < 0.66:
-                    proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
-                else:
-                    proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
-            elif se3_enabled:
-                if rng.random() < 0.5:
-                    proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
-                else:
-                    proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
-            elif haptic_enabled:
-                if rng.random() < 0.5:
-                    proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
-                else:
-                    proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
-            else:
-                proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
-        else:
-            # 对齐未开或未 ready — 走原 se3 + haptic 逻辑 (行为不变)
-            if se3_enabled and haptic_enabled:
-                # 双通道: 一半几何引导, 一半力学引导 (跨模态互补)
-                if rng.random() < 0.5:
-                    proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
-                else:
-                    proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
-            elif se3_enabled:
-                proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
-            elif haptic_enabled:
-                proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
-        if proposal is None:
-            # Gramian 预条件 (flag off → None, fisher 提议行为不变).
-            precond = None
-            if gramian_enabled:
-                try:
-                    precond = self._gramian_precond(current_h_id, k=gramian_k)
-                except Exception:  # noqa: BLE001 — 预条件失败退化原 fisher, 不阻塞
-                    logger.debug("best-effort op failed", exc_info=True)
-                    precond = None
-            proposal = self._fisher_proposal(
-                current_h_id, rng, temperature, precond=precond)
+        proposal = self._mcmc_pick_proposal(
+            current_h_id, rng, temperature=temperature,
+            se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
+            haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
+            alignment_enabled=alignment_enabled,
+            alignment_temperature=alignment_temperature,
+            gramian_enabled=gramian_enabled, gramian_k=gramian_k,
+        )
 
         # P2-7: 全局 proposal 混合 — 以 global_proposal_prob 概率从整个 hypothesis
         # 空间均匀提议, 覆盖上述局部 proposal (fisher/se3/haptic/alignment).
@@ -852,7 +795,148 @@ class HypothesisManifold:
             if _cands:
                 proposal = rng.choice(_cands)
 
-        # Step 2 增量: current 复用缓存, proposal 只算一次
+        return self._mcmc_accept(
+            obs, current_h_id, proposal, cached_log_p_current, rng,
+            temperature, anchor_lambda,
+        )
+
+    def _mcmc_step_guard(
+        self,
+        obs: list,
+        current_h_id: str,
+        cached_log_p_current: float | None,
+        h_ids: list[str],
+    ) -> tuple[str, float] | None:
+        """样本空间不足 2 个假设时的退化早返回; 正常返回 None."""
+        if len(h_ids) < 2:
+            if cached_log_p_current is None:
+                cached_log_p_current = self._log_posterior_single(obs, current_h_id)
+            return current_h_id, cached_log_p_current
+        others = [h for h in h_ids if h != current_h_id]
+        if not others:
+            if cached_log_p_current is None:
+                cached_log_p_current = self._log_posterior_single(obs, current_h_id)
+            return current_h_id, cached_log_p_current
+        return None
+
+    def _mcmc_pick_proposal(
+        self,
+        current_h_id: str,
+        rng: Any,
+        *,
+        temperature: float,
+        se3_enabled: bool,
+        se3_angle_sigma: float,
+        haptic_enabled: bool,
+        haptic_temperature: float,
+        alignment_enabled: bool,
+        alignment_temperature: float,
+        gramian_enabled: bool,
+        gramian_k: int,
+    ) -> str:
+        """选 proposal: 对齐/几何/力学引导, 缺失时退化 fisher (含 Gramian 预条件)."""
+        # Proposal kernel: se3 (几何) / haptic (力学) / alignment (预测力学) / fisher.
+        # alignment_enabled + ready 时走三通道, 否则走原 se3+haptic 逻辑.
+        # 任一引导返回 None (缺数据) 退化为 fisher.
+        _align_ok = (alignment_enabled and self._alignment_fn is not None
+                     and self._alignment_fn.ready)
+        if _align_ok:
+            proposal = self._mcmc_proposal_aligned(
+                current_h_id, rng, se3_enabled=se3_enabled,
+                se3_angle_sigma=se3_angle_sigma, haptic_enabled=haptic_enabled,
+                haptic_temperature=haptic_temperature,
+                alignment_temperature=alignment_temperature,
+            )
+        else:
+            proposal = self._mcmc_proposal_legacy(
+                current_h_id, rng, se3_enabled=se3_enabled,
+                se3_angle_sigma=se3_angle_sigma, haptic_enabled=haptic_enabled,
+                haptic_temperature=haptic_temperature,
+            )
+        if proposal is not None:
+            return proposal
+        # Gramian 预条件 (flag off → None, fisher 提议行为不变).
+        precond = None
+        if gramian_enabled:
+            try:
+                precond = self._gramian_precond(current_h_id, k=gramian_k)
+            except Exception:  # noqa: BLE001 — 预条件失败退化原 fisher, 不阻塞
+                logger.debug("best-effort op failed", exc_info=True)
+                precond = None
+        return self._fisher_proposal(
+            current_h_id, rng, temperature, precond=precond)
+
+    def _mcmc_proposal_aligned(
+        self,
+        current_h_id: str,
+        rng: Any,
+        *,
+        se3_enabled: bool,
+        se3_angle_sigma: float,
+        haptic_enabled: bool,
+        haptic_temperature: float,
+        alignment_temperature: float,
+    ) -> str | None:
+        """对齐 ready 时的三通道 proposal (33/33/34 或 50/50 或纯对齐)."""
+        if se3_enabled and haptic_enabled:
+            # 三通道 33/33/34 — 几何 / 力学 / 对齐预测
+            _r = rng.random()
+            if _r < 0.33:
+                return self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+            elif _r < 0.66:
+                return self._haptic_proposal(current_h_id, rng, haptic_temperature)
+            return self._alignment_proposal(
+                current_h_id, rng, alignment_temperature)
+        if se3_enabled:
+            if rng.random() < 0.5:
+                return self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+            return self._alignment_proposal(
+                current_h_id, rng, alignment_temperature)
+        if haptic_enabled:
+            if rng.random() < 0.5:
+                return self._haptic_proposal(
+                    current_h_id, rng, haptic_temperature)
+            return self._alignment_proposal(
+                current_h_id, rng, alignment_temperature)
+        return self._alignment_proposal(
+            current_h_id, rng, alignment_temperature)
+
+    def _mcmc_proposal_legacy(
+        self,
+        current_h_id: str,
+        rng: Any,
+        *,
+        se3_enabled: bool,
+        se3_angle_sigma: float,
+        haptic_enabled: bool,
+        haptic_temperature: float,
+    ) -> str | None:
+        """对齐未开/未 ready 时的原 se3 + haptic proposal (行为不变)."""
+        if se3_enabled and haptic_enabled:
+            # 双通道: 一半几何引导, 一半力学引导 (跨模态互补)
+            if rng.random() < 0.5:
+                return self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+            return self._haptic_proposal(current_h_id, rng, haptic_temperature)
+        if se3_enabled:
+            return self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+        if haptic_enabled:
+            return self._haptic_proposal(current_h_id, rng, haptic_temperature)
+        return None
+
+    def _mcmc_accept(
+        self,
+        obs: list,
+        current_h_id: str,
+        proposal: str,
+        cached_log_p_current: float | None,
+        rng: Any,
+        temperature: float,
+        anchor_lambda: float,
+    ) -> tuple[str, float]:
+        """MH 接受步 + 访问计数 + 锚点慢更新.
+
+        Step 2 增量: current 复用缓存, proposal 只算一次
+        """
         if cached_log_p_current is None:
             log_p_current = self._log_posterior_single(obs, current_h_id)
         else:
@@ -892,36 +976,21 @@ class HypothesisManifold:
     # 真正的并行要 multiprocessing 或 Ray. 但 mcmc_step 是纯 Python 计算
     # (没 IO), asyncio 也能跑通, 只是 wallclock 没加速. 升级路径: ProcessPool.
     async def mcmc_multi_chain(
-        self,
-        obs: Iterable[Observation],
-        n_chains: int = 4,
-        n_steps_per_chain: int = 1_750_000,
-        checkpoint_interval: int = 10_000,
-        *,
-        temperature: float = 1.0,
-        se3_enabled: bool = False,
-        se3_angle_sigma: float = 30.0,
-        haptic_enabled: bool = False,
-        haptic_temperature: float = 1.0,
-        alignment_enabled: bool = False,
+        self, obs: Iterable[Observation], n_chains: int = 4,
+        n_steps_per_chain: int = 1_750_000, checkpoint_interval: int = 10_000, *,
+        temperature: float = 1.0, se3_enabled: bool = False,
+        se3_angle_sigma: float = 30.0, haptic_enabled: bool = False,
+        haptic_temperature: float = 1.0, alignment_enabled: bool = False,
         alignment_temperature: float = 1.0,
         on_chain_checkpoint: Callable[[int, dict], None] | None = None,
-        anneal: bool = True,
-        t_high: float = 10.0,
+        anneal: bool = True, t_high: float = 10.0,
         global_proposal_prob: float = 0.3,
     ) -> dict:
         """多链并行 MCMC + Gelman-Rubin R̂ 收敛诊断.
 
-        Returns:
-            {
-                "chains": [[h_id, ...], ...],  # 每链样本 (burn-in 后, 降采样)
-                "r_hat": float,                # Gelman-Rubin R̂
-                "converged": bool,             # R̂ < 1.1
-                "accept_rates": [float, ...],  # 每链接受率
-            }
+        Returns: {"chains": [[h_id, ...], ...], "r_hat": float,
+                 "converged": bool, "accept_rates": [float, ...]}
         """
-        import asyncio
-
         obs_list = list(obs)
         if not self._hyp or n_chains < 1:
             return {"chains": [], "r_hat": float("nan"), "converged": False, "accept_rates": []}
@@ -930,110 +999,231 @@ class HypothesisManifold:
         # 种子派生: chain_id * 7919 + base_seed. 7919 是质数, 避免相邻链种子相关.
         base_seed = int(os.environ.get("HUGINN_MCMC_SEED", "42"))
 
-        # 升级路径 A (ProcessPool): 真并行 gate.
-        # asyncio.gather 对 CPU-bound 是串行; 只有未启用 se3/haptic/alignment
-        # (这些依赖不可 pickle 的对象) 且显式允许时, 才走 ProcessPool 真并行.
-        # HUGINN_MCMC_PARALLEL=0 强制回退 asyncio (回归逃生门).
-        # ponytail: 升级路径 B (Ray) — 触发条件: 有第二台机要加进来 / 需要
-        # actor 状态驻留 / 跨机自动容错. 当前单机 ProcessPool 已覆盖, 不加.
-        _pp_enabled = (
-            os.environ.get("HUGINN_MCMC_PARALLEL", "1") != "0"
-            and not (se3_enabled or haptic_enabled or alignment_enabled)
-        )
-        if _pp_enabled:
-            try:
-                import concurrent.futures as _cf
-
-                # 序列化 hypothesis 到纯 pickle 数据行
-                _hyp_rows = [
-                    (
-                        h.h_id, h.description, dict(h.predictions), h.n_params,
-                        h.prior_override, h.confidence, h.evidence_strength,
-                    )
-                    for h in self._hyp.values()
-                ]
-                _obs_rows = [(o.name, o.value, o.sigma) for o in obs_list]
-                # 主进程算 init_h (abductive_inference 同步, 不需要 worker)
-                _init_h = None
-                try:
-                    _abd = self.abductive_inference(obs_list)
-                    _init_h = _abd.h_id if _abd else None
-                except Exception:
-                    _init_h = None
-
-                # n_chains 个小进程池, 每个跑 1 条链 → 真并行 n_chains 链.
-                # ponytail: 每个链独立 pool, 崩溃不影响其他链 (submit 后 get 各自结果).
-                _executors = []
-                _futures = []
-                for i in range(n_chains):
-                    _ex = _cf.ProcessPoolExecutor(max_workers=1)
-                    _executors.append(_ex)
-                    _futures.append(
-                        _ex.submit(
-                            _mcmc_chain_worker,
-                            i, base_seed, _hyp_rows, _obs_rows,
-                            n_steps_per_chain, checkpoint_interval,
-                            temperature=temperature, anneal=anneal, t_high=t_high,
-                            global_proposal_prob=global_proposal_prob,
-                            init_h_id=_init_h or "",
-                        )
-                    )
-                _results = []
-                for _f in _futures:
-                    try:
-                        _results.append(_f.result())
-                    except Exception:
-                        _results.append(None)  # 崩溃链降级, 不参与 R̂
-                for _ex in _executors:
-                    with contextlib.suppress(Exception):
-                        _ex.shutdown(wait=False)
-
-                _pp_chains = [r["samples"] for r in _results if r is not None]
-                _pp_rates = [r["accept_rate"] for r in _results if r is not None]
-                _pp_rhat = (
-                    self._gelman_rubin(_pp_chains)
-                    if len(_pp_chains) >= 2 else float("nan")
-                )
-                return {
-                    "chains": _pp_chains,
-                    "r_hat": _pp_rhat,
-                    "converged": (not math.isnan(_pp_rhat)) and _pp_rhat < 1.1,
-                    "accept_rates": _pp_rates,
-                }
-            except Exception:
-                # ProcessPool 失败回退 asyncio (内存/序列化/平台问题)
-                logger.debug("ProcessPool sampling failed, falling back to asyncio", exc_info=True)
-
-        async def _chain_runner(chain_id: int):
-            rng = random.Random(chain_id * 7919 + base_seed)
-            # current 初始化: 用 abductive_inference 给一个合理起点, 避免全从同一点开始
-            init_h = None
-            try:
-                abd = self.abductive_inference(obs_list)
-                init_h = abd.h_id if abd else None
-            except Exception:
-                init_h = None
-            if init_h is None:
-                h_ids = list(self._hyp)
-                init_h = rng.choice(h_ids)
-            return await self._run_single_chain(
-                chain_id, obs_list, n_steps_per_chain, checkpoint_interval,
-                rng=rng, temperature=temperature,
-                se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
-                haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
-                alignment_enabled=alignment_enabled,
-                alignment_temperature=alignment_temperature,
-                init_h_id=init_h, on_checkpoint=on_chain_checkpoint,
-                anneal=anneal, t_high=t_high,
-                global_proposal_prob=global_proposal_prob,
+        if self._mcmc_parallel_enabled(se3_enabled, haptic_enabled, alignment_enabled):
+            _pp = self._mcmc_pp_attempt(
+                obs_list, n_chains, base_seed, n_steps_per_chain,
+                checkpoint_interval, temperature=temperature, anneal=anneal,
+                t_high=t_high, global_proposal_prob=global_proposal_prob,
             )
+            if _pp is not None:
+                return _pp
 
-        # return_exceptions=True: 单链崩溃返回 Exception 对象, 不影响其他链
-        results = await asyncio.gather(
-            *[_chain_runner(i) for i in range(n_chains)],
+        results = await self._mcmc_gather(
+            obs_list, n_chains, n_steps_per_chain, checkpoint_interval, base_seed,
+            temperature=temperature, se3_enabled=se3_enabled,
+            se3_angle_sigma=se3_angle_sigma, haptic_enabled=haptic_enabled,
+            haptic_temperature=haptic_temperature,
+            alignment_enabled=alignment_enabled,
+            alignment_temperature=alignment_temperature,
+            on_checkpoint=on_chain_checkpoint, anneal=anneal, t_high=t_high,
+            global_proposal_prob=global_proposal_prob,
+        )
+        return self._mcmc_collect(results)
+
+    async def _mcmc_gather(
+        self, obs_list: list, n_chains: int, n_steps_per_chain: int,
+        checkpoint_interval: int, base_seed: int, *, temperature: float,
+        se3_enabled: bool, se3_angle_sigma: float, haptic_enabled: bool,
+        haptic_temperature: float, alignment_enabled: bool,
+        alignment_temperature: float,
+        on_checkpoint: Callable[[int, dict], None] | None, anneal: bool,
+        t_high: float, global_proposal_prob: float,
+    ) -> list:
+        """并发跑全部链; return_exceptions=True 让单链崩溃不影响其他链."""
+        import asyncio
+
+        return await asyncio.gather(
+            *[
+                self._mcmc_chain_runner(
+                    i, obs_list, n_steps_per_chain, checkpoint_interval, base_seed,
+                    temperature=temperature,
+                    se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
+                    haptic_enabled=haptic_enabled,
+                    haptic_temperature=haptic_temperature,
+                    alignment_enabled=alignment_enabled,
+                    alignment_temperature=alignment_temperature,
+                    on_checkpoint=on_checkpoint,
+                    anneal=anneal, t_high=t_high,
+                    global_proposal_prob=global_proposal_prob,
+                )
+                for i in range(n_chains)
+            ],
             return_exceptions=True,
         )
 
+    @staticmethod
+    def _mcmc_parallel_enabled(
+        se3_enabled: bool, haptic_enabled: bool, alignment_enabled: bool
+    ) -> bool:
+        """升级路径 A (ProcessPool): 真并行 gate.
+
+        asyncio.gather 对 CPU-bound 是串行; 只有未启用 se3/haptic/alignment
+        (这些依赖不可 pickle 的对象) 且显式允许时, 才走 ProcessPool 真并行.
+        HUGINN_MCMC_PARALLEL=0 强制回退 asyncio (回归逃生门).
+        ponytail: 升级路径 B (Ray) — 触发条件: 有第二台机要加进来 / 需要
+        actor 状态驻留 / 跨机自动容错. 当前单机 ProcessPool 已覆盖, 不加.
+        """
+        return (
+            os.environ.get("HUGINN_MCMC_PARALLEL", "1") != "0"
+            and not (se3_enabled or haptic_enabled or alignment_enabled)
+        )
+
+    def _mcmc_pp_attempt(
+        self,
+        obs_list: list,
+        n_chains: int,
+        base_seed: int,
+        n_steps_per_chain: int,
+        checkpoint_interval: int,
+        *,
+        temperature: float,
+        anneal: bool,
+        t_high: float,
+        global_proposal_prob: float,
+    ) -> dict | None:
+        """ProcessPool 真并行采样; 任何失败返回 None 让调用方回退 asyncio."""
+        try:
+            _hyp_rows, _obs_rows, _init_h = self._mcmc_pp_rows(obs_list)
+            _results = self._mcmc_pp_run(
+                _hyp_rows, _obs_rows, _init_h, n_chains, base_seed,
+                n_steps_per_chain, checkpoint_interval,
+                temperature=temperature, anneal=anneal, t_high=t_high,
+                global_proposal_prob=global_proposal_prob,
+            )
+            _pp_chains = [r["samples"] for r in _results if r is not None]
+            _pp_rates = [r["accept_rate"] for r in _results if r is not None]
+            _pp_rhat = (
+                self._gelman_rubin(_pp_chains)
+                if len(_pp_chains) >= 2 else float("nan")
+            )
+            return {
+                "chains": _pp_chains,
+                "r_hat": _pp_rhat,
+                "converged": (not math.isnan(_pp_rhat)) and _pp_rhat < 1.1,
+                "accept_rates": _pp_rates,
+            }
+        except Exception:
+            # ProcessPool 失败回退 asyncio (内存/序列化/平台问题)
+            logger.debug(
+                "ProcessPool sampling failed, falling back to asyncio",
+                exc_info=True,
+            )
+            return None
+
+    def _mcmc_pp_rows(
+        self, obs_list: list
+    ) -> tuple[list, list, str | None]:
+        """序列化 hypothesis/observation 到纯 pickle 数据行 + 主进程算 init_h."""
+        # 序列化 hypothesis 到纯 pickle 数据行
+        _hyp_rows = [
+            (
+                h.h_id, h.description, dict(h.predictions), h.n_params,
+                h.prior_override, h.confidence, h.evidence_strength,
+            )
+            for h in self._hyp.values()
+        ]
+        _obs_rows = [(o.name, o.value, o.sigma) for o in obs_list]
+        # 主进程算 init_h (abductive_inference 同步, 不需要 worker)
+        _init_h = None
+        try:
+            _abd = self.abductive_inference(obs_list)
+            _init_h = _abd.h_id if _abd else None
+        except Exception:
+            _init_h = None
+        return _hyp_rows, _obs_rows, _init_h
+
+    def _mcmc_pp_run(
+        self,
+        hyp_rows: list,
+        obs_rows: list,
+        init_h: str | None,
+        n_chains: int,
+        base_seed: int,
+        n_steps_per_chain: int,
+        checkpoint_interval: int,
+        *,
+        temperature: float,
+        anneal: bool,
+        t_high: float,
+        global_proposal_prob: float,
+    ) -> list:
+        """n_chains 个独立单 worker 进程池并行跑链; 崩溃链记 None."""
+        import concurrent.futures as _cf
+
+        # n_chains 个小进程池, 每个跑 1 条链 → 真并行 n_chains 链.
+        # ponytail: 每个链独立 pool, 崩溃不影响其他链 (submit 后 get 各自结果).
+        _executors = []
+        _futures = []
+        for i in range(n_chains):
+            _ex = _cf.ProcessPoolExecutor(max_workers=1)
+            _executors.append(_ex)
+            _futures.append(
+                _ex.submit(
+                    _mcmc_chain_worker,
+                    i, base_seed, hyp_rows, obs_rows,
+                    n_steps_per_chain, checkpoint_interval,
+                    temperature=temperature, anneal=anneal, t_high=t_high,
+                    global_proposal_prob=global_proposal_prob,
+                    init_h_id=init_h or "",
+                )
+            )
+        _results = []
+        for _f in _futures:
+            try:
+                _results.append(_f.result())
+            except Exception:
+                _results.append(None)  # 崩溃链降级, 不参与 R̂
+        for _ex in _executors:
+            with contextlib.suppress(Exception):
+                _ex.shutdown(wait=False)
+        return _results
+
+    async def _mcmc_chain_runner(
+        self,
+        chain_id: int,
+        obs_list: list,
+        n_steps_per_chain: int,
+        checkpoint_interval: int,
+        base_seed: int,
+        *,
+        temperature: float,
+        se3_enabled: bool,
+        se3_angle_sigma: float,
+        haptic_enabled: bool,
+        haptic_temperature: float,
+        alignment_enabled: bool,
+        alignment_temperature: float,
+        on_checkpoint: Callable[[int, dict], None] | None,
+        anneal: bool,
+        t_high: float,
+        global_proposal_prob: float,
+    ) -> dict:
+        """单链入口: 独立 rng + abductive 起点, 交给 _run_single_chain."""
+        rng = random.Random(chain_id * 7919 + base_seed)
+        # current 初始化: 用 abductive_inference 给一个合理起点, 避免全从同一点开始
+        init_h = None
+        try:
+            abd = self.abductive_inference(obs_list)
+            init_h = abd.h_id if abd else None
+        except Exception:
+            init_h = None
+        if init_h is None:
+            h_ids = list(self._hyp)
+            init_h = rng.choice(h_ids)
+        return await self._run_single_chain(
+            chain_id, obs_list, n_steps_per_chain, checkpoint_interval,
+            rng=rng, temperature=temperature,
+            se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
+            haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
+            alignment_enabled=alignment_enabled,
+            alignment_temperature=alignment_temperature,
+            init_h_id=init_h, on_checkpoint=on_checkpoint,
+            anneal=anneal, t_high=t_high,
+            global_proposal_prob=global_proposal_prob,
+        )
+
+    def _mcmc_collect(self, results: list) -> dict:
+        """汇总多链结果 + Gelman-Rubin R̂ 收敛判定."""
         chains: list[list[str]] = []
         accept_rates: list[float] = []
         for r in results:
@@ -1054,87 +1244,125 @@ class HypothesisManifold:
         }
 
     async def _run_single_chain(
-        self,
-        chain_id: int,
-        obs: list,
-        n_steps: int,
-        checkpoint_interval: int,
-        *,
-        rng: random.Random,
-        temperature: float = 1.0,
-        se3_enabled: bool = False,
-        se3_angle_sigma: float = 30.0,
-        haptic_enabled: bool = False,
-        haptic_temperature: float = 1.0,
-        alignment_enabled: bool = False,
-        alignment_temperature: float = 1.0,
-        init_h_id: str,
+        self, chain_id: int, obs: list, n_steps: int,
+        checkpoint_interval: int, *, rng: random.Random,
+        temperature: float = 1.0, se3_enabled: bool = False,
+        se3_angle_sigma: float = 30.0, haptic_enabled: bool = False,
+        haptic_temperature: float = 1.0, alignment_enabled: bool = False,
+        alignment_temperature: float = 1.0, init_h_id: str,
         on_checkpoint: Callable[[int, dict], None] | None = None,
-        anneal: bool = True,
-        t_high: float = 10.0,
+        anneal: bool = True, t_high: float = 10.0,
         global_proposal_prob: float = 0.3,
     ) -> dict:
-        """单链 MCMC 执行器. 复用 mcmc_step 的增量逻辑.
+        """单链 MCMC 执行器; 复用 mcmc_step 的增量逻辑.
 
-        温度退火 (anneal=True): T(step) = t_high * (t_low/t_high) ** (step/n_steps),
-        t_low = 调用方 temperature. 高温阶段接受宽松 → 全局探索 (配合 mcmc_step 的
-        global_proposal_prob 跳到远处), 低温阶段收敛锁定 MAP. 这是模拟退火
-        (Simulated Annealing) 的几何降温, 解决尖锐后验下 MCMC 从最优出发锁死、
-        接受率趋近 0 的问题.
-        ponytail: anneal=False 时行为 = 原固定 temperature (向后兼容).
-
+        anneal=True: T(step) = t_high * (t_low/t_high) ** (step/n_steps),
+        t_low = temperature — 模拟退火几何降温 (高温探索 / 低温锁定 MAP).
         Returns: {"samples": [...], "accept_rate": float, "final_h": str}
         """
         current = init_h_id
         cached_log_p: float | None = None
         accept_count = 0
-        # burn-in: 前半段不采样本 (Markov 链未达稳态)
-        burn_in = n_steps // 2
-        # 降采样: 每 1000 步取 1 个, 避免样本自相关 + 节省内存
-        thin = 1000
-        samples: list[str] = []
-
+        # burn-in: 前半段不采样本; 降采样: 每 1000 步取 1 个 (避免自相关 + 省内存)
+        burn_in, thin, samples = n_steps // 2, 1000, []
         _t_low = temperature if temperature > 0 else 1.0
         for step in range(1, n_steps + 1):
-            prev_h = current
-            T = temperature
-            if anneal:
-                # 几何退火: step=1 → t_high, step=n_steps → t_low
-                T = t_high * (_t_low / t_high) ** (step / n_steps)
-            current, cached_log_p = self.mcmc_step(
-                obs, current, rng=rng, temperature=T,
-                cached_log_p_current=cached_log_p,
-                se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
-                haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
-                alignment_enabled=alignment_enabled,
-                alignment_temperature=alignment_temperature,
-                global_proposal_prob=global_proposal_prob,
+            current, cached_log_p, accept_count = self._chain_step(
+                obs, current, cached_log_p, accept_count, step, n_steps,
+                rng, temperature, _t_low, anneal, t_high,
+                se3_enabled, se3_angle_sigma, haptic_enabled, haptic_temperature,
+                alignment_enabled, alignment_temperature, global_proposal_prob,
             )
-            if current != prev_h:
-                accept_count += 1
             if step > burn_in and step % thin == 0:
                 samples.append(current)
+            self._chain_checkpoint(
+                chain_id, step, current, rng, accept_count,
+                checkpoint_interval, on_checkpoint,
+            )
+        return self._chain_result(samples, accept_count, current, n_steps)
 
-            # 周期 checkpoint
-            if checkpoint_interval > 0 and step % checkpoint_interval == 0:
-                ckpt = {
-                    "chain_id": chain_id,
-                    "step": step,
-                    "current": current,
-                    "rng_state": rng.getstate(),
-                    "accept_count": accept_count,
-                }
-                if on_checkpoint is not None:
-                    with contextlib.suppress(Exception):
-                        # checkpoint 失败不阻塞链
-                        on_checkpoint(chain_id, ckpt)
-
-        accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
+    @staticmethod
+    def _chain_result(
+        samples: list[str], accept_count: int, current: str, n_steps: int,
+    ) -> dict:
+        """组装单链结果 (接受率 + 最终假设)."""
         return {
             "samples": samples,
-            "accept_rate": accept_rate,
+            "accept_rate": accept_count / n_steps if n_steps > 0 else 0.0,
             "final_h": current,
         }
+
+    def _chain_step(
+        self, obs: list, current: str, cached_log_p: float | None,
+        accept_count: int, step: int, n_steps: int, rng: random.Random,
+        temperature: float, t_low: float, anneal: bool, t_high: float,
+        se3_enabled: bool, se3_angle_sigma: float, haptic_enabled: bool,
+        haptic_temperature: float, alignment_enabled: bool,
+        alignment_temperature: float, global_proposal_prob: float,
+    ) -> tuple[str, float | None, int]:
+        """跑一步 MCMC (含几何退火温度), 返回 (current, cached_log_p, accept_count)."""
+        T = temperature
+        if anneal:
+            # 几何退火: step=1 → t_high, step=n_steps → t_low
+            T = t_high * (t_low / t_high) ** (step / n_steps)
+        prev_h = current
+        current, cached_log_p = self.mcmc_step(
+            obs, current, rng=rng, temperature=T,
+            cached_log_p_current=cached_log_p,
+            se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
+            haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
+            alignment_enabled=alignment_enabled,
+            alignment_temperature=alignment_temperature,
+            global_proposal_prob=global_proposal_prob,
+        )
+        if current != prev_h:
+            accept_count += 1
+        return current, cached_log_p, accept_count
+
+    @staticmethod
+    def _chain_checkpoint(
+        chain_id: int, step: int, current: str, rng: random.Random,
+        accept_count: int, checkpoint_interval: int,
+        on_checkpoint: Callable[[int, dict], None] | None,
+    ) -> None:
+        """周期 checkpoint; 未到间隔或无回调时静默返回."""
+        if checkpoint_interval <= 0 or step % checkpoint_interval != 0:
+            return
+        ckpt = {
+            "chain_id": chain_id,
+            "step": step,
+            "current": current,
+            "rng_state": rng.getstate(),
+            "accept_count": accept_count,
+        }
+        if on_checkpoint is not None:
+            with contextlib.suppress(Exception):
+                # checkpoint 失败不阻塞链
+                on_checkpoint(chain_id, ckpt)
+
+    @staticmethod
+    def _rank_encode(chains: list[list[str]]) -> tuple[list[list[float]], int] | None:
+        """h_id → rank 数值 (按全样本首次出现顺序), 截到最短链长度.
+
+        无法计算 (空样本 / 最短链 < 2) 时返回 None.
+        """
+        all_h: list[str] = []
+        seen: set[str] = set()
+        for c in chains:
+            for h in c:
+                if h not in seen:
+                    seen.add(h)
+                    all_h.append(h)
+        if not all_h:
+            return None
+        h_to_idx = {h: float(i) for i, h in enumerate(all_h)}
+
+        # 转数值 + 截到最短链长度 (R̂ 要求等长)
+        min_len = min(len(c) for c in chains)
+        if min_len < 2:
+            return None
+        num_chains = [[h_to_idx[h] for h in c[:min_len]] for c in chains]
+        return num_chains, min_len
 
     @staticmethod
     def _gelman_rubin(chains: list[list[str]]) -> float:
@@ -1151,26 +1379,12 @@ class HypothesisManifold:
         if len(chains) < 2:
             return float("nan")
 
-        # h_id → 数值映射 (按全样本首次出现顺序)
-        all_h: list[str] = []
-        seen: set[str] = set()
-        for c in chains:
-            for h in c:
-                if h not in seen:
-                    seen.add(h)
-                    all_h.append(h)
-        if not all_h:
+        encoded = HypothesisManifold._rank_encode(chains)
+        if encoded is None:
             return float("nan")
-        h_to_idx = {h: float(i) for i, h in enumerate(all_h)}
-
-        # 转数值 + 截到最短链长度 (R̂ 要求等长)
-        min_len = min(len(c) for c in chains)
-        if min_len < 2:
-            return float("nan")
-        num_chains = [[h_to_idx[h] for h in c[:min_len]] for c in chains]
+        num_chains, n = encoded
 
         m = len(num_chains)       # 链数
-        n = min_len               # 每链样本数
 
         # 链均值
         chain_means = [sum(c) / n for c in num_chains]
@@ -1353,59 +1567,67 @@ class HypothesisManifold:
         构造 2 个 hypothesis + 1 对 isomorphic anomaly (结构同 haptic 不同),
         验证 detect 返回非空 + trigger 能生成新 hypothesis (stub engine).
         """
-        import asyncio
-        import types as _types
-
-        import numpy as _np
-
-        from huginn.mechanics import ElasticTensor
-        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
-        from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
-
-        # 石墨/金刚石: 同结构 (同 coords), 弹性天差地别 → 同构不同性
-        _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
-        _lattice = _np.eye(3) * 5.0
-        _cmap_g = StructureCognitiveMap.from_coords(
-            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
-        _cmap_d = StructureCognitiveMap.from_coords(
-            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
-
-        _m = HypothesisManifold()
-        _m.add(Hypothesis("graphite", "graphite", predictions={"x": 1.0}))
-        _m.add(Hypothesis("diamond", "diamond", predictions={"x": 1.0}))
-        _m.register_structure("graphite", "s_g", _cmap_g)
-        _m.register_structure("diamond", "s_d", _cmap_d)
-        _m.register_haptic(
-            "graphite", HapticPropertyLayer(elastic=ElasticTensor(C=_np.eye(6) * 10.0)))
-        _m.register_haptic(
-            "diamond", HapticPropertyLayer(elastic=ElasticTensor(C=_np.eye(6) * 1000.0)))
-
+        _m, _anom = _build_haptic_fixture()
         # 1. detect_isomorphic_anomaly 抓到这对
-        _anom = _m.detect_isomorphic_anomaly()
         assert _anom, f"anomaly not detected: {_anom}"
         assert ("graphite", "diamond") in _anom, f"wrong pair: {_anom}"
 
         # 2. trigger_isomorphic_anomaly_hypothesis 生成新 hypothesis (stub engine)
-        # ponytail: 不构造 full AutoloopEngine, 用 stub 持有 _hypothesize.
-        async def _run():
-            from huginn.autoloop.engine import AutoloopEngine
-
-            async def _stub_hyp(ctx):
-                return f"new hypothesis: {ctx['anomaly_pair']} structure-property mismatch"
-
-            _stub = _types.SimpleNamespace(
-                _hypothesize=_stub_hyp,
-                _last_hypothesis=None,
-                _last_raw_hypothesis=None,
-            )
-            return await AutoloopEngine.trigger_isomorphic_anomaly_hypothesis(
-                _stub, _anom)
-
-        _generated = asyncio.run(_run())
+        _generated = _run_haptic_trigger(_anom)
         assert _generated, f"trigger should generate hypothesis: {_generated}"
         assert len(_generated) == 1, f"expected 1 hypothesis, got {len(_generated)}"
 
         print("  haptic mainloop: detect_isomorphic_anomaly + trigger OK")
+
+
+def _build_haptic_fixture() -> tuple[HypothesisManifold, dict]:
+    """石墨/金刚石: 同结构 (同 coords), 弹性天差地别 → 同构不同性."""
+    import numpy as _np
+
+    from huginn.mechanics import ElasticTensor
+    from huginn.metacog.haptic_property_layer import HapticPropertyLayer
+    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
+    _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
+    _lattice = _np.eye(3) * 5.0
+    _cmap_g = StructureCognitiveMap.from_coords(
+        species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
+    _cmap_d = StructureCognitiveMap.from_coords(
+        species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
+
+    _m = HypothesisManifold()
+    _m.add(Hypothesis("graphite", "graphite", predictions={"x": 1.0}))
+    _m.add(Hypothesis("diamond", "diamond", predictions={"x": 1.0}))
+    _m.register_structure("graphite", "s_g", _cmap_g)
+    _m.register_structure("diamond", "s_d", _cmap_d)
+    _m.register_haptic(
+        "graphite", HapticPropertyLayer(elastic=ElasticTensor(C=_np.eye(6) * 10.0)))
+    _m.register_haptic(
+        "diamond", HapticPropertyLayer(elastic=ElasticTensor(C=_np.eye(6) * 1000.0)))
+
+    return _m, _m.detect_isomorphic_anomaly()
+
+
+def _run_haptic_trigger(_anom: dict) -> list:
+    """用 stub engine 触发同构异常假设生成 (不构造 full AutoloopEngine)."""
+    import asyncio
+    import types as _types
+
+    from huginn.autoloop.engine import AutoloopEngine
+
+    async def _stub_hyp(ctx):
+        return f"new hypothesis: {ctx['anomaly_pair']} structure-property mismatch"
+
+    async def _run():
+        _stub = _types.SimpleNamespace(
+            _hypothesize=_stub_hyp,
+            _last_hypothesis=None,
+            _last_raw_hypothesis=None,
+        )
+        return await AutoloopEngine.trigger_isomorphic_anomaly_hypothesis(
+            _stub, _anom)
+
+    return asyncio.run(_run())
 
 
 # ---------- 多进程 worker (ProcessPool 升级路径 A) ----------
@@ -1438,6 +1660,26 @@ def _mcmc_chain_worker(
     proposal 退化 fisher). 每条链独立 rng, 独立当前状态.
     返回 {"samples": [...], "accept_rate": float, "final_h": str}.
     """
+    m, obs, rng = _mcmc_worker_setup(chain_id, base_seed, hyp_rows, obs_rows)
+
+    current = init_h_id
+    if current not in m._hyp:
+        h_ids = list(m._hyp)
+        current = rng.choice(h_ids) if h_ids else current
+    current, accept_count, samples = _mcmc_worker_loop(
+        m, obs, rng, chain_id, current, n_steps, checkpoint_interval,
+        temperature=temperature, anneal=anneal, t_high=t_high,
+        global_proposal_prob=global_proposal_prob,
+    )
+
+    accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
+    return {"samples": samples, "accept_rate": accept_rate, "final_h": current}
+
+
+def _mcmc_worker_setup(
+    chain_id: int, base_seed: int, hyp_rows: list[tuple], obs_rows: list[tuple],
+) -> tuple[HypothesisManifold, list, random.Random]:
+    """重建轻量 manifold (只加 hypothesis, 无 structure/haptic/alignment)."""
     m = HypothesisManifold()
     for row in hyp_rows:
         (hid, desc, preds, np_, prior, conf, ev) = row
@@ -1448,12 +1690,16 @@ def _mcmc_chain_worker(
                 evidence_strength=ev,
             ))
     obs = [Observation(name=n, value=v, sigma=s) for (n, v, s) in obs_rows]
-    rng = random.Random(chain_id * 7919 + base_seed)
+    return m, obs, random.Random(chain_id * 7919 + base_seed)
 
-    current = init_h_id
-    if current not in m._hyp:
-        h_ids = list(m._hyp)
-        current = rng.choice(h_ids) if h_ids else current
+
+def _mcmc_worker_loop(
+    m: HypothesisManifold, obs: list, rng: random.Random, chain_id: int,
+    current: str, n_steps: int, checkpoint_interval: int, *,
+    temperature: float, anneal: bool, t_high: float,
+    global_proposal_prob: float,
+) -> tuple[str, int, list[str]]:
+    """跑 n_steps 步 MCMC, 返回 (final_h, accept_count, samples)."""
     cached_log_p: float | None = None
     accept_count = 0
     burn_in = n_steps // 2
@@ -1476,23 +1722,27 @@ def _mcmc_chain_worker(
             accept_count += 1
         if step > burn_in and step % thin == 0:
             samples.append(current)
-        # checkpoint 落盘: 每链独立文件, 主进程聚合时不需要读
         if checkpoint_interval > 0 and step % checkpoint_interval == 0:
-            try:
-                _ckpt_path = os.environ.get(
-                    "HUGINN_MCMC_CKPT_DIR", "") + f"/mcmc_chain_{chain_id}.json"
-                if _ckpt_path.startswith("/"):
-                    import json as _json
-                    with open(_ckpt_path, "w", encoding="utf-8") as _f:
-                        _json.dump({
-                            "chain_id": chain_id, "step": step,
-                            "current": current, "accept_count": accept_count,
-                        }, _f)
-            except Exception:
-                logger.debug("MCMC checkpoint save failed, chain continues", exc_info=True)
+            _mcmc_worker_checkpoint(chain_id, step, current, accept_count)
+    return current, accept_count, samples
 
-    accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
-    return {"samples": samples, "accept_rate": accept_rate, "final_h": current}
+
+def _mcmc_worker_checkpoint(
+    chain_id: int, step: int, current: str, accept_count: int,
+) -> None:
+    """checkpoint 落盘: 每链独立文件, 主进程聚合时不需要读."""
+    try:
+        _ckpt_path = os.environ.get(
+            "HUGINN_MCMC_CKPT_DIR", "") + f"/mcmc_chain_{chain_id}.json"
+        if _ckpt_path.startswith("/"):
+            import json as _json
+            with open(_ckpt_path, "w", encoding="utf-8") as _f:
+                _json.dump({
+                    "chain_id": chain_id, "step": step,
+                    "current": current, "accept_count": accept_count,
+                }, _f)
+    except Exception:
+        logger.debug("MCMC checkpoint save failed, chain continues", exc_info=True)
 
 
 # ---------- Self-check ----------

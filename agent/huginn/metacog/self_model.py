@@ -543,251 +543,286 @@ class _ErrMock:
         raise self.error
 
 
+
+
+def _sc_cases_1_to_4(td_path: Path) -> None:
+    # Case 1: 成功调用 → capable
+    sm = SelfModel(
+        task_local_path=td_path / "ws1" / HUGINN_DIR_NAME / "self_model.json",
+        cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
+        model=None,
+    )
+    sm.update_from_step({
+        "tool_name": "matplotlib", "success": True, "error_message": "",
+    })
+    assert sm.get_tier("matplotlib") == "capable", \
+        f"case1: capable failed: {sm.get_tier('matplotlib')}"
+    print("[CHECK] case1 success -> capable (skill=matplotlib)")
+
+    # Case 2: timeout → blind (keyword)
+    sm.update_from_step({
+        "tool_name": "long_runner", "success": False,
+        "error_message": "TimeoutError: tool call timed out after 30s",
+    })
+    assert sm.get_tier("exec_timeout") == "blind", \
+        f"case2: blind failed: {sm.get_tier('exec_timeout')}"
+    print("[CHECK] case2 timeout -> blind (skill=exec_timeout)")
+
+    # Case 3: import error → blind (keyword)
+    sm.update_from_step({
+        "tool_name": "unknown_pkg", "success": False,
+        "error_message": "ModuleNotFoundError: No module named 'foo'",
+    })
+    assert sm.get_tier("pkg_install") == "blind", \
+        f"case3: blind failed: {sm.get_tier('pkg_install')}"
+    print("[CHECK] case3 import error -> blind (skill=pkg_install)")
+
+    # Case 4: 未知错误 → uncertain (keyword fallback)
+    sm.update_from_step({
+        "tool_name": "weird_tool", "success": False,
+        "error_message": "something went wrong",
+    })
+    assert sm.get_tier("weird_tool") == "uncertain", \
+        f"case4: uncertain failed: {sm.get_tier('weird_tool')}"
+    print("[CHECK] case4 unknown error -> uncertain (skill=weird_tool)")
+
+
+def _sc_case5_llm(td_path: Path) -> None:
+    # Case 5: LLM 分类 — pytorch_training → blind
+    sm_llm = SelfModel(
+        task_local_path=td_path / "ws2" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross2" / "sm.json",
+        model=_SeqMock(
+            '{"tier": "blind", "reason": "needs GPU", '
+            '"skill": "pytorch_training"}'
+        ),
+    )
+    sm_llm.update_from_step({
+        "tool_name": "pytorch", "success": False,
+        "error_message": "CUDA error",
+    })
+    assert sm_llm.get_tier("pytorch_training") == "blind", \
+        f"case5: LLM blind failed: {sm_llm.get_tier('pytorch_training')}"
+    print("[CHECK] case5 LLM classify -> blind (skill=pytorch_training)")
+
+
+def _sc_case6_fallback(td_path: Path) -> None:
+    # Case 6: LLM 失败降级到 keyword (lammps → uncertain)
+    sm_err = SelfModel(
+        task_local_path=td_path / "ws3" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross3" / "sm.json",
+        model=_ErrMock(RuntimeError("llm down")),
+    )
+    sm_err.update_from_step({
+        "tool_name": "lammps", "success": False,
+        "error_message": "lammps exec not found",
+    })
+    assert sm_err.get_tier("lammps") == "uncertain", \
+        f"case6: keyword fallback failed: {sm_err.get_tier('lammps')}"
+    print("[CHECK] case6 LLM error -> keyword fallback (skill=lammps)")
+
+
+def _sc_case7_cross_task(td_path: Path) -> None:
+    # Case 7: 跨 task 累积 — cross-task 文件持久化 + 加载合并
+    # case1-4 的 sm 已 save 到 cross1/, 新 SelfModel 加载应继承 capable/blind
+    sm2 = SelfModel(
+        task_local_path=td_path / "ws_new" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
+        model=None,
+    )
+    # matplotlib (capable) 和 exec_timeout (blind) 应从 cross-task 加载
+    assert sm2.get_tier("matplotlib") == "capable", \
+        "case7: cross-task capable not loaded"
+    assert sm2.get_tier("exec_timeout") == "blind", \
+        "case7: cross-task blind not loaded"
+    # uncertain 不持久化到 cross-task, 应默认 uncertain
+    assert sm2.get_tier("weird_tool") == "uncertain", \
+        "case7: uncertain should default (not in cross-task)"
+    print("[CHECK] case7 cross-task accumulation OK")
+
+
+def _sc_case8_imagination_success(td_path: Path) -> None:
+    # Case 8: imagination feedback — uncertain → capable (success)
+    sm_fb = SelfModel(
+        task_local_path=td_path / "ws4" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross4" / "sm.json",
+        model=None,
+    )
+    sm_fb.update_from_step({
+        "tool_name": "rdkit", "success": False,
+        "error_message": "rdkit parse error",
+    })
+    assert sm_fb.get_tier("rdkit") == "uncertain"
+    sm_fb.feedback_from_imagination("rdkit", success=True)
+    assert sm_fb.get_tier("rdkit") == "capable", \
+        f"case8: upgrade failed: {sm_fb.get_tier('rdkit')}"
+    print("[CHECK] case8 imagination success -> uncertain to capable")
+
+
+def _sc_case9_imagination_failure(td_path: Path) -> None:
+    # Case 9: imagination feedback — uncertain → blind (failure)
+    sm_fb2 = SelfModel(
+        task_local_path=td_path / "ws5" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross5" / "sm.json",
+        model=None,
+    )
+    sm_fb2.update_from_step({
+        "tool_name": "rdkit", "success": False,
+        "error_message": "rdkit error",
+    })
+    sm_fb2.feedback_from_imagination("rdkit", success=False)
+    assert sm_fb2.get_tier("rdkit") == "blind", \
+        f"case9: downgrade failed: {sm_fb2.get_tier('rdkit')}"
+    print("[CHECK] case9 imagination failure -> uncertain to blind")
+
+
+def _sc_case10_list(td_path: Path) -> None:
+    # Case 10: 多条 step_result (list) — 一次性更新多个 skill
+    sm_list = SelfModel(
+        task_local_path=td_path / "ws6" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross6" / "sm.json",
+        model=None,
+    )
+    sm_list.update_from_step([
+        {"tool_name": "numpy", "success": True, "error_message": ""},
+        {"tool_name": "pandas", "success": True, "error_message": ""},
+        {"tool_name": "big_sim", "success": False,
+         "error_message": "OOM cuda out of memory"},
+    ])
+    assert sm_list.get_tier("numpy") == "capable"
+    assert sm_list.get_tier("pandas") == "capable"
+    assert sm_list.get_tier("memory_limit") == "blind"
+    print("[CHECK] case10 list step_result OK")
+
+
+def _sc_case11_audit(td_path: Path) -> None:
+    # Case 11: extract_step_result_from_audit — mock audit.jsonl
+    audit_path = td_path / "audit.jsonl"
+    with audit_path.open("w", encoding="utf-8") as f:
+        # step 1: matplotlib 成功
+        f.write(json.dumps({
+            "type": "tool.call", "step_id": 1,
+            "data": {"tool": "matplotlib"}, "timestamp": 1000.0,
+        }) + "\n")
+        f.write(json.dumps({
+            "type": "tool.result", "step_id": 1,
+            "data": {"tool": "matplotlib"}, "timestamp": 1001.5,
+        }) + "\n")
+        # step 1: vasp 失败
+        f.write(json.dumps({
+            "type": "tool.call", "step_id": 1,
+            "data": {"tool": "vasp"}, "timestamp": 1002.0,
+        }) + "\n")
+        f.write(json.dumps({
+            "type": "tool.error", "step_id": 1,
+            "data": {"tool": "vasp", "error": "OMP Error"},
+            "timestamp": 1005.0,
+        }) + "\n")
+        # step 2: 别的 step (应被过滤)
+        f.write(json.dumps({
+            "type": "tool.call", "step_id": 2,
+            "data": {"tool": "other"}, "timestamp": 2000.0,
+        }) + "\n")
+
+    records = extract_step_result_from_audit(audit_path, step_id=1)
+    assert len(records) == 2, \
+        f"case11: expected 2, got {len(records)}"
+    tools = {r["tool_name"] for r in records}
+    assert tools == {"matplotlib", "vasp"}, \
+        f"case11: tools mismatch: {tools}"
+    mpl = [r for r in records if r["tool_name"] == "matplotlib"][0]
+    assert mpl["success"] is True, "case11: matplotlib should succeed"
+    assert abs(mpl["duration"] - 1.5) < 0.01, \
+        f"case11: duration mismatch: {mpl['duration']}"
+    vasp = [r for r in records if r["tool_name"] == "vasp"][0]
+    assert vasp["success"] is False, "case11: vasp should fail"
+    assert "OMP Error" in vasp["error_message"], \
+        f"case11: err msg missing: {vasp['error_message']}"
+    print("[CHECK] case11 audit extraction OK (2 records, mpl ok, vasp fail)")
+
+
+def _sc_case12_degradation(td_path: Path) -> None:
+    # Case 12: 失败降级 — None / 空 / 非法输入都不阻塞
+    sm_safe = SelfModel(
+        task_local_path=td_path / "ws7" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross7" / "sm.json",
+        model=None,
+    )
+    sm_safe.update_from_step(None)  # 不抛
+    sm_safe.update_from_step([])  # 不抛
+    sm_safe.update_from_step("not a dict")  # 不抛
+    sm_safe.update_from_step([{"invalid": "no tool_name"}])  # 不抛
+    # 跨 task load 文件损坏不抛
+    bad_cross = td_path / "bad_cross" / "sm.json"
+    bad_cross.parent.mkdir(parents=True, exist_ok=True)
+    bad_cross.write_text("not json", encoding="utf-8")
+    sm_bad = SelfModel(
+        task_local_path=None, cross_task_path=bad_cross, model=None)
+    assert sm_bad.get_tier("anything") == "uncertain"
+    print("[CHECK] case12 failure degradation OK (None/empty/bad input/bad file)")
+
+
+def _sc_case13_promote(td_path: Path) -> None:
+    # Case 13: 连续成功 N 次升级 — uncertain → capable
+    sm_promote = SelfModel(
+        task_local_path=td_path / "ws8" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross8" / "sm.json",
+        model=None,
+    )
+    # 先让 rdkit 进 uncertain
+    sm_promote.update_from_step({
+        "tool_name": "rdkit", "success": False,
+        "error_message": "rdkit parse error",
+    })
+    assert sm_promote.get_tier("rdkit") == "uncertain"
+    # 连续 3 次成功 → capable
+    for _ in range(_PROMOTE_THRESHOLD):
+        sm_promote.update_from_step({
+            "tool_name": "rdkit", "success": True, "error_message": "",
+        })
+    assert sm_promote.get_tier("rdkit") == "capable", \
+        f"case13: promote failed: {sm_promote.get_tier('rdkit')}"
+    print(f"[CHECK] case13 promote after {_PROMOTE_THRESHOLD} successes OK")
+
+
+def _sc_case14_priority(td_path: Path) -> None:
+    # Case 14: 跨 task 优先级 — cross-task blind 不被 task-local uncertain 覆盖
+    # 已有 cross1 (matplotlib capable, exec_timeout blind, pkg_install blind)
+    sm_priority = SelfModel(
+        task_local_path=td_path / "ws_priority" / HUGINN_DIR_NAME / "sm.json",
+        cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
+        model=None,
+    )
+    # 即使本 task 又试 matplotlib 失败 (keyword 未命中 → uncertain), 不覆盖 cross-task capable
+    sm_priority.update_from_step({
+        "tool_name": "matplotlib", "success": False,
+        "error_message": "weird unrelated error",
+    })
+    # _update_one 走 keyword_classify 没匹配到 → uncertain + skill=matplotlib
+    # 但 LLM/keyword 给的 tier=uncertain 不覆盖现有 capable (规则: tier != uncertain 才覆盖)
+    # 不过 _update_one 写了 success_count + failure_count, tier 仍是 capable
+    assert sm_priority.get_tier("matplotlib") == "capable", \
+        f"case14: cross-task capable should not be downgraded: {sm_priority.get_tier('matplotlib')}"
+    print("[CHECK] case14 cross-task capable not downgraded by single failure")
+
+
 def _selfcheck() -> None:
     """Assert-based demo: 三档分类 + 跨 task 累积 + imagination feedback + 失败降级."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
-
-        # Case 1: 成功调用 → capable
-        sm = SelfModel(
-            task_local_path=td_path / "ws1" / HUGINN_DIR_NAME / "self_model.json",
-            cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
-            model=None,
-        )
-        sm.update_from_step({
-            "tool_name": "matplotlib", "success": True, "error_message": "",
-        })
-        assert sm.get_tier("matplotlib") == "capable", \
-            f"case1: capable failed: {sm.get_tier('matplotlib')}"
-        print("[CHECK] case1 success -> capable (skill=matplotlib)")
-
-        # Case 2: timeout → blind (keyword)
-        sm.update_from_step({
-            "tool_name": "long_runner", "success": False,
-            "error_message": "TimeoutError: tool call timed out after 30s",
-        })
-        assert sm.get_tier("exec_timeout") == "blind", \
-            f"case2: blind failed: {sm.get_tier('exec_timeout')}"
-        print("[CHECK] case2 timeout -> blind (skill=exec_timeout)")
-
-        # Case 3: import error → blind (keyword)
-        sm.update_from_step({
-            "tool_name": "unknown_pkg", "success": False,
-            "error_message": "ModuleNotFoundError: No module named 'foo'",
-        })
-        assert sm.get_tier("pkg_install") == "blind", \
-            f"case3: blind failed: {sm.get_tier('pkg_install')}"
-        print("[CHECK] case3 import error -> blind (skill=pkg_install)")
-
-        # Case 4: 未知错误 → uncertain (keyword fallback)
-        sm.update_from_step({
-            "tool_name": "weird_tool", "success": False,
-            "error_message": "something went wrong",
-        })
-        assert sm.get_tier("weird_tool") == "uncertain", \
-            f"case4: uncertain failed: {sm.get_tier('weird_tool')}"
-        print("[CHECK] case4 unknown error -> uncertain (skill=weird_tool)")
-
-        # Case 5: LLM 分类 — pytorch_training → blind
-        sm_llm = SelfModel(
-            task_local_path=td_path / "ws2" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross2" / "sm.json",
-            model=_SeqMock(
-                '{"tier": "blind", "reason": "needs GPU", '
-                '"skill": "pytorch_training"}'
-            ),
-        )
-        sm_llm.update_from_step({
-            "tool_name": "pytorch", "success": False,
-            "error_message": "CUDA error",
-        })
-        assert sm_llm.get_tier("pytorch_training") == "blind", \
-            f"case5: LLM blind failed: {sm_llm.get_tier('pytorch_training')}"
-        print("[CHECK] case5 LLM classify -> blind (skill=pytorch_training)")
-
-        # Case 6: LLM 失败降级到 keyword (lammps → uncertain)
-        sm_err = SelfModel(
-            task_local_path=td_path / "ws3" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross3" / "sm.json",
-            model=_ErrMock(RuntimeError("llm down")),
-        )
-        sm_err.update_from_step({
-            "tool_name": "lammps", "success": False,
-            "error_message": "lammps exec not found",
-        })
-        assert sm_err.get_tier("lammps") == "uncertain", \
-            f"case6: keyword fallback failed: {sm_err.get_tier('lammps')}"
-        print("[CHECK] case6 LLM error -> keyword fallback (skill=lammps)")
-
-        # Case 7: 跨 task 累积 — cross-task 文件持久化 + 加载合并
-        # case1-4 的 sm 已 save 到 cross1/, 新 SelfModel 加载应继承 capable/blind
-        sm2 = SelfModel(
-            task_local_path=td_path / "ws_new" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
-            model=None,
-        )
-        # matplotlib (capable) 和 exec_timeout (blind) 应从 cross-task 加载
-        assert sm2.get_tier("matplotlib") == "capable", \
-            "case7: cross-task capable not loaded"
-        assert sm2.get_tier("exec_timeout") == "blind", \
-            "case7: cross-task blind not loaded"
-        # uncertain 不持久化到 cross-task, 应默认 uncertain
-        assert sm2.get_tier("weird_tool") == "uncertain", \
-            "case7: uncertain should default (not in cross-task)"
-        print("[CHECK] case7 cross-task accumulation OK")
-
-        # Case 8: imagination feedback — uncertain → capable (success)
-        sm_fb = SelfModel(
-            task_local_path=td_path / "ws4" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross4" / "sm.json",
-            model=None,
-        )
-        sm_fb.update_from_step({
-            "tool_name": "rdkit", "success": False,
-            "error_message": "rdkit parse error",
-        })
-        assert sm_fb.get_tier("rdkit") == "uncertain"
-        sm_fb.feedback_from_imagination("rdkit", success=True)
-        assert sm_fb.get_tier("rdkit") == "capable", \
-            f"case8: upgrade failed: {sm_fb.get_tier('rdkit')}"
-        print("[CHECK] case8 imagination success -> uncertain to capable")
-
-        # Case 9: imagination feedback — uncertain → blind (failure)
-        sm_fb2 = SelfModel(
-            task_local_path=td_path / "ws5" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross5" / "sm.json",
-            model=None,
-        )
-        sm_fb2.update_from_step({
-            "tool_name": "rdkit", "success": False,
-            "error_message": "rdkit error",
-        })
-        sm_fb2.feedback_from_imagination("rdkit", success=False)
-        assert sm_fb2.get_tier("rdkit") == "blind", \
-            f"case9: downgrade failed: {sm_fb2.get_tier('rdkit')}"
-        print("[CHECK] case9 imagination failure -> uncertain to blind")
-
-        # Case 10: 多条 step_result (list) — 一次性更新多个 skill
-        sm_list = SelfModel(
-            task_local_path=td_path / "ws6" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross6" / "sm.json",
-            model=None,
-        )
-        sm_list.update_from_step([
-            {"tool_name": "numpy", "success": True, "error_message": ""},
-            {"tool_name": "pandas", "success": True, "error_message": ""},
-            {"tool_name": "big_sim", "success": False,
-             "error_message": "OOM cuda out of memory"},
-        ])
-        assert sm_list.get_tier("numpy") == "capable"
-        assert sm_list.get_tier("pandas") == "capable"
-        assert sm_list.get_tier("memory_limit") == "blind"
-        print("[CHECK] case10 list step_result OK")
-
-        # Case 11: extract_step_result_from_audit — mock audit.jsonl
-        audit_path = td_path / "audit.jsonl"
-        with audit_path.open("w", encoding="utf-8") as f:
-            # step 1: matplotlib 成功
-            f.write(json.dumps({
-                "type": "tool.call", "step_id": 1,
-                "data": {"tool": "matplotlib"}, "timestamp": 1000.0,
-            }) + "\n")
-            f.write(json.dumps({
-                "type": "tool.result", "step_id": 1,
-                "data": {"tool": "matplotlib"}, "timestamp": 1001.5,
-            }) + "\n")
-            # step 1: vasp 失败
-            f.write(json.dumps({
-                "type": "tool.call", "step_id": 1,
-                "data": {"tool": "vasp"}, "timestamp": 1002.0,
-            }) + "\n")
-            f.write(json.dumps({
-                "type": "tool.error", "step_id": 1,
-                "data": {"tool": "vasp", "error": "OMP Error"},
-                "timestamp": 1005.0,
-            }) + "\n")
-            # step 2: 别的 step (应被过滤)
-            f.write(json.dumps({
-                "type": "tool.call", "step_id": 2,
-                "data": {"tool": "other"}, "timestamp": 2000.0,
-            }) + "\n")
-
-        records = extract_step_result_from_audit(audit_path, step_id=1)
-        assert len(records) == 2, \
-            f"case11: expected 2, got {len(records)}"
-        tools = {r["tool_name"] for r in records}
-        assert tools == {"matplotlib", "vasp"}, \
-            f"case11: tools mismatch: {tools}"
-        mpl = [r for r in records if r["tool_name"] == "matplotlib"][0]
-        assert mpl["success"] is True, "case11: matplotlib should succeed"
-        assert abs(mpl["duration"] - 1.5) < 0.01, \
-            f"case11: duration mismatch: {mpl['duration']}"
-        vasp = [r for r in records if r["tool_name"] == "vasp"][0]
-        assert vasp["success"] is False, "case11: vasp should fail"
-        assert "OMP Error" in vasp["error_message"], \
-            f"case11: err msg missing: {vasp['error_message']}"
-        print("[CHECK] case11 audit extraction OK (2 records, mpl ok, vasp fail)")
-
-        # Case 12: 失败降级 — None / 空 / 非法输入都不阻塞
-        sm_safe = SelfModel(
-            task_local_path=td_path / "ws7" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross7" / "sm.json",
-            model=None,
-        )
-        sm_safe.update_from_step(None)  # 不抛
-        sm_safe.update_from_step([])  # 不抛
-        sm_safe.update_from_step("not a dict")  # 不抛
-        sm_safe.update_from_step([{"invalid": "no tool_name"}])  # 不抛
-        # 跨 task load 文件损坏不抛
-        bad_cross = td_path / "bad_cross" / "sm.json"
-        bad_cross.parent.mkdir(parents=True, exist_ok=True)
-        bad_cross.write_text("not json", encoding="utf-8")
-        sm_bad = SelfModel(
-            task_local_path=None, cross_task_path=bad_cross, model=None)
-        assert sm_bad.get_tier("anything") == "uncertain"
-        print("[CHECK] case12 failure degradation OK (None/empty/bad input/bad file)")
-
-        # Case 13: 连续成功 N 次升级 — uncertain → capable
-        sm_promote = SelfModel(
-            task_local_path=td_path / "ws8" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross8" / "sm.json",
-            model=None,
-        )
-        # 先让 rdkit 进 uncertain
-        sm_promote.update_from_step({
-            "tool_name": "rdkit", "success": False,
-            "error_message": "rdkit parse error",
-        })
-        assert sm_promote.get_tier("rdkit") == "uncertain"
-        # 连续 3 次成功 → capable
-        for _ in range(_PROMOTE_THRESHOLD):
-            sm_promote.update_from_step({
-                "tool_name": "rdkit", "success": True, "error_message": "",
-            })
-        assert sm_promote.get_tier("rdkit") == "capable", \
-            f"case13: promote failed: {sm_promote.get_tier('rdkit')}"
-        print(f"[CHECK] case13 promote after {_PROMOTE_THRESHOLD} successes OK")
-
-        # Case 14: 跨 task 优先级 — cross-task blind 不被 task-local uncertain 覆盖
-        # 已有 cross1 (matplotlib capable, exec_timeout blind, pkg_install blind)
-        sm_priority = SelfModel(
-            task_local_path=td_path / "ws_priority" / HUGINN_DIR_NAME / "sm.json",
-            cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
-            model=None,
-        )
-        # 即使本 task 又试 matplotlib 失败 (keyword 未命中 → uncertain), 不覆盖 cross-task capable
-        sm_priority.update_from_step({
-            "tool_name": "matplotlib", "success": False,
-            "error_message": "weird unrelated error",
-        })
-        # _update_one 走 keyword_classify 没匹配到 → uncertain + skill=matplotlib
-        # 但 LLM/keyword 给的 tier=uncertain 不覆盖现有 capable (规则: tier != uncertain 才覆盖)
-        # 不过 _update_one 写了 success_count + failure_count, tier 仍是 capable
-        assert sm_priority.get_tier("matplotlib") == "capable", \
-            f"case14: cross-task capable should not be downgraded: {sm_priority.get_tier('matplotlib')}"
-        print("[CHECK] case14 cross-task capable not downgraded by single failure")
+        _sc_cases_1_to_4(td_path)
+        _sc_case5_llm(td_path)
+        _sc_case6_fallback(td_path)
+        _sc_case7_cross_task(td_path)
+        _sc_case8_imagination_success(td_path)
+        _sc_case9_imagination_failure(td_path)
+        _sc_case10_list(td_path)
+        _sc_case11_audit(td_path)
+        _sc_case12_degradation(td_path)
+        _sc_case13_promote(td_path)
+        _sc_case14_priority(td_path)
 
     print("OK self_model self-check passed (14 cases)")
 

@@ -563,10 +563,9 @@ class _ErrMock:
         raise self.error
 
 
-def _selfcheck() -> None:
-    """Assert-based demo: mock LLM 验证三族变换 / interpolation 拒绝 / 可证伪性拒绝 / 失败降级."""
-    import tempfile
 
+
+def _sc_base_hypothesis() -> tuple[Hypothesis, str]:
     # 原始 hypothesis — 掺杂半导体的电导率模型
     h0 = Hypothesis(
         h_id="h_base",
@@ -576,7 +575,10 @@ def _selfcheck() -> None:
     )
 
     falsifiability_resp = '{"falsifiable": true, "observable": "conductivity", "reason": "measurable"}'
+    return h0, falsifiability_resp
 
+
+def _sc_three_families(h0: Hypothesis, falsifiability_resp: str) -> None:
     # Case 1: 三族变换都能生成新 hypothesis
     transforms = {
         "algebraic": '{"new_description": "Gauge-coupled carrier field: conductivity governed by U(1) gauge symmetry, sigma = n e^2 tau / m", "new_predictions": {"conductivity": 1.5, "mobility": 150.0}, "new_n_params": 3, "transform_reason": "spin-rotation -> gauge"}',
@@ -594,6 +596,8 @@ def _selfcheck() -> None:
         assert new_h.n_params >= 1, f"case1 {t_type}: n_params < 1"
         print(f"[CHECK] case1 {t_type}: new h_id={new_h.h_id}, predictions={new_h.predictions}")
 
+
+def _sc_interpolation() -> None:
     # Case 2: interpolation 检查 — 拒绝太近, 接受够远, 空 manifold 放行
     m = HypothesisManifold()
     m.add(Hypothesis("h_near", "near", predictions={"conductivity": 1.05, "mobility": 100.5}, n_params=2))
@@ -611,6 +615,8 @@ def _selfcheck() -> None:
     assert not check_interpolation(h_diff_keys, m, sigma=0.5), "case2d: no common keys = extrapolation"
     print("[CHECK] case2: interpolation check (far ok / close reject / empty ok / no-common-keys ok)")
 
+
+def _sc_falsifiability() -> None:
     # Case 3: 可证伪性检查 — 拒绝不可证伪
     mock_not_falsifiable = _SeqMock('{"falsifiable": false, "reason": "no testable prediction"}')
     h_unfalsifiable = Hypothesis("h_unf", "vague claim with no prediction", predictions={}, n_params=0)
@@ -622,6 +628,8 @@ def _selfcheck() -> None:
     assert not check_falsifiability(h_unfalsifiable, model=None), "case3c: no model + no pred = reject"
     print("[CHECK] case3: falsifiability (reject unfalsifiable / no-model fallback)")
 
+
+def _sc_failure_fallback(h0: Hypothesis) -> None:
     # Case 4: 失败降级 — LLM 异常 / JSON 解析失败 / 无 model / 未知 type -> None
     assert imagine(h0, "algebraic", model=_ErrMock(RuntimeError("llm down"))) is None, "case4a: llm error -> None"
     assert imagine(h0, "algebraic", model=_SeqMock("not json at all")) is None, "case4b: bad json -> None"
@@ -631,56 +639,74 @@ def _selfcheck() -> None:
     assert imagine(h0, "algebraic", model=_SeqMock('{"new_description": ""}')) is None, "case4e: empty desc -> None"
     print("[CHECK] case4: failure fallback returns None (5 paths)")
 
+
+def _sc_pipeline(h0: Hypothesis, falsifiability_resp: str) -> HypothesisManifold:
+    import tempfile
+
     # Case 5: imagine_with_checks 完整流水线 — 通过 + 拒绝 + 写 log
     with tempfile.TemporaryDirectory() as td:
         log_path = Path(td) / "imagination_log.jsonl"
         m2 = HypothesisManifold()
         m2.add(h0)
 
-        # 5a: 通过路径 — 新 h 跟 h0 距离够远
-        ok_resp = '{"new_description": "totally new mechanism with gauge field", "new_predictions": {"conductivity": 10.0, "mobility": 500.0}, "new_n_params": 3, "transform_reason": "test"}'
-        mock_ok = _SeqMock(ok_resp, falsifiability_resp)
-        new_h = imagine_with_checks(h0, "algebraic", m2, model=mock_ok, sigma=0.5, log_path=log_path)
-        assert new_h is not None, "case5a: imagine_with_checks should succeed"
-        lines = log_path.read_text(encoding="utf-8").strip().split("\n")
-        assert len(lines) == 1, f"case5a: log should have 1 entry, got {len(lines)}"
-        entry = json.loads(lines[0])
-        assert entry["accepted"] is True, f"case5a: accepted should be True, got {entry}"
-        assert entry["transform_type"] == "algebraic"
-        assert entry["parent_h_id"] == "h_base"
-        assert entry["interpolation_check"] == "passed"
-        assert entry["falsifiability_check"] == "passed"
-        print(f"[CHECK] case5a: full pipeline ok, log accepted={entry['accepted']}")
+        ok_resp = _sc_pipeline_accept_reject(h0, falsifiability_resp, m2, log_path)
+        _sc_pipeline_failures(h0, falsifiability_resp, m2, log_path, ok_resp)
+    return m2
 
-        # 5b: 拒绝路径 — interpolation (新 h 跟 h0 太近)
-        close_resp = '{"new_description": "close to original", "new_predictions": {"conductivity": 1.01, "mobility": 100.1}, "new_n_params": 2, "transform_reason": "test"}'
-        mock_close = _SeqMock(close_resp, falsifiability_resp)
-        new_h_close = imagine_with_checks(h0, "topological", m2, model=mock_close, sigma=0.5, log_path=log_path)
-        assert new_h_close is None, "case5b: interpolation should be rejected"
-        lines = log_path.read_text(encoding="utf-8").strip().split("\n")
-        last_entry = json.loads(lines[-1])
-        assert last_entry["accepted"] is False
-        assert last_entry["interpolation_check"] == "rejected"
-        assert last_entry["falsifiability_check"] == "passed"
-        print(f"[CHECK] case5b: interpolation rejected, log accepted={last_entry['accepted']}")
 
-        # 5c: imagine 返回 None (LLM 失败) -> log 写 falsifiability_check=failed
-        mock_fail = _ErrMock(RuntimeError("llm down"))
-        new_h_fail = imagine_with_checks(h0, "order", m2, model=mock_fail, sigma=0.5, log_path=log_path)
-        assert new_h_fail is None, "case5c: llm failure should return None"
-        lines = log_path.read_text(encoding="utf-8").strip().split("\n")
-        last_entry = json.loads(lines[-1])
-        assert last_entry["accepted"] is False
-        assert last_entry["falsifiability_check"] == "failed"
-        assert last_entry["interpolation_check"] == "skipped"
-        print("[CHECK] case5c: llm failure logged, falsifiability_check=failed")
+def _sc_pipeline_accept_reject(
+    h0: Hypothesis, falsifiability_resp: str,
+    m2: HypothesisManifold, log_path: Any,
+) -> str:
+    ok_resp = '{"new_description": "totally new mechanism with gauge field", "new_predictions": {"conductivity": 10.0, "mobility": 500.0}, "new_n_params": 3, "transform_reason": "test"}'
+    mock_ok = _SeqMock(ok_resp, falsifiability_resp)
+    new_h = imagine_with_checks(h0, "algebraic", m2, model=mock_ok, sigma=0.5, log_path=log_path)
+    assert new_h is not None, "case5a: imagine_with_checks should succeed"
+    lines = log_path.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 1, f"case5a: log should have 1 entry, got {len(lines)}"
+    entry = json.loads(lines[0])
+    assert entry["accepted"] is True, f"case5a: accepted should be True, got {entry}"
+    assert entry["transform_type"] == "algebraic"
+    assert entry["parent_h_id"] == "h_base"
+    assert entry["interpolation_check"] == "passed"
+    assert entry["falsifiability_check"] == "passed"
+    print(f"[CHECK] case5a: full pipeline ok, log accepted={entry['accepted']}")
 
-        # 5d: log_path=None -> 不写文件, 不抛异常
-        new_h_nolog = imagine_with_checks(h0, "algebraic", m2, model=_SeqMock(ok_resp, falsifiability_resp), sigma=0.5, log_path=None)
-        assert new_h_nolog is not None, "case5d: log_path=None should still work"
+    # 5b: 拒绝路径 — interpolation (新 h 跟 h0 太近)
+    close_resp = '{"new_description": "close to original", "new_predictions": {"conductivity": 1.01, "mobility": 100.1}, "new_n_params": 2, "transform_reason": "test"}'
+    mock_close = _SeqMock(close_resp, falsifiability_resp)
+    new_h_close = imagine_with_checks(h0, "topological", m2, model=mock_close, sigma=0.5, log_path=log_path)
+    assert new_h_close is None, "case5b: interpolation should be rejected"
+    lines = log_path.read_text(encoding="utf-8").strip().split("\n")
+    last_entry = json.loads(lines[-1])
+    assert last_entry["accepted"] is False
+    assert last_entry["interpolation_check"] == "rejected"
+    assert last_entry["falsifiability_check"] == "passed"
+    print(f"[CHECK] case5b: interpolation rejected, log accepted={last_entry['accepted']}")
+    return ok_resp
 
-    print("[CHECK] case5: imagine_with_checks full pipeline (4 sub-cases)")
 
+def _sc_pipeline_failures(
+    h0: Hypothesis, falsifiability_resp: str,
+    m2: HypothesisManifold, log_path: Any, ok_resp: str,
+) -> None:
+    # 5c: imagine 返回 None (LLM 失败) -> log 写 falsifiability_check=failed
+    mock_fail = _ErrMock(RuntimeError("llm down"))
+    new_h_fail = imagine_with_checks(h0, "order", m2, model=mock_fail, sigma=0.5, log_path=log_path)
+    assert new_h_fail is None, "case5c: llm failure should return None"
+    lines = log_path.read_text(encoding="utf-8").strip().split("\n")
+    last_entry = json.loads(lines[-1])
+    assert last_entry["accepted"] is False
+    assert last_entry["falsifiability_check"] == "failed"
+    assert last_entry["interpolation_check"] == "skipped"
+    print("[CHECK] case5c: llm failure logged, falsifiability_check=failed")
+
+    # 5d: log_path=None -> 不写文件, 不抛异常
+    new_h_nolog = imagine_with_checks(h0, "algebraic", m2, model=_SeqMock(ok_resp, falsifiability_resp), sigma=0.5, log_path=None)
+    assert new_h_nolog is not None, "case5d: log_path=None should still work"
+
+
+def _sc_stagnation() -> None:
     # Case 6: detect_stagnation
     assert not detect_stagnation(["h1"], N=3), "case6a: < N -> not stagnation"
     assert not detect_stagnation(["h1", "h2", "h1"], N=3), "case6b: not all same -> not stagnation"
@@ -691,6 +717,8 @@ def _selfcheck() -> None:
     assert detect_stagnation(["h1", "h1"], N=2), "case6f: N=2 all same -> stagnation"
     print("[CHECK] case6: detect_stagnation (6 sub-cases)")
 
+
+def _sc_blind_spot_degradation(m2: HypothesisManifold) -> Any:
     # Case 7: imagine_from_blind_spot — 失败降级路径
     from huginn.metacog.blind_spot_mapper import BlindSpot
     _bs = BlindSpot(
@@ -714,6 +742,13 @@ def _selfcheck() -> None:
     assert imagine_from_blind_spot(
         _bs, m2, model=_SeqMock("not json at all")) is None, "case7c: bad json"
     print("[CHECK] case7b/c: llm failure / bad json -> None")
+    return _bs
+
+
+def _sc_blind_spot_accept_reject(
+    h0: Hypothesis, falsifiability_resp: str, _bs: Any
+) -> str:
+    import tempfile
 
     # 7d: 成功路径 — manifold 已有 h0, 新 h 距离够远, 通过 falsifiability
     with tempfile.TemporaryDirectory() as td:
@@ -756,23 +791,43 @@ def _selfcheck() -> None:
         assert _last["accepted"] is False
         assert _last["interpolation_check"] == "rejected"
         print(f"[CHECK] case7e: interpolation rejected, log accepted={_last['accepted']}")
+        _sc_blind_spot_falsifiability(
+            h0, falsifiability_resp, _bs, _ok_resp, _m_bs, _log_path)
+    return _ok_resp
 
-        # 7f: falsifiability 拒绝
-        _mock_unf = _SeqMock(_ok_resp, '{"falsifiable": false, "reason": "no test"}')
-        _new_h_unf = imagine_from_blind_spot(
-            _bs, _m_bs, model=_mock_unf, log_path=_log_path, sigma=0.5)
-        assert _new_h_unf is None, "case7f: should reject unfalsifiable"
-        _lines = _log_path.read_text(encoding="utf-8").strip().split("\n")
-        _last = json.loads(_lines[-1])
-        assert _last["falsifiability_check"] == "failed"
-        print("[CHECK] case7f: unfalsifiable rejected")
 
-        # 7g: log_path=None 不抛
-        _new_h_nolog = imagine_from_blind_spot(
-            _bs, _m_bs, model=_SeqMock(_ok_resp, falsifiability_resp), log_path=None)
-        assert _new_h_nolog is not None, "case7g: log_path=None should still work"
-        print("[CHECK] case7g: log_path=None ok")
+def _sc_blind_spot_falsifiability(
+    h0: Hypothesis, falsifiability_resp: str, _bs: Any, _ok_resp: str,
+    _m_bs: HypothesisManifold, _log_path: Any,
+) -> None:
+    # 7f: falsifiability 拒绝
+    _mock_unf = _SeqMock(_ok_resp, '{"falsifiable": false, "reason": "no test"}')
+    _new_h_unf = imagine_from_blind_spot(
+        _bs, _m_bs, model=_mock_unf, log_path=_log_path, sigma=0.5)
+    assert _new_h_unf is None, "case7f: should reject unfalsifiable"
+    _lines = _log_path.read_text(encoding="utf-8").strip().split("\n")
+    _last = json.loads(_lines[-1])
+    assert _last["falsifiability_check"] == "failed"
+    print("[CHECK] case7f: unfalsifiable rejected")
 
+    # 7g: log_path=None 不抛
+    _new_h_nolog = imagine_from_blind_spot(
+        _bs, _m_bs, model=_SeqMock(_ok_resp, falsifiability_resp), log_path=None)
+    assert _new_h_nolog is not None, "case7g: log_path=None should still work"
+    print("[CHECK] case7g: log_path=None ok")
+
+
+def _selfcheck() -> None:
+    """Assert-based demo: mock LLM 验证三族变换 / interpolation 拒绝 / 可证伪性拒绝 / 失败降级."""
+    h0, falsifiability_resp = _sc_base_hypothesis()
+    _sc_three_families(h0, falsifiability_resp)
+    _sc_interpolation()
+    _sc_falsifiability()
+    _sc_failure_fallback(h0)
+    m2 = _sc_pipeline(h0, falsifiability_resp)
+    _sc_stagnation()
+    bs = _sc_blind_spot_degradation(m2)
+    _sc_blind_spot_accept_reject(h0, falsifiability_resp, bs)
     print("OK imagination self-check passed (7 cases)")
 
 

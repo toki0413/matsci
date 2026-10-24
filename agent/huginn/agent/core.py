@@ -149,6 +149,21 @@ def _bandit_effort_hint() -> str | None:
         return None
 
 
+def _unpack_agent_config(config: AgentConfig) -> tuple[Any, ...]:
+    """按原顺序拆出 AgentConfig 的九个子配置段."""
+    return (
+        config.model,
+        config.tools,
+        config.memory,
+        config.security,
+        config.telemetry,
+        config.context_budget,
+        config.knowledge_graph,
+        config.personalization,
+        config.core,
+    )
+
+
 class HuginnAgent(
     ContextMixin,
     CallbackMixin,
@@ -304,16 +319,50 @@ class HuginnAgent(
         scheduler: Any = None,
         kb_enabled: Any = _UNSET_SENTINEL,
     ) -> None:
-        m = config.model
-        t = config.tools
-        mem = config.memory
-        sec = config.security
-        tel = config.telemetry
-        cb = config.context_budget
-        kg = config.knowledge_graph
-        pers = config.personalization
-        core = config.core
+        """按阶段装配 agent, 各阶段保持原有初始化顺序与降级行为."""
+        m, t, mem, sec, tel, cb, kg, pers, core = _unpack_agent_config(config)
 
+        self._core_init_base_state(m, t, mem)
+
+        self._core_init_cache_and_session(m, core)
+
+        self._core_init_cognitive()
+
+        self._core_init_scheduler_state(t, core, scheduler)
+
+        # ponytail: CodeAct 双轨制 — 默认走原 langgraph tool_call 路径,
+        # 设 "code_act" 后 chat() 早返回到 code_act_loop. 用户通过实例属性切换,
+        # 不改 __init__ 签名. 升级: 加 config 字段 + AgentConfig.mode.
+        self.mode: str = "tool_call"
+
+        self._core_init_mode_and_permissions(mem, sec, t, tel)
+
+        self._core_init_security(sec)
+
+        self.max_tool_output_tokens, self.context_budget_tokens = (
+            self._core_resolve_context_budget(m, t, cb)
+        )
+        self._context_max_messages, self._model_context_window = (
+            self._core_resolve_message_limits(m)
+        )
+
+        self._core_init_knowledge(kg, kb_enabled)
+
+        self._core_init_persona(pers)
+
+        self._core_init_memory_and_skills(mem, core)
+
+        self._core_init_tool_adapter()
+        self._core_init_hooks(t)
+
+        self._core_init_personalization(pers)
+
+        self._core_init_internal_state()
+
+        self._core_init_context_builder()
+
+    def _core_init_base_state(self, m: Any, t: Any, mem: Any) -> None:
+        """基础字段、checkpointer 与 phase manager."""
         self.model = m.model
         self.model_router = m.model_router
         self.langchain_tools = t.tools or []
@@ -339,6 +388,8 @@ class HuginnAgent(
 
         self._phase_manager = PhaseManager(initial=ResearchPhase.OPEN)
 
+    def _core_init_cache_and_session(self, m: Any, core: Any) -> None:
+        """prompt cache、任务路由字段与 unified session state."""
         # 当前用户消息, 用于 query-aware tool retrieval
         self._current_user_message: str | None = None
 
@@ -371,6 +422,8 @@ class HuginnAgent(
             persona_system_prompt=self.system_prompt,
         )
 
+    def _core_init_cognitive(self) -> None:
+        """task reflector 与认知状态机 (含事件日志绑定)."""
         from huginn.task_reflector import TaskReflector
 
         self._reflector = TaskReflector()
@@ -382,6 +435,7 @@ class HuginnAgent(
         # 使状态机状态成为事件日志的投影 (可重放/可恢复/可分支).
         try:
             from huginn.events.session_log import SessionEventLog
+
             self._csm.attach_session_log(
                 SessionEventLog.open(self.thread_id, load=True)
             )
@@ -390,6 +444,10 @@ class HuginnAgent(
                 "best-effort op failed", exc_info=True
             )  # 无事件日志不阻塞 agent
 
+    def _core_init_scheduler_state(
+        self, t: Any, core: Any, scheduler: Any
+    ) -> None:
+        """tool_filter/agent_factory/scheduler 与图相关初始字段."""
         self.tool_filter = set(t.tool_filter) if t.tool_filter else None
         self.agent_factory = core.agent_factory
         self.scheduler = scheduler
@@ -412,6 +470,10 @@ class HuginnAgent(
         self._telemetry_collector = TelemetryCollector()
         self._turn_count = 0
 
+    def _core_init_mode_and_permissions(
+        self, mem: Any, sec: Any, t: Any, tel: Any
+    ) -> None:
+        """mode、memory decay、权限与 telemetry 字段."""
         # ponytail: CodeAct 双轨制 — 默认走原 langgraph tool_call 路径,
         # 设 "code_act" 后 chat() 早返回到 code_act_loop. 用户通过实例属性切换,
         # 不改 __init__ 签名. 升级: 加 config 字段 + AgentConfig.mode.
@@ -444,12 +506,18 @@ class HuginnAgent(
             TelemetryCollector() if tel.telemetry_enabled else NullTelemetryCollector()
         )
 
+    def _core_init_security(self, sec: Any) -> None:
+        """sandbox/audit 与隐私脱敏开关."""
         self.sandbox = sec.sandbox
         self.audit = sec.audit
 
         self.privacy_redact_secrets = sec.privacy_redact_secrets
         self.privacy_block_on_secrets = sec.privacy_block_on_secrets
 
+    def _core_resolve_context_budget(
+        self, m: Any, t: Any, cb: Any
+    ) -> tuple[Any, Any]:
+        """解析工具输出上限与上下文预算 (预算 <=0 时按模型窗口回填)."""
         max_tool_output_tokens = t.max_tool_output_tokens
         context_budget_tokens = cb.context_budget_tokens
         if (
@@ -462,15 +530,15 @@ class HuginnAgent(
             )
             if model_name:
                 context_budget_tokens = get_context_window(str(model_name))
-        self.max_tool_output_tokens = max_tool_output_tokens
-        self.context_budget_tokens = context_budget_tokens
+        return max_tool_output_tokens, context_budget_tokens
+
+    def _core_resolve_message_limits(self, m: Any) -> tuple[int, int]:
+        """按消息条数的压缩阈值与当前模型上下文窗口."""
         # C1b: 渐进式压缩阈值 — 消息条数超此值即触发压缩(即便未超 token 预算),
         # 让长程任务把上下文渐进维护在安全水位, 而非等逼近模型窗口才压缩.
         # env 可调; 默认 60 条. 0 = 关闭按条数触发.
-        self._context_max_messages = int(
-            os.environ.get("HUGINN_CONTEXT_MAX_MESSAGES", "60")
-        )
-        self._model_context_window = (
+        context_max_messages = int(os.environ.get("HUGINN_CONTEXT_MAX_MESSAGES", "60"))
+        model_context_window = (
             get_context_window(
                 str(
                     getattr(m.model, "model_name", None)
@@ -480,7 +548,10 @@ class HuginnAgent(
             if m.model is not None
             else 0
         )
+        return context_max_messages, model_context_window
 
+    def _core_init_knowledge(self, kg: Any, kb_enabled: Any) -> None:
+        """workspace/knowledge graph 字段与上下文缓存重置."""
         self.workspace = kg.workspace
         self.kg_enabled = kg.kg_enabled
         self.kg_depth = kg.kg_depth
@@ -490,9 +561,13 @@ class HuginnAgent(
         self._kb: Any | None = None
         reset_context_cache()
 
+    def _core_init_persona(self, pers: Any) -> None:
+        """persona 与情绪追踪器."""
         self.persona_name = pers.persona_name
         self.emotion_tracker = pers.emotion_tracker
 
+    def _core_init_memory_and_skills(self, mem: Any, core: Any) -> None:
+        """memory manager 与 skill executor (缺省时懒加载)."""
         memory_manager = mem.memory_manager
         if memory_manager is None:
             from huginn.memory.manager import MemoryManager
@@ -507,6 +582,8 @@ class HuginnAgent(
             skill_executor = DeclarativeSkillExecutor(ToolRegistry)
         self.skills = skill_executor
 
+    def _core_init_tool_adapter(self) -> None:
+        """tool adapter、boundary state 与 summarizer."""
         self._tool_adapter = ToolAdapter()
         # P1-1: constraints BoundaryState 之前生产路径不注入, 所有 boundary 守卫被 None 短路.
         # 现在挂 session 级 BoundaryState, SafetyOperator 评测出 block 级失败后能收紧 require_confirmation.
@@ -519,6 +596,8 @@ class HuginnAgent(
         if tool_summarizer is not None:
             self._tool_adapter.set_summarizer(tool_summarizer)
 
+    def _core_init_hooks(self, t: Any) -> None:
+        """hook manager、science hooks 与工具调用上限."""
         self.hook_manager = HookManager()
         self.hook_manager.agent = self
 
@@ -535,16 +614,22 @@ class HuginnAgent(
         self._max_tool_calls = t.max_tool_calls
         self._max_tool_calls_per_tool = t.max_tool_calls_per_tool
 
+    def _core_init_personalization(self, pers: Any) -> None:
+        """style learner 与共享实例注册."""
         self.style_learner = pers.style_learner
         if pers.style_learner is not None:
             from huginn.personalization import set_shared_style_learner
 
             set_shared_style_learner(pers.style_learner)
 
+    def _core_init_internal_state(self) -> None:
+        """内部模式标记."""
         self._mode: str = "chat"
 
         self._evolution_engine: Any | None = None
 
+    def _core_init_context_builder(self) -> None:
+        """上下文构建器 (依赖前面各阶段产物)."""
         from huginn.context_builder import ContextBuilder
 
         self._ctx_builder = ContextBuilder(

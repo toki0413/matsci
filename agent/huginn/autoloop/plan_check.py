@@ -52,6 +52,265 @@ def _get_math_signals():
 _BASE_MODE_ENUM = "coder|workflow|explore|skill|visual_inspect"
 
 
+# ---------------------------------------------------------------------------
+# plan prompt 拼接片段 (_build_plan_prompt 外提; 文本内容与拼接顺序逐字节不变)
+# ---------------------------------------------------------------------------
+
+_PC_PROTOCOL_CHECK_PROMPT = """Protocol completeness check (RCBench failure mode: experimental protocol mismatch):
+Before finalizing, verify your plan covers all necessary steps:
+- For DFT: structure optimization BEFORE property calculation? Convergence test (encut/kpoints)?
+- For MD: equilibration BEFORE production run? Timestep appropriate for the system?
+- For analysis: raw data processing BEFORE interpretation? Reference comparison?
+- Are computational parameters appropriate for the target property (e.g. HSE06 for band gap, not PBE)?
+- Cross-check against domain knowledge above: any known methodological requirements?
+If a step is missing, add it to DESCRIPTION.
+
+"""
+
+_PC_SYMBOLIC_MATH_HINT_PROMPT = """When the hypothesis involves a PDE / variational principle / curved
+geometry, consider the symbolic_math_tool actions listed in the math
+depth block above — but numerical solvers are equally valid.
+
+"""
+
+_PC_ALIGNMENT_GATE_PROMPT = """Alignment gate (plan_check will reject the plan if this fails):
+- Name the exact quantity / structure / assertion the hypothesis makes, and point to
+  the step in DESCRIPTION that measures or computes THAT thing.
+- A numeric scan (capacity / error / scaling) only tests a claim that is itself numeric.
+  If the hypothesis asserts something else (topological / algebraic / existence /
+  uniqueness), either pick a MODE + workflow that computes that object symbolically, or
+  restate the hypothesis to a numerically testable form that the plan actually implements.
+- Never reuse a previous round's DESCRIPTION when the hypothesis has changed. A plan that
+  ignores the current hypothesis is invalid even if the code runs and returns numbers.
+
+"""
+
+# contract_audit 的 workflow 面用正则静态解析本文件里 "MODE:" 后的候选枚举
+# (huginn/cli/contract_audit.py), 故下面字面量必须留在源码, 不要改成 f-string 占位符.
+_PC_OUTPUT_FORMAT_PROMPT = """Respond in this exact format:
+MODE: <coder|workflow|explore|skill|visual_inspect>
+DESCRIPTION: <brief description of what to do>
+SKILL: <composite skill name, only if MODE is skill>
+FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
+PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
+SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
+"""
+
+
+def _pc_task_prompt(
+    hypothesis: str, context: dict[str, Any], extra_mode_lines: str
+) -> str:
+    """role/task 段: 假设 + 上下文 + mode 说明 + 实验 mode 附加行."""
+    return f"""Given the hypothesis: "{hypothesis}"
+
+Context:
+{json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
+
+Choose ONE mode and describe the plan:
+- coder: modify code/files to fix or improve something
+- workflow: run a computational simulation pipeline
+- explore: search a design space for optimal parameters
+- skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
+- visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
+{extra_mode_lines}
+"""
+
+
+def _pc_plan_body(
+    hypothesis: str, context: dict[str, Any], extra_mode_lines: str
+) -> str:
+    """prompt 主体: role/task + rules(协议完整性/符号数学/对齐门) + output format."""
+    return (
+        _pc_task_prompt(hypothesis, context, extra_mode_lines)
+        + _PC_PROTOCOL_CHECK_PROMPT
+        + _PC_SYMBOLIC_MATH_HINT_PROMPT
+        + _PC_ALIGNMENT_GATE_PROMPT
+        + _PC_OUTPUT_FORMAT_PROMPT
+    )
+
+
+def _pc_retrieval_blocks(
+    pc: Any, hypothesis: str
+) -> tuple[str, str, str, str, str, str]:
+    """KB / KG / 长期记忆 / PM / metacog / 稳定原则 六块 (无内容时为空串)."""
+    # 同 hypothesize: 用 hypothesis 串检索 KB, 把参考块喂给 planner
+    kb_block = pc._build_kb_text(query=hypothesis)
+    if kb_block:
+        kb_block = f"\n{kb_block}\n"
+    # KG 检索: 用 hypothesis 当 query, 看看已有实体里有没有相关的
+    kg_block = pc._build_kg_text(query=hypothesis)
+    if kg_block:
+        kg_block = f"\n{kg_block}\n"
+    # 长期记忆检索 (同 hypothesize)
+    mem_block = pc._build_memory_text(query=hypothesis)
+    if mem_block:
+        mem_block = f"\n{mem_block}\n"
+    # C2: PM 层 trajectory_match 召回 (同 hypothesize, 极限模式才开)
+    pm_block = pc._build_pm_text()
+    if pm_block:
+        pm_block = f"\n{pm_block}\n"
+    # C2: metacog 信号注入 (同 hypothesize) — target_chain + prospective
+    metacog_block = pc._build_metacog_block(include_prospective=True)
+    if metacog_block:
+        metacog_block = f"\n{metacog_block}\n"
+    # H0: stable_principles 注入 (同 hypothesize, 修 P3 断链)
+    try:
+        _principles = load_stable_principles()[:5]
+    except Exception:  # 防御: 原则加载失败用空表
+        _principles = []
+    principles_block = (
+        "\n".join(f"- {p}" for p in _principles) if _principles else ""
+    )
+    if principles_block:
+        principles_block = (
+            f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
+        )
+    return kb_block, kg_block, mem_block, pm_block, metacog_block, principles_block
+
+
+def _pc_world_model_block(pc: Any, hypothesis: str) -> str:
+    """P1 Task 5: world model 预测注入 (懒路, toggle HUGINN_WORLD_MODEL)."""
+    block = pc._build_world_model_block(hypothesis)
+    if block:
+        block = f"\n### World Model Prediction (analogy-based)\n{block}"
+    return block
+
+
+def _pc_visual_block(pc: Any) -> str:
+    """视觉基元注入 (同 hypothesize)."""
+    block = getattr(pc, "_last_visual_context", "")
+    if block:
+        block = f"\n### Visual Primitives (from last tool output)\n{block}\n"
+    return block
+
+
+def _pc_math_block(pc: Any, hypothesis: str, context: dict[str, Any]) -> str:
+    """条件化 math_block (同 hypothesize)."""
+    hyp_blob = (
+        hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
+    )
+    # P21/dsh: 相关任务链 → 降级引导 (math_block 不注入).
+    related_chain = pc._is_related_chain(context.get("changed_files", []))
+    return (
+        pc._MATH_DEPTH_PROMPT_BLOCK
+        if not related_chain and any(s in hyp_blob for s in _get_math_signals())
+        else ""
+    )
+
+
+def _pc_learning_blocks(pc: Any, hypothesis: str) -> tuple[str, str]:
+    """evolution 学到的 skills + prompt patches 提示行."""
+    # Inject learned skills + prompt patches from evolution engine.
+    # This is the "use what you learned" half of the Learn→Plan loop.
+    skill_hints = ""
+    patch_hints = ""
+    try:
+        evolution = pc._get_evolution()
+        skills = evolution.get_relevant_skills(hypothesis)
+        if skills:
+            skill_lines = [f"  - {s.name}: {s.description}" for s in skills[:3]]
+            skill_hints = (
+                "\nLearned skills (from past iterations):\n"
+                + "\n".join(skill_lines)
+                + "\n"
+            )
+        patches = evolution.get_prompt_patches()
+        if patches:
+            patch_hints = (
+                "\nLearned patches:\n"
+                + "\n".join(f"  - {p}" for p in patches[:3])
+                + "\n"
+            )
+    except Exception:  # 防御: 技能/补丁拉取失败不阻断提示
+        logger.warning(
+            "error in _build_plan_prompt: evolution skill/patch fetch failed",
+            exc_info=True,
+        )
+    return skill_hints, patch_hints
+
+
+def _pc_composite_block(hypothesis: str) -> str:
+    """条件化 composite skills 列表 (仿真/计算类 hypothesis 才注入)."""
+    # Inject matching composite skills — lets the LLM pick a pre-built
+    # multi-tool pipeline instead of improvising from scratch.
+    # 条件化: 只在 hypothesis 涉及仿真/计算/材料性质时注入, coder-only
+    # 任务不需要 composite skill 列表. 节省 ~500 tokens.
+    composite_block = ""
+    hyp_lower = hypothesis.lower()
+    _workflow_signals = (
+        "workflow",
+        "simulation",
+        "band",
+        "dos",
+        "phonon",
+        "mechanical",
+        "thermal",
+        "optical",
+        "dft",
+        "vasp",
+        "lammps",
+        "md ",
+        "structure",
+        "property",
+        "energy",
+        "convergence",
+        "optimize",
+        "calc",
+    )
+    if any(s in hyp_lower for s in _workflow_signals):
+        try:
+            from huginn.skills.composite import _ensure_registered
+            from huginn.skills.registry import SkillRegistry
+
+            _ensure_registered()
+            matches = SkillRegistry.search(hypothesis)
+            if not matches:
+                matches = SkillRegistry.get_all_definitions()
+            if matches:
+                lines = [s.to_prompt() for s in matches[:4]]
+                composite_block = (
+                    "\nAvailable composite skills (prefer these over manual workflow):\n"
+                    + "\n\n".join(lines)
+                    + "\n"
+                )
+        except Exception:  # 防御: 组合技能查找失败跳过
+            logger.debug("composite skill lookup failed", exc_info=True)
+    return composite_block
+
+
+def _pc_pipeline_block(pc: Any) -> str:
+    """Pipeline 建议: 基于 provenance 规则推荐下一步工具."""
+    # 42 条领域规则, 零 LLM 调用. 让 plan 知道"这类任务通常下一步是 X".
+    pipeline_block = ""
+    try:
+        from huginn.provenance.pipeline import SimulationPipeline
+
+        pipeline = SimulationPipeline(
+            pc.kg.root if hasattr(pc.kg, "root") else None
+        )
+        # 用上一轮的 execution_result 触发 suggest_next
+        last_result = getattr(pc, "_last_execution_result", None)
+        if last_result and isinstance(last_result, dict):
+            tool_name = last_result.get("_tool_name", "")
+            suggestions = pipeline.suggest_next(
+                tool_name=tool_name,
+                tool_input=last_result.get("_tool_input", {}),
+                tool_output=last_result.get("result", last_result),
+            )
+            if suggestions:
+                s_lines = [
+                    f"  - {s.tool_hint}: {s.description}" for s in suggestions[:3]
+                ]
+                pipeline_block = (
+                    "\nPipeline suggestions (based on provenance):\n"
+                    + "\n".join(s_lines)
+                    + "\n"
+                )
+    except Exception:  # 防御: 建议失败不阻塞流程
+        logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
+    return pipeline_block
+
+
 class PlanCheck:
     """plan_check 方法族协作对象.
 
@@ -176,162 +435,21 @@ class PlanCheck:
         return "\n".join(lines)
 
     def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
-        # 同 hypothesize: 用 hypothesis 串检索 KB, 把参考块喂给 planner
-        kb_block = self._build_kb_text(query=hypothesis)
-        if kb_block:
-            kb_block = f"\n{kb_block}\n"
-        # KG 检索: 用 hypothesis 当 query, 看看已有实体里有没有相关的
-        kg_block = self._build_kg_text(query=hypothesis)
-        if kg_block:
-            kg_block = f"\n{kg_block}\n"
-        # 长期记忆检索 (同 hypothesize)
-        mem_block = self._build_memory_text(query=hypothesis)
-        if mem_block:
-            mem_block = f"\n{mem_block}\n"
-        # C2: PM 层 trajectory_match 召回 (同 hypothesize, 极限模式才开)
-        pm_block = self._build_pm_text()
-        if pm_block:
-            pm_block = f"\n{pm_block}\n"
-        # C2: metacog 信号注入 (同 hypothesize) — target_chain + prospective
-        metacog_block = self._build_metacog_block(include_prospective=True)
-        if metacog_block:
-            metacog_block = f"\n{metacog_block}\n"
-        # H0: stable_principles 注入 (同 hypothesize, 修 P3 断链)
-        try:
-            _principles = load_stable_principles()[:5]
-        except Exception:  # 防御: 原则加载失败用空表
-            _principles = []
-        principles_block = (
-            "\n".join(f"- {p}" for p in _principles) if _principles else ""
-        )
-        if principles_block:
-            principles_block = (
-                f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
-            )
-        # P1 Task 5: world model 预测注入 (懒路, toggle HUGINN_WORLD_MODEL)
-        world_model_block = self._build_world_model_block(hypothesis)
-        if world_model_block:
-            world_model_block = f"\n### World Model Prediction (analogy-based)\n{world_model_block}"
+        (
+            kb_block,
+            kg_block,
+            mem_block,
+            pm_block,
+            metacog_block,
+            principles_block,
+        ) = _pc_retrieval_blocks(self, hypothesis)
+        world_model_block = _pc_world_model_block(self, hypothesis)
+        visual_block = _pc_visual_block(self)
+        math_block = _pc_math_block(self, hypothesis, context)
 
-        # 视觉基元注入 (同 hypothesize)
-        visual_block = getattr(self, "_last_visual_context", "")
-        if visual_block:
-            visual_block = (                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
-            )
-        # 条件化 math_block (同 hypothesize)
-        hyp_blob = (
-            hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
-        )
-        # P21/dsh: 相关任务链 → 降级引导 (math_block 不注入).
-        related_chain = self._is_related_chain(context.get("changed_files", []))
-        math_block = (
-            self._MATH_DEPTH_PROMPT_BLOCK
-            if not related_chain
-            and any(s in hyp_blob for s in _get_math_signals())
-            else ""
-        )
-
-        # Inject learned skills + prompt patches from evolution engine.
-        # This is the "use what you learned" half of the Learn→Plan loop.
-        skill_hints = ""
-        patch_hints = ""
-        try:
-            evolution = self._get_evolution()
-            skills = evolution.get_relevant_skills(hypothesis)
-            if skills:
-                skill_lines = [f"  - {s.name}: {s.description}" for s in skills[:3]]
-                skill_hints = (
-                    "\nLearned skills (from past iterations):\n"
-                    + "\n".join(skill_lines)
-                    + "\n"
-                )
-            patches = evolution.get_prompt_patches()
-            if patches:
-                patch_hints = (
-                    "\nLearned patches:\n"
-                    + "\n".join(f"  - {p}" for p in patches[:3])
-                    + "\n"
-                )
-        except Exception:  # 防御: 技能/补丁拉取失败不阻断提示
-            logger.warning(
-                "error in _build_plan_prompt: evolution skill/patch fetch failed",
-                exc_info=True,
-            )
-
-        # Inject matching composite skills — lets the LLM pick a pre-built
-        # multi-tool pipeline instead of improvising from scratch.
-        # 条件化: 只在 hypothesis 涉及仿真/计算/材料性质时注入, coder-only
-        # 任务不需要 composite skill 列表. 节省 ~500 tokens.
-        composite_block = ""
-        hyp_lower = hypothesis.lower()
-        _workflow_signals = (
-            "workflow",
-            "simulation",
-            "band",
-            "dos",
-            "phonon",
-            "mechanical",
-            "thermal",
-            "optical",
-            "dft",
-            "vasp",
-            "lammps",
-            "md ",
-            "structure",
-            "property",
-            "energy",
-            "convergence",
-            "optimize",
-            "calc",
-        )
-        if any(s in hyp_lower for s in _workflow_signals):
-            try:
-                from huginn.skills.composite import _ensure_registered
-                from huginn.skills.registry import SkillRegistry
-
-                _ensure_registered()
-                matches = SkillRegistry.search(hypothesis)
-                if not matches:
-                    matches = SkillRegistry.get_all_definitions()
-                if matches:
-                    lines = [s.to_prompt() for s in matches[:4]]
-                    composite_block = (
-                        "\nAvailable composite skills (prefer these over manual workflow):\n"
-                        + "\n\n".join(lines)
-                        + "\n"
-                    )
-            except Exception:  # 防御: 组合技能查找失败跳过
-                logger.debug("composite skill lookup failed", exc_info=True)
-
-        # Pipeline 建议: 基于 provenance 规则推荐下一步工具.
-        # 42 条领域规则, 零 LLM 调用. 让 plan 知道"这类任务通常下一步是 X".
-        pipeline_block = ""
-        try:
-            from huginn.provenance.pipeline import SimulationPipeline
-
-            pipeline = SimulationPipeline(
-                self.kg.root if hasattr(self.kg, "root") else None
-            )
-            # 用上一轮的 execution_result 触发 suggest_next
-            last_result = getattr(self, "_last_execution_result", None)
-            if last_result and isinstance(last_result, dict):
-                tool_name = last_result.get("_tool_name", "")
-                suggestions = pipeline.suggest_next(
-                    tool_name=tool_name,
-                    tool_input=last_result.get("_tool_input", {}),
-                    tool_output=last_result.get("result", last_result),
-                )
-                if suggestions:
-                    s_lines = [
-                        f"  - {s.tool_hint}: {s.description}" for s in suggestions[:3]
-                    ]
-                    pipeline_block = (
-                        "\nPipeline suggestions (based on provenance):\n"
-                        + "\n".join(s_lines)
-                        + "\n"
-                    )
-        except Exception:  # 防御: 建议失败不阻塞流程
-            logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
+        skill_hints, patch_hints = _pc_learning_blocks(self, hypothesis)
+        composite_block = _pc_composite_block(hypothesis)
+        pipeline_block = _pc_pipeline_block(self)
 
         # VISTA 借鉴: 两个实验 mode 的说明 (flag 关时为空串); 枚举由
         # _extend_mode_enum 在返回前按 flag 展开 (模板保留基线字面量).
@@ -339,52 +457,7 @@ class PlanCheck:
 
         blocks = self._apply_block_patches(
             [
-                (
-                    "body",
-                    f"""Given the hypothesis: "{hypothesis}"
-
-Context:
-{json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
-
-Choose ONE mode and describe the plan:
-- coder: modify code/files to fix or improve something
-- workflow: run a computational simulation pipeline
-- explore: search a design space for optimal parameters
-- skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
-- visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
-{extra_mode_lines}
-Protocol completeness check (RCBench failure mode: experimental protocol mismatch):
-Before finalizing, verify your plan covers all necessary steps:
-- For DFT: structure optimization BEFORE property calculation? Convergence test (encut/kpoints)?
-- For MD: equilibration BEFORE production run? Timestep appropriate for the system?
-- For analysis: raw data processing BEFORE interpretation? Reference comparison?
-- Are computational parameters appropriate for the target property (e.g. HSE06 for band gap, not PBE)?
-- Cross-check against domain knowledge above: any known methodological requirements?
-If a step is missing, add it to DESCRIPTION.
-
-When the hypothesis involves a PDE / variational principle / curved
-geometry, consider the symbolic_math_tool actions listed in the math
-depth block above — but numerical solvers are equally valid.
-
-Alignment gate (plan_check will reject the plan if this fails):
-- Name the exact quantity / structure / assertion the hypothesis makes, and point to
-  the step in DESCRIPTION that measures or computes THAT thing.
-- A numeric scan (capacity / error / scaling) only tests a claim that is itself numeric.
-  If the hypothesis asserts something else (topological / algebraic / existence /
-  uniqueness), either pick a MODE + workflow that computes that object symbolically, or
-  restate the hypothesis to a numerically testable form that the plan actually implements.
-- Never reuse a previous round's DESCRIPTION when the hypothesis has changed. A plan that
-  ignores the current hypothesis is invalid even if the code runs and returns numbers.
-
-Respond in this exact format:
-MODE: <coder|workflow|explore|skill|visual_inspect>
-DESCRIPTION: <brief description of what to do>
-SKILL: <composite skill name, only if MODE is skill>
-FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
-PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
-SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
-""",
-                ),
+                ("body", _pc_plan_body(hypothesis, context, extra_mode_lines)),
                 ("math", math_block),
                 ("kg", kg_block),
                 ("visual", visual_block),

@@ -83,148 +83,211 @@ class WorkflowEngine:
         If ``checkpoint_path`` is provided, the engine writes a snapshot after
         every stage transition so the workflow can be resumed later.
         """
-
-        stage_map = {s.id: s for s in stages}
-        completed: set[str] = {s.id for s in stages if s.status == "completed"}
-        failed: set[str] = {s.id for s in stages if s.status == "failed"}
-        outputs: dict[str, Any] = {
-            s.id: s.result.data
-            for s in stages
-            if s.status == "completed" and s.result is not None
-        }
-
+        stage_map, completed, failed, outputs = self._wf_initial_state(stages)
         start_time = datetime.now()
 
         # 登记进度任务: 用 session_id + uuid 区分, 避免跟其它 workflow 撞
         tracker = self.progress_tracker or get_progress_tracker()
-        progress_task_id = f"{context.session_id}:workflow:{uuid.uuid4().hex[:8]}"
-        stage_labels = [s.id for s in stages]
+        task_id = self._wf_start_progress(tracker, stages, context)
+
+        while len(completed) + len(failed) < len(stages):
+            ready = self._wf_ready(stages, completed, failed)
+            if not ready:
+                return self._wf_blocked(
+                    stages, completed, failed, stage_map, outputs,
+                    checkpoint_path, tracker, task_id,
+                )
+
+            allowed_ready = self._wf_filter_budget(
+                ready, budget_policy or self.budget_policy, failed
+            )
+            if not allowed_ready:
+                self._wf_checkpoint(stage_map, outputs, checkpoint_path)
+                continue
+
+            results = await self._wf_run_stages(allowed_ready, context, outputs)
+            await self._wf_apply_results(
+                allowed_ready, results, completed, failed, outputs,
+                tracker, task_id, stage_map, checkpoint_path, context,
+            )
+
+        return self._wf_finish(
+            stage_map, outputs, failed, start_time, tracker, task_id, checkpoint_path
+        )
+
+    @staticmethod
+    def _wf_initial_state(
+        stages: list[ComputationalStage],
+    ) -> tuple[dict[str, ComputationalStage], set[str], set[str], dict[str, Any]]:
+        """从 stages 恢复 stage_map / completed / failed / outputs."""
+        stage_map = {s.id: s for s in stages}
+        completed = {s.id for s in stages if s.status == "completed"}
+        failed = {s.id for s in stages if s.status == "failed"}
+        outputs = {
+            s.id: s.result.data
+            for s in stages
+            if s.status == "completed" and s.result is not None
+        }
+        return stage_map, completed, failed, outputs
+
+    @staticmethod
+    def _wf_start_progress(
+        tracker: ProgressTracker, stages: list[ComputationalStage], context: ToolContext,
+    ) -> str:
+        """登记进度任务, 返回 task id."""
+        task_id = f"{context.session_id}:workflow:{uuid.uuid4().hex[:8]}"
         tracker.start_task(
-            task_id=progress_task_id,
+            task_id=task_id,
             description=f"workflow with {len(stages)} stages",
             total_steps=len(stages),
-            stage_labels=stage_labels,
+            stage_labels=[s.id for s in stages],
             engine_kind="workflow",
             metadata={"session_id": context.session_id},
         )
+        return task_id
 
-        def _maybe_checkpoint() -> None:
-            if checkpoint_path is not None:
-                WorkflowCheckpoint(
-                    stages=list(stage_map.values()), outputs=outputs
-                ).save(checkpoint_path)
+    @staticmethod
+    def _wf_ready(
+        stages: list[ComputationalStage], completed: set[str], failed: set[str],
+    ) -> list[ComputationalStage]:
+        """依赖全部完成的待执行 stage."""
+        return [
+            s
+            for s in stages
+            if s.id not in completed
+            and s.id not in failed
+            and all(dep in completed for dep in s.dependencies)
+        ]
 
-        while len(completed) + len(failed) < len(stages):
-            # Find stages whose dependencies are all satisfied
-            ready = [
-                s
-                for s in stages
-                if s.id not in completed
-                and s.id not in failed
-                and all(dep in completed for dep in s.dependencies)
-            ]
+    @staticmethod
+    def _wf_checkpoint(
+        stage_map: dict[str, ComputationalStage], outputs: dict[str, Any],
+        checkpoint_path: str | Path | None,
+    ) -> None:
+        """checkpoint_path 有值时落一份快照."""
+        if checkpoint_path is not None:
+            WorkflowCheckpoint(
+                stages=list(stage_map.values()), outputs=outputs
+            ).save(checkpoint_path)
 
-            if not ready:
-                # Deadlock or all remaining blocked by failures
-                remaining = [
-                    s.id for s in stages if s.id not in completed and s.id not in failed
-                ]
-                _maybe_checkpoint()
-                tracker.fail(
-                    progress_task_id,
-                    f"Workflow blocked: stages {remaining} have unsatisfied dependencies",
-                )
-                return WorkflowResult(
-                    success=False,
-                    stages=stage_map,
-                    outputs=outputs,
-                    error=f"Workflow blocked: stages {remaining} have unsatisfied dependencies",
-                )
+    def _wf_blocked(
+        self, stages: list[ComputationalStage], completed: set[str], failed: set[str],
+        stage_map: dict[str, ComputationalStage], outputs: dict[str, Any],
+        checkpoint_path: str | Path | None, tracker: ProgressTracker, task_id: str,
+    ) -> WorkflowResult:
+        """无 ready stage → 死锁/被失败阻塞, 落快照返回失败结果."""
+        remaining = [
+            s.id for s in stages if s.id not in completed and s.id not in failed
+        ]
+        self._wf_checkpoint(stage_map, outputs, checkpoint_path)
+        message = f"Workflow blocked: stages {remaining} have unsatisfied dependencies"
+        tracker.fail(task_id, message)
+        return WorkflowResult(
+            success=False,
+            stages=stage_map,
+            outputs=outputs,
+            error=message,
+        )
 
-            # Budget check for ready stages
-            effective_budget = budget_policy or self.budget_policy
-            allowed_ready: list[ComputationalStage] = []
-            for stage in ready:
-                if effective_budget is None:
-                    allowed_ready.append(stage)
-                    continue
-                estimate = self._estimate_stage_cost(stage)
-                decision, reason = effective_budget.check(estimate)
-                if decision == BudgetDecision.DENY:
-                    stage.status = "failed"
-                    stage.result = ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"Budget denied: {reason}",
-                    )
-                    failed.add(stage.id)
-                elif decision == BudgetDecision.WARN:
-                    # Proceed but surface the warning
-                    stage.tool_input.setdefault("__budget_warnings", []).append(reason)
-                    allowed_ready.append(stage)
-                else:
-                    allowed_ready.append(stage)
-
-            if not allowed_ready:
-                _maybe_checkpoint()
+    def _wf_filter_budget(
+        self, ready: list[ComputationalStage], effective_budget: BudgetPolicy | None,
+        failed: set[str],
+    ) -> list[ComputationalStage]:
+        """按预算过滤 ready; DENY 直接标 failed, WARN 只记警告后放行."""
+        allowed_ready: list[ComputationalStage] = []
+        for stage in ready:
+            if effective_budget is None:
+                allowed_ready.append(stage)
                 continue
-
-            # Execute ready stages in parallel, optionally through a task backend.
-            if self.task_backend is not None:
-                results = await self._dispatch_stages(allowed_ready, context, outputs)
+            estimate = self._estimate_stage_cost(stage)
+            decision, reason = effective_budget.check(estimate)
+            if decision == BudgetDecision.DENY:
+                stage.status = "failed"
+                stage.result = ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"Budget denied: {reason}",
+                )
+                failed.add(stage.id)
+            elif decision == BudgetDecision.WARN:
+                # Proceed but surface the warning
+                stage.tool_input.setdefault("__budget_warnings", []).append(reason)
+                allowed_ready.append(stage)
             else:
-                tasks = [
-                    self._execute_stage(s, context, outputs) for s in allowed_ready
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                allowed_ready.append(stage)
+        return allowed_ready
 
-            for stage, result in zip(allowed_ready, results):
-                if isinstance(result, Exception):
+    async def _wf_run_stages(
+        self, allowed_ready: list[ComputationalStage],
+        context: ToolContext, outputs: dict[str, Any],
+    ) -> list[Any]:
+        """并行执行 ready stages, 可选走 task backend."""
+        if self.task_backend is not None:
+            return await self._dispatch_stages(allowed_ready, context, outputs)
+        tasks = [self._execute_stage(s, context, outputs) for s in allowed_ready]
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _wf_apply_results(
+        self, allowed_ready: list[ComputationalStage], results: list[Any],
+        completed: set[str], failed: set[str], outputs: dict[str, Any],
+        tracker: ProgressTracker, task_id: str,
+        stage_map: dict[str, ComputationalStage], checkpoint_path: str | Path | None,
+        context: ToolContext,
+    ) -> None:
+        """逐 stage 落定状态 (失败/重试), 落快照并更新进度."""
+        for stage, result in zip(allowed_ready, results):
+            if isinstance(result, Exception):
+                stage.status = "failed"
+                failed.add(stage.id)
+            elif result.success:
+                stage.status = "completed"
+                stage.result = result
+                outputs[stage.id] = result.data
+                completed.add(stage.id)
+            else:
+                # Check retry policy
+                if self._should_retry(stage, result.error):
+                    stage.status = "pending"
+                    stage.attempts += 1
+
+                    # Auto-diagnose and apply fixes if enabled
+                    if stage.retry_policy.auto_diagnose:
+                        await self._diagnose_and_fix(stage, result, context)
+
+                    # Backoff delay
+                    delay = stage.retry_policy.backoff_factor**stage.attempts
+                    await asyncio.sleep(min(delay, 30))  # Cap at 30s
+                else:
                     stage.status = "failed"
                     failed.add(stage.id)
-                elif result.success:
-                    stage.status = "completed"
-                    stage.result = result
-                    outputs[stage.id] = result.data
-                    completed.add(stage.id)
-                else:
-                    # Check retry policy
-                    if self._should_retry(stage, result.error):
-                        stage.status = "pending"
-                        stage.attempts += 1
 
-                        # Auto-diagnose and apply fixes if enabled
-                        if stage.retry_policy.auto_diagnose:
-                            await self._diagnose_and_fix(stage, result, context)
+            self._wf_checkpoint(stage_map, outputs, checkpoint_path)
+            # 每个 stage 落定后更新进度 (含失败和重试中的)
+            tracker.update(
+                task_id,
+                current_step=len(completed) + len(failed),
+                current_label=f"stage {stage.id}: {stage.status}",
+                metadata={
+                    "completed": sorted(completed),
+                    "failed": sorted(failed),
+                },
+            )
 
-                        # Backoff delay
-                        delay = stage.retry_policy.backoff_factor**stage.attempts
-                        await asyncio.sleep(min(delay, 30))  # Cap at 30s
-                    else:
-                        stage.status = "failed"
-                        failed.add(stage.id)
-
-                _maybe_checkpoint()
-                # 每个 stage 落定后更新进度 (含失败和重试中的)
-                tracker.update(
-                    progress_task_id,
-                    current_step=len(completed) + len(failed),
-                    current_label=f"stage {stage.id}: {stage.status}",
-                    metadata={
-                        "completed": sorted(completed),
-                        "failed": sorted(failed),
-                    },
-                )
-
-        _maybe_checkpoint()
+    def _wf_finish(
+        self, stage_map: dict[str, ComputationalStage], outputs: dict[str, Any],
+        failed: set[str], start_time: datetime, tracker: ProgressTracker,
+        task_id: str, checkpoint_path: str | Path | None,
+    ) -> WorkflowResult:
+        """收尾: 落快照 + 标记进度完成/失败 + 打包结果."""
+        self._wf_checkpoint(stage_map, outputs, checkpoint_path)
         total_time = (datetime.now() - start_time).total_seconds()
         success = len(failed) == 0
 
         # 标记整个 workflow 完成 / 失败
         if success:
-            tracker.complete(progress_task_id, result={"outputs": list(outputs.keys())})
+            tracker.complete(task_id, result={"outputs": list(outputs.keys())})
         else:
-            tracker.fail(progress_task_id, f"Stages failed: {sorted(failed)}")
+            tracker.fail(task_id, f"Stages failed: {sorted(failed)}")
 
         return WorkflowResult(
             success=success,

@@ -352,15 +352,10 @@ def get_phase_extra(phase_name: str, key: str, default: Any = None) -> Any:
         return default
 
 
-def _selfcheck() -> None:
-    """H4 试点 selfcheck: PhaseRegistry 覆盖 + 持久化 + 未覆盖字段回退 baseline."""
-    import shutil
-    import tempfile
-
-    import huginn.harness.phase_spec as ps
+def _sc_baseline_load() -> None:
+    """1. toggle off: SubagentDispatch 用 class attr baseline."""
     from huginn.agents.subagent import SubagentDispatch
 
-    # 1. toggle off: SubagentDispatch 用 class attr baseline
     d = SubagentDispatch()
     assert "explore" in d._specs
     assert d._specs["explore"].system_prompt.startswith(
@@ -368,7 +363,13 @@ def _selfcheck() -> None:
     ), "baseline should be loaded"
     print("1. SubagentDispatch baseline load OK")
 
-    # 2. toggle on + 注册 override + 持久化
+
+def _sc_override_persist() -> tuple[str, Any, Any]:
+    """2. toggle on + 注册 override + 持久化. 返回 (tmp, orig, reg2)."""
+    import tempfile
+
+    import huginn.harness.phase_spec as ps
+
     orig = ps._harness_enabled
     ps._harness_enabled = lambda key, default=False: (
         True if key == "harness_phase_evolve" else default
@@ -398,19 +399,31 @@ def _selfcheck() -> None:
         f"baseline allowed_tools lost: {spec.allowed_tools}"
     )
     print("2. PhaseRegistry override + persistence + baseline fallback OK")
+    return tmp, orig, reg2
 
-    # 3. 不存在的 spec 名 → None
+
+def _sc_unknown_subagent_name(reg2: Any) -> None:
+    """3. 不存在的 spec 名 → None."""
     assert reg2.get_subagent_spec("nonexistent") is None
     print("3. unknown subagent name → None OK")
 
-    # 4. get_subagent_specs_for_dispatch (SubagentDispatch 接入点)
+
+def _sc_dispatch_specs() -> None:
+    """4. get_subagent_specs_for_dispatch (SubagentDispatch 接入点)."""
+    import huginn.harness.phase_spec as ps
+    from huginn.agents.subagent import SubagentDispatch
+
     specs = ps.get_subagent_specs_for_dispatch()
     assert specs is not None, "toggle on should return specs dict"
     assert set(specs.keys()) == set(SubagentDispatch.BUILTIN_SPECS.keys())
     assert specs["explore"].system_prompt == "PATCHED explore prompt"
     print("4. get_subagent_specs_for_dispatch OK")
 
-    # 5. phase spec baseline: _execute dispatch_table + _report persona
+
+def _sc_phase_baseline() -> Any:
+    """5. phase spec baseline: _execute dispatch_table + _report persona."""
+    import huginn.harness.phase_spec as ps
+
     reg3 = ps.PhaseRegistry.get_instance()
     exec_spec = reg3.get_phase_spec("_execute")
     assert exec_spec is not None, "_execute baseline should exist"
@@ -425,8 +438,13 @@ def _selfcheck() -> None:
     assert report_spec is not None, "_report baseline should exist"
     assert report_spec.persona == "tutor", f"_report persona wrong: {report_spec.persona}"
     print("5. phase spec baseline (_execute dispatch_table + _report persona) OK")
+    return reg3
 
-    # 6. phase spec override + 持久化
+
+def _sc_phase_override(reg3: Any) -> Any:
+    """6. phase spec override + 持久化."""
+    import huginn.harness.phase_spec as ps
+
     reg3.register_phase_override("_execute", {
         "dispatch_table": {
             "coder": ["_execute_coder", "description"],
@@ -441,15 +459,24 @@ def _selfcheck() -> None:
     assert "workflow" in exec_spec2.dispatch_table, "baseline workflow lost after override"
     assert exec_spec2.dispatch_table["custom_mode"] == ["_execute_explore", "description"]
     print("6. phase spec override + persistence + baseline fallback OK")
+    return reg4
 
-    # 7. get_phase_dispatch_table helper (engine._execute 接入点)
+
+def _sc_dispatch_table_helper() -> None:
+    """7. get_phase_dispatch_table helper (engine._execute 接入点)."""
+    import huginn.harness.phase_spec as ps
+
     dt = ps.get_phase_dispatch_table()
     assert dt is not None, "toggle on should return dispatch_table"
     assert "custom_mode" in dt, "custom_mode missing from helper"
     assert dt["coder"] == ["_execute_coder", "description"]
     print("7. get_phase_dispatch_table helper OK")
 
-    # 8. get_phase_persona helper (engine._report 接入点)
+
+def _sc_persona_helper(reg4: Any) -> None:
+    """8. get_phase_persona helper (engine._report 接入点)."""
+    import huginn.harness.phase_spec as ps
+
     # override _report persona
     reg4.register_phase_override("_report", {"persona": "reviewer"})
     ps.PhaseRegistry._instance = None
@@ -459,7 +486,11 @@ def _selfcheck() -> None:
     assert ps.get_phase_persona("nonexistent") is None
     print("8. get_phase_persona helper OK")
 
-    # 9. toggle off: helpers 返回 None (caller 用 hardcode)
+
+def _sc_toggle_off_helpers() -> None:
+    """9. toggle off: helpers 返回 None (caller 用 hardcode)."""
+    import huginn.harness.phase_spec as ps
+
     ps._harness_enabled = lambda key, default=False: False
     assert ps.get_phase_dispatch_table() is None, "toggle off should return None"
     assert ps.get_phase_persona("_report") is None, "toggle off should return None"
@@ -468,7 +499,11 @@ def _selfcheck() -> None:
     )
     print("9. toggle off helpers → None OK")
 
-    # 10. 全 7 phase baseline 存在 + extra 字段正确
+
+def _sc_all_phase_baseline() -> Any:
+    """10. 全 7 phase baseline 存在 + extra 字段正确."""
+    import huginn.harness.phase_spec as ps
+
     ps._harness_enabled = lambda key, default=False: (
         True if key == "harness_phase_evolve" else default
     )
@@ -499,8 +534,13 @@ def _selfcheck() -> None:
     assert learn_spec.extra.get("importance_default") == 0.6
     assert learn_spec.extra.get("importance_max") == 0.9
     print("10. 全 7 phase baseline + extra 字段 OK")
+    return reg5
 
-    # 11. get_phase_extra helper + override (key 级 merge)
+
+def _sc_extra_helper(reg5: Any) -> None:
+    """11. get_phase_extra helper + override (key 级 merge)."""
+    import huginn.harness.phase_spec as ps
+
     reg5.register_phase_override("_hypothesize", {
         "extra": {"selected_marker": "CHOSEN:"},
     })
@@ -511,7 +551,11 @@ def _selfcheck() -> None:
     assert ps.get_phase_extra("_hypothesize", "branch_incubator_env") == "HUGINN_USE_BRANCH_INCUBATOR"
     print("11. get_phase_extra helper + extra key 级 merge OK")
 
-    # 12. _validate extra override (reviewer_threshold)
+
+def _sc_validate_extra_override(reg5: Any) -> None:
+    """12. _validate extra override (reviewer_threshold)."""
+    import huginn.harness.phase_spec as ps
+
     reg5.register_phase_override("_validate", {
         "extra": {"reviewer_threshold": 0.7},
     })
@@ -522,11 +566,34 @@ def _selfcheck() -> None:
     assert "structure" in cats, f"baseline categories lost: {cats}"
     print("12. _validate extra override OK")
 
-    # 清理
+
+def _sc_cleanup(tmp: str, orig: Any) -> None:
+    """清理: 恢复 env / singleton / monkeypatch."""
+    import shutil
+
+    import huginn.harness.phase_spec as ps
+
     shutil.rmtree(tmp, ignore_errors=True)
     del os.environ["HUGINN_CACHE_DIR"]
     ps.PhaseRegistry._instance = None
     ps._harness_enabled = orig
+
+
+def _selfcheck() -> None:
+    """H4 试点 selfcheck: PhaseRegistry 覆盖 + 持久化 + 未覆盖字段回退 baseline."""
+    _sc_baseline_load()
+    tmp, orig, reg2 = _sc_override_persist()
+    _sc_unknown_subagent_name(reg2)
+    _sc_dispatch_specs()
+    reg3 = _sc_phase_baseline()
+    reg4 = _sc_phase_override(reg3)
+    _sc_dispatch_table_helper()
+    _sc_persona_helper(reg4)
+    _sc_toggle_off_helpers()
+    reg5 = _sc_all_phase_baseline()
+    _sc_extra_helper(reg5)
+    _sc_validate_extra_override(reg5)
+    _sc_cleanup(tmp, orig)
     print("H4 phase_spec selfcheck OK (12/12)")
 
 

@@ -530,36 +530,42 @@ class FitSCMFromObservationsTool(HuginnTool):
 
 # ── self-check ───────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """14 项 assert 验证 visual_causal_chain 核心行为."""
-    import random as _rng
-    _rng.seed(42)
-
+def _sc_templates_fittable() -> None:
     # 1. 4 个模板都有拟合规格
     assert set(_FITTABLE.keys()) == {"sintering", "ostwald_ripening",
                                       "diffusion", "phase_transition"}
 
+
+def _sc_sintering_monotonic() -> None:
     # 2. _sintering_predict 单调性: T 升 → particle_size 升
     X = np.array([[1500.0, 1800.0], [2.0, 2.0]])  # (2, 2): T=[1500,1800], t=[2,2]
     y = _sintering_predict(X, 250.0, 1e6, 50.0)
     assert y[1] > y[0], f"Arrhenius 单调性失败: {y}"
 
+
+def _sc_ostwald_monotonic() -> None:
     # 3. _ostwald_predict 单调性: t 升 → particle_size 升
     X = np.array([[800.0, 800.0], [10.0, 100.0]])
     y = _ostwald_predict(X, 180.0, 1e4, 20.0)
     assert y[1] > y[0]
 
+
+def _sc_diffusion_monotonic() -> None:
     # 4. _diffusion_predict 单调性: T 升 → D 升
     X = np.array([[500.0, 1000.0]])  # (1, 2): 1 个条件, 2 个数据点
     y = _diffusion_predict(X, 150.0, 1e-4)  # 返 shape (2,)
     assert y[1] > y[0], f"Fick 单调性失败: {y}"
 
+
+def _sc_phase_predict() -> None:
     # 5. _phase_predict: T 低于 T_eq → phase_fraction > 0; T 高于 T_eq → 0
     X = np.array([[900.0, 1100.0]])  # (1, 2): 1 个条件 T, 2 个数据点
     y = _phase_predict(X, 120.0, 1e3, 1000.0)  # 返 shape (2,)
     assert y[0] > 0.0, f"低温应有相变: {y}"
     assert y[1] == 0.0, f"高温应无相变: {y}"
 
+
+def _sc_fit_sintering(_rng) -> tuple[list[Observation], VisualSCM]:
     # 6. 拟合 sintering 数据点 (用真实参数生成 16 点 + 1% 噪声) → 拟合参数接近真实
     # 用 Ea=100, A0=1e8, r0=30 (不是模板默认 Ea=250), 让 Arrhenius 项在 1200-2000 K 明显起作用.
     # ponytail: 模板默认 Ea=250 在 2000 K 下 exp(-15)≈3e-7 几乎不变化, 测试无意义.
@@ -583,13 +589,18 @@ def _selfcheck() -> None:
     assert 60 < p["Ea_grow"] < 150, f"Ea_grow 偏离: {p}"
     assert 1e6 < p["A0_grow"] < 1e10, f"A0_grow 偏离: {p}"
     assert 15 < p["r0"] < 60, f"r0 偏离: {p}"
+    return obs, fitted_scm
 
+
+def _sc_fitted_scm_flags(fitted_scm: VisualSCM) -> None:
     # 7. fitted_scm 标记正确
     assert fitted_scm.name == "sintering_fitted"
     assert fitted_scm.source == "visual_chain_fit"
     assert fitted_scm.confirmed is False  # 数据拟合需用户审核
     assert "R^2=" in fitted_scm.notes
 
+
+def _sc_fit_insufficient(obs: list[Observation]) -> None:
     # 8. 数据点不足 → 回退默认参数 + warning
     obs_few = obs[:2]  # 只 2 点, 但 sintering 有 3 参数
     fitted_scm2, report2 = fit_scm_from_observations(obs_few, "sintering")
@@ -598,6 +609,8 @@ def _selfcheck() -> None:
     assert report2["params"] == _FITTABLE["sintering"].defaults
     assert math.isnan(report2["r2"])
 
+
+def _sc_fit_unknown_template(obs: list[Observation]) -> None:
     # 9. 不存在的模板 → 抛 ValueError
     try:
         fit_scm_from_observations(obs, "nonexistent_template")
@@ -605,6 +618,8 @@ def _selfcheck() -> None:
     except ValueError:
         logger.debug("best-effort op failed", exc_info=True)
 
+
+def _sc_fit_diffusion(_rng) -> None:
     # 10. 拟合 diffusion 数据点
     obs_d: list[Observation] = []
     for T in [600, 700, 800, 900, 1000, 1100, 1200]:
@@ -620,6 +635,8 @@ def _selfcheck() -> None:
     assert 80 < p_d["Ea"] < 250, f"Ea 偏离: {p_d}"
     assert 1e-6 < p_d["D0"] < 1e-2, f"D0 偏离: {p_d}"
 
+
+def _sc_fit_ostwald(_rng) -> None:
     # 11. 拟合 ostwald_ripening 数据点
     # 用 Ea=60, K0=1e7, r0=15 (不是模板默认), 让 LSW 项在 500-900 K 明显起作用.
     Ea_true_o, K0_true, r0_true_o = 60.0, 1e7, 15.0
@@ -640,6 +657,8 @@ def _selfcheck() -> None:
     assert 1e5 < p_o["K0"] < 1e9, f"K0 偏离: {p_o}"
     assert 5 < p_o["r0"] < 40, f"r0 偏离: {p_o}"
 
+
+def _sc_fit_phase(_rng) -> None:
     # 12. 拟合 phase_transition 数据点
     # 用 Ea=70, k0=1e4, T_eq=1000 (让 Avrami 项在 850-990 K 有非平凡值).
     Ea_true_p, k0_true, T_eq_true = 70.0, 1e4, 1000.0
@@ -661,6 +680,8 @@ def _selfcheck() -> None:
     # phase_transition 6 数据点拟合 3 参数, R^2 可能不稳定, 只验证无报错
     assert report_p["warning"] is None or "curve_fit" in (report_p["warning"] or "")
 
+
+def _sc_extract_feature() -> None:
     # 13. _extract_numerical_feature 命中各种格式
     assert _extract_numerical_feature("particle size: 250 nm", "particle_size") == 250.0
     assert _extract_numerical_feature("particle_size = 250", "particle_size") == 250.0
@@ -670,6 +691,8 @@ def _selfcheck() -> None:
     assert _extract_numerical_feature("扩散系数 1.5e-12", "D") == 1.5e-12
     assert _extract_numerical_feature("no relevant info", "particle_size") is None
 
+
+def _sc_tool_validate() -> None:
     # 14. Tool validate_input 拒绝未知模板 + 空 observations
     import asyncio
     tool = FitSCMFromObservationsTool()
@@ -691,7 +714,10 @@ def _selfcheck() -> None:
     finally:
         loop.close()
 
+
+def _sc_tool_call() -> None:
     # 15. Tool call 成功返 fit_report
+    import asyncio
     tool2 = FitSCMFromObservationsTool()
     loop2 = asyncio.new_event_loop()
     try:
@@ -709,6 +735,26 @@ def _selfcheck() -> None:
     finally:
         loop2.close()
 
+
+def _selfcheck() -> None:
+    """14 项 assert 验证 visual_causal_chain 核心行为."""
+    import random as _rng
+    _rng.seed(42)
+    _sc_templates_fittable()
+    _sc_sintering_monotonic()
+    _sc_ostwald_monotonic()
+    _sc_diffusion_monotonic()
+    _sc_phase_predict()
+    obs, fitted_scm = _sc_fit_sintering(_rng)
+    _sc_fitted_scm_flags(fitted_scm)
+    _sc_fit_insufficient(obs)
+    _sc_fit_unknown_template(obs)
+    _sc_fit_diffusion(_rng)
+    _sc_fit_ostwald(_rng)
+    _sc_fit_phase(_rng)
+    _sc_extract_feature()
+    _sc_tool_validate()
+    _sc_tool_call()
     print("all self-checks passed")
 
 

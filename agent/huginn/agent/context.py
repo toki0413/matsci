@@ -28,6 +28,191 @@ def _capability_note() -> str:
         return ""
 
 
+def _esp_base_prompt(ctx: Any) -> str:
+    """模式前缀 + system_prompt + phase 声明 (静态层, 放 prompt 开头)."""
+    if ctx._mode == "research":
+        base = (
+            "RESEARCH MODE: You are conducting systematic scientific research.\n"
+            "- Always cite literature sources for claims\n"
+            "- Quantify uncertainty in results\n"
+            "- Compare results to published values\n"
+            "- Flag unexpected results as potential discoveries\n"
+            "- Write findings to knowledge base\n\n"
+            f"{ctx.system_prompt}"
+        )
+    elif ctx._mode == "extreme":
+        base = (
+            "EXTREME MODE: You are operating at maximum capability for a "
+            "long-horizon task. Unlock all tools and reasoning depth.\n"
+            "- Cite literature sources for claims\n"
+            "- Quantify uncertainty in results\n"
+            "- Compare results to published values\n"
+            "- Flag unexpected results as potential discoveries\n"
+            "- Write findings to knowledge base\n"
+            "- Persist intermediate results and follow the goal to completion\n\n"
+            f"{ctx.system_prompt}"
+        )
+    else:
+        base = ctx.system_prompt
+
+    return (
+        f"{base}\n\n"
+        "You can request a phase transition by including "
+        "[PHASE:TARGET_PHASE] in your response. "
+        "Available phases: LITERATURE, HYPOTHESIS, PLANNING, "
+        "EXECUTION, VALIDATION, REPORTING."
+    )
+
+
+def _esp_prompt_segments(ctx: Any, base: str) -> str:
+    """按**段生效声明**渲染应生效段 (writing / multimodal / thinking + 插件段).
+
+    旧实现只硬编码渲染 "thinking", 导致反防御写作、多模态引导、插件段
+    (如 asd_ste100) 在主路径静默缺席 —— 与 s7 路径段集合不一致的"孤儿段".
+    声明面单一来源在 prompt_segments._APPLIES_TO; 门禁
+    tests/test_prompt_contract.py 断言 "声明 != 渲染" 即红.
+    fail-open: 注册表/插件异常都不让系统提示构建崩.
+    """
+    try:
+        # 确保内置段已注册 (persona/mode/.../thinking 注册在 prompt_builder import 时).
+        import huginn.agent.prompt_builder as _pb  # noqa: F401
+        from huginn.plugins.prompt_segments import render_prompt_segments_for_path
+
+        _declared = render_prompt_segments_for_path(
+            "main", getattr(ctx, "_mode", "chat"), "execute",
+            "s0_blank", ctx.system_prompt,
+        )
+        if _declared:
+            base += "\n\n" + _declared
+    except Exception:  # 非致命: 段注入失败则跳过
+        logger.debug("prompt segment injection skipped", exc_info=True)
+    return base
+
+
+def _esp_workspace_context(ctx: Any, base: str) -> str:
+    """注入 session 级系统上下文 + 项目上下文 (.huginn.md / AGENTS.md)."""
+    # Inject cached system context (date + git status) and project
+    # context (.huginn.md / AGENTS.md). Computed once per session
+    # to avoid repeated git calls.
+    workspace = ctx.workspace or os.getcwd()
+    try:
+        sys_ctx = get_system_context(str(workspace))
+        if sys_ctx:
+            ctx_lines = [f"{k}: {v}" for k, v in sys_ctx.items()]
+            base = f"{base}\n\n# Environment\n" + "\n".join(ctx_lines)
+        user_ctx = get_user_context(str(workspace))
+        if user_ctx:
+            base = (
+                f"{base}\n\n# Project Context\n"
+                + "\n".join(f"{k}: {v}" for k, v in user_ctx.items())
+            )
+        agents_md = load_agents_md(str(workspace))
+        if agents_md:
+            base = f"{base}\n\n# Project Memory\n{agents_md}"
+    except Exception:  # 非致命: 项目上下文注入失败则跳过
+        logger.debug("context injection skipped", exc_info=True)
+    return base
+
+
+def _esp_taste(ctx: Any, base: str) -> str:
+    """注入 user taste profile (session 级缓存, 只在首次调时读 JSON)."""
+    taste = getattr(ctx, "_cached_taste", None)
+    if taste is None and not getattr(ctx, "_taste_loaded", False):
+        try:
+            from huginn.personalization import get_taste_directive
+
+            taste = get_taste_directive() or ""
+        except Exception:  # 非致命: taste 注入失败则回落空串
+            logger.warning("taste profile injection failed", exc_info=True)
+            taste = ""
+        ctx._cached_taste = taste
+        ctx._taste_loaded = True
+    if taste:
+        base = f"{base}\n\n# User Taste Profile\n{taste}"
+    return base
+
+
+def _esp_missing_backends(ctx: Any, base: str) -> str:
+    """注入缺失后端提示 (session 级缓存, 只在首次调时跑 shutil.which)."""
+    _missing = getattr(ctx, "_cached_missing_backends", None)
+    if _missing is None and not getattr(ctx, "_backends_checked", False):
+        try:
+            import shutil as _shutil
+
+            _missing = []
+            for _name, _exes in [
+                ("VASP", ["vasp", "vasp_std", "vasp_gam"]),
+                ("LAMMPS", ["lmp", "lmp_serial", "lammps"]),
+                ("CP2K", ["cp2k"]),
+            ]:
+                if not any(_shutil.which(e) for e in _exes):
+                    _missing.append(_name)
+        except Exception:  # 非致命: 工具可用性探测失败则回落空
+            logger.debug("tool availability check failed", exc_info=True)
+            _missing = []
+        ctx._cached_missing_backends = _missing
+        ctx._backends_checked = True
+    if _missing:
+        base += (
+            f"\n\nNote: {', '.join(_missing)} not installed locally. "
+            "Answer parameter questions from knowledge."
+        )
+    return base
+
+
+def _esp_stable_principles(base: str) -> str:
+    """注入 S7 自修改回流进来的 persona 原则 (最多 5 条).
+
+    闭合 persona→behavior→memory→knowledge→persona 回路 (G8 加法).
+    不走 CSM, benchmark 场景也保留 — 这部分是 persona 一部分,
+    memory_manager 在 bench 里是 None 不影响这里 (走文件不走 SQLite).
+    """
+    try:
+        from huginn.memory import load_stable_principles
+
+        _principles = load_stable_principles()[:5]
+        if _principles:
+            base += "\n\n## STABLE_PRINCIPLES\n"
+            base += "\n".join(f"- {p}" for p in _principles) + "\n"
+    except Exception:  # 非致命: stable_principles 注入失败则跳过
+        logger.debug("stable_principles injection skipped", exc_info=True)
+    return base
+
+
+def _esp_csm_prompt(ctx: Any, base: str) -> str | None:
+    """S7 自修改态委托 prompt_builder; 命中且够长则返回, 否则 None.
+
+    ponytail: prompt_builder 当前只对 S7 自修改态有独特价值 (metacog_segment);
+    其他状态走原 base 路径, 保留 "RESEARCH MODE" / system_prompt 行为.
+    persona 迁移完成: 将 ctx.system_prompt 传入 prompt_builder, 使其
+    persona_segment 使用 runtime persona 而非内置最小 persona.
+    """
+    _csm = getattr(ctx, "_csm", None)
+    _metacog = getattr(getattr(_csm, "state", None), "value", None) or "s0_blank"
+    if _metacog != "s7_self_modify":
+        return None
+    try:
+        from huginn.agent.prompt_builder import build_prompt as _build_prompt
+
+        _mode = getattr(ctx, "_mode", "chat")
+        _pm = getattr(ctx, "_phase_manager", None)
+        _phase = getattr(getattr(_pm, "phase", None), "value", None) or "execute"
+        built = _build_prompt(_mode, _phase, _metacog, ctx.system_prompt)
+        if built and len(built) > len(base) * 0.5:
+            return built
+    except Exception:  # 非致命: prompt_builder 委托失败则回落 base
+        logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
+    return None
+
+
+def _esp_phase_prefix(ctx: Any, base: str) -> str:
+    """phase prefix 放末尾: 前面静态层稳定, phase 切换只让末尾几行重算."""
+    prefix = ctx._phase_manager.prompt_prefix()
+    if prefix:
+        base = f"{base}\n\n{prefix}"
+    return base
+
+
 class ContextMixin:
     """Methods that assemble the prompt context and manage tool visibility."""
 
@@ -57,161 +242,22 @@ class ContextMixin:
         DeepSeek context cache 命中前面; phase 切换只让末尾几行重算.
         旧版 phase prefix 放开头, phase 一变整个 KV cache 作废.
         """
-        if self._mode == "research":
-            base = (
-                "RESEARCH MODE: You are conducting systematic scientific research.\n"
-                "- Always cite literature sources for claims\n"
-                "- Quantify uncertainty in results\n"
-                "- Compare results to published values\n"
-                "- Flag unexpected results as potential discoveries\n"
-                "- Write findings to knowledge base\n\n"
-                f"{self.system_prompt}"
-            )
-        elif self._mode == "extreme":
-            base = (
-                "EXTREME MODE: You are operating at maximum capability for a "
-                "long-horizon task. Unlock all tools and reasoning depth.\n"
-                "- Cite literature sources for claims\n"
-                "- Quantify uncertainty in results\n"
-                "- Compare results to published values\n"
-                "- Flag unexpected results as potential discoveries\n"
-                "- Write findings to knowledge base\n"
-                "- Persist intermediate results and follow the goal to completion\n\n"
-                f"{self.system_prompt}"
-            )
-        else:
-            base = self.system_prompt
-
-        base = (
-            f"{base}\n\n"
-            "You can request a phase transition by including "
-            "[PHASE:TARGET_PHASE] in your response. "
-            "Available phases: LITERATURE, HYPOTHESIS, PLANNING, "
-            "EXECUTION, VALIDATION, REPORTING."
-        )
-        # 主路径按**段生效声明**渲染应生效段 (writing / multimodal / thinking +
-        # 对 main 有声明的第三方插件段). 旧实现只硬编码渲染 "thinking", 导致
-        # 反防御写作、多模态引导、插件段 (如 asd_ste100) 在主路径静默缺席 ——
-        # 与 s7 路径段集合不一致的"孤儿段". 声明面单一来源在
-        # prompt_segments._APPLIES_TO; 门禁 tests/test_prompt_contract.py 断言
-        # "声明 != 渲染" 即红. fail-open: 注册表/插件异常都不让系统提示构建崩.
-        try:
-            # 确保内置段已注册 (persona/mode/.../thinking 注册在 prompt_builder import 时).
-            import huginn.agent.prompt_builder as _pb  # noqa: F401
-            from huginn.plugins.prompt_segments import render_prompt_segments_for_path
-
-            _declared = render_prompt_segments_for_path(
-                "main", getattr(self, "_mode", "chat"), "execute",
-                "s0_blank", self.system_prompt,
-            )
-            if _declared:
-                base += "\n\n" + _declared
-        except Exception:  # 非致命: 段注入失败则跳过
-            logger.debug("prompt segment injection skipped", exc_info=True)
-        # Inject cached system context (date + git status) and project
-        # context (.huginn.md / AGENTS.md). Computed once per session
-        # to avoid repeated git calls.
-        workspace = self.workspace or os.getcwd()
-        try:
-            sys_ctx = get_system_context(str(workspace))
-            if sys_ctx:
-                ctx_lines = [f"{k}: {v}" for k, v in sys_ctx.items()]
-                base = f"{base}\n\n# Environment\n" + "\n".join(ctx_lines)
-            user_ctx = get_user_context(str(workspace))
-            if user_ctx:
-                base = (
-                    f"{base}\n\n# Project Context\n"
-                    + "\n".join(f"{k}: {v}" for k, v in user_ctx.items())
-                )
-            agents_md = load_agents_md(str(workspace))
-            if agents_md:
-                base = f"{base}\n\n# Project Memory\n{agents_md}"
-        except Exception:  # 非致命: 项目上下文注入失败则跳过
-            logger.debug("context injection skipped", exc_info=True)
-        # User taste profile — session 级缓存, 只在首次调时读 JSON.
-        # taste profile 只在用户填问卷时变, session 内稳定.
-        taste = getattr(self, "_cached_taste", None)
-        if taste is None and not getattr(self, "_taste_loaded", False):
-            try:
-                from huginn.personalization import get_taste_directive
-                taste = get_taste_directive() or ""
-            except Exception:  # 非致命: taste 注入失败则回落空串
-                logger.warning("taste profile injection failed", exc_info=True)
-                taste = ""
-            self._cached_taste = taste
-            self._taste_loaded = True
-        if taste:
-            base = f"{base}\n\n# User Taste Profile\n{taste}"
-
-        # missing backends — session 级缓存, 只在首次调时跑 6 次 shutil.which.
-        # backends 只在装软件时变, session 内稳定.
-        _missing = getattr(self, "_cached_missing_backends", None)
-        if _missing is None and not getattr(self, "_backends_checked", False):
-            try:
-                import shutil as _shutil
-                _missing = []
-                for _name, _exes in [
-                    ("VASP", ["vasp", "vasp_std", "vasp_gam"]),
-                    ("LAMMPS", ["lmp", "lmp_serial", "lammps"]),
-                    ("CP2K", ["cp2k"]),
-                ]:
-                    if not any(_shutil.which(e) for e in _exes):
-                        _missing.append(_name)
-            except Exception:  # 非致命: 工具可用性探测失败则回落空
-                logger.debug("tool availability check failed", exc_info=True)
-                _missing = []
-            self._cached_missing_backends = _missing
-            self._backends_checked = True
-        if _missing:
-            base += (
-                f"\n\nNote: {', '.join(_missing)} not installed locally. "
-                "Answer parameter questions from knowledge."
-            )
+        base = _esp_base_prompt(self)
+        base = _esp_prompt_segments(self, base)
+        base = _esp_workspace_context(self, base)
+        base = _esp_taste(self, base)
+        base = _esp_missing_backends(self, base)
 
         # 能力面汇总 — 每次构建重算(不缓存), 保证装完依赖后不注入陈旧状态 (AC-4).
         # L0 为纯静态扫描 (不 import 工具模块、无网络), 开销可控.
         base += _capability_note()
+        base = _esp_stable_principles(base)
 
-        # STABLE_PRINCIPLES: S7 自修改回流进来的 persona 原则. 闭合
-        # persona→behavior→memory→knowledge→persona 回路 (G8 加法).
-        # 不走 CSM, benchmark 场景也保留 — 这部分是 persona 一部分,
-        # memory_manager 在 bench 里是 None 不影响这里 (走文件不走 SQLite).
-        try:
-            from huginn.memory import load_stable_principles
+        built = _esp_csm_prompt(self, base)
+        if built is not None:
+            return built
 
-            _principles = load_stable_principles()[:5]
-            if _principles:
-                base += "\n\n## STABLE_PRINCIPLES\n"
-                base += "\n".join(f"- {p}" for p in _principles) + "\n"
-        except Exception:  # 非致命: stable_principles 注入失败则跳过
-            logger.debug("stable_principles injection skipped", exc_info=True)
-
-        # ponytail: prompt_builder 当前只对 S7 自修改态有独特价值 (metacog_segment);
-        # 其他状态走原 base 路径, 保留 "RESEARCH MODE" / system_prompt 行为.
-        # persona 迁移完成: 将 self.system_prompt 传入 prompt_builder, 使其 persona_segment
-        # 使用 runtime persona 而非内置最小 persona.
-        _csm = getattr(self, "_csm", None)
-        _metacog = getattr(getattr(_csm, "state", None), "value", None) or "s0_blank"
-        if _metacog == "s7_self_modify":
-            try:
-                from huginn.agent.prompt_builder import build_prompt as _build_prompt
-
-                _mode = getattr(self, "_mode", "chat")
-                _pm = getattr(self, "_phase_manager", None)
-                _phase = getattr(getattr(_pm, "phase", None), "value", None) or "execute"
-                built = _build_prompt(_mode, _phase, _metacog, self.system_prompt)
-                if built and len(built) > len(base) * 0.5:
-                    return built
-            except Exception:  # 非致命: prompt_builder 委托失败则回落 base
-                logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
-
-        # phase prefix 放末尾: 前面静态层稳定, DeepSeek context cache 命中前面,
-        # phase 切换只让末尾几行重算. 旧版放开头, phase 一变整个 KV cache 作废.
-        prefix = self._phase_manager.prompt_prefix()
-        if prefix:
-            base = f"{base}\n\n{prefix}"
-
-        return base
+        return _esp_phase_prefix(self, base)
 
     def _effective_tools(self, query: str | None = None) -> list[Any]:
         """Return the tool list filtered by mode, phase, and query relevance.

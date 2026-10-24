@@ -153,64 +153,100 @@ def grounding_verifier() -> Callable[[str, list[str]], dict]:
     return _v
 
 
+@dataclass
+class _RPState:
+    """run_research_program 的阶段间上下文(显式承载可变状态, 不靠跨函数闭包)."""
+
+    goal: str
+    experiments: list[Experiment]
+    objectives_config: dict[str, str]
+    max_parallel: int
+    plan_summary: dict | None
+    spec_by_name: dict[str, Experiment]
+    layers_map: list[list[str]]
+    layer_epochs: bool
+    replan_enabled: bool
+    replan_similarity: float
+    hypotheses: dict[str, str]
+    early_stop_enabled: bool
+    early_stop_meta: dict
+    early_stop_min_layers: int
+    early_stop_margin: float
+    prior_args: dict
+    stream_summary_chars: int
+    world_model: Any = None
+    cache: dict[str, dict] = field(default_factory=dict)
+    reuse_plan: dict[str, str] = field(default_factory=dict)
+    runs_by_base: dict[str, list[dict]] = field(default_factory=dict)
+    stream_rows: list[dict] = field(default_factory=list)
+    replan_log: list[dict] = field(default_factory=list)
+    replan_checked: int = 0
+    early_stop_active: bool = False
+    judgment_hints: list[str] = field(default_factory=list)
+    stream_view: list[dict] | None = None
+    n_epochs: int = 0
+
+
 def run_research_program(
-    goal: str,
-    experiments: list[Experiment],
-    objectives_config: dict[str, str],
-    *,
-    max_iterations: int = 40,
-    min_iterations: int = 6,
-    max_parallel: int = 2,
-    client: Any = None,            # OpenAI 兼容 client; None → 确定性综合
-    model: str = "intern-s2-preview",
-    base_url: str | None = None,
-    verify: Callable[[str, list[str]], dict] | None = None,
-    out_md: Path | None = None,
-    mutation_config: dict | None = None,   # {"param_space":{p:(lo,hi)}, "mutation_rate":0.5, "max_children":3}
-    human_review: Callable[[dict], dict] | None = None,  # 人工/专家评审回调(card)->{drop,keep,guidance}
-    supervisor_every: int = 0,             # 每 N 轮一次 HITL 评审; 0=关闭
-    debate: bool = False,                  # 用 client 对存活想法做 LLM tournament 筛选
-    diagnostic_tools: list[dict] | None = None,  # 域诊断工具能力 [{"tool":schema,"handle":fn}], LLM 可自主发现并调用
-    self_audit: Callable[[], list[str]] | None = None,  # 能力自省 §3: 返回需并入 trace 的可证伪工件(能力缺口提案)
-    structural_audit: Callable[[list[dict], str], dict] | None = None,  # 结构闸门: (survivors, goal)->{"pass",...} 交互等效审计(张拳石/多元论治理)
-    workspace: Any = None,  # C-Space 工作区: 若提供, 最终报告须经 workspace.broadcast 作为"在场断言"落地才成文
-    planner: Callable[[str], ResearchPlan] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
-    harness_agent: str = "",          # Self-Harness 报告维度: agent 身份 (组织层账本聚合维度, 留空可)
-    harness_machine: str = "",        # Self-Harness 报告维度: machine 身份 (留空可)
-    world_model: Any = None,          # 世界模型(可选): predict(spec)->{predicted:{...}} 或 LawModel.
-                                      # 接入后, predict 在每次真实执行前对候选做预期目标预筛,
-                                      # 预测值作为**可证伪证据**进 cache/trace —— 让 LawModel 真进决策路径(真深思 D),
-                                      # 而非只存在于代码里. 不提供则深研走纯真实执行(R).
-    external_verifier: Callable[[dict], dict] | None = None,  # 缺陷五: 独立验证方(可选).
-                                      # 纯函数契约 {verified: bool, reason: str}, 不共享策略参数;
-                                      # 不提供则用出厂最小确定性复核 oracle_verify_consolidated.
-    layer_epochs: bool = False,       # 缺陷一(P-A): 分层流式结算. 提供 planner 时, 每个真实实验
-                                      # 完成即按层把压缩摘要增量记录进 stream_view(有界决策上下文),
-                                      # 并记 epochs —— 决策不再"全跑完才结算". 默认关闭(全 BSP, 零行为变化).
-    replan_gate: bool = False,        # 缺陷二(P-B): 层间重规划门. 提供 planner(含 layers)时,
-                                      # 前序层真实证据结算后, 用假说重叠/证伪判定跳过已冗余或被打脸方向的
-                                      # 后序实验(预算再分配; 跳过=不执行=不产生证据, **绝不伪造**),
-                                      # 全程记录 replan_log 供审计. 默认关闭(全执行, 零行为变化).
-    early_stop_gate: bool = False,    # 缺陷一(P-C): 证据驱动提前终止门. 提供 planner(含 layers)时,
-                                      # 每层结算后用稳定度判据(连续层 top-1 分数高原)判定占优方向是否饱和,
-                                      # 饱和则提前终止剩余层(预算回收; 未执行=不产生证据, **绝不伪造**).
-                                      # 防早停: 至少 2 个有分观测层才允许判稳定. 默认关闭(全 BSP, 零行为变化).
-    stream_summary_chars: int = _STREAM_SUMMARY_CHARS,  # A1: P-A 单条层摘要上限(字符)
-    replan_similarity: float = _REPLAN_SIM,             # A1: P-B 假说重叠阈值(0..1)
-    early_stop_min_layers: int = _EARLY_STOP_MIN_LAYERS, # A1: P-C 防早停最小观测层数
-    early_stop_margin: float = _EARLY_STOP_MARGIN,      # A1: P-C 分数高原容差
-    prior: dict | None = None,                      # A2: 跨 run 稳定度先验(prior_store.extract_prior 产物).
-                                                    # 只保守调整早停预算参数(min_layers 单调不减), 绝不参与实验.
-    strictness: int = 0,                        # 判断层·分级护栏: 0=只真伪硬门禁(信任模型, 零变化);
-                                                # 1=最小软提示(候选自变量对照确认); 2=完整软提示(量纲/不确定度).
-                                                # 仅追加进成文 prompt, 不参与 verify —— 强模型不受锁.
+    goal: str, experiments: list[Experiment], objectives_config: dict[str, str], *,
+    max_iterations: int = 40, min_iterations: int = 6, max_parallel: int = 2,
+    client: Any = None, model: str = "intern-s2-preview", base_url: str | None = None,
+    verify: Callable[[str, list[str]], dict] | None = None, out_md: Path | None = None,
+    mutation_config: dict | None = None,
+    human_review: Callable[[dict], dict] | None = None, supervisor_every: int = 0,
+    debate: bool = False, diagnostic_tools: list[dict] | None = None,
+    self_audit: Callable[[], list[str]] | None = None,
+    structural_audit: Callable[[list[dict], str], dict] | None = None,
+    workspace: Any = None, planner: Callable[[str], ResearchPlan] | None = None,
+    harness_agent: str = "", harness_machine: str = "",
+    world_model: Any = None,
+    external_verifier: Callable[[dict], dict] | None = None,
+    layer_epochs: bool = False, replan_gate: bool = False,
+    early_stop_gate: bool = False,
+    stream_summary_chars: int = _STREAM_SUMMARY_CHARS,
+    replan_similarity: float = _REPLAN_SIM,
+    early_stop_min_layers: int = _EARLY_STOP_MIN_LAYERS,
+    early_stop_margin: float = _EARLY_STOP_MARGIN,
+    prior: dict | None = None, strictness: int = 0,
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
-    from huginn.exploration.orchestrator import ExplorationOrchestrator
-    from huginn.exploration.strategies import MutationStrategy
-    from huginn.exploration.supervisor import SupervisorStrategy
+    st = _rp_build_state(
+        goal=goal, experiments=experiments, objectives_config=objectives_config,
+        max_parallel=max_parallel, planner=planner, layer_epochs=layer_epochs,
+        replan_gate=replan_gate, early_stop_gate=early_stop_gate,
+        early_stop_min_layers=early_stop_min_layers, early_stop_margin=early_stop_margin,
+        stream_summary_chars=stream_summary_chars, prior=prior,
+        replan_similarity=replan_similarity, world_model=world_model)
+    verify = verify or grounding_verifier()
+    debate_eval = (
+        functools.partial(_llm_tournament, goal=goal, model=model, client=client)
+        if (debate and client is not None) else None)
+    strategy = _build_strategy(
+        mutation_config=mutation_config, human_review=human_review, debate=debate,
+        debate_eval=debate_eval, supervisor_every=supervisor_every,
+        max_parallel=st.max_parallel)
+    result = _rp_explore(st, strategy, max_iterations, min_iterations)
+    front, trace, out, audit, survivors = _rp_collect(
+        st, result, strategy, self_audit, structural_audit)
+    final, verdict, ungrounded = _rp_generate_final(
+        st, out, survivors, audit, trace, client=client, model=model,
+        diagnostic_tools=diagnostic_tools, strictness=strictness, verify=verify,
+        workspace=workspace)
+    _rp_finish(
+        st, out, final, verdict, ungrounded, front, audit, survivors,
+        workspace, external_verifier, harness_agent, harness_machine, out_md)
+    return out
 
-    # 需求拆解/自主规划: planner 把高层 goal 解成子任务 DAG, 调整实验序列与并行度
+
+def _rp_build_state(
+    *, goal: str, experiments: list[Experiment], objectives_config: dict[str, str],
+    max_parallel: int, planner: Callable[[str], ResearchPlan] | None,
+    layer_epochs: bool, replan_gate: bool, early_stop_gate: bool,
+    early_stop_min_layers: int, early_stop_margin: float,
+    stream_summary_chars: int, replan_similarity: float, prior: dict | None,
+    world_model: Any,
+) -> _RPState:
+    """初始化/预算阶段: 规划拆解、层拓扑、门控状态与先验参数."""
     plan_summary: dict | None = None
     if planner is not None:
         plan = planner(goal)
@@ -218,341 +254,314 @@ def run_research_program(
             experiments = list(plan.experiments or experiments)
             max_parallel = int(plan.max_parallel or max_parallel)
             plan_summary = plan.to_dict()
-
-    cache: dict[str, dict] = {}
-    spec_by_name = {e.name: e for e in experiments}
-    # §10 扩展: 重复实验一致性 —— 变异回退(parametrize=None 复用父 run)时,
-    # 子代与父执行的是**同一实验体**, 按其被重复执行的 objectives 聚合审计.
-    _reuse_plan: dict[str, str] = {}                 # branch_name -> 被复用父实验名
-    _runs_by_base: dict[str, list[dict]] = {}        # base_name -> [objectives, ...]
-
-    def _resolve_variant(branch_name: str, branch) -> Experiment | None:
-        """把动态子代(变异/演化)解析成可真实执行的实验 spec.
-
-        迭代闭环的关键: MutationStrategy 生成的 `{parent}~mut{i}` 子代不在初始
-        `experiments` 里, 以前 executor 直接返回 failure → 子代被创建却永不产生
-        真实 objectives(「评估→变异→再执行」断裂)。这里按 branch.metadata 里的
-        世系与参数重建变体:
-
-          - 父实验声明了 parametrize → 用变异参数生成真实变异实验(参数真正生效);
-          - 未声明 → 复用父实验 run 真实重跑(诚实回退, 不伪造数值);
-          - 参数化失败 → 丢弃该子代(不产生假数据), 由 orchestrator 正常失败兜底。
-        """
-        meta = branch.metadata or {}
-        parent = meta.get("mutation_of")
-        if parent is None:
-            return None  # 非变异子代(如 refine 缺参), 保持原行为
-        spec = spec_by_name.get(parent)
-        if spec is None:
-            return None
-        params = meta.get("params") or {}
-        if spec.parametrize is not None:
-            try:
-                variant_run = spec.parametrize(params)
-                if variant_run is None:
-                    raise TypeError("parametrize 返回 None")
-            except Exception:  # noqa: BLE001 — 参数化失败: 不伪造, 子代丢弃
-                return None
-        else:
-            variant_run = spec.run  # 诚实回退: 父实验真实重跑
-            _reuse_plan[branch_name] = parent  # §10: 同体重复执行指纹 = 父实验
-        return dataclasses.replace(
-            spec,
-            run=variant_run,
-            name=branch_name,
-            hypothesis=branch.hypothesis or spec.hypothesis,
-        )
-
-    # ── 缺陷一(P-A) 分层流式结算: 流视图 + 层映射 ──────────────────────
-    # 提供 planner(有 layers)且 layer_epochs=True 时, 每完成一个真实实验就把压缩
-    # 摘要增量记入 _stream_rows —— 决策上下文随执行生长, 而非全跑完后一次性结算.
-    _layer_epochs = bool(layer_epochs) and plan_summary is not None \
-        and bool(plan_summary.get("layers"))
-    # 拓扑层映射: 只要 planner 给过 layers 就可用 —— P-A(P-B 亦共用)的门控前提.
-    # 与 _layer_epochs 解耦: replan_gate(P-B) 不要求流式视图开启.
-    _layers_map: list[list[str]] = (plan_summary.get("layers") or []) \
-        if plan_summary is not None else []
-    _stream_rows: list[dict] = []
-
-    # ── 缺陷二(P-B) 层间重规划门: 状态与单实验判定 ──────────────────────────
-    # 前序层真实证据结算后, 用假说重叠(冗余方向)/predicted 对账(证伪方向)判定
-    # 后序实验是否仍值得执行 —— DAG 边在证据到达后可修订, 不再一次性冻结.
-    # _replan_enabled 只要求 planner 给出 layers(重规划把先验边当可修订工作假说);
-    # 与 _layer_epochs 正交: 不开 P-A 也可单独启用 replan(P-B 只依赖 cache 证据面).
-    _replan_enabled = bool(replan_gate) and plan_summary is not None \
-        and bool(plan_summary.get("layers"))
-    _replan_log: list[dict] = []
-    _replan_checked = 0                          # 被门控评估过的后序实验数(审计计数)
-    # 判断层·分级护栏软提示的聚合头载体(非 god-object 字段): `_synthesize` 闭包往里写,
-    # 收敛聚合头据此注册 `guardrail.judgment` head. 仅记注入内容, 不进 verify.
-    _judgment_hints: list[str] = []
-    _hypotheses = {e.name: e.hypothesis for e in experiments}
-
-    def _replan_decision(name: str) -> dict | None:
-        """单个后序实验的层间重规划判定 (纯函数托管在 replan_gate.decide_replan_skip)."""
-        from huginn.research.replan_gate import decide_replan_skip
-        i = _layer_of(name)
-        if i <= 0:
-            return None
-        prior = [n for j in range(i) for n in _layers_map[j]]
-        return decide_replan_skip(
-            name, i, prior, cache, _hypotheses,
-            already_decided=set(cache) | {r["name"] for r in _replan_log},
-            similarity=replan_similarity, tol=_WM_TOL,
-        )
-
-    def _layer_of(name: str) -> int:
-        for i, lay in enumerate(_layers_map):
-            if name in lay:
-                return i
-        return -1
-
-    # ── 缺陷一(P-C) 证据驱动提前终止门: 状态与层结算判定 ──────────────────
-    # 与 P-B 同族(层间预算决策, 不伪造): P-B 逐实验修订边; P-C 在"分数进入高原
-    # (连续层 top-1 得分趋平)"时直接终止剩余层. 判定只基于真实执行成绩(cache).
-    _early_stop_enabled = bool(early_stop_gate) and plan_summary is not None \
-        and bool(plan_summary.get("layers"))
-    _early_stop_active = False
-    _early_stop_meta: dict = {"enabled": _early_stop_enabled}
-
-    # A2: 先验注入 —— 只把早停参数推向更保守方向(上次 N 层才稳定, 这次至少等 N 层).
-    # A4/A5/A6: 附当前 goal 的归一化 slug 与原文, 支持异域拒绝/时间衰减/模糊匹配.
-    # 无先验 → defaults 取参数原件(优先级: 参数 > 常量), 行为不变; 有先验 → min_layers 单调不减且钳制 [2,4].
+    layers_map = (plan_summary.get("layers") or []) if plan_summary is not None else []
+    has_layers = plan_summary is not None and bool(plan_summary.get("layers"))
     from huginn.research.prior_store import resolve_early_stop_args
-    _prior_args = resolve_early_stop_args(
-        prior, default_min_layers=early_stop_min_layers, default_margin=early_stop_margin,
-        current_goal_slug=_slug_goal(str(goal)), current_goal=str(goal))
-    _early_stop_min_layers = int(_prior_args["min_layers"])
-    _early_stop_margin = float(_prior_args["margin"])
 
-    def _settle_layer_check(settled_until: int) -> None:
-        """层 settled_until 刚结算: 用稳定度判据决定是否激活提前终止(预算决策)."""
-        nonlocal _early_stop_active
-        if not _early_stop_enabled or _early_stop_active:
-            return
-        from huginn.research.early_stop_gate import stability_check
-        settled_layers: list[list[tuple[str, float]]] = []
-        for i in range(min(settled_until, len(_layers_map) - 1) + 1):
-            rows = []
-            for n in _layers_map[i]:
-                res = cache.get(n) or {}
-                s = _first_scalar(res.get("objectives") or res.get("summary"))
-                if s is not None:
-                    rows.append((n, s))
-            settled_layers.append(rows)
-        _st = stability_check(settled_layers, min_layers=_early_stop_min_layers,
-                              margin=_early_stop_margin)
-        _early_stop_meta["stability"] = _st
-        # 稳定 且 还有剩余层可终止 → 激活
-        if _st["stable"] and settled_until + 1 < len(_layers_map):
-            _early_stop_active = True
-            _early_stop_meta["stopped_after_layer"] = settled_until
-            _early_stop_meta["skipped"] = []
-            _early_stop_meta["verdict"] = "early_stopped"
-        else:
-            _early_stop_meta.setdefault("verdict", "checked_and_continued")
+    prior_args = resolve_early_stop_args(
+        prior, default_min_layers=early_stop_min_layers,
+        default_margin=early_stop_margin, current_goal_slug=_slug_goal(str(goal)),
+        current_goal=str(goal))
+    st = _RPState(
+        goal=goal, experiments=experiments, objectives_config=objectives_config,
+        max_parallel=max_parallel, plan_summary=plan_summary,
+        spec_by_name={e.name: e for e in experiments},
+        layers_map=layers_map, layer_epochs=bool(layer_epochs) and has_layers,
+        replan_enabled=bool(replan_gate) and has_layers,
+        replan_similarity=replan_similarity,
+        hypotheses={e.name: e.hypothesis for e in experiments},
+        early_stop_enabled=bool(early_stop_gate) and has_layers,
+        early_stop_meta={"enabled": bool(early_stop_gate) and has_layers},
+        early_stop_min_layers=int(prior_args["min_layers"]),
+        early_stop_margin=float(prior_args["margin"]),
+        prior_args=prior_args, stream_summary_chars=stream_summary_chars,
+        world_model=world_model)
+    return st
 
-    def _spec_for(branch) -> Experiment | None:
-        spec = spec_by_name.get(branch.name)
-        if spec is None:  # 动态子代(变异/演化新分支)
-            spec = _resolve_variant(branch.name, branch)
-            if spec is not None:
-                spec_by_name[branch.name] = spec  # 注册, 供综合阶段取假说/摘要
-        return spec
 
-    def _early_stop_skip(name: str) -> dict | None:
-        """P-C: 占优方向已稳定 → 剩余层实验终止 (未执行=不产生证据, 不伪造)."""
-        if not _early_stop_active:
-            return None
-        if _layer_of(name) <= _early_stop_meta.get("stopped_after_layer", -1):
-            return None
-        _early_stop_meta.setdefault("skipped", []).append({
-            "name": name, "layer": _layer_of(name),
-            "reason": "early_termination",
-            "evidence_from": f"layers 0..{_early_stop_meta['stopped_after_layer']}"})
-        return {"success": False, "objectives": {},
-                "results": {"early_stopped": True}}
-
-    def _replan_skip(name: str) -> dict | None:
-        """P-B: 前序层真实证据结算后判定该实验是否仍值得执行."""
-        nonlocal _replan_checked
-        if not _replan_enabled:
-            return None
-        _replan_checked += 1
-        _rp = _replan_decision(name)
-        if _rp is None:
-            return None
-        _replan_log.append(_rp)
-        return {"success": False, "objectives": {},
-                "results": {"replanned": _rp["reasons"]}}
-
-    def _attach_prediction(res: dict, spec: Experiment) -> dict:
-        """世界模型预筛(真 D): 预测值作为可证伪证据并入结果."""
-        if world_model is None:
-            return res
-        res = dict(res)
+def _rp_resolve_variant(
+    st: _RPState, branch_name: str, branch: Any
+) -> Experiment | None:
+    """把动态子代(变异/演化)解析成可真实执行的实验 spec (失败则丢弃, 不伪造)."""
+    meta = branch.metadata or {}
+    parent = meta.get("mutation_of")
+    if parent is None:
+        return None  # 非变异子代(如 refine 缺参), 保持原行为
+    spec = st.spec_by_name.get(parent)
+    if spec is None:
+        return None
+    params = meta.get("params") or {}
+    if spec.parametrize is not None:
         try:
-            res["predicted"] = _wm_predict(world_model, spec)
-        except Exception:  # noqa: BLE001 — 世界模型预筛失败: 不伪造, 保留纯真实结果
-            res.setdefault("predicted", {})
-        return res
-
-    def _maybe_settle_layer(name: str) -> None:
-        if not _early_stop_enabled or _early_stop_active:
-            return
-        _i = _layer_of(name)
-        if _i < 0:
-            return
-        _layer = _layers_map[_i]
-        _es_skipped = {s.get("name") for s in _early_stop_meta.get("skipped", [])}
-        _rp_skipped = {r["name"] for r in _replan_log}
-        if all(n in cache or n in _es_skipped or n in _rp_skipped for n in _layer):
-            _settle_layer_check(_i)
-
-    def _record_result(name: str, res: dict, spec: Experiment) -> None:
-        cache[name] = res
-        # §10 扩展: 按同体指纹聚合 objectives(变异回退 → 父名; 普通 → 自身).
-        _base = _reuse_plan.get(name, name)
-        _runs_by_base.setdefault(_base, []).append(res.get("objectives") or {})
-        _maybe_settle_layer(name)
-        if _layer_epochs:
-            try:
-                from huginn.research.decision_gate import distill_tool_output
-
-                _d = distill_tool_output(
-                    spec.name,
-                    json.dumps(res.get("summary", {}), ensure_ascii=False),
-                    goal=str(goal), max_chars=stream_summary_chars)
-                _stream_rows.append({
-                    "layer": _layer_of(spec.name),
-                    "experiment": spec.name,
-                    "summary": _d["front"],
-                    "relevance": _d["relevance"],
-                })
-            except Exception:  # noqa: BLE001 — 流式记录失败不影响执行结果
-                pass
-
-    async def executor(branch) -> dict:
-        spec = _spec_for(branch)
-        if spec is None:
-            return {"success": False, "objectives": {}, "results": {}}
-        skipped = _early_stop_skip(branch.name) or _replan_skip(branch.name)
-        if skipped is not None:
-            return skipped
-        res = await asyncio.to_thread(spec.run)
-        res = _attach_prediction(res, spec)
-        _record_result(branch.name, res, spec)
-        return {"success": bool(res.get("success", True)),
-                "objectives": res.get("objectives", {}),
-                "results": res.get("summary", {})}
+            variant_run = spec.parametrize(params)
+            if variant_run is None:
+                raise TypeError("parametrize 返回 None")
+        except Exception:  # noqa: BLE001 — 参数化失败: 不伪造, 子代丢弃
+            return None
+    else:
+        variant_run = spec.run  # 诚实回退: 父实验真实重跑
+        st.reuse_plan[branch_name] = parent  # §10: 同体重复执行指纹 = 父实验
+    return dataclasses.replace(
+        spec, run=variant_run, name=branch_name,
+        hypothesis=branch.hypothesis or spec.hypothesis)
 
 
-    debate_eval = (
-        functools.partial(_llm_tournament, goal=goal, model=model, client=client)
-        if (debate and client is not None) else None
+def _rp_layer_of(st: _RPState, name: str) -> int:
+    for i, lay in enumerate(st.layers_map):
+        if name in lay:
+            return i
+    return -1
+
+
+def _rp_replan_decision(st: _RPState, name: str) -> dict | None:
+    """单个后序实验的层间重规划判定 (纯函数托管在 replan_gate.decide_replan_skip)."""
+    from huginn.research.replan_gate import decide_replan_skip
+
+    i = _rp_layer_of(st, name)
+    if i <= 0:
+        return None
+    prior = [n for j in range(i) for n in st.layers_map[j]]
+    return decide_replan_skip(
+        name, i, prior, st.cache, st.hypotheses,
+        already_decided=set(st.cache) | {r["name"] for r in st.replan_log},
+        similarity=st.replan_similarity, tol=_WM_TOL,
     )
-    strategy = _build_strategy(
-        mutation_config=mutation_config, human_review=human_review,
-        debate=debate, debate_eval=debate_eval,
-        supervisor_every=supervisor_every, max_parallel=max_parallel)
+
+
+def _rp_settle_layer_check(st: _RPState, settled_until: int) -> None:
+    """层 settled_until 刚结算: 用稳定度判据决定是否激活提前终止(预算决策)."""
+    if not st.early_stop_enabled or st.early_stop_active:
+        return
+    from huginn.research.early_stop_gate import stability_check
+
+    settled_layers: list[list[tuple[str, float]]] = []
+    for i in range(min(settled_until, len(st.layers_map) - 1) + 1):
+        rows = []
+        for n in st.layers_map[i]:
+            res = st.cache.get(n) or {}
+            s = _first_scalar(res.get("objectives") or res.get("summary"))
+            if s is not None:
+                rows.append((n, s))
+        settled_layers.append(rows)
+    _st = stability_check(settled_layers, min_layers=st.early_stop_min_layers,
+                          margin=st.early_stop_margin)
+    st.early_stop_meta["stability"] = _st
+    if _st["stable"] and settled_until + 1 < len(st.layers_map):
+        st.early_stop_active = True
+        st.early_stop_meta["stopped_after_layer"] = settled_until
+        st.early_stop_meta["skipped"] = []
+        st.early_stop_meta["verdict"] = "early_stopped"
+    else:
+        st.early_stop_meta.setdefault("verdict", "checked_and_continued")
+
+
+def _rp_spec_for(st: _RPState, branch: Any) -> Experiment | None:
+    spec = st.spec_by_name.get(branch.name)
+    if spec is None:  # 动态子代(变异/演化新分支)
+        spec = _rp_resolve_variant(st, branch.name, branch)
+        if spec is not None:
+            st.spec_by_name[branch.name] = spec  # 注册, 供综合阶段取假说/摘要
+    return spec
+
+
+def _rp_early_stop_skip(st: _RPState, name: str) -> dict | None:
+    """P-C: 占优方向已稳定 → 剩余层实验终止 (未执行=不产生证据, 不伪造)."""
+    if not st.early_stop_active:
+        return None
+    if _rp_layer_of(st, name) <= st.early_stop_meta.get("stopped_after_layer", -1):
+        return None
+    st.early_stop_meta.setdefault("skipped", []).append({
+        "name": name, "layer": _rp_layer_of(st, name),
+        "reason": "early_termination",
+        "evidence_from": f"layers 0..{st.early_stop_meta['stopped_after_layer']}"})
+    return {"success": False, "objectives": {},
+            "results": {"early_stopped": True}}
+
+
+def _rp_replan_skip(st: _RPState, name: str) -> dict | None:
+    """P-B: 前序层真实证据结算后判定该实验是否仍值得执行."""
+    if not st.replan_enabled:
+        return None
+    st.replan_checked += 1
+    _rp = _rp_replan_decision(st, name)
+    if _rp is None:
+        return None
+    st.replan_log.append(_rp)
+    return {"success": False, "objectives": {},
+            "results": {"replanned": _rp["reasons"]}}
+
+
+def _rp_attach_prediction(st: _RPState, res: dict, spec: Experiment) -> dict:
+    """世界模型预筛(真 D): 预测值作为可证伪证据并入结果."""
+    if st.world_model is None:
+        return res
+    res = dict(res)
+    try:
+        res["predicted"] = _wm_predict(st.world_model, spec)
+    except Exception:  # noqa: BLE001 — 世界模型预筛失败: 不伪造, 保留纯真实结果
+        res.setdefault("predicted", {})
+    return res
+
+
+def _rp_maybe_settle_layer(st: _RPState, name: str) -> None:
+    if not st.early_stop_enabled or st.early_stop_active:
+        return
+    _i = _rp_layer_of(st, name)
+    if _i < 0:
+        return
+    _layer = st.layers_map[_i]
+    _es_skipped = {s.get("name") for s in st.early_stop_meta.get("skipped", [])}
+    _rp_skipped = {r["name"] for r in st.replan_log}
+    if all(n in st.cache or n in _es_skipped or n in _rp_skipped for n in _layer):
+        _rp_settle_layer_check(st, _i)
+
+
+def _rp_record_result(st: _RPState, name: str, res: dict, spec: Experiment) -> None:
+    st.cache[name] = res
+    # §10 扩展: 按同体指纹聚合 objectives(变异回退 → 父名; 普通 → 自身).
+    _base = st.reuse_plan.get(name, name)
+    st.runs_by_base.setdefault(_base, []).append(res.get("objectives") or {})
+    _rp_maybe_settle_layer(st, name)
+    if st.layer_epochs:
+        try:
+            from huginn.research.decision_gate import distill_tool_output
+
+            _d = distill_tool_output(
+                spec.name,
+                json.dumps(res.get("summary", {}), ensure_ascii=False),
+                goal=str(st.goal), max_chars=st.stream_summary_chars)
+            st.stream_rows.append({
+                "layer": _rp_layer_of(st, spec.name),
+                "experiment": spec.name,
+                "summary": _d["front"],
+                "relevance": _d["relevance"],
+            })
+        except Exception:  # noqa: BLE001 — 流式记录失败不影响执行结果
+            pass
+
+
+async def _rp_execute_branch(st: _RPState, branch: Any) -> dict:
+    """主循环执行体: observe/decide/execute/validate 的单分支落地."""
+    spec = _rp_spec_for(st, branch)
+    if spec is None:
+        return {"success": False, "objectives": {}, "results": {}}
+    skipped = _rp_early_stop_skip(st, branch.name) or _rp_replan_skip(st, branch.name)
+    if skipped is not None:
+        return skipped
+    res = await asyncio.to_thread(spec.run)
+    res = _rp_attach_prediction(st, res, spec)
+    _rp_record_result(st, branch.name, res, spec)
+    return {"success": bool(res.get("success", True)),
+            "objectives": res.get("objectives", {}),
+            "results": res.get("summary", {})}
+
+
+def _rp_explore(
+    st: _RPState, strategy: Any, max_iterations: int, min_iterations: int
+) -> Any:
+    """计划与团队阶段: 在预算内跑真实编排循环(branch_executor 绑定本上下文)."""
+    from huginn.exploration.orchestrator import ExplorationOrchestrator
 
     orch = ExplorationOrchestrator(
         strategy=strategy,
-        branch_executor=executor,
-        max_parallel=max_parallel,
+        branch_executor=functools.partial(_rp_execute_branch, st),
+        max_parallel=st.max_parallel,
     )
-
-    # 声明门禁: 默认从产品内单一实现取
-    verify = verify or grounding_verifier()
-
-    result = asyncio.run(orch.explore(
-        objective=goal,
-        initial_branches=[{"name": e.name, "hypothesis": e.hypothesis} for e in experiments],
-        objectives_config=objectives_config,
+    return asyncio.run(orch.explore(
+        objective=st.goal,
+        initial_branches=[
+            {"name": e.name, "hypothesis": e.hypothesis} for e in st.experiments],
+        objectives_config=st.objectives_config,
         max_iterations=max_iterations,
         min_iterations=min_iterations,
     ))
 
-    stream_view, _n_epochs = (
-        _group_stream_view(_stream_rows) if _layer_epochs else (None, 0)
-    )
 
-    trace = _build_trace(cache)
-    # 能力自省 §3: 把能力缺口提案的可证伪工件并入 trace, 使报告引用可被 grounding 门禁核实
+def _rp_collect(
+    st: _RPState, result: Any, strategy: Any,
+    self_audit: Callable[[], list[str]] | None,
+    structural_audit: Callable[[list[dict], str], dict] | None,
+) -> tuple[list, list[str], ResearchOutcome, dict | None, list]:
+    """复盘与学习前置: 流式视图/证据 trace/outcome/结构闸门/存活集."""
+    from huginn.exploration.strategies import MutationStrategy
+    from huginn.exploration.supervisor import SupervisorStrategy
+
+    st.stream_view, st.n_epochs = (
+        _group_stream_view(st.stream_rows) if st.layer_epochs else (None, 0))
+    trace = _build_trace(st.cache)
+    # 能力自省 §3: 把能力缺口提案的可证伪工件并入 trace, 使报告引用可被门禁核实
     if self_audit is not None:
         with contextlib.suppress(Exception):
             trace += list(self_audit())
     front = result.pareto_front or []
-    out = ResearchOutcome(converred=result.convergence_reason,
-                          explored=result.n_branches_explored,
-                          pruned=result.n_branches_pruned,
-                          pareto_front=front, cache=cache,
-                          plan_summary=plan_summary)
+    out = ResearchOutcome(
+        converred=result.convergence_reason, explored=result.n_branches_explored,
+        pruned=result.n_branches_pruned, pareto_front=front, cache=st.cache,
+        plan_summary=st.plan_summary)
     _apply_strategy_metrics(out, strategy, MutationStrategy, SupervisorStrategy)
-    audit = _run_structural_audit(structural_audit, front, goal, trace, out)
+    audit = _run_structural_audit(structural_audit, front, st.goal, trace, out)
+    survivors = [(b["name"], st.cache.get(b["name"], {})) for b in front]
+    return front, trace, out, audit, survivors
 
-    survivors = [(b["name"], cache.get(b["name"], {})) for b in front]
 
-    def _synthesize() -> str:
-        return _synthesize_report(goal, survivors, spec_by_name, audit, out)
-
+def _rp_generate_final(
+    st: _RPState, out: ResearchOutcome, survivors: list, audit: dict | None,
+    trace: list[str], *, client: Any, model: str,
+    diagnostic_tools: list[dict] | None, strictness: int,
+    verify: Callable[[str, list[str]], dict], workspace: Any,
+) -> tuple[str, str, list]:
+    """汇总与报告阶段: 成文 + 门禁重试 + 门控审计段 + 工作区落地."""
+    synthesize = functools.partial(
+        _synthesize_report, st.goal, survivors, st.spec_by_name, audit, out)
     final, verdict, ungrounded = _generate_report(
-        client=client, model=model, goal=goal, survivors=survivors,
-        stream_view=stream_view, audit=audit, out=out,
+        client=client, model=model, goal=st.goal, survivors=survivors,
+        stream_view=st.stream_view, audit=audit, out=out,
         diagnostic_tools=diagnostic_tools, strictness=strictness,
-        trace=trace, synthesize=_synthesize, verify=verify,
-        judgment_hints=_judgment_hints,
-    )
-
+        trace=trace, synthesize=synthesize, verify=verify,
+        judgment_hints=st.judgment_hints)
     final = _append_gate_audits(
-        final, trace, _replan_log, _early_stop_active, _early_stop_meta)
-
+        final, trace, st.replan_log, st.early_stop_active, st.early_stop_meta)
     g2 = verify(final, trace)
     if g2["verdict"] == "pass":
         verdict, ungrounded = "pass", []
     else:
         ungrounded = g2["unsubstantiated"]
-
-    # C-Space 工作区门: 若注入工作区, 先以存活结论的真实执行证据"灌出在场 + trace"，
-    # 再把最终报告作为一条 broadcast 经其声明门禁落地才成文. 未过 → 如实醒目标注.
+    # C-Space 工作区门: 先以存活结论真实证据灌在场, 再让报告经 broadcast 落地.
     if workspace is not None:
-        final = _apply_workspace_gate(workspace, survivors, final, out, goal)
+        final = _apply_workspace_gate(workspace, survivors, final, out, st.goal)
+    return final, verdict, ungrounded
+
+
+def _rp_finish(
+    st: _RPState, out: ResearchOutcome, final: str, verdict: str, ungrounded: list,
+    front: list, audit: dict | None, survivors: list, workspace: Any,
+    external_verifier: Callable[[dict], dict] | None, harness_agent: str,
+    harness_machine: str, out_md: Path | None,
+) -> None:
+    """收尾/落盘阶段: 使用审计、收敛聚合头、harness 与报告文件."""
     out.report = final
     out.verdict, out.ungrounded = verdict, ungrounded
-
-    _audit_usage_and_plan(out, final, front, plan_summary, cache, goal)
-
-    # 世界模型真用证据: 若提供了 world_model, 本 run 确实用 predict 预筛了候选 ——
-    # 记录 per-实验预测对账素材, 供 harness 的 "世界模型真用?" 以 observed 落地(真 D)。
-    # 更进一步: 把预测与真实执行 reconcile 数值对账 —— 预测升级为"强在场"检验,
-    # 偏差如实记 falsified(这就是发现), 而非只记"用过了"。诚实红线不变。
-    if world_model is not None:
-        _record_world_model_usage(out, cache, world_model)
-    # ── 收敛聚合头 (P1 纯适配器) ─────────────────────────────────────────
-    # 把现有治理字段一次性收敛成 head 注册视图 out.consolidated; 旧字段保留为
-    # 残差兼容(报告/self-harness/账本 P2 前仍读旧字段). 未来新视角一律走
-    # HeadResult 注册, 不再加 out.* 字段 (P3 由 arch_cleanliness 执法).
-    _consolidate_outcome(out, {
-        "front": front, "cache": cache, "verdict": verdict,
+    _audit_usage_and_plan(out, final, front, st.plan_summary, st.cache, st.goal)
+    if st.world_model is not None:
+        _record_world_model_usage(out, st.cache, st.world_model)
+    ctx = {
+        "front": front, "cache": st.cache, "verdict": verdict,
         "ungrounded": ungrounded, "audit": audit, "workspace": workspace,
-        "stream_view": stream_view, "n_epochs": _n_epochs,
-        "replan_enabled": _replan_enabled, "replan_checked": _replan_checked,
-        "replan_log": _replan_log, "early_stop_enabled": _early_stop_enabled,
-        "early_stop_meta": _early_stop_meta, "layers_map": _layers_map,
-        "early_stop_min_layers": _early_stop_min_layers,
-        "early_stop_margin": _early_stop_margin, "prior_args": _prior_args,
-        "runs_by_base": _runs_by_base, "judgment_hints": _judgment_hints,
+        "stream_view": st.stream_view, "n_epochs": st.n_epochs,
+        "replan_enabled": st.replan_enabled, "replan_checked": st.replan_checked,
+        "replan_log": st.replan_log, "early_stop_enabled": st.early_stop_enabled,
+        "early_stop_meta": st.early_stop_meta, "layers_map": st.layers_map,
+        "early_stop_min_layers": st.early_stop_min_layers,
+        "early_stop_margin": st.early_stop_margin, "prior_args": st.prior_args,
+        "runs_by_base": st.runs_by_base, "judgment_hints": st.judgment_hints,
         "external_verifier": external_verifier,
-    })
-    _attach_harness(out, goal, harness_agent, harness_machine)
-
-    # 报告页眉 (移动到底部, 聚合头/账本产出后再写): 门禁按声明定稿, 聚合视图取
-    # out.consolidated(统一入口), 旧字段仅作残差回显.
+    }
+    _consolidate_outcome(out, ctx)
+    _attach_harness(out, st.goal, harness_agent, harness_machine)
     _write_report_file(
         out_md, final, out, verdict, ungrounded, audit, workspace,
-        _replan_log, _early_stop_meta, _early_stop_active,
-    )
-    return out
+        st.replan_log, st.early_stop_meta, st.early_stop_active)
+
 
 def _llm_tournament(
     ideas: list[dict], *, goal: str, model: str, client: Any

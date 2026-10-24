@@ -929,22 +929,20 @@ class VisionDescribeTool(HuginnTool):
 
 # ── self-check (assert-based, 无框架) ────────────────────────
 
-def _selfcheck() -> None:
-    """10 项 assert 验证调度框架核心行为.
-
-    各 Tier 用 monkey-patch 模拟可用/不可用, 验证降级链.
-    """
-    import tempfile
-
-    from PIL import Image
-
-    # 1. 不存在的图像 → error tier
+def _sc_missing_image() -> None:
+    """#1. 不存在的图像 → error tier."""
     out = describe_image("/nonexistent.png", "test")
     assert out["tier"] == "error"
     assert out["available"] is False
     assert "不存在" in out["error"]
 
-    # 2. 真实图像 + 所有 Tier 都 stub/不可用 → tier0_none 或 tier1
+
+def _sc_real_image_tier() -> None:
+    """#2. 真实图像 + 所有 Tier 都 stub/不可用 → tier0_none 或 tier1."""
+    import tempfile
+
+    from PIL import Image
+
     # 先重置缓存让 _pick_tier 重新探测
     _reset_probe_cache()
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -961,37 +959,50 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 3. _pick_tier 返回 availability dict 含 4 个引擎
+
+def _sc_pick_tier_keys() -> None:
+    """#3. _pick_tier 返回 availability dict 含 4 个引擎."""
     _reset_probe_cache()
-    tier, avail = _pick_tier()
+    _tier, avail = _pick_tier()
     assert set(avail.keys()) == {"deepseek_ocr", "paddleocr", "easyocr", "tesseract"}
 
-    # 4. 探测缓存生效: 第二次调 _probe_* 不重新探测
+
+def _sc_probe_cache() -> None:
+    """#4-5. 探测缓存生效; _reset_probe_cache 真重置."""
     _reset_probe_cache()
     _ = _probe_easyocr()  # 第一次探测
     cached = _probed["easyocr"]
     _ = _probe_easyocr()  # 第二次应走缓存
     assert _probed["easyocr"] == cached
 
-    # 5. _reset_probe_cache 真重置
     _reset_probe_cache()
     assert _probed["deepseek_ocr"] is None
     assert _probed["paddleocr"] is None
 
-    # 6. _tier3_deepseek_ocr stub 返结构化 unavailable
+
+def _sc_tier3_stub() -> None:
+    """#6. _tier3_deepseek_ocr stub 返结构化 unavailable."""
     out = _tier3_deepseek_ocr(b"", "test")
     assert out["tier"] == "tier3_deepseek_ocr"
     assert out["available"] is False
     assert "stub" in out["error"]
 
-    # 7. _tier2_paddleocr: 没装时返 unavailable, 装了时返结构化结果
+
+def _sc_tier2_paddle() -> None:
+    """#7. _tier2_paddleocr: 没装时返 unavailable, 装了时返结构化结果."""
     out = _tier2_paddleocr(b"\x89PNG fake", "test")
     assert out["tier"] == "tier2_paddleocr"
     # 没装或假图片都走 except, 返 unavailable
     if not out["available"]:
         assert "PaddleOCR" in out["error"] or "推理失败" in out["error"]
 
-    # 8. _tier1_classic_ocr 真实跑 (EasyOCR/Tesseract 装了的话)
+
+def _sc_tier1_classic() -> None:
+    """#8. _tier1_classic_ocr 真实跑 (EasyOCR/Tesseract 装了的话)."""
+    import tempfile
+
+    from PIL import Image
+
     # 不强制 assert available, 只验返结构正确
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         Image.new("RGB", (10, 10), (255, 255, 255)).save(tmp.name)
@@ -1007,7 +1018,11 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 9. describe_image 顶层不抛 (失败也返 dict)
+
+def _sc_top_level_no_raise() -> None:
+    """#9. describe_image 顶层不抛 (失败也返 dict)."""
+    import tempfile
+
     # 用一个非图像文件触发 Tier 1 失败
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp.write(b"not an image")
@@ -1019,13 +1034,21 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 10. VisionDescribeTool name/category 正确
+
+def _sc_tool_meta() -> None:
+    """#10. VisionDescribeTool name/category 正确."""
     tool = VisionDescribeTool()
     assert tool.name == "vision_describe"
     assert tool.category == "cv"
     assert tool.read_only is True
 
-    # 11. A1: check_consistency 默认 False, 行为不变 (向后兼容)
+
+def _sc_consistency_default() -> None:
+    """#11. A1: check_consistency 默认 False, 行为不变 (向后兼容)."""
+    import tempfile
+
+    from PIL import Image
+
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         Image.new("RGB", (10, 10), (128, 128, 128)).save(tmp.name)
         tmp_path = tmp.name
@@ -1035,7 +1058,13 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 12. A1: check_consistency=True 时返回 low_confidence 字段
+
+def _sc_consistency_enabled() -> None:
+    """#12. A1: check_consistency=True 时返回 low_confidence 字段."""
+    import tempfile
+
+    from PIL import Image
+
     _reset_probe_cache()
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         Image.new("RGB", (10, 10), (128, 128, 128)).save(tmp.name)
@@ -1050,7 +1079,9 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 13. A1: _compare_describe_results 三级比较
+
+def _sc_compare_results() -> None:
+    """#13. A1: _compare_describe_results 三级比较 (13a-13d)."""
     # 13a. text_blocks 数量差异 >20% → inconsistent
     r1 = {"text_blocks": [1, 2, 3, 4, 5]}
     r2 = {"text_blocks": [1, 2]}
@@ -1077,6 +1108,25 @@ def _selfcheck() -> None:
     diff = _compare_describe_results(r1, r2)
     assert diff["inconsistent"] is False, f"identical results should be consistent: {diff}"
     assert diff["note"] == "consistent"
+
+
+def _selfcheck() -> None:
+    """10 项 assert 验证调度框架核心行为.
+
+    各 Tier 用 monkey-patch 模拟可用/不可用, 验证降级链.
+    """
+    _sc_missing_image()
+    _sc_real_image_tier()
+    _sc_pick_tier_keys()
+    _sc_probe_cache()
+    _sc_tier3_stub()
+    _sc_tier2_paddle()
+    _sc_tier1_classic()
+    _sc_top_level_no_raise()
+    _sc_tool_meta()
+    _sc_consistency_default()
+    _sc_consistency_enabled()
+    _sc_compare_results()
 
     print("all self-checks passed (A1 Hallu detection OK)")
 

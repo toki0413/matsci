@@ -488,58 +488,24 @@ class LeanTool(HuginnTool):
         """
         import sympy as sp
 
-        if not args.lagrangian:
-            return ToolResult(
-                data=None, success=False, error="lagrangian 不能为空"
-            )
-        if not args.coordinates:
-            return ToolResult(
-                data=None, success=False, error="coordinates 不能为空"
-            )
+        err = _vp_validate_args(args)
+        if err is not None:
+            return err
 
         coords = list(args.coordinates)
         t_name = args.time_symbol or "t"
         t = sp.Symbol(t_name)
 
-        # 速度命名：给了就用给的，否则按 {coord}_dot；
-        # 单自由度时如果表达式里没出现 {coord}_dot 但有 v，就退回用 v
-        if args.velocities:
-            if len(args.velocities) != len(coords):
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="velocities 长度必须和 coordinates 一致",
-                )
-            vel_names = list(args.velocities)
-        else:
-            vel_names = [f"{c}_dot" for c in coords]
-            if len(coords) == 1:
-                auto_name = f"{coords[0]}_dot"
-                if auto_name not in args.lagrangian and "v" in args.lagrangian:
-                    vel_names = ["v"]
+        vel_names, err = _vp_resolve_velocities(args, coords)
+        if err is not None:
+            return err
 
         # 坐标用 Function，速度用 Symbol（方便先对 v 求偏导再替换）
         coord_funcs = [sp.Function(c)(t) for c in coords]
         vel_syms = [sp.Symbol(v) for v in vel_names]
 
-        local_dict = {t_name: t}
-        for name, func in zip(coords, coord_funcs):
-            local_dict[name] = func
-        for name, sym in zip(vel_names, vel_syms):
-            local_dict[name] = sym
-        # 数学函数和常数，方便 claimed_eom 里写 diff(...)
-        local_dict.update(
-            {
-                "sin": sp.sin,
-                "cos": sp.cos,
-                "tan": sp.tan,
-                "exp": sp.exp,
-                "log": sp.log,
-                "sqrt": sp.sqrt,
-                "pi": sp.pi,
-                "E": sp.E,
-                "diff": sp.diff,
-            }
+        local_dict = _vp_local_dict(
+            t_name, t, coords, coord_funcs, vel_names, vel_syms,
         )
 
         # 解析拉氏量
@@ -556,95 +522,17 @@ class LeanTool(HuginnTool):
         }
         L_sub = L.subs(subs_map)
 
-        # 逐个广义坐标推 EOM: dL/dq - d/dt(dL/dq_dot) = 0
-        derived_eoms = []
-        for cf, vs in zip(coord_funcs, vel_syms):
-            dL_dq = sp.diff(L_sub, cf)
-            # 先对速度符号求偏导，再替换成 dx/dt，最后对 t 求全导数
-            dL_dvdot = sp.diff(L, vs).subs(subs_map)
-            ddt_dL_dvdot = sp.diff(dL_dvdot, t)
-            eom = sp.simplify(dL_dq - ddt_dL_dvdot)
-            derived_eoms.append(eom)
+        derived_eoms = _vp_derive_eoms(L_sub, L, t, coord_funcs, vel_syms, subs_map)
+        derived_str = _vp_format_derived(coords, derived_eoms)
 
-        # 拼字符串
-        if len(derived_eoms) == 1:
-            derived_str = str(derived_eoms[0])
-        else:
-            derived_str = "; ".join(
-                f"{c}: {e}" for c, e in zip(coords, derived_eoms)
-            )
+        claimed_expr, claimed_norm_str, err = _vp_parse_claimed(args, local_dict)
+        if err is not None:
+            return err
 
-        # 解析用户声明的 EOM，归一化成 lhs - rhs = 0 的形式
-        claimed_expr = None
-        claimed_norm_str = None
-        if args.claimed_eom:
-            raw = args.claimed_eom.strip()
-            try:
-                if "=" in raw:
-                    lhs_str, rhs_str = raw.split("=", 1)
-                    lhs = sp.sympify(lhs_str, locals=local_dict)
-                    rhs = sp.sympify(rhs_str, locals=local_dict)
-                    claimed_expr = sp.simplify(lhs - rhs)
-                else:
-                    claimed_expr = sp.sympify(raw, locals=local_dict)
-                claimed_norm_str = f"{claimed_expr} = 0"
-            except Exception as e:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"claimed_eom 解析失败: {e}",
-                )
-
-        # 一致性检查：允许差一个整体符号（都是 = 0 的方程）
-        is_consistent = None
-        difference_str = None
-        if claimed_expr is not None:
-            if len(derived_eoms) == 1:
-                d = derived_eoms[0]
-                diff_minus = sp.simplify(d - claimed_expr)
-                diff_plus = sp.simplify(d + claimed_expr)
-                if diff_minus == 0:
-                    is_consistent = True
-                    difference_str = "0"
-                elif diff_plus == 0:
-                    is_consistent = True
-                    difference_str = "0 (相差整体符号，方程等价)"
-                else:
-                    is_consistent = False
-                    difference_str = str(diff_minus)
-            else:
-                # 多自由度：逐条比对
-                per_coord = []
-                all_ok = True
-                for c, d in zip(coords, derived_eoms):
-                    dm = sp.simplify(d - claimed_expr)
-                    dp = sp.simplify(d + claimed_expr)
-                    if dm == 0:
-                        per_coord.append(f"{c}: 0")
-                    elif dp == 0:
-                        per_coord.append(f"{c}: 0 (差符号)")
-                    else:
-                        per_coord.append(f"{c}: {dm}")
-                        all_ok = False
-                is_consistent = all_ok
-                difference_str = "; ".join(per_coord)
-
-        # 可选：Lean 4 命题文本（不真编译，只给陈述）
-        lean_stmt = None
-        if args.return_lean:
-            if len(derived_eoms) == 1:
-                lean_stmt = (
-                    f"theorem variational_principle : "
-                    f"{derived_eoms[0]} = 0 := by sorry"
-                )
-            else:
-                conjuncts = " ∧ ".join(
-                    f"({e} = 0)" for e in derived_eoms
-                )
-                lean_stmt = (
-                    f"theorem variational_principle : "
-                    f"{conjuncts} := by sorry"
-                )
+        is_consistent, difference_str = _vp_check_consistency(
+            coords, derived_eoms, claimed_expr,
+        )
+        lean_stmt = _vp_lean_stmt(args, derived_eoms)
 
         data = {
             "derived_eom": derived_str,
@@ -679,3 +567,164 @@ class LeanTool(HuginnTool):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, self.call(parsed, ctx)).result()
+
+
+# ── variational_principle 分阶段 helper ──────────────────────────────
+
+def _vp_validate_args(args) -> ToolResult | None:
+    """校验必填字段."""
+    if not args.lagrangian:
+        return ToolResult(data=None, success=False, error="lagrangian 不能为空")
+    if not args.coordinates:
+        return ToolResult(data=None, success=False, error="coordinates 不能为空")
+    return None
+
+
+def _vp_resolve_velocities(args, coords: list[str]):
+    """解析速度符号名，返回 (vel_names, error)."""
+    if args.velocities:
+        if len(args.velocities) != len(coords):
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error="velocities 长度必须和 coordinates 一致",
+            )
+        return list(args.velocities), None
+
+    vel_names = [f"{c}_dot" for c in coords]
+    if len(coords) == 1:
+        auto_name = f"{coords[0]}_dot"
+        if auto_name not in args.lagrangian and "v" in args.lagrangian:
+            vel_names = ["v"]
+    return vel_names, None
+
+
+def _vp_local_dict(
+    t_name: str, t, coords: list[str], coord_funcs: list, vel_names: list[str],
+    vel_syms: list,
+) -> dict:
+    """构造 sympify 的 local_dict（坐标/速度/常用数学函数）."""
+    import sympy as sp
+
+    local_dict = {t_name: t}
+    for name, func in zip(coords, coord_funcs):
+        local_dict[name] = func
+    for name, sym in zip(vel_names, vel_syms):
+        local_dict[name] = sym
+    # 数学函数和常数，方便 claimed_eom 里写 diff(...)
+    local_dict.update(
+        {
+            "sin": sp.sin,
+            "cos": sp.cos,
+            "tan": sp.tan,
+            "exp": sp.exp,
+            "log": sp.log,
+            "sqrt": sp.sqrt,
+            "pi": sp.pi,
+            "E": sp.E,
+            "diff": sp.diff,
+        }
+    )
+    return local_dict
+
+
+def _vp_derive_eoms(L_sub, L, t, coord_funcs: list, vel_syms: list, subs_map: dict) -> list:
+    """逐个广义坐标推 EOM: dL/dq - d/dt(dL/dq_dot) = 0."""
+    import sympy as sp
+
+    derived_eoms = []
+    for cf, vs in zip(coord_funcs, vel_syms):
+        dL_dq = sp.diff(L_sub, cf)
+        # 先对速度符号求偏导，再替换成 dx/dt，最后对 t 求全导数
+        dL_dvdot = sp.diff(L, vs).subs(subs_map)
+        ddt_dL_dvdot = sp.diff(dL_dvdot, t)
+        eom = sp.simplify(dL_dq - ddt_dL_dvdot)
+        derived_eoms.append(eom)
+    return derived_eoms
+
+
+def _vp_format_derived(coords: list[str], derived_eoms: list) -> str:
+    """把推导出的 EOM 列表拼成字符串."""
+    if len(derived_eoms) == 1:
+        return str(derived_eoms[0])
+    return "; ".join(f"{c}: {e}" for c, e in zip(coords, derived_eoms))
+
+
+def _vp_parse_claimed(args, local_dict: dict):
+    """解析用户声明的 EOM，归一化成 lhs - rhs = 0. 返回 (expr, str, error)."""
+    import sympy as sp
+
+    claimed_expr = None
+    claimed_norm_str = None
+    if not args.claimed_eom:
+        return claimed_expr, claimed_norm_str, None
+    raw = args.claimed_eom.strip()
+    try:
+        if "=" in raw:
+            lhs_str, rhs_str = raw.split("=", 1)
+            lhs = sp.sympify(lhs_str, locals=local_dict)
+            rhs = sp.sympify(rhs_str, locals=local_dict)
+            claimed_expr = sp.simplify(lhs - rhs)
+        else:
+            claimed_expr = sp.sympify(raw, locals=local_dict)
+        claimed_norm_str = f"{claimed_expr} = 0"
+    except Exception as e:
+        return None, None, ToolResult(
+            data=None,
+            success=False,
+            error=f"claimed_eom 解析失败: {e}",
+        )
+    return claimed_expr, claimed_norm_str, None
+
+
+def _vp_check_consistency(coords: list[str], derived_eoms: list, claimed_expr):
+    """符号等价检查（允许差一个整体符号）。返回 (is_consistent, difference)."""
+    import sympy as sp
+
+    is_consistent = None
+    difference_str = None
+    if claimed_expr is None:
+        return is_consistent, difference_str
+
+    if len(derived_eoms) == 1:
+        d = derived_eoms[0]
+        diff_minus = sp.simplify(d - claimed_expr)
+        diff_plus = sp.simplify(d + claimed_expr)
+        if diff_minus == 0:
+            is_consistent = True
+            difference_str = "0"
+        elif diff_plus == 0:
+            is_consistent = True
+            difference_str = "0 (相差整体符号，方程等价)"
+        else:
+            is_consistent = False
+            difference_str = str(diff_minus)
+        return is_consistent, difference_str
+
+    # 多自由度：逐条比对
+    per_coord = []
+    all_ok = True
+    for c, d in zip(coords, derived_eoms):
+        dm = sp.simplify(d - claimed_expr)
+        dp = sp.simplify(d + claimed_expr)
+        if dm == 0:
+            per_coord.append(f"{c}: 0")
+        elif dp == 0:
+            per_coord.append(f"{c}: 0 (差符号)")
+        else:
+            per_coord.append(f"{c}: {dm}")
+            all_ok = False
+    return all_ok, "; ".join(per_coord)
+
+
+def _vp_lean_stmt(args, derived_eoms: list) -> str | None:
+    """可选：Lean 4 命题文本（不真编译，只给陈述）."""
+    if not args.return_lean:
+        return None
+    if len(derived_eoms) == 1:
+        return (
+            f"theorem variational_principle : "
+            f"{derived_eoms[0]} = 0 := by sorry"
+        )
+    conjuncts = " ∧ ".join(f"({e} = 0)" for e in derived_eoms)
+    return f"theorem variational_principle : {conjuncts} := by sorry"

@@ -366,6 +366,156 @@ def engine_state_digest(state: EngineState) -> str:
 # ── selfcheck ──────────────────────────────────────────────────────────────
 
 
+class _FakeEngine:
+    """最小 engine stub, 只暴露 15 个字段 + hypothesis_graph."""
+
+    def __init__(self):
+        self._iteration = 7
+        self._consecutive_failures = 3
+        self._refine_count = 2
+        self._pivot_count = 1
+        self._next_phase_hint = "execute"
+        self._refined_hypothesis = "h_new"
+        self._plan_check_history = [{"phase": "plan", "ok": False}]
+        self._plan_check_patterns = [{"pat": "missing_test"}]
+        self._last_persona = "domain_skeptic"
+        self._last_surprise = 0.42
+        self._evals_history = [{"step": 1, "score": 0.3}]
+        self._budget_rejects = {"tier1": 2}
+        self._budget_degraded = True
+        # QW1: 视觉记忆字段
+        self._visual_primitives_history = ["[band] peak=<point>[500,800]</point>(2.5)"]
+        self._image_embeddings = {"img_001": [0.1, 0.2, 0.3]}
+        # hypothesis_graph stub
+        self.hypothesis_graph = None
+
+
+def _es_scenario1(ws, eng) -> None:
+    """场景 1: save → load round-trip."""
+    saved = save_engine_state(eng, "loop_abc123", ws)
+    assert saved is not None, "save returned None with flag on"
+    assert saved.run_id == "loop_abc123"
+    assert saved._iteration == 7
+    assert saved._pivot_count == 1
+    assert saved._budget_degraded is True
+    # 文件落到正确路径
+    assert _engine_state_path(ws, "loop_abc123").exists(), "snapshot not written"
+
+    loaded = load_engine_state("loop_abc123", ws)
+    assert loaded is not None, "load returned None after save"
+    assert loaded._iteration == 7
+    assert loaded._consecutive_failures == 3
+    assert loaded._refine_count == 2
+    assert loaded._pivot_count == 1
+    assert loaded._next_phase_hint == "execute"
+    assert loaded._refined_hypothesis == "h_new"
+    assert loaded._plan_check_history == [{"phase": "plan", "ok": False}]
+    assert loaded._plan_check_patterns == [{"pat": "missing_test"}]
+    assert loaded._last_persona == "domain_skeptic"
+    assert loaded._last_surprise == 0.42
+    assert loaded._evals_history == [{"step": 1, "score": 0.3}]
+    assert loaded._budget_rejects == {"tier1": 2}
+    assert loaded._budget_degraded is True
+    # QW1: 视觉记忆字段 round-trip
+    assert loaded._visual_primitives_history == ["[band] peak=<point>[500,800]</point>(2.5)"]
+    assert loaded._image_embeddings == {"img_001": [0.1, 0.2, 0.3]}
+    assert loaded.run_id == "loop_abc123"
+    assert loaded.saved_at == saved.saved_at
+    print("1. save+load round-trip OK")
+
+
+def _es_scenario2(ws) -> None:
+    """场景 2: load missing → None."""
+    missing = load_engine_state("loop_does_not_exist", ws)
+    assert missing is None, "load missing file should return None"
+    print("2. load missing → None OK")
+
+
+def _es_scenario3(ws, eng) -> None:
+    """场景 3: atomic write 不留 partial."""
+    # 模拟 crash: 在 save_engine_state 中间不让 atomic_write_json 失败.
+    # atomic_write_json 用 tmp + os.replace, 即便 process 在 rename 前被杀,
+    # 也只会留 .tmp 文件, 原文件 (如果存在) 不破. 这里验: 第二次 save 覆盖
+    # 第一次, 中间无 partial <run_id>.json 残缺.
+    eng._iteration = 99
+    save_engine_state(eng, "loop_overwrite", ws)
+    path = _engine_state_path(ws, "loop_overwrite")
+    # 写完后立刻读, 内容必须完整 (JSON parse 成功)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["_iteration"] == 99
+    # 不应该有 .tmp 文件残留 (atomic_write_json 内部清理)
+    tmp_files = list(path.parent.glob("*.tmp"))
+    assert not tmp_files, f"partial .tmp files leaked: {tmp_files}"
+    # 二次覆盖后字段正确
+    eng._iteration = 100
+    save_engine_state(eng, "loop_overwrite", ws)
+    data2 = json.loads(path.read_text(encoding="utf-8"))
+    assert data2["_iteration"] == 100
+    print("3. atomic write no partial OK")
+
+
+def _es_scenario4(ws, eng) -> None:
+    """场景 4: flag off 时 save/load 全部 no-op."""
+    os.environ[_PERSISTENCE_FLAG] = "0"
+    flag_off_saved = save_engine_state(eng, "loop_off", ws)
+    assert flag_off_saved is None, "flag off should return None from save"
+    flag_off_loaded = load_engine_state("loop_off", ws)
+    assert flag_off_loaded is None, "flag off should return None from load"
+    assert not _engine_state_path(ws, "loop_off").exists(), \
+        "flag off should not write file"
+    print("4. flag off no-op OK")
+
+
+def _es_scenario5(ws, eng2) -> None:
+    """场景 5: apply_state_to_engine 写回字段."""
+    os.environ[_PERSISTENCE_FLAG] = "1"
+    loaded2 = load_engine_state("loop_abc123", ws)
+    apply_state_to_engine(loaded2, eng2)
+    assert eng2._iteration == 7
+    assert eng2._pivot_count == 1
+    assert eng2._last_persona == "domain_skeptic"
+    print("5. apply_state_to_engine OK")
+
+
+def _es_scenario6(ws) -> None:
+    """场景 6: engine_state_digest 稳定."""
+    loaded2 = load_engine_state("loop_abc123", ws)
+    d1 = engine_state_digest(loaded2)
+    d2 = engine_state_digest(loaded2)
+    assert d1 == d2, "digest should be stable for same state"
+    assert len(d1) == 8
+    eng3 = _FakeEngine()
+    eng3._iteration = 999
+    s3 = _snapshot_engine(eng3, "loop_x")
+    d3 = engine_state_digest(s3)
+    assert d3 != d1, "digest should differ for different state"
+    print("6. engine_state_digest stable + distinct OK")
+
+
+def _es_scenario7(ws, eng) -> None:
+    """场景 7: MCMC 字段 round-trip + _mcmc_chains int key."""
+    eng._mcmc_current = "h_mcmc_42"
+    eng._mcmc_accept_count = 17
+    eng._mcmc_step_count = 100
+    eng._mcmc_rng_state = (3, tuple(range(625)), None)
+    eng._mcmc_chains = {0: {"current": "h0"}, 1: {"current": "h1"}}
+    save_engine_state(eng, "loop_mcmc", ws)
+    loaded_mcmc = load_engine_state("loop_mcmc", ws)
+    assert loaded_mcmc._mcmc_current == "h_mcmc_42"
+    assert loaded_mcmc._mcmc_accept_count == 17
+    assert loaded_mcmc._mcmc_step_count == 100
+    # int key 经 JSON round-trip 后仍是 int (load 时转回)
+    assert loaded_mcmc._mcmc_chains == {
+        0: {"current": "h0"}, 1: {"current": "h1"}}, \
+        f"mcmc_chains int key broken: {loaded_mcmc._mcmc_chains}"
+    # apply_state_to_engine 写回 _mcmc_chains
+    eng4 = _FakeEngine()
+    apply_state_to_engine(loaded_mcmc, eng4)
+    assert eng4._mcmc_current == "h_mcmc_42"
+    assert eng4._mcmc_chains == {0: {"current": "h0"}, 1: {"current": "h1"}}
+    print("7. MCMC fields round-trip + int key OK")
+
+
 def _selfcheck() -> None:
     """3 场景: save+load round-trip / load missing / atomic write 不留 partial."""
     import os
@@ -378,143 +528,17 @@ def _selfcheck() -> None:
     ws = Path(_tf.mkdtemp(prefix="huginn_es_test_")) / "ws"
     ws.mkdir()
     try:
-        # ── 场景 1: save → load round-trip ──────────────────────────
-        class _FakeEngine:
-            """最小 engine stub, 只暴露 15 个字段 + hypothesis_graph."""
-
-            def __init__(self):
-                self._iteration = 7
-                self._consecutive_failures = 3
-                self._refine_count = 2
-                self._pivot_count = 1
-                self._next_phase_hint = "execute"
-                self._refined_hypothesis = "h_new"
-                self._plan_check_history = [{"phase": "plan", "ok": False}]
-                self._plan_check_patterns = [{"pat": "missing_test"}]
-                self._last_persona = "domain_skeptic"
-                self._last_surprise = 0.42
-                self._evals_history = [{"step": 1, "score": 0.3}]
-                self._budget_rejects = {"tier1": 2}
-                self._budget_degraded = True
-                # QW1: 视觉记忆字段
-                self._visual_primitives_history = ["[band] peak=<point>[500,800]</point>(2.5)"]
-                self._image_embeddings = {"img_001": [0.1, 0.2, 0.3]}
-                # hypothesis_graph stub
-                self.hypothesis_graph = None
-
         eng = _FakeEngine()
-        saved = save_engine_state(eng, "loop_abc123", ws)
-        assert saved is not None, "save returned None with flag on"
-        assert saved.run_id == "loop_abc123"
-        assert saved._iteration == 7
-        assert saved._pivot_count == 1
-        assert saved._budget_degraded is True
-        # 文件落到正确路径
-        assert _engine_state_path(ws, "loop_abc123").exists(), "snapshot not written"
-
-        loaded = load_engine_state("loop_abc123", ws)
-        assert loaded is not None, "load returned None after save"
-        assert loaded._iteration == 7
-        assert loaded._consecutive_failures == 3
-        assert loaded._refine_count == 2
-        assert loaded._pivot_count == 1
-        assert loaded._next_phase_hint == "execute"
-        assert loaded._refined_hypothesis == "h_new"
-        assert loaded._plan_check_history == [{"phase": "plan", "ok": False}]
-        assert loaded._plan_check_patterns == [{"pat": "missing_test"}]
-        assert loaded._last_persona == "domain_skeptic"
-        assert loaded._last_surprise == 0.42
-        assert loaded._evals_history == [{"step": 1, "score": 0.3}]
-        assert loaded._budget_rejects == {"tier1": 2}
-        assert loaded._budget_degraded is True
-        # QW1: 视觉记忆字段 round-trip
-        assert loaded._visual_primitives_history == ["[band] peak=<point>[500,800]</point>(2.5)"]
-        assert loaded._image_embeddings == {"img_001": [0.1, 0.2, 0.3]}
-        assert loaded.run_id == "loop_abc123"
-        assert loaded.saved_at == saved.saved_at
-        print("1. save+load round-trip OK")
-
-        # ── 场景 2: load missing → None ─────────────────────────────
-        missing = load_engine_state("loop_does_not_exist", ws)
-        assert missing is None, "load missing file should return None"
-        print("2. load missing → None OK")
-
-        # ── 场景 3: atomic write 不留 partial ───────────────────────
-        # 模拟 crash: 在 save_engine_state 中间不让 atomic_write_json 失败.
-        # atomic_write_json 用 tmp + os.replace, 即便 process 在 rename 前被杀,
-        # 也只会留 .tmp 文件, 原文件 (如果存在) 不破. 这里验: 第二次 save 覆盖
-        # 第一次, 中间无 partial <run_id>.json 残缺.
-        eng._iteration = 99
-        save_engine_state(eng, "loop_overwrite", ws)
-        path = _engine_state_path(ws, "loop_overwrite")
-        # 写完后立刻读, 内容必须完整 (JSON parse 成功)
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["_iteration"] == 99
-        # 不应该有 .tmp 文件残留 (atomic_write_json 内部清理)
-        tmp_files = list(path.parent.glob("*.tmp"))
-        assert not tmp_files, f"partial .tmp files leaked: {tmp_files}"
-        # 二次覆盖后字段正确
-        eng._iteration = 100
-        save_engine_state(eng, "loop_overwrite", ws)
-        data2 = json.loads(path.read_text(encoding="utf-8"))
-        assert data2["_iteration"] == 100
-        print("3. atomic write no partial OK")
-
-        # ── 场景 4: flag off 时 save/load 全部 no-op ────────────────
-        os.environ[_PERSISTENCE_FLAG] = "0"
-        flag_off_saved = save_engine_state(eng, "loop_off", ws)
-        assert flag_off_saved is None, "flag off should return None from save"
-        flag_off_loaded = load_engine_state("loop_off", ws)
-        assert flag_off_loaded is None, "flag off should return None from load"
-        assert not _engine_state_path(ws, "loop_off").exists(), \
-            "flag off should not write file"
-        print("4. flag off no-op OK")
-
-        # ── 场景 5: apply_state_to_engine 写回字段 ───────────────────
-        os.environ[_PERSISTENCE_FLAG] = "1"
+        _es_scenario1(ws, eng)
+        _es_scenario2(ws)
+        _es_scenario3(ws, eng)
+        _es_scenario4(ws, eng)
         eng2 = _FakeEngine()
         eng2._iteration = 0
         eng2._pivot_count = 0
-        loaded2 = load_engine_state("loop_abc123", ws)
-        apply_state_to_engine(loaded2, eng2)
-        assert eng2._iteration == 7
-        assert eng2._pivot_count == 1
-        assert eng2._last_persona == "domain_skeptic"
-        print("5. apply_state_to_engine OK")
-
-        # ── 场景 6: engine_state_digest 稳定 ─────────────────────────
-        d1 = engine_state_digest(loaded2)
-        d2 = engine_state_digest(loaded2)
-        assert d1 == d2, "digest should be stable for same state"
-        assert len(d1) == 8
-        eng3 = _FakeEngine()
-        eng3._iteration = 999
-        s3 = _snapshot_engine(eng3, "loop_x")
-        d3 = engine_state_digest(s3)
-        assert d3 != d1, "digest should differ for different state"
-        print("6. engine_state_digest stable + distinct OK")
-
-        # ── 场景 7: MCMC 字段 round-trip + _mcmc_chains int key ─────
-        eng._mcmc_current = "h_mcmc_42"
-        eng._mcmc_accept_count = 17
-        eng._mcmc_step_count = 100
-        eng._mcmc_rng_state = (3, tuple(range(625)), None)
-        eng._mcmc_chains = {0: {"current": "h0"}, 1: {"current": "h1"}}
-        save_engine_state(eng, "loop_mcmc", ws)
-        loaded_mcmc = load_engine_state("loop_mcmc", ws)
-        assert loaded_mcmc._mcmc_current == "h_mcmc_42"
-        assert loaded_mcmc._mcmc_accept_count == 17
-        assert loaded_mcmc._mcmc_step_count == 100
-        # int key 经 JSON round-trip 后仍是 int (load 时转回)
-        assert loaded_mcmc._mcmc_chains == {
-            0: {"current": "h0"}, 1: {"current": "h1"}}, \
-            f"mcmc_chains int key broken: {loaded_mcmc._mcmc_chains}"
-        # apply_state_to_engine 写回 _mcmc_chains
-        eng4 = _FakeEngine()
-        apply_state_to_engine(loaded_mcmc, eng4)
-        assert eng4._mcmc_current == "h_mcmc_42"
-        assert eng4._mcmc_chains == {0: {"current": "h0"}, 1: {"current": "h1"}}
-        print("7. MCMC fields round-trip + int key OK")
+        _es_scenario5(ws, eng2)
+        _es_scenario6(ws)
+        _es_scenario7(ws, eng)
 
         print("ALL CHECKS PASSED")
     finally:

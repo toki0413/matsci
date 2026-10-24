@@ -966,116 +966,158 @@ class LongTermMemory:
             created_at >= since are returned. Useful for querying only
             recent knowledge within an autoresearch iteration window.
         """
-        results = []
         alive_where, alive_params = self._where_alive()
         # ponytail: 路径排序需要更大候选池, 否则 SQL LIMIT 直接砍掉了应该靠前的行.
         # 拉到 3 倍候选, Python 层 re-rank 后取 top_k. 不传 path 时拉 1 倍, 行为不变.
         fetch_k = top_k * 3 if path else top_k
 
-        # FTS5 tokenized search — handles multi-word queries that LIKE misses.
-        # Falls back to LIKE substring match if FTS5 query syntax errors out.
         with self._connect() as conn:
-            sql = "SELECT * FROM memories AS m WHERE " + alive_where
-            params: list[Any] = list(alive_params)
-            # Scope to a single tenant before any other filter. Omitting the
-            # clause entirely keeps the old shared-memory behaviour intact.
-            if user_id is not None:
-                sql += " AND m.user_id = ?"
-                params.append(user_id)
-            if category:
-                sql += " AND category = ?"
-                params.append(category)
-            if tier:
-                sql += " AND tier = ?"
-                params.append(tier)
-            if formula:
-                sql += " AND m.formula = ?"
-                params.append(formula)
-            if since:
-                # P1: 时间范围查询 — 只返回 created_at >= since 的记忆.
-                # autoresearch 场景: 查询本轮/本会话新写入的知识, 避免旧记忆干扰.
-                sql += " AND m.created_at >= ?"
-                params.append(since)
-            if query:
-                fts_matched = False
-                # Try FTS5 first for proper tokenized matching
-                fts_query = self._build_fts_query(query)
-                if fts_query:
-                    try:
-                        fts_sql = (
-                            sql
-                            + " AND m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?)"
-                        )
-                        fts_params = params + [fts_query]
-                        fts_sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
-                        fts_params.append(fetch_k)
-                        rows = conn.execute(fts_sql, tuple(fts_params)).fetchall()
-                        fts_matched = True
-                    except sqlite3.OperationalError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                # Fallback to LIKE if FTS5 unavailable or query failed
-                if not fts_matched:
-                    sql += " AND content LIKE ?"
-                    params.append(f"%{query}%")
-                    sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
-                    params.append(fetch_k)
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-            else:
-                sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
-                params.append(fetch_k)
-                rows = conn.execute(sql, tuple(params)).fetchall()
-
-            now = datetime.now().isoformat()
-            for row in rows:
-                results.append(dict(row))
-                # Update access stats and rejuvenate short/mid TTL
-                conn.execute(
-                    "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-                    (now, row["id"]),
-                )
-            conn.commit()
-            self._rejuvenate([r["id"] for r in rows])
+            # FTS5 tokenized search — handles multi-word queries that LIKE misses.
+            rows = self._retrieve_fts_rows(
+                conn, query, alive_where, alive_params, category, tier,
+                formula, user_id, since, fetch_k,
+            )
+            results = self._retrieve_touch(conn, rows)
 
         # Semantic search via vector store
         if semantic and self._enable_semantic:
-            try:
-                vec_results = self._vector_store.search(query, top_k=fetch_k)
-            except Exception:
-                logger.warning("vector search failed, falling back to FTS-only", exc_info=True)
-                vec_results = []
-            seen_ids = {r["id"] for r in results}
-            for vr in vec_results:
-                if vr["id"] in seen_ids:
-                    continue
-                with self._connect() as conn:
-                    # Re-apply the tenant filter on the metadata fetch so a
-                    # vector hit from another user can't leak across tenants.
-                    if user_id is not None:
-                        row = conn.execute(
-                            "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?) AND user_id = ?",
-                            (vr["id"], datetime.now().isoformat(), user_id),
-                        ).fetchone()
-                    else:
-                        row = conn.execute(
-                            "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)",
-                            (vr["id"], datetime.now().isoformat()),
-                        ).fetchone()
-                    if row:
-                        results.append(dict(row))
+            self._retrieve_merge_semantic(results, query, user_id, fetch_k)
 
         if path:
-            # ponytail: SQL 已经按 tier/importance 排过, 但路径近邻更重要 —
-            # 在 Python 层按 (path_rank, tier_order, importance) 再排一次.
-            # 升级路径: 把 _path_rank 写成 SQL 表达式避免双排序.
-            tier_rank = {"long": 0, "mid": 1, "short": 2}
-            results.sort(
-                key=lambda r: (
-                    self._path_rank(r.get("path"), path),
-                    tier_rank.get(r.get("tier", "mid"), 3),
-                    -(r.get("importance", 0.5)),
-                )
-            )
+            self._retrieve_path_sort(results, path)
 
+        return self._retrieve_finalize(query, results, top_k, semantic)
+
+    def _retrieve_fts_rows(
+        self, conn: Any, query: str, alive_where: str, alive_params: list[Any],
+        category: str | None, tier: str | None, formula: str | None,
+        user_id: str | None, since: str | None, fetch_k: int,
+    ) -> list[Any]:
+        """拼 FTS5 查询并取候选行 (FTS5 语法失败时降级 LIKE)."""
+        sql, params = self._retrieve_filters(
+            alive_where, alive_params, category, tier, formula, user_id, since
+        )
+        if not query:
+            sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
+            params.append(fetch_k)
+            return conn.execute(sql, tuple(params)).fetchall()
+
+        # Try FTS5 first for proper tokenized matching
+        fts_query = self._build_fts_query(query)
+        if fts_query:
+            try:
+                fts_sql = (
+                    sql
+                    + " AND m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?)"
+                )
+                fts_params = params + [fts_query]
+                fts_sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
+                fts_params.append(fetch_k)
+                return conn.execute(fts_sql, tuple(fts_params)).fetchall()
+            except sqlite3.OperationalError:
+                logger.debug("best-effort op failed", exc_info=True)
+        # Fallback to LIKE if FTS5 unavailable or query failed
+        sql += " AND content LIKE ?"
+        params.append(f"%{query}%")
+        sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
+        params.append(fetch_k)
+        return conn.execute(sql, tuple(params)).fetchall()
+
+    @staticmethod
+    def _retrieve_filters(
+        alive_where: str, alive_params: list[Any], category: str | None,
+        tier: str | None, formula: str | None, user_id: str | None, since: str | None,
+    ) -> tuple[str, list[Any]]:
+        """拼 WHERE 子句 + 参数; 租户过滤放最前, 省略时保持旧共享行为."""
+        sql = "SELECT * FROM memories AS m WHERE " + alive_where
+        params: list[Any] = list(alive_params)
+        # Scope to a single tenant before any other filter. Omitting the
+        # clause entirely keeps the old shared-memory behaviour intact.
+        if user_id is not None:
+            sql += " AND m.user_id = ?"
+            params.append(user_id)
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        if tier:
+            sql += " AND tier = ?"
+            params.append(tier)
+        if formula:
+            sql += " AND m.formula = ?"
+            params.append(formula)
+        if since:
+            # P1: 时间范围查询 — 只返回 created_at >= since 的记忆.
+            # autoresearch 场景: 查询本轮/本会话新写入的知识, 避免旧记忆干扰.
+            sql += " AND m.created_at >= ?"
+            params.append(since)
+        return sql, params
+
+    def _retrieve_touch(self, conn: Any, rows: list[Any]) -> list[dict[str, Any]]:
+        """把行转 dict, 更新 access 统计并复壮短/中 TTL."""
+        now = datetime.now().isoformat()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            results.append(dict(row))
+            # Update access stats and rejuvenate short/mid TTL
+            conn.execute(
+                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+        conn.commit()
+        self._rejuvenate([r["id"] for r in rows])
+        return results
+
+    def _retrieve_merge_semantic(
+        self, results: list[dict[str, Any]], query: str,
+        user_id: str | None, fetch_k: int,
+    ) -> None:
+        """向量检索命中合并进 results (按 id 去重 + 重做租户过滤)."""
+        try:
+            vec_results = self._vector_store.search(query, top_k=fetch_k)
+        except Exception:
+            logger.warning("vector search failed, falling back to FTS-only", exc_info=True)
+            vec_results = []
+        seen_ids = {r["id"] for r in results}
+        for vr in vec_results:
+            if vr["id"] in seen_ids:
+                continue
+            with self._connect() as conn:
+                row = self._retrieve_vec_row(conn, vr["id"], user_id)
+                if row:
+                    results.append(dict(row))
+
+    @staticmethod
+    def _retrieve_vec_row(conn: Any, mem_id: str, user_id: str | None) -> Any:
+        """按向量命中 id 取元数据行, 重做租户过滤防跨租户泄漏."""
+        now = datetime.now().isoformat()
+        if user_id is not None:
+            return conn.execute(
+                "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?) AND user_id = ?",
+                (mem_id, now, user_id),
+            ).fetchone()
+        return conn.execute(
+            "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)",
+            (mem_id, now),
+        ).fetchone()
+
+    def _retrieve_path_sort(self, results: list[dict[str, Any]], path: str) -> None:
+        """在 Python 层按 (path_rank, tier_order, importance) 再排一次."""
+        # ponytail: SQL 已经按 tier/importance 排过, 但路径近邻更重要 —
+        # 升级路径: 把 _path_rank 写成 SQL 表达式避免双排序.
+        tier_rank = {"long": 0, "mid": 1, "short": 2}
+        results.sort(
+            key=lambda r: (
+                self._path_rank(r.get("path"), path),
+                tier_rank.get(r.get("tier", "mid"), 3),
+                -(r.get("importance", 0.5)),
+            )
+        )
+
+    def _retrieve_finalize(
+        self, query: str, results: list[dict[str, Any]],
+        top_k: int, semantic: bool,
+    ) -> list[dict[str, Any]]:
+        """三级 re-rank 出口: HiLS → Ising → has_reasoning 优先."""
         # P2-5: HiLS 分层稀疏 attention (Modern Hopfield). 优先于 P1-1 Ising.
         # N>=K 时分层稀疏 (28x 加速 @ N=100K), N<K 时退化到全 attention.
         # off 时回退 P1-1 Ising 贪心 (已有 fallback 链).

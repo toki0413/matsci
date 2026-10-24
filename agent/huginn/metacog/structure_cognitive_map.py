@@ -998,19 +998,7 @@ def _min_image_distance(a: np.ndarray, b: np.ndarray, lattice: np.ndarray) -> fl
 
 # ── self-check ─────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """12 场景: 构建 + 距离/角度 + 邻居 + SE(3) 等变 + save/load + immutability
-    + 9 新 ops + bond 识别 + compose.
-
-    ponytail: 用 NaCl 简单结构 (2 原子常规 cell, d≈4.88Å), 不依赖真 CIF 文件.
-    ceiling: 不验 PBC 边界 case (a in cell 0, b in cell 1), 升级路径加 edge case.
-    """
-    import os
-    import tempfile
-
-    # Mock NaCl CIF (a=5.64Å, P1 不写 spacegroup 避免 pymatgen 展开对称操作).
-    # ponytail: 2 原子直接列出, d(Na,Cl) = a*sqrt(3)/2 ≈ 4.88Å.
-    nacl_cif = """data_NaCl
+_NACL_CIF = """data_NaCl
 _cell_length_a 5.64
 _cell_length_b 5.64
 _cell_length_c 5.64
@@ -1026,26 +1014,44 @@ _atom_site_fract_z
 Na1 Na 0.0 0.0 0.0
 Cl1 Cl 0.5 0.5 0.5
 """
+def _sc_build_nacl() -> None:
     print("1. from_cif 构建测试...")
-    m = StructureCognitiveMap.from_cif(nacl_cif)
+    m = StructureCognitiveMap.from_cif(_NACL_CIF)
     assert len(m) == 2, f"expected 2 atoms, got {len(m)}"
     assert m.species == ["Na", "Cl"], f"species wrong: {m.species}"
     print(f"   OK: {m}")
+    return m
 
+
+
+def _sc_distance_angle(m: Any) -> None:
     print("2. query_distance + query_angle 测试...")
     d = m.query_distance(0, 1)
     assert 4.0 < d < 6.0, f"NaCl distance expected ~4.88Å, got {d}"
     print(f"   OK: d(Na, Cl) = {d:.3f}Å")
+    return d
 
+
+
+def _sc_neighbors(m: Any) -> None:
     print("3. query_neighbors 测试...")
     nbs = m.query_neighbors(0, cutoff=5.0)
     print(f"   Na neighbors (cutoff=5.0): {nbs}")
 
+
+
+def _sc_se3_rotation(m: Any, d: float) -> None:
     print("4. SE(3) 等变验证 (rotate z=90 后距离不变)...")
     m_rot = m.rotate(axis="z", angle=90, degrees=True)
     d_rot = m_rot.query_distance(0, 1)
     assert abs(d - d_rot) < 1e-6, f"SE(3) 不变: d={d}, d_rot={d_rot}"
     print(f"   OK: rotate 前后 d 不变 ({d:.3f} -> {d_rot:.3f})")
+
+
+
+def _sc_save_load(m: Any, d: float) -> None:
+    import os
+    import tempfile
 
     print("5. save/load round-trip 测试...")
     with tempfile.TemporaryDirectory() as td:
@@ -1058,6 +1064,9 @@ Cl1 Cl 0.5 0.5 0.5
         assert abs(d - d2) < 1e-6, f"load 后距离不一致: {d} vs {d2}"
     print("   OK: save/load 距离一致")
 
+
+
+def _sc_immutability(m: Any, d: float) -> None:
     print("6. query_after_rotation immutability 测试...")
     original_d = m.query_distance(0, 1)
     rotated_coords = m.query_after_rotation([0, 1], axis="z", angle=45, degrees=True)
@@ -1067,6 +1076,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert abs(rot_d - original_d) < 1e-6, f"SE(3) 不等变: rot_d={rot_d}, orig={original_d}"
     print("   OK: query_after_rotation 不改原 map, 距离等变")
 
+
+
+def _sc_move_ops(m: Any, d: float) -> None:
     print("7. move_atom + move_selected + move_towards...")
     m_moved = m.move_atom(0, [0.1, 0, 0])
     assert len(m_moved) == 2
@@ -1078,6 +1090,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert abs(d_towards - d * 0.5) < 0.1, f"move_towards 距离错: {d_towards} vs {d*0.5}"
     print(f"   OK: move_towards 距离减半 ({d:.3f} -> {d_towards:.3f})")
 
+
+
+def _sc_move_around_scale(m: Any, d: float) -> None:
     print("8. move_around + change_atom + scale...")
     m_around = m.move_around(0, center=1, axis="z", angle=45)
     assert len(m_around) == 2
@@ -1088,6 +1103,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert abs(d_scaled - d * 2.0) < 0.1, f"scale 距离错: {d_scaled} vs {d*2.0}"
     print(f"   OK: scale 2x 距离翻倍 ({d:.3f} -> {d_scaled:.3f})")
 
+
+
+def _sc_insert_delete(m: Any) -> None:
     print("9. insert_between + delete_below + delete_around_atom...")
     m_ins = m.insert_between(0, 1, "O")
     assert len(m_ins) == 3
@@ -1097,6 +1115,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert len(m_del2) == len(m_del)
     print(f"   OK: insert_between n=3, delete_below n={len(m_del)}")
 
+
+
+def _sc_bonds(m: Any) -> None:
     print("10. bond 识别 (cutoff + crystalnn) + classify_bond...")
     bonds = m.identify_bonds(method="cutoff", cutoff=5.0)
     assert len(bonds) >= 1, f"期望至少 1 个键, got {bonds}"
@@ -1106,6 +1127,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert isinstance(types, dict)
     print(f"   OK: bonds={len(bonds)}, Na-Cl={bt}, types={list(types.keys())}")
 
+
+
+def _sc_coordination(m: Any) -> None:
     print("11. coordination_shell + coordination_polyhedra...")
     shell = m.coordination_shell(0, cutoff=5.0)
     assert shell.center == 0
@@ -1113,6 +1137,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert len(polys) == len(m)
     print(f"   OK: shell.geometry={shell.geometry}, polys={len(polys)}")
 
+
+
+def _sc_compose(m: Any, d: float) -> None:
     print("12. compose (变换链)...")
     m_composed = m.compose(
         lambda mm: mm.rotate("z", 90),
@@ -1124,6 +1151,9 @@ Cl1 Cl 0.5 0.5 0.5
     assert abs(d_composed - d * 1.5) < 0.5, f"compose 距离错: {d_composed} vs {d*1.5}"
     print(f"   OK: rotate+translate+scale d={d_composed:.3f} (原 {d:.3f} x 1.5)")
 
+
+
+def _sc_from_image() -> None:
     # ── 13. M7 from_image: TEM 图像 → FFT → d-spacings → cubic placeholder ──
     print("13. M7 from_image (TEM FFT → lattice → map)...")
     # 构造一个合成 lattice 图像: 用 numpy 生成正弦光栅模拟晶格条纹
@@ -1171,6 +1201,9 @@ Cl1 Cl 0.5 0.5 0.5
         print(f"   SKIP: tem_lattice on synthetic grating failed ({exc})")
         print("   (ceiling: 合成正弦光栅可能不够 'TEM-like' 触发 FFT 峰检测)")
 
+
+
+def _sc_composite_token() -> None:
     # ── 14. G1: to_composite_token (C 实验工程化) ──────────────
     print("\n14. G1 to_composite_token (coords → <point3d> + dict)...")
     _m_g1 = StructureCognitiveMap.from_coords(
@@ -1210,6 +1243,9 @@ Cl1 Cl 0.5 0.5 0.5
     except ImportError:
         print("   SKIP: scipy not available for se3_act integration test")
 
+
+
+def _sc_hodge() -> None:
     # ── 15. Hodge: 拓扑三分量分解 ─────────────────────────────
     print("\n15. Hodge decomposition (gradient / curl / harmonic)...")
     # 构建已知图: 4 原子方形 (连通, genus=0)
@@ -1252,6 +1288,30 @@ Cl1 Cl 0.5 0.5 0.5
     print(f"   OK: 3-atom 三角环, n_harmonic={hodge_tri['n_harmonic']}, "
           f"eigenvalues={[round(e, 4) for e in hodge_tri['eigenvalues']]}")
 
+
+
+def _selfcheck() -> None:
+    """12 场景: 构建 + 距离/角度 + 邻居 + SE(3) 等变 + save/load + immutability
+    + 9 新 ops + bond 识别 + compose.
+
+    ponytail: 用 NaCl 简单结构 (2 原子常规 cell, d≈4.88Å), 不依赖真 CIF 文件.
+    ceiling: 不验 PBC 边界 case (a in cell 0, b in cell 1), 升级路径加 edge case.
+    """
+    m = _sc_build_nacl()
+    d = _sc_distance_angle(m)
+    _sc_neighbors(m)
+    _sc_se3_rotation(m, d)
+    _sc_save_load(m, d)
+    _sc_immutability(m, d)
+    _sc_move_ops(m, d)
+    _sc_move_around_scale(m, d)
+    _sc_insert_delete(m)
+    _sc_bonds(m)
+    _sc_coordination(m)
+    _sc_compose(m, d)
+    _sc_from_image()
+    _sc_composite_token()
+    _sc_hodge()
     print("\nstructure_cognitive_map selfcheck OK (15 actions + bond + compose + from_image + G1 + Hodge)")
 
 

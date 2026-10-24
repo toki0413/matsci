@@ -243,6 +243,173 @@ def _kill_process_tree(proc: subprocess.Popen, *, own_group: bool) -> None:
             proc.kill()
 
 
+# Windows coreutils fallback 映射 (POSIX coreutil -> cmd 内置命令).
+_WIN_COREUTIL_CMD_MAP = {
+    "ls": "dir",
+    "cp": "copy",
+    "mv": "move",
+    "rm": "del",
+    "cat": "type",
+    "touch": "copy /b",
+    "mkdir": "mkdir",
+    "rmdir": "rmdir",
+    "echo": "echo",
+    "pwd": "cd",
+    "which": "where",
+    "find": "find",
+    "sort": "sort",
+    "head": "more",
+    "tail": "more",
+    "wc": "find /c",
+    "grep": "findstr",
+    "diff": "fc",
+    "true": "rem",
+    "false": "rem",
+    "test": "if",
+    "env": "set",
+}
+
+
+def _sb_dry_run_result(cmd: list[str]) -> SandboxResult:
+    """dry-run 模式的返回值 (不实际执行命令)."""
+    return SandboxResult(
+        success=True,
+        returncode=0,
+        stdout="[dry-run] Command would execute: " + " ".join(cmd),
+        stderr="",
+        command=cmd,
+        dry_run=True,
+    )
+
+
+def _sb_apply_profile_rlimit(profile: str) -> int | None:
+    """Task 1.2: POSIX 软沙箱补 RLIMIT_AS 内存上限 (按 profile), 返回原 soft.
+
+    Windows 跳过 (resource 模块不支持 RLIMIT_AS). 只降 soft limit, 不动 hard
+    limit — 非 root 用户降了 hard 就再也升不回去. 失败不阻塞 (返回 None).
+    """
+    if os.name == "nt":
+        return None
+    saved: int | None = None
+    try:
+        import resource as _resource
+
+        _mem = _profile_mem_bytes(profile)
+        if _mem and _mem > 0:
+            _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
+            saved = _cur_soft
+            _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _cur_hard))
+    except Exception:
+        logger.debug(
+            "setrlimit(RLIMIT_AS, profile=%s) failed (non-fatal)",
+            profile,
+            exc_info=True,
+        )
+    return saved
+
+
+def _sb_restore_parent_rlimit(saved_soft: int) -> None:
+    """恢复父进程 soft limit (hard limit 从未被降低, 无需恢复)."""
+    try:
+        import resource as _resource
+
+        _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
+        _resource.setrlimit(_resource.RLIMIT_AS, (saved_soft, _cur_hard))
+    except Exception:
+        logger.debug("failed to restore parent rlimit", exc_info=True)
+
+
+def _sb_popen_kwargs(run_kwargs: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """组装 Popen kwargs, 并确定子进程是否自立新进程组 (供整组回收).
+
+    调用方显式指定进程组行为时尊重之, 仅在其确实自立新组时才整组杀.
+    """
+    popen_kwargs = dict(run_kwargs)
+    if "start_new_session" in popen_kwargs or "creationflags" in popen_kwargs:
+        own_group = bool(popen_kwargs.get("start_new_session")) or bool(
+            popen_kwargs.get("creationflags", 0)
+            & getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+        return popen_kwargs, own_group
+    default_kwargs, own_group = new_group_popen_kwargs()
+    popen_kwargs.update(default_kwargs)
+    return popen_kwargs, own_group
+
+
+def _sb_timeout_result(
+    proc: subprocess.Popen, cmd: list[str], own_group: bool
+) -> SandboxResult:
+    """超时收尾: 整组回收子进程, 回收僵尸并取回已产出的部分输出."""
+    _kill_process_tree(proc, own_group=own_group)
+    _out, _err = proc.communicate()
+    return SandboxResult(
+        success=False,
+        returncode=-1,
+        stdout=_out or "",
+        stderr=_err or "",
+        command=cmd,
+        dry_run=False,
+        timed_out=True,
+    )
+
+
+def _sb_execute(
+    cmd: list[str],
+    valid_cwd: Path | None,
+    capture_output: bool,
+    text: bool,
+    env: dict[str, str] | None,
+    popen_kwargs: dict[str, Any],
+    own_group: bool,
+    timeout: float,
+    saved_rlimit_soft: int | None,
+) -> tuple[subprocess.CompletedProcess | None, SandboxResult | None]:
+    """阶段 5: 起子进程、超时整组回收、取回输出, 并恢复父进程 rlimit.
+
+    返回 ``(CompletedProcess, None)`` 或 ``(None, 超时结果)``.
+    """
+    tracked_pid: int | None = None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(valid_cwd) if valid_cwd else None,
+            stdout=subprocess.PIPE if capture_output else None,
+            stderr=subprocess.PIPE if capture_output else None,
+            text=text,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            shell=False,
+            **popen_kwargs,
+        )
+        # 登记在册: 父进程若先退出 (autoloop CLI 无 lifespan 钩子), 退出兜底
+        # ``kill_tracked_children()`` 才能按进程组整组回收, 不留 PPID→1 孤儿.
+        track_live_child(proc.pid, own_group=own_group)
+        tracked_pid = proc.pid
+        try:
+            _out, _err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None, _sb_timeout_result(proc, cmd, own_group)
+        return subprocess.CompletedProcess(cmd, proc.returncode, _out, _err), None
+    finally:
+        # 子进程已结束 (或已被整组回收) → 注销登记, 防止 pid 复用被退出兜底误杀.
+        if tracked_pid is not None:
+            untrack_live_child(tracked_pid)
+        if saved_rlimit_soft is not None:
+            _sb_restore_parent_rlimit(saved_rlimit_soft)
+
+
+def _sb_truncate(value: str | bytes, max_bytes: int) -> str | bytes:
+    """阶段 6: 超限输出截断 (bytes 按字节, str 按 UTF-8 字节估算后取 1/4 字符)."""
+    if isinstance(value, bytes):
+        if len(value) > max_bytes:
+            return value[:max_bytes] + b"\n... [truncated]"
+        return value
+    if len(value.encode("utf-8", errors="replace")) > max_bytes:
+        return value[: max_bytes // 4] + "\n... [truncated]"
+    return value
+
+
 class SandboxExecutor:
     """Execute subprocess commands inside a security sandbox."""
 
@@ -416,6 +583,110 @@ class SandboxExecutor:
         "job_name",
     }
 
+    def _sb_validate_and_clamp(
+        self,
+        cmd: list[str],
+        cwd: str | Path | None,
+        timeout: float | None,
+        config: SandboxConfig | None,
+    ) -> tuple[SandboxConfig, Path | None, float]:
+        """阶段 1-2: 命令/allow-list 校验 + 工作目录作用域检查 + 超时夹取."""
+        cfg = config or self.config
+        self._validate_command(cmd, config=cfg)
+        valid_cwd = self._validate_cwd(cwd, config=cfg)
+
+        # Clamp timeout
+        if timeout is None:
+            timeout = cfg.default_timeout
+        timeout = min(float(timeout), cfg.max_timeout)
+        return cfg, valid_cwd, timeout
+
+    def _sb_landlock_rw_dirs(self, cfg: SandboxConfig) -> list[str]:
+        """可写根: 仅 scoped 模式下给出, 否则空集 (不锁文件系统)."""
+        if not (cfg.strict_work_dir and cfg.allowed_work_dirs):
+            return []
+        return [str(p) for p in cfg.allowed_work_dirs]
+
+    def _sb_landlock_ro_dirs(
+        self, cmd: list[str], cfg: SandboxConfig, valid_cwd: Path | None
+    ) -> list[str]:
+        """只读/执行根: (a) 工作目录 + (b) 白名单可执行文件自身所在目录.
+
+        否则隔离后子进程读不到二进制本身而无法 exec (正确性缺陷).
+        """
+        scoped = bool(cfg.strict_work_dir and cfg.allowed_work_dirs)
+        ro_dirs = [str(valid_cwd)] if (valid_cwd and scoped) else []
+        if scoped:
+            try:
+                exe_abs = self._resolve_executable(cmd)
+                exe_dir = str(Path(exe_abs).resolve().parent)
+                if exe_dir not in ro_dirs:
+                    ro_dirs.append(exe_dir)
+            except Exception:
+                logger.debug(
+                    "landlock: exe dir resolution failed, confining cwd only",
+                    exc_info=True,
+                )
+        return [d for d in ro_dirs if d]
+
+    def _sb_inject_confinement(
+        self,
+        cmd: list[str],
+        cfg: SandboxConfig,
+        valid_cwd: Path | None,
+        run_kwargs: dict[str, Any],
+    ) -> None:
+        """阶段 4: 内核级 confinement (Landlock FS/网络规则 + 子进程 rlimit).
+
+        T-BCSE-07 / P1: 把 Landlock (FS 路径规则 + 可选网络隔离) 与子进程
+        rlimit 合并成**单个** preexec_fn 注入, 只在 posix 且确有要收紧的东西时
+        构造, 否则完全不注入 (零回归). 调用方已显式传 preexec_fn 时尊重其注入.
+        """
+        rlimits = _build_rlimits(cfg)
+        want_confinement = bool(
+            cfg.isolate_network
+            or rlimits
+            or (cfg.strict_work_dir and cfg.allowed_work_dirs)
+        )
+        if not (
+            os.name == "posix"
+            and want_confinement
+            and "preexec_fn" not in run_kwargs
+        ):
+            return
+        try:
+            from huginn.security.landlock import make_preexec_fn
+
+            # FS 隔离只在 scoped 模式 (strict_work_dir + allowed_work_dirs) 下
+            # 生效; net-only / rlimit-only 时传空 path 集 — 不锁文件系统, 只收紧
+            # 网络与资源. 这也避免"只开网络隔离"把子进程的文件访问一并封死.
+            preexec = make_preexec_fn(
+                self._sb_landlock_ro_dirs(cmd, cfg, valid_cwd),
+                self._sb_landlock_rw_dirs(cfg),
+                required=False,
+                net_isolate=cfg.isolate_network,
+                rlimits=rlimits,
+            )
+            if preexec is not None:
+                run_kwargs["preexec_fn"] = preexec
+        except Exception:
+            logger.debug("landlock confinement skipped (non-fatal)", exc_info=True)
+
+    @staticmethod
+    def _sb_win_cmd_wrap(cmd: list[str]) -> list[str]:
+        """Windows coreutils fallback: 白名单里的 POSIX coreutil 用 cmd /c 包裹.
+
+        ``_resolve_executable`` 返回原 cmd[0] (e.g. "ls") 但 ``shutil.which``
+        找不到 → 这里让 cmd.exe 走内置命令 (dir/copy/type/...). 白名单已含
+        cmd.exe 间接调用, 不开新口子. 只在 cmd[0] 是 POSIX coreutil 时翻译,
+        参数透传.
+        """
+        if os.name == "nt" and cmd and cmd[0].lower() in _WIN_COREUTIL_CMD_MAP:
+            _mapped = _WIN_COREUTIL_CMD_MAP.get(cmd[0].lower(), cmd[0])
+            # 重组: cmd /c <mapped> <rest args>
+            return ["cmd", "/c", _mapped, *cmd[1:]]
+        return cmd
+
     def run(
         self,
         cmd: list[str],
@@ -431,253 +702,35 @@ class SandboxExecutor:
 
         Raises SandboxError if policy is violated.
         """
-        cfg = config or self.config
-        self._validate_command(cmd, config=cfg)
-        valid_cwd = self._validate_cwd(cwd, config=cfg)
-
-        # Clamp timeout
-        if timeout is None:
-            timeout = cfg.default_timeout
-        timeout = min(float(timeout), cfg.max_timeout)
-
+        cfg, valid_cwd, timeout = self._sb_validate_and_clamp(
+            cmd, cwd, timeout, config
+        )
         if cfg.dry_run:
-            return SandboxResult(
-                success=True,
-                returncode=0,
-                stdout="[dry-run] Command would execute: " + " ".join(cmd),
-                stderr="",
-                command=cmd,
-                dry_run=True,
-            )
-
+            return _sb_dry_run_result(cmd)
         # Drop scheduler-only hints so they do not reach subprocess.run.
         run_kwargs = {k: v for k, v in kwargs.items() if k not in self._REMOTE_KWARGS}
+        self._sb_inject_confinement(cmd, cfg, valid_cwd, run_kwargs)
+        cmd = self._sb_win_cmd_wrap(cmd)
+        # Task 1.2: POSIX 软沙箱补 RLIMIT_AS 内存上限 (按 profile, 与 Docker 档位对齐).
+        _saved_rlimit_soft = _sb_apply_profile_rlimit(self.profile)
 
-        # T-BCSE-07 / P1: 内核级 confinement (Linux). 把 Landlock (FS 路径规则 +
-        # 可选网络隔离) 与子进程 rlimit 合并成**单个** preexec_fn 注入, 只在 posix
-        # 且确有要收紧的东西时构造, 否则完全不注入 (零回归). 调用方已显式传
-        # preexec_fn 时尊重其注入, 不覆盖.
-        _rlimits = _build_rlimits(cfg)
-        _want_confinement = bool(
-            cfg.isolate_network
-            or _rlimits
-            or (cfg.strict_work_dir and cfg.allowed_work_dirs)
+        # P0 修复 (超时孤儿泄漏): 子进程自立新会话/进程组, 超时由 _kill_process_tree 整组回收.
+        _popen_kwargs, _own_group = _sb_popen_kwargs(run_kwargs)
+
+        completed, timeout_result = _sb_execute(
+            cmd, valid_cwd, capture_output, text, env,
+            _popen_kwargs, _own_group, timeout, _saved_rlimit_soft,
         )
-        if (
-            os.name == "posix"
-            and _want_confinement
-            and "preexec_fn" not in run_kwargs
-        ):
-            try:
-                from huginn.security.landlock import make_preexec_fn
-
-                # FS 隔离只在 scoped 模式 (strict_work_dir + allowed_work_dirs) 下
-                # 生效; net-only / rlimit-only 时传空 path 集 — 不锁文件系统, 只收紧
-                # 网络与资源. 这也避免"只开网络隔离"把子进程的文件访问一并封死.
-                _scoped = bool(cfg.strict_work_dir and cfg.allowed_work_dirs)
-                rw_dirs = [str(p) for p in cfg.allowed_work_dirs] if _scoped else []
-                # ro 集合含 (a) 工作目录 (只读/执行) + (b) 白名单可执行文件自身所在
-                # 目录, 否则隔离后子进程读不到二进制本身而无法 exec (正确性缺陷).
-                ro_dirs = [str(valid_cwd)] if (valid_cwd and _scoped) else []
-                if _scoped:
-                    try:
-                        exe_abs = self._resolve_executable(cmd)
-                        exe_dir = str(Path(exe_abs).resolve().parent)
-                        if exe_dir not in ro_dirs:
-                            ro_dirs.append(exe_dir)
-                    except Exception:
-                        logger.debug(
-                            "landlock: exe dir resolution failed, confining cwd only",
-                            exc_info=True,
-                        )
-                ro_dirs = [d for d in ro_dirs if d]
-                preexec = make_preexec_fn(
-                    ro_dirs,
-                    rw_dirs,
-                    required=False,
-                    net_isolate=cfg.isolate_network,
-                    rlimits=_rlimits,
-                )
-                if preexec is not None:
-                    run_kwargs["preexec_fn"] = preexec
-            except Exception:
-                logger.debug("landlock confinement skipped (non-fatal)", exc_info=True)
-
-        # Windows coreutils fallback: _resolve_executable 返回原 cmd[0] (e.g. "ls")
-        # 但 shutil.which 找不到 → 这里用 cmd /c 把整条命令包起来, 让 cmd.exe
-        # 走内置命令 (dir/copy/type/...). 白名单已含 cmd.exe 间接调用, 不开新口子.
-        # ponytail: 用 cmd /c 单层包裹, 不递归. 天花板: cmd /c 参数语义跟 POSIX
-        #   不完全一致 (e.g. ls -la vs dir), agent LLM 通常会自己适配 Windows 语法.
-        #   升级路径: 装 git-bash 让 coreutils 在 PATH 里直接 which 到.
-        _WIN_COREUTILS = {
-            "ls",
-            "cp",
-            "mv",
-            "rm",
-            "cat",
-            "touch",
-            "mkdir",
-            "rmdir",
-            "echo",
-            "pwd",
-            "which",
-            "find",
-            "sort",
-            "head",
-            "tail",
-            "wc",
-            "grep",
-            "diff",
-            "true",
-            "false",
-            "test",
-            "env",
-        }
-        if os.name == "nt" and cmd and cmd[0].lower() in _WIN_COREUTILS:
-            # shutil.which 已经在 _resolve_executable 里试过失败, 直接走 cmd /c
-            _win_map = {
-                "ls": "dir",
-                "cp": "copy",
-                "mv": "move",
-                "rm": "del",
-                "cat": "type",
-                "touch": "copy /b",
-                "mkdir": "mkdir",
-                "rmdir": "rmdir",
-                "echo": "echo",
-                "pwd": "cd",
-                "which": "where",
-                "find": "find",
-                "sort": "sort",
-                "head": "more",
-                "tail": "more",
-                "wc": "find /c",
-                "grep": "findstr",
-                "diff": "fc",
-                "true": "rem",
-                "false": "rem",
-                "test": "if",
-                "env": "set",
-            }
-            _mapped = _win_map.get(cmd[0].lower(), cmd[0])
-            # 重组: cmd /c <mapped> <rest args>
-            # ponytail: 不翻译 -la/-la 等参数, agent 自己写 Windows 语法时直接通过.
-            #   这里只在 cmd[0] 是 POSIX coreutil 时翻译, 参数透传 (可能不兼容但至少不卡).
-            cmd = ["cmd", "/c", _mapped, *cmd[1:]]
-
-        # Task 1.2: POSIX 软沙箱补 RLIMIT_AS 内存上限 (按 profile, 跚 Docker 档位对齐).
-        # Windows 跳过 (resource 模块不支持 RLIMIT_AS). save/restore 父进程 limit,
-        # 避免污染 agent 自身内存上限. ponytail: try/except 包裹, 失败不阻塞.
-        #
-        # 关键: 只降 soft limit, 不动 hard limit. 非 root 用户一旦降低 hard limit
-        # 就无法再升高 (POSIX 规范), 导致 setrlimit 恢复失败, RLIMIT_AS 永久卡在
-        # 2GB, 后续 pytest 进程因虚拟内存不足触发 MemoryError 并挂起 (Python 3.13
-        # 在 CI 上实测卡死 42 分钟直到 job timeout).
-        _saved_rlimit_soft = None
-        if os.name != "nt":
-            try:
-                import resource as _resource
-
-                _mem = _profile_mem_bytes(self.profile)
-                if _mem and _mem > 0:
-                    _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
-                    _saved_rlimit_soft = _cur_soft
-                    _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _cur_hard))
-            except Exception:
-                import logging
-
-                logging.getLogger(__name__).debug(
-                    "setrlimit(RLIMIT_AS, profile=%s) failed (non-fatal)",
-                    self.profile,
-                    exc_info=True,
-                )
-
-        # P0 修复 (超时孤儿泄漏): 让子进程自立新会话/进程组, 超时时由
-        # ``_kill_process_tree`` 整组回收 —— 连 ``sh -c '...; python3 heavy.py'``
-        # 派生的孙进程一并杀掉 (旧实现只杀直接子进程 = 那层 sh, 孙进程 orphan 后
-        # 继续跑). 调用方显式指定进程组行为时尊重之, 仅在其确实自立新组时才整组杀.
-        _popen_kwargs = dict(run_kwargs)
-        if "start_new_session" in _popen_kwargs or "creationflags" in _popen_kwargs:
-            _own_group = bool(_popen_kwargs.get("start_new_session")) or bool(
-                _popen_kwargs.get("creationflags", 0)
-                & getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            )
-        else:
-            _default_kwargs, _own_group = new_group_popen_kwargs()
-            _popen_kwargs.update(_default_kwargs)
-
-        _tracked_pid: int | None = None
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(valid_cwd) if valid_cwd else None,
-                stdout=subprocess.PIPE if capture_output else None,
-                stderr=subprocess.PIPE if capture_output else None,
-                text=text,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-                shell=False,
-                **_popen_kwargs,
-            )
-            # 登记在册: 父进程若先退出 (autoloop CLI 无 lifespan 钩子), 退出兜底
-            # ``kill_tracked_children()`` 才能按进程组整组回收, 不留 PPID→1 孤儿.
-            track_live_child(proc.pid, own_group=_own_group)
-            _tracked_pid = proc.pid
-            try:
-                _out, _err = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _kill_process_tree(proc, own_group=_own_group)
-                # 回收直接子进程 (防僵尸) 并取回已产出的部分输出; 孙进程已被整组杀掉.
-                _out, _err = proc.communicate()
-                return SandboxResult(
-                    success=False,
-                    returncode=-1,
-                    stdout=_out or "",
-                    stderr=_err or "",
-                    command=cmd,
-                    dry_run=False,
-                    timed_out=True,
-                )
-            result = subprocess.CompletedProcess(cmd, proc.returncode, _out, _err)
-        finally:
-            # 子进程已结束 (或已被整组回收) → 注销登记, 防止 pid 复用被退出兜底误杀.
-            if _tracked_pid is not None:
-                untrack_live_child(_tracked_pid)
-            # 恢复父进程 soft limit, 避免子进程内存上限反过来卡死 agent 自身.
-            # 只恢复 soft limit — hard limit 从未被降低, 无需恢复.
-            if _saved_rlimit_soft is not None:
-                try:
-                    import resource as _resource
-
-                    _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
-                    _resource.setrlimit(
-                        _resource.RLIMIT_AS, (_saved_rlimit_soft, _cur_hard)
-                    )
-                except Exception:
-                    logger.debug("failed to restore parent rlimit", exc_info=True)
+        if timeout_result is not None:
+            return timeout_result
 
         # Truncate oversized output
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
         max_bytes = self.config.max_output_bytes
-        if isinstance(stdout, bytes):
-            if len(stdout) > max_bytes:
-                stdout = stdout[:max_bytes] + b"\n... [truncated]"
-        else:
-            if len(stdout.encode("utf-8", errors="replace")) > max_bytes:
-                stdout = stdout[: max_bytes // 4] + "\n... [truncated]"
-
-        if isinstance(stderr, bytes):
-            if len(stderr) > max_bytes:
-                stderr = stderr[:max_bytes] + b"\n... [truncated]"
-        else:
-            if len(stderr.encode("utf-8", errors="replace")) > max_bytes:
-                stderr = stderr[: max_bytes // 4] + "\n... [truncated]"
-
+        stdout = _sb_truncate(completed.stdout or "", max_bytes)
+        stderr = _sb_truncate(completed.stderr or "", max_bytes)
         return SandboxResult(
-            success=result.returncode == 0,
-            returncode=result.returncode,
+            success=completed.returncode == 0,
+            returncode=completed.returncode,
             stdout=stdout,
             stderr=stderr,
             command=cmd,

@@ -518,6 +518,16 @@ class AutoloopEngine:
 
     def _init_lazy_backends(self, goal_scheduler: GoalScheduler | None = None) -> None:
         """懒加载词汇表 + phase_gate_hook 装配 (原 __init__ 主体, 行为等价)."""
+        self._lazy_backends_basics()
+        self._lazy_backends_metacog_state()
+        self._lazy_backends_hypothesis_state()
+        self._lazy_backends_execution_state()
+        self._lazy_backends_phase_gate()
+        self._lazy_backends_metacog_layers()
+        self._lazy_backends_services(goal_scheduler)
+
+    def _lazy_backends_basics(self) -> None:
+        """clarification / evolution / persona / kb / perception / plan store / progress / target chains."""
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -540,6 +550,9 @@ class AutoloopEngine:
         # 时 lazy build (调 build_target_chains, 一次 LLM call). 之后只读.
         self._target_chains: list = []
         self._target_chains_built: bool = False
+
+    def _lazy_backends_metacog_state(self) -> None:
+        """eval history / task metrics / drift / visual context / prediction / darwin belief state."""
         # AV2: 元认知护航状态 — autoloop 之前零接 PMK/TaskMetrics/detect_drift,
         # 跑完无 task_metrics.json 落盘, 脱轨无告警, PMK 撕裂无感知. 现补上.
         self._evals_history: list = []
@@ -576,6 +589,9 @@ class AutoloopEngine:
         # prior N(0, 100): 弱信息先验, 让早期观测主导.
         self._darwin_belief_mu: float = 0.0
         self._darwin_belief_sigma2: float = 100.0
+
+    def _lazy_backends_hypothesis_state(self) -> None:
+        """hypothesis confidence / prediction / task perf / reconstruct / GRILL state."""
         # v6 G54: 假设的 confidence + evidence_strength, 供 _plan / _validate 读取
         # confidence = darwin score / 10 (0-1); evidence_strength = supported_ratio (代理)
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
@@ -601,6 +617,9 @@ class AutoloopEngine:
         # ponytail: 不持 GrillSession 实例, 只用 bool + 计数. LLM 自己负责流程.
         self._grill_active: bool = False
         self._grill_turns: int = 0
+
+    def _lazy_backends_execution_state(self) -> None:
+        """last execution result + per-round execution ledger."""
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
@@ -608,6 +627,9 @@ class AutoloopEngine:
         # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
         # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
         self._execution_ledger: list[dict[str, Any]] = []
+
+    def _lazy_backends_phase_gate(self) -> None:
+        """phase gate hook: red/blue team reviewers + math evidence checker."""
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -628,6 +650,9 @@ class AutoloopEngine:
             blue_reviewer_fn=BlueTeamReviewer(),
             math_checker=MathEvidenceChecker(graph=self.hypothesis_graph),
         )
+
+    def _lazy_backends_metacog_layers(self) -> None:
+        """metacognition layers: auditor / registries / convergence & completion detectors."""
         # 元认知层: 信息隔离 / 方法族注册 / 等价性审计 / 阻塞-重启协议.
         # 全部懒加载, 测试或不需要时不会拉起. _hypothesize / refine_failed 按需读.
         # ponytail: 不在 __init__ 实例化, 避免循环 import 和测试 mock 复杂度
@@ -640,6 +665,9 @@ class AutoloopEngine:
         self._metacog_convergence_detector = None
         # 反完成审计: 综合 effort floor + 等价性陷阱 + 不完整性自白
         self._metacog_completion_auditor = None
+
+    def _lazy_backends_services(self, goal_scheduler: GoalScheduler | None = None) -> None:
+        """goal scheduler / side channel / event bus / pending signals / phase state / self-model counter."""
         # Goal scheduler: 持久化目标到 $HUGINN_CACHE_DIR/goals.json.
         # engine.run(goal=...) 时每轮 learn 后查 completion, 满足则提前停.
         # None → 懒加载, 避免实例化时就碰磁盘 (测试隔离用).

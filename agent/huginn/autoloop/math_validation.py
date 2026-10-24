@@ -235,6 +235,162 @@ class MathValidator:
         except Exception as e:
             return {"agrees": False, "reason": f"GP verify error: {e}"}
 
+    @staticmethod
+    def _math_evidence_conservation(
+        math_validation: dict, evidence: dict[str, Any]
+    ) -> None:
+        """1. conservation_law — 从已有 math_validation 透传."""
+        cons = math_validation.get("conservation")
+        if isinstance(cons, dict) and "verified" in cons:
+            evidence["conservation_law"] = {
+                "verified": bool(cons["verified"]),
+                "current": cons.get("message", ""),
+                "symmetry": cons.get("method", ""),
+            }
+
+    async def _math_evidence_dimensional(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """2. dimensional_consistent — 跑量纲分析, 所有 quantity 都能解析 → True."""
+        equation = (
+            execution_result.get("equation") or execution_result.get("equations") or ""
+        )
+        if not equation:
+            return
+        try:
+            from huginn.tools.symbolic_math.tool import (
+                SymbolicMathInput,
+                SymbolicMathTool,
+            )
+
+            tool = SymbolicMathTool()
+            args = SymbolicMathInput(
+                action="dimensional_analysis",
+                expression=str(equation),
+                target="validate_expression",
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                quantities = vr.data.get("quantities", [])
+                has_error = any("error" in q for q in quantities)
+                evidence["dimensional_consistent"] = (
+                    len(quantities) > 0 and not has_error
+                )
+        except Exception:  # 防御: 量纲分析失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: dimensional_analysis failed",
+                exc_info=True,
+            )
+
+    async def _math_evidence_pde(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """3. pde_classification — 跑 pde_classify, 比对 expected vs actual."""
+        pde_coeffs = execution_result.get("pde_coefficients")
+        expected_class = execution_result.get("expected_pde_class")
+        if not (pde_coeffs and expected_class):
+            return
+        try:
+            from huginn.tools.symbolic_math.tool import (
+                SymbolicMathInput,
+                SymbolicMathTool,
+            )
+
+            tool = SymbolicMathTool()
+            args = SymbolicMathInput(
+                action="pde_classify",
+                expression=str(pde_coeffs),
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                actual = vr.data.get("classification", "")
+                evidence["pde_classification"] = {
+                    "consistent": actual.lower() == str(expected_class).lower(),
+                    "expected": str(expected_class),
+                    "actual": actual,
+                }
+        except Exception:  # 防御: PDE 分类失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: pde_classify failed",
+                exc_info=True,
+            )
+
+    async def _math_evidence_sobol(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """4. sobol_top_features — top features (S_i>0.1) 须被 hypothesis 覆盖."""
+        sobol_data = execution_result.get("sobol_data")
+        hypothesis_features = execution_result.get("hypothesis_features")
+        if not (sobol_data and hypothesis_features):
+            return
+        try:
+            from huginn.tools.sci.symbolic_regression_tool import (
+                SymbolicRegressionInput,
+                SymbolicRegressionTool,
+            )
+
+            tool = SymbolicRegressionTool()
+            target_col = (
+                sobol_data.get("target", "y")
+                if isinstance(sobol_data, dict)
+                else "y"
+            )
+            args = SymbolicRegressionInput(
+                action="sobol_indices",
+                data_json=sobol_data,
+                target_column=target_col,
+                n_sobol_samples=512,
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                first_order = vr.data.get("first_order", {})
+                if first_order:
+                    top = [f for f, s in first_order.items() if s > 0.1]
+                    evidence["sobol_top_features"] = {
+                        "hypothesis_covers_top": set(top).issubset(
+                            set(hypothesis_features)
+                        ),
+                        "top_features": top,
+                        "hypothesis_features": list(hypothesis_features),
+                    }
+        except Exception:  # 防御: Sobol 失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: sobol_indices failed",
+                exc_info=True,
+            )
+
+    async def _math_evidence_constraint(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed."""
+        expr = execution_result.get("expression")
+        constraints = execution_result.get("constraints")
+        if not (expr and constraints):
+            return
+        try:
+            from huginn.tools.sci.symbolic_regression_tool import (
+                SymbolicRegressionInput,
+                SymbolicRegressionTool,
+            )
+
+            tool = SymbolicRegressionTool()
+            args = SymbolicRegressionInput(
+                action="constraint_check",
+                probe_expression=str(expr),
+                constraints=constraints,
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                evidence["constraint_check"] = {
+                    "all_passed": vr.data.get("all_passed", False),
+                    "violations": vr.data.get("violations", []),
+                }
+        except Exception:  # 防御: 约束校验失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: constraint_check failed",
+                exc_info=True,
+            )
+
     async def collect_math_evidence(
         self, execution_result: Any, math_validation: dict
     ) -> dict[str, Any]:
@@ -259,13 +415,7 @@ class MathValidator:
             return evidence
 
         # 1. conservation_law — 从已有 math_validation 透传
-        cons = math_validation.get("conservation")
-        if isinstance(cons, dict) and "verified" in cons:
-            evidence["conservation_law"] = {
-                "verified": bool(cons["verified"]),
-                "current": cons.get("message", ""),
-                "symmetry": cons.get("method", ""),
-            }
+        self._math_evidence_conservation(math_validation, evidence)
 
         from huginn.core_types import ToolContext
 
@@ -275,134 +425,10 @@ class MathValidator:
             config=self.settings,
         )
 
-        # 2. dimensional_consistent — 跑量纲分析, 所有 quantity 都能解析 → True
-        equation = (
-            execution_result.get("equation") or execution_result.get("equations") or ""
-        )
-        if equation:
-            try:
-                from huginn.tools.symbolic_math.tool import (
-                    SymbolicMathInput,
-                    SymbolicMathTool,
-                )
-
-                tool = SymbolicMathTool()
-                args = SymbolicMathInput(
-                    action="dimensional_analysis",
-                    expression=str(equation),
-                    target="validate_expression",
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    quantities = vr.data.get("quantities", [])
-                    has_error = any("error" in q for q in quantities)
-                    evidence["dimensional_consistent"] = (
-                        len(quantities) > 0 and not has_error
-                    )
-            except Exception:  # 防御: 量纲分析失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: dimensional_analysis failed",
-                    exc_info=True,
-                )
-
-        # 3. pde_classification — 跑 pde_classify, 比对 expected vs actual
-        pde_coeffs = execution_result.get("pde_coefficients")
-        expected_class = execution_result.get("expected_pde_class")
-        if pde_coeffs and expected_class:
-            try:
-                from huginn.tools.symbolic_math.tool import (
-                    SymbolicMathInput,
-                    SymbolicMathTool,
-                )
-
-                tool = SymbolicMathTool()
-                args = SymbolicMathInput(
-                    action="pde_classify",
-                    expression=str(pde_coeffs),
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    actual = vr.data.get("classification", "")
-                    evidence["pde_classification"] = {
-                        "consistent": actual.lower() == str(expected_class).lower(),
-                        "expected": str(expected_class),
-                        "actual": actual,
-                    }
-            except Exception:  # 防御: PDE 分类失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: pde_classify failed",
-                    exc_info=True,
-                )
-
-        # 4. sobol_top_features — 跑 sobol_indices, top features (S_i>0.1) 必须
-        # 被 hypothesis_features 覆盖
-        sobol_data = execution_result.get("sobol_data")
-        hypothesis_features = execution_result.get("hypothesis_features")
-        if sobol_data and hypothesis_features:
-            try:
-                from huginn.tools.sci.symbolic_regression_tool import (
-                    SymbolicRegressionInput,
-                    SymbolicRegressionTool,
-                )
-
-                tool = SymbolicRegressionTool()
-                target_col = (
-                    sobol_data.get("target", "y")
-                    if isinstance(sobol_data, dict)
-                    else "y"
-                )
-                args = SymbolicRegressionInput(
-                    action="sobol_indices",
-                    data_json=sobol_data,
-                    target_column=target_col,
-                    n_sobol_samples=512,
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    first_order = vr.data.get("first_order", {})
-                    if first_order:
-                        top = [f for f, s in first_order.items() if s > 0.1]
-                        evidence["sobol_top_features"] = {
-                            "hypothesis_covers_top": set(top).issubset(
-                                set(hypothesis_features)
-                            ),
-                            "top_features": top,
-                            "hypothesis_features": list(hypothesis_features),
-                        }
-            except Exception:  # 防御: Sobol 失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: sobol_indices failed",
-                    exc_info=True,
-                )
-
-        # 5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed
-        expr = execution_result.get("expression")
-        constraints = execution_result.get("constraints")
-        if expr and constraints:
-            try:
-                from huginn.tools.sci.symbolic_regression_tool import (
-                    SymbolicRegressionInput,
-                    SymbolicRegressionTool,
-                )
-
-                tool = SymbolicRegressionTool()
-                args = SymbolicRegressionInput(
-                    action="constraint_check",
-                    probe_expression=str(expr),
-                    constraints=constraints,
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    evidence["constraint_check"] = {
-                        "all_passed": vr.data.get("all_passed", False),
-                        "violations": vr.data.get("violations", []),
-                    }
-            except Exception:  # 防御: 约束校验失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: constraint_check failed",
-                    exc_info=True,
-                )
-
+        await self._math_evidence_dimensional(execution_result, tool_ctx, evidence)
+        await self._math_evidence_pde(execution_result, tool_ctx, evidence)
+        await self._math_evidence_sobol(execution_result, tool_ctx, evidence)
+        await self._math_evidence_constraint(execution_result, tool_ctx, evidence)
         return evidence
 
 

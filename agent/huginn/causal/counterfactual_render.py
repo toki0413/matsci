@@ -364,9 +364,9 @@ class CounterfactualRenderTool(HuginnTool):
 
 # ── self-check ───────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """12 项 assert 验证 counterfactual_render 核心行为."""
-    import math as _math
+
+
+def _sc_imports() -> tuple[Any, Any, Any]:
     import random as _rng
     _rng.seed(42)
 
@@ -375,7 +375,12 @@ def _selfcheck() -> None:
         _template_diffusion,
         _template_sintering,
     )
+    return _simulate_once, _template_diffusion, _template_sintering
 
+
+def _sc_diffusion_forward(
+    _simulate_once: Any, _template_diffusion: Any
+) -> tuple[Any, dict]:
     # 1. diffusion 反事实: factual T=800, do(T=1000) → D 升几个数量级
     scm_d = _template_diffusion()
     base_sim = _simulate_once(scm_d, intervention={}, base_conditions={"T": 800})
@@ -401,12 +406,17 @@ def _selfcheck() -> None:
     assert cf_mean > factual_mean * 10, (
         f"counterfactual 应远大于 factual: cf={cf_mean}, factual={factual_mean}"
     )
+    return scm_d, r
 
+
+def _sc_lift(r: dict) -> None:
     # 2. lift 字段正确
     assert "D" in r["lift"]
     assert r["lift"]["D"]["relative_lift"] > 1.0
     assert r["lift"]["D"]["significant"] is True
 
+
+def _sc_reverse(scm_d: Any, _simulate_once: Any) -> None:
     # 3. 逆向反事实: factual T=1000, do(T=800) → D 降
     base_sim2 = _simulate_once(scm_d, intervention={}, base_conditions={"T": 1000})
     D_obs2 = base_sim2["D"]
@@ -422,6 +432,8 @@ def _selfcheck() -> None:
     assert "error" not in r2
     assert r2["targets"]["D"]["mean"] < r2["factual"]["D"]["mean"]
 
+
+def _sc_unreachable_evidence(scm_d: Any) -> None:
     # 4. evidence 不可达 → abduction 返空, counterfactual_render 返 error
     # T=800 时 D ≈ 1.6e-14, evidence D=1e-5 物理不可能匹配
     abducted_bad = _abduct_noise(
@@ -442,6 +454,8 @@ def _selfcheck() -> None:
     assert "error" in r3, f"不可达 evidence 应返 error: {r3}"
     assert "abduction" in r3["error"]
 
+
+def _sc_overlap(scm_d: Any) -> None:
     # 5. evidence 和 intervention 重叠 → 报错
     r4 = counterfactual_render(
         scm_d,
@@ -452,6 +466,8 @@ def _selfcheck() -> None:
     )
     assert "error" in r4
 
+
+def _sc_unconfirmed(_template_diffusion: Any, _simulate_once: Any) -> None:
     # 6. SCM confirmed=False → 警告
     scm_unconf = _template_diffusion()
     scm_unconf.confirmed = False
@@ -469,6 +485,9 @@ def _selfcheck() -> None:
     assert r6["warning"] is not None
     assert "未确认" in r6["warning"]
 
+
+def _sc_end_to_end(_simulate_once: Any, _template_sintering: Any) -> None:
+    import math as _math
     # 7. 端到端 Phase 2+3: fit_scm_from_observations → counterfactual_render
     # 用 sintering 真实参数 Ea=100, A0=1e8, r0=30 生成数据 (Phase 2 测试已验证)
     R_const = 8.314e-3
@@ -510,7 +529,8 @@ def _selfcheck() -> None:
     assert r7["warning"] is not None
     assert "视觉因果链拟合" in r7["warning"]
 
-    # 10. Tool validate_input 拒绝空 evidence/intervention/targets + 未知 SCM
+
+def _sc_tool_validate() -> None:
     import asyncio
     tool = CounterfactualRenderTool()
     loop = asyncio.new_event_loop()
@@ -543,7 +563,9 @@ def _selfcheck() -> None:
     finally:
         loop.close()
 
-    # 11. Tool call 成功
+
+def _sc_tool_call(_simulate_once: Any, _template_diffusion: Any) -> None:
+    import asyncio
     tool2 = CounterfactualRenderTool()
     loop2 = asyncio.new_event_loop()
     try:
@@ -567,6 +589,8 @@ def _selfcheck() -> None:
     finally:
         loop2.close()
 
+
+def _sc_simulate_consistency(_template_sintering: Any) -> None:
     # 12. _simulate_with_noise 一致性: 同 noise + 同 base 应得同结果
     scm_t = _template_sintering()
     noise_sample = {n: scm_t.noise[n]() for n in scm_t.noise}
@@ -577,6 +601,20 @@ def _selfcheck() -> None:
     sim_c = _simulate_with_noise(scm_t, {"T": 1500, "t": 2}, {"T": 1800}, noise_sample)
     assert sim_c["T"] == 1800.0
 
+
+def _selfcheck() -> None:
+    """12 项 assert 验证 counterfactual_render 核心行为."""
+    _simulate_once, _template_diffusion, _template_sintering = _sc_imports()
+    scm_d, r = _sc_diffusion_forward(_simulate_once, _template_diffusion)
+    _sc_lift(r)
+    _sc_reverse(scm_d, _simulate_once)
+    _sc_unreachable_evidence(scm_d)
+    _sc_overlap(scm_d)
+    _sc_unconfirmed(_template_diffusion, _simulate_once)
+    _sc_end_to_end(_simulate_once, _template_sintering)
+    _sc_tool_validate()
+    _sc_tool_call(_simulate_once, _template_diffusion)
+    _sc_simulate_consistency(_template_sintering)
     print("all self-checks passed")
 
 
