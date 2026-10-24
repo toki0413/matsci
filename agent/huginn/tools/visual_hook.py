@@ -118,6 +118,84 @@ def _extract_metric_pairs(stdout: str) -> list[tuple[str, float]]:
     return pairs
 
 
+def _rt_plot_series(ax: Any, result: dict[str, Any]) -> bool:
+    """Band structure / DOS / phonon -> line plot."""
+    for key in ("bands", "dos", "frequencies"):
+        data = result.get(key)
+        if not isinstance(data, list) or not data:
+            continue
+        if isinstance(data[0], list):
+            for line in data[:20]:  # cap at 20 lines
+                if isinstance(line, list):
+                    ax.plot(line, linewidth=0.8)
+        else:
+            ax.plot(data, linewidth=1.2)
+        ax.set_xlabel("k-path" if key == "bands" else key)
+        ax.set_ylabel(key)
+        return True
+    return False
+
+
+def _rt_plot_energies(ax: Any, result: dict[str, Any]) -> bool:
+    """Energies -> scatter/bar."""
+    energies = result.get("energies") or result.get("energy")
+    if isinstance(energies, list) and energies:
+        labels = result.get("labels", [f"#{i}" for i in range(len(energies))])
+        ax.bar(labels[:20], energies[:20])
+        ax.set_ylabel("Energy (eV)")
+        return True
+    if isinstance(energies, int | float):
+        ax.text(
+            0.5, 0.5, f"E = {energies:.4f} eV",
+            ha="center", va="center", fontsize=16,
+        )
+        return True
+    return False
+
+
+def _rt_plot_stress_strain(ax: Any, result: dict[str, Any]) -> bool:
+    """Stress-strain curve."""
+    stress = result.get("stress")
+    strain = result.get("strain")
+    if not (isinstance(stress, list) and isinstance(strain, list)):
+        return False
+    ax.plot(strain, stress, "b-o", markersize=4)
+    ax.set_xlabel("Strain")
+    ax.set_ylabel("Stress (GPa)")
+    return True
+
+
+def _rt_plot_scores(ax: Any, result: dict[str, Any]) -> bool:
+    """Scores -> horizontal bar chart."""
+    scores = result.get("scores")
+    if not isinstance(scores, dict):
+        return False
+    names = list(scores.keys())[:10]
+    ax.barh(names, [scores[n] for n in names])
+    ax.set_xlabel("Score")
+    return True
+
+
+def _rt_plot_metrics(ax: Any, result: dict[str, Any], tool_name: str) -> bool:
+    """F1: code_tool / bash_tool stdout -> 'key: value' bar chart.
+
+    不画 line chart — RCB agent 的 stdout 通常是离散指标 (MAE/RMSE/R2), 不是时序.
+    """
+    if tool_name not in ("code_tool", "bash_tool", "shell_tool"):
+        return False
+    stdout = result.get("stdout") or result.get("output") or ""
+    if not isinstance(stdout, str):
+        return False
+    pairs = _extract_metric_pairs(stdout)
+    if not pairs:
+        return False
+    labels, values = zip(*pairs[:10])
+    ax.bar(labels, values)
+    ax.set_ylabel("Value")
+    ax.tick_params(axis="x", rotation=30)
+    return True
+
+
 def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
     """Generate a quick chart from tool output, return as base64 string.
 
@@ -136,67 +214,13 @@ def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
         return None
 
     fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
-    plotted = False
-
-    # Band structure / DOS / phonon -> line plot
-    for key in ("bands", "dos", "frequencies"):
-        data = result.get(key)
-        if isinstance(data, list) and data:
-            if isinstance(data[0], list):
-                for line in data[:20]:  # cap at 20 lines
-                    if isinstance(line, list):
-                        ax.plot(line, linewidth=0.8)
-            else:
-                ax.plot(data, linewidth=1.2)
-            ax.set_xlabel("k-path" if key == "bands" else key)
-            ax.set_ylabel(key)
-            plotted = True
-            break
-
-    # Energies -> scatter/bar
-    if not plotted:
-        energies = result.get("energies") or result.get("energy")
-        if isinstance(energies, list) and energies:
-            labels = result.get("labels", [f"#{i}" for i in range(len(energies))])
-            ax.bar(labels[:20], energies[:20])
-            ax.set_ylabel("Energy (eV)")
-            plotted = True
-        elif isinstance(energies, int | float):
-            ax.text(0.5, 0.5, f"E = {energies:.4f} eV", ha="center", va="center", fontsize=16)
-            plotted = True
-
-    # Stress-strain
-    if not plotted:
-        stress = result.get("stress")
-        strain = result.get("strain")
-        if isinstance(stress, list) and isinstance(strain, list):
-            ax.plot(strain, stress, "b-o", markersize=4)
-            ax.set_xlabel("Strain")
-            ax.set_ylabel("Stress (GPa)")
-            plotted = True
-
-    # Scores -> bar chart
-    if not plotted:
-        scores = result.get("scores")
-        if isinstance(scores, dict):
-            names = list(scores.keys())[:10]
-            values = [scores[n] for n in names]
-            ax.barh(names, values)
-            ax.set_xlabel("Score")
-            plotted = True
-
-    # F1: code_tool / bash_tool stdout → 解析 "key: value" 对画 bar chart
-    # 不画 line chart — RCB agent 的 stdout 通常是离散指标 (MAE/RMSE/R2), 不是时序.
-    if not plotted and tool_name in ("code_tool", "bash_tool", "shell_tool"):
-        stdout = result.get("stdout") or result.get("output") or ""
-        if isinstance(stdout, str):
-            pairs = _extract_metric_pairs(stdout)
-            if pairs:
-                labels, values = zip(*pairs[:10])
-                ax.bar(labels, values)
-                ax.set_ylabel("Value")
-                ax.tick_params(axis="x", rotation=30)
-                plotted = True
+    plotted = (
+        _rt_plot_series(ax, result)
+        or _rt_plot_energies(ax, result)
+        or _rt_plot_stress_strain(ax, result)
+        or _rt_plot_scores(ax, result)
+        or _rt_plot_metrics(ax, result, tool_name)
+    )
 
     if not plotted:
         plt.close(fig)
@@ -214,6 +238,139 @@ def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
         return None  # too large for context
 
     return b64
+
+
+def _vp_1d_nested(key: str, data: list[Any]) -> list[str]:
+    """Summarize nested 1D series (e.g. bands = [[...], [...]]) as per-band peaks."""
+    sub_lines = []
+    for bi, band in enumerate(data[:5]):
+        try:
+            nums = [float(v) for v in band if isinstance(v, int | float)]
+        except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+        if not nums:
+            continue
+        pk, pk_xy = _to_coord(nums, max(range(len(nums)), key=lambda i: nums[i]))
+        mn, mn_xy = _to_coord(nums, min(range(len(nums)), key=lambda i: nums[i]))
+        sub_lines.append(
+            f"  band{bi}: peak=<point>[{pk_xy}]</point>({nums[pk]:.4f}), "
+            f"min=<point>[{mn_xy}]</point>({nums[mn]:.4f})"
+        )
+    if not sub_lines:
+        return []
+    return [f"[{key}] {len(data)} bands:\n" + "\n".join(sub_lines)]
+
+
+def _vp_trend(nums: list[float]) -> str:
+    """Compare first-half vs second-half means (5% band)."""
+    n = len(nums)
+    mid = n // 2
+    if mid <= 0:
+        return "unknown"
+    first_half = sum(nums[:mid]) / mid
+    second_half = sum(nums[mid:]) / (n - mid)
+    if second_half > first_half * 1.05:
+        return "increasing"
+    if second_half < first_half * 0.95:
+        return "decreasing"
+    return "approximately flat"
+
+
+def _vp_anomalies(nums: list[float], mean_v: float, std_v: float) -> str:
+    """Points more than 2 std from the mean, with coordinates."""
+    anomalies = []
+    if std_v > 0:
+        for i, v in enumerate(nums):
+            if abs(v - mean_v) > 2 * std_v:
+                xy = _normalize_coord(i, len(nums), v, nums)
+                anomalies.append(f"<point>[{xy}]</point>={v:.4f}")
+    return ", ".join(anomalies[:5]) if anomalies else "none"
+
+
+def _vp_1d_flat(key: str, data: list[Any]) -> list[str]:
+    """Summarize a flat 1D numeric series with coordinates + trend."""
+    try:
+        nums = [float(v) for v in data if isinstance(v, int | float)]
+    except (ValueError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return []
+    if not nums:
+        return []
+
+    n = len(nums)
+    peak_idx = max(range(n), key=lambda i: nums[i])
+    min_idx = min(range(n), key=lambda i: nums[i])
+    mean_v = sum(nums) / n
+    std_v = (sum((x - mean_v) ** 2 for x in nums) / n) ** 0.5
+
+    # 坐标化: 归一化到 0-999, 让 LLM 可以"指向"数据位置
+    peak_xy = _normalize_coord(peak_idx, n, nums[peak_idx], nums)
+    min_xy = _normalize_coord(min_idx, n, nums[min_idx], nums)
+    anomalies_str = _vp_anomalies(nums, mean_v, std_v)
+
+    lines = [
+        f"[{key}] n={n}, peak=<point>[{peak_xy}]</point>({nums[peak_idx]:.4f}), "
+        f"min=<point>[{min_xy}]</point>({nums[min_idx]:.4f}), "
+        f"mean={mean_v:.4f}, std={std_v:.4f}, "
+        f"trend={_vp_trend(nums)}, anomalies={anomalies_str}"
+    ]
+
+    # 导数分析: 拐点 (二阶导符号变化) 和 FWHM 估计.
+    # 材料科学中拐点常对应相变/临界点, FWHM 表征峰展宽程度.
+    if n >= 5:
+        lines.extend(_extract_derivative_primitives(nums, key))
+    return lines
+
+
+def _vp_scores(scores: Any) -> list[str]:
+    """Top/bottom scored items with one-coordinate anchors."""
+    if not (isinstance(scores, dict) and scores):
+        return []
+    try:
+        items = sorted(scores.items(), key=lambda kv: float(kv[1]), reverse=True)
+        vals = [float(v) for _, v in items]
+        v_min, v_max = min(vals), max(vals)
+        v_range = v_max - v_min if v_max != v_min else 1.0
+        top_parts = []
+        for k, v in items[:3]:
+            yi = int((float(v) - v_min) / v_range * 999)
+            top_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
+        bot_parts = []
+        for k, v in items[-2:]:
+            yi = int((float(v) - v_min) / v_range * 999)
+            bot_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
+    except (ValueError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return []
+    return [
+        f"[scores] top3: {', '.join(top_parts)}; bottom: {', '.join(bot_parts)}"
+    ]
+
+
+def _vp_metrics(tool_name: str, result: dict[str, Any]) -> list[str]:
+    """F1: code_tool / bash_tool stdout 指标 primitives.
+
+    让 text-only LLM 看到 "MAE=<point>[700]</point>=0.05" 这种坐标化锚点,
+    配合 v8 _measure_nearest_primitive 的变体 5 解析. 不画图也有结构化视觉锚点.
+    """
+    if tool_name not in ("code_tool", "bash_tool", "shell_tool"):
+        return []
+    stdout = result.get("stdout") or result.get("output") or ""
+    if not isinstance(stdout, str):
+        return []
+    pairs = _extract_metric_pairs(stdout)
+    if not pairs:
+        return []
+    vals = [v for _, v in pairs]
+    v_min, v_max = min(vals), max(vals)
+    v_range = v_max - v_min if v_max != v_min else 1.0
+    parts = []
+    for k, v in pairs[:8]:
+        # 单坐标 (1D): x 归一化到 0-999, 让 LLM 指向指标值高度
+        yi = int((v - v_min) / v_range * 999)
+        parts.append(f"{k}=<point>[{yi}]</point>={v:.4f}")
+    return ["[metrics] " + ", ".join(parts)]
 
 
 def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
@@ -244,123 +401,22 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         data = result.get(key)
         if not isinstance(data, list) or not data:
             continue
-        # Handle nested lists (e.g. bands = [[...], [...]]) — flatten to summary
         if isinstance(data[0], list):
-            sub_lines = []
-            for bi, band in enumerate(data[:5]):
-                try:
-                    nums = [float(v) for v in band if isinstance(v, int | float)]
-                except (ValueError, TypeError):
-                    logger.debug("best-effort op failed", exc_info=True)
-                    continue
-                if not nums:
-                    continue
-                pk, pk_xy = _to_coord(nums, max(range(len(nums)), key=lambda i: nums[i]))
-                mn, mn_xy = _to_coord(nums, min(range(len(nums)), key=lambda i: nums[i]))
-                sub_lines.append(
-                    f"  band{bi}: peak=<point>[{pk_xy}]</point>({nums[pk]:.4f}), "
-                    f"min=<point>[{mn_xy}]</point>({nums[mn]:.4f})"
-                )
-            if sub_lines:
-                lines.append(f"[{key}] {len(data)} bands:\n" + "\n".join(sub_lines))
-            continue
-        try:
-            nums = [float(v) for v in data if isinstance(v, int | float)]
-        except (ValueError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
-            continue
-        if not nums:
-            continue
-
-        n = len(nums)
-        peak_idx = max(range(n), key=lambda i: nums[i])
-        min_idx = min(range(n), key=lambda i: nums[i])
-        mean_v = sum(nums) / n
-        std_v = (sum((x - mean_v) ** 2 for x in nums) / n) ** 0.5
-
-        # 坐标化: 归一化到 0-999, 让 LLM 可以"指向"数据位置
-        peak_xy = _normalize_coord(peak_idx, n, nums[peak_idx], nums)
-        min_xy = _normalize_coord(min_idx, n, nums[min_idx], nums)
-
-        # trend: compare first half mean vs second half mean
-        mid = n // 2
-        if mid > 0:
-            first_half = sum(nums[:mid]) / mid
-            second_half = sum(nums[mid:]) / (n - mid)
-            if second_half > first_half * 1.05:
-                trend = "increasing"
-            elif second_half < first_half * 0.95:
-                trend = "decreasing"
-            else:
-                trend = "approximately flat"
+            # 嵌套列表 (e.g. bands = [[...], [...]]) — 展平成逐带摘要
+            lines.extend(_vp_1d_nested(key, data))
         else:
-            trend = "unknown"
-
-        # anomalies: points > 2 std from mean, with coordinates
-        anomalies = []
-        if std_v > 0:
-            for i, v in enumerate(nums):
-                if abs(v - mean_v) > 2 * std_v:
-                    xy = _normalize_coord(i, n, v, nums)
-                    anomalies.append(f"<point>[{xy}]</point>={v:.4f}")
-        anomalies_str = ", ".join(anomalies[:5]) if anomalies else "none"
-
-        lines.append(
-            f"[{key}] n={n}, peak=<point>[{peak_xy}]</point>({nums[peak_idx]:.4f}), "
-            f"min=<point>[{min_xy}]</point>({nums[min_idx]:.4f}), "
-            f"mean={mean_v:.4f}, std={std_v:.4f}, "
-            f"trend={trend}, anomalies={anomalies_str}"
-        )
-
-        # 导数分析: 拐点 (二阶导符号变化) 和 FWHM 估计.
-        # 材料科学中拐点常对应相变/临界点, FWHM 表征峰展宽程度.
-        if n >= 5:
-            deriv_lines = _extract_derivative_primitives(nums, key)
-            lines.extend(deriv_lines)
+            lines.extend(_vp_1d_flat(key, data))
 
     # Dict scores: top/bottom items with box coordinates
-    scores = result.get("scores")
-    if isinstance(scores, dict) and scores:
-        try:
-            items = sorted(scores.items(), key=lambda kv: float(kv[1]), reverse=True)
-            # 坐标化: 每个分数项占一个虚拟 x 位置, y 归一化
-            vals = [float(v) for _, v in items]
-            v_min, v_max = min(vals), max(vals)
-            v_range = v_max - v_min if v_max != v_min else 1.0
-            top_parts = []
-            for k, v in items[:3]:
-                yi = int((float(v) - v_min) / v_range * 999)
-                top_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
-            bot_parts = []
-            for k, v in items[-2:]:
-                yi = int((float(v) - v_min) / v_range * 999)
-                bot_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
-            lines.append(f"[scores] top3: {', '.join(top_parts)}; bottom: {', '.join(bot_parts)}")
-        except (ValueError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
+    lines.extend(_vp_scores(result.get("scores")))
 
     # 2D 数据 primitives: EDS mapping / phase_field / 2D 矩阵
     # 之前只处理 1D (bands/dos/energies), 2D 数据(相场/元素分布)没有坐标化 primitives,
     # text-only LLM 对 2D 形态"失明". 加 2D 分支让 LLM 通过质心/覆盖率坐标推理空间分布.
     lines.extend(_extract_2d_primitives(result))
 
-    # F1: code_tool / bash_tool stdout 指标 primitives — 让 text-only LLM
-    # 看到 "MAE=<point>[700]</point>=0.05" 这种坐标化锚点, 配合 v8 _measure_nearest_primitive
-    # 的变体 5 解析. 不画图也有结构化视觉锚点.
-    if tool_name in ("code_tool", "bash_tool", "shell_tool"):
-        stdout = result.get("stdout") or result.get("output") or ""
-        if isinstance(stdout, str):
-            pairs = _extract_metric_pairs(stdout)
-            if pairs:
-                vals = [v for _, v in pairs]
-                v_min, v_max = min(vals), max(vals)
-                v_range = v_max - v_min if v_max != v_min else 1.0
-                parts = []
-                for k, v in pairs[:8]:
-                    # 单坐标 (1D): x 归一化到 0-999, 让 LLM 指向指标值高度
-                    yi = int((v - v_min) / v_range * 999)
-                    parts.append(f"{k}=<point>[{yi}]</point>={v:.4f}")
-                lines.append("[metrics] " + ", ".join(parts))
+    # F1: code_tool / bash_tool stdout 指标 primitives
+    lines.extend(_vp_metrics(tool_name, result))
 
     if not lines:
         return ""
@@ -538,18 +594,9 @@ def _to_coord(nums: list[float], idx: int) -> tuple[int, str]:
     return idx, xy
 
 
-def _extract_derivative_primitives(nums: list[float], key: str) -> list[str]:
-    """提取导数相关原语: 拐点 + FWHM 估计.
-
-    拐点 = 二阶差分符号变化点, 常对应相变/临界温度.
-    FWHM = 半峰全宽, 用线性插值估算峰的展宽程度.
-    """
-    lines: list[str] = []
+def _dp_inflections(nums: list[float], key: str) -> list[str]:
+    """二阶差分符号变化点 (拐点), 常对应相变/临界温度."""
     n = len(nums)
-    if n < 5:
-        return lines
-
-    # 二阶差分: sign 变化 = 拐点
     inflections: list[str] = []
     for i in range(1, n - 1):
         d2 = (nums[i + 1] - 2 * nums[i] + nums[i - 1])
@@ -557,37 +604,99 @@ def _extract_derivative_primitives(nums: list[float], key: str) -> list[str]:
         if d2_prev != 0 and (d2 > 0) != (d2_prev > 0):
             xy = _normalize_coord(i, n, nums[i], nums)
             inflections.append(f"<point>[{xy}]</point>={nums[i]:.4f}")
-    if inflections:
-        lines.append(
-            f"  [{key}] inflections({len(inflections)}): {', '.join(inflections[:5])}"
-        )
+    if not inflections:
+        return []
+    return [
+        f"  [{key}] inflections({len(inflections)}): {', '.join(inflections[:5])}"
+    ]
 
-    # FWHM: 以最大峰为基准, 找半峰高位置的左右边界
+
+def _dp_fwhm(nums: list[float], key: str) -> list[str]:
+    """FWHM: 以最大峰为基准, 线性找半峰高左右边界."""
+    n = len(nums)
     peak_idx = max(range(n), key=lambda i: nums[i])
     peak_val = nums[peak_idx]
     baseline = min(nums)
     half_max = baseline + (peak_val - baseline) * 0.5
-    # 向左找半峰交叉
+
     left_i = peak_idx
     for i in range(peak_idx, -1, -1):
         if nums[i] < half_max:
             left_i = i
             break
-    # 向右找半峰交叉
     right_i = peak_idx
     for i in range(peak_idx, n):
         if nums[i] < half_max:
             right_i = i
             break
+
     fwhm = right_i - left_i
-    if fwhm > 0:
-        lxy = _normalize_coord(left_i, n, nums[left_i], nums)
-        rxy = _normalize_coord(right_i, n, nums[right_i], nums)
+    if fwhm <= 0:
+        return []
+    lxy = _normalize_coord(left_i, n, nums[left_i], nums)
+    rxy = _normalize_coord(right_i, n, nums[right_i], nums)
+    return [
+        f"  [{key}] FWHM~{fwhm} points, "
+        f"left=<point>[{lxy}]</point>, right=<point>[{rxy}]</point>"
+    ]
+
+
+def _extract_derivative_primitives(nums: list[float], key: str) -> list[str]:
+    """提取导数相关原语: 拐点 + FWHM 估计.
+
+    拐点 = 二阶差分符号变化点, 常对应相变/临界温度.
+    FWHM = 半峰全宽, 用线性插值估算峰的展宽程度.
+    """
+    if len(nums) < 5:
+        return []
+    return _dp_inflections(nums, key) + _dp_fwhm(nums, key)
+
+
+def _cp_1d_series(bl_data: Any, cr_data: Any, key: str) -> list[str]:
+    """单条 1D 序列的跨轮差分: 峰/谷位移 + 新异常."""
+    if not isinstance(bl_data, list) or not isinstance(cr_data, list):
+        return []
+    if isinstance(bl_data[0] if bl_data else 0, list):
+        return []  # 跳过嵌套, 只比 1D
+    try:
+        bl_nums = [float(v) for v in bl_data if isinstance(v, int | float)]
+        cr_nums = [float(v) for v in cr_data if isinstance(v, int | float)]
+    except (ValueError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return []
+    if not bl_nums or not cr_nums:
+        return []
+
+    lines: list[str] = []
+    bl_peak = max(bl_nums)
+    cr_peak = max(cr_nums)
+    shift = cr_peak - bl_peak
+    if abs(shift) > 1e-6:
         lines.append(
-            f"  [{key}] FWHM~{fwhm} points, "
-            f"left=<point>[{lxy}]</point>, right=<point>[{rxy}]</point>"
+            f"[{key}] peak_shift: {bl_peak:.4f} → {cr_peak:.4f} (Δ={shift:+.4f})"
         )
 
+    # 谷值位移: 材料科学中 valley shift 同样重要 (如能带极小值)
+    bl_val = min(bl_nums)
+    cr_val = min(cr_nums)
+    vshift = cr_val - bl_val
+    if abs(vshift) > 1e-6:
+        lines.append(
+            f"[{key}] valley_shift: {bl_val:.4f} → {cr_val:.4f} (Δ={vshift:+.4f})"
+        )
+
+    # 新异常: 本轮有 >2σ 的点但上轮没有
+    cr_mean = sum(cr_nums) / len(cr_nums)
+    cr_std = (sum((x - cr_mean) ** 2 for x in cr_nums) / len(cr_nums)) ** 0.5
+    bl_mean = sum(bl_nums) / len(bl_nums)
+    bl_std = (sum((x - bl_mean) ** 2 for x in bl_nums) / len(bl_nums)) ** 0.5
+    new_anomalies = 0
+    if cr_std > 0 and bl_std > 0:
+        for v in cr_nums:
+            if abs(v - cr_mean) > 2 * cr_std and abs(v - bl_mean) <= 2 * bl_std:
+                new_anomalies += 1
+    if new_anomalies:
+        lines.append(f"[{key}] new_anomalies: {new_anomalies} points outside baseline 2σ")
     return lines
 
 
@@ -608,50 +717,7 @@ def extract_comparative_primitives(
 
     lines: list[str] = []
     for key in ("bands", "dos", "frequencies", "energies", "stress", "strain"):
-        bl_data = bl_result.get(key)
-        cr_data = cr_result.get(key)
-        if not isinstance(bl_data, list) or not isinstance(cr_data, list):
-            continue
-        if isinstance(bl_data[0] if bl_data else 0, list):
-            continue  # 跳过嵌套, 只比 1D
-        try:
-            bl_nums = [float(v) for v in bl_data if isinstance(v, int | float)]
-            cr_nums = [float(v) for v in cr_data if isinstance(v, int | float)]
-        except (ValueError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
-            continue
-        if not bl_nums or not cr_nums:
-            continue
-
-        bl_peak = max(bl_nums)
-        cr_peak = max(cr_nums)
-        shift = cr_peak - bl_peak
-        if abs(shift) > 1e-6:
-            lines.append(
-                f"[{key}] peak_shift: {bl_peak:.4f} → {cr_peak:.4f} (Δ={shift:+.4f})"
-            )
-
-        # 谷值位移: 材料科学中 valley shift 同样重要 (如能带极小值)
-        bl_val = min(bl_nums)
-        cr_val = min(cr_nums)
-        vshift = cr_val - bl_val
-        if abs(vshift) > 1e-6:
-            lines.append(
-                f"[{key}] valley_shift: {bl_val:.4f} → {cr_val:.4f} (Δ={vshift:+.4f})"
-            )
-
-        # 新异常: 本轮有 >2σ 的点但上轮没有
-        cr_mean = sum(cr_nums) / len(cr_nums)
-        cr_std = (sum((x - cr_mean) ** 2 for x in cr_nums) / len(cr_nums)) ** 0.5
-        bl_mean = sum(bl_nums) / len(bl_nums)
-        bl_std = (sum((x - bl_mean) ** 2 for x in bl_nums) / len(bl_nums)) ** 0.5
-        new_anomalies = 0
-        if cr_std > 0 and bl_std > 0:
-            for v in cr_nums:
-                if abs(v - cr_mean) > 2 * cr_std and abs(v - bl_mean) <= 2 * bl_std:
-                    new_anomalies += 1
-        if new_anomalies:
-            lines.append(f"[{key}] new_anomalies: {new_anomalies} points outside baseline 2σ")
+        lines.extend(_cp_1d_series(bl_result.get(key), cr_result.get(key), key))
 
     # QW2: 2D 比较分支 — EDS centroid shift / coverage diff / phase_field vol_frac diff
     # 之前只比 1D, 2D 数据 (相场/元素分布) 的空间变化对 text-only LLM 不可见.
@@ -662,6 +728,114 @@ def extract_comparative_primitives(
     return "### Comparative Visual Primitives (vs last run)\n" + "\n".join(lines)
 
 
+def _c2_norm(px: Any, py: Any, h: float, w: float) -> tuple[int, int]:
+    """像素坐标归一化到 0-999."""
+    nx = int(float(px) / w * 999) if w > 0 else 0
+    ny = int(float(py) / h * 999) if h > 0 else 0
+    return nx, ny
+
+
+def _c2_eds_elem_parts(
+    elem: str, be: Any, ce: Any, bl_h: float, bl_w: float, cr_h: float, cr_w: float
+) -> list[str]:
+    """单个元素的 EDS 质心位移 + 覆盖率变化."""
+    if not (isinstance(be, dict) and isinstance(ce, dict)):
+        return []
+    try:
+        bcx, bcy = be.get("centroid_px", [0, 0])
+        ccx, ccy = ce.get("centroid_px", [0, 0])
+        bnx, bny = _c2_norm(bcx, bcy, bl_h, bl_w)
+        cnx, cny = _c2_norm(ccx, ccy, cr_h, cr_w)
+        dx = cnx - bnx
+        dy = cny - bny
+        parts: list[str] = []
+        if dx or dy:
+            parts.append(
+                f"  {elem} centroid_shift: "
+                f"<point>[{bnx},{bny}]</point> → <point>[{cnx},{cny}]</point> "
+                f"(Δx={dx:+d}, Δy={dy:+d})"
+            )
+        bl_cov = float(be.get("coverage_fraction", 0))
+        cr_cov = float(ce.get("coverage_fraction", 0))
+        if abs(cr_cov - bl_cov) > 1e-4:
+            parts.append(
+                f"  {elem} coverage: {bl_cov * 100:.1f}% → {cr_cov * 100:.1f}% "
+                f"(Δ={(cr_cov - bl_cov) * 100:+.2f}%)"
+            )
+        return parts
+    except (ValueError, TypeError, IndexError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return []
+
+
+def _c2_eds_diff(bl_meas: Any, cr_meas: Any) -> list[str]:
+    """EDS mapping 跨轮 diff: 质心位移 / 覆盖率 / 元素增减."""
+    bl_els = bl_meas.get("elements") if isinstance(bl_meas, dict) else None
+    cr_els = cr_meas.get("elements") if isinstance(cr_meas, dict) else None
+    if not (isinstance(bl_els, dict) and isinstance(cr_els, dict)):
+        return []
+    bl_shape = bl_meas.get("image_shape") or [1, 1]
+    cr_shape = cr_meas.get("image_shape") or bl_shape
+    bl_h, bl_w = float(bl_shape[0]), float(bl_shape[1])
+    cr_h, cr_w = float(cr_shape[0]), float(cr_shape[1])
+
+    parts: list[str] = []
+    for elem in set(bl_els) & set(cr_els):
+        parts.extend(
+            _c2_eds_elem_parts(elem, bl_els[elem], cr_els[elem], bl_h, bl_w, cr_h, cr_w)
+        )
+    # baseline 有但本轮消失 / 本轮新增的元素
+    only_bl = set(bl_els) - set(cr_els)
+    only_cr = set(cr_els) - set(bl_els)
+    if only_bl:
+        parts.append(f"  lost_elements: {sorted(only_bl)}")
+    if only_cr:
+        parts.append(f"  new_elements: {sorted(only_cr)}")
+    if not parts:
+        return []
+    return ["[EDS_mapping] 2D diff:\n" + "\n".join(parts)]
+
+
+def _c2_phase_diff(bl_meas: Any, cr_meas: Any) -> list[str]:
+    """phase_field 跨轮 diff: volume_fractions + interface_pixel_fraction."""
+    bl_pf = bl_meas.get("volume_fractions") if isinstance(bl_meas, dict) else None
+    cr_pf = cr_meas.get("volume_fractions") if isinstance(cr_meas, dict) else None
+    if not (isinstance(bl_pf, dict) and isinstance(cr_pf, dict)):
+        return []
+
+    parts: list[str] = []
+    for phase in set(bl_pf) & set(cr_pf):
+        try:
+            bf = float(bl_pf[phase])
+            cf = float(cr_pf[phase])
+        except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+        if abs(cf - bf) > 1e-4:
+            parts.append(
+                f"  {phase}: {bf * 100:.1f}% → {cf * 100:.1f}% "
+                f"(Δ={(cf - bf) * 100:+.2f}%)"
+            )
+
+    bl_iface = bl_meas.get("interface_pixel_fraction") if isinstance(bl_meas, dict) else None
+    cr_iface = cr_meas.get("interface_pixel_fraction") if isinstance(cr_meas, dict) else None
+    iface_changed = (
+        isinstance(bl_iface, int | float)
+        and isinstance(cr_iface, int | float)
+        and abs(float(cr_iface) - float(bl_iface)) > 1e-4
+    )
+    if iface_changed:
+        parts.append(
+            f"  interface: {float(bl_iface) * 100:.2f}% → "
+            f"{float(cr_iface) * 100:.2f}% "
+            f"(Δ={(float(cr_iface) - float(bl_iface)) * 100:+.3f}%)"
+        )
+
+    if not parts:
+        return []
+    return ["[phase_field] 2D diff:\n" + "\n".join(parts)]
+
+
 def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, Any]) -> list[str]:
     """2D 差分原语: EDS 质心位移 / 覆盖率变化 / 相场体积分数差.
 
@@ -669,87 +843,9 @@ def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, A
     坐标归一化到 0-999, 让 LLM 通过 <point> 引用空间位移.
     ponytail: 只处理结构化字段, 不重建 2D 矩阵. 升级: 光流 / 域配准.
     """
-    out: list[str] = []
-
-    # EDS: elements 字典, 每元素 {centroid_px, coverage_fraction, hotspots}
     bl_meas = bl_result.get("measurements") or bl_result
     cr_meas = cr_result.get("measurements") or cr_result
-    bl_els = bl_meas.get("elements") if isinstance(bl_meas, dict) else None
-    cr_els = cr_meas.get("elements") if isinstance(cr_meas, dict) else None
-    if isinstance(bl_els, dict) and isinstance(cr_els, dict):
-        bl_shape = bl_meas.get("image_shape") or [1, 1]
-        cr_shape = cr_meas.get("image_shape") or bl_shape
-        bl_h, bl_w = float(bl_shape[0]), float(bl_shape[1])
-        cr_h, cr_w = float(cr_shape[0]), float(cr_shape[1])
-        parts = []
-        for elem in set(bl_els) & set(cr_els):
-            be, ce = bl_els[elem], cr_els[elem]
-            if not (isinstance(be, dict) and isinstance(ce, dict)):
-                continue
-            try:
-                bcx, bcy = be.get("centroid_px", [0, 0])
-                ccx, ccy = ce.get("centroid_px", [0, 0])
-                bnx = int(float(bcx) / bl_w * 999) if bl_w > 0 else 0
-                bny = int(float(bcy) / bl_h * 999) if bl_h > 0 else 0
-                cnx = int(float(ccx) / cr_w * 999) if cr_w > 0 else 0
-                cny = int(float(ccy) / cr_h * 999) if cr_h > 0 else 0
-                dx = cnx - bnx
-                dy = cny - bny
-                if dx or dy:
-                    parts.append(
-                        f"  {elem} centroid_shift: "
-                        f"<point>[{bnx},{bny}]</point> → <point>[{cnx},{cny}]</point> "
-                        f"(Δx={dx:+d}, Δy={dy:+d})"
-                    )
-                bl_cov = float(be.get("coverage_fraction", 0))
-                cr_cov = float(ce.get("coverage_fraction", 0))
-                if abs(cr_cov - bl_cov) > 1e-4:
-                    parts.append(
-                        f"  {elem} coverage: {bl_cov * 100:.1f}% → {cr_cov * 100:.1f}% "
-                        f"(Δ={(cr_cov - bl_cov) * 100:+.2f}%)"
-                    )
-            except (ValueError, TypeError, IndexError):
-                logger.debug("best-effort op failed", exc_info=True)
-                continue
-        # baseline 有但本轮消失 / 本轮新增的元素
-        only_bl = set(bl_els) - set(cr_els)
-        only_cr = set(cr_els) - set(bl_els)
-        if only_bl:
-            parts.append(f"  lost_elements: {sorted(only_bl)}")
-        if only_cr:
-            parts.append(f"  new_elements: {sorted(only_cr)}")
-        if parts:
-            out.append("[EDS_mapping] 2D diff:\n" + "\n".join(parts))
-
-    # phase_field: volume_fractions + interface_pixel_fraction
-    bl_pf = bl_meas.get("volume_fractions") if isinstance(bl_meas, dict) else None
-    cr_pf = cr_meas.get("volume_fractions") if isinstance(cr_meas, dict) else None
-    if isinstance(bl_pf, dict) and isinstance(cr_pf, dict):
-        parts = []
-        for phase in set(bl_pf) & set(cr_pf):
-            try:
-                bf = float(bl_pf[phase])
-                cf = float(cr_pf[phase])
-                if abs(cf - bf) > 1e-4:
-                    parts.append(
-                        f"  {phase}: {bf * 100:.1f}% → {cf * 100:.1f}% "
-                        f"(Δ={(cf - bf) * 100:+.2f}%)"
-                    )
-            except (ValueError, TypeError):
-                logger.debug("best-effort op failed", exc_info=True)
-                continue
-        bl_iface = bl_meas.get("interface_pixel_fraction") if isinstance(bl_meas, dict) else None
-        cr_iface = cr_meas.get("interface_pixel_fraction") if isinstance(cr_meas, dict) else None
-        if isinstance(bl_iface, int | float) and isinstance(cr_iface, int | float) and abs(float(cr_iface) - float(bl_iface)) > 1e-4:
-                parts.append(
-                    f"  interface: {float(bl_iface) * 100:.2f}% → "
-                    f"{float(cr_iface) * 100:.2f}% "
-                    f"(Δ={(float(cr_iface) - float(bl_iface)) * 100:+.3f}%)"
-                )
-        if parts:
-            out.append("[phase_field] 2D diff:\n" + "\n".join(parts))
-
-    return out
+    return _c2_eds_diff(bl_meas, cr_meas) + _c2_phase_diff(bl_meas, cr_meas)
 
 
 def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]:
@@ -798,21 +894,10 @@ def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]
     return output
 
 
-def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
-    """估算工具产出的数值数据可视化置信度.
-
-    1D 数据 (bands/dos/energies): 数据点数 / 信噪比 / 异常比例
-    2D 数据 (EDS/phase_field): 像素覆盖率 / 域数量 / 重叠度
-    ponytail: 启发式加权, 不调 LLM. 升级: 让 LLM 判断数据质量.
-    """
-    result = output.get("result", {})
-    if not isinstance(result, dict):
-        return {}
-
+def _dc_score_1d(result: dict[str, Any]) -> tuple[float, list[str]]:
+    """1D 序列置信度: 数据点数 / 信噪比 / 异常比例."""
     score = 0.0
     caveats: list[str] = []
-
-    # 1D 数据
     for key in ("bands", "dos", "frequencies", "energies", "stress", "strain"):
         data = result.get(key)
         if not isinstance(data, list) or not data:
@@ -850,44 +935,82 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
 
         if anom_rate > 0.1:
             caveats.append(f"high_anomaly_rate_{key}: {anom_rate * 100:.1f}% 数据点异常")
+    return score, caveats
 
-    # 2D 数据 (EDS)
-    measurements = result.get("measurements") or result
+
+def _dc_score_eds(measurements: Any) -> tuple[float, list[str]]:
+    """2D EDS 置信度: 元素覆盖率 / hotspots 存在性."""
+    score = 0.0
+    caveats: list[str] = []
     elements = measurements.get("elements") if isinstance(measurements, dict) else None
-    if isinstance(elements, dict) and elements:
-        total_cov = 0.0
-        n_elems = 0
-        for _elem, stats in elements.items():
-            if isinstance(stats, dict):
-                cov = float(stats.get("coverage_fraction", 0))
-                total_cov += cov
-                n_elems += 1
-                # hotspots 存在说明做了连通域分析, 置信度高
-                if stats.get("hotspots"):
-                    score += 0.05
-        avg_cov = total_cov / n_elems if n_elems > 0 else 0
-        if avg_cov < 0.05:
-            caveats.append(f"low_coverage_eds: 平均覆盖率 {avg_cov * 100:.1f}%, 元素信号弱")
-        elif avg_cov > 0.5:
-            score += 0.1
-        if n_elems == 0:
-            caveats.append("no_elements_eds: 未检测到元素")
+    if not (isinstance(elements, dict) and elements):
+        return score, caveats
 
-    # 2D 数据 (phase_field)
+    total_cov = 0.0
+    n_elems = 0
+    for _elem, stats in elements.items():
+        if isinstance(stats, dict):
+            cov = float(stats.get("coverage_fraction", 0))
+            total_cov += cov
+            n_elems += 1
+            # hotspots 存在说明做了连通域分析, 置信度高
+            if stats.get("hotspots"):
+                score += 0.05
+    avg_cov = total_cov / n_elems if n_elems > 0 else 0
+    if avg_cov < 0.05:
+        caveats.append(f"low_coverage_eds: 平均覆盖率 {avg_cov * 100:.1f}%, 元素信号弱")
+    elif avg_cov > 0.5:
+        score += 0.1
+    if n_elems == 0:
+        caveats.append("no_elements_eds: 未检测到元素")
+    return score, caveats
+
+
+def _dc_score_phase_field(measurements: Any) -> tuple[float, list[str]]:
+    """2D 相场置信度: 相域数量 / 质心存在性."""
+    score = 0.0
+    caveats: list[str] = []
     vol_fracs = measurements.get("volume_fractions") if isinstance(measurements, dict) else None
-    if isinstance(vol_fracs, dict) and vol_fracs:
-        morphology = measurements.get("morphology") if isinstance(measurements, dict) else None
-        if isinstance(morphology, dict):
-            n_total_doms = 0
-            for _phase, morph in morphology.items():
-                if isinstance(morph, dict):
-                    n_total_doms += int(morph.get("n_domains", 0))
-                    if morph.get("top_domain_centroids_px"):
-                        score += 0.05
-            if n_total_doms == 0:
-                caveats.append("no_domains_phase_field: 未检测到相域")
-            elif n_total_doms >= 3:
-                score += 0.1
+    if not (isinstance(vol_fracs, dict) and vol_fracs):
+        return score, caveats
+
+    morphology = measurements.get("morphology") if isinstance(measurements, dict) else None
+    if not isinstance(morphology, dict):
+        return score, caveats
+    n_total_doms = 0
+    for _phase, morph in morphology.items():
+        if isinstance(morph, dict):
+            n_total_doms += int(morph.get("n_domains", 0))
+            if morph.get("top_domain_centroids_px"):
+                score += 0.05
+    if n_total_doms == 0:
+        caveats.append("no_domains_phase_field: 未检测到相域")
+    elif n_total_doms >= 3:
+        score += 0.1
+    return score, caveats
+
+
+def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
+    """估算工具产出的数值数据可视化置信度.
+
+    1D 数据 (bands/dos/energies): 数据点数 / 信噪比 / 异常比例
+    2D 数据 (EDS/phase_field): 像素覆盖率 / 域数量 / 重叠度
+    ponytail: 启发式加权, 不调 LLM. 升级: 让 LLM 判断数据质量.
+    """
+    result = output.get("result", {})
+    if not isinstance(result, dict):
+        return {}
+
+    measurements = result.get("measurements") or result
+    score = 0.0
+    caveats: list[str] = []
+    for s, c in (
+        _dc_score_1d(result),
+        _dc_score_eds(measurements),
+        _dc_score_phase_field(measurements),
+    ):
+        score += s
+        caveats.extend(c)
 
     if not caveats:
         score += 0.2  # 无 caveats 加分
@@ -900,6 +1023,79 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── M6: <box>[x1,y1,x2,y2]</box> 原语 + 连通域 bbox 检测 ────────────────────
+
+
+def _bp_region_boxes(
+    slices: Any, labeled: Any, h: int, w: int, min_area_px2: int, max_boxes: int
+) -> list[str]:
+    """把连通域 slices 转成归一化 <box> 原语行."""
+    import numpy as np
+
+    boxes: list[str] = []
+    for i, sl in enumerate(slices):
+        if sl is None:
+            continue
+        y1, y2 = int(sl[0].start), int(sl[0].stop)
+        x1, x2 = int(sl[1].start), int(sl[1].stop)
+        area = (y2 - y1) * (x2 - x1)
+        if area < min_area_px2:
+            continue
+        # 真实像素面积 (连通域内像素数, 比 bbox 面积更准)
+        real_area = int(np.sum(labeled[sl] == i + 1))
+        nx1 = int(x1 / w * 999) if w > 0 else 0
+        ny1 = int(y1 / h * 999) if h > 0 else 0
+        nx2 = int(x2 / w * 999) if w > 0 else 0
+        ny2 = int(y2 / h * 999) if h > 0 else 0
+        boxes.append(
+            f"<box>[{nx1},{ny1},{nx2},{ny2}]</box>(region{i+1}:{real_area}px²)"
+        )
+        if len(boxes) >= max_boxes:
+            break
+    return boxes
+
+
+def _bp_overall_box(binary: Any, h: int, w: int) -> str | None:
+    """覆盖所有连通域的最小外接矩形."""
+    import numpy as np
+
+    ys, xs = np.where(binary)
+    if len(ys) == 0 or len(xs) == 0:
+        return None
+    overall_x1 = int(xs.min() / w * 999) if w > 0 else 0
+    overall_y1 = int(ys.min() / h * 999) if h > 0 else 0
+    overall_x2 = int(xs.max() / w * 999) if w > 0 else 0
+    overall_y2 = int(ys.max() / h * 999) if h > 0 else 0
+    return (
+        f"<box>[{overall_x1},{overall_y1},{overall_x2},{overall_y2}]</box>"
+        f"(overall:{int(np.sum(binary))}px²)"
+    )
+
+
+def _bp_load_mask(
+    image_bytes: bytes, threshold: int
+) -> tuple[Any, Any, int, Any, int, int] | None:
+    """读图 → 灰度 → 二值 → 连通域标注. 失败返回 None."""
+    try:
+        import numpy as np
+        from PIL import Image
+        from scipy import ndimage
+    except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode != "L":
+        img = img.convert("L")
+    arr = np.asarray(img)
+    h, w = arr.shape
+    if h == 0 or w == 0:
+        return None
+
+    binary = arr < threshold
+    labeled, n = ndimage.label(binary)
+    if n == 0:
+        return None
+    return binary, labeled, n, ndimage.find_objects(labeled), h, w
 
 
 def extract_box_primitives(
@@ -929,62 +1125,17 @@ def extract_box_primitives(
         primitives 文本. 无连通域时返回空字符串.
     """
     try:
-        import numpy as np
-        from PIL import Image
-        from scipy import ndimage
-    except ImportError:
-        logger.debug("best-effort op failed", exc_info=True)
-        return ""
-
-    try:
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode != "L":
-            img = img.convert("L")
-        arr = np.asarray(img)
-        h, w = arr.shape
-        if h == 0 or w == 0:
+        mask = _bp_load_mask(image_bytes, threshold)
+        if mask is None:
             return ""
-
-        binary = arr < threshold
-        labeled, n = ndimage.label(binary)
-        if n == 0:
-            return ""
-
-        slices = ndimage.find_objects(labeled)
-        boxes: list[str] = []
-        for i, sl in enumerate(slices):
-            if sl is None:
-                continue
-            y1, y2 = int(sl[0].start), int(sl[0].stop)
-            x1, x2 = int(sl[1].start), int(sl[1].stop)
-            area = (y2 - y1) * (x2 - x1)
-            if area < min_area_px2:
-                continue
-            # 真实像素面积 (连通域内像素数, 比 bbox 面积更准)
-            real_area = int(np.sum(labeled[sl] == i + 1))
-            nx1 = int(x1 / w * 999) if w > 0 else 0
-            ny1 = int(y1 / h * 999) if h > 0 else 0
-            nx2 = int(x2 / w * 999) if w > 0 else 0
-            ny2 = int(y2 / h * 999) if h > 0 else 0
-            boxes.append(
-                f"<box>[{nx1},{ny1},{nx2},{ny2}]</box>(region{i+1}:{real_area}px²)"
-            )
-            if len(boxes) >= max_boxes:
-                break
-
+        binary, labeled, n, slices, h, w = mask
+        boxes = _bp_region_boxes(slices, labeled, h, w, min_area_px2, max_boxes)
         if not boxes:
             return ""
+
         # 加整体 bbox (覆盖所有连通域的最小外接矩形)
-        ys, xs = np.where(binary)
-        if len(ys) > 0 and len(xs) > 0:
-            overall_x1 = int(xs.min() / w * 999) if w > 0 else 0
-            overall_y1 = int(ys.min() / h * 999) if h > 0 else 0
-            overall_x2 = int(xs.max() / w * 999) if w > 0 else 0
-            overall_y2 = int(ys.max() / h * 999) if h > 0 else 0
-            overall = (
-                f"<box>[{overall_x1},{overall_y1},{overall_x2},{overall_y2}]</box>"
-                f"(overall:{int(np.sum(binary))}px²)"
-            )
+        overall = _bp_overall_box(binary, h, w)
+        if overall:
             boxes.insert(0, overall)
 
         return f"[boxes] n_regions={n}, bboxes: " + ", ".join(boxes)
@@ -1030,6 +1181,27 @@ _POINT3D_RE = _re.compile(
 )
 
 
+def _p3d_normalize(arr: Any, normalize_to: int | None) -> Any:
+    """每维独立 min-max 归一化到 [0, normalize_to]."""
+    import numpy as _np
+
+    if normalize_to is not None and len(arr) > 0:
+        mins = arr.min(axis=0)
+        maxs = arr.max(axis=0)
+        ranges = _np.where(maxs - mins > 1e-9, maxs - mins, 1.0)
+        return ((arr - mins) / ranges * normalize_to).astype(int)
+    return arr.astype(int)
+
+
+def _p3d_label(i: int, labels: list[str] | None, species: list[str] | None) -> str:
+    """按 species 优先、labels 次之、atom{i} 兜底取标签."""
+    if species and i < len(species):
+        return str(species[i])
+    if labels and i < len(labels):
+        return str(labels[i])
+    return f"atom{i}"
+
+
 def extract_point3d_primitives(
     coords: list[list[float]] | Any,
     labels: list[str] | None = None,
@@ -1068,28 +1240,12 @@ def extract_point3d_primitives(
     if arr.size == 0 or arr.ndim != 2 or arr.shape[1] != 3:
         return ""
 
-    # 归一化: 每维独立 min-max 到 [0, normalize_to]
-    if normalize_to is not None and len(arr) > 0:
-        mins = arr.min(axis=0)
-        maxs = arr.max(axis=0)
-        ranges = _np.where(maxs - mins > 1e-9, maxs - mins, 1.0)
-        arr_norm = ((arr - mins) / ranges * normalize_to).astype(int)
-    else:
-        arr_norm = arr.astype(int)
+    arr_norm = _p3d_normalize(arr, normalize_to)
 
     lines: list[str] = []
     for i, (x, y, z) in enumerate(arr_norm):
-        label = ""
-        if species and i < len(species):
-            label = str(species[i])
-        elif labels and i < len(labels):
-            label = str(labels[i])
-        else:
-            label = f"atom{i}"
-        if label:
-            lines.append(f"<point3d>[{int(x)},{int(y)},{int(z)}]</point3d>({label})")
-        else:
-            lines.append(f"<point3d>[{int(x)},{int(y)},{int(z)}]</point3d>")
+        label = _p3d_label(i, labels, species)
+        lines.append(f"<point3d>[{int(x)},{int(y)},{int(z)}]</point3d>({label})")
     return "\n".join(lines)
 
 
@@ -1119,12 +1275,8 @@ def parse_point3d_primitive(text: str) -> list[dict[str, Any]]:
 # ── selfcheck ──────────────────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """M6 selfcheck: <box> 原语 + parse + extract (真图 + 解析回环)."""
-    import io as _io
-
-    from PIL import Image
-
+def _sc_parse_checks() -> None:
+    """校验 1-3: parse_box_primitive 解析行为."""
     # 1. parse_box_primitive: 标准 <box> 原语解析
     text = (
         "[boxes] n_regions=3, bboxes: "
@@ -1153,6 +1305,13 @@ def _selfcheck() -> None:
     assert p[0]["label"] == "", p[0]
     assert p[0]["area_px2"] is None, p[0]
     print("3. parse_box_primitive no label OK")
+
+
+def _sc_image_detect_checks() -> None:
+    """校验 4-6: 真图连通域检测 + extract→parse 回环."""
+    import io as _io
+
+    from PIL import Image
 
     # 4. extract_box_primitives: 真图检测 — 黑底白图反过来, 黑色像素 < 128
     # 画一张 100x100 白图, 中间放 3 个黑色方块 (10x10 each)
@@ -1186,7 +1345,13 @@ def _selfcheck() -> None:
     assert len(parsed2) >= 3, f"round-trip parse failed: {len(parsed2)} boxes from {out}"
     print(f"6. round-trip extract→parse OK: {len(parsed2)} boxes")
 
-    # 7. min_area_px2 过滤小连通域
+
+def _sc_image_filter_checks() -> None:
+    """校验 7: min_area_px2 过滤小连通域."""
+    import io as _io
+
+    from PIL import Image
+
     img2 = Image.new("L", (100, 100), 255)
     # 大方块 20x20 + 小方块 2x2
     for x in range(20, 40):
@@ -1205,6 +1370,15 @@ def _selfcheck() -> None:
     assert "overall" in region_labels, f"missing overall: {region_labels}"
     print(f"7. min_area filter OK: {len(parsed3)} boxes after filter (small region dropped)")
 
+
+def _sc_image_checks() -> None:
+    """校验 4-7: extract_box_primitives 连通域检测."""
+    _sc_image_detect_checks()
+    _sc_image_filter_checks()
+
+
+def _sc_point3d_checks() -> None:
+    """校验 8-11: <point3d> 原语生成与解析回环."""
     # 8. <point3d> 原语: extract_point3d_primitives + parse_point3d_primitive 回环
     coords_3d = [
         [0.0, 0.0, 0.0],
@@ -1241,6 +1415,12 @@ def _selfcheck() -> None:
     assert extract_point3d_primitives([[1, 2]]) == ""  # 不是 (N, 3)
     print("11. <point3d> empty/invalid input OK")
 
+
+def _selfcheck() -> None:
+    """M6 selfcheck: <box> 原语 + parse + extract (真图 + 解析回环)."""
+    _sc_parse_checks()
+    _sc_image_checks()
+    _sc_point3d_checks()
     print("M6+point3d ALL CHECKS PASSED")
 
 

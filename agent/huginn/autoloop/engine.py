@@ -306,6 +306,19 @@ class AutoloopEngine:
         agent_factory: Any = None,
         resume_from_state: str | None = None,
     ):
+        self._init_core(workspace, agent_factory, verification_model, memory_manager)
+        self._init_collaborators()
+        self._init_knowledge_and_tools()
+        self._init_runtime(goal_scheduler, resume_from_state)
+
+    def _init_core(
+        self,
+        workspace: str | Path | None,
+        agent_factory: Any,
+        verification_model: Any,
+        memory_manager: MemoryManager | None,
+    ) -> None:
+        """基础状态: workspace / signals / model / model_router / memory."""
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
         # EngineSignals: 持有纯环信号字段的单一事实源; 名下属性桥 self._<field>
@@ -325,10 +338,9 @@ class AutoloopEngine:
             set_model_provider(lambda: self.model)
         except Exception:  # 防御: 语义提供方注入失败跳过
             logger.debug("hypothesis_semantic model provider inject skipped", exc_info=True)
-        # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的
-        # task 路由真正生效 (之前 getattr(self,"model_router",None) 恒 None,
-        # "reasoning/summarize/verification" 分类路由全是死代码).
-        # 单模型配置时 build_agent_kwargs 返回 model_router=None, 行为不变.
+        # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的 task
+        # 路由真正生效 (单模型配置时 build_agent_kwargs 返回 None, 行为不变).
+        # 不挂则 getattr(self,"model_router",None) 恒 None, verification 路由是死码.
         self.model_router = None
         try:
             from huginn.config import get_config
@@ -340,15 +352,17 @@ class AutoloopEngine:
         except Exception:  # 防御: 模型路由构建失败跳过
             logger.debug("model_router build skipped (non-fatal)", exc_info=True)
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
-        # 显式注入的 verification_model 优先; 未注入时默认走 select_model
-        # ("verification" 路由会选注册的独立验证模型, 无则退回 self.model),
-        # 保持单模型下行为与改动前一致.
+        # 显式注入优先; 未注入走 select_model("verification") (无注册则退回 self.model),
+        # 单模型下行为不变.
         self.verification_model = verification_model or self.select_model(
             "verification"
         )
         # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
+
+    def _init_collaborators(self) -> None:
+        """去 mixin 协作对象 (阶段 1-10) + 召回/帧存储."""
         # 去 mixin 阶段1: MathValidationMixin → MathValidator 协作对象.
         # engine_reflect.py:133/153 通过薄委托方法 _run_math_validation /
         # _collect_math_evidence 走这里, 调用点零改动.
@@ -388,6 +402,9 @@ class AutoloopEngine:
         self._recall_modes = RecallModes(self)
         # 无损视觉帧存储 (懒加载; 只在 visual_frame_memory 开且真产出帧时才建).
         self._frame_store: Any = None
+
+    def _init_knowledge_and_tools(self) -> None:
+        """知识图 / 假设图 / 报告与子引擎 (explorer / workflow / coder)."""
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -432,6 +449,10 @@ class AutoloopEngine:
             )
         )
 
+    def _init_runtime(
+        self, goal_scheduler: GoalScheduler | None, resume_from_state: str | None
+    ) -> None:
+        """运行期状态: 失败跟踪 / lazy 后端 / resume / ledger / 对齐数据集."""
         self._init_failure_state()
         self._init_lazy_backends(goal_scheduler)
 
@@ -450,7 +471,13 @@ class AutoloopEngine:
     # ── 状态初始化分片 (b4 slim: 纯 self.xxx 默认值块外移, 行为等价) ──
 
     def _init_failure_state(self) -> None:
-        """失败跟踪 / 窗口 / refine / pivot 状态 (原 __init__ 主体, 纯默认值)."""
+        """失败跟踪 / 窗口 / refine / pivot / plan_check 状态 (原 __init__ 主体)."""
+        self._init_failure_counters()
+        self._init_refine_state()
+        self._init_plan_check_state()
+
+    def _init_failure_counters(self) -> None:
+        """stop / iteration / 连续失败 / 分类阈值 / 滑动窗口失败率."""
         self._should_stop = False
         self._iteration = 0
         # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户;
@@ -478,6 +505,9 @@ class AutoloopEngine:
         self._validate_window_fail_threshold = float(
             os.environ.get("HUGINN_VALIDATE_FAIL_THRESHOLD", "0.8")
         )
+
+    def _init_refine_state(self) -> None:
+        """refine / pivot 计数 + phase 解耦 hint + 瞬时不可用标记."""
         # refine 循环计数: 防止 refute→refine 无限循环
         # v7 长任务: 8→20 默认. Oxelra 失败回退不计数, 这里仍保留上限防失控.
         self._refine_count = 0
@@ -505,6 +535,9 @@ class AutoloopEngine:
         # 默认开, RCBench 跑分需要确定性时设 HUGINN_COGNITIVE_LLM_DECIDER=0 关掉.
         # 失败/超时/非法 action 自动 fallback 到规则版, 不影响死循环防护.
         self._use_llm_decider = os.environ.get("HUGINN_COGNITIVE_LLM_DECIDER", "1") == "1"
+
+    def _init_plan_check_state(self) -> None:
+        """plan_check / scene_tag 状态 (跨 run 持久化的失败模式记忆)."""
         # plan_check 状态走引擎级, 不塞 plan dict — plan 会序列化进 prompt,
         # 塞进去等于把校验元信息喂给 LLM 污染上下文. history 喂自适应, last_result
         # 给 _validate 取, warnings 留痕. patterns 跨 run 持久化 (失败模式记忆).
@@ -2064,8 +2097,6 @@ class AutoloopEngine:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
-
-
     def _extract_haptic_layer(self, execution_result: Any):
         """Step 8: 从 execution_result 抽力学字段, 构 HapticPropertyLayer.
 
@@ -2074,17 +2105,9 @@ class AutoloopEngine:
         phonon_freqs / surface_energy / thermal), 其他格式让各 tool 自己 add.
         ceiling: stage_results[*].output 里的力学字段抓不到, 升级路径递归扫.
         """
-        if not isinstance(execution_result, dict):
+        data = self._haptic_unwrap(execution_result)
+        if data is None:
             return None
-        data = execution_result
-        # _validate / _literature_comparison 用的同款 fallback: result_data 优先, parsed 兜底
-        nested = data.get("result_data")
-        if isinstance(nested, dict):
-            data = nested
-        else:
-            nested = data.get("parsed")
-            if isinstance(nested, dict):
-                data = nested
 
         # 力学字段 — 跟 validate_tool._run_elastic_validation 对齐
         elastic_raw = data.get("elastic_tensor") or data.get("elastic_constants") or data.get("C")
@@ -2100,37 +2123,55 @@ class AutoloopEngine:
 
         from huginn.metacog.haptic_property_layer import HapticPropertyLayer
 
-        elastic = None
-        if elastic_raw is not None:
-            try:
-                import numpy as np
-
-                from huginn.mechanics import ElasticTensor
-                C = np.array(elastic_raw, dtype=float)
-                if C.shape == (6, 6):
-                    elastic = ElasticTensor(C=C)
-            except Exception:  # 防御: 弹性张量解析失败跳过
-                logger.debug(
-                    "elastic_tensor parse failed, skipping elastic field",
-                    exc_info=True,
-                )
-
-        phonon_arr = None
-        if phonon is not None:
-            try:
-                import numpy as np
-                phonon_arr = np.asarray(phonon, dtype=float)
-            except Exception:  # 防御: 声子数组解析失败跳过
-                logger.debug("phonon array parse skipped", exc_info=True)
-
         return HapticPropertyLayer(
-            elastic=elastic,
-            phonon_freqs=phonon_arr,
+            elastic=self._haptic_elastic(elastic_raw),
+            phonon_freqs=self._haptic_phonon(phonon),
             surface_energy=float(surface) if surface is not None else None,
             thermal=thermal if isinstance(thermal, dict) else None,
         )
 
+    @staticmethod
+    def _haptic_unwrap(execution_result: Any) -> dict | None:
+        """取顶层 dict; result_data 优先, parsed 兜底 (同 _validate 的 fallback)."""
+        if not isinstance(execution_result, dict):
+            return None
+        data = execution_result
+        nested = data.get("result_data")
+        if isinstance(nested, dict):
+            return nested
+        nested = data.get("parsed")
+        return nested if isinstance(nested, dict) else data
 
+    @staticmethod
+    def _haptic_elastic(elastic_raw: Any) -> Any:
+        """解析 6x6 弹性张量; 非 6x6 或解析失败 → None."""
+        if elastic_raw is None:
+            return None
+        try:
+            import numpy as np
+
+            from huginn.mechanics import ElasticTensor
+            C = np.array(elastic_raw, dtype=float)
+            if C.shape == (6, 6):
+                return ElasticTensor(C=C)
+        except Exception:  # 防御: 弹性张量解析失败跳过
+            logger.debug(
+                "elastic_tensor parse failed, skipping elastic field",
+                exc_info=True,
+            )
+        return None
+
+    @staticmethod
+    def _haptic_phonon(phonon: Any) -> Any:
+        """解析声子频率数组; 解析失败 → None."""
+        if phonon is None:
+            return None
+        try:
+            import numpy as np
+            return np.asarray(phonon, dtype=float)
+        except Exception:  # 防御: 声子数组解析失败跳过
+            logger.debug("phonon array parse skipped", exc_info=True)
+            return None
 
     def _collect_alignment_pair(
         self, execution_result: Any, tool_name: str | None = None,

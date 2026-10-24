@@ -78,6 +78,159 @@ logger = logging.getLogger(__name__)
 _MAX_ACTION_HIST = int(os.environ.get("HUGINN_ACTION_HIST_MAX", "1000"))
 # 迭代历史栈上限: 50 轮足够回溯一个完整 autoresearch run 的试错路径
 _MAX_ITER_HIST = int(os.environ.get("HUGINN_ITER_HIST_MAX", "50"))
+
+
+def _trim_action_history(history: list[str]) -> None:
+    """截断到滑动窗口, 防 700 万步极限场景内存爆炸.
+
+    所有调用方只用尾部 ([-10:], count, reversed, len), 截断前缀不影响语义.
+    ponytail: 保留 list 不改 deque, 避免切片兼容性. 升级路径: deque + tail_n().
+    """
+    if len(history) > _MAX_ACTION_HIST:
+        del history[: -_MAX_ACTION_HIST]
+
+
+def _fail_window_str(window: list, size: int) -> str:
+    """700 万步场景: 滑动窗口失败率; 窗口未满时显示 building."""
+    if len(window) < size or not size:
+        return f"building ({len(window)}/{size})"
+    return f"{1.0 - (sum(window) / len(window)):.2f} (last {size})"
+
+
+# decider prompt 的静态尾部 (Actions 清单 + 输出契约), 与动态状态块分开维护.
+_DECIDER_FOOTER = """Actions:
+- observe: re-perceive environment (context stale / need fresh data)
+- hypothesize: generate new hypothesis (no hypothesis / after pivot)
+- plan: design execution plan for current hypothesis
+- execute: run the plan
+- validate: check execution results
+- learn: update memory/KG with results
+- pivot: switch to new hypothesis (current path stuck)
+- skip: do nothing this iteration
+- stop: end the loop
+
+Note: report runs automatically when loop ends — do not pick "report".
+
+Respond JSON only:
+{"action": "one of above", "rationale": "1 sentence why", "expected_outcome": "1 sentence what you expect"}"""
+
+
+def _inbox_deps() -> dict[str, Any] | None:
+    """P4-1 可选依赖 (inbox store + task lifecycle); 不可用返回 None."""
+    try:
+        from huginn.interaction.inbox import get_inbox_store
+        from huginn.runtime.task_lifecycle import (
+            DecisionRequest,
+            TaskLifecycle,
+            TaskState,
+            load_task_lifecycle,
+            save_task_lifecycle,
+        )
+    except ImportError:
+        return None
+    return {
+        "get_inbox_store": get_inbox_store,
+        "DecisionRequest": DecisionRequest,
+        "TaskLifecycle": TaskLifecycle,
+        "TaskState": TaskState,
+        "load_task_lifecycle": load_task_lifecycle,
+        "save_task_lifecycle": save_task_lifecycle,
+    }
+
+
+def _pmk_tag_list(record: dict) -> list:
+    """把 memory 记录的 tags 列 (可能是 JSON 字符串) 归一成 list."""
+    raw = record.get("tags")
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        with contextlib.suppress(Exception):
+            return json.loads(raw)
+        return raw.split(",")
+    return []
+
+
+def _new_phase(name: str) -> LoopPhase:
+    """建一个 running 状态的 LoopPhase."""
+    phase = LoopPhase(name=name)
+    phase.start_time = time.time()
+    phase.status = "running"
+    return phase
+
+
+def _fire_and_forget(dispatch, event, name, *, what: str, **kwargs) -> None:
+    """同步路径 fire-and-forget 派发事件; 无 running loop 时只记 warning."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("%s dispatch skipped (no running loop)", what, exc_info=True)
+        return
+    loop.create_task(dispatch(event, name, **kwargs))
+
+
+def _mark_phase_failure(phase: LoopPhase, phase_span: Any, exc: Exception, what: str) -> None:
+    """phase 失败: 落 status/error 并尽力写 span metadata."""
+    phase.status = "failed"
+    phase.error = str(exc)
+    try:
+        phase_span.metadata["status"] = "failed"
+        phase_span.metadata["error"] = str(exc)
+    except Exception:  # 防御: 跨度元数据更新失败忽略
+        logger.warning("%s: span metadata update failed", what, exc_info=True)
+
+
+def _safe_call(fn, *args, what: str, **kwargs) -> None:
+    """best-effort 调用; 失败只记 debug, 不阻断主流程."""
+    try:
+        fn(*args, **kwargs)
+    except Exception:  # 防御: best-effort 调用失败忽略
+        logger.debug("%s failed (non-fatal)", what, exc_info=True)
+
+
+def _ts_spatial_line(ts: dict) -> str:
+    """三元组 (t, r, v) — 时空摘要: 峰位漂移 + 峰强衰减."""
+    _data = ts.get("data") or []
+    # 取每帧的最大 v 位置 (r_peak), 看峰位漂移 (structural relaxation)
+    _frames: dict = {}
+    for _t, _r, _v in _data:
+        _frames.setdefault(_t, []).append((_r, _v))
+    _peak_list = [
+        (t, max(_frames[t], key=lambda x: x[1])[0], max(_frames[t], key=lambda x: x[1])[1])
+        for t in sorted(_frames)
+    ]
+    _peak_drift = _peak_list[-1][1] - _peak_list[0][1] if len(_peak_list) >= 2 else 0.0
+    _peak_v_decay = _peak_list[-1][2] - _peak_list[0][2] if len(_peak_list) >= 2 else 0.0
+    _n_t = len(_frames)
+    _n_r = len(_data) // max(_n_t, 1)
+    return (
+        f"  {ts.get('name', 'unknown')} ({ts.get('source', '')}): "
+        f"{_n_t}t × {_n_r}r pts, unit={ts.get('unit', '')}, "
+        f"trend=peak_drift={_peak_drift:+.3f}, v_decay={_peak_v_decay:+.3f}. "
+        f"meaning: {ts.get('meaning', '')} (spatio-temporal)"
+    )
+
+
+def _ts_scalar_line(ts: dict) -> str:
+    """二元组 (t, v) — 标量时序摘要: 首末差分判趋势."""
+    _data = ts.get("data") or []
+    _first = _data[0][1] if isinstance(_data[0], list | tuple) and len(_data[0]) >= 2 else None
+    _last = _data[-1][1] if isinstance(_data[-1], list | tuple) and len(_data[-1]) >= 2 else None
+    _trend = ""
+    if _first is not None and _last is not None:
+        _diff = _last - _first
+        if abs(_diff) < 1e-9:
+            _trend = "flat"
+        elif _diff > 0:
+            _trend = "rising"
+        else:
+            _trend = "decaying"
+    return (
+        f"  {ts.get('name', 'unknown')} ({ts.get('source', '')}): {len(_data)} pts, "
+        f"unit={ts.get('unit', '')}, trend={_trend or '?'}. "
+        f"meaning: {ts.get('meaning', '')}"
+    )
+
+
 # v11 进展不变量阈值: 假设层单调"换名债务" (只在真进展时归零) 越过此值 ⇒ 结题停止.
 # 换名 soft 阶梯在 streak 3/5 触发 (hunt / 重定向) 并**自复位**, 是闭环的根源;
 # 债务与之解耦, 只由真进展归零, 唯一消费者是下面的终止出口. 取 8 > 5 保证 soft
@@ -204,147 +357,178 @@ class CognitiveLoop:
         """
         state = initial_state or LoopState(max_iterations=self._max_iterations)
         state.max_iterations = self._max_iterations
-
         # ON_WORKFLOW_BEGIN: 之前只发 stage 级事件, workflow 整体首尾缺失.
-        try:
-            await self._dispatch_stage_event(EventType.ON_WORKFLOW_BEGIN, "workflow_start")
-        except Exception:  # 防御: 工作流开始派发失败忽略
-            logger.debug("ON_WORKFLOW_BEGIN dispatch failed (non-fatal)", exc_info=True)
-
+        await self._dispatch_workflow_event(EventType.ON_WORKFLOW_BEGIN, "workflow_start")
         while state.iteration < state.max_iterations and not state.should_stop:
             state.iteration += 1
             logger.info("CognitiveLoop iter %d/%d", state.iteration, state.max_iterations)
-
-            # 1. observe — 轻量环境扫描, 不强制 git diff
-            try:
-                observation = await self._observe(state)
-            except Exception as e:
-                logger.warning("observe failed: %s", e)
-                observation = {}
-
-            # P4-3: 钩子间中断检查 — observe 后 should_stop 可能被外部设
-            if state.should_stop:
+            if await self._run_iteration(state):
                 break
-
-            # 2. decide — 选下一个 action (LLM 自主或规则)
-            try:
-                decision = await self._decide(state, observation)
-                if decision.action not in VALID_ACTIONS:
-                    logger.warning(
-                        "decide returned invalid action %r, defaulting to 'skip'",
-                        decision.action,
-                    )
-                    decision.action = "skip"
-            except Exception as e:
-                logger.warning("decide failed: %s, defaulting to 'stop'", e)
-                state.should_stop = True
-                break
-
-            # 死循环防护: 连续重复 action 超上限 → 强制 redirect, 超过 2 倍上限 → stop
-            state.action_history.append(decision.action)
-            # 700 万步极限场景防内存爆炸: 截断到滑动窗口. 所有调用方只用尾部
-            # ([-10:], count, reversed, len), 截断前缀不影响语义. ponytail: 保留
-            # list 不改 deque, 避免切片兼容性. 升级路径: deque + 专用 tail_n().
-            if len(state.action_history) > _MAX_ACTION_HIST:
-                del state.action_history[: -_MAX_ACTION_HIST]
-            state.last_action = decision.action
-            state.last_rationale = decision.rationale
-            repeated = self._count_repeated_tail(state.action_history)
-            if repeated >= self._max_repeated_actions and not decision.force:
-                logger.warning(
-                    "CognitiveLoop: %d consecutive '%s' actions, forcing redirect",
-                    repeated, decision.action,
-                )
-                state.should_redirect = True
-                state.redirect_reason = (
-                    f"死循环防护: 连续 {repeated} 次 '{decision.action}', 换方向"
-                )
-                # 超过 2 倍上限仍未换方向 → 真死循环, 强制 stop
-                if repeated >= self._max_repeated_actions * 2:
-                    logger.error(
-                        "CognitiveLoop: %d consecutive '%s' (2x limit), forcing stop",
-                        repeated, decision.action,
-                    )
-                    state.should_stop = True
-                    break
-
-            # P4-3: 钩子间中断检查 — decide 后 should_stop 可能被外部设
-            if state.should_stop:
-                break
-
-            # 3. execute_action — 跑 LLM 选的 action
-            # P4-3: turn 级超时保护. execute 最可能卡住 (DFT/MD/HPC 计算),
-            # 超时后跳过该 turn, 不阻塞后续. None 时不限时 (向后兼容).
-            try:
-                if self._turn_timeout is not None:
-                    import asyncio as _aio
-                    result = await _aio.wait_for(
-                        self._execute(state, decision),
-                        timeout=self._turn_timeout,
-                    )
-                else:
-                    result = await self._execute(state, decision)
-                state.last_action_result = result
-            except TimeoutError as e:
-                logger.warning(
-                    "execute_action '%s' timed out after %ss, skipping turn",
-                    decision.action, self._turn_timeout,
-                )
-                state.last_action_result = None
-                state.redirect_reason = (
-                    f"turn timeout: {decision.action} 超过 {self._turn_timeout}s"
-                )
-                state.should_redirect = True
-                self._notify_execute_failure(state, decision, e)
-            except Exception as e:
-                logger.warning("execute_action '%s' failed: %s", decision.action, e)
-                state.last_action_result = None
-                # 失败不阻塞, 让 reflect 评估
-                self._notify_execute_failure(state, decision, e)
-
-            # 4. reflect — 评估上轮, 决定是否继续/换方向/停
-            try:
-                reflection = await self._reflect(state, decision, state.last_action_result)
-                reflection.repeated_action_count = repeated
-            except Exception as e:
-                logger.warning("reflect failed: %s, defaulting to continue", e)
-                reflection = ReflectionResult()
-
-            state.should_stop = state.should_stop or reflection.should_stop
-            state.should_redirect = reflection.should_redirect
-            if reflection.should_redirect and reflection.redirect_reason:
-                state.redirect_reason = reflection.redirect_reason
-
-            # output_writer 钩子 — 每轮末尾写产物 (RCBench 写 report.md, autoloop 写 provenance)
-            if self._output_writer is not None:
-                try:
-                    self._output_writer.write_step(
-                        iteration=state.iteration,
-                        action=decision.action,
-                        result=state.last_action_result,
-                        reflection=reflection,
-                    )
-                except Exception as e:
-                    logger.debug("output_writer.write_step failed: %s", e)
-
-            if decision.action == "stop":
-                # WARNING 级 (非 INFO): CLI autoloop 路径 root logger 未配置, 只有
-                # WARNING+ 经 lastResort 落盘; INFO 级终止原因会被静默吞掉, 长程
-                # run 提前收口时无从审计 (run50 即此).
-                logger.warning(
-                    "CognitiveLoop: stop action at iter %d (rationale=%s)",
-                    state.iteration, (decision.rationale or "")[:160],
-                )
-                state.should_stop = True
-                break
-
         # ON_WORKFLOW_DONE: 与 ON_WORKFLOW_BEGIN 对称, workflow 结束时发一次.
-        try:
-            await self._dispatch_stage_event(EventType.ON_WORKFLOW_DONE, "workflow_done")
-        except Exception:  # 防御: 工作流完成派发失败忽略
-            logger.debug("ON_WORKFLOW_DONE dispatch failed (non-fatal)", exc_info=True)
-
+        await self._dispatch_workflow_event(EventType.ON_WORKFLOW_DONE, "workflow_done")
         return state
+
+    async def _dispatch_workflow_event(self, event: EventType, stage: str) -> None:
+        """派发 workflow 首/尾事件; 派发失败不影响主流程."""
+        try:
+            await self._dispatch_stage_event(event, stage)
+        except Exception:  # 防御: 事件派发失败忽略
+            logger.debug("%s dispatch failed (non-fatal)", stage, exc_info=True)
+
+    async def _run_iteration(self, state: LoopState) -> bool:
+        """跑一轮 observe→decide→execute→reflect; 返回 True 表示应退出主循环."""
+        observation, stop = await self._run_observe(state)
+        if stop:
+            return True
+        decision = await self._run_decide(state, observation)
+        if decision is None:
+            return True
+        state.action_history.append(decision.action)
+        _trim_action_history(state.action_history)
+        state.last_action = decision.action
+        state.last_rationale = decision.rationale
+        repeated = self._count_repeated_tail(state.action_history)
+        if self._guard_repetition(state, decision, repeated) or state.should_stop:
+            return True
+        await self._run_execute(state, decision)
+        reflection = await self._run_reflect(state, decision, repeated)
+        self._run_write_step(state, decision, reflection)
+        if decision.action != "stop":
+            return False
+        # WARNING 级 (非 INFO): CLI autoloop 路径 root logger 未配置, 只有
+        # WARNING+ 经 lastResort 落盘; INFO 级终止原因会被静默吞掉, 长程
+        # run 提前收口时无从审计 (run50 即此).
+        logger.warning(
+            "CognitiveLoop: stop action at iter %d (rationale=%s)",
+            state.iteration, (decision.rationale or "")[:160],
+        )
+        state.should_stop = True
+        return True
+
+    async def _run_observe(self, state: LoopState) -> tuple[dict[str, Any], bool]:
+        """observe — 轻量环境扫描, 不强制 git diff; 返回 (observation, 是否退出)."""
+        try:
+            observation = await self._observe(state)
+        except Exception as e:
+            logger.warning("observe failed: %s", e)
+            observation = {}
+        # P4-3: 钩子间中断检查 — observe 后 should_stop 可能被外部设
+        return observation, bool(state.should_stop)
+
+    async def _run_decide(
+        self, state: LoopState, observation: dict[str, Any]
+    ) -> ActionDecision | None:
+        """decide — 选下一个 action (LLM 自主或规则); 失败/中断返回 None."""
+        try:
+            decision = await self._decide(state, observation)
+        except Exception as e:
+            logger.warning("decide failed: %s, defaulting to 'stop'", e)
+            state.should_stop = True
+            return None
+        if decision.action not in VALID_ACTIONS:
+            logger.warning(
+                "decide returned invalid action %r, defaulting to 'skip'",
+                decision.action,
+            )
+            decision.action = "skip"
+        # P4-3: 钩子间中断检查 — decide 后 should_stop 可能被外部设
+        return None if state.should_stop else decision
+
+    def _guard_repetition(
+        self, state: LoopState, decision: ActionDecision, repeated: int
+    ) -> bool:
+        """死循环防护: 超上限强制 redirect, 超 2 倍上限强制 stop; 返回是否退出."""
+        if repeated < self._max_repeated_actions or decision.force:
+            return False
+        logger.warning(
+            "CognitiveLoop: %d consecutive '%s' actions, forcing redirect",
+            repeated, decision.action,
+        )
+        state.should_redirect = True
+        state.redirect_reason = (
+            f"死循环防护: 连续 {repeated} 次 '{decision.action}', 换方向"
+        )
+        # 超过 2 倍上限仍未换方向 → 真死循环, 强制 stop
+        if repeated < self._max_repeated_actions * 2:
+            return False
+        logger.error(
+            "CognitiveLoop: %d consecutive '%s' (2x limit), forcing stop",
+            repeated, decision.action,
+        )
+        state.should_stop = True
+        return True
+
+    async def _run_execute(
+        self, state: LoopState, decision: ActionDecision
+    ) -> None:
+        """跑 LLM 选的 action; 超时/失败只标 redirect, 不阻塞后续.
+
+        P4-3: turn 级超时保护. execute 最可能卡住 (DFT/MD/HPC 计算),
+        超时后跳过该 turn. None 时不限时 (向后兼容).
+        """
+        try:
+            if self._turn_timeout is not None:
+                import asyncio as _aio
+                result = await _aio.wait_for(
+                    self._execute(state, decision),
+                    timeout=self._turn_timeout,
+                )
+            else:
+                result = await self._execute(state, decision)
+            state.last_action_result = result
+        except TimeoutError as e:
+            logger.warning(
+                "execute_action '%s' timed out after %ss, skipping turn",
+                decision.action, self._turn_timeout,
+            )
+            state.last_action_result = None
+            state.redirect_reason = (
+                f"turn timeout: {decision.action} 超过 {self._turn_timeout}s"
+            )
+            state.should_redirect = True
+            self._notify_execute_failure(state, decision, e)
+        except Exception as e:
+            logger.warning("execute_action '%s' failed: %s", decision.action, e)
+            state.last_action_result = None
+            # 失败不阻塞, 让 reflect 评估
+            self._notify_execute_failure(state, decision, e)
+
+    async def _run_reflect(
+        self, state: LoopState, decision: ActionDecision, repeated: int
+    ) -> ReflectionResult:
+        """reflect — 评估上轮, 决定是否继续/换方向/停."""
+        try:
+            reflection = await self._reflect(
+                state, decision, state.last_action_result
+            )
+            reflection.repeated_action_count = repeated
+        except Exception as e:
+            logger.warning("reflect failed: %s, defaulting to continue", e)
+            reflection = ReflectionResult()
+        state.should_stop = state.should_stop or reflection.should_stop
+        state.should_redirect = reflection.should_redirect
+        if reflection.should_redirect and reflection.redirect_reason:
+            state.redirect_reason = reflection.redirect_reason
+        return reflection
+
+    def _run_write_step(
+        self,
+        state: LoopState,
+        decision: ActionDecision,
+        reflection: ReflectionResult,
+    ) -> None:
+        """output_writer 钩子 — 每轮末尾写产物 (RCBench 写 report.md 等)."""
+        if self._output_writer is None:
+            return
+        try:
+            self._output_writer.write_step(
+                iteration=state.iteration,
+                action=decision.action,
+                result=state.last_action_result,
+                reflection=reflection,
+            )
+        except Exception as e:
+            logger.debug("output_writer.write_step failed: %s", e)
 
     def _notify_execute_failure(
         self, state: LoopState, decision: ActionDecision, exc: BaseException
@@ -451,6 +635,34 @@ def _provenance_from_tool_calls(
     return chain
 
 
+def _fdl_tokens(txt) -> set[str]:
+    """按非字母数字切词, 只留 len>=3 的 token (小写)."""
+    toks: set[str] = set()
+    for seg in re.split(r"[^A-Za-z0-9]", txt or ""):
+        if len(seg) >= 3:
+            toks.add(seg.lower())
+    return toks
+
+
+def _fdl_collect(memory, objective: str, persona_id, limit: int) -> list[str]:
+    """recall 历史失败方向, 用 objective token 重叠过滤, 取前 limit 条教训."""
+    goal_toks = _fdl_tokens(objective)
+    lessons: list[str] = []
+    for h, reason, mc in memory.recall_failed_directions(limit=10, persona_id=persona_id):
+        if not h or not reason:
+            continue
+        cand_toks = _fdl_tokens(h) | (_fdl_tokens(mc) if mc else set())
+        if not (cand_toks & goal_toks):
+            continue
+        line = f"- {h[:120]} | 败因: {reason[:160]}"
+        if mc:
+            line += f" | 概念: {mc[:40]}"
+        lessons.append(line)
+        if len(lessons) >= limit:
+            break
+    return lessons
+
+
 def _inject_failed_direction_lessons(
     objective: str,
     memory,
@@ -469,28 +681,8 @@ def _inject_failed_direction_lessons(
     if memory is None or not hasattr(memory, "recall_failed_directions"):
         return current_hint
 
-    def _tokens(txt) -> set[str]:
-        toks: set[str] = set()
-        for seg in re.split(r"[^A-Za-z0-9]", txt or ""):
-            if len(seg) >= 3:
-                toks.add(seg.lower())
-        return toks
-
     try:
-        goal_toks = _tokens(objective)
-        lessons: list[str] = []
-        for h, reason, mc in memory.recall_failed_directions(limit=10, persona_id=persona_id):
-            if not h or not reason:
-                continue
-            cand_toks = _tokens(h) | (_tokens(mc) if mc else set())
-            if not (cand_toks & goal_toks):
-                continue
-            line = f"- {h[:120]} | 败因: {reason[:160]}"
-            if mc:
-                line += f" | 概念: {mc[:40]}"
-            lessons.append(line)
-            if len(lessons) >= limit:
-                break
+        lessons = _fdl_collect(memory, objective, persona_id, limit)
     except Exception:  # 防御: 启动教训注入失败沿用当前提示
         logger.debug("startup lessons injection skipped", exc_info=True)
         return current_hint
@@ -620,181 +812,175 @@ class CognitiveRunner:
 
         返回 None 表示 Inbox 不可用 (调用方退化到 hint 注入).
         """
-        try:
-            from huginn.interaction.inbox import get_inbox_store
-            from huginn.runtime.task_lifecycle import (
-                DecisionRequest,
-                TaskLifecycle,
-                TaskState,
-                load_task_lifecycle,
-                save_task_lifecycle,
-            )
-        except ImportError:
+        deps = _inbox_deps()
+        if deps is None:
             logger.debug("P4-1 inbox/task_lifecycle import failed, fallback to hint")
             return None
-
         run_id = str(getattr(self, "_run_id", None) or "autoloop")
-        session_id = f"autoloop:{run_id}"
-
-        # 加载或创建 TaskLifecycle, 复用已有记录 (durable resume)
-        lifecycle = load_task_lifecycle(run_id, self.workspace)
-        if lifecycle is None:
-            lifecycle = TaskLifecycle(task_id=run_id)
-        if lifecycle.state == TaskState.CREATED:
-            lifecycle.transition(TaskState.RUNNING)
-
-        # 构造 quick-reply 选项 (Inbox question 要 list[str])
-        quick_replies = [
-            f"{o.get('id', '?')}: {o.get('label', '')}" for o in options
-        ] or ["继续", "停止", "修改计划"]
-
-        dr = DecisionRequest(
-            step_id=step_id,
-            question=reason,
-            options=options,
-            context_summary=f"autoloop iter {getattr(self, '_iteration', '?')}, run {run_id}",
-        )
-        lifecycle.pause_for_decision(dr)
-        save_task_lifecycle(lifecycle, self.workspace)
-
-        # 创建 Inbox question item, 按 (session, tool_call_id) 幂等
-        store = get_inbox_store()
-        item = store.add_question(
-            session_id=session_id,
-            title=reason[:120],
-            body=f"Step {step_id} pause: {reason}\n\nOptions:\n" + "\n".join(quick_replies),
-            options=quick_replies,
-            allow_text=True,
-            tool_call_id=f"pause:{run_id}:{step_id}",
-        )
-
+        store, item, lifecycle = self._ahd_pause(deps, reason, options, step_id, run_id)
         logger.info(
             "P4-1 autoloop paused, waiting human decision: %s (item=%s)",
             reason[:80], item.id,
         )
-
         # 真挂起等人类响应
         resolution = await store.wait(item.id)
-
         # resume lifecycle
         lifecycle.resume(answer=resolution)
-        save_task_lifecycle(lifecycle, self.workspace)
-
+        deps["save_task_lifecycle"](lifecycle, self.workspace)
         logger.info("P4-1 autoloop resumed, answer: %s", str(resolution)[:80])
+        self._ahd_writeback(reason, resolution, run_id, step_id)
+        return resolution
 
-        # PMK 决策回写: 用户已表态(遵从哪一路), 记一条 typed 记忆.
-        # 下次同 subject 冲突时, 回写的那条会被召回到 prompt, 作为既有立场,
-        # 避免换个措辞又重复问同类问题. 用 subject 标签去重, 而不是按内容 —
-        # 用户对同一冲突换措辞表态(如"还是遵从知识")不该再写一条. best-effort,
-        # 拿不到 memory 就跳过.
+    def _ahd_pause(
+        self,
+        deps: dict[str, Any],
+        reason: str,
+        options: list[dict],
+        step_id: int,
+        run_id: str,
+    ) -> tuple[Any, Any, Any]:
+        """登记 pause 决策 (lifecycle) + 建 Inbox question; 返回 (store, item, lifecycle)."""
+        # 加载或创建 TaskLifecycle, 复用已有记录 (durable resume)
+        lifecycle = deps["load_task_lifecycle"](run_id, self.workspace)
+        if lifecycle is None:
+            lifecycle = deps["TaskLifecycle"](task_id=run_id)
+        if lifecycle.state == deps["TaskState"].CREATED:
+            lifecycle.transition(deps["TaskState"].RUNNING)
+        # 构造 quick-reply 选项 (Inbox question 要 list[str])
+        quick_replies = [
+            f"{o.get('id', '?')}: {o.get('label', '')}" for o in options
+        ] or ["继续", "停止", "修改计划"]
+        dr = deps["DecisionRequest"](
+            step_id=step_id,
+            question=reason,
+            options=options,
+            context_summary=(
+                f"autoloop iter {getattr(self, '_iteration', '?')}, run {run_id}"
+            ),
+        )
+        lifecycle.pause_for_decision(dr)
+        deps["save_task_lifecycle"](lifecycle, self.workspace)
+        # 创建 Inbox question item, 按 (session, tool_call_id) 幂等
+        store = deps["get_inbox_store"]()
+        item = store.add_question(
+            session_id=f"autoloop:{run_id}",
+            title=reason[:120],
+            body=(
+                f"Step {step_id} pause: {reason}\n\nOptions:\n"
+                + "\n".join(quick_replies)
+            ),
+            options=quick_replies,
+            allow_text=True,
+            tool_call_id=f"pause:{run_id}:{step_id}",
+        )
+        return store, item, lifecycle
+
+    def _ahd_writeback(
+        self, reason: str, resolution: str | None, run_id: str, step_id: int
+    ) -> None:
+        """PMK 决策回写: 用户已表态, 记一条 typed 记忆 (同 subject 去重).
+
+        下次同 subject 冲突时, 回写的那条会被召回到 prompt, 作为既有立场,
+        避免换个措辞又重复问同类问题. 用 subject 标签去重, 而不是按内容 —
+        用户对同一冲突换措辞表态(如"还是遵从知识")不该再写一条. best-effort,
+        拿不到 memory 就跳过.
+        """
         try:
             _mm = getattr(self, "memory", None)
-            if _mm is not None and hasattr(_mm, "remember_typed") and resolution:
-                _subject_tag = f"pmk_subject:{reason}"
-                _already: list = []
-                if hasattr(_mm, "recall_typed"):
-                    _already = _mm.recall_typed("persona_decision", limit=50) or []
-                # tags 列是 JSON 字符串 (SQLite), 转成 list 再精确匹配 subject;
-                # 不能对字符串做 substring, 否则 pmk_subject:xxx 会误命中前缀.
-                def _tag_list(r: dict) -> list:
-                    raw = r.get("tags")
-                    if isinstance(raw, list):
-                        return raw
-                    if isinstance(raw, str) and raw.strip():
-                        with contextlib.suppress(Exception):
-                            return json.loads(raw)
-                        return raw.split(",")
-                    return []
-
-                _dup = any(
-                    _subject_tag in _tag_list(r)
-                    for r in _already
-                )
-                if not _dup:
-                    _mm.remember_typed(
-                        content=str(resolution).strip(),
-                        memory_type="persona_decision",
-                        status="resolved",
-                        importance=0.9,
-                        tier="long",
-                        tags=["pmk", "human_decision", _subject_tag],
-                        source=f"autoloop pause {run_id} step {step_id}",
-                    )
+            if _mm is None or not hasattr(_mm, "remember_typed") or not resolution:
+                return
+            _subject_tag = f"pmk_subject:{reason}"
+            _already: list = []
+            if hasattr(_mm, "recall_typed"):
+                _already = _mm.recall_typed("persona_decision", limit=50) or []
+            # tags 列是 JSON 字符串 (SQLite), 转成 list 再精确匹配 subject;
+            # 不能对字符串做 substring, 否则 pmk_subject:xxx 会误命中前缀.
+            _dup = any(_subject_tag in _pmk_tag_list(r) for r in _already)
+            if _dup:
+                return
+            _mm.remember_typed(
+                content=str(resolution).strip(),
+                memory_type="persona_decision",
+                status="resolved",
+                importance=0.9,
+                tier="long",
+                tags=["pmk", "human_decision", _subject_tag],
+                source=f"autoloop pause {run_id} step {step_id}",
+            )
         except Exception:  # 防御: PMK 决策写回失败忽略
             logger.debug("best-effort PMK decision writeback failed", exc_info=True)
-
-        return resolution
 
 # === 自检 ===
 
     def _run_phase(self, name: str, fn, *args) -> LoopPhase:
         """Run a synchronous phase function."""
-        phase = LoopPhase(name=name)
-        phase.start_time = time.time()
-        phase.status = "running"
+        phase = _new_phase(name)
         # 同步路径: 如果当前在 event loop 里, fire-and-forget 发开始事件.
         # 不 await, 因为 _run_phase 本身是同步的.
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(
-                self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
-            )
-        except RuntimeError:
-            logger.warning(
-                "error in _run_phase: stage-start event dispatch skipped (no running loop)",
-                exc_info=True,
-            )
+        _fire_and_forget(
+            self._dispatch_stage_event,
+            EventType.ON_WORKFLOW_STAGE_START,
+            name,
+            what="error in _run_phase: stage-start event",
+        )
         # 包 telemetry span: 把 phase 级决策也记进轨迹, 回放时不止看 tool_call
-        from huginn.telemetry import get_telemetry_collector
-
-        span_cm = get_telemetry_collector().span(f"phase:{name}")
+        span_cm = self._phase_span(name)
+        phase_span: Any = span_cm
         try:
             with span_cm as phase_span:
                 phase.result = fn(*args)
                 phase.status = "completed"
                 phase_span.metadata["status"] = "completed"
         except Exception as e:
-            phase.status = "failed"
-            phase.error = str(e)
-            try:
-                phase_span.metadata["status"] = "failed"
-                phase_span.metadata["error"] = str(e)
-            except Exception:  # 防御: 跨度元数据更新失败忽略
-                logger.warning(
-                    "error in _run_phase: span metadata update failed", exc_info=True
-                )
+            _mark_phase_failure(phase, phase_span, e, "error in _run_phase")
         phase.end_time = time.time()
         # fire-and-forget 发结束/失败事件
-        try:
-            loop = asyncio.get_running_loop()
-            done_type = (
-                EventType.ON_WORKFLOW_STAGE_DONE
-                if phase.status == "completed"
-                else EventType.ON_WORKFLOW_FAILED
-            )
-            loop.create_task(
-                self._dispatch_stage_event(
-                    done_type,
-                    name,
-                    duration_sec=phase.end_time - (phase.start_time or 0),
-                    error=phase.error,
-                )
-            )
-        except RuntimeError:
-            logger.warning(
-                "error in _run_phase: stage-done event dispatch skipped (no running loop)",
-                exc_info=True,
-            )
+        done_type = (
+            EventType.ON_WORKFLOW_STAGE_DONE
+            if phase.status == "completed"
+            else EventType.ON_WORKFLOW_FAILED
+        )
+        _fire_and_forget(
+            self._dispatch_stage_event,
+            done_type,
+            name,
+            duration_sec=phase.end_time - (phase.start_time or 0),
+            error=phase.error,
+            what="error in _run_phase: stage-done event",
+        )
         return phase
+
+    def _phase_span(self, name: str) -> Any:
+        """取 phase 级 telemetry span context manager."""
+        from huginn.telemetry import get_telemetry_collector
+
+        return get_telemetry_collector().span(f"phase:{name}")
 
     async def _run_phase_async(self, name: str, fn, *args) -> LoopPhase:
         """Run an async phase function."""
-        phase = LoopPhase(name=name)
-        phase.start_time = time.time()
-        phase.status = "running"
+        phase = _new_phase(name)
         # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
         # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
         self._current_phase = name
+        tok = self._rpa_begin(name)
+        await self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
+        span_cm = self._phase_span(name)
+        phase_span: Any = span_cm
+        try:
+            with span_cm as phase_span:
+                phase.result = await fn(*args)
+                phase.status = "completed"
+                phase_span.metadata["status"] = "completed"
+        except Exception as e:
+            _mark_phase_failure(phase, phase_span, e, "error in _run_phase_async")
+        phase.end_time = time.time()
+        await self._rpa_finish(name, phase)
+        # 单写者纪律: 复位 phase 标注, 避免泄漏到下个非 phase 上下文 (best-effort).
+        self._rpa_reset(tok)
+        return phase
+
+    def _rpa_begin(self, name: str) -> Any:
+        """phase 起始记账: 单写者标注 / 事件日志 / 进度通道 / 序列追踪."""
         # 单写者 frontier 纪律 (ARTEX planner 独占追加): 用 phase 名标注"当前写
         # 假设图的阶段", 让 add_hypothesis 能判定越权. 只有 hypothesize/branch 是
         # 写者阶段; 其它阶段内部若追加方向 → 计数 (默认只观测, strict flag 才拒).
@@ -802,21 +988,21 @@ class CognitiveRunner:
         try:
             from huginn.autoloop.hypothesis_loop import set_frontier_writer_phase
 
-            _frontier_phase_tok = set_frontier_writer_phase(name)
+            tok = set_frontier_writer_phase(name)
         except Exception:  # 防御: 标注失败不阻断 phase; 未标注 → 不检查 (兼容)
-            _frontier_phase_tok = None
+            tok = None
             logger.debug("set frontier writer phase failed (non-fatal)", exc_info=True)
         # H3: phase 切换写进事件日志 (best-effort). 事件日志是 source of truth,
         # 读模型经 AutoloopStateProjection 派生 — 可重放/可恢复.
-        try:
-            self._record_autoloop_phase(name, "running", getattr(self, "_iteration", 0))
-        except Exception:  # 防御: 阶段事件记录失败忽略
-            logger.debug("autoloop phase event record failed (non-fatal)", exc_info=True)
+        _safe_call(
+            self._record_autoloop_phase,
+            name,
+            "running",
+            getattr(self, "_iteration", 0),
+            what="autoloop phase event record",
+        )
         # H3: 把投影读模型推到 UI 进度通道 (current_label + phase_seq).
-        try:
-            self._publish_progress()
-        except Exception:  # 防御: 进度发布失败忽略
-            logger.debug("autoloop progress publish failed (non-fatal)", exc_info=True)
+        _safe_call(self._publish_progress, what="autoloop progress publish")
         # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
         if not hasattr(self, "_current_run_phases"):
             self._current_run_phases = []
@@ -824,65 +1010,44 @@ class CognitiveRunner:
         # 防止无界增长 (1000+ iter × 7 phase = 7000+), 只保留最近 50 个
         if len(self._current_run_phases) > 50:
             self._current_run_phases = self._current_run_phases[-50:]
-        await self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
-        from huginn.telemetry import get_telemetry_collector
+        return tok
 
-        span_cm = get_telemetry_collector().span(f"phase:{name}")
-        try:
-            with span_cm as phase_span:
-                phase.result = await fn(*args)
-                phase.status = "completed"
-                phase_span.metadata["status"] = "completed"
-        except Exception as e:
-            phase.status = "failed"
-            phase.error = str(e)
-            try:
-                phase_span.metadata["status"] = "failed"
-                phase_span.metadata["error"] = str(e)
-            except Exception:  # 防御: 跨度元数据更新失败忽略
-                    logger.warning(
-                        "error in _run_phase_async: span metadata update failed",
-                    exc_info=True,
-                )
-        phase.end_time = time.time()
+    async def _rpa_finish(self, name: str, phase: LoopPhase) -> None:
+        """phase 结束: 派发 done/failed 事件 + 状态写回 + 推进度."""
+        elapsed = phase.end_time - (phase.start_time or 0)
         if phase.status == "completed":
             await self._dispatch_stage_event(
-                EventType.ON_WORKFLOW_STAGE_DONE,
-                name,
-                duration_sec=phase.end_time - (phase.start_time or 0),
+                EventType.ON_WORKFLOW_STAGE_DONE, name, duration_sec=elapsed,
             )
         else:
             await self._dispatch_stage_event(
                 EventType.ON_WORKFLOW_FAILED,
                 name,
-                duration_sec=phase.end_time - (phase.start_time or 0),
+                duration_sec=elapsed,
                 error=phase.error,
             )
         # H3: phase 完成状态写回事件日志 (best-effort), 投影可读到 finished 状态.
-        try:
-            self._record_autoloop_phase(
-                name, phase.status, getattr(self, "_iteration", 0)
-            )
-        except Exception:  # 防御: 阶段状态事件记录失败忽略
-            logger.debug(
-                "autoloop phase status event record failed (non-fatal)", exc_info=True,
-            )
+        _safe_call(
+            self._record_autoloop_phase,
+            name,
+            phase.status,
+            getattr(self, "_iteration", 0),
+            what="autoloop phase status event record",
+        )
         # H3: 完成状态也推到 UI 进度通道.
-        try:
-            self._publish_progress()
-        except Exception:  # 防御: 完成进度发布失败忽略
-            logger.debug(
-                "autoloop progress publish (complete) failed (non-fatal)", exc_info=True,
-            )
-        # 单写者纪律: 复位 phase 标注, 避免泄漏到下个非 phase 上下文 (best-effort).
-        if _frontier_phase_tok is not None:
-            try:
-                from huginn.autoloop.hypothesis_loop import reset_frontier_writer_phase
+        _safe_call(self._publish_progress, what="autoloop progress publish (complete)")
 
-                reset_frontier_writer_phase(_frontier_phase_tok)
-            except Exception:  # 防御: 复位失败不阻断 (下个 phase 会覆盖)
-                logger.debug("reset frontier writer phase failed (non-fatal)", exc_info=True)
-        return phase
+    @staticmethod
+    def _rpa_reset(tok: Any) -> None:
+        """复位单写者 phase 标注, 避免泄漏到下个非 phase 上下文 (best-effort)."""
+        if tok is None:
+            return
+        try:
+            from huginn.autoloop.hypothesis_loop import reset_frontier_writer_phase
+
+            reset_frontier_writer_phase(tok)
+        except Exception:  # 防御: 复位失败不阻断 (下个 phase 会覆盖)
+            logger.debug("reset frontier writer phase failed (non-fatal)", exc_info=True)
 
     def _render_report(self, data: dict[str, Any]) -> str:
         """Render a markdown report."""
@@ -1729,6 +1894,23 @@ class CognitiveRunner:
         # 本 run 写入的新知识, 避免旧文献值跟新实验冲突被误判.
         self._run_start_iso = datetime.now().isoformat()
 
+        provenance_record, provenance_logger = self._pr_provenance(run_id, objective)
+
+        from huginn.telemetry import TelemetryCollector, set_telemetry_collector
+
+        run_collector = TelemetryCollector()
+        set_telemetry_collector(run_collector)
+
+        self._pr_reset_counters()
+        self._pr_load_history()
+        self._pr_activate_goal(goal)
+        self._pr_reset_budget(progressive_budget)
+        self._pr_reset_hints()
+        self._pr_speculator(objective)
+        return run_id, provenance_record, run_collector
+
+    def _pr_provenance(self, run_id: str, objective: str) -> tuple[Any, Any]:
+        """建 provenance logger/record 并挂到 self."""
         from huginn.provenance import ProvenanceLogger, ProvenanceRecord
 
         provenance_logger = ProvenanceLogger(
@@ -1741,12 +1923,10 @@ class CognitiveRunner:
         )
         self._provenance_record = provenance_record
         self._provenance_logger = provenance_logger
+        return provenance_record, provenance_logger
 
-        from huginn.telemetry import TelemetryCollector, set_telemetry_collector
-
-        run_collector = TelemetryCollector()
-        set_telemetry_collector(run_collector)
-
+    def _pr_reset_counters(self) -> None:
+        """每 run 归零的计数器/台账 (跨 run 记忆无意义)."""
         self._iteration = 0
         self._should_stop = False
         # 报告 citation 门: 执行台账随 run 重置 (跨 run 证据混入报告 = 溯源失真).
@@ -1761,8 +1941,18 @@ class CognitiveRunner:
         self._consecutive_failures_by_type = {}
         # 700 万步场景: 滑动窗口随 run 重置 (跨 run 失败率无意义).
         self._validate_window = []
+        # P3: 物理时序数据收集 — 任何工具可通过 result["_physical_timeseries"]
+        # 返回标准化时序 (name/unit/data/meaning/source), engine 收集后注入
+        # decider/validate prompt, 让 agent 推理系统的时间演化结构.
+        # VACF/Green-Kubo 是 MD 的实例, 但化学反应动力学/信号衰减等同样适用.
+        self._physical_timeseries: list[dict] = []
+
+    def _pr_load_history(self) -> None:
+        """加载跨 run 参考快照: 失败模式 / 上轮探索摘要 / 轨迹 action 序列.
+
+        不恢复计数器 (跨 run 计数无意义), 只注入 prompt 作为参考.
+        """
         # 700 万步场景: 加载上 run 失败模式快照, 让 decider 知道历史卡点.
-        # 不恢复计数器 (跨 run 计数无意义), 只注入 prompt 作为参考.
         self._last_run_failure_pattern: str = ""
         try:
             self._last_run_failure_pattern = self._load_failure_pattern()
@@ -1774,21 +1964,27 @@ class CognitiveRunner:
             self._prev_run_context = self._load_prev_run_context()
         except Exception:  # 防御: 上轮上下文加载失败忽略
             logger.debug("load prev run_context failed (non-fatal)", exc_info=True)
-        # P3: 物理时序数据收集 — 任何工具可通过 result["_physical_timeseries"]
-        # 返回标准化时序 (name/unit/data/meaning/source), engine 收集后注入
-        # decider/validate prompt, 让 agent 推理系统的时间演化结构.
-        # VACF/Green-Kubo 是 MD 的实例, 但化学反应动力学/信号衰减等同样适用.
-        self._physical_timeseries: list[dict] = []
+        # G2: 加载历史 trajectory action 序列, 给 _check_stuck 当 VF2 匹配历史.
+        # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
+        try:
+            self._traj_history = self._load_trajectory_action_history(limit=20)
+        except Exception:  # 防御: 轨迹历史加载失败置空
+            self._traj_history = []
+            logger.debug("G2 traj history load failed (non-fatal)", exc_info=True)
 
-        if goal is not None and goal.status == "pending":
-            goal.status = "active"
-            if self._goal_scheduler is not None:
-                self._goal_scheduler.update_goal(goal.id, status="active")
+    def _pr_activate_goal(self, goal: Goal | None) -> None:
+        """pending goal 进入 active."""
+        if goal is None or goal.status != "pending":
+            return
+        goal.status = "active"
+        if self._goal_scheduler is not None:
+            self._goal_scheduler.update_goal(goal.id, status="active")
 
+    def _pr_reset_budget(self, progressive_budget: bool) -> None:
+        """budget + plan_check 状态重置 (跨 run 的历史成功率会误导自适应)."""
         self._budget = ProgressiveBudget.default() if progressive_budget else None
         self._budget_rejects: dict[str, int] = {}
         self._budget_degraded = False
-        # plan_check 状态随 run 重置 — 跨 run 的历史成功率没意义, 会误导自适应.
         # patterns 例外: 跨 run 保留 (失败模式记忆), 加载 workspace 里的历史.
         # extra_keywords 也跨 run 保留 (自动发现的 scene_tag 关键词).
         self._plan_check_history = []
@@ -1798,6 +1994,8 @@ class CognitiveRunner:
         self._scene_tag_extra_keywords = {}
         self._load_plan_check_patterns()
 
+    def _pr_reset_hints(self) -> None:
+        """清空上 run 残留的 prompt hint / 预测缓冲."""
         self._speculator_hint = ""
         self._last_visual_context = ""  # reset per run, stale data shapes mislead
         self._current_prediction = ""  # reset JEPA prediction buffer
@@ -1807,13 +2005,9 @@ class CognitiveRunner:
         self._last_task_perf = None  # D: 真实任务性能信号 (无则 None)
         self._last_reconstruct_disagree = None  # 观察者差分读数 (每轮 _validate 刷新)
         self._last_blind_confidence = 0.0
-        # G2: 加载历史 trajectory action 序列, 给 _check_stuck 当 VF2 匹配历史.
-        # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
-        try:
-            self._traj_history = self._load_trajectory_action_history(limit=20)
-        except Exception:  # 防御: 轨迹历史加载失败置空
-            self._traj_history = []
-            logger.debug("G2 traj history load failed (non-fatal)", exc_info=True)
+
+    def _pr_speculator(self, objective: str) -> None:
+        """启动投机器, 并把历史失败教训回灌进 speculator hint."""
         try:
             from huginn.agents.speculator import on_turn_start
 
@@ -1823,7 +2017,6 @@ class CognitiveRunner:
                 logger.info("autoloop speculator: %s", self._speculator_hint)
         except Exception:  # 防御: 投机器失败跳过
             logger.warning("autoloop speculator skipped", exc_info=True)
-
         # 方向2: 启动期回灌历史失败教训 — 每次 run 自带前次败因, 而不是等到卡壳
         # 才想起. 复用模块级纯函数 _inject_failed_direction_lessons (可单测).
         self._speculator_hint = _inject_failed_direction_lessons(
@@ -1832,8 +2025,6 @@ class CognitiveRunner:
             getattr(self, "_last_persona", None),
             getattr(self, "_speculator_hint", "") or "",
         )
-
-        return run_id, provenance_record, run_collector
 
     def _persist_failure_pattern(self, run_id: str) -> None:
         """run 结束时把 by_type + window 快照存 longterm. 供下 run 加载.
@@ -1999,63 +2190,14 @@ class CognitiveRunner:
             return ""
         lines = []
         for _ts in _ts_list[-5:]:  # 最近 5 条, 防 prompt 膨胀
-            _name = _ts.get("name", "unknown")
-            _unit = _ts.get("unit", "")
-            _meaning = _ts.get("meaning", "")
-            _source = _ts.get("source", "")
             _data = _ts.get("data") or []
+            if not _data:
+                continue
             _is_spatial = _ts.get("spatial", False)
-            _n = len(_data)
-            if _n == 0:
-                continue
-
             if _is_spatial and isinstance(_data[0], list | tuple) and len(_data[0]) >= 3:
-                # 三元组 (t, r, v) — 时空联合表征
-                _t_first = _data[0][0]
-                _t_last = _data[-1][0]
-                # 取每帧的最大 v 位置 (r_peak), 看峰位漂移 (structural relaxation)
-                _frames: dict = {}
-                for _t, _r, _v in _data:
-                    _frames.setdefault(_t, []).append((_r, _v))
-                _peak_drift = 0.0
-                _peak_v_decay = 0.0
-                _peak_list: list[tuple] = []
-                for _t in sorted(_frames.keys()):
-                    _pts = _frames[_t]
-                    _peak = max(_pts, key=lambda x: x[1])
-                    _peak_list.append((_t, _peak[0], _peak[1]))
-                if len(_peak_list) >= 2:
-                    _peak_drift = _peak_list[-1][1] - _peak_list[0][1]
-                    _peak_v_decay = _peak_list[-1][2] - _peak_list[0][2]
-                _trend = (
-                    f"peak_drift={_peak_drift:+.3f}, "
-                    f"v_decay={_peak_v_decay:+.3f}"
-                )
-                _n_t = len(_frames)
-                _n_r = len(_data) // max(_n_t, 1)
-                lines.append(
-                    f"  {_name} ({_source}): {_n_t}t × {_n_r}r pts, unit={_unit}, "
-                    f"trend={_trend}. meaning: {_meaning} "
-                    f"(spatio-temporal)"
-                )
-                continue
-
-            # 二元组 (t, v) — 标量时序
-            _first = _data[0][1] if isinstance(_data[0], list | tuple) and len(_data[0]) >= 2 else None
-            _last = _data[-1][1] if isinstance(_data[-1], list | tuple) and len(_data[-1]) >= 2 else None
-            _trend = ""
-            if _first is not None and _last is not None:
-                _diff = _last - _first
-                if abs(_diff) < 1e-9:
-                    _trend = "flat"
-                elif _diff > 0:
-                    _trend = "rising"
-                else:
-                    _trend = "decaying"
-            lines.append(
-                f"  {_name} ({_source}): {_n} pts, unit={_unit}, "
-                f"trend={_trend or '?'}. meaning: {_meaning}"
-            )
+                lines.append(_ts_spatial_line(_ts))
+            else:
+                lines.append(_ts_scalar_line(_ts))
         return "\n".join(lines) if lines else ""
 
     async def _decide_next_action_llm(
@@ -2109,78 +2251,10 @@ class CognitiveRunner:
         ponytail: 不重组结构, 只在 State block 后追加 Detail block. 升级路径:
         把这些字段做成 PhaseRegistry extra, 跟 H4 phase 分批一致.
         """
-        hyp = cog.get("hypothesis") or "NONE"
-        if isinstance(hyp, str) and len(hyp) > 120:
-            hyp = hyp[:120]
-        plan = cog.get("plan")
-        plan_mode = plan.get("mode", "NONE") if isinstance(plan, dict) else "NONE"
-        exec_done = cog.get("execution_result") is not None
-        val = cog.get("validation") or {}
-        val_status = "PASSED" if _extract_tests_passed(val) else "FAILED" if val else "NONE"
-
-        # D1: validation 具体字段 — 让 LLM 看到为什么 PASSED/FAILED
-        val_detail = ""
-        if isinstance(val, dict) and val:
-            _vd_keys = (
-                "thinking_collapse", "physics_validation_error",
-                "reviewer_critique", "dimensional_consistent",
-                "pde_classification", "constraint_check",
-            )
-            _vd_parts = []
-            for _k in _vd_keys:
-                _v = val.get(_k)
-                if _v:
-                    _vd_parts.append(f"{_k}={str(_v)[:80]}")
-            if _vd_parts:
-                val_detail = "; ".join(_vd_parts)[:300]
-
-        # D1: 控制流统计 — 让 LLM 感知 stuck 程度
-        # getattr 防 __new__ 测试场景 (selfcheck 绕过 __init__).
-        _max_fail = getattr(self, "_max_consecutive_failures", 20)
-        _max_pivot = 10  # ponytail: 硬编码上限, 升级路径走 PhaseRegistry extra
-        action_hist_str = ", ".join(state.action_history[-10:]) or "none"
-        spec_hint = (getattr(self, "_speculator_hint", "") or "")[:300]
-        last_learn = (cog.get("last_learn_summary") or "none")[:200]
-        # F-borrow: 分类失败计数 — 让 LLM 看到是 tool_error 多还是 hypothesis_error 多,
-        # 不同失败类型语义不同 (技术故障 vs 方向错). 空时不显示, 避免噪声.
-        _by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
-        _type_max = getattr(self, "_max_failures_by_type", {}) or {}
-        _type_parts = [
-            f"{k}={v}/{_type_max.get(k, '?')}"
-            for k, v in sorted(_by_type.items())
-            if v > 0
-        ]
-        _type_str = ", ".join(_type_parts) if _type_parts else "none"
-        # 700 万步场景: 滑动窗口失败率. 让 LLM 看到整体趋势, 不只是 consecutive.
-        # 窗口未满时不显示 (数据不足). ponytail: 简单 fail rate, 不做加权.
-        _vwin = getattr(self, "_validate_window", None) or []
-        _wsize = getattr(self, "_validate_window_size", 100)
-        if len(_vwin) >= _wsize:
-            _wfail_rate = 1.0 - (sum(_vwin) / len(_vwin))
-            _window_str = f"{_wfail_rate:.2f} (last {_wsize})"
-        else:
-            _window_str = f"building ({len(_vwin)}/{_wsize})"
-        # 700 万步场景: 跨 run 失败模式. 让 LLM 知道上 run 主要卡在哪类失败.
-        _last_pattern = (getattr(self, "_last_run_failure_pattern", "") or "").strip()
-        # P2: 上 run 探索摘要 — hypothesis/findings/inconclusive, 避免重复探索.
-        _prev_ctx = (getattr(self, "_prev_run_context", "") or "").strip()
-        # P3: 物理时序数据摘要 — 让 agent 看到本轮收集的时序数据趋势,
-        # 推理系统动力学 (扩散/束缚/平衡). 空则不注入.
-        _ts_ctx = self._format_timeseries_context()
-
-        # P0: 迭代历史栈 — 让 LLM 看到前几轮的试错路径, 避免重复探索.
-        # ponytail: 只取最近 5 轮, 每轮一行 compact, 超 5 轮的旧记录在 state 里但不进 prompt.
-        _hist = state.iteration_history[-5:] if state.iteration_history else []
-        _hist_lines = []
-        for _h in _hist:
-            _hist_lines.append(
-                f"  iter{_h.get('iter', '?')}: {_h.get('action', '?')} "
-                f"({_h.get('val_status', 'none')})"
-                + (f" [{_h.get('plan_mode')}]" if _h.get('plan_mode') else "")
-                + (f" → {_h.get('advice', '')[:80]}" if _h.get('redirect') else "")
-            )
-        _hist_block = "\n".join(_hist_lines) if _hist_lines else "  (none)"
-
+        sm = self._bd_summary(cog)
+        ctl = self._bd_control_stats(state, cog)
+        val_detail = self._bd_validation_detail(cog.get("validation") or {})
+        hist_block = self._bd_history_block(state)
         return f"""You are the cognitive controller of a research agent. Choose the next action.
 
 Iteration: {state.iteration}/{state.max_iterations}
@@ -2188,47 +2262,110 @@ Last action: {state.last_action or 'NONE'}
 Last rationale: {state.last_rationale or 'none'}
 
 State:
-- Hypothesis: {hyp}
-- Plan mode: {plan_mode}
-- Execution: {'DONE' if exec_done else 'NONE'}
-- Validation: {val_status}
-- Consecutive failures: {getattr(self, "_consecutive_failures", 0)}/{_max_fail}
-- Failures by type: {_type_str}
-- Window fail rate: {_window_str}
-- Last run pattern: {_last_pattern or 'none'}
-- Pivot count: {getattr(self, "_pivot_count", 0)}/{_max_pivot}
-- Refine count: {getattr(self, "_refine_count", 0)}
-- Action history (last 10): {action_hist_str}
-- Last learn summary: {last_learn}
+- Hypothesis: {sm['hyp']}
+- Plan mode: {sm['plan_mode']}
+- Execution: {'DONE' if sm['exec_done'] else 'NONE'}
+- Validation: {sm['val_status']}
+- Consecutive failures: {ctl['consec_fail']}/{ctl['max_fail']}
+- Failures by type: {ctl['type_str']}
+- Window fail rate: {ctl['window_str']}
+- Last run pattern: {ctl['last_pattern'] or 'none'}
+- Pivot count: {ctl['pivot_count']}/{ctl['max_pivot']}
+- Refine count: {ctl['refine_count']}
+- Action history (last 10): {ctl['action_hist']}
+- Last learn summary: {ctl['last_learn']}
 
 Validation details: {val_detail or 'none'}
-Speculator hints: {spec_hint or 'none'}
+Speculator hints: {ctl['spec_hint'] or 'none'}
 Last reflection advice: {state.redirect_reason or 'none'}
 
 Previous iterations (avoid repeating failed paths):
-{_hist_block}
+{hist_block}
 
 Previous run context (what was explored last run):
-{_prev_ctx or 'none'}
+{ctl['prev_ctx'] or 'none'}
 
 Physical time series collected this run:
-{_ts_ctx or 'none'}
+{ctl['ts_ctx'] or 'none'}
 
-Actions:
-- observe: re-perceive environment (context stale / need fresh data)
-- hypothesize: generate new hypothesis (no hypothesis / after pivot)
-- plan: design execution plan for current hypothesis
-- execute: run the plan
-- validate: check execution results
-- learn: update memory/KG with results
-- pivot: switch to new hypothesis (current path stuck)
-- skip: do nothing this iteration
-- stop: end the loop
+{_DECIDER_FOOTER}"""
 
-Note: report runs automatically when loop ends — do not pick "report".
+    def _bd_summary(self, cog: dict) -> dict[str, Any]:
+        """粗粒度状态: hypothesis / plan mode / execution / validation 结论."""
+        hyp = cog.get("hypothesis") or "NONE"
+        if isinstance(hyp, str) and len(hyp) > 120:
+            hyp = hyp[:120]
+        plan = cog.get("plan")
+        val = cog.get("validation") or {}
+        return {
+            "hyp": hyp,
+            "plan_mode": plan.get("mode", "NONE") if isinstance(plan, dict) else "NONE",
+            "exec_done": cog.get("execution_result") is not None,
+            "val_status": (
+                "PASSED" if _extract_tests_passed(val) else "FAILED" if val else "NONE"
+            ),
+        }
 
-Respond JSON only:
-{{"action": "one of above", "rationale": "1 sentence why", "expected_outcome": "1 sentence what you expect"}}"""
+    @staticmethod
+    def _bd_validation_detail(val: Any) -> str:
+        """D1: validation 具体字段 — 让 LLM 看到为什么 PASSED/FAILED."""
+        if not isinstance(val, dict) or not val:
+            return ""
+        _vd_keys = (
+            "thinking_collapse", "physics_validation_error",
+            "reviewer_critique", "dimensional_consistent",
+            "pde_classification", "constraint_check",
+        )
+        _vd_parts = [
+            f"{_k}={str(val[_k])[:80]}" for _k in _vd_keys if val.get(_k)
+        ]
+        return "; ".join(_vd_parts)[:300]
+
+    def _bd_control_stats(self, state: LoopState, cog: dict) -> dict[str, Any]:
+        """D1: 控制流统计 — 让 LLM 感知 stuck 程度与历史失败模式."""
+        # getattr 防 __new__ 测试场景 (selfcheck 绕过 __init__).
+        _by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
+        _type_max = getattr(self, "_max_failures_by_type", {}) or {}
+        _type_parts = [
+            f"{k}={v}/{_type_max.get(k, '?')}"
+            for k, v in sorted(_by_type.items())
+            if v > 0
+        ]
+        return {
+            "consec_fail": getattr(self, "_consecutive_failures", 0),
+            "max_fail": getattr(self, "_max_consecutive_failures", 20),
+            # ponytail: 硬编码上限, 升级路径走 PhaseRegistry extra
+            "max_pivot": 10,
+            "pivot_count": getattr(self, "_pivot_count", 0),
+            "refine_count": getattr(self, "_refine_count", 0),
+            "type_str": ", ".join(_type_parts) if _type_parts else "none",
+            "window_str": _fail_window_str(
+                getattr(self, "_validate_window", None) or [],
+                getattr(self, "_validate_window_size", 100),
+            ),
+            "action_hist": ", ".join(state.action_history[-10:]) or "none",
+            "spec_hint": (getattr(self, "_speculator_hint", "") or "")[:300],
+            "last_learn": (cog.get("last_learn_summary") or "none")[:200],
+            "last_pattern": (
+                getattr(self, "_last_run_failure_pattern", "") or ""
+            ).strip(),
+            "prev_ctx": (getattr(self, "_prev_run_context", "") or "").strip(),
+            "ts_ctx": self._format_timeseries_context(),
+        }
+
+    @staticmethod
+    def _bd_history_block(state: LoopState) -> str:
+        """P0: 最近 5 轮 compact 迭代历史, 让 LLM 避免重复失败的路径."""
+        _hist = state.iteration_history[-5:] if state.iteration_history else []
+        _lines = []
+        for _h in _hist:
+            _lines.append(
+                f"  iter{_h.get('iter', '?')}: {_h.get('action', '?')} "
+                f"({_h.get('val_status', 'none')})"
+                + (f" [{_h.get('plan_mode')}]" if _h.get('plan_mode') else "")
+                + (f" → {_h.get('advice', '')[:80]}" if _h.get('redirect') else "")
+            )
+        return "\n".join(_lines) if _lines else "  (none)"
 
     def _is_action_legal(self, action: str, cog: dict) -> bool:
         """LLM 选择的 action 是否合法 (前置条件满足)."""
@@ -2600,17 +2737,11 @@ Respond JSON only:
         state: LoopState,
         max_iterations: int,
     ) -> dict[str, Any]:
-        """单一完成判定出口 (控制面审计: 合并 F2/F17/Unified/CompletionGate).
+        """单一完成判定出口 (合并 F2/F17/Unified/CompletionGate).
 
-        此前"是否完成"有三套并行实现各自重算/各自写 should_stop, 且默认路径用
-        规则版 GoalJudge, 这条硬出口不可信. 这里收敛为一次判定: (1) GoalJudge
-        (有模型走 LLM, 否则规则降级) 出 achieved/gaps; (2) 可选变体 (统一决策 /
-        完成门) 消费同一 judge 结果, 只决定 stop 之外的 switch_tool/requery;
-        (3) 统一验收门 ``_accept_completion`` 对任何"完成"信号做证据门 + SKEPTIC
-        对抗审查.
-
-        返回 ``{"ran", "stop", "reason", "hint"}``; 纯判定, 不写 state.should_stop
-        (由调用方写一次, 便于审计与触发率观测).
+        一次判定: (1) GoalJudge 出 achieved/gaps; (2) 可选变体只消费同一结果;
+        (3) 验收门 ``_accept_completion`` 做证据门 + SKEPTIC 对抗审查.
+        返回 ``{"ran", "stop", "reason", "hint"}``; 纯判定, 不写 state.should_stop.
         """
         out: dict[str, Any] = {"ran": False, "stop": False, "reason": "", "hint": ""}
         if goal is None or getattr(state, "should_stop", False):
@@ -2816,16 +2947,20 @@ Respond JSON only:
         (2) **SKEPTIC**: 独立 LLM 对抗审查, 拿证据尝试证伪声明; 不通过则把反例
             作为 hint 回灌, 不终止. 无模型时 fail-open (退化为只看证据门).
         """
-        from huginn.autoloop.engine_reflect import (
-            _ledger_evidence_text,
-            _ledger_has_finite_evidence,
-        )
-
         _ledger = getattr(self, "_execution_ledger", None) or []
-        if not _ledger_has_finite_evidence(_ledger):
+        ok, why = self._ac_evidence_gate(state, _ledger)
+        if not ok:
+            return False, why
+        return await self._ac_skeptic(goal, claim_text, state, _ledger)
+
+    def _ac_evidence_gate(self, state: LoopState, ledger: list) -> tuple[bool, str]:
+        """证据门: 台账须有本轮有限数值 + 元认知完成度审计 (无 LLM)."""
+        from huginn.autoloop.engine_reflect import _ledger_has_finite_evidence
+
+        if not _ledger_has_finite_evidence(ledger):
             self._control_trace(
                 "goal_acceptance",
-                f"blocked: no finite execution evidence (ledger={len(_ledger)})",
+                f"blocked: no finite execution evidence (ledger={len(ledger)})",
                 iteration=state.iteration,
                 action="block",
             )
@@ -2833,7 +2968,6 @@ Respond JSON only:
                 "[验收门] 完成声明缺少本轮真实执行证据 (台账中无有限数值): "
                 "请先跑出可溯源的数值结果, 或显式说明证据缺口, 不要停在无证据的结论上."
             )
-
         # (1b) 元认知完成度审计 (推导链/复现证据/证据强度启发式, 无 LLM).
         #      原 F2/F17 用它作硬阻断, 这里保留为验收门的一层.
         _blk, _why = self._metacog_check_completion()
@@ -2845,47 +2979,55 @@ Respond JSON only:
                 action="block",
             )
             return False, f"[验收门·完成度审计] {_why}"
+        return True, ""
 
+    async def _ac_skeptic(
+        self, goal: Any, claim_text: str, state: LoopState, ledger: list
+    ) -> tuple[bool, str]:
+        """SKEPTIC 门: 独立 LLM 对抗审查; 无模型 / 审查失败时 fail-open."""
         _model = getattr(self, "verification_model", None) or getattr(self, "model", None)
-        if _model is not None and hasattr(_model, "ainvoke"):
-            try:
-                from huginn.metacog.critique import adversarial_critique
+        if _model is None or not hasattr(_model, "ainvoke"):
+            return True, ""
+        from huginn.autoloop.engine_reflect import _ledger_evidence_text
 
-                _crit = await adversarial_critique(
-                    model=_model,
-                    report=(
-                        f"## 完成声明 (待证伪)\n{claim_text[:4000]}\n\n"
-                        f"## 本轮真实执行证据台账\n{_ledger_evidence_text(_ledger)[:6000]}"
-                    ),
-                    checklist=(
-                        f"目标: {getattr(goal, 'objective', '')}\n"
-                        "核对: 声明中的每个数值/结论是否能在**证据台账**中查到出处; "
-                        "凡是优于合理基线、或台账中查无出处的数值, 一律作为 red flag."
-                    ),
-                )
-                _verdict = str(_crit.get("overall_verdict", "fix_needed"))
-                _flags = _crit.get("implausible_metrics") or []
-                if _verdict != "pass":
-                    _why = "; ".join(
-                        f"{m.get('metric', '?')}({m.get('red_flag', '')})"
-                        for m in _flags[:3] if isinstance(m, dict)
-                    ) or f"skeptic verdict={_verdict}"
-                    self._control_trace(
-                        "goal_skeptic",
-                        f"verdict={_verdict} flags={len(_flags)}",
-                        iteration=state.iteration,
-                        action="block",
-                    )
-                    return False, (
-                        f"[验收门·SKEPTIC] 独立对抗审查未通过 ({_verdict}): {_why}. "
-                        "请修正声明或补齐证据后重报."
-                    )
+        try:
+            from huginn.metacog.critique import adversarial_critique
+
+            _crit = await adversarial_critique(
+                model=_model,
+                report=(
+                    f"## 完成声明 (待证伪)\n{claim_text[:4000]}\n\n"
+                    f"## 本轮真实执行证据台账\n{_ledger_evidence_text(ledger)[:6000]}"
+                ),
+                checklist=(
+                    f"目标: {getattr(goal, 'objective', '')}\n"
+                    "核对: 声明中的每个数值/结论是否能在**证据台账**中查到出处; "
+                    "凡是优于合理基线、或台账中查无出处的数值, 一律作为 red flag."
+                ),
+            )
+            _verdict = str(_crit.get("overall_verdict", "fix_needed"))
+            _flags = _crit.get("implausible_metrics") or []
+            if _verdict != "pass":
+                _why = "; ".join(
+                    f"{m.get('metric', '?')}({m.get('red_flag', '')})"
+                    for m in _flags[:3] if isinstance(m, dict)
+                ) or f"skeptic verdict={_verdict}"
                 self._control_trace(
-                    "goal_skeptic", "verdict=pass",
-                    iteration=state.iteration, action="allow_stop",
+                    "goal_skeptic",
+                    f"verdict={_verdict} flags={len(_flags)}",
+                    iteration=state.iteration,
+                    action="block",
                 )
-            except Exception:  # 防御: 对抗审查失败 fail-open (证据门已过)
-                logger.debug("goal skeptic failed (fail-open)", exc_info=True)
+                return False, (
+                    f"[验收门·SKEPTIC] 独立对抗审查未通过 ({_verdict}): {_why}. "
+                    "请修正声明或补齐证据后重报."
+                )
+            self._control_trace(
+                "goal_skeptic", "verdict=pass",
+                iteration=state.iteration, action="allow_stop",
+            )
+        except Exception:  # 防御: 对抗审查失败 fail-open (证据门已过)
+            logger.debug("goal skeptic failed (fail-open)", exc_info=True)
         return True, ""
 
     def _reflect_empty_output_advice(
@@ -4645,9 +4787,8 @@ Respond JSON only:
             logger.debug("advisor_post_task_recommend failed (non-fatal)", exc_info=True)
 
 
-def _selfcheck_rcb_feedback() -> None:
-    """RCB 顶层认知反馈函数的最小自检 — assert-based, 无框架无 fixture."""
-    # darwin_ratchet_check: continue / pivot / counterexample / stop 四路
+def _scr_darwin_ratchet() -> None:
+    """darwin_ratchet_check: continue / pivot / counterexample / stop 四路."""
     act, st = darwin_ratchet_check(8.0, 0.6, 0, 3)
     assert act == "continue", f"expected continue, got {act}"
     act, st = darwin_ratchet_check(8.0, 0.6, 3, 3)
@@ -4660,14 +4801,18 @@ def _selfcheck_rcb_feedback() -> None:
     assert st["stagnation_count"] == 0, "counterexample 应重置 stagnation"
     assert st["speculator_hint"] and "counterexample" in st["speculator_hint"].lower()
 
-    # classify_stall: history-based
+
+def _scr_classify_stall() -> None:
+    """classify_stall: history-based 四路."""
     assert classify_stall([], []) == "pivot"
     assert classify_stall([1.0, 1.0, 1.0], [0.5]) == "stop"
     assert classify_stall([5.0, 5.1, 4.9], [0.1]) == "counterexample"
     assert classify_stall([5.0, 5.1, 4.9], [0.6]) == "pivot"
     assert classify_stall([5.0, 5.1, 4.9], [0.7, 0.7, 0.5, 0.4]) == "counterexample"
 
-    # metacog_check_completion: 4 层 + passed
+
+def _scr_completion_check() -> None:
+    """metacog_check_completion: 4 层 + passed."""
     r = metacog_check_completion("no derivation here", "/nonexistent/path")
     assert r["passed"] is False
     assert "derivation_chain_coverage" in r
@@ -4680,7 +4825,9 @@ def _selfcheck_rcb_feedback() -> None:
     assert r2["derivation_chain_coverage"] >= 0.5
     assert r2["evidence_strength"] >= 0.5
 
-    # metacog_check_topology_collapse: 三路径
+
+def _scr_topology_collapse() -> None:
+    """metacog_check_topology_collapse: 三路径."""
     r3 = metacog_check_topology_collapse()
     assert r3["collapsed"] is False and r3["diversity_score"] == 1.0
     r4 = metacog_check_topology_collapse(hypothesis_list=[])
@@ -4698,7 +4845,9 @@ def _selfcheck_rcb_feedback() -> None:
     ])
     assert r6["collapsed"] is False and r6["diversity_score"] == 1.0
 
-    # metacog_check_selection_bias: 命中 / 不命中 / 空 / 异常
+
+def _scr_selection_bias() -> None:
+    """metacog_check_selection_bias: 命中 / 不命中 / 空 / hint 透传."""
     r7 = metacog_check_selection_bias()
     assert r7["biased"] is False and r7["n"] == 0
     r8 = metacog_check_selection_bias(
@@ -4714,94 +4863,109 @@ def _selfcheck_rcb_feedback() -> None:
         [{"outcome": "a", "group": "z1"}] * 3 + [{"outcome": "b", "group": "z2"}] * 3
     )
     assert r10["biased"] is False
-    # hint 透传
     r11 = metacog_check_selection_bias([{"outcome": "x"}], hint="custom hint")
     assert r11["hint"] == "custom hint"
+
+
+def _selfcheck_rcb_feedback() -> None:
+    """RCB 顶层认知反馈函数的最小自检 — assert-based, 无框架无 fixture."""
+    _scr_darwin_ratchet()
+    _scr_classify_stall()
+    _scr_completion_check()
+    _scr_topology_collapse()
+    _scr_selection_bias()
     print("rcb_feedback selfcheck ok")
 
 
 
 
+async def _sc_observe(state: LoopState) -> dict[str, Any]:
+    return {"step": state.iteration}
+
+
+async def _sc_decide(state: LoopState, obs: dict[str, Any]) -> ActionDecision:
+    """第 3 轮后选 stop, 验证主循环能退出."""
+    if state.iteration >= 3:
+        return ActionDecision(action="stop", rationale="done")
+    return ActionDecision(action="execute", rationale="working")
+
+
+async def _sc_execute(state: LoopState, decision: ActionDecision) -> Any:
+    return f"result_iter_{state.iteration}"
+
+
+async def _sc_reflect(
+    state: LoopState, decision: ActionDecision, result: Any
+) -> ReflectionResult:
+    return ReflectionResult(should_continue=True)
+
+
+async def _sc_stuck_decide(state: LoopState, obs: dict[str, Any]) -> ActionDecision:
+    return ActionDecision(action="execute", rationale="stuck")
+
+
+async def _sc_bad_decide(state: LoopState, obs: dict[str, Any]) -> ActionDecision:
+    return ActionDecision(action="invalid_action", rationale="bad")
+
+
+class _MockWriter(OutputWriter):
+    def __init__(self):
+        self.steps = []
+
+    def write_step(self, iteration, action, result, reflection):
+        self.steps.append((iteration, action))
+
+
+def _sc_new_loop(writer: OutputWriter, decide, **kwargs) -> CognitiveLoop:
+    return CognitiveLoop(
+        observe_fn=_sc_observe,
+        decide_fn=decide,
+        execute_fn=_sc_execute,
+        reflect_fn=_sc_reflect,
+        output_writer=writer,
+        **kwargs,
+    )
+
+
+async def _sc_basic_flow() -> None:
+    writer = _MockWriter()
+    state = await _sc_new_loop(writer, _sc_decide, max_iterations=10).run()
+    assert state.iteration == 3, f"expected 3 iters, got {state.iteration}"
+    assert state.should_stop, "should_stop should be True after 'stop' action"
+    assert len(writer.steps) == 3, f"writer should have 3 steps, got {len(writer.steps)}"
+    assert writer.steps[-1] == (3, "stop"), f"last step wrong: {writer.steps[-1]}"
+
+
+async def _sc_stuck_loop() -> None:
+    """死循环防护测试: decide 总返回相同 action."""
+    state = await _sc_new_loop(
+        _MockWriter(), _sc_stuck_decide, max_iterations=10, max_repeated_actions=3
+    ).run()
+    # 死循环防护: 6 次 (2x limit) 后强制 stop, should_redirect 在过程中被设过
+    assert state.should_stop, "stuck loop should force stop at 2x limit"
+    assert state.iteration == 6, (
+        f"stuck loop should stop at 6 iters (2x limit=3), got {state.iteration}"
+    )
+    assert state.should_redirect, "should_redirect should be set before force stop"
+    assert "死循环防护" in state.redirect_reason, f"redirect_reason wrong: {state.redirect_reason}"
+
+
+async def _sc_invalid_action() -> None:
+    """invalid action 被替换为 'skip', 不崩溃."""
+    state = await _sc_new_loop(_MockWriter(), _sc_bad_decide, max_iterations=2).run()
+    assert state.iteration >= 1, "should run at least 1 iter"
+
+
+async def _sc_run_all() -> None:
+    await _sc_basic_flow()
+    await _sc_stuck_loop()
+    await _sc_invalid_action()
+    print("CognitiveLoop selfcheck OK (3/3: basic flow + stuck protection + invalid action)")
+
+
 def _selfcheck() -> None:
     """CognitiveLoop 骨架自检 — 不依赖 LLM, 用 mock 钩子验证控制流."""
-    import asyncio
-
-    async def mock_observe(state: LoopState) -> dict[str, Any]:
-        return {"step": state.iteration}
-
-    async def mock_decide(state: LoopState, obs: dict[str, Any]) -> ActionDecision:
-        # 第 3 轮后选 stop, 验证主循环能退出
-        if state.iteration >= 3:
-            return ActionDecision(action="stop", rationale="done")
-        return ActionDecision(action="execute", rationale="working")
-
-    async def mock_execute(state: LoopState, decision: ActionDecision) -> Any:
-        return f"result_iter_{state.iteration}"
-
-    async def mock_reflect(
-        state: LoopState, decision: ActionDecision, result: Any
-    ) -> ReflectionResult:
-        return ReflectionResult(should_continue=True)
-
-    class MockWriter(OutputWriter):
-        def __init__(self):
-            self.steps = []
-        def write_step(self, iteration, action, result, reflection):
-            self.steps.append((iteration, action))
-
-    async def run_test():
-        writer = MockWriter()
-        loop = CognitiveLoop(
-            observe_fn=mock_observe,
-            decide_fn=mock_decide,
-            execute_fn=mock_execute,
-            reflect_fn=mock_reflect,
-            output_writer=writer,
-            max_iterations=10,
-        )
-        state = await loop.run()
-        assert state.iteration == 3, f"expected 3 iters, got {state.iteration}"
-        assert state.should_stop, "should_stop should be True after 'stop' action"
-        assert len(writer.steps) == 3, f"writer should have 3 steps, got {len(writer.steps)}"
-        assert writer.steps[-1] == (3, "stop"), f"last step wrong: {writer.steps[-1]}"
-
-        # 死循环防护测试: decide 总返回相同 action
-        async def stuck_decide(state, obs):
-            return ActionDecision(action="execute", rationale="stuck")
-        writer2 = MockWriter()
-        loop2 = CognitiveLoop(
-            observe_fn=mock_observe,
-            decide_fn=stuck_decide,
-            execute_fn=mock_execute,
-            reflect_fn=mock_reflect,
-            output_writer=writer2,
-            max_iterations=10,
-            max_repeated_actions=3,
-        )
-        state2 = await loop2.run()
-        # 死循环防护: 6 次 (2x limit) 后强制 stop, should_redirect 在过程中被设过
-        assert state2.should_stop, "stuck loop should force stop at 2x limit"
-        assert state2.iteration == 6, f"stuck loop should stop at 6 iters (2x limit=3), got {state2.iteration}"
-        assert state2.should_redirect, "should_redirect should be set before force stop"
-        assert "死循环防护" in state2.redirect_reason, f"redirect_reason wrong: {state2.redirect_reason}"
-
-        # invalid action 测试
-        async def bad_decide(state, obs):
-            return ActionDecision(action="invalid_action", rationale="bad")
-        loop3 = CognitiveLoop(
-            observe_fn=mock_observe,
-            decide_fn=bad_decide,
-            execute_fn=mock_execute,
-            reflect_fn=mock_reflect,
-            max_iterations=2,
-        )
-        state3 = await loop3.run()
-        # invalid action 被替换为 'skip', 不崩溃
-        assert state3.iteration >= 1, "should run at least 1 iter"
-
-        print("CognitiveLoop selfcheck OK (3/3: basic flow + stuck protection + invalid action)")
-
-    asyncio.run(run_test())
+    asyncio.run(_sc_run_all())
 
 
 # ── P4 Task 24: RCB → autoloop _learn 顶层 wrapper ──────────────────────────

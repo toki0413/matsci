@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -195,6 +196,259 @@ class MemoryEntry:
     access_count: int = 0
 
 
+def _track_memory_rerank(mode: str, n: int) -> None:
+    """埋点 rerank 命中模式; metrics 模块缺失不阻断检索."""
+    try:
+        from huginn.routes.metrics import track_memory_rerank
+
+        track_memory_rerank(mode, n)
+    except Exception:
+        logger.debug("memory rerank metric tracking failed", exc_info=True)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """余弦相似度; 任一零向量返回 0.0."""
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+
+def _hils_assign(c_embs: list[list[float]], landmarks: list[list[float]]) -> list[int]:
+    """每个 candidate 挂到余弦最相似的地标."""
+    assign = [0] * len(c_embs)
+    for i, emb in enumerate(c_embs):
+        best_lm = 0
+        best_sim = -2.0
+        for li, lm in enumerate(landmarks):
+            s = _cosine(emb, lm)
+            if s > best_sim:
+                best_sim = s
+                best_lm = li
+        assign[i] = best_lm
+    return assign
+
+
+def _hils_alpha(
+    q_emb: list[float], c_embs: list[list[float]], beta: float
+) -> list[float] | None:
+    """Modern Hopfield attention 权重 softmax(β·cos); 全零时返回 None."""
+    scores = [math.exp(beta * _cosine(q_emb, c_embs[i])) for i in range(len(c_embs))]
+    total = sum(scores)
+    if total <= 0:
+        return None
+    return [s / total for s in scores]
+
+
+def _hils_trivial(
+    candidates: list[dict[str, Any]], top_k: int, vector_store: Any
+) -> bool:
+    """N 太小或没有 vector store 时无需 rerank."""
+    return (
+        not candidates
+        or top_k <= 1
+        or len(candidates) <= top_k
+        or vector_store is None
+    )
+
+
+def _hils_embed(
+    vector_store: Any, query: str, candidates: list[dict[str, Any]]
+) -> tuple[list[float], list[list[float]]] | None:
+    """算 query + candidates 的 embedding; 失败或数量不符返回 None."""
+    try:
+        texts = [query] + [str(c.get("content", "")) for c in candidates]
+        embs = vector_store._compute_embeddings(texts)
+    except Exception:
+        logger.warning("hils: embedding 失败, 回退原排序", exc_info=True)
+        return None
+    if not embs or len(embs) != len(texts):
+        return None
+    return embs[0], embs[1:]
+
+
+def _hils_full_result(
+    candidates: list[dict[str, Any]], alpha: list[float], top_k: int, n: int, mode: str
+) -> list[dict[str, Any]]:
+    """按 alpha 全排序取 top_k, 并记录实际走的 rerank 模式."""
+    ranked = sorted(range(n), key=lambda i: -alpha[i])
+    _track_memory_rerank(mode, n)
+    return [candidates[i] for i in ranked[:top_k]]
+
+
+def _hils_filter(
+    n: int,
+    lm_assign: list[int],
+    lm_alpha: list[float],
+    top_lm_set: set[int],
+    top_k: int,
+) -> list[int]:
+    """只保留 top-h 地标下的 candidates; 不足 top_k 时按次优地标补齐."""
+    filtered = [i for i in range(n) if lm_assign[i] in top_lm_set]
+    if len(filtered) >= top_k:
+        return filtered
+    for li in sorted(range(len(lm_alpha)), key=lambda i: -lm_alpha[i]):
+        if li in top_lm_set:
+            continue
+        extra = [i for i in range(n) if lm_assign[i] == li and i not in filtered]
+        filtered.extend(extra)
+        if len(filtered) >= top_k * 2:
+            break
+    return filtered
+
+
+def _ising_fields(
+    q_emb: list[float], c_embs: list[list[float]], n: int
+) -> tuple[list[float], list[list[float]]]:
+    """Ising 外场 Hᵢ 与耦合矩阵 Tᵢⱼ (对称, 只算上三角)."""
+    # Hᵢ = sim(query, mᵢ)
+    H = [_cosine(q_emb, c_embs[i]) for i in range(n)]
+    # Tᵢⱼ = sim(mᵢ, mⱼ)
+    T: list[list[float]] = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            s = _cosine(c_embs[i], c_embs[j])
+            T[i][j] = s
+            T[j][i] = s
+    return H, T
+
+
+def _ising_greedy(
+    H: list[float], T: list[list[float]], top_k: int, beta: float
+) -> list[int]:
+    """按 Hᵢ 降序贪心选 K-子集: 每步算 ΔE, ΔE < 0 接受, 否则跳过."""
+    order = sorted(range(len(H)), key=lambda i: -H[i])
+    selected: list[int] = []
+    for idx in order:
+        if len(selected) >= top_k:
+            break
+        if not selected:
+            # 第一个: ΔE = -Hᵢ, Hᵢ > 0 时接受
+            if H[idx] > 0:
+                selected.append(idx)
+            continue
+        # ΔE = -H_idx - β Σⱼ∈selected T[idx][j]
+        delta = -H[idx] - beta * sum(T[idx][j] for j in selected)
+        if delta < 0:
+            selected.append(idx)
+    # 兜底: 若贪心太保守没选够, 按 H 顺序补齐
+    if len(selected) < top_k:
+        for idx in order:
+            if idx not in selected and len(selected) < top_k:
+                selected.append(idx)
+            if len(selected) >= top_k:
+                break
+    return selected
+
+
+_LINT_NUM_RE = re.compile(r"-?\d+\.?\d*")
+
+
+def _lint_groups(rows: list[Any]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """按 (formula, tag) 分组; contradicts:/crossref: 是标记不是分组维度."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        formula = r["formula"] or ""
+        if not formula:
+            continue
+        try:
+            tags_list = json.loads(r["tags"]) if r["tags"] else []
+        except (json.JSONDecodeError, TypeError):
+            tags_list = []
+        for tag in tags_list:
+            if isinstance(tag, str) and (
+                tag.startswith("contradicts:") or tag.startswith("crossref:")
+            ):
+                continue
+            groups.setdefault((formula, tag), []).append(
+                {"id": r["id"], "content": r["content"], "tags": tags_list}
+            )
+    return groups
+
+
+def _lint_contradicts(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """同一 (formula, tag) 下两条记录数值集合不同 → 矛盾."""
+    na = set(_LINT_NUM_RE.findall(a["content"] or ""))
+    nb = set(_LINT_NUM_RE.findall(b["content"] or ""))
+    return bool(na and nb and na != nb)
+
+
+def _lint_scan(
+    groups: dict[tuple[str, str], list[dict[str, Any]]], auto_fix: bool
+) -> tuple[list[dict[str, Any]], dict[str, list[str]], int]:
+    """扫描分组, 返回 (矛盾列表, 待更新 tags, 已修条数)."""
+    contradictions: list[dict[str, Any]] = []
+    pending_updates: dict[str, list[str]] = {}
+    auto_fixed = 0
+    for (formula, tag), entries in groups.items():
+        if len(entries) < 2:
+            continue
+        for i in range(len(entries)):
+            for j in range(i + 1, len(entries)):
+                a, b = entries[i], entries[j]
+                if not _lint_contradicts(a, b):
+                    continue
+                contradictions.append(
+                    {"ids": [a["id"], b["id"]], "formula": formula, "tag": tag}
+                )
+                if not auto_fix:
+                    continue
+                a_tag = f"contradicts:{b['id']}"
+                b_tag = f"contradicts:{a['id']}"
+                a_new = pending_updates.setdefault(a["id"], list(a["tags"]))
+                b_new = pending_updates.setdefault(b["id"], list(b["tags"]))
+                if a_tag not in a_new:
+                    a_new.append(a_tag)
+                    auto_fixed += 1
+                if b_tag not in b_new:
+                    b_new.append(b_tag)
+                    auto_fixed += 1
+    return contradictions, pending_updates, auto_fixed
+
+
+def _kmeans_update(
+    embs: list[list[float]],
+    assign: list[int],
+    k: int,
+    d: int,
+    centroids: list[list[float]],
+) -> list[list[float]]:
+    """按 assign 重算质心; 空簇保留旧质心."""
+    new_centroids = [[0.0] * d for _ in range(k)]
+    counts = [0] * k
+    for i, emb in enumerate(embs):
+        ci = assign[i]
+        for j in range(d):
+            new_centroids[ci][j] += emb[j]
+        counts[ci] += 1
+    for ci in range(k):
+        if counts[ci] > 0:
+            for j in range(d):
+                new_centroids[ci][j] /= counts[ci]
+        else:
+            # 空簇: 保留旧 centroid
+            new_centroids[ci] = centroids[ci]
+    return new_centroids
+
+
+def _analogy_rows(
+    rows: list[dict[str, Any]], top_k: int, similarity_threshold: float
+) -> list[dict[str, Any]]:
+    """rank 代理 score: 第 i 条 score = 1.0 - i*(0.5/top_k), 范围 (0.5, 1.0]."""
+    step = 0.5 / max(top_k, 1)
+    analogy: list[dict[str, Any]] = []
+    for i, row in enumerate(rows[:top_k]):
+        score = 1.0 - i * step
+        if score < similarity_threshold:
+            continue
+        analogy.append({
+            "content": str(row.get("content", ""))[:200],
+            "score": round(score, 3),
+        })
+    return analogy
+
+
 class LongTermMemory:
     """SQLite-backed long-term memory with optional vector semantic search and tiered TTL."""
 
@@ -226,8 +480,8 @@ class LongTermMemory:
         finally:
             conn.close()
 
-    def _init_db(self) -> None:
-        # Base table + indexes that only reference original columns
+    def _init_base_schema(self) -> None:
+        """Base table + indexes that only reference original columns."""
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
@@ -252,11 +506,8 @@ class LongTermMemory:
             """)
             conn.commit()
 
-        # Run versioned migrations -- replaces the old scattered
-        # ALTER TABLE + suppress(OperationalError) approach
-        _run_memory_migrations(str(self.db_path))
-
-        # Indexes on migrated columns + FTS (depend on columns added above)
+    def _init_migrated_schema(self) -> None:
+        """Indexes on migrated columns + FTS (depend on columns added above)."""
         with self._connect() as conn:
             # Self-heal: stale DBs may have user_version=1 from before
             # some columns were added to _migrate_memories_v1. MigrationManager
@@ -296,6 +547,15 @@ class LongTermMemory:
                 )
             """)
             conn.commit()
+
+    def _init_db(self) -> None:
+        self._init_base_schema()
+
+        # Run versioned migrations -- replaces the old scattered
+        # ALTER TABLE + suppress(OperationalError) approach
+        _run_memory_migrations(str(self.db_path))
+
+        self._init_migrated_schema()
 
         # G35: 启动时校验 FTS5 索引一致性. 多处 DELETE 路径 (decay/dedup/
         # prune/export 覆盖导入) 历史上绕过 FTS5 'delete' 命令, 留孤儿索引行
@@ -380,6 +640,90 @@ class LongTermMemory:
                     return True
         return True
 
+    @staticmethod
+    def _store_expires(
+        tier: str, ttl_hours: float | None, now: datetime
+    ) -> str | None:
+        """算过期时间; long tier 且无 ttl_hours 时返回 None (永久)."""
+        if ttl_hours is None:
+            ttl_hours = TIER_TTL_HOURS[tier]
+        if ttl_hours is None:
+            return None
+        return (now + timedelta(hours=ttl_hours)).isoformat()
+
+    def _store_insert(
+        self,
+        conn: sqlite3.Connection,
+        row: tuple[Any, ...],
+        content: str,
+        fts_tags: str,
+        source: str,
+    ) -> None:
+        """插入主表 + FTS 索引; disk full 时清理旧记忆并重建 FTS."""
+        try:
+            conn.execute(
+                """
+                INSERT INTO memories
+                (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id, path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row,
+            )
+            conn.execute(
+                "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
+                (
+                    conn.execute("SELECT last_insert_rowid()").fetchone()[0],
+                    content,
+                    fts_tags,
+                    source,
+                ),
+            )
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            if "disk" in str(e).lower() or "full" in str(e).lower():
+                logger.error("disk full, cannot write to long-term memory: %s", e)
+                # 紧急清理：删低重要度的非 long 记忆腾空间
+                conn.execute(
+                    "DELETE FROM memories WHERE tier != 'long' "
+                    "ORDER BY importance ASC LIMIT 100"
+                )
+                conn.commit()
+                # G35: bulk DELETE 绕过 FTS5 'delete' 命令, 重建索引兜底
+                self._rebuild_fts_index()
+            raise
+
+    def _store_ingest(
+        self,
+        entry_id: str,
+        content: str,
+        category: str,
+        fts_tags: str,
+        source: str,
+        importance: float,
+        tier: str,
+        formula: str | None,
+        user_id: str | None,
+        path: str | None,
+    ) -> None:
+        """把新记忆同步进向量库, 供语义检索."""
+        self._vector_store.ingest(
+            [content],
+            metadatas=[
+                {
+                    "memory_id": entry_id,
+                    "category": category,
+                    "tags": fts_tags,
+                    "source": source,
+                    "importance": str(importance),
+                    "tier": tier,
+                    "formula": formula or "",
+                    "user_id": user_id or "",
+                    "path": path or "",
+                }
+            ],
+            ids=[entry_id],
+        )
+
     def store(
         self,
         content: str,
@@ -395,13 +739,10 @@ class LongTermMemory:
     ) -> str:
         """Store a new memory entry. Returns the entry ID.
 
-        tier: short (6h), mid (7d), long (permanent). ttl_hours overrides default TTL.
+        tier: short (6h), mid (7d), long (permanent), ttl_hours overrides TTL.
         formula: optional material formula (e.g. "GaN") for material entries.
-        user_id: optional owner. When set the memory is private to that user;
-            when omitted the memory is shared (backward compatible).
-        path: optional hierarchical path (e.g. "materials/GaN/synthesis").
-            retrieve() uses _path_rank to prefer memories at or near the
-            lookup path. NULL means global, no path preference.
+        user_id: optional owner; omitted means shared (backward compatible).
+        path: optional hierarchical path; NULL means global, no path preference.
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
@@ -410,76 +751,21 @@ class LongTermMemory:
         )
         tags = tags or []
         now = datetime.now()
-        expires = None
-        if ttl_hours is None:
-            ttl_hours = TIER_TTL_HOURS[tier]
-        if ttl_hours is not None:
-            expires = (now + timedelta(hours=ttl_hours)).isoformat()
+        expires = self._store_expires(tier, ttl_hours, now)
+        # formula 进 tags 让 FTS5 也能搜到
+        fts_tags = " ".join(tags + ([formula] if formula else []))
+        row = (
+            entry_id, category, content, json.dumps(tags), source, importance,
+            tier, now.isoformat(), now.isoformat(), expires, formula, user_id, path,
+        )
 
         with self._connect() as conn:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO memories
-                    (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id, path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        entry_id,
-                        category,
-                        content,
-                        json.dumps(tags),
-                        source,
-                        importance,
-                        tier,
-                        now.isoformat(),
-                        now.isoformat(),
-                        expires,
-                        formula,
-                        user_id,
-                        path,
-                    ),
-                )
-                # formula 进 tags 让 FTS5 也能搜到
-                fts_tags = " ".join(tags + ([formula] if formula else []))
-                conn.execute(
-                    "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
-                    (
-                        conn.execute("SELECT last_insert_rowid()").fetchone()[0],
-                        content,
-                        fts_tags,
-                        source,
-                    ),
-                )
-                conn.commit()
-            except sqlite3.OperationalError as e:
-                if "disk" in str(e).lower() or "full" in str(e).lower():
-                    logger.error("disk full, cannot write to long-term memory: %s", e)
-                    # 紧急清理：删低重要度的非 long 记忆腾空间
-                    conn.execute("DELETE FROM memories WHERE tier != 'long' ORDER BY importance ASC LIMIT 100")
-                    conn.commit()
-                    # G35: bulk DELETE 绕过 FTS5 'delete' 命令, 重建索引兜底
-                    self._rebuild_fts_index()
-                    raise
-                raise
+            self._store_insert(conn, row, content, fts_tags, source)
 
         if self._enable_semantic:
-            self._vector_store.ingest(
-                [content],
-                metadatas=[
-                    {
-                        "memory_id": entry_id,
-                        "category": category,
-                        "tags": fts_tags,
-                        "source": source,
-                        "importance": str(importance),
-                        "tier": tier,
-                        "formula": formula or "",
-                        "user_id": user_id or "",
-                        "path": path or "",
-                    }
-                ],
-                ids=[entry_id],
+            self._store_ingest(
+                entry_id, content, category, fts_tags, source,
+                importance, tier, formula, user_id, path,
             )
 
         return entry_id
@@ -648,77 +934,20 @@ class LongTermMemory:
         ceiling: 贪心不保证全局最优; 升级路径: 模拟退火 / Modern Hopfield attention.
         """
         # 边界: 候选不足 / 单选 / 无 vector_store — 全部 no-op 回原排序
-        if (
-            not candidates
-            or top_k <= 1
-            or len(candidates) <= top_k
-            or self._vector_store is None
-        ):
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("none", len(candidates))
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
+        if _hils_trivial(candidates, top_k, self._vector_store):
+            _track_memory_rerank("none", len(candidates))
             return candidates[:top_k]
-        try:
-            texts = [query] + [str(c.get("content", "")) for c in candidates]
-            embs = self._vector_store._compute_embeddings(texts)
-        except Exception:
-            logger.warning("ising rerank: embedding 失败, 回退原排序", exc_info=True)
-            return candidates[:top_k]
-        if not embs or len(embs) != len(texts):
+        embedded = _hils_embed(self._vector_store, query, candidates)
+        if embedded is None:
             return candidates[:top_k]
 
-        # cosine similarity (chromadb 返回的 embedding 未归一化, 手动算)
-        import math
-
-        def _cos(a: list[float], b: list[float]) -> float:
-            na = math.sqrt(sum(x * x for x in a))
-            nb = math.sqrt(sum(x * x for x in b))
-            if na == 0 or nb == 0:
-                return 0.0
-            return sum(x * y for x, y in zip(a, b)) / (na * nb)
-
-        q_emb = embs[0]
-        c_embs = embs[1:]
-        # Hᵢ = sim(query, mᵢ)
-        H = [_cos(q_emb, c_embs[i]) for i in range(len(candidates))]
-        # Tᵢⱼ = sim(mᵢ, mⱼ) — 对称矩阵, 只算上三角
+        q_emb, c_embs = embedded
         n = len(candidates)
-        T: list[list[float]] = [[0.0] * n for _ in range(n)]
-        for i in range(n):
-            for j in range(i + 1, n):
-                s = _cos(c_embs[i], c_embs[j])
-                T[i][j] = s
-                T[j][i] = s
+        # cosine similarity (chromadb 返回的 embedding 未归一化, 手动算)
+        H, T = _ising_fields(q_emb, c_embs, n)
+        selected = _ising_greedy(H, T, top_k, beta)
 
-        # 贪心: 按 Hᵢ 降序, 逐个尝试加入 selected
-        order = sorted(range(n), key=lambda i: -H[i])
-        selected: list[int] = []
-        for idx in order:
-            if len(selected) >= top_k:
-                break
-            if not selected:
-                # 第一个: ΔE = -Hᵢ, Hᵢ > 0 时接受
-                if H[idx] > 0:
-                    selected.append(idx)
-                continue
-            # ΔE = -H_idx - β Σⱼ∈selected T[idx][j]
-            delta = -H[idx] - beta * sum(T[idx][j] for j in selected)
-            if delta < 0:
-                selected.append(idx)
-        # 兜底: 若贪心太保守没选够, 按 H 顺序补齐
-        if len(selected) < top_k:
-            for idx in order:
-                if idx not in selected and len(selected) < top_k:
-                    selected.append(idx)
-                if len(selected) >= top_k:
-                    break
-        try:
-            from huginn.routes.metrics import track_memory_rerank
-            track_memory_rerank("ising", len(candidates))
-        except Exception:
-            logger.debug("memory rerank metric tracking failed", exc_info=True)
+        _track_memory_rerank("ising", len(candidates))
         return [candidates[i] for i in selected]
 
     # ── P2-5: HiLS 分层稀疏 attention ─────────────────────────────────
@@ -738,147 +967,51 @@ class LongTermMemory:
         return os.environ.get("HUGINN_HILS_ATTENTION", "1") != "0"
 
     def _hils_attention(
-        self,
-        query: str,
-        candidates: list[dict[str, Any]],
-        top_k: int,
-        beta: float = 8.0,
-        n_landmarks: int = 256,
-        top_h: int = 8,
+        self, query: str, candidates: list[dict[str, Any]], top_k: int,
+        beta: float = 8.0, n_landmarks: int = 256, top_h: int = 8,
     ) -> list[dict[str, Any]]:
         """HiLS 分层稀疏 attention re-rank.
 
-        Modern Hopfield: ξ = softmax(β X^T q) X, β 是温度 (β→∞ 退化为传统 Hopfield).
-        分层稀疏 (HiLS):
-          Layer 0 (地标): K=n_landmarks 个地标 (k-means on candidate embs)
-                          q 跟 K 个地标算 attention → O(K·d)
-                          选 top-h 个地标
-          Layer 1 (精细): 只跟 top-h 地标下的 candidates 算全 attention
-                          O(h·(N/K)·d)
-          Total: O((K + h·N/K)·d) vs 全 attention O(N·d)
-          N=100K, K=256, h=8: 28x 加速.
-
-        N < n_landmarks 时退化到全 attention (v1 baseline), 不分层.
-        ponytail: 地标缓存用 (content_hash, n_landmarks) 做 key, 增量更新 lazy.
-        ceiling: 朴素 k-means (random init + 10 iter), N>1M 需 GPU faiss.
+        Modern Hopfield: ξ = softmax(β X^T q) X, β→∞ 退化为传统 Hopfield.
+        Layer 0 用地标算 attention 选 top-h; Layer 1 只在 top-h 地标下做全
+        attention. O((K + h·N/K)·d) vs 全量 O(N·d) — N=100K/K=256/h=8 约 28x.
+        N < n_landmarks 时退化为全 attention. ceiling: 朴素 k-means, N>1M 需 GPU.
         """
-        if (
-            not candidates
-            or top_k <= 1
-            or len(candidates) <= top_k
-            or self._vector_store is None
-        ):
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("none", len(candidates))
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
+        if _hils_trivial(candidates, top_k, self._vector_store):
+            _track_memory_rerank("none", len(candidates))
             return candidates[:top_k]
-        try:
-            texts = [query] + [str(c.get("content", "")) for c in candidates]
-            embs = self._vector_store._compute_embeddings(texts)
-        except Exception:
-            logger.warning("hils: embedding 失败, 回退原排序", exc_info=True)
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("none", len(candidates))
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
-            return candidates[:top_k]
-        if not embs or len(embs) != len(texts):
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("none", len(candidates))
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
+        embedded = _hils_embed(self._vector_store, query, candidates)
+        if embedded is None:
+            _track_memory_rerank("none", len(candidates))
             return candidates[:top_k]
 
-        import math
-
-        def _cos(a: list[float], b: list[float]) -> float:
-            na = math.sqrt(sum(x * x for x in a))
-            nb = math.sqrt(sum(x * x for x in b))
-            if na == 0 or nb == 0:
-                return 0.0
-            return sum(x * y for x, y in zip(a, b)) / (na * nb)
-
-        q_emb = embs[0]
-        c_embs = embs[1:]
+        q_emb, c_embs = embedded
         n = len(candidates)
 
         # 全 attention 权重: αᵢ = softmax(β · cos(q, mᵢ))
         # Modern Hopfield: ξ = Σ αᵢ mᵢ, 但我们只排序不组合, 用 αᵢ 作 score
-        scores = [math.exp(beta * _cos(q_emb, c_embs[i])) for i in range(n)]
-        total = sum(scores)
-        if total <= 0:
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("none", n)
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
+        alpha = _hils_alpha(q_emb, c_embs, beta)
+        if alpha is None:
+            _track_memory_rerank("none", n)
             return candidates[:top_k]
-        alpha = [s / total for s in scores]
 
         # N < K: 退化到全 attention (v1 baseline), 不分层
         if n < n_landmarks:
-            ranked = sorted(range(n), key=lambda i: -alpha[i])
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("hils_full", n)
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
-            return [candidates[i] for i in ranked[:top_k]]
+            return _hils_full_result(candidates, alpha, top_k, n, "hils_full")
 
-        # N >= K: 分层稀疏 (v2)
-        # Step 1: k-means 选地标 (朴素版, random init + 10 iter)
+        # N >= K: 分层稀疏 (v2) — Step 1: k-means 选地标; Step 2: query 跟地标算
+        # attention 选 top-h; 地标全零时回退全 attention.
         landmarks = self._kmeans_landmarks(c_embs, n_landmarks)
-
-        # Step 2: query 跟地标算 attention, 选 top-h
-        lm_scores = [math.exp(beta * _cos(q_emb, lm)) for lm in landmarks]
-        lm_total = sum(lm_scores)
-        if lm_total <= 0:
-            # 地标全零, 回退全 attention
-            ranked = sorted(range(n), key=lambda i: -alpha[i])
-            try:
-                from huginn.routes.metrics import track_memory_rerank
-                track_memory_rerank("hils_full", n)
-            except Exception:
-                logger.debug("memory rerank metric tracking failed", exc_info=True)
-            return [candidates[i] for i in ranked[:top_k]]
-        lm_alpha = [s / lm_total for s in lm_scores]
+        lm_alpha = _hils_alpha(q_emb, landmarks, beta)
+        if lm_alpha is None:
+            return _hils_full_result(candidates, alpha, top_k, n, "hils_full")
         top_lm_idx = sorted(range(len(landmarks)), key=lambda i: -lm_alpha[i])[:top_h]
-        top_lm_set = set(top_lm_idx)
 
-        # Step 3: 每个 candidate 挂到最近地标
-        lm_assign = [0] * n
-        for i in range(n):
-            best_lm = 0
-            best_sim = -2.0
-            for li in range(len(landmarks)):
-                s = _cos(c_embs[i], landmarks[li])
-                if s > best_sim:
-                    best_sim = s
-                    best_lm = li
-            lm_assign[i] = best_lm
-
-        # Step 4: 只保留 top-h 地标下的 candidates, 全 attention 排序
-        filtered = [i for i in range(n) if lm_assign[i] in top_lm_set]
-        if len(filtered) < top_k:
-            # top-h 太严格, 补齐: 加入次 top 地标的 candidates
-            all_lm_ranked = sorted(range(len(landmarks)), key=lambda i: -lm_alpha[i])
-            for li in all_lm_ranked:
-                if li in top_lm_set:
-                    continue
-                extra = [i for i in range(n) if lm_assign[i] == li and i not in filtered]
-                filtered.extend(extra)
-                if len(filtered) >= top_k * 2:
-                    break
+        # Step 3/4: candidate 挂到最近地标, 只保留 top-h 地标下的做全 attention 排序
+        lm_assign = _hils_assign(c_embs, landmarks)
+        filtered = _hils_filter(n, lm_assign, lm_alpha, set(top_lm_idx), top_k)
         ranked = sorted(filtered, key=lambda i: -alpha[i])
-        try:
-            from huginn.routes.metrics import track_memory_rerank
-            track_memory_rerank("hils_sparse", n)
-        except Exception:
-            logger.debug("memory rerank metric tracking failed", exc_info=True)
+        _track_memory_rerank("hils_sparse", n)
         return [candidates[i] for i in ranked[:top_k]]
 
     def _kmeans_landmarks(
@@ -902,42 +1035,10 @@ class LongTermMemory:
         idxs = random.sample(range(n), k)
         centroids = [list(embs[i]) for i in idxs]
 
-        def _cos(a, b):
-            import math
-            na = math.sqrt(sum(x * x for x in a))
-            nb = math.sqrt(sum(x * x for x in b))
-            if na == 0 or nb == 0:
-                return 0.0
-            return sum(x * y for x, y in zip(a, b)) / (na * nb)
-
         for _ in range(max_iter):
-            # assign
-            assign = [0] * n
-            for i in range(n):
-                best_c = 0
-                best_sim = -2.0
-                for ci in range(k):
-                    s = _cos(embs[i], centroids[ci])
-                    if s > best_sim:
-                        best_sim = s
-                        best_c = ci
-                assign[i] = best_c
-            # update
-            new_centroids = [[0.0] * d for _ in range(k)]
-            counts = [0] * k
-            for i in range(n):
-                ci = assign[i]
-                for j in range(d):
-                    new_centroids[ci][j] += embs[i][j]
-                counts[ci] += 1
-            for ci in range(k):
-                if counts[ci] > 0:
-                    for j in range(d):
-                        new_centroids[ci][j] /= counts[ci]
-                else:
-                    # 空簇: 保留旧 centroid
-                    new_centroids[ci] = centroids[ci]
-            centroids = new_centroids
+            # assign: 每点挂到余弦最相似的中心
+            assign = _hils_assign(embs, centroids)
+            centroids = _kmeans_update(embs, assign, k, d, centroids)
         return centroids
 
     def retrieve(
@@ -1197,18 +1298,9 @@ class LongTermMemory:
         if not rows:
             return {"prediction_type": "none", "analogy": []}
 
-        # rank 代理 score: 第 i 条 score = 1.0 - i * (0.5 / top_k), 范围 (0.5, 1.0].
+        # rank 代理 score: 第 i 条 score = 1.0 - i*(0.5/top_k), 范围 (0.5, 1.0].
         # similarity_threshold 过滤掉排名靠后的弱匹配.
-        step = 0.5 / max(top_k, 1)
-        analogy: list[dict[str, Any]] = []
-        for i, row in enumerate(rows[:top_k]):
-            score = 1.0 - i * step
-            if score < similarity_threshold:
-                continue
-            analogy.append({
-                "content": str(row.get("content", ""))[:200],
-                "score": round(score, 3),
-            })
+        analogy = _analogy_rows(rows, top_k, similarity_threshold)
         if not analogy:
             return {"prediction_type": "none", "analogy": []}
         return {"prediction_type": "analogy", "analogy": analogy}
@@ -1273,6 +1365,73 @@ class LongTermMemory:
                 return True
             return False
 
+    def _update_fields(
+        self,
+        conn: sqlite3.Connection,
+        entry_id: str,
+        content: str | None,
+        importance: float | None,
+        tags: list[str] | None,
+        tier: str | None,
+        ttl_hours: float | None,
+    ) -> None:
+        """按传入的非 None 字段更新主表."""
+        if content is not None:
+            conn.execute(
+                "UPDATE memories SET content = ? WHERE id = ?", (content, entry_id)
+            )
+            if self._enable_semantic:
+                self._vector_store.ingest(
+                    [content],
+                    metadatas=[{"memory_id": entry_id}],
+                    ids=[entry_id],
+                )
+        if tags is not None:
+            conn.execute(
+                "UPDATE memories SET tags = ? WHERE id = ?",
+                (json.dumps(tags), entry_id),
+            )
+        if importance is not None:
+            conn.execute(
+                "UPDATE memories SET importance = ? WHERE id = ?",
+                (importance, entry_id),
+            )
+        if tier is not None:
+            if tier not in TIER_TTL_HOURS:
+                raise ValueError(f"Invalid tier {tier}")
+            ttl = ttl_hours if ttl_hours is not None else TIER_TTL_HOURS[tier]
+            expires = (
+                (datetime.now() + timedelta(hours=ttl)).isoformat() if ttl else None
+            )
+            conn.execute(
+                "UPDATE memories SET tier = ?, expires_at = ? WHERE id = ?",
+                (tier, expires, entry_id),
+            )
+
+    def _update_fts(
+        self, conn: sqlite3.Connection, entry_id: str, old: sqlite3.Row
+    ) -> None:
+        """content/tags 变了就重建 FTS5 索引行 (importance/tier 不影响 FTS5)."""
+        new_row = conn.execute(
+            "SELECT content, tags, source, formula FROM memories WHERE id = ?",
+            (entry_id,),
+        ).fetchone()
+        if new_row is None:
+            return
+        conn.execute(
+            "INSERT INTO memory_fts(memory_fts, rowid, content, tags, source) "
+            "VALUES('delete', ?, ?, ?, ?)",
+            (old["rowid"], old["content"], old["tags"], old["source"]),
+        )
+        new_tags_list = json.loads(new_row["tags"] or "[]")
+        fts_tags = " ".join(
+            new_tags_list + ([new_row["formula"]] if new_row["formula"] else [])
+        )
+        conn.execute(
+            "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
+            (old["rowid"], new_row["content"], fts_tags, new_row["source"]),
+        )
+
     def update(
         self,
         entry_id: str,
@@ -1291,58 +1450,13 @@ class LongTermMemory:
             if old is None:
                 return False
 
-            if content is not None:
-                conn.execute(
-                    "UPDATE memories SET content = ? WHERE id = ?", (content, entry_id)
-                )
-                if self._enable_semantic:
-                    self._vector_store.ingest(
-                        [content],
-                        metadatas=[{"memory_id": entry_id}],
-                        ids=[entry_id],
-                    )
-            if tags is not None:
-                conn.execute(
-                    "UPDATE memories SET tags = ? WHERE id = ?",
-                    (json.dumps(tags), entry_id),
-                )
-            if importance is not None:
-                conn.execute(
-                    "UPDATE memories SET importance = ? WHERE id = ?",
-                    (importance, entry_id),
-                )
-            if tier is not None:
-                if tier not in TIER_TTL_HOURS:
-                    raise ValueError(f"Invalid tier {tier}")
-                ttl = ttl_hours if ttl_hours is not None else TIER_TTL_HOURS[tier]
-                expires = (
-                    (datetime.now() + timedelta(hours=ttl)).isoformat() if ttl else None
-                )
-                conn.execute(
-                    "UPDATE memories SET tier = ?, expires_at = ? WHERE id = ?",
-                    (tier, expires, entry_id),
-                )
+            self._update_fields(
+                conn, entry_id, content, importance, tags, tier, ttl_hours
+            )
             # content/tags 变了就要重建 FTS5 索引行, 否则 retrieve 走 FTS5
             # 时拿到的是旧 token (importance/tier 不影响 FTS5, 跳过)
             if content is not None or tags is not None:
-                new_row = conn.execute(
-                    "SELECT content, tags, source, formula FROM memories WHERE id = ?",
-                    (entry_id,),
-                ).fetchone()
-                if new_row is not None:
-                    conn.execute(
-                        "INSERT INTO memory_fts(memory_fts, rowid, content, tags, source) "
-                        "VALUES('delete', ?, ?, ?, ?)",
-                        (old["rowid"], old["content"], old["tags"], old["source"]),
-                    )
-                    new_tags_list = json.loads(new_row["tags"] or "[]")
-                    fts_tags = " ".join(
-                        new_tags_list + ([new_row["formula"]] if new_row["formula"] else [])
-                    )
-                    conn.execute(
-                        "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
-                        (old["rowid"], new_row["content"], fts_tags, new_row["source"]),
-                    )
+                self._update_fts(conn, entry_id, old)
             conn.commit()
             return conn.total_changes > 0
 
@@ -1656,6 +1770,40 @@ class LongTermMemory:
         dedup = _decay_module.MemoryDeduplicator(case_sensitive=case_sensitive)
         return dedup.run(self)
 
+    @staticmethod
+    def _maintenance_thresholds(
+        decay_per_day: float | None,
+        prune_threshold: float | None,
+        deduplicate: bool | None,
+    ) -> tuple[float, float, bool]:
+        """未显式传参 → 由策略注册表提供阈值 (显式传参优先)."""
+        from huginn.plugins.memory_maintenance_policy import resolve_memory_policy
+
+        policy = resolve_memory_policy()
+        return (
+            policy.decay_per_day if decay_per_day is None else decay_per_day,
+            policy.prune_threshold if prune_threshold is None else prune_threshold,
+            policy.deduplicate if deduplicate is None else deduplicate,
+        )
+
+    def _maintenance_cluster(self, summary: dict[str, Any], llm_chat_fn: Any) -> None:
+        """semantic cluster + LLM summarize; 失败不 abort maintenance."""
+        try:
+            from huginn.memory.cluster import cluster_memories, compress_clusters
+
+            clusters = cluster_memories(self)
+            if clusters:
+                result = compress_clusters(self, clusters, llm_chat_fn)
+                summary["clustered"] = result.get("summarized", 0)
+                summary["archived"] = result.get("archived", 0)
+                summary["cluster_skipped"] = result.get("skipped", 0)
+                summary["cluster_failed"] = result.get("failed", 0)
+        except Exception:
+            logger.warning(
+                "memory cluster step failed, decay/prune/dedupe still applied",
+                exc_info=True,
+            )
+
     def maintenance(
         self,
         decay_per_day: float | None = None,
@@ -1673,17 +1821,9 @@ class LongTermMemory:
         decay_per_day / prune_threshold / deduplicate 未显式传入时, 取记忆整理策略
         注册表 (plugins.memory_maintenance_policy) 的生效策略值; 显式传参优先.
         """
-        # 未显式传参 → 由策略注册表提供阈值 (形态 B). 显式传参优先.
-        from huginn.plugins.memory_maintenance_policy import resolve_memory_policy
-
-        policy = resolve_memory_policy()
-        if decay_per_day is None:
-            decay_per_day = policy.decay_per_day
-        if prune_threshold is None:
-            prune_threshold = policy.prune_threshold
-        if deduplicate is None:
-            deduplicate = policy.deduplicate
-
+        decay_per_day, prune_threshold, deduplicate = self._maintenance_thresholds(
+            decay_per_day, prune_threshold, deduplicate
+        )
         summary = self.apply_decay_policy(
             decay_per_day=decay_per_day, prune_threshold=prune_threshold
         )
@@ -1695,23 +1835,7 @@ class LongTermMemory:
             and llm_chat_fn is not None
             and os.environ.get("HUGINN_MEMORY_CLUSTER", "0") == "1"
         ):
-            try:
-                from huginn.memory.cluster import (
-                    cluster_memories,
-                    compress_clusters,
-                )
-                clusters = cluster_memories(self)
-                if clusters:
-                    result = compress_clusters(self, clusters, llm_chat_fn)
-                    summary["clustered"] = result.get("summarized", 0)
-                    summary["archived"] = result.get("archived", 0)
-                    summary["cluster_skipped"] = result.get("skipped", 0)
-                    summary["cluster_failed"] = result.get("failed", 0)
-            except Exception:
-                logger.warning(
-                    "memory cluster step failed, decay/prune/dedupe still applied",
-                    exc_info=True,
-                )
+            self._maintenance_cluster(summary, llm_chat_fn)
         return summary
 
     def lint(self, auto_fix: bool = False) -> dict[str, Any]:
@@ -1741,55 +1865,10 @@ class LongTermMemory:
 
         # Group by (formula, tag). contradicts:/crossref: tags are markers,
         # not grouping dimensions, so they're skipped to keep grouping stable.
-        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for r in rows:
-            formula = r["formula"] or ""
-            if not formula:
-                continue
-            try:
-                tags_list = json.loads(r["tags"]) if r["tags"] else []
-            except (json.JSONDecodeError, TypeError):
-                tags_list = []
-            for tag in tags_list:
-                if isinstance(tag, str) and (
-                    tag.startswith("contradicts:") or tag.startswith("crossref:")
-                ):
-                    continue
-                groups.setdefault((formula, tag), []).append(
-                    {"id": r["id"], "content": r["content"], "tags": tags_list}
-                )
+        groups = _lint_groups(rows)
+        contradictions, pending_updates, auto_fixed = _lint_scan(groups, auto_fix)
 
-        contradictions: list[dict[str, Any]] = []
-        pending_updates: dict[str, list[str]] = {}
-        auto_fixed = 0
-        num_re = re.compile(r"-?\d+\.?\d*")
-        for (formula, tag), entries in groups.items():
-            if len(entries) < 2:
-                continue
-            for i in range(len(entries)):
-                for j in range(i + 1, len(entries)):
-                    a, b = entries[i], entries[j]
-                    na = set(num_re.findall(a["content"] or ""))
-                    nb = set(num_re.findall(b["content"] or ""))
-                    if not na or not nb or na == nb:
-                        continue
-                    contradictions.append(
-                        {"ids": [a["id"], b["id"]], "formula": formula, "tag": tag}
-                    )
-                    if not auto_fix:
-                        continue
-                    a_tag = f"contradicts:{b['id']}"
-                    b_tag = f"contradicts:{a['id']}"
-                    a_new = pending_updates.setdefault(a["id"], list(a["tags"]))
-                    b_new = pending_updates.setdefault(b["id"], list(b["tags"]))
-                    if a_tag not in a_new:
-                        a_new.append(a_tag)
-                        auto_fixed += 1
-                    if b_tag not in b_new:
-                        b_new.append(b_tag)
-                        auto_fixed += 1
-
-        if auto_fix and pending_updates:
+        if auto_fix:
             for entry_id, new_tags in pending_updates.items():
                 self.update(entry_id, tags=new_tags)
 
@@ -1855,6 +1934,78 @@ class LongTermMemory:
             logger.warning("maybe_consolidate: LLM invoke 失败", exc_info=True)
             return None
 
+    def _consolidate_short_rows(self) -> list[Any]:
+        """拉未归档 short tier 记录 (一条 SQL 同时拿 count 和 rows)."""
+        with self._connect() as conn:
+            alive_where, alive_params = self._where_alive()
+            return conn.execute(
+                f"SELECT id, content, tags, source, importance, category, created_at "
+                f"FROM memories AS m WHERE {alive_where} AND tier = 'short' "
+                f"ORDER BY created_at ASC",
+                alive_params,
+            ).fetchall()
+
+    def _consolidate_gate(
+        self, force: bool, days_since: float, short_count: int
+    ) -> bool:
+        """双门槛判定; True 表示应触发整理 (含 7 天兜底)."""
+        if force:
+            return True
+        if days_since < self._CONSOLIDATE_TIME_GATE_DAYS:
+            return False
+        if short_count == 0:
+            # 时间到了但没东西可整理, 刷新时间戳避免每次都查
+            self._write_last_consolidation()
+            return False
+        # time_gate 已过且有 short 记录 → 触发 (count_gate 在 7 天已过时被 void)
+        return True
+
+    def _consolidate_summary(self, rows: list[Any]) -> str | None:
+        """拼 prompt 并调 LLM 生成长期摘要."""
+        items = [
+            f"- [{r['id']}] (imp={r['importance']}, cat={r['category']}) {r['content']}"
+            for r in rows
+        ]
+        prompt = (
+            f"把以下 {len(rows)} 条短期记忆合并成一份精简的长期摘要, "
+            f"保留关键事实/数值/结论, 去重去噪, 不超过 800 字:\n\n"
+            + "\n".join(items)
+        )
+        return self._llm_summarize_memories(prompt)
+
+    def _consolidate_write(self, rows: list[Any], summary: str) -> str | None:
+        """写回一条 long tier 摘要; 失败返回 None."""
+        from collections import Counter
+
+        max_imp = max((float(r["importance"]) for r in rows), default=0.5)
+        sources = [r["source"] for r in rows if r["source"]]
+        source = " | ".join(sources[:3]) if sources else "consolidation"
+        cats = [r["category"] for r in rows if r["category"]]
+        category = Counter(cats).most_common(1)[0][0] if cats else "fact"
+        try:
+            return self.store(
+                content=summary.strip(),
+                category=category,
+                tags=["consolidated"] + [r["id"] for r in rows[:10]],
+                source=source,
+                importance=max_imp,
+                tier="long",
+            )
+        except Exception:
+            logger.warning("maybe_consolidate: store summary 失败", exc_info=True)
+            return None
+
+    def _consolidate_archive(self, rows: list[Any]) -> int:
+        """原条目归档 (archived=1, _where_alive 自动过滤); 返回归档条数."""
+        archived = 0
+        for r in rows:
+            try:
+                if self.update_archived(r["id"], archived=True):
+                    archived += 1
+            except Exception:
+                logger.debug("archive %s 失败", r["id"], exc_info=True)
+        return archived
+
     def maybe_consolidate(self, force: bool = False) -> bool:
         """双门槛触发记忆整理. 参考 research-dream 的 dream 心智.
 
@@ -1869,84 +2020,26 @@ class LongTermMemory:
         try:
             last = self._read_last_consolidation()
             now = datetime.now()
-            if last is None:
-                days_since = float("inf")
-            else:
-                days_since = (now - last).total_seconds() / 86400.0
-
-            # 拉未归档 short tier 记录 (一条 SQL 同时拿 count 和 rows)
-            with self._connect() as conn:
-                alive_where, alive_params = self._where_alive()
-                rows = conn.execute(
-                    f"SELECT id, content, tags, source, importance, category, created_at "
-                    f"FROM memories AS m WHERE {alive_where} AND tier = 'short' "
-                    f"ORDER BY created_at ASC",
-                    alive_params,
-                ).fetchall()
-            short_count = len(rows)
-
-            time_gate = days_since >= self._CONSOLIDATE_TIME_GATE_DAYS
-            count_gate = short_count >= self._CONSOLIDATE_COUNT_GATE
-
-            if not force:
-                # 双门槛: 时间 + 累积都满足; 7 天兜底: 时间到了累积未到也触发
-                if not time_gate:
-                    return False
-                if short_count == 0:
-                    # 时间到了但没东西可整理, 刷新时间戳避免每次都查
-                    self._write_last_consolidation()
-                    return False
-                # time_gate 已过且有 short 记录 → 触发 (count_gate 在 7 天已过时被 void)
-                _ = count_gate  # 保留语义, 实际 7 天兜底已覆盖
-
-            if short_count == 0:
-                # force=True 但没记录, 空转刷新时间戳
+            days_since = (
+                float("inf") if last is None else (now - last).total_seconds() / 86400.0
+            )
+            rows = self._consolidate_short_rows()
+            if not self._consolidate_gate(force, days_since, len(rows)):
+                return False
+            if not rows:
+                # force=True 但没记录 → 空转刷新时间戳
                 self._write_last_consolidation()
                 return False
 
-            # 拼 LLM prompt
-            items = []
-            for r in rows:
-                items.append(f"- [{r['id']}] (imp={r['importance']}, cat={r['category']}) {r['content']}")
-            prompt = (
-                f"把以下 {len(rows)} 条短期记忆合并成一份精简的长期摘要, "
-                f"保留关键事实/数值/结论, 去重去噪, 不超过 800 字:\n\n"
-                + "\n".join(items)
-            )
-
-            summary = self._llm_summarize_memories(prompt)
+            summary = self._consolidate_summary(rows)
             if not summary or not summary.strip():
                 return False
 
-            # 写回 long tier
-            from collections import Counter
-            max_imp = max((float(r["importance"]) for r in rows), default=0.5)
-            sources = [r["source"] for r in rows if r["source"]]
-            source = " | ".join(sources[:3]) if sources else "consolidation"
-            cats = [r["category"] for r in rows if r["category"]]
-            category = Counter(cats).most_common(1)[0][0] if cats else "fact"
-            try:
-                new_id = self.store(
-                    content=summary.strip(),
-                    category=category,
-                    tags=["consolidated"] + [r["id"] for r in rows[:10]],
-                    source=source,
-                    importance=max_imp,
-                    tier="long",
-                )
-            except Exception:
-                logger.warning("maybe_consolidate: store summary 失败", exc_info=True)
+            new_id = self._consolidate_write(rows, summary)
+            if new_id is None:
                 return False
 
-            # 原条目归档 (archived=1, _where_alive 自动过滤)
-            archived = 0
-            for r in rows:
-                try:
-                    if self.update_archived(r["id"], archived=True):
-                        archived += 1
-                except Exception:
-                    logger.debug("archive %s 失败", r["id"], exc_info=True)
-
+            archived = self._consolidate_archive(rows)
             self._write_last_consolidation()
             logger.info(
                 "maybe_consolidate: %d 条 short → 1 条 long (%s), archived %d",
@@ -2224,137 +2317,135 @@ def cleanup_stable_principles() -> int:
 # P1-1 验证: _ising_rerank 能量函数性质. 用 mock vector_store 避免依赖
 # embedding 模型. `python -m huginn.memory.longterm` 跑.
 
+class _MockVec:
+    """Mock vector_store — _compute_embeddings 返回预设向量."""
+
+    def __init__(self, embs: list[list[float]]) -> None:
+        self._embs = embs
+
+    def _compute_embeddings(self, texts: list[str]) -> list[list[float]] | None:
+        return self._embs[: len(texts)]
+
+
+def _sc_ising(mem: LongTermMemory) -> None:
+    """29-32b: Ising 能量函数 / top_k=1 / 无 vector_store / 候选不足 / toggle."""
+    # m1, m2 高度相似 (cos≈0.99), m3 跟 m1/m2 矛盾.
+    # top_k=2 时贪心应选 {m1, m2}, 不选 m3.
+    mock_vec = _MockVec(
+        [
+            [1.0, 0.0, 0.0],  # query
+            [0.8, 0.1, 0.0],  # m1
+            [0.7, 0.1, 0.1],  # m2
+            [-0.5, 0.8, 0.3],  # m3
+        ]
+    )
+    mem._vector_store = mock_vec
+    mem._enable_semantic = True
+    cands = [
+        {"id": "m1", "content": "encut=520 OK"},
+        {"id": "m2", "content": "encut=520 fine"},
+        {"id": "m3", "content": "encut=520 不够"},
+    ]
+
+    r29 = mem._ising_rerank("encut 520", cands, top_k=2, beta=1.0)
+    ids29 = [c["id"] for c in r29]
+    assert "m3" not in ids29, f"矛盾 candidate 不应入选: {ids29}"
+    assert "m1" in ids29 and "m2" in ids29, f"应选 m1+m2: {ids29}"
+    print("29. Ising 能量函数 (矛盾 candidate 被拒, 一致 candidate 入选) OK")
+
+    r30 = mem._ising_rerank("encut 520", cands, top_k=1, beta=1.0)
+    assert r30[0]["id"] == "m1", f"top_k=1 应选 H 最大的 m1, got {r30[0]['id']}"
+    print("30. Ising top_k=1 退化 (argmax H) OK")
+
+    mem._vector_store = None
+    r31 = mem._ising_rerank("encut 520", cands, top_k=2, beta=1.0)
+    assert len(r31) == 2, "无 vector_store 应回退原排序取前 2"
+    assert r31[0]["id"] == "m1", "no-op 应保持原顺序"
+    print("31. Ising 无 vector_store → no-op 回原排序 OK")
+
+    mem._vector_store = mock_vec  # 恢复
+    r32 = mem._ising_rerank("encut 520", cands[:1], top_k=2, beta=1.0)
+    assert len(r32) == 1, f"候选不足应全返回, got {len(r32)}"
+    print("32. Ising 候选不足 → 全返回 OK")
+
+    os.environ["HUGINN_ISING_RERANK"] = "0"
+    assert LongTermMemory._ising_rerank_enabled() is False, "toggle off"
+    os.environ["HUGINN_ISING_RERANK"] = "1"
+    assert LongTermMemory._ising_rerank_enabled() is True, "toggle on"
+    print("32b. Ising toggle (HUGINN_ISING_RERANK=0/1) OK")
+
+
+def _sc_hils_full(mem: LongTermMemory) -> None:
+    """38-39: N<K 全 attention 排序与 N<K 退化."""
+    mem._vector_store = _MockVec(
+        [
+            [1.0, 0.0],  # query
+            [0.9, 0.1],  # m1: 高相关
+            [0.1, 0.9],  # m2: 低相关
+            [0.5, 0.5],  # m3: 中等
+        ]
+    )
+    mem._enable_semantic = True
+    cands = [{"id": "m1"}, {"id": "m2"}, {"id": "m3"}]
+
+    r38 = mem._hils_attention("q", cands, top_k=2, beta=8.0, n_landmarks=256)
+    ids38 = [c["id"] for c in r38]
+    # m1 (cos≈0.99) 应排第一, m3 (cos≈0.71) 第二, m2 (cos≈0.1) 被淘汰
+    assert ids38[0] == "m1", f"最高 cos 应排第一: {ids38}"
+    assert "m2" not in ids38, f"最低 cos 应被淘汰: {ids38}"
+    print("38. HiLS 全 attention (N<K, softmax β·cos 排序) OK")
+
+    # 只给 3 个 candidates, n_landmarks=256 → 走 v1 全 attention 路径
+    r39 = mem._hils_attention("q", cands, top_k=3, beta=8.0, n_landmarks=256)
+    assert len(r39) == 3, "N<K 应全返回 (top_k=3)"
+    print("39. HiLS N<K 退化 (不分层, 全 attention) OK")
+
+
+def _sc_hils_sparse(mem: LongTermMemory) -> None:
+    """40-41c: 分层稀疏 (N>=K) / no-op / toggle / k-means 地标."""
+    import random as _rng
+
+    _rng.seed(40)
+    embs = [[_rng.uniform(-1, 1) for _ in range(4)] for _ in range(30)]
+    # query 跟第 0 个 candidate 完全一致 → 应排第一
+    mock_vec = _MockVec([list(embs[0])] + embs)
+    mem._vector_store = mock_vec
+    cands = [{"id": f"m{i}"} for i in range(30)]
+
+    r40 = mem._hils_attention("q", cands, top_k=3, beta=8.0, n_landmarks=5, top_h=2)
+    assert len(r40) == 3, f"应返回 3 个, got {len(r40)}"
+    assert r40[0]["id"] == "m0", f"query==m0 应排第一: {[c['id'] for c in r40]}"
+    print("40. HiLS 分层稀疏 (N>=K, k-means + top-h 筛选) OK")
+
+    mem._vector_store = None
+    r41 = mem._hils_attention("q", cands, top_k=3, beta=8.0)
+    assert len(r41) == 3
+    assert r41[0]["id"] == "m0", "no-op 应保持原顺序"
+    print("41. HiLS 无 vector_store → no-op 回原排序 OK")
+
+    os.environ["HUGINN_HILS_ATTENTION"] = "0"
+    assert LongTermMemory._hils_enabled() is False
+    os.environ["HUGINN_HILS_ATTENTION"] = "1"
+    assert LongTermMemory._hils_enabled() is True
+    print("41b. HiLS toggle (HUGINN_HILS_ATTENTION=0/1) OK")
+
+    mem._vector_store = mock_vec  # 恢复
+    lm = mem._kmeans_landmarks(embs, k=5, max_iter=3)
+    assert len(lm) == 5, f"应返回 5 个地标, got {len(lm)}"
+    assert all(len(c) == 4 for c in lm), "地标维度应匹配"
+    print("41c. HiLS k-means 地标 (K=5, dim=4) OK")
+
+
 def _selfcheck() -> None:
-    import math
     import tempfile
-
-    class _MockVec:
-        """Mock vector_store — _compute_embeddings 返回预设向量."""
-        def __init__(self, embs: list[list[float]]) -> None:
-            self._embs = embs
-        def _compute_embeddings(self, texts: list[str]) -> list[list[float]] | None:
-            return self._embs[: len(texts)]
-
-    def _cos(a, b):
-        na = math.sqrt(sum(x * x for x in a))
-        nb = math.sqrt(sum(x * x for x in b))
-        if na == 0 or nb == 0:
-            return 0.0
-        return sum(x * y for x, y in zip(a, b)) / (na * nb)
 
     # 用临时 db 构造 LongTermMemory, vector_store 用 mock
     with tempfile.TemporaryDirectory() as _td:
-        _db = str(Path(_td) / "test.db")
-        mem = LongTermMemory(db_path=_db, vector_store=None, enable_semantic=False)
-
-        # 29. 能量函数基本性质 — 矛盾 candidate 被拒
-        # 3 个 candidates: m1, m2 高度相似 (cos=0.9), m3 跟 m1/m2 矛盾 (cos=-0.5,-0.4)
-        # H = [0.8, 0.7, 0.6] (query 相关性)
-        # top_k=2, 贪心应选 {m1, m2}, 不选 m3
-        q_emb = [1.0, 0.0, 0.0]
-        m1_emb = [0.8, 0.1, 0.0]
-        m2_emb = [0.7, 0.1, 0.1]   # 跟 m1 cos ≈ 0.99
-        m3_emb = [-0.5, 0.8, 0.3]  # 跟 m1/m2 矛盾
-        mock_vec = _MockVec([q_emb, m1_emb, m2_emb, m3_emb])
-        mem._vector_store = mock_vec
-        mem._enable_semantic = True
-        cands = [
-            {"id": "m1", "content": "encut=520 OK"},
-            {"id": "m2", "content": "encut=520 fine"},
-            {"id": "m3", "content": "encut=520 不够"},
-        ]
-        r29 = mem._ising_rerank("encut 520", cands, top_k=2, beta=1.0)
-        ids29 = [c["id"] for c in r29]
-        assert "m3" not in ids29, f"矛盾 candidate 不应入选: {ids29}"
-        assert "m1" in ids29 and "m2" in ids29, f"应选 m1+m2: {ids29}"
-        print("29. Ising 能量函数 (矛盾 candidate 被拒, 一致 candidate 入选) OK")
-
-        # 30. top_k=1 退化 — 等价 argmax H
-        r30 = mem._ising_rerank("encut 520", cands, top_k=1, beta=1.0)
-        assert r30[0]["id"] == "m1", f"top_k=1 应选 H 最大的 m1, got {r30[0]['id']}"
-        print("30. Ising top_k=1 退化 (argmax H) OK")
-
-        # 31. 无 vector_store — no-op 回原排序
-        mem._vector_store = None
-        r31 = mem._ising_rerank("encut 520", cands, top_k=2, beta=1.0)
-        assert len(r31) == 2, "无 vector_store 应回退原排序取前 2"
-        assert r31[0]["id"] == "m1", "no-op 应保持原顺序"
-        print("31. Ising 无 vector_store → no-op 回原排序 OK")
-
-        # 32. 候选不足 — 直接返回 candidates[:top_k]
-        mem._vector_store = mock_vec  # 恢复
-        r32 = mem._ising_rerank("encut 520", cands[:1], top_k=2, beta=1.0)
-        assert len(r32) == 1, f"候选不足应全返回, got {len(r32)}"
-        print("32. Ising 候选不足 → 全返回 OK")
-
-        # 32b. toggle off — retrieve 路径不走 rerank
-        os.environ["HUGINN_ISING_RERANK"] = "0"
-        assert LongTermMemory._ising_rerank_enabled() is False, "toggle off"
-        os.environ["HUGINN_ISING_RERANK"] = "1"
-        assert LongTermMemory._ising_rerank_enabled() is True, "toggle on"
-        print("32b. Ising toggle (HUGINN_ISING_RERANK=0/1) OK")
-
-        # ── P2-5: HiLS 分层稀疏 attention ────────────────────────────
-        # 38. 全 attention (N<K) — softmax(β·cos) 排序基本性质
-        mock_vec38 = _MockVec([
-            [1.0, 0.0],       # query
-            [0.9, 0.1],       # m1: 高相关
-            [0.1, 0.9],       # m2: 低相关
-            [0.5, 0.5],       # m3: 中等
-        ])
-        mem._vector_store = mock_vec38
-        mem._enable_semantic = True
-        cands38 = [
-            {"id": "m1"}, {"id": "m2"}, {"id": "m3"},
-        ]
-        r38 = mem._hils_attention("q", cands38, top_k=2, beta=8.0, n_landmarks=256)
-        ids38 = [c["id"] for c in r38]
-        # m1 (cos≈0.99) 应排第一, m3 (cos≈0.71) 第二, m2 (cos≈0.1) 被淘汰
-        assert ids38[0] == "m1", f"最高 cos 应排第一: {ids38}"
-        assert "m2" not in ids38, f"最低 cos 应被淘汰: {ids38}"
-        print("38. HiLS 全 attention (N<K, softmax β·cos 排序) OK")
-
-        # 39. N<K 退化 — 不分层, 等价全 attention
-        # 只给 3 个 candidates, n_landmarks=256, 应走 v1 全 attention 路径
-        r39 = mem._hils_attention("q", cands38, top_k=3, beta=8.0, n_landmarks=256)
-        assert len(r39) == 3, "N<K 应全返回 (top_k=3)"
-        print("39. HiLS N<K 退化 (不分层, 全 attention) OK")
-
-        # 40. 分层稀疏 (N>=K) — k-means 地标 + top-h 筛选
-        # 构造 30 个 candidates, K=5, h=2. 验证返回 top_k=3 且都在 top-h 地标下
-        import random as _rng
-        _rng.seed(40)
-        embs40 = [[_rng.uniform(-1, 1) for _ in range(4)] for _ in range(30)]
-        # query 跟第 0 个 candidate 完全一致 → 应排第一
-        q40 = list(embs40[0])
-        mock_vec40 = _MockVec([q40] + embs40)
-        mem._vector_store = mock_vec40
-        cands40 = [{"id": f"m{i}"} for i in range(30)]
-        r40 = mem._hils_attention("q", cands40, top_k=3, beta=8.0, n_landmarks=5, top_h=2)
-        assert len(r40) == 3, f"应返回 3 个, got {len(r40)}"
-        assert r40[0]["id"] == "m0", f"query==m0 应排第一: {[c['id'] for c in r40]}"
-        print("40. HiLS 分层稀疏 (N>=K, k-means + top-h 筛选) OK")
-
-        # 41. 无 vector_store — no-op 回原排序
-        mem._vector_store = None
-        r41 = mem._hils_attention("q", cands40, top_k=3, beta=8.0)
-        assert len(r41) == 3
-        assert r41[0]["id"] == "m0", "no-op 应保持原顺序"
-        print("41. HiLS 无 vector_store → no-op 回原排序 OK")
-
-        # 41b. toggle off — retrieve 路径不走 HiLS, 回退 Ising
-        os.environ["HUGINN_HILS_ATTENTION"] = "0"
-        assert LongTermMemory._hils_enabled() is False
-        os.environ["HUGINN_HILS_ATTENTION"] = "1"
-        assert LongTermMemory._hils_enabled() is True
-        print("41b. HiLS toggle (HUGINN_HILS_ATTENTION=0/1) OK")
-
-        # 41c. k-means 地标基本性质 — 返回 K 个 centroid, 维度匹配
-        mem._vector_store = mock_vec40  # 恢复
-        lm = mem._kmeans_landmarks(embs40, k=5, max_iter=3)
-        assert len(lm) == 5, f"应返回 5 个地标, got {len(lm)}"
-        assert all(len(c) == 4 for c in lm), "地标维度应匹配"
-        print("41c. HiLS k-means 地标 (K=5, dim=4) OK")
+        db = str(Path(_td) / "test.db")
+        mem = LongTermMemory(db_path=db, vector_store=None, enable_semantic=False)
+        _sc_ising(mem)
+        _sc_hils_full(mem)
+        _sc_hils_sparse(mem)
 
     print("LongTermMemory selfcheck OK (29-32b Ising + 38-41c HiLS)")
 

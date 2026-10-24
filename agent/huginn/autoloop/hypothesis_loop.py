@@ -101,6 +101,205 @@ def frontier_write_phase(phase: str):
         reset_frontier_writer_phase(tok)
 
 
+def _bi_make_value_fn() -> Any:
+    """构造 PRM rollout value_fn; 不可用 (无 LLM / 关闭) 时返回 None 回退 token 剪枝."""
+    # 树由 BranchIncubator 的分叉生成: depth>=2 → layer1 每成功 branch 再派
+    # width 个 sub-branch (PTD tree-shape); step_verifier (PRM) 给每个 branch
+    # 的 hypothesis 打分作为 rollout value, 剪枝/选优优先取高价值分支.
+    # 无 PRM LLM / 关闭时 value 恒 None → 回退 tokens_used, 行为不变.
+    if os.environ.get("HUGINN_BRANCH_VALUE_PRM", "1") != "1":
+        return None
+    try:
+        from huginn.runtime.step_verifier import (
+            StepVerifierHook,
+            make_branch_value_fn,
+            make_default_llm_chat_fn,
+        )
+        return make_branch_value_fn(StepVerifierHook(make_default_llm_chat_fn()))
+    except Exception:  # 防御: PRM 不可用 → 树搜索退回按 token 剪枝
+        logger.debug(
+            "branch value_fn unavailable, fallback to token prune",
+            exc_info=True,
+        )
+        return None
+
+
+def _bi_resolve_depth(host: Any) -> int:
+    """Ataraxos 式强度调度: 假设弱→深搜/广探索, 强→浅搜/局部精修.
+
+    env 的 HUGINN_BRANCH_INCUBATOR_DEPTH 作基准 (base), 调度在其周围 [1,3]
+    摆动; HUGINN_STRENGTH_SCHEDULE=0 → 行为不变 (用 base).
+    """
+    base_depth = int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "2"))
+    if not strength_schedule_enabled():
+        return base_depth
+    return strength_branch_depth(hypothesis_strength(host), base=base_depth)
+
+
+def _fr_track_metric(pool_size: int) -> None:
+    """上报 Ising 重排指标; 指标模块不可用/失败时静默跳过."""
+    try:
+        from huginn.routes.metrics import track_memory_rerank
+        track_memory_rerank("ising", pool_size)
+    except Exception:  # 防御: 记忆重排指标失败跳过
+        logger.debug("memory rerank metric skipped", exc_info=True)
+
+
+_CF_TOOL_MARKERS = (
+    "timeout", "timed out", "connection", "crash", "segfault", "oom",
+    "out of memory", "exception", "subprocess", "slurm", "queue", "killed", "abort",
+)
+# 参数错: 输入无效/类型错/值错
+_CF_PARAM_MARKERS = (
+    "invalid", "argument", "parameter", "value error", "type error",
+    "dimension", "shape mismatch", "key error",
+)
+# 数据噪声: 不确定/模糊/噪声大
+_CF_NOISE_MARKERS = (
+    "noise", "uncertain", "ambiguous", "inconclusive",
+    "not converge", "did not converge", "no clear",
+)
+# RedTeam 映射: methodology_gap (方法论缺陷) / hidden_assumption (隐含前提缺失)
+# → 改参数; confounder (混淆变量) → 数据噪声; alternative_explanation → 假设错.
+_CF_RT_MAP = {
+    "methodology_gap": "param_error",
+    "hidden_assumption": "param_error",
+    "confounder": "data_noise",
+    "alternative_explanation": "hypothesis_error",
+}
+
+
+def _cf_keyword_classify(text: str) -> str | None:
+    """关键词匹配 param/noise; 未命中返回 None (交给语义分类器)."""
+    if any(m in text for m in _CF_PARAM_MARKERS):
+        return "param_error"
+    if any(m in text for m in _CF_NOISE_MARKERS):
+        return "data_noise"
+    return None
+
+
+def _mk_stable_id(text: str) -> str:
+    """内容哈希做稳定 id — 同文本永远同 id, 保证幂等挂载."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+
+
+def _mk_bigrams(text: str) -> set[str]:
+    """字符 bigram 集 — 中文短语义的粗粒度指纹.
+
+    滑窗取相邻 2 字符 (含空格归一后的连续字符), 让"掺杂+带隙"这类局部语义
+    能跨文本命中. 纯字符, 不依赖分词器.
+    """
+    if not text:
+        return set()
+    chars = [c for c in text.lower() if not c.isspace()]
+    return {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
+
+
+def _mk_load_principles() -> list[str]:
+    """加载 stable_principles; 失败用空表."""
+    try:
+        from huginn.memory.longterm import load_stable_principles
+        return load_stable_principles()
+    except Exception:  # 防御: 原则加载失败用空表
+        return []
+
+
+def _mk_load_rules() -> list[dict]:
+    """加载 evolution_rules.json; 不存在/失败用空表."""
+    try:
+        _rp = Path(str(get_runtime_home())) / "logs" / "evolution_rules.json"
+        if not _rp.exists():
+            return []
+        with _rp.open("r", encoding="utf-8") as _rf:
+            _loaded = json.load(_rf)
+        return _loaded if isinstance(_loaded, list) else []
+    except Exception:  # 防御: 规则加载失败用空表
+        return []
+
+
+def _mk_principle_key(item: Any) -> tuple[str, str]:
+    """原则 → (kid, text); 内容哈希保证同文本永远同 id."""
+    text = str(item) if item else ""
+    return (f"sp:{_mk_stable_id(text)}" if text else ""), text
+
+
+def _mk_rule_key(item: Any) -> tuple[str, str]:
+    """进化规则 → (kid, text); 有 rule_id 用 rule_id, 否则内容哈希."""
+    if not isinstance(item, dict):
+        return "", ""
+    act = item.get("action", "")
+    desc = str(act.get("description", "")) if isinstance(act, dict) else str(act)
+    if not desc:
+        return "", ""
+    return f"er:{item.get('rule_id') or _mk_stable_id(desc)}", desc
+
+
+def _ei_build_prompt(statement: str, existing_block: str) -> str:
+    """拼装信息量评估 prompt."""
+    return (
+        "评估 hypothesis 的 novelty 和 verifiability.\n\n"
+        f"Hypothesis: {statement}\n\n"
+        f"已有 supported/refuted hypothesis (供判重叠):\n{existing_block}\n\n"
+        "novelty (0-1, 与已有低重叠=高新颖), "
+        "verifiability (0-1, 有明确 testable prediction=高). "
+        '输出 JSON: {"novelty": float, "verifiability": float, "reason": str}'
+    )
+
+
+def _ei_parse_json(text: str) -> dict | None:
+    """LLM 可能包 ```json fence, 直接抠第一个含 novelty 的 JSON 对象."""
+    _m = re.search(r'\{[^{}]*"novelty"[^{}]*\}', text, re.DOTALL)
+    if not _m:
+        return None
+    try:
+        _parsed = json.loads(_m.group(0))
+    except Exception:  # 防御: LLM 输出非法 JSON
+        return None
+    return _parsed if isinstance(_parsed, dict) else None
+
+
+def _sr_format_block(payload: Mapping[str, Any]) -> str:
+    """把 symreg payload 的首个候选表达式格式化成 prompt block."""
+    cands = (
+        payload.get("candidates")
+        or payload.get("expressions")
+        or payload.get("pareto_front")
+        or []
+    )
+    if not cands:
+        return ""
+    top = cands[0] if isinstance(cands, list) else cands
+    expr = top.get("expression") if isinstance(top, dict) else str(top)
+    if not expr:
+        return ""
+    return (
+        "### Data-driven candidate law (symbolic regression)\n"
+        f"Top recovered expression: {expr}\n"
+        "Use this as a data-driven candidate when forming the hypothesis.\n"
+        "### End candidate law"
+    )
+
+
+def _rbc_predict(fields: list[str]) -> str:
+    """从 `|` 切出的字段里取 predict: 后的正文."""
+    for _p in fields[1:]:
+        if _p.lower().startswith("predict:"):
+            return _p.split(":", 1)[1].strip()
+    return ""
+
+
+def _cm_score(has_refuted: bool, audited: bool, depth: int) -> float:
+    """分量成熟度打分: 有 refuted +0.3 / 过审计 +0.3 / 链深>=2 +0.4."""
+    score = 0.0
+    if has_refuted:
+        score += 0.3
+    if audited:
+        score += 0.3
+    if depth >= 2:
+        score += 0.4
+    return score
+
+
 # ── data structures ──────────────────────────────────────────────────────────
 
 
@@ -439,41 +638,70 @@ class HypothesisGraph:
         """新增假设节点, 返回 node id. parent_id 非空时自动加 derive 边."""
         if not statement.strip():
             raise HypothesisGraphError("假设陈述不能为空")
-        # 单写者 frontier 纪律 (ARTEX planner 独占追加): 只有 hypothesize/branch
-        # 阶段可追加方向. 阶段已标注且非写者阶段 = 越权: 默认只计数观测 (fail-open,
-        # 不丢节点), strict flag 打开才拒绝. 阶段未标注 ("") → 不检查 (向后兼容).
+        if not self._ah_write_guard(statement):
+            return None
+        if not self._ah_distinct_guard(statement):
+            return None
+        # 先查 parent 再加节点, 避免失败时留下孤儿节点
+        if parent_id is not None:
+            self._check_node(parent_id)
+        node = self._ah_build(statement, rationale, testable_prediction, parent_id)
+        self._nodes[node.id] = node
+        if parent_id is not None and not self._ah_link(node.id, parent_id, rationale):
+            return None
+        self._ah_announce(node, parent_id)
+        return node.id
+
+    def _ah_write_guard(self, statement: str) -> bool:
+        """单写者 frontier 纪律 (ARTEX planner 独占追加).
+
+        只有 hypothesize/branch 阶段可追加方向. 阶段已标注且非写者阶段 = 越权:
+        默认只计数观测 (fail-open, 不丢节点), strict flag 打开才拒绝.
+        阶段未标注 ("") → 不检查 (向后兼容).
+        """
         _phase = _FRONTIER_WRITER_PHASE.get()
-        if _phase and _phase not in _FRONTIER_WRITE_PHASES:
-            self._out_of_phase_writes += 1
-            if _frontier_single_writer_strict():
-                logger.info(
-                    "add_hypothesis 拒绝非写者阶段追加 (phase=%s): %r",
-                    _phase, statement[:60],
-                )
-                return None
-            logger.debug(
-                "add_hypothesis 非写者阶段追加 (phase=%s, 只观测): %r",
+        if not _phase or _phase in _FRONTIER_WRITE_PHASES:
+            return True
+        self._out_of_phase_writes += 1
+        if _frontier_single_writer_strict():
+            logger.info(
+                "add_hypothesis 拒绝非写者阶段追加 (phase=%s): %r",
                 _phase, statement[:60],
             )
-        # 实质内容守卫: "**" / 仅 [DIM: ...] 标签 / 纯符号 → 返回 None (同交叉授粉
+            return False
+        logger.debug(
+            "add_hypothesis 非写者阶段追加 (phase=%s, 只观测): %r",
+            _phase, statement[:60],
+        )
+        return True
+
+    def _ah_distinct_guard(self, statement: str) -> bool:
+        """实质内容守卫 + 精确重复守卫; 不通过时计数并返回 False."""
+        # 实质内容守卫: "**" / 仅 [DIM: ...] 标签 / 纯符号 → 拒绝 (同交叉授粉
         # 拒绝语义), 调用方按 falsy 处理. 阻止空壳节点灌满 frontier.
         if not _is_substantive_statement(statement):
             self._rejected_adds += 1
             logger.info("add_hypothesis 拒绝非实质陈述: %r", statement[:60])
-            return None
+            return False
         # 精确重复守卫: 归一化后完全相同的陈述不再入图 (跨轮反复重述同一命题
         # 只会膨胀图). 修正/pivot/crossover 产出的陈述不同, 不受影响.
         _key = _statement_key(statement)
         if any(_statement_key(_n.statement) == _key for _n in self._nodes.values()):
             self._rejected_adds += 1
             logger.info("add_hypothesis 拒绝重复陈述: %r", statement[:60])
-            return None
-        # 先查 parent 再加节点, 避免失败时留下孤儿节点
-        if parent_id is not None:
-            self._check_node(parent_id)
-        node_id = f"h_{uuid.uuid4().hex[:8]}"
-        node = HypothesisNode(
-            id=node_id,
+            return False
+        return True
+
+    @staticmethod
+    def _ah_build(
+        statement: str,
+        rationale: str,
+        testable_prediction: str,
+        parent_id: str | None,
+    ) -> HypothesisNode:
+        """构造新节点 (未入图)."""
+        return HypothesisNode(
+            id=f"h_{uuid.uuid4().hex[:8]}",
             statement=statement,
             rationale=rationale,
             testable_prediction=testable_prediction,
@@ -481,24 +709,31 @@ class HypothesisGraph:
             created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             dimension=_extract_dimension(statement),
         )
-        self._nodes[node_id] = node
-        if parent_id is not None:
-            # 交叉授粉延迟: 跨分量 derive 需两端分量都成熟.
-            # 新节点是 singleton, _is_cross_component_edge 排除单节点 → 正常 derive 不受影响.
-            # 防的是未来直接连两个已有节点的场景.
-            ok, reason = self._check_cross_pollination_readiness(parent_id, node_id)
-            if not ok:
-                logging.getLogger(__name__).info(
-                    "derive 被交叉授粉延迟拒绝: %s -> %s, %s",
-                    parent_id, node_id, reason,
-                )
-                del self._nodes[node_id]
-                return None
-            self._edges.append(HypothesisEdge(
-                from_id=parent_id, to_id=node_id, edge_type="derive",
-                evidence={"rationale": rationale},
-            ))
-        self._record_event("add", node_id, statement=statement,
+
+    def _ah_link(self, node_id: str, parent_id: str, rationale: str) -> bool:
+        """加 derive 边; 交叉授粉延迟拒绝时回滚节点并返回 False.
+
+        交叉授粉延迟: 跨分量 derive 需两端分量都成熟. 新节点是 singleton,
+        _is_cross_component_edge 排除单节点 → 正常 derive 不受影响; 防的是
+        未来直接连两个已有节点的场景.
+        """
+        ok, reason = self._check_cross_pollination_readiness(parent_id, node_id)
+        if not ok:
+            logger.info(
+                "derive 被交叉授粉延迟拒绝: %s -> %s, %s",
+                parent_id, node_id, reason,
+            )
+            del self._nodes[node_id]
+            return False
+        self._edges.append(HypothesisEdge(
+            from_id=parent_id, to_id=node_id, edge_type="derive",
+            evidence={"rationale": rationale},
+        ))
+        return True
+
+    def _ah_announce(self, node: HypothesisNode, parent_id: str | None) -> None:
+        """记 add 事件 + 写研究日志."""
+        self._record_event("add", node.id, statement=node.statement,
                            parent_id=parent_id)
         self._log_research(
             "conjecture", node.statement[:80],
@@ -507,7 +742,6 @@ class HypothesisGraph:
             parent_id=parent_id, status="proposed",
             tags=["autoloop", "hypothesis"],
         )
-        return node_id
 
     def get(self, node_id: str) -> HypothesisNode:
         self._check_node(node_id)
@@ -679,6 +913,17 @@ class HypothesisGraph:
             return untested[:1]
 
         # Hᵢ: parent 已 refute 的假设优先 (refine_failed 同动机), parent 已 support 次之.
+        H = self._fr_energies(untested, phys_gain)
+        n = len(untested)
+        T = self._fr_couplings(untested)
+        selected = self._fr_greedy(untested, H, T, top_k, beta)
+        _fr_track_metric(n)
+        return [untested[i] for i in selected]
+
+    def _fr_energies(
+        self, untested: list[HypothesisNode], phys_gain: float
+    ) -> dict[str, float]:
+        """Hᵢ: parent 已 refute 优先, parent 已 support 次之; phys_gain 作 steering."""
         # phys_gain: 推理时 steering — 把物理奖励 R_phys 当作独立于证据强度的
         # steering 方向注入 Hᵢ (h → h + λ·R_phys), 对应 brain-guided 论文的
         # "orthogonal gain": R_phys 携带与纯语言/证据监督正交的物理有效性信号.
@@ -701,8 +946,11 @@ class HypothesisGraph:
                         # 脏值不参与 steering, 不崩
                         h += phys_gain * float(_rp)
             H[n.id] = h
+        return H
 
-        # Tᵢⱼ: 同 dimension 支撑 (+0.5), 同 sibling_group 互斥 (-1.0).
+    @staticmethod
+    def _fr_couplings(untested: list[HypothesisNode]) -> list[list[float]]:
+        """Tᵢⱼ: 同 dimension 支撑 (+0.5), 同 sibling_group 互斥 (-1.0)."""
         n = len(untested)
         T: list[list[float]] = [[0.0] * n for _ in range(n)]
         for i in range(n):
@@ -711,15 +959,24 @@ class HypothesisGraph:
                 t = 0.0
                 if ni.dimension and ni.dimension == nj.dimension:
                     t += 0.5
-                if (ni.sibling_group_id and ni.sibling_group_id == nj.sibling_group_id):
+                if ni.sibling_group_id and ni.sibling_group_id == nj.sibling_group_id:
                     t -= 1.0  # 同组候选互斥, 选一个即可
                 T[i][j] = t
                 T[j][i] = t
+        return T
 
-        # 贪心: 按 H 降序逐个加入, ΔE<0 接受.
+    @staticmethod
+    def _fr_greedy(
+        untested: list[HypothesisNode],
+        H: dict[str, float],
+        T: list[list[float]],
+        top_k: int,
+        beta: float,
+    ) -> list[int]:
+        """贪心按 H 降序加入, ΔE<0 接受; sibling 互斥走硬约束."""
         # sibling_group 互斥走硬约束 (选过直接跳过), 不走软 Tᵢⱼ — 否则 H 大的
         # 候选会被接受, 跟 "同组选一个" 语义冲突. ponytail: 硬约束比调 β 简单.
-        order = sorted(range(n), key=lambda i: -H[untested[i].id])
+        order = sorted(range(len(untested)), key=lambda i: -H[untested[i].id])
         selected: list[int] = []
         selected_siblings: set[str] = set()
         for idx in order:
@@ -753,14 +1010,7 @@ class HypothesisGraph:
                     selected_siblings.add(ni.sibling_group_id)
                 if len(selected) >= top_k:
                     break
-
-        try:
-            from huginn.routes.metrics import track_memory_rerank
-            track_memory_rerank("ising", n)
-        except Exception:  # 防御: 记忆重排指标失败跳过
-            logger.debug("memory rerank metric skipped", exc_info=True)
-
-        return [untested[i] for i in selected]
+        return selected
 
     def supported(self) -> list[HypothesisNode]:
         return [n for n in self._nodes.values() if n.status == "supported"]
@@ -1005,44 +1255,17 @@ class HypothesisGraph:
 
     # ── 失败驱动的假设修正 ───────────────────────────────────────────
 
-    def pivot(
+    def _pivot_generate(
         self,
-        failed_node_id: str,
+        failed_node: Any,
+        failed_statements: list[str],
         evidence: dict[str, Any],
-        model: Any | None = None,
-        objective: str = "",
-        n_best: int = 2,
-    ) -> str:
-        """战略转向: 放弃当前假设方向, 生成全新假设.
-
-        v11: N-best speculative — n_best=2 并行采样, 主候选返回, 备候选进图
-        标 sibling_group_id 共享. 复用 _hypothesize 的 N=2 思路, 但 pivot 是
-        sync 方法, 这里用顺序调用 (LLM 调用是瓶颈, 顺序 vs 并行差异小).
-        ponytail: 不 async 化 pivot (会传染到调用方), 顺序 N-best 够用.
-
-        与 refine_failed 的区别: refine 在原假设基础上修正参数或条件,
-        pivot 彻底换一个方向. 在 refine 次数耗尽时触发.
-
-        流程:
-        1. 收集所有已反驳假设的失败模式, 避免重走老路
-        2. 调 LLM 生成 N 个候选 (主温度 + 高温), 主候选返回, 备候选进图
-           - 不可用时回退到模板: 换一个变量维度
-        3. 新假设不继承 parent (不是 derive 关系, 是 pivot 关系)
-        4. v11: N 个候选共享 sibling_group_id, siblings() 可查
-        """
-        self._check_node(failed_node_id)
-        failed_node = self._nodes[failed_node_id]
-
-        # 收集所有 refuted 节点的 statement, 让 LLM 知道哪些路走不通
-        failed_statements = [
-            n.statement for n in self._nodes.values()
-            if n.status in ("refuted", "superseded")
-        ]
-
-        # v11: N-best 采样 — 主候选 (默认温度) + 备候选 (高温=1.0)
-        # ponytail: 顺序调用, 不 async. LLM invoke 是同步阻塞, 并行需 asyncio.
-        # 升级路径: async pivot + asyncio.gather (v12 候选, 要改调用方).
-        main_statement: str = ""
+        objective: str,
+        model: Any | None,
+        n_best: int,
+    ) -> tuple[str, list[str]]:
+        """生成主候选 + (可选) 高温备候选; 无模型时回退模板."""
+        main_statement = ""
         backup_statements: list[str] = []
         if model is not None and self._is_real_model(model):
             main_statement = self._llm_pivot(
@@ -1052,30 +1275,24 @@ class HypothesisGraph:
                 try:
                     hot_model = model.bind(temperature=1.0)
                     _backup = self._llm_pivot(
-                        failed_node.statement, failed_statements, evidence, objective, hot_model,
+                        failed_node.statement, failed_statements, evidence,
+                        objective, hot_model,
                     )
                     if _backup and _backup != main_statement:
                         backup_statements.append(_backup)
                 except Exception:  # 防御: 绑定失败回退模板
-                    logger.debug("best-effort op failed", exc_info=True)  # not all model wrappers support bind
+                    # not all model wrappers support bind
+                    logger.debug("best-effort op failed", exc_info=True)
         else:
             main_statement = self._template_pivot(
                 failed_node.statement, failed_statements,
             )
+        return main_statement, backup_statements
 
-        # v11: 生成 sibling_group_id, N 个候选共享
-        _sibling_group = f"sg_{uuid.uuid4().hex[:8]}" if backup_statements else None
-
-        # 加节点 + pivot 边 (不是 derive, 是独立的 pivot 关系)
-        new_id = self.add_hypothesis(
-            statement=main_statement,
-            rationale=f"战略转向: refine 次数耗尽, 放弃 {failed_node_id} 方向",
-        )
-        # v11: 主候选标 sibling_group_id
-        if _sibling_group:
-            self._nodes[new_id].sibling_group_id = _sibling_group
-
-        # v11: 备候选进图, 标 sibling_group_id + evidence={"candidate_role":"backup"}
+    def _pivot_add_backups(
+        self, new_id: str, backup_statements: list[str], sibling_group: str | None
+    ) -> None:
+        """v11: 备候选进图, 标 sibling_group_id + evidence={"candidate_role":"backup"}."""
         for _backup_stmt in backup_statements:
             try:
                 _backup_id = self.add_hypothesis(
@@ -1083,25 +1300,25 @@ class HypothesisGraph:
                     rationale=f"backup pivot candidate (sibling of {new_id})",
                 )
                 if _backup_id:
-                    self._nodes[_backup_id].sibling_group_id = _sibling_group
+                    self._nodes[_backup_id].sibling_group_id = sibling_group
                     self._nodes[_backup_id].evidence = {
                         **self._nodes[_backup_id].evidence,
                         "candidate_role": "backup",
                     }
             except Exception:  # 防御: 备选生成失败不阻塞
-                logger.debug("best-effort op failed", exc_info=True)  # backup 失败不阻塞主候选
+                # backup 失败不阻塞主候选
+                logger.debug("best-effort op failed", exc_info=True)
 
-        # 交叉授粉延迟: pivot 跨分量需两端分量都成熟.
-        # new_id 是 singleton, _is_cross_component_edge 排除单节点 → 正常 pivot 不受影响.
-        ok, reason = self._check_cross_pollination_readiness(
-            failed_node_id, new_id,
-        )
-        if not ok:
-            logging.getLogger(__name__).info(
-                "pivot 被交叉授粉延迟拒绝: %s -> %s, %s",
-                failed_node_id, new_id, reason,
-            )
-            return None
+    def _pivot_commit(
+        self,
+        failed_node_id: str,
+        new_id: str,
+        failed_node: Any,
+        main_statement: str,
+        failed_statements: list[str],
+        backup_statements: list[str],
+    ) -> None:
+        """记录 pivot 边 + 事件 + 研究日志."""
         # 把 pivot 关系记到边里 — 用 "pivot" 类型, 不污染 children() 的 derive 过滤
         self._edges.append(HypothesisEdge(
             from_id=failed_node_id, to_id=new_id, edge_type="pivot",
@@ -1123,27 +1340,91 @@ class HypothesisGraph:
             tags=["autoloop", "pivot"],
         )
 
-        # v12: AlphaEvolve crossover — sibling_group 有主+备时, 尝试组合产生第 3 候选.
-        # ponytail: 复用 model.invoke, 失败 non-fatal. child 通过 derive 边连 parent_a.
-        # 升级路径: mutation (单候选局部扰动) — YAGNI, crossover 已够闭环, benchmark 驱动再加.
-        if _sibling_group and backup_statements and model is not None and self._is_real_model(model):
-            try:
-                _backup_id = next(
-                    (n.id for n in self._nodes.values()
-                     if n.sibling_group_id == _sibling_group
-                     and n.evidence.get("candidate_role") == "backup"),
-                    None,
-                )
-                if _backup_id:
-                    _child_id = self.crossover(
-                        new_id, _backup_id, model, objective,
-                    )
-                    if _child_id:
-                        self._nodes[_child_id].sibling_group_id = _sibling_group
-            except Exception:  # 防御: 交叉授粉失败忽略
-                logger.debug("v12 crossover after pivot failed (non-fatal)", exc_info=True)
+    def _pivot_try_crossover(
+        self,
+        new_id: str,
+        sibling_group: str | None,
+        backup_statements: list[str],
+        model: Any | None,
+        objective: str,
+    ) -> None:
+        """v12: AlphaEvolve crossover — sibling_group 有主+备时组合出第 3 候选.
 
+        ponytail: 复用 model.invoke, 失败 non-fatal. child 通过 derive 边连 parent_a.
+        """
+        if not (sibling_group and backup_statements and model is not None):
+            return
+        if not self._is_real_model(model):
+            return
+        try:
+            _backup_id = next(
+                (n.id for n in self._nodes.values()
+                 if n.sibling_group_id == sibling_group
+                 and n.evidence.get("candidate_role") == "backup"),
+                None,
+            )
+            if _backup_id:
+                _child_id = self.crossover(new_id, _backup_id, model, objective)
+                if _child_id:
+                    self._nodes[_child_id].sibling_group_id = sibling_group
+        except Exception:  # 防御: 交叉授粉失败忽略
+            logger.debug("v12 crossover after pivot failed (non-fatal)", exc_info=True)
+
+    def pivot(
+        self,
+        failed_node_id: str,
+        evidence: dict[str, Any],
+        model: Any | None = None,
+        objective: str = "",
+        n_best: int = 2,
+    ) -> str:
+        """战略转向: 放弃当前假设方向, 生成全新假设.
+
+        v11 N-best speculative — n_best=2 顺序采样, 主候选返回, 备候选进图标
+        sibling_group_id 共享 (不 async 化以免传染调用方, LLM 顺序调用够用).
+        与 refine_failed 区别: refine 在原假设上修正参数, pivot 彻底换方向,
+        在 refine 次数耗尽时触发. 新假设不继承 parent (pivot 而非 derive 关系).
+        """
+        self._check_node(failed_node_id)
+        failed_node = self._nodes[failed_node_id]
+        # 收集所有 refuted 节点的 statement, 让 LLM 知道哪些路走不通
+        failed_statements = self._pivot_failed_statements()
+        main_statement, backup_statements = self._pivot_generate(
+            failed_node, failed_statements, evidence, objective, model, n_best,
+        )
+        # v11: N 个候选共享 sibling_group_id, siblings() 可查
+        _sibling_group = f"sg_{uuid.uuid4().hex[:8]}" if backup_statements else None
+        new_id = self.add_hypothesis(
+            statement=main_statement,
+            rationale=f"战略转向: refine 次数耗尽, 放弃 {failed_node_id} 方向",
+        )
+        if _sibling_group:
+            self._nodes[new_id].sibling_group_id = _sibling_group
+        self._pivot_add_backups(new_id, backup_statements, _sibling_group)
+        # 交叉授粉延迟: pivot 跨分量需两端分量都成熟. new_id 是 singleton,
+        # _is_cross_component_edge 排除单节点 → 正常 pivot 不受影响.
+        ok, reason = self._check_cross_pollination_readiness(failed_node_id, new_id)
+        if not ok:
+            logging.getLogger(__name__).info(
+                "pivot 被交叉授粉延迟拒绝: %s -> %s, %s",
+                failed_node_id, new_id, reason,
+            )
+            return None
+        self._pivot_commit(
+            failed_node_id, new_id, failed_node, main_statement,
+            failed_statements, backup_statements,
+        )
+        self._pivot_try_crossover(
+            new_id, _sibling_group, backup_statements, model, objective,
+        )
         return new_id
+
+    def _pivot_failed_statements(self) -> list[str]:
+        """收集所有 refuted/superseded 节点 statement, 让 LLM 知道哪些路走不通."""
+        return [
+            n.statement for n in self._nodes.values()
+            if n.status in ("refuted", "superseded")
+        ]
 
     def crossover(
         self,
@@ -1168,23 +1449,8 @@ class HypothesisGraph:
         a = self._nodes[parent_a_id]
         b = self._nodes[parent_b_id]
 
-        prompt = (
-            f"研究目标: {objective}\n\n"
-            f"假设 A: {a.statement}\n  理由: {a.rationale}\n\n"
-            f"假设 B: {b.statement}\n  理由: {b.rationale}\n\n"
-            "组合 A 和 B 的优势, 生成一个新假设 — 继承 A 在某方面的优点和 "
-            "B 在另一方面的优点. 必须可测试且新颖 (非简单合并).\n"
-            "用一句话陈述新假设:"
-        )
-        try:
-            resp = model.invoke(prompt)
-            text = resp.content if hasattr(resp, "content") else str(resp)
-            stmt = text.strip().split("\n")[0].strip()
-            stmt = stmt.lstrip("- *•").strip().strip('"\'')
-        except Exception:  # 防御: 尽力生成失败返回空
-            logger.debug("best-effort op failed", exc_info=True)
-            return None
-
+        prompt = self._cx_build_prompt(a, b, objective)
+        stmt = self._cx_invoke(model, prompt)
         if not stmt or stmt == a.statement or stmt == b.statement:
             return None
 
@@ -1194,25 +1460,58 @@ class HypothesisGraph:
             parent_id=parent_a_id,  # derive 边
         )
         if child_id:
-            self._nodes[child_id].evidence = {
-                **self._nodes[child_id].evidence,
-                "crossover_parents": [parent_a_id, parent_b_id],
-                "candidate_role": "crossover",
-            }
-            self._record_event(
-                "crossover", child_id,
-                parents=[parent_a_id, parent_b_id],
-            )
-            self._log_research(
-                "conjecture", f"CROSSOVER: {stmt[:60]}",
-                f"AlphaEvolve crossover — 组合两个 parent 优势.\n\n"
-                f"child: {stmt}\n"
-                f"parent_a: {a.statement}\n"
-                f"parent_b: {b.statement}",
-                parent_id=child_id, status="proposed",
-                tags=["autoloop", "crossover"],
-            )
+            self._cx_record(child_id, parent_a_id, parent_b_id, a, b, stmt)
         return child_id
+
+    @staticmethod
+    def _cx_build_prompt(a: HypothesisNode, b: HypothesisNode, objective: str) -> str:
+        """拼 crossover prompt: 组合 A/B 各自优势, 要求可测试且新颖."""
+        return (
+            f"研究目标: {objective}\n\n"
+            f"假设 A: {a.statement}\n  理由: {a.rationale}\n\n"
+            f"假设 B: {b.statement}\n  理由: {b.rationale}\n\n"
+            "组合 A 和 B 的优势, 生成一个新假设 — 继承 A 在某方面的优点和 "
+            "B 在另一方面的优点. 必须可测试且新颖 (非简单合并).\n"
+            "用一句话陈述新假设:"
+        )
+
+    @staticmethod
+    def _cx_invoke(model: Any, prompt: str) -> str | None:
+        """调 LLM 取首行作为 child 陈述; 异常/空返回 None (non-fatal)."""
+        try:
+            resp = model.invoke(prompt)
+            text = resp.content if hasattr(resp, "content") else str(resp)
+            stmt = text.strip().split("\n")[0].strip()
+            return stmt.lstrip("- *•").strip().strip('"\'')
+        except Exception:  # 防御: 尽力生成失败返回空
+            logger.debug("best-effort op failed", exc_info=True)
+            return None
+
+    def _cx_record(
+        self,
+        child_id: str,
+        parent_a_id: str,
+        parent_b_id: str,
+        a: HypothesisNode,
+        b: HypothesisNode,
+        stmt: str,
+    ) -> None:
+        """给 child 标 crossover 证据 + 事件 + 研究日志."""
+        self._nodes[child_id].evidence = {
+            **self._nodes[child_id].evidence,
+            "crossover_parents": [parent_a_id, parent_b_id],
+            "candidate_role": "crossover",
+        }
+        self._record_event("crossover", child_id, parents=[parent_a_id, parent_b_id])
+        self._log_research(
+            "conjecture", f"CROSSOVER: {stmt[:60]}",
+            f"AlphaEvolve crossover — 组合两个 parent 优势.\n\n"
+            f"child: {stmt}\n"
+            f"parent_a: {a.statement}\n"
+            f"parent_b: {b.statement}",
+            parent_id=child_id, status="proposed",
+            tags=["autoloop", "crossover"],
+        )
 
     def _llm_pivot(
         self,
@@ -1284,7 +1583,29 @@ class HypothesisGraph:
                 f"节点 {node_id} 状态为 {node.status}, 只有 refuted 才能 refine"
             )
 
-        # 1. red-team 审查
+        findings, obstacle_summary = self._rf_review(node, node_id, evidence, model)
+
+        # 2. 生成修正假设
+        new_statement = self._rf_generate(node, findings, evidence, model)
+
+        # 3. 阻塞-重启协议: 拒绝时返回原 node_id, 不加新节点, 不 supersede 旧节点.
+        if not self._rf_try_reopen(
+            node_id, new_statement, block_registry, method_family,
+            proposed_mechanism_type,
+        ):
+            return node_id  # 调用方据此知道 refine 被阻塞
+
+        # 4. 加节点 + 标旧节点 superseded
+        return self._rf_commit(node_id, node, new_statement, findings, obstacle_summary)
+
+    def _rf_review(
+        self,
+        node: HypothesisNode,
+        node_id: str,
+        evidence: dict[str, Any],
+        model: Any | None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """1. red-team 审查并记障碍到研究日志, 返回 (findings, 摘要)."""
         from huginn.autoloop.red_team import RedTeamReviewer
 
         reviewer = RedTeamReviewer(model=model)
@@ -1294,10 +1615,8 @@ class HypothesisGraph:
         )
         findings = [f.to_dict() for f in report.findings]
 
-        # 把 red-team 发现的障碍记到研究日志
         obstacle_summary = "; ".join(
-            f.get("description", f.get("severity", "unknown"))
-            for f in findings
+            f.get("description", f.get("severity", "unknown")) for f in findings
         ) if findings else "无具体发现"
         self._log_research(
             "obstacle", f"障碍识别: {node.statement[:50]}",
@@ -1308,43 +1627,67 @@ class HypothesisGraph:
             parent_id=node_id, status="in_progress",
             tags=["autoloop", "refine", "red-team"],
         )
+        return findings, obstacle_summary
 
-        # 2. 生成修正假设
+    def _rf_generate(
+        self,
+        node: HypothesisNode,
+        findings: list[dict[str, Any]],
+        evidence: dict[str, Any],
+        model: Any | None,
+    ) -> str:
+        """2. 生成修正假设: 有真模型走 LLM, 否则模板拼接."""
         if model is not None and self._is_real_model(model):
-            new_statement = self._llm_refine(node.statement, findings, evidence, model)
-        else:
-            new_statement = self._template_refine(node.statement, findings)
+            return self._llm_refine(node.statement, findings, evidence, model)
+        return self._template_refine(node.statement, findings)
 
-        # 3. 阻塞-重启协议: 检查该族是否有阻塞路线
-        # 新假设作为 "proposed mechanism" 过 try_reopen, 防止换名重启死路线.
-        # 拒绝时返回原 node_id, 不加新节点, 不 supersede 旧节点.
-        if block_registry is not None and method_family is not None:
-            blocked_routes = block_registry.list_blocked(family_id=method_family)
-            if blocked_routes:
-                # 取最近一条阻塞路线尝试重启
-                route = blocked_routes[0]
-                mech_type = proposed_mechanism_type or "new_construction"  # type: ignore[arg-type]
-                attempt = block_registry.try_reopen(
-                    route_id=route.route_id,
-                    proposed_mechanism=new_statement,
-                    proposer_agent=f"refine:{node_id}",
-                    mechanism_type=mech_type,  # type: ignore[arg-type]
-                )
-                if attempt.verdict != "reopen":
-                    # 重启被拒: 换名归约或机制类型不匹配, 不加新节点
-                    self._log_research(
-                        "obstacle", f"阻塞路线拒绝重启: {route.route_id}",
-                        f"假设 {node_id} 的修正被阻塞路线 {route.route_id} 拒绝.\n\n"
-                        f"提议机制: {new_statement}\n"
-                        f"拒绝原因: {attempt.verdict}\n"
-                        f"阻塞原因: {route.block_reason}\n"
-                        f"需要: {route.required_mechanism_description}",
-                        parent_id=node_id, status="blocked",
-                        tags=["autoloop", "refine", "block_registry"],
-                    )
-                    return node_id  # 调用方据此知道 refine 被阻塞
+    def _rf_try_reopen(
+        self,
+        node_id: str,
+        new_statement: str,
+        block_registry: Any | None,
+        method_family: str | None,
+        proposed_mechanism_type: str | None,
+    ) -> bool:
+        """3. 阻塞-重启协议; 返回 False 表示重启被拒, 调用方应中止 refine."""
+        if block_registry is None or method_family is None:
+            return True
+        blocked_routes = block_registry.list_blocked(family_id=method_family)
+        if not blocked_routes:
+            return True
+        # 取最近一条阻塞路线尝试重启
+        route = blocked_routes[0]
+        mech_type = proposed_mechanism_type or "new_construction"  # type: ignore[arg-type]
+        attempt = block_registry.try_reopen(
+            route_id=route.route_id,
+            proposed_mechanism=new_statement,
+            proposer_agent=f"refine:{node_id}",
+            mechanism_type=mech_type,  # type: ignore[arg-type]
+        )
+        if attempt.verdict == "reopen":
+            return True
+        # 重启被拒: 换名归约或机制类型不匹配, 不加新节点
+        self._log_research(
+            "obstacle", f"阻塞路线拒绝重启: {route.route_id}",
+            f"假设 {node_id} 的修正被阻塞路线 {route.route_id} 拒绝.\n\n"
+            f"提议机制: {new_statement}\n"
+            f"拒绝原因: {attempt.verdict}\n"
+            f"阻塞原因: {route.block_reason}\n"
+            f"需要: {route.required_mechanism_description}",
+            parent_id=node_id, status="blocked",
+            tags=["autoloop", "refine", "block_registry"],
+        )
+        return False
 
-        # 4. 加节点 + 标旧节点 superseded
+    def _rf_commit(
+        self,
+        node_id: str,
+        node: HypothesisNode,
+        new_statement: str,
+        findings: list[dict[str, Any]],
+        obstacle_summary: str,
+    ) -> str:
+        """4. 加节点 + 标旧节点 superseded, 返回新 node id."""
         new_id = self.add_hypothesis(
             statement=new_statement,
             rationale=f"修正自 {node_id}: {node.statement}",
@@ -1484,79 +1827,38 @@ class HypothesisGraph:
         升级路径: 语义 embedding cosine.
         """
         if principles is None:
-            try:
-                from huginn.memory.longterm import load_stable_principles
-                principles = load_stable_principles()
-            except Exception:  # 防御: 原则加载失败用空表
-                principles = []
+            principles = _mk_load_principles()
         if rules is None:
-            try:
-                _base = str(get_runtime_home())
-                _rp = Path(_base) / "logs" / "evolution_rules.json"
-                if _rp.exists():
-                    with _rp.open("r", encoding="utf-8") as _rf:
-                        _loaded = json.load(_rf)
-                    rules = _loaded if isinstance(_loaded, list) else []
-                else:
-                    rules = []
-            except Exception:  # 防御: 规则加载失败用空表
-                rules = []
+            rules = _mk_load_rules()
 
-        def _stable_id(text: str) -> str:
-            """内容哈希做稳定 id — 同文本永远同 id, 保证幂等挂载."""
-            return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
-
-        def _bigrams(text: str) -> set[str]:
-            """字符 bigram 集 — 中文短语义的粗粒度指纹.
-
-            滑窗取相邻 2 字符 (含空格归一后的连续字符), 让"掺杂+带隙"这类
-            局部语义能跨文本命中. 纯字符, 不依赖分词器.
-            """
-            if not text:
-                return set()
-            chars = [c for c in text.lower() if not c.isspace()]
-            return {
-                chars[i] + chars[i + 1]
-                for i in range(len(chars) - 1)
-            }
-
-        added = 0
         node_bigrams = {
-            nid: _bigrams(n.statement)
-            for nid, n in self._nodes.items()
+            nid: _mk_bigrams(n.statement) for nid, n in self._nodes.items()
         }
+        added = self._mk_register_items(principles, _mk_principle_key, node_bigrams)
+        return added + self._mk_register_items(rules, _mk_rule_key, node_bigrams)
 
-        def _register(kid: str, text: str) -> None:
-            nonlocal added
-            kbgs = _bigrams(text)
+    def _mk_register_items(
+        self,
+        items: list[Any],
+        key_of: Any,
+        node_bigrams: dict[str, set[str]],
+    ) -> int:
+        """把每条知识 (kid, text) 注册成 simplex, 返回新增数 (幂等)."""
+        added = 0
+        for item in items or []:
+            kid, text = key_of(item)
+            if not kid or not text:
+                continue
+            kbgs = _mk_bigrams(text)
             if not kbgs:
-                return
+                continue
             hit = [nid for nid, bgs in node_bigrams.items() if bgs & kbgs]
             if not hit:
-                return
+                continue
             simplex = frozenset({kid, *hit})
             if simplex not in self._simplicials:
                 self._simplicials.add(simplex)
                 added += 1
-
-        for p in principles or []:
-            if not p:
-                continue
-            # 内容哈希做 id, 同文本永远同 id → 幂等 (重复挂载不重复加).
-            _kid = f"sp:{_stable_id(str(p))}"
-            _register(_kid, str(p))
-
-        for r in rules or []:
-            if not isinstance(r, dict):
-                continue
-            act = r.get("action", "")
-            desc = str(act.get("description", "")) if isinstance(act, dict) else str(act)
-            if not desc:
-                continue
-            # 有 rule_id 用 rule_id, 否则退回内容哈希, 保证幂等.
-            _kid = f"er:{r.get('rule_id') or _stable_id(desc)}"
-            _register(_kid, desc)
-
         return added
 
     # ── 连通分量监控 ───────────────────────────────────────────────────
@@ -1594,7 +1896,24 @@ class HypothesisGraph:
             self._nodes[nid] for nid in component_node_ids
             if nid in self._nodes
         ]
-        # 最长派生链: 在分量内沿 parent_id 走的最长路径
+        depth = self._cm_depth(nodes, component_node_ids)
+        has_refuted = any(n.status == "refuted" for n in nodes)
+        # 无 block_registry 入参, 默认 False
+        has_blocked_route = False
+        audited = bool(nodes) and all(
+            "equivalence_verdict" in n.evidence for n in nodes
+        )
+        return {
+            "size": len(nodes),
+            "depth": depth,
+            "has_refuted": has_refuted,
+            "has_blocked_route": has_blocked_route,
+            "audited": audited,
+            "maturity_score": _cm_score(has_refuted, audited, depth),
+        }
+
+    def _cm_depth(self, nodes: list[HypothesisNode], component_ids: set[str]) -> int:
+        """最长派生链: 在分量内沿 parent_id 走的最长路径."""
         depth = 0
         for n in nodes:
             chain_len = 0
@@ -1603,34 +1922,12 @@ class HypothesisGraph:
             while cur is not None and cur.id not in seen:
                 seen.add(cur.id)
                 chain_len += 1
-                if cur.parent_id and cur.parent_id in component_node_ids:
+                if cur.parent_id and cur.parent_id in component_ids:
                     cur = self._nodes.get(cur.parent_id)
                 else:
                     cur = None
-            if chain_len > depth:
-                depth = chain_len
-
-        has_refuted = any(n.status == "refuted" for n in nodes)
-        # 无 block_registry 入参, 默认 False
-        has_blocked_route = False
-        audited = bool(nodes) and all(
-            "equivalence_verdict" in n.evidence for n in nodes
-        )
-        score = 0.0
-        if has_refuted:
-            score += 0.3
-        if audited:
-            score += 0.3
-        if depth >= 2:
-            score += 0.4
-        return {
-            "size": len(nodes),
-            "depth": depth,
-            "has_refuted": has_refuted,
-            "has_blocked_route": has_blocked_route,
-            "audited": audited,
-            "maturity_score": score,
-        }
+            depth = max(depth, chain_len)
+        return depth
 
     def component_representative(self, component_node_ids: set[str]) -> str | None:
         """选分量代表节点, 防单分量靠节点数主导.
@@ -1952,6 +2249,32 @@ def _selfcheck_phys_steering() -> None:
     λ=0 时 frontier 全选高 H 的 m (证据监督主导); λ 升高后转向高 R_phys 的 n,
     证明 steering 方向正交于证据峰度.
     """
+    g, low, high = _sps_build_graph()
+
+    # λ=0: 无干预, 证据监督主导 → 全选高 H 的 m
+    base = g.frontier_ranked(top_k=3, phys_gain=0.0)
+    base_ids = [n.id for n in base]
+    assert all(nid in low for nid in base_ids), f"λ=0 应按证据选 m, got {base_ids}"
+    base_rp = _sps_mean_rp(g, base_ids)
+    assert base_rp < 0.2, f"λ=0 平均 R_phys 应低, got {base_rp:.2f}"
+
+    # λ>0: steering 把 frontier 拉向高 R_phys 的 n — orthogonal gain
+    steered = g.frontier_ranked(top_k=3, phys_gain=2.0)
+    steer_ids = [n.id for n in steered]
+    steer_rp = _sps_mean_rp(g, steer_ids)
+    assert set(steer_ids) != set(base_ids), "steering 不应是无操作"
+    assert steer_ids[0] == high[0], f"高 R_phys 应占据首位, got {steer_ids}"
+    assert steer_rp > 0.5, f"steering 应显著提升平均 R_phys, got {steer_rp:.2f}"
+
+    _sps_check_monotonic(g, base_rp)
+    print(
+        f"OK: R_phys steering — λ=0 平均 {base_rp:.2f} → λ=2 平均 {steer_rp:.2f}, "
+        "orthogonal gain 成立"
+    )
+
+
+def _sps_build_graph() -> tuple[HypothesisGraph, list[str], list[str]]:
+    """构造证据强度与 R_phys 反相关的假设群, 返回 (graph, 低 R_phys, 高 R_phys)."""
     g = HypothesisGraph()
     parent = g.add_hypothesis("parent hypothesis")
     g.refute(parent, evidence={"why": "fail"})
@@ -1959,40 +2282,27 @@ def _selfcheck_phys_steering() -> None:
     low = [g.add_hypothesis(f"m{i}", parent_id=parent) for i in range(4)]
     # 低 H (无 parent) 但物理校验好
     high = [g.add_hypothesis(f"n{i}") for i in range(4)]
-    for _i, nid in enumerate(low):
+    for nid in low:
         g._nodes[nid].evidence["r_phys"] = 0.1
     for i, nid in enumerate(high):
         g._nodes[nid].evidence["r_phys"] = [0.9, 0.8, 0.7, 0.6][i]
+    return g, low, high
 
-    def _mean_rp(ids: list[str]) -> float:
-        return sum(float(g._nodes[i].evidence["r_phys"]) for i in ids) / len(ids)
 
-    # λ=0: 无干预, 证据监督主导 → 全选高 H 的 m
-    base = g.frontier_ranked(top_k=3, phys_gain=0.0)
-    base_ids = [n.id for n in base]
-    assert all(nid in low for nid in base_ids), f"λ=0 应按证据选 m, got {base_ids}"
-    base_rp = _mean_rp(base_ids)
-    assert base_rp < 0.2, f"λ=0 平均 R_phys 应低, got {base_rp:.2f}"
+def _sps_mean_rp(g: HypothesisGraph, ids: list[str]) -> float:
+    """给定节点 id 的平均 R_phys."""
+    return sum(float(g._nodes[i].evidence["r_phys"]) for i in ids) / len(ids)
 
-    # λ>0: steering 把 frontier 拉向高 R_phys 的 n — orthogonal gain
-    steered = g.frontier_ranked(top_k=3, phys_gain=2.0)
-    steer_ids = [n.id for n in steered]
-    steer_rp = _mean_rp(steer_ids)
-    assert set(steer_ids) != set(base_ids), "steering 不应是无操作"
-    assert steer_ids[0] == high[0], f"高 R_phys 应占据首位, got {steer_ids}"
-    assert steer_rp > 0.5, f"steering 应显著提升平均 R_phys, got {steer_rp:.2f}"
 
-    # λ 单调性: 更强的 steering → 更高的平均 R_phys
+def _sps_check_monotonic(g: HypothesisGraph, base_rp: float) -> None:
+    """λ 单调性: 更强的 steering → 更高的平均 R_phys."""
     prev = base_rp
     for lam in (0.5, 1.0, 2.0, 4.0):
-        cur = _mean_rp([n.id for n in g.frontier_ranked(top_k=3, phys_gain=lam)])
+        cur = _sps_mean_rp(
+            g, [n.id for n in g.frontier_ranked(top_k=3, phys_gain=lam)]
+        )
         assert cur >= prev, f"λ 增大平均 R_phys 不应下降 ({lam}: {cur:.2f})"
         prev = cur
-
-    print(
-        f"OK: R_phys steering — λ=0 平均 {base_rp:.2f} → λ=2 平均 {steer_rp:.2f}, "
-        "orthogonal gain 成立"
-    )
 
 
 def _selfcheck_lit_consensus() -> None:
@@ -2028,6 +2338,16 @@ def _selfcheck_lit_consensus() -> None:
 
 def _selfcheck_connected_components() -> None:
     """连通分量监控自检 — 构造 2 个不相交分量验证基本逻辑."""
+    g, h2, h3 = _scc_build_graph()
+    comps = _scc_check_components(g)
+    _scc_check_maturity(g, comps)
+    _scc_check_representative(g, comps, h2, h3)
+    _scc_check_cross_pollination()
+    print("OK: connected_components selfcheck passed")
+
+
+def _scc_build_graph() -> tuple[HypothesisGraph, str, str]:
+    """构造 3+2 两个不相交分量, 返回 (graph, h2, h3)."""
     g = HypothesisGraph()
     # 分量 1: 3 节点 derive 链
     h1 = g.add_hypothesis("h1 statement")
@@ -2035,16 +2355,19 @@ def _selfcheck_connected_components() -> None:
     h3 = g.add_hypothesis("h3 statement", parent_id=h2)
     # 分量 2: 2 节点 derive 链
     h4 = g.add_hypothesis("h4 statement")
-    h5 = g.add_hypothesis("h5 statement", parent_id=h4)
+    g.add_hypothesis("h5 statement", parent_id=h4)
 
     # 给不同的 created_at, 让 "最新" 优先级可判定
     g.get(h1).created_at = "2024-01-01T00:00:01Z"
     g.get(h2).created_at = "2024-01-01T00:00:02Z"
     g.get(h3).created_at = "2024-01-01T00:00:03Z"
     g.get(h4).created_at = "2024-01-01T00:00:04Z"
-    g.get(h5).created_at = "2024-01-01T00:00:05Z"
+    g.get("h5").created_at = "2024-01-01T00:00:05Z"
+    return g, h2, h3
 
-    # 分量数
+
+def _scc_check_components(g: HypothesisGraph) -> list[set[str]]:
+    """分量数 / 降序 / 最大分量规模 + 坍缩判据."""
     assert g.component_count() == 2, f"expected 2, got {g.component_count()}"
 
     comps = g.connected_components()
@@ -2052,7 +2375,14 @@ def _selfcheck_connected_components() -> None:
     assert len(comps[0]) >= len(comps[1])  # 降序
     assert len(comps[0]) == 3, f"largest should have 3 nodes, got {len(comps[0])}"
 
-    # 成熟度指标字段
+    # 坍缩: 2 < 3 -> True, 2 < 2 -> False
+    assert g.is_collapsed(min_components=3) is True
+    assert g.is_collapsed(min_components=2) is False
+    return comps
+
+
+def _scc_check_maturity(g: HypothesisGraph, comps: list[set[str]]) -> None:
+    """成熟度指标字段 + 取值."""
     m = g.component_maturity(comps[0])
     expected_keys = {
         "size", "depth", "has_refuted", "has_blocked_route",
@@ -2067,24 +2397,24 @@ def _selfcheck_connected_components() -> None:
     # depth>=2 -> +0.4, 其余 False
     assert abs(m["maturity_score"] - 0.4) < 1e-9
 
-    # 坍缩: 2 < 3 -> True, 2 < 2 -> False
-    assert g.is_collapsed(min_components=3) is True
-    assert g.is_collapsed(min_components=2) is False
 
-    # 代表: 全 untested -> 最新 (h3)
+def _scc_check_representative(
+    g: HypothesisGraph, comps: list[set[str]], h2: str, h3: str
+) -> None:
+    """代表节点: 全 untested → 最新; 有 supported → 优先; 空集 → None."""
     rep = g.component_representative(comps[0])
     assert rep is not None and rep in comps[0]
     assert rep == h3, f"expected newest untested h3, got {rep}"
 
-    # 代表: 标 h2 为 supported 后应优先选 h2
     g.get(h2).status = "supported"
     rep2 = g.component_representative(comps[0])
     assert rep2 == h2, f"expected supported h2, got {rep2}"
 
-    # 空集
     assert g.component_representative(set()) is None
 
-    # ── 交叉授粉延迟 ─────────────────────────────────────────────
+
+def _scc_check_cross_pollination() -> None:
+    """交叉授粉延迟: 两端分量都成熟才放行跨分量边."""
     # 构造 2 个不成熟的多节点分量, 验证跨分量边被拒绝; 成熟后才放行
     g2 = HypothesisGraph()
     # 分量 A: a1 -> a2 (depth=2, 无 refute 无 audit → score=0.4 < 0.6)
@@ -2122,16 +2452,30 @@ def _selfcheck_connected_components() -> None:
     assert ok3 is True, f"两边都成熟应放行, got ok={ok3}"
     assert reason3 == ""
 
-    print("OK: connected_components selfcheck passed")
-
 
 def _selfcheck_save_load() -> None:
     """P15: HypothesisGraph.save/load round-trip — 节点/边/单纯形/状态完整恢复."""
-    import json
     import shutil
     import tempfile as _tf
     from pathlib import Path
 
+    g, h1, h2 = _ssl_build_graph()
+    ws = Path(_tf.mkdtemp(prefix="hgraph_save_test_"))
+    path = ws / "graph.json"
+    try:
+        g.save(path)
+        assert path.exists(), "save 没写文件"
+        loaded = HypothesisGraph.load(path)
+        assert loaded is not None, "load 返回 None"
+        _ssl_verify_loaded(g, loaded, h1, h2, ws, path)
+        _ssl_verify_overwrite(g, path)
+        print("OK: save/load round-trip selfcheck passed")
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+
+
+def _ssl_build_graph() -> tuple[HypothesisGraph, str, str]:
+    """构造带 support/refute/双覆盖的小图, 返回 (graph, h1, h2)."""
     g = HypothesisGraph()
     h1 = g.add_hypothesis("h1: 掺杂增加带隙减小", rationale="r1")
     h2 = g.add_hypothesis("h2: 温度调控载流子迁移", parent_id=h1)
@@ -2140,56 +2484,58 @@ def _selfcheck_save_load() -> None:
     # 2-单纯形: 给 h1 加第 2 条 support 边 (不同 modality) → dual_covered 注册 simplex
     g.support(h1, evidence={"modality": "numeric", "data_source": "dft"})
     assert g.dual_covered(h1), "setup: h1 应该被双覆盖"
+    return g, h1, h2
 
-    ws = Path(_tf.mkdtemp(prefix="hgraph_save_test_"))
-    path = ws / "graph.json"
-    try:
-        # save → load round-trip
-        g.save(path)
-        assert path.exists(), "save 没写文件"
-        loaded = HypothesisGraph.load(path)
-        assert loaded is not None, "load 返回 None"
 
-        # 节点数 + 内容一致
-        assert len(loaded.all_nodes()) == len(g.all_nodes())
-        n1_loaded = loaded.get(h1)
-        assert n1_loaded.statement == "h1: 掺杂增加带隙减小"
-        assert n1_loaded.status == "supported"
-        n2_loaded = loaded.get(h2)
-        assert n2_loaded.status == "refuted"
-        assert n2_loaded.parent_id == h1
+def _ssl_verify_loaded(
+    g: HypothesisGraph,
+    loaded: HypothesisGraph,
+    h1: str,
+    h2: str,
+    ws: Any,
+    path: Any,
+) -> None:
+    """校验 load 回来的节点/边/单纯形/拓扑结构与原图一致."""
+    import json
 
-        # 边一致
-        orig_edges = {(e.from_id, e.to_id, e.edge_type) for e in g.edges()}
-        loaded_edges = {(e.from_id, e.to_id, e.edge_type) for e in loaded.edges()}
-        assert orig_edges == loaded_edges, f"边集合不一致: {orig_edges} vs {loaded_edges}"
+    # 节点数 + 内容一致
+    assert len(loaded.all_nodes()) == len(g.all_nodes())
+    n1_loaded = loaded.get(h1)
+    assert n1_loaded.statement == "h1: 掺杂增加带隙减小"
+    assert n1_loaded.status == "supported"
+    n2_loaded = loaded.get(h2)
+    assert n2_loaded.status == "refuted"
+    assert n2_loaded.parent_id == h1
 
-        # 单纯形 (frozenset) round-trip
-        orig_simp = sorted(sorted(s) for s in g._simplicials)
-        loaded_simp = sorted(sorted(s) for s in loaded._simplicials)
-        assert orig_simp == loaded_simp, f"单纯形不一致: {orig_simp} vs {loaded_simp}"
+    # 边一致
+    orig_edges = {(e.from_id, e.to_id, e.edge_type) for e in g.edges()}
+    loaded_edges = {(e.from_id, e.to_id, e.edge_type) for e in loaded.edges()}
+    assert orig_edges == loaded_edges, f"边集合不一致: {orig_edges} vs {loaded_edges}"
 
-        # 连通性 + 割点判定一致 (验证图结构可正常用)
-        assert loaded.component_count() == g.component_count()
-        assert loaded._articulation_points() == g._articulation_points()
+    # 单纯形 (frozenset) round-trip
+    orig_simp = sorted(sorted(s) for s in g._simplicials)
+    loaded_simp = sorted(sorted(s) for s in loaded._simplicials)
+    assert orig_simp == loaded_simp, f"单纯形不一致: {orig_simp} vs {loaded_simp}"
 
-        # load 不存在的文件 → None
-        missing = HypothesisGraph.load(ws / "nope.json")
-        assert missing is None, "load missing should return None"
+    # 连通性 + 割点判定一致 (验证图结构可正常用)
+    assert loaded.component_count() == g.component_count()
+    assert loaded._articulation_points() == g._articulation_points()
 
-        # save 出来是合法 JSON
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert "nodes" in data and "edges" in data and "simplicials" in data
+    # load 不存在的文件 → None
+    missing = HypothesisGraph.load(ws / "nope.json")
+    assert missing is None, "load missing should return None"
 
-        # 二次覆盖 (atomic write 不破)
-        g.add_hypothesis("h3: 新增节点")
-        g.save(path)
-        loaded2 = HypothesisGraph.load(path)
-        assert len(loaded2.all_nodes()) == 3
+    # save 出来是合法 JSON
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "nodes" in data and "edges" in data and "simplicials" in data
 
-        print("OK: save/load round-trip selfcheck passed")
-    finally:
-        shutil.rmtree(ws, ignore_errors=True)
+
+def _ssl_verify_overwrite(g: HypothesisGraph, path: Any) -> None:
+    """二次覆盖 (atomic write 不破)."""
+    g.add_hypothesis("h3: 新增节点")
+    g.save(path)
+    loaded2 = HypothesisGraph.load(path)
+    assert len(loaded2.all_nodes()) == 3
 
 
 def _selfcheck_frontier_ranked() -> None:
@@ -2198,8 +2544,16 @@ def _selfcheck_frontier_ranked() -> None:
 
     _saved = FeatureFlags.shared().is_enabled("ising_frontier")
     FeatureFlags.shared().enable("ising_frontier")
+    _sfr_check_small_pool()
+    _sfr_check_plain_pool()
+    g3 = _sfr_check_refuted_parent()
+    _sfr_check_sibling_exclusive()
+    _sfr_check_toggle_off(g3, _saved)
+    print("OK: frontier_ranked selfcheck passed")
 
-    # 场景 1: 假设数 <= top_k → 回退原 frontier
+
+def _sfr_check_small_pool() -> None:
+    """场景 1: 假设数 <= top_k → 回退原 frontier."""
     g = HypothesisGraph()
     a = g.add_hypothesis("h1 composition")
     b = g.add_hypothesis("h2 composition")
@@ -2207,14 +2561,18 @@ def _selfcheck_frontier_ranked() -> None:
     assert len(out) == 2, f"<=top_k 应回退, got {len(out)}"
     assert {n.id for n in out} == {a, b}
 
-    # 场景 2: 假设数 > top_k, 无 parent/sibling → 按 H 排前 K
+
+def _sfr_check_plain_pool() -> None:
+    """场景 2: 假设数 > top_k, 无 parent/sibling → 按 H 排前 K."""
     g2 = HypothesisGraph()
     ids = [g2.add_hypothesis(f"h{i}") for i in range(6)]
     out2 = g2.frontier_ranked(top_k=3)
     assert len(out2) == 3, f"top_k=3 应返回 3 个, got {len(out2)}"
     assert all(n.id in ids for n in out2)
 
-    # 场景 3: refute 过的 parent 的子假设 H 高, 优先入选
+
+def _sfr_check_refuted_parent() -> HypothesisGraph:
+    """场景 3: refute 过的 parent 的子假设 H 高, 优先入选. 返回该图备用."""
     g3 = HypothesisGraph()
     parent = g3.add_hypothesis("parent")
     g3.refute(parent, evidence={"why": "fail"})
@@ -2225,33 +2583,34 @@ def _selfcheck_frontier_ranked() -> None:
     out3 = g3.frontier_ranked(top_k=2)
     assert child in [n.id for n in out3], \
         f"refute 过的 parent 的子假设应优先, got {[n.id for n in out3]}"
+    return g3
 
-    # 场景 4: 同 sibling_group 互斥 — 不应同时选两个同组候选
+
+def _sfr_check_sibling_exclusive() -> None:
+    """场景 4: 同 sibling_group 互斥 — 不应同时选两个同组候选."""
     g4 = HypothesisGraph()
     base = g4.add_hypothesis("base")
     g4.refute(base, evidence={"why": "fail"})
     # pivot 出 3 个兄弟 (同 sibling_group), parent 都 refute
-    pivot_a = g4.add_hypothesis("pivot_a", parent_id=base)
-    g4._nodes[pivot_a].sibling_group_id = "grp1"
-    pivot_b = g4.add_hypothesis("pivot_b", parent_id=base)
-    g4._nodes[pivot_b].sibling_group_id = "grp1"
-    pivot_c = g4.add_hypothesis("pivot_c", parent_id=base)
-    g4._nodes[pivot_c].sibling_group_id = "grp1"
+    for name in ("pivot_a", "pivot_b", "pivot_c"):
+        nid = g4.add_hypothesis(name, parent_id=base)
+        g4._nodes[nid].sibling_group_id = "grp1"
     out4 = g4.frontier_ranked(top_k=2)
     grp_count = sum(1 for n in out4 if n.sibling_group_id == "grp1")
     assert grp_count <= 1, \
         f"同 sibling_group 不应同时选两个, got {grp_count} from {[n.id for n in out4]}"
 
-    # 场景 5: toggle off → 回退原 frontier() 顺序 (无 ranking)
+
+def _sfr_check_toggle_off(g3: HypothesisGraph, saved: bool) -> None:
+    """场景 5: toggle off → 回退原 frontier() 顺序 (无 ranking)."""
+    from huginn.feature_flags import FeatureFlags
+
     FeatureFlags.shared().disable("ising_frontier")
     out5 = g3.frontier_ranked(top_k=3)
     # toggle off 时返回 frontier() 完整列表 (未截断), 顺序保持
     assert len(out5) == len(g3.frontier()), \
         f"toggle off 应回退完整 frontier, got {len(out5)} vs {len(g3.frontier())}"
-
-    FeatureFlags.shared().toggle("ising_frontier", _saved)
-
-    print("OK: frontier_ranked selfcheck passed")
+    FeatureFlags.shared().toggle("ising_frontier", saved)
 
 
 def _selfcheck_mount_knowledge() -> None:
@@ -2442,51 +2801,39 @@ class HypothesisLoop:
             )
             return None
 
-        # 复用原 prompt 构造流程, 让 Subagent 看到相同 task
-        symreg_task = asyncio.create_task(self._symreg_hint(context))
-        conjecture_hint = self._conjecture_hint(context)
-        symreg_hint = await symreg_task
-        prompt = self._build_hypothesis_prompt(context)
-        if symreg_hint:
-            prompt = f"{symreg_hint}\n{prompt}"
-        if conjecture_hint:
-            prompt = f"{conjecture_hint}\n{prompt}"
+        prompt = await self._bi_build_prompt(context)
 
         if self._branch_incubator is None:
             self._branch_incubator = BranchIncubator()
 
-        # 树由 BranchIncubator 的分叉生成: depth>=2 → layer1 每成功 branch 再派
-        # width 个 sub-branch (PTD tree-shape); step_verifier (PRM) 给每个 branch
-        # 的 hypothesis 打分作为 rollout value, 剪枝/选优优先取高价值分支.
-        # 无 PRM LLM / 关闭时 value 恒 None → 回退 tokens_used, 行为不变.
-        value_fn = None
-        if os.environ.get("HUGINN_BRANCH_VALUE_PRM", "1") == "1":
-            try:
-                from huginn.runtime.step_verifier import (
-                    StepVerifierHook,
-                    make_branch_value_fn,
-                    make_default_llm_chat_fn,
-                )
-                value_fn = make_branch_value_fn(
-                    StepVerifierHook(make_default_llm_chat_fn())
-                )
-            except Exception:  # 防御: PRM 不可用 → 树搜索退回按 token 剪枝
-                logger.debug(
-                    "branch value_fn unavailable, fallback to token prune",
-                    exc_info=True,
-                )
-                value_fn = None
+        value_fn = _bi_make_value_fn()
+        _depth = _bi_resolve_depth(self)
+        results = await self._bi_run_round(prompt, context, value_fn, _depth)
+        if results is None:
+            return None
+        return self._bi_select_best(results, _depth)
 
-        # Ataraxos 式强度调度: 假设弱→深搜/广探索, 强→浅搜/局部精修. env 的
-        # HUGINN_BRANCH_INCUBATOR_DEPTH 作基准 (base), 调度在其周围 [1,3] 摆动;
-        # HUGINN_STRENGTH_SCHEDULE=0 → 行为不变 (用 base).
-        _base_depth = int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "2"))
-        _depth = (
-            strength_branch_depth(hypothesis_strength(self), base=_base_depth)
-            if strength_schedule_enabled() else _base_depth
-        )
+    async def _bi_build_prompt(self, context: dict[str, Any]) -> str:
+        """复用原 prompt 构造流程, 让 Subagent 看到相同 task."""
+        symreg_task = asyncio.create_task(self._symreg_hint(context))
+        conjecture_hint = self._conjecture_hint(context)
+        symreg_hint = await symreg_task
+        prompt = self._build_hypothesis_prompt(context)
+        for hint in (symreg_hint, conjecture_hint):
+            if hint:
+                prompt = f"{hint}\n{prompt}"
+        return prompt
+
+    async def _bi_run_round(
+        self,
+        prompt: str,
+        context: dict[str, Any],
+        value_fn: Any,
+        depth: int,
+    ) -> list[Any] | None:
+        """跑一轮 N 路孵化; 异常时返回 None 让 caller 回退主模型."""
         try:
-            results = await self._branch_incubator.run_round(
+            return await self._branch_incubator.run_round(
                 task=prompt,
                 agent_factory=self._agent_factory,
                 n_branches=3,
@@ -2494,7 +2841,7 @@ class HypothesisLoop:
                 researcher_intuition=context.get("researcher_intuition", ""),
                 round_idx=self._iteration,
                 total_rounds=max(self._max_pivots * 3, 10),
-                depth=_depth,
+                depth=depth,
                 width=2,
                 value_fn=value_fn,
                 # D-slice: 细粒度预算切片 — 把"此刻剩余挂钟"注入孵化器, 让 layer1/
@@ -2516,10 +2863,9 @@ class HypothesisLoop:
             )
             return None
 
-        # 选 success + hypothesis 非空 + tokens_used 最小 (省 token)
-        candidates = [
-            r for r in results if r.success and r.hypothesis
-        ]
+    def _bi_select_best(self, results: list[Any], depth: int) -> str | None:
+        """选 success + hypothesis 非空的最优分支 (有 value 用 value, 否则省 token)."""
+        candidates = [r for r in results if r.success and r.hypothesis]
         if not candidates:
             # 观测: 孵化**跑了**但 N 路子 agent 全没产出可用假设 → 静默回退.
             # 之前野外只看到"returned None, fallback"却不知是没跑还是空手.
@@ -2544,58 +2890,42 @@ class HypothesisLoop:
             "collab_branch_incubator",
             f"use: branches={len(results)} ok={len(candidates)} "
             f"valued={len(valued)} winner_value={best.value} "
-            f"winner_tokens={best.tokens_used} depth={_depth}",
+            f"winner_tokens={best.tokens_used} depth={depth}",
             action="use",
         )
         return best.hypothesis
 
-    async def _hypothesize(self, context: dict[str, Any]) -> str | None:
-        """Generate a hypothesis from perceived context."""
-        # 阶段开始清零: 成功产出保持 False; 若因 LLM 瞬时不可用而彻底失败, 末尾置
-        # True, 供 reflect 抑制 redirect→pivot (否则一次限流被放大成状态清空+停机).
-        self._last_phase_unavailable = False
-        # BranchIncubator gating: flag on + factory 注入时走 N=3 隔离采样,
-        # 失败/None 时 fallback 到下面 main+hot_model 2 路.
-        # H4: env name + selected marker 从 PhaseRegistry extra 取 (toggle off 回退 hardcode)
-        from huginn.harness.phase_spec import get_phase_extra
-        _incubator_env = get_phase_extra(
-            "_hypothesize", "branch_incubator_env", "HUGINN_USE_BRANCH_INCUBATOR"
-        )
-        _selected_marker = get_phase_extra(
-            "_hypothesize", "selected_marker", "SELECTED:"
-        )
-        if (
-            os.environ.get(_incubator_env, "0") == "1"
-            and self._agent_factory is not None
-            # D1: 预算耗尽不启动 N 路隔离采样 (多路多轮最贵) — 回落 2 路.
-            and not self._budget_exhausted()
-        ):
-            try:
-                inc_hyp = await self._hypothesize_via_branch_incubator(context)
-            except Exception:  # 防御: 孵化意外错误回退
-                logger.warning(
-                    "branch incubator unexpected error, fallback",
-                    exc_info=True,
-                )
-                inc_hyp = None
-            if inc_hyp:
-                self._last_hypothesis = inc_hyp
-                self._last_raw_hypothesis = inc_hyp
-                self._record_backup_candidates(inc_hyp, inc_hyp)
-                self._metacog_audit_hypothesis(inc_hyp, context)
-                return inc_hyp
+    async def _hyp_try_incubator(
+        self, context: dict[str, Any], env_name: str
+    ) -> str | None:
+        """BranchIncubator gating: N 路隔离采样, 不可用时返回 None 让主路径兜底."""
+        if os.environ.get(env_name, "0") != "1":
+            return None
+        # D1: 预算耗尽不启动 N 路隔离采样 (多路多轮最贵) — 回落 2 路.
+        if self._agent_factory is None or self._budget_exhausted():
+            return None
+        try:
+            inc_hyp = await self._hypothesize_via_branch_incubator(context)
+        except Exception:  # 防御: 孵化意外错误回退
             logger.warning(
-                "branch incubator returned None, fallback to main+hot_model"
+                "branch incubator unexpected error, fallback", exc_info=True
             )
-        # Use knowledge graph + LLM to generate hypothesis
-        # symreg (async, up to 60s) and conjecture (sync, fast) are independent
-        symreg_task = asyncio.create_task(self._symreg_hint(context))
-        conjecture_hint = self._conjecture_hint(context)
-        symreg_hint = await symreg_task
-        # 桥 K: EvolutionManager.recommend → avoid_directions 注入 prompt.
-        # 接通 recommend 死代码 (之前仅 selfcheck 调). 失败非致命, 不阻塞 hypothesize.
-        # ponytail: 避开方向作为 advisory hint, 不强制. ceiling: avoid_directions
-        # 是纯文本, 不做语义去重. 升级: embedding 相似度过滤重复方向.
+            inc_hyp = None
+        if not inc_hyp:
+            logger.warning("branch incubator returned None, fallback to main+hot_model")
+            return None
+        self._last_hypothesis = inc_hyp
+        self._last_raw_hypothesis = inc_hyp
+        self._record_backup_candidates(inc_hyp, inc_hyp)
+        self._metacog_audit_hypothesis(inc_hyp, context)
+        return inc_hyp
+
+    def _hyp_evolution_hint(self, context: dict[str, Any]) -> str:
+        """桥 K: EvolutionManager.recommend → avoid_directions / revisit 注入 prompt.
+
+        接通 recommend 死代码. 失败非致命, 不阻塞 hypothesize.
+        ponytail: 作为 advisory hint, 不强制. ceiling: 纯文本, 不做语义去重.
+        """
         evolution_hint = ""
         try:
             from huginn.evolution.manager import EvolutionManager
@@ -2625,73 +2955,134 @@ class HypothesisLoop:
                 )
         except Exception:  # 防御: 演化推荐失败忽略
             logger.debug("evolution recommend failed (non-fatal)", exc_info=True)
+        return evolution_hint
+
+    def _hyp_build_prompt(
+        self,
+        context: dict[str, Any],
+        symreg_hint: str | None,
+        conjecture_hint: str | None,
+        evolution_hint: str,
+    ) -> str:
+        """把各 hint 依次前置到基础 prompt (后置的优先级更高)."""
         prompt = self._build_hypothesis_prompt(context)
-        if symreg_hint:
-            prompt = f"{symreg_hint}\n{prompt}"
-        if conjecture_hint:
-            prompt = f"{conjecture_hint}\n{prompt}"
-        if evolution_hint:
-            prompt = f"{evolution_hint}\n{prompt}"
+        for hint in (symreg_hint, conjecture_hint, evolution_hint):
+            if hint:
+                prompt = f"{hint}\n{prompt}"
+        return prompt
+
+    async def _hyp_gather(self, prompt: str, persona_name: str) -> list[Any]:
+        """True parallel sampling: main call + high-temp diversity call.
+
+        Both run concurrently via asyncio.gather — same wall-clock latency
+        as a single call, 2x tokens for genuine diversity insurance.
+        ponytail: 2 calls not 3 — main provides quality, diversity provides novelty.
+        """
+        hot_model = None
+        with contextlib.suppress(Exception):
+            # not all model wrappers support bind
+            hot_model = self.model.bind(temperature=1.0)
+        coros = [self._llm_chat(prompt, persona_name=persona_name, task="reasoning")]
+        if hot_model is not None:
+            coros.append(
+                self._llm_chat(
+                    prompt,
+                    persona_name=persona_name,
+                    model=hot_model,
+                    task="reasoning",
+                )
+            )
+        return await asyncio.gather(*coros, return_exceptions=True)
+
+    def _hyp_extract_selected(
+        self, results: list[Any], selected_marker: str, context: dict[str, Any]
+    ) -> str | None:
+        """Extract SELECTED: from results — main call first (priority)."""
+        for raw in results:
+            if isinstance(raw, Exception) or not raw:
+                continue
+            raw = raw.strip()
+            if selected_marker not in raw:
+                continue
+            _after = raw.split(selected_marker, 1)[1].strip()
+            _sel = _after.split("\n")[0].strip() if _after else ""
+            self._last_hypothesis = _sel or raw
+            self._last_raw_hypothesis = raw  # 保留 LUCID review 文本
+            # v11: 3 候选全进图 — 解析 [DIM: ...] 候选, backup 进图让 frontier 选优.
+            self._record_backup_candidates(raw, self._last_hypothesis)
+            self._metacog_audit_hypothesis(self._last_hypothesis, context)
+            return self._last_hypothesis
+        return None
+
+    def _hyp_accept_fallback(
+        self, results: list[Any], context: dict[str, Any]
+    ) -> str | None:
+        """No SELECTED: found — fall back to first non-exception result."""
+        for raw in results:
+            if isinstance(raw, Exception) or not raw:
+                continue
+            raw = raw.strip()
+            self._last_hypothesis = raw
+            self._last_raw_hypothesis = raw
+            self._record_backup_candidates(raw, self._last_hypothesis)
+            self._metacog_audit_hypothesis(self._last_hypothesis, context)
+            return self._last_hypothesis
+        return None
+
+    def _hyp_mark_unavailable(self, results: list[Any]) -> None:
+        """两路调用全失败: 区分"LLM 瞬时不可用"与"确实没产出".
+
+        前者置标记, 让 reflect 原地重试而非 redirect→pivot (清空状态 → 停机).
+        """
+        _excs = [r for r in results if isinstance(r, Exception)]
+        if not _excs or len(_excs) != len(results):
+            return
+        from huginn.llm_retry import is_transient_error
+
+        if any(is_transient_error(e) for e in _excs):
+            self._last_phase_unavailable = True
+
+    async def _hypothesize(self, context: dict[str, Any]) -> str | None:
+        """Generate a hypothesis from perceived context."""
+        # 阶段开始清零: 成功产出保持 False; 若因 LLM 瞬时不可用而彻底失败, 末尾置
+        # True, 供 reflect 抑制 redirect→pivot (否则一次限流被放大成状态清空+停机).
+        self._last_phase_unavailable = False
+        # H4: env name + selected marker 从 PhaseRegistry extra 取 (toggle off 回退 hardcode)
+        from huginn.harness.phase_spec import get_phase_extra
+        _incubator_env = get_phase_extra(
+            "_hypothesize", "branch_incubator_env", "HUGINN_USE_BRANCH_INCUBATOR"
+        )
+        _selected_marker = get_phase_extra(
+            "_hypothesize", "selected_marker", "SELECTED:"
+        )
+
+        inc_hyp = await self._hyp_try_incubator(context, _incubator_env)
+        if inc_hyp:
+            return inc_hyp
+
+        # Use knowledge graph + LLM to generate hypothesis
+        # symreg (async, up to 60s) and conjecture (sync, fast) are independent
+        symreg_task = asyncio.create_task(self._symreg_hint(context))
+        conjecture_hint = self._conjecture_hint(context)
+        symreg_hint = await symreg_task
+        evolution_hint = self._hyp_evolution_hint(context)
+        prompt = self._hyp_build_prompt(
+            context, symreg_hint, conjecture_hint, evolution_hint
+        )
         # 按研究类型选 persona: MD 类用 md_expert, 默认走 dft_expert.
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)
         self._last_persona = persona_name  # 供 _learn 写入 memory/KG
         self._last_context = context  # 供 _learn 写 persona_use entity (C5)
         try:
-            # True parallel sampling: main call + high-temp diversity call.
-            # Both run concurrently via asyncio.gather — same wall-clock latency
-            # as a single call, 2x tokens for genuine diversity insurance.
-            # Main call's SELECTED: wins; diversity call is fallback.
-            # ponytail: 2 calls not 3 — main provides quality, diversity provides
-            # novelty; a third call adds cost without marginal diversity gain.
-            hot_model = None
-            with contextlib.suppress(Exception):
-                # not all model wrappers support bind
-                hot_model = self.model.bind(temperature=1.0)
-            coros = [
-                self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
-            ]
-            if hot_model is not None:
-                coros.append(
-                    self._llm_chat(
-                        prompt,
-                        persona_name=persona_name,
-                        model=hot_model,
-                        task="reasoning",
-                    )
-                )
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            # Extract SELECTED: from results — main call first (priority)
-            for raw in results:
-                if isinstance(raw, Exception) or not raw:
-                    continue
-                raw = raw.strip()
-                if _selected_marker in raw:
-                    _after = raw.split(_selected_marker, 1)[1].strip()
-                    _sel = _after.split("\n")[0].strip() if _after else ""
-                    self._last_hypothesis = _sel or raw
-                    self._last_raw_hypothesis = raw  # 保留 LUCID review 文本
-                    # v11: 3 候选全进图 — 解析 [DIM: ...] 候选, backup 进图让 frontier 选优.
-                    # ponytail: 解析失败不阻塞, SELECTED 仍正常返回. 升级路径: LLM 判定 dimension.
-                    self._record_backup_candidates(raw, self._last_hypothesis)
-                    self._metacog_audit_hypothesis(self._last_hypothesis, context)
-                    return self._last_hypothesis
-            # No SELECTED: found — fall back to first non-exception result
-            for raw in results:
-                if not isinstance(raw, Exception) and raw:
-                    raw = raw.strip()
-                    self._last_hypothesis = raw
-                    self._last_raw_hypothesis = raw
-                    self._record_backup_candidates(raw, self._last_hypothesis)
-                    self._metacog_audit_hypothesis(self._last_hypothesis, context)
-                    return self._last_hypothesis
-            # 两路调用**全部**失败 → 区分"LLM 瞬时不可用"与"确实没产出". 前者置
-            # 标记, 让 reflect 原地重试而非 redirect→pivot (清空状态 → 停机).
-            _excs = [r for r in results if isinstance(r, Exception)]
-            if _excs and len(_excs) == len(results):
-                from huginn.llm_retry import is_transient_error
-                if any(is_transient_error(e) for e in _excs):
-                    self._last_phase_unavailable = True
+            results = await self._hyp_gather(prompt, persona_name)
+            selected = self._hyp_extract_selected(results, _selected_marker, context)
+            if selected:
+                return selected
+            fallback = self._hyp_accept_fallback(results, context)
+            if fallback:
+                return fallback
+            self._hyp_mark_unavailable(results)
             return None
         except Exception as _exc:  # 防御: 尽力生成失败返回空
             from huginn.llm_retry import is_transient_error
@@ -2709,8 +3100,6 @@ class HypothesisLoop:
         让 LLM decider 在选优时避开 (cluster_block 已含 dim 分布提示).
         """
         try:
-            import re
-            # 匹配 [DIM: xxx] statement | predict: ... | pro: ... | con: ...
             # v13: 按 `|` 切字段后分别解析, 不再用一条正则把 predict 正文一起
             # 剥掉 (旧正则让 backup/选中假设的 testable_prediction 恒空, 见 run78).
             _pattern = re.compile(
@@ -2720,39 +3109,55 @@ class HypothesisLoop:
             _seen_dims: set[str] = set()
             _selected_pred = ""
             for _m in _pattern.finditer(raw):
-                _dim = _m.group(1).strip().lower()
-                _fields = [p.strip() for p in _m.group(2).split("|")]
-                _stmt = _fields[0].strip() if _fields else ""
-                if not _stmt:
-                    continue
-                _predict = ""
-                for _p in _fields[1:]:
-                    if _p.lower().startswith("predict:"):
-                        _predict = _p.split(":", 1)[1].strip()
-                        break
-                # 跳过 SELECTED 的那个 (它已进图), 但记下它的预测给主路径用.
-                if _stmt == selected.strip():
-                    _selected_pred = _predict or _selected_pred
-                    continue
-                # v12: 同 dim 不再跳过, 标 dim_conflict 让 decider 避开
-                _dim_conflict = _dim in _seen_dims
-                _seen_dims.add(_dim)
-                # backup 候选进图, 标 evidence={"candidate_role":"backup", "dim_conflict":...}
-                _new_id = self.hypothesis_graph.add_hypothesis(
-                    statement=_stmt,
-                    rationale=f"backup candidate (dim={_dim})",
-                    testable_prediction=_predict,
+                _selected_pred = self._rbc_one(
+                    _m, selected, _seen_dims, _selected_pred
                 )
-                if _new_id:
-                    self.hypothesis_graph._nodes[_new_id].evidence = {
-                        **self.hypothesis_graph._nodes[_new_id].evidence,
-                        "candidate_role": "backup",
-                        "dim_conflict": _dim_conflict,
-                    }
             # A: 选中候选的预测落盘给主路径 (每轮重置, 避免上轮残留).
             self._last_selected_prediction = _selected_pred
         except Exception:  # 防御: 备选记录失败忽略
             logger.debug("v11 _record_backup_candidates failed (non-fatal)", exc_info=True)
+
+    def _rbc_one(
+        self,
+        match: re.Match,
+        selected: str,
+        seen_dims: set[str],
+        selected_pred: str,
+    ) -> str:
+        """处理单个候选; 返回更新后的 selected_pred."""
+        _dim = match.group(1).strip().lower()
+        _fields = [p.strip() for p in match.group(2).split("|")]
+        _stmt = _fields[0].strip() if _fields else ""
+        if not _stmt:
+            return selected_pred
+        _predict = _rbc_predict(_fields)
+        # 跳过 SELECTED 的那个 (它已进图), 但记下它的预测给主路径用.
+        if _stmt == selected.strip():
+            return _predict or selected_pred
+        # v12: 同 dim 不再跳过, 标 dim_conflict 让 decider 避开
+        _dim_conflict = _dim in seen_dims
+        seen_dims.add(_dim)
+        self._rbc_register(_stmt, _dim, _predict, _dim_conflict)
+        return selected_pred
+
+    def _rbc_register(
+        self, stmt: str, dim: str, predict: str, dim_conflict: bool
+    ) -> None:
+        """backup 候选进图, 标 evidence={"candidate_role":"backup", ...}."""
+        _new_id = self.hypothesis_graph.add_hypothesis(
+            statement=stmt,
+            rationale=f"backup candidate (dim={dim})",
+            testable_prediction=predict,
+        )
+        if not _new_id:
+            return
+        _nodes = self.hypothesis_graph._nodes
+        _nodes[_new_id].evidence = {
+            **_nodes[_new_id].evidence,
+            "candidate_role": "backup",
+            "dim_conflict": dim_conflict,
+        }
+
     def _metacog_classify_family(self, hypothesis: str) -> str:
         """廉价关键词分类: 把假设归到方法族.
 
@@ -2764,6 +3169,129 @@ class HypothesisLoop:
         from huginn.autoloop.hypothesis_semantic import classify_family
 
         return classify_family(hypothesis)
+
+    def _mah_audit_graph(self, hypothesis: str) -> Any:
+        """对"已入图的旧假设"做冗余审计, 返回 verdict 并缓存."""
+        auditor = self._get_metacog_auditor()
+        # v12: 假设层冗余只对**假设图**判, 不再对 objective 判.
+        # 旧写法 audit(candidate=hyp, original_problem=objective) 把"针对该问题的
+        # 任何假设"都拿去和问题本身比 → 机制不同 (代数秩/流形维数/Rademacher 复杂度)
+        # 也判换名 → 债务虚高 → 过早终止, 反而掐死了真正想要的"LLM 自主有效探索".
+        # 冗余的正确基线是"已入图的旧假设": 只有"新假设 ≈ 某条旧假设"才是真换名重提.
+        try:
+            _cand_key = _statement_key(hypothesis)
+            _existing_stmts = [
+                n.statement
+                for n in self.hypothesis_graph.all_nodes()
+                if n.statement and _statement_key(n.statement) != _cand_key
+            ]
+        except Exception:  # 防御: 无图时退化为空基线 (空基线不误判换名)
+            logger.debug("graph statements unavailable for audit", exc_info=True)
+            _existing_stmts = []
+        verdict = auditor.audit_hypothesis_against_graph(
+            candidate_hypothesis=hypothesis,
+            graph_statements=_existing_stmts,
+            reduction_chain="",  # _hypothesize 阶段还没有归约链
+        )
+        self._metacog_last_audit = verdict
+        return verdict
+
+    def _mah_register_family(self, hypothesis: str) -> Any:
+        """方法族归类 + 注册表更新, 返回 registry."""
+        family = self._metacog_classify_family(hypothesis)
+        registry = self._get_metacog_method_registry()
+        # 用 iteration + hypothesis 短哈希做 agent_id, 避免重复登记
+        agent_id = f"hyp-{self._iteration}-{abs(hash(hypothesis)) % 10000}"
+        registry.register_agent(family, agent_id)
+        return registry
+
+    def _mah_escalate_rename(self, streak: int) -> None:
+        """streak >= 5 的硬动作: block 主导方法族 + 写入强制重定向提示."""
+        self._rename_streak = 0
+        # 复位软闩锁: _force_imaginate 此前只被置 True 从不复位, 触发了
+        # 也是永久常开; 复位后它才是"针对性一次 nudge".
+        self._force_imaginate = False
+        # 硬动作 1: 把主导方法族标 blocked, 由阻塞-重启协议拒绝再入族.
+        try:
+            _dom = self._metacog_dominant_family()
+            if _dom:
+                self._get_metacog_block_registry().block(
+                    method_family=_dom,
+                    block_reason=(
+                        f"连续换名归约 {streak} 次: 主导方法族已饱和, 强制换族"
+                    ),
+                )
+        except Exception:  # 防御: block 失败不阻断审计
+            logger.debug("block dominant family skipped", exc_info=True)
+        # 硬动作 2: 把已算好却只被打印的 suggest_redirect 结果写进下轮提示.
+        try:
+            _redirect = self._get_metacog_method_registry().suggest_redirect()
+            if _redirect is not None:
+                _rd_hint = (
+                    f"[强制重定向] 连续换名归约 {streak} 次, "
+                    f"转向方法族 {_redirect.target_family}: {_redirect.reason}"
+                )
+            else:
+                _rd_hint = (
+                    f"[强制重定向] 连续换名归约 {streak} 次: "
+                    f"放弃当前方法族, 换一个族重新出发"
+                )
+            # 换族 ≠ 换名: 必须带**可区分的数值预测** + 能把它区分出来的
+            # 扫描实验, 否则新假设只是旧假设的改述 (换透镜不换实验).
+            _rd_hint += (
+                "\n新假设必须给出与旧机制可区分的数值预测 (如同一被测量随"
+                "参数 w 的定/线性/对数趋势), 并设计一次能把这些预测区分开的"
+                "扫描实验; 仅换数学维度/术语而预测相同 = 换名, 不算进展."
+            )
+            self._speculator_hint = (
+                (getattr(self, "_speculator_hint", "") or "") + "\n" + _rd_hint
+            )
+        except Exception:  # 防御: 重定向提示失败不阻断审计
+            logger.debug("force redirect hint skipped", exc_info=True)
+
+    def _mah_handle_rename(self, hypothesis: str, verdict: Any) -> None:
+        """根据审计 verdict 维护换名 streak / 债务, 并按阶梯升级处置."""
+        if not verdict.is_equivalent_renaming:
+            self._rename_streak = 0
+            # v11 进展不变量: 真进展 (非换名) ⇒ 债务归零. 债务只在**这一处**归零,
+            # 而 3/5 阶梯的 _rename_streak=0 不复位债务 —— 两者解耦, 闭环断链.
+            self._rename_debt = 0
+            return
+        # 等价性审计发现换名归约 → 记日志, 不阻断
+        logger.warning(
+            "metacog: 假设可能为换名归约 (trap=%s, target=%s): %s",
+            verdict.trap_category,
+            verdict.reduction_target,
+            hypothesis[:100],
+        )
+        # 连续换名归约计数: advisory 不阻断当前假设, 但连续多轮都是同一
+        # 命题的换名改写 = 方法层停滞, 必须换方向. 两级升级:
+        #   streak == 3 → 软提示 (反例搜索: _force_imaginate + hint)
+        #   streak >= 5 → 软提示已 fire 仍换名 → 硬动作: block 主导方法族
+        #                + 强制重定向 + 复位想象闩锁 (不再只塞 hint).
+        _rename_streak = getattr(self, "_rename_streak", 0) + 1
+        self._rename_streak = _rename_streak
+        # v11 进展不变量 (假设层入口): 单调"换名债务" — 每次判为换名归约 +1,
+        # **只在真进展(非换名)时归零**; 下面的 3/5 streak 阶梯是 soft 升级
+        # (提示/重定向) 且会自复位, 债务与其解耦, 由 cognitive_loop 唯一消费
+        # 为终止出口. 于是 run47/49 那种"换名→提示→重定向→归零"闭环无法再
+        # 无限打转 —— 无进展轮必然被债务累积逼到终止.
+        self._rename_debt = getattr(self, "_rename_debt", 0) + 1
+        if _rename_streak == 3:
+            # warning 级: 根 logger 过滤 INFO, 用 info 会被静默吞掉,
+            # 这些"循环改变方向"的事件必须可审计 (见 [exec-route] 同款做法).
+            logger.warning(
+                "renamed-reduction %d× consecutive: trigger counterexample hunt",
+                _rename_streak,
+            )
+            self._trigger_counterexample_hunt()
+        elif _rename_streak >= 5:
+            logger.warning(
+                "renamed-reduction %d× consecutive: escalate — block dominant "
+                "family + force redirect",
+                _rename_streak,
+            )
+            self._mah_escalate_rename(_rename_streak)
 
     def _metacog_audit_hypothesis(
         self, hypothesis: str, context: dict[str, Any]
@@ -2777,120 +3305,9 @@ class HypothesisLoop:
         if not hypothesis:
             return
         try:
-            auditor = self._get_metacog_auditor()
-            # v12: 假设层冗余只对**假设图**判, 不再对 objective 判.
-            # 旧写法 audit(candidate=hyp, original_problem=objective) 把"针对该问题的
-            # 任何假设"都拿去和问题本身比 → 机制不同 (代数秩/流形维数/Rademacher 复杂度)
-            # 也判换名 → 债务虚高 → 过早终止, 反而掐死了真正想要的"LLM 自主有效探索".
-            # 冗余的正确基线是"已入图的旧假设": 只有"新假设 ≈ 某条旧假设"才是真换名重提.
-            try:
-                _cand_key = _statement_key(hypothesis)
-                _existing_stmts = [
-                    n.statement
-                    for n in self.hypothesis_graph.all_nodes()
-                    if n.statement and _statement_key(n.statement) != _cand_key
-                ]
-            except Exception:  # 防御: 无图时退化为空基线 (空基线不误判换名)
-                logger.debug("graph statements unavailable for audit", exc_info=True)
-                _existing_stmts = []
-            verdict = auditor.audit_hypothesis_against_graph(
-                candidate_hypothesis=hypothesis,
-                graph_statements=_existing_stmts,
-                reduction_chain="",  # _hypothesize 阶段还没有归约链
-            )
-            self._metacog_last_audit = verdict
-
-            # 方法族归类 + 注册表更新
-            family = self._metacog_classify_family(hypothesis)
-            registry = self._get_metacog_method_registry()
-            # 用 iteration + hypothesis 短哈希做 agent_id, 避免重复登记
-            agent_id = f"hyp-{self._iteration}-{abs(hash(hypothesis)) % 10000}"
-            registry.register_agent(family, agent_id)
-
-            # 等价性审计发现换名归约 → 记日志, 不阻断
-            if verdict.is_equivalent_renaming:
-                logger.warning(
-                    "metacog: 假设可能为换名归约 (trap=%s, target=%s): %s",
-                    verdict.trap_category,
-                    verdict.reduction_target,
-                    hypothesis[:100],
-                )
-                # 连续换名归约计数: advisory 不阻断当前假设, 但连续多轮都是同一
-                # 命题的换名改写 = 方法层停滞, 必须换方向. 两级升级:
-                #   streak == 3 → 软提示 (反例搜索: _force_imaginate + hint)
-                #   streak >= 5 → 软提示已 fire 仍换名 → 硬动作: block 主导方法族
-                #                + 强制重定向 + 复位想象闩锁 (不再只塞 hint).
-                # 此前该 verdict 只写进 _metacog_last_audit 而无人消费, 长程跑必然退化.
-                _rename_streak = getattr(self, "_rename_streak", 0) + 1
-                self._rename_streak = _rename_streak
-                # v11 进展不变量 (假设层入口): 单调"换名债务" — 每次判为换名归约 +1,
-                # **只在真进展(非换名)时归零**; 下面的 3/5 streak 阶梯是 soft 升级
-                # (提示/重定向) 且会自复位, 债务与其解耦, 由 cognitive_loop 唯一消费
-                # 为终止出口. 于是 run47/49 那种"换名→提示→重定向→归零"闭环无法再
-                # 无限打转 —— 无进展轮必然被债务累积逼到终止.
-                self._rename_debt = getattr(self, "_rename_debt", 0) + 1
-                if _rename_streak == 3:
-                    # warning 级: 根 logger 过滤 INFO, 用 info 会被静默吞掉,
-                    # 这些"循环改变方向"的事件必须可审计 (见 [exec-route] 同款做法).
-                    logger.warning(
-                        "renamed-reduction %d× consecutive: trigger counterexample hunt",
-                        _rename_streak,
-                    )
-                    self._trigger_counterexample_hunt()
-                elif _rename_streak >= 5:
-                    logger.warning(
-                        "renamed-reduction %d× consecutive: escalate — block dominant "
-                        "family + force redirect",
-                        _rename_streak,
-                    )
-                    self._rename_streak = 0
-                    # 复位软闩锁: _force_imaginate 此前只被置 True 从不复位, 触发了
-                    # 也是永久常开; 复位后它才是"针对性一次 nudge".
-                    self._force_imaginate = False
-                    # 硬动作 1: 把主导方法族标 blocked, 由阻塞-重启协议拒绝再入族.
-                    try:
-                        _dom = self._metacog_dominant_family()
-                        if _dom:
-                            self._get_metacog_block_registry().block(
-                                method_family=_dom,
-                                block_reason=(
-                                    f"连续换名归约 {_rename_streak} 次: 主导方法族"
-                                    f"已饱和, 强制换族"
-                                ),
-                            )
-                    except Exception:  # 防御: block 失败不阻断审计
-                        logger.debug("block dominant family skipped", exc_info=True)
-                    # 硬动作 2: 把已算好却只被打印的 suggest_redirect 结果写进下轮提示.
-                    try:
-                        _redirect = self._get_metacog_method_registry().suggest_redirect()
-                        if _redirect is not None:
-                            _rd_hint = (
-                                f"[强制重定向] 连续换名归约 {_rename_streak} 次, "
-                                f"转向方法族 {_redirect.target_family}: {_redirect.reason}"
-                            )
-                        else:
-                            _rd_hint = (
-                                f"[强制重定向] 连续换名归约 {_rename_streak} 次: "
-                                f"放弃当前方法族, 换一个族重新出发"
-                            )
-                        # 换族 ≠ 换名: 必须带**可区分的数值预测** + 能把它区分出来的
-                        # 扫描实验, 否则新假设只是旧假设的改述 (换透镜不换实验).
-                        _rd_hint += (
-                            "\n新假设必须给出与旧机制可区分的数值预测 (如同一被测量随"
-                            "参数 w 的定/线性/对数趋势), 并设计一次能把这些预测区分开的"
-                            "扫描实验; 仅换数学维度/术语而预测相同 = 换名, 不算进展."
-                        )
-                        self._speculator_hint = (
-                            (getattr(self, "_speculator_hint", "") or "")
-                            + "\n" + _rd_hint
-                        )
-                    except Exception:  # 防御: 重定向提示失败不阻断审计
-                        logger.debug("force redirect hint skipped", exc_info=True)
-            else:
-                self._rename_streak = 0
-                # v11 进展不变量: 真进展 (非换名) ⇒ 债务归零. 债务只在**这一处**归零,
-                # 而 3/5 阶梯的 _rename_streak=0 不复位债务 —— 两者解耦, 闭环断链.
-                self._rename_debt = 0
+            verdict = self._mah_audit_graph(hypothesis)
+            registry = self._mah_register_family(hypothesis)
+            self._mah_handle_rename(hypothesis, verdict)
 
             # 收敛度监控: 某族过热时记日志
             redirect = registry.suggest_redirect()
@@ -2930,92 +3347,12 @@ class HypothesisLoop:
             logger.debug("topology audit: no graph", exc_info=True)
             return
 
-        # ① sheaf H¹ — 多源一致性. core=目标, support=各假设陈述.
-        try:
-            from huginn.metacog.sheaf_cohomology import (
-                build_sheaf_from_findings,
-                compute_H1,
-            )
-            core = str(context.get("summary", "")) or str(self._objective or hypothesis)
-            support = [n.statement for n in nodes if n.statement]
-            if support:
-                sheaf = build_sheaf_from_findings(core, support[:8])
-                result["h1"] = int(compute_H1(sheaf))
-        except Exception:  # 防御: sheaf H1 失败忽略
-            logger.debug("sheaf H1 failed (non-fatal)", exc_info=True)
-
-        # ② simplicial Betti — 假设图拓扑复杂度. 节点=0-simplex, 边=1-simplex.
-        try:
-            from huginn.metacog.simplicial_homology import compute_exact_betti
-            node_ids = [n.id for n in nodes]
-            if len(node_ids) >= 2:
-                simplices_l = [(i,) for i in range(len(node_ids))]
-                id_to_idx = {nid: i for i, nid in enumerate(node_ids)}
-                for e in edges:
-                    if e.from_id in id_to_idx and e.to_id in id_to_idx:
-                        simplices_l.append(
-                            tuple(sorted((id_to_idx[e.from_id], id_to_idx[e.to_id])))
-                        )
-                betti = compute_exact_betti(simplices_l, max_dim=1)
-                result["betti"] = (int(betti.get(0, 0)), int(betti.get(1, 0)))
-        except Exception:  # 防御: Betti 数失败忽略
-            logger.debug("simplicial Betti failed (non-fatal)", exc_info=True)
-
-        # ③ Hodge 拓扑等价审计 — 候选假设图 vs 目标问题证据网络.
-        try:
-            cand_nodes = [n.id for n in nodes]
-            cand_edges = [
-                (e.from_id, e.to_id)
-                for e in edges
-                if e.from_id in set(cand_nodes) and e.to_id in set(cand_nodes)
-            ]
-            orig_nodes = [f"obj:{str(self._objective)[:40]}"] if self._objective else ["objective"]
-            if cand_nodes:
-                verdict = self._get_metacog_auditor().audit_topology(
-                    candidate_nodes=cand_nodes[:20],
-                    candidate_edges=cand_edges[:40],
-                    original_nodes=orig_nodes,
-                    original_edges=[],
-                )
-                result["topo_verdict"] = verdict.verdict
-        except Exception:  # 防御: Hodge 审计失败忽略
-            logger.debug("Hodge topology audit failed (non-fatal)", exc_info=True)
-
-        # ④ persistence landscape — 假设图在 evidence 特征空间的 cluster 结构.
-        # Open Problem 7.4 的探索路径: 节点 evidence 数值特征拍成 point cloud,
-        # Rips 出 persistence diagram, 看是否有多尺度存活的 cluster (高 n_persistent).
-        # 多 cluster → 假设空间分裂, 说明图里是多个互不相关的候选族而非单一主线.
-        # 复用底层 compute_persistent_homology, 不走 HypothesisManifold 包装 —
-        # 生产图是 HypothesisGraph, 不引入第二套假设系统.
-        try:
-            import math as _math
-
-            import numpy as _np
-
-            from huginn.metacog.simplicial_homology import compute_persistent_homology
-            feat_keys = sorted({
-                k for n in nodes
-                for k, v in n.evidence.items() if isinstance(v, int | float)
-            })
-            if len(nodes) >= 3 and len(feat_keys) >= 1:
-                cloud = _np.array(
-                    [
-                        [float(n.evidence.get(k, 0.0)) for k in feat_keys]
-                        for n in nodes
-                    ],
-                    dtype=float,
-                )
-                _diag = compute_persistent_homology(cloud, max_dim=1)
-                _n_persist = sum(
-                    1 for d, b, de in _diag
-                    if d == 0 and (_math.isinf(de) or de - b > 0.0)
-                )
-                result["persistence"] = {
-                    "n_persistent_clusters": int(_n_persist),
-                    "diagram_size": len(_diag),
-                }
-        except Exception:  # 防御: 持续景观失败忽略
-            logger.debug("persistence landscape failed (non-fatal)", exc_info=True)
+        result["h1"] = self._mt_sheaf_h1(nodes, hypothesis, context)
+        result["betti"] = self._mt_betti(nodes, edges)
+        result["topo_verdict"] = self._mt_topo_verdict(nodes, edges)
+        persistence = self._mt_persistence(nodes)
+        if persistence is not None:
+            result["persistence"] = persistence
 
         self._metacog_last_topology = result
         if result["h1"]:
@@ -3027,6 +3364,111 @@ class HypothesisLoop:
         # _simplicials) 同步回 ProjectKnowledgeGraph 成 hyperedge. 让 KB 检索能命中
         # "成分∧工艺→性能"这类 n-ary 联合命题, 而非单点. advisory, 失败静默.
         self._sync_simplicials_to_kg()
+
+    def _mt_sheaf_h1(
+        self,
+        nodes: list[Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> int | None:
+        """① sheaf H¹ — 多源一致性. core=目标, support=各假设陈述."""
+        try:
+            from huginn.metacog.sheaf_cohomology import (
+                build_sheaf_from_findings,
+                compute_H1,
+            )
+            core = str(context.get("summary", "")) or str(self._objective or hypothesis)
+            support = [n.statement for n in nodes if n.statement]
+            if support:
+                sheaf = build_sheaf_from_findings(core, support[:8])
+                return int(compute_H1(sheaf))
+        except Exception:  # 防御: sheaf H1 失败忽略
+            logger.debug("sheaf H1 failed (non-fatal)", exc_info=True)
+        return None
+
+    def _mt_betti(
+        self, nodes: list[Any], edges: list[Any]
+    ) -> tuple[int, int] | None:
+        """② simplicial Betti — 假设图拓扑复杂度. 节点=0-simplex, 边=1-simplex."""
+        try:
+            from huginn.metacog.simplicial_homology import compute_exact_betti
+            node_ids = [n.id for n in nodes]
+            if len(node_ids) < 2:
+                return None
+            simplices_l = [(i,) for i in range(len(node_ids))]
+            id_to_idx = {nid: i for i, nid in enumerate(node_ids)}
+            for e in edges:
+                if e.from_id in id_to_idx and e.to_id in id_to_idx:
+                    simplices_l.append(
+                        tuple(sorted((id_to_idx[e.from_id], id_to_idx[e.to_id])))
+                    )
+            betti = compute_exact_betti(simplices_l, max_dim=1)
+            return (int(betti.get(0, 0)), int(betti.get(1, 0)))
+        except Exception:  # 防御: Betti 数失败忽略
+            logger.debug("simplicial Betti failed (non-fatal)", exc_info=True)
+        return None
+
+    def _mt_topo_verdict(self, nodes: list[Any], edges: list[Any]) -> str | None:
+        """③ Hodge 拓扑等价审计 — 候选假设图 vs 目标问题证据网络."""
+        try:
+            cand_nodes = [n.id for n in nodes]
+            cand_set = set(cand_nodes)
+            cand_edges = [
+                (e.from_id, e.to_id)
+                for e in edges
+                if e.from_id in cand_set and e.to_id in cand_set
+            ]
+            if not cand_nodes:
+                return None
+            _obj = str(self._objective)[:40] if self._objective else "objective"
+            verdict = self._get_metacog_auditor().audit_topology(
+                candidate_nodes=cand_nodes[:20],
+                candidate_edges=cand_edges[:40],
+                original_nodes=[f"obj:{_obj}"],
+                original_edges=[],
+            )
+            return verdict.verdict
+        except Exception:  # 防御: Hodge 审计失败忽略
+            logger.debug("Hodge topology audit failed (non-fatal)", exc_info=True)
+        return None
+
+    def _mt_persistence(self, nodes: list[Any]) -> dict[str, Any] | None:
+        """④ persistence landscape — 假设图在 evidence 特征空间的 cluster 结构.
+
+        Open Problem 7.4 的探索路径: 节点 evidence 数值特征拍成 point cloud,
+        Rips 出 persistence diagram, 看是否有多尺度存活的 cluster (高 n_persistent).
+        多 cluster → 假设空间分裂, 说明图里是多个互不相关的候选族而非单一主线.
+        复用底层 compute_persistent_homology, 不走 HypothesisManifold 包装 —
+        生产图是 HypothesisGraph, 不引入第二套假设系统.
+        """
+        try:
+            import math as _math
+
+            import numpy as _np
+
+            from huginn.metacog.simplicial_homology import compute_persistent_homology
+            feat_keys = sorted({
+                k for n in nodes
+                for k, v in n.evidence.items() if isinstance(v, int | float)
+            })
+            if len(nodes) < 3 or len(feat_keys) < 1:
+                return None
+            cloud = _np.array(
+                [[float(n.evidence.get(k, 0.0)) for k in feat_keys] for n in nodes],
+                dtype=float,
+            )
+            _diag = compute_persistent_homology(cloud, max_dim=1)
+            _n_persist = sum(
+                1 for d, b, de in _diag
+                if d == 0 and (_math.isinf(de) or de - b > 0.0)
+            )
+            return {
+                "n_persistent_clusters": int(_n_persist),
+                "diagram_size": len(_diag),
+            }
+        except Exception:  # 防御: 持续景观失败忽略
+            logger.debug("persistence landscape failed (non-fatal)", exc_info=True)
+        return None
 
     def _sync_simplicials_to_kg(self) -> None:
         """把假设图 _simplicials 的 n-ary 联合命题写回 self.kg 成 hyperedge.
@@ -3095,20 +3537,12 @@ class HypothesisLoop:
     ) -> str:
         """根据 validation 证据分类失败类型, 决定走 retry/refine/pivot.
 
-        返回值:
-        - "tool_error": 工具崩溃/超时/连接失败 → 不 refute, 下轮重试同一假设
-        - "prompt_injection_suspect": 失败 + 证据来源 external_content → 可能被注入, 单独标记
-        - "param_error": 输入参数错 → refine (改参数)
-        - "data_noise": 结果不确定/噪声大 → refine (重做或换方法)
-        - "hypothesis_error": 结果与假设相反 → refine 或 pivot (假设本身错)
+        返回 tool_error / prompt_injection_suspect / param_error / data_noise /
+        hypothesis_error. 优先级: tool_error (工具问题与假设无关) >
+        prompt_injection_suspect (external_content + 失败) > RedTeam findings
+        > 关键词匹配 param/noise > 语义判定 (默认 hypothesis_error).
 
-        优先级: tool_error (工具问题与假设无关) > prompt_injection_suspect
-        (external_content + 失败) > RedTeam high severity findings
-        > 关键词匹配 param/noise > 默认 hypothesis_error.
-
-        ponytail: RedTeam findings 通过 redteam_cats 注入, 保持 staticmethod
-        可测性. 映射: methodology_gap/hidden_assumption → param_error,
-        confounder → data_noise, alternative_explanation → hypothesis_error.
+        ponytail: RedTeam findings 通过 redteam_cats 注入, 保持可测性.
         升级: 让 LLM 对 ambiguous 失败做语义分类 (当前纯关键词+规则).
         """
         errors = str(self.get("errors", ""))
@@ -3119,22 +3553,7 @@ class HypothesisLoop:
         if self.get("failure_kind") == "effort_floor_retry":
             return "tool_error"
         # 工具失败: 超时/崩溃/连接/OOM — 不是假设错, 重试即可
-        tool_markers = (
-            "timeout",
-            "timed out",
-            "connection",
-            "crash",
-            "segfault",
-            "oom",
-            "out of memory",
-            "exception",
-            "subprocess",
-            "slurm",
-            "queue",
-            "killed",
-            "abort",
-        )
-        if any(m in text for m in tool_markers):
+        if any(m in text for m in _CF_TOOL_MARKERS):
             return "tool_error"
         # ARGUS: 失败 + 证据来自 external_content → 可能 prompt injection.
         # 优先级低于 tool_error (技术故障与来源无关), 高于 RedTeam/关键词.
@@ -3142,44 +3561,13 @@ class HypothesisLoop:
         if _validation_has_external_source(self):
             return "prompt_injection_suspect"
         # RedTeam high severity findings: 对抗性发现优先于关键词匹配
-        # methodology_gap (方法论缺陷) / hidden_assumption (隐含前提缺失) → 改参数
-        # confounder (混淆变量) → 数据噪声, 需重做排除混淆
-        # alternative_explanation (替代解释) → 假设本身可能错
         if redteam_cats:
-            _RT_MAP = {
-                "methodology_gap": "param_error",
-                "hidden_assumption": "param_error",
-                "confounder": "data_noise",
-                "alternative_explanation": "hypothesis_error",
-            }
             for cat in redteam_cats:
-                if cat in _RT_MAP:
-                    return _RT_MAP[cat]
-        # 参数错: 输入无效/类型错/值错
-        param_markers = (
-            "invalid",
-            "argument",
-            "parameter",
-            "value error",
-            "type error",
-            "dimension",
-            "shape mismatch",
-            "key error",
-        )
-        if any(m in text for m in param_markers):
-            return "param_error"
-        # 数据噪声: 不确定/模糊/噪声大
-        noise_markers = (
-            "noise",
-            "uncertain",
-            "ambiguous",
-            "inconclusive",
-            "not converge",
-            "did not converge",
-            "no clear",
-        )
-        if any(m in text for m in noise_markers):
-            return "data_noise"
+                if cat in _CF_RT_MAP:
+                    return _CF_RT_MAP[cat]
+        kind = _cf_keyword_classify(text)
+        if kind is not None:
+            return kind
         # 默认: 假设错 (结果与预期相反, 或无明确错误但测试失败).
         # P1#1: 无明确关键词命中的 ambiguous 失败 → 让 LLM 做语义判定 (优雅降级,
         # 无 LLM/关 flag 时仍回退 hypothesis_error, 行为向后兼容).
@@ -3319,31 +3707,19 @@ class HypothesisLoop:
         try:
             from huginn.autoloop.conjecture import get_conjecture_generator
 
-            source_problem = context.get("goal") or context.get("observation") or ""
-            if not source_problem or len(source_problem) < 10:
+            _ctx = self._ch_resolve_context(context)
+            if _ctx is None:
                 return ""
-            # 域锚定 = 数学: 跨域类比的源域默认是数学, 目标域默认另一个学科,
-            # 不预设材料 —— 任意命题都先归约到数学骨架再谈具体体系.
-            source_domain = context.get("domain") or "mathematics"
-            target_domain = context.get("target_domain") or "another scientific domain"
-
+            source_problem, source_domain, target_domain = _ctx
             hint_prefix, should_skip = self._cross_domain_hint_prefix(target_domain)
             if should_skip:
                 return ""
-
-            gen = get_conjecture_generator()
-
-            if self._should_imaginate():
-                result = self._run_imagination_conjecture(
-                    gen, source_problem, source_domain, target_domain
-                )
-            else:
-                result = gen.run(
-                    source_problem=str(source_problem)[:500],
-                    source_domain=str(source_domain),
-                    target_domain=str(target_domain),
-                    model=None,  # template mode, 不烧 token
-                )
+            result = self._ch_run(
+                get_conjecture_generator(),
+                source_problem,
+                source_domain,
+                target_domain,
+            )
             conjecture = result.get("conjecture", {})
             statement = conjecture.get("statement", "")
             prediction = conjecture.get("prediction", "")
@@ -3356,6 +3732,38 @@ class HypothesisLoop:
         except Exception:  # 防御: 尽力生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
+
+    def _ch_resolve_context(
+        self, context: dict[str, Any]
+    ) -> tuple[Any, str, str] | None:
+        """从 context 提取 (源问题, 源域, 目标域); 源问题太短返回 None."""
+        source_problem = context.get("goal") or context.get("observation") or ""
+        if not source_problem or len(source_problem) < 10:
+            return None
+        # 域锚定 = 数学: 跨域类比的源域默认是数学, 目标域默认另一个学科,
+        # 不预设材料 —— 任意命题都先归约到数学骨架再谈具体体系.
+        source_domain = context.get("domain") or "mathematics"
+        target_domain = context.get("target_domain") or "another scientific domain"
+        return source_problem, str(source_domain), str(target_domain)
+
+    def _ch_run(
+        self,
+        gen: Any,
+        source_problem: Any,
+        source_domain: str,
+        target_domain: str,
+    ) -> dict[str, Any]:
+        """想象力模式走 forget_then_generate, 否则走模板模式 run."""
+        if self._should_imaginate():
+            return self._run_imagination_conjecture(
+                gen, source_problem, source_domain, target_domain
+            )
+        return gen.run(
+            source_problem=str(source_problem)[:500],
+            source_domain=source_domain,
+            target_domain=target_domain,
+            model=None,  # template mode, 不烧 token
+        )
 
     def _cross_domain_hint_prefix(self, target_domain: Any) -> tuple[str, bool]:
         """P13: 查 CrossDomain transfer 历史, 返回 (hint_prefix, should_skip)."""
@@ -3469,53 +3877,43 @@ class HypothesisLoop:
             return ""
         # A3: 先查 KB 拿已知公式形式, symreg 失败时 KB 候选仍能注入
         kb_forms = self._query_kb_known_forms(data)
+        target = data.get("target_column") or data.get("target") or "y"
+        if target not in data:
+            return kb_forms
         try:
-            from huginn.core_types import ToolContext
-            from huginn.tools.sci.symbolic_regression_tool import (
-                SymbolicRegressionInput,
-                SymbolicRegressionTool,
-            )
-
-            target = data.get("target_column") or data.get("target") or "y"
-            if target not in data:
-                return kb_forms
-            tool = SymbolicRegressionTool()
-            args = SymbolicRegressionInput(
-                action="discover",
-                data_json=data,
-                target_column=target,
-                time_limit=60,
-                top_k=3,
-            )
-            ctx = ToolContext(
-                session_id=f"symreg_{uuid.uuid4().hex[:8]}",
-                workspace=str(self.workspace),
-                config=self.settings,
-            )
-            vr = await tool.call(args, ctx)
-            symreg_block = ""
-            if vr.success and vr.data:
-                cands = (
-                    vr.data.get("candidates")
-                    or vr.data.get("expressions")
-                    or vr.data.get("pareto_front")
-                    or []
-                )
-                if cands:
-                    top = cands[0] if isinstance(cands, list) else cands
-                    expr = top.get("expression") if isinstance(top, dict) else str(top)
-                    if expr:
-                        symreg_block = (
-                            "### Data-driven candidate law (symbolic regression)\n"
-                            f"Top recovered expression: {expr}\n"
-                            "Use this as a data-driven candidate when forming the hypothesis.\n"
-                            "### End candidate law"
-                        )
-            if symreg_block and kb_forms:
-                return f"{kb_forms}\n{symreg_block}"
-            return symreg_block or kb_forms
+            symreg_block = await self._sr_run(data, target)
         except Exception:  # 防御: 符号回归失败回落已知表
             return kb_forms
+        if symreg_block and kb_forms:
+            return f"{kb_forms}\n{symreg_block}"
+        return symreg_block or kb_forms
+
+    async def _sr_run(self, data: dict[str, Any], target: str) -> str:
+        """跑符号回归工具, 返回格式化候选 block; 失败/无候选返回空串."""
+        from huginn.core_types import ToolContext
+        from huginn.tools.sci.symbolic_regression_tool import (
+            SymbolicRegressionInput,
+            SymbolicRegressionTool,
+        )
+
+        tool = SymbolicRegressionTool()
+        args = SymbolicRegressionInput(
+            action="discover",
+            data_json=data,
+            target_column=target,
+            time_limit=60,
+            top_k=3,
+        )
+        ctx = ToolContext(
+            session_id=f"symreg_{uuid.uuid4().hex[:8]}",
+            workspace=str(self.workspace),
+            config=self.settings,
+        )
+        vr = await tool.call(args, ctx)
+        if not (vr.success and vr.data):
+            return ""
+        return _sr_format_block(vr.data)
+
     def _query_kb_known_forms(self, data: dict[str, Any]) -> str:
         """查 KB 拿已知公式形式 (Arrhenius / Brillouin / Langmuir 等) 作为
         symreg 先验. 失败/空都返回空串."""
@@ -3676,38 +4074,15 @@ class HypothesisLoop:
         _statement = _node.statement
         if not _statement or len(_statement) < 5:
             return _default
-        # 收集已有 supported/refuted hypothesis 摘要, 给 LLM 判重叠用
-        _existing: list[str] = []
-        try:
-            for _n in self.hypothesis_graph.all_nodes():
-                if _n.id == hypothesis_id:
-                    continue
-                if _n.status in ("supported", "refuted"):
-                    _existing.append(_n.statement[:120])
-        except Exception:  # 防御: 既有假设列表失败跳过
-            logger.debug("existing hypothesis list skipped", exc_info=True)
-        _existing_block = (
-            "\n".join(f"- {s}" for s in _existing[:10]) or "(none)"
-        )
-        _prompt = (
-            f"评估 hypothesis 的 novelty 和 verifiability.\n\n"
-            f"Hypothesis: {_statement}\n\n"
-            f"已有 supported/refuted hypothesis (供判重叠):\n{_existing_block}\n\n"
-            f"novelty (0-1, 与已有低重叠=高新颖), "
-            f"verifiability (0-1, 有明确 testable prediction=高). "
-            f"输出 JSON: {{\"novelty\": float, \"verifiability\": float, \"reason\": str}}"
-        )
+        _prompt = _ei_build_prompt(_statement, self._ei_existing_block(hypothesis_id))
         try:
             from langchain_core.messages import HumanMessage
             _resp = await self.verification_model.ainvoke(
                 [HumanMessage(content=_prompt)]
             )
-            _text = getattr(_resp, "content", str(_resp))
-            # LLM 可能包 ```json fence, 直接抠第一个含 novelty 的 JSON 对象
-            _m = re.search(r"\{[^{}]*\"novelty\"[^{}]*\}", _text, re.DOTALL)
-            if not _m:
+            _parsed = _ei_parse_json(getattr(_resp, "content", str(_resp)))
+            if _parsed is None:
                 return _default
-            _parsed = json.loads(_m.group(0))
             _nov = max(0.0, min(1.0, float(_parsed.get("novelty", 0.5))))
             _ver = max(0.0, min(1.0, float(_parsed.get("verifiability", 0.5))))
             # E: 把 novelty 落到节点上 (随图落盘 + 供 darwin 第 6 维). 失败不影响返回.
@@ -3722,6 +4097,19 @@ class HypothesisLoop:
         except Exception:  # 防御: 信息量评估失败返回默认
             logger.debug("informativeness eval failed", exc_info=True)
             return _default
+
+    def _ei_existing_block(self, hypothesis_id: str) -> str:
+        """收集已有 supported/refuted hypothesis 摘要, 给 LLM 判重叠用."""
+        _existing: list[str] = []
+        try:
+            for _n in self.hypothesis_graph.all_nodes():
+                if _n.id == hypothesis_id:
+                    continue
+                if _n.status in ("supported", "refuted"):
+                    _existing.append(_n.statement[:120])
+        except Exception:  # 防御: 既有假设列表失败跳过
+            logger.debug("existing hypothesis list skipped", exc_info=True)
+        return "\n".join(f"- {s}" for s in _existing[:10]) or "(none)"
 
 
 
