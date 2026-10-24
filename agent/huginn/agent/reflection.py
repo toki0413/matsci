@@ -226,227 +226,266 @@ class ReflectionMixin:
 
         # ponytail: benchmark 场景 skip CSM transition — 无人工 subprocess,
         # CSM attention prompt 是 noise 还触发不必要 compaction. 升级: mode-aware.
-        _skip_csm = os.environ.get("HUGINN_SKIP_CSM", "").lower() in (
+        skip_csm = os.environ.get("HUGINN_SKIP_CSM", "").lower() in (
             "1",
             "true",
             "yes",
         )
 
         for tr in self._session_state.tool_results_this_turn:
-            try:
-                reflection = self._reflector.reflect(
-                    tool_name=tr.get("tool_name", "unknown"),
-                    tool_result=tr,
-                    session_state=self._session_state,
+            self._reflect_one_tool_result(tr, skip_csm)
+
+        self._run_post_loop_signals()
+        self._maybe_save_session_snapshot()
+        self._maybe_evaluate_meta_rules()
+
+        self._session_state.clear_turn_results()
+
+    def _reflect_one_tool_result(self, tr: dict, skip_csm: bool) -> None:
+        """Reflect on one tool result and drive all downstream side effects."""
+        try:
+            reflection = self._reflector.reflect(
+                tool_name=tr.get("tool_name", "unknown"),
+                tool_result=tr,
+                session_state=self._session_state,
+            )
+        except Exception:  # 防御: 反思失败则跳过该工具结果
+            logger.debug("reflection failed", exc_info=True)
+            return
+
+        self._track_fix_success(tr, reflection)
+        if reflection.should_evolve:
+            self._trigger_evolution(tr, reflection)
+        if not skip_csm:
+            self._drive_csm(tr, reflection)
+        if reflection.message or reflection.has_physics_errors:
+            self._write_reflection_sidecar(tr, reflection)
+        self._persist_plan_progress(reflection)
+        if reflection.needs_user_input:
+            self._request_user_confirmation(tr, reflection)
+        if reflection.should_switch_mode and reflection.suggested_mode:
+            self._maybe_switch_cognitive_mode(tr, reflection)
+
+    def _track_fix_success(self, tr: dict, reflection: Any) -> None:
+        """Increment the success counter of any rule that fixed this tool."""
+        # Track fix success: if a tool succeeded after a fix was applied,
+        # increment success_count on the matching rule.
+        try:
+            self._get_evolution_engine().mark_fix_success(
+                tr.get("tool_name", ""), reflection.tool_succeeded
+            )
+        except Exception:  # 防御: 修复成功计数失败则忽略
+            logger.debug("mark_fix_success failed", exc_info=True)
+
+    def _trigger_evolution(self, tr: dict, reflection: Any) -> None:
+        """Log the call and evolve rules from this failure / success signal."""
+        # Trigger evolution on failure / success signals.
+        try:
+            ev_engine = self._get_evolution_engine()
+            content = tr.get("content", "")
+            ev_engine.logger.log_tool_call(
+                session_id=self._session_state.session_id or "default",
+                tool_name=tr.get("tool_name", ""),
+                tool_input=tr.get("tool_input", tr.get("args", {})),
+                result=content if reflection.tool_succeeded else None,
+                error=None if reflection.tool_succeeded else str(content),
+            )
+            if reflection.evolve_signal == "failure":
+                new_rules = ev_engine.evolve_from_failures()
+                self._apply_failure_fix(ev_engine, tr, content)
+            elif reflection.evolve_signal == "success":
+                new_rules = ev_engine.evolve_from_successes()
+                self._sync_evolved_skills(ev_engine)
+            else:
+                new_rules = []
+            # G7: evolution 学新规则后让 CSM 重新探索 (新规则可能改路径)
+            if new_rules:
+                self._signal_evolution_rules(new_rules, reflection)
+        except Exception:  # 防御: 进化触发失败则忽略
+            logger.debug("evolution trigger failed", exc_info=True)
+
+    def _apply_failure_fix(self, ev_engine: Any, tr: dict, content: Any) -> None:
+        """Apply a high-confidence heuristic fix and inject it as a system note."""
+        # 应用断点: 对当前失败尝试 apply_heuristic_fix.
+        # post-turn 不重试工具 (LLM 已看到错误并决策), 只让规则
+        # usage_count++ 度量命中, 验证闭环接通. fix description
+        # 留作观测, 软注入已由 build_evolution_rules 负责.
+        try:
+            fix = ev_engine.apply_heuristic_fix(
+                tr.get("tool_name", ""),
+                tr.get("tool_input", tr.get("args", {})),
+                str(content),
+                min_confidence=0.5,
+            )
+            if not fix:
+                return
+            logger.info(
+                "evolved fix hit: tool=%s desc=%s",
+                tr.get("tool_name", ""),
+                fix.get("description", "")[:80],
+            )
+            # 软注入: 命中高置信度规则, 把修复建议作为 system 消息
+            # 让下轮 LLM 显式看到. 之前只 log, agent 看不到 ->
+            # 同 session 重复犯同类错误 (gap 分析: 13 次/session).
+            self._session_state.add_message(
+                "system",
+                f"Evolved fix (rule={fix.get('rule_id','')}, "
+                f"confidence={fix.get('confidence',0):.2f}): "
+                f"{fix.get('description','')[:200]}. "
+                "Apply this fix in your next action.",
+            )
+        except Exception:  # 防御: 启发式修复失败则忽略
+            logger.debug(
+                "apply_heuristic_fix in reflection failed",
+                exc_info=True,
+            )
+
+    def _sync_evolved_skills(self, ev_engine: Any) -> None:
+        """G7b: mirror auto-extracted skill templates into the main registry."""
+        # G7b: 把 evolution 自动提取的技能模板同步进主技能库,
+        # 弥合 SkillTemplate 池与 SkillRegistry 两个技能池.
+        try:
+            ev_engine.sync_to_registry()
+        except Exception:  # 防御: 技能同步失败则忽略
+            logger.debug(
+                "sync evolved skills to registry failed",
+                exc_info=True,
+            )
+
+    def _signal_evolution_rules(self, new_rules: list, reflection: Any) -> None:
+        """G7: let the CSM re-explore after new rules were learned."""
+        try:
+            from huginn.cognitive_engine import TransitionSignal
+
+            self._csm.transition(
+                TransitionSignal(
+                    "evolution_rule_learned",
+                    {
+                        "count": len(new_rules),
+                        "signal": reflection.evolve_signal,
+                    },
                 )
-            except Exception:  # 防御: 反思失败则跳过该工具结果
-                logger.debug("reflection failed", exc_info=True)
-                continue
+            )
+        except Exception:  # 防御: 进化CSM信号失败则忽略
+            logger.debug("evolution CSM signal failed", exc_info=True)
 
-            # Track fix success: if a tool succeeded after a fix was applied,
-            # increment success_count on the matching rule.
-            try:
-                ev_engine = self._get_evolution_engine()
-                ev_engine.mark_fix_success(
-                    tr.get("tool_name", ""), reflection.tool_succeeded
+    def _drive_csm(self, tr: dict, reflection: Any) -> None:
+        """Drive the cognitive state machine with the reflection result."""
+        try:
+            sig_type = reflection.to_transition_signal()
+            if not sig_type:
+                return
+            from huginn.cognitive_engine import TransitionSignal
+
+            new_state = self._csm.transition(
+                TransitionSignal(
+                    sig_type,
+                    {
+                        "tool_name": tr.get("tool_name", ""),
+                        "objective": self._session_state.active_plan_objective,
+                        "step": str(self._session_state.active_plan_step_index + 1),
+                        "result_summary": str(tr.get("content", ""))[:100],
+                    },
                 )
-            except Exception:  # 防御: 修复成功计数失败则忽略
-                logger.debug("mark_fix_success failed", exc_info=True)
+            )
+            self._session_state.l1_coordinates = self._csm.l1_coordinates
+            self._session_state._cognitive_prompt = self._csm.get_attention_prompt()
+            self._handle_new_csm_state(new_state, reflection)
+        except Exception:  # 防御: CSM切换失败则忽略
+            logger.debug("CSM transition failed", exc_info=True)
 
-            # Trigger evolution on failure / success signals.
-            if reflection.should_evolve:
-                try:
-                    ev_engine = self._get_evolution_engine()
-                    _content = tr.get("content", "")
-                    ev_engine.logger.log_tool_call(
-                        session_id=self._session_state.session_id or "default",
-                        tool_name=tr.get("tool_name", ""),
-                        tool_input=tr.get("tool_input", tr.get("args", {})),
-                        result=_content if reflection.tool_succeeded else None,
-                        error=None if reflection.tool_succeeded else str(_content),
-                    )
-                    _new_rules = []
-                    if reflection.evolve_signal == "failure":
-                        _new_rules = ev_engine.evolve_from_failures()
-                        # 应用断点: 对当前失败尝试 apply_heuristic_fix.
-                        # post-turn 不重试工具 (LLM 已看到错误并决策), 只让规则
-                        # usage_count++ 度量命中, 验证闭环接通. fix description
-                        # 留作观测, 软注入已由 build_evolution_rules 负责.
-                        try:
-                            _fix = ev_engine.apply_heuristic_fix(
-                                tr.get("tool_name", ""),
-                                tr.get("tool_input", tr.get("args", {})),
-                                str(_content),
-                                min_confidence=0.5,
-                            )
-                            if _fix:
-                                logger.info(
-                                    "evolved fix hit: tool=%s desc=%s",
-                                    tr.get("tool_name", ""),
-                                    _fix.get("description", "")[:80],
-                                )
-                                # 软注入: 命中高置信度规则, 把修复建议作为 system 消息
-                                # 让下轮 LLM 显式看到. 之前只 log, agent 看不到 ->
-                                # 同 session 重复犯同类错误 (gap 分析: 13 次/session).
-                                self._session_state.add_message(
-                                    "system",
-                                    f"Evolved fix (rule={_fix.get('rule_id','')}, "
-                                    f"confidence={_fix.get('confidence',0):.2f}): "
-                                    f"{_fix.get('description','')[:200]}. "
-                                    "Apply this fix in your next action.",
-                                )
-                        except Exception:  # 防御: 启发式修复失败则忽略
-                            logger.debug(
-                                "apply_heuristic_fix in reflection failed",
-                                exc_info=True,
-                            )
-                    elif reflection.evolve_signal == "success":
-                        _new_rules = ev_engine.evolve_from_successes()
-                        # G7b: 把 evolution 自动提取的技能模板同步进主技能库,
-                        # 弥合 SkillTemplate 池与 SkillRegistry 两个技能池.
-                        try:
-                            ev_engine.sync_to_registry()
-                        except Exception:  # 防御: 技能同步失败则忽略
-                            logger.debug(
-                                "sync evolved skills to registry failed",
-                                exc_info=True,
-                            )
-                    # G7: evolution 学新规则后让 CSM 重新探索 (新规则可能改路径)
-                    if _new_rules:
-                        try:
-                            from huginn.cognitive_engine import TransitionSignal
+    def _handle_new_csm_state(self, new_state: Any, reflection: Any) -> None:
+        """Post-transition bookkeeping: compaction flag and S6→S7 self-modify."""
+        from huginn.cognitive_engine import CognitiveState, TransitionSignal
 
-                            self._csm.transition(
-                                TransitionSignal(
-                                    "evolution_rule_learned",
-                                    {
-                                        "count": len(_new_rules),
-                                        "signal": reflection.evolve_signal,
-                                    },
-                                )
-                            )
-                        except Exception:  # 防御: 进化CSM信号失败则忽略
-                            logger.debug("evolution CSM signal failed", exc_info=True)
-                except Exception:  # 防御: 进化触发失败则忽略
-                    logger.debug("evolution trigger failed", exc_info=True)
+        # mode 切换 flag: S3_SWITCH / S6_FEEDBACK 时标记需要 compaction.
+        # streaming.py 下轮开头检查 flag, 触发 summarize_compact_messages.
+        # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
+        if new_state in (CognitiveState.S3_SWITCH, CognitiveState.S6_FEEDBACK):
+            # 子集模式: CSM transition 走 (含 S7), 但不触发 compaction (Task 18)
+            self._needs_compaction = not os.environ.get("HUGINN_CSM_SUBSET_MODE")
 
-            # Drive the cognitive state machine with the reflection result.
-            if _skip_csm:
-                continue
-            try:
-                sig_type = reflection.to_transition_signal()
-                if sig_type:
-                    from huginn.cognitive_engine import TransitionSignal
-
-                    new_state = self._csm.transition(
-                        TransitionSignal(
-                            sig_type,
-                            {
-                                "tool_name": tr.get("tool_name", ""),
-                                "objective": self._session_state.active_plan_objective,
-                                "step": str(
-                                    self._session_state.active_plan_step_index + 1
-                                ),
-                                "result_summary": str(tr.get("content", ""))[:100],
-                            },
-                        )
-                    )
-                    self._session_state.l1_coordinates = self._csm.l1_coordinates
-                    self._session_state._cognitive_prompt = (
-                        self._csm.get_attention_prompt()
-                    )
-                    # mode 切换 flag: S3_SWITCH / S6_FEEDBACK 时标记需要 compaction.
-                    # streaming.py 下轮开头检查 flag, 触发 summarize_compact_messages.
-                    # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
-                    from huginn.cognitive_engine import CognitiveState
-
-                    if self._csm._state in (
-                        CognitiveState.S3_SWITCH,
-                        CognitiveState.S6_FEEDBACK,
-                    ):
-                        # 子集模式: CSM transition 走 (含 S7), 但不触发 compaction (Task 18)
-                        self._needs_compaction = not os.environ.get(
-                            "HUGINN_CSM_SUBSET_MODE"
-                        )
-
-                    # 哥德尔机闭环: S6 + 实质 gap → S7_SELF_MODIFY (打通 L232 flag 断层)
-                    if (
-                        new_state == CognitiveState.S6_FEEDBACK
-                        and self._has_substantive_gap(reflection)
-                    ):
-                        new_state = self._csm.transition(
-                            TransitionSignal("gap_found", {"gap": getattr(reflection, "message", "")})
-                        )
-                    # S7 状态: 调 meta critique 评估 proposal, accept→stable_principle / reject→rejection log
-                    # S7 是 meta 状态, benchmark 场景也不触发 compaction (与 S3/S6 不同)
-                    if new_state == CognitiveState.S7_SELF_MODIFY:
-                        self._needs_compaction = False
-                        try:
-                            self._schedule_s7_self_modify(reflection, self._csm)
-                        except Exception:  # 防御: S7自改处理失败仅告警
-                            logger.warning(
-                                "S7 self-modify handler failed", exc_info=True
-                            )
-            except Exception:  # 防御: CSM切换失败则忽略
-                logger.debug("CSM transition failed", exc_info=True)
-
-            # 反思 sidecar: 把反思结论写文件, 主上下文只引用结论不引用推理过程.
-            # 避免自我污染: 反思文本进入 history 会抬高 P(next_支持_反思结论).
-            # ponytail: 只在有实质内容时写. 升级: 按反思类型分文件.
-            if reflection.message or reflection.has_physics_errors:
-                try:
-                    self._append_reflection_sidecar(tr, reflection)
-                except Exception:  # 防御: 反思sidecar写入失败则忽略
-                    logger.debug("reflection sidecar write failed", exc_info=True)
-
-            # Persist plan progress when a step is judged done.
-            if reflection.plan_step_completed and self._session_state.active_plan_id:
-                self._session_state.advance_step()
-                try:
-                    self.memory.store_plan_progress(
-                        plan_id=self._session_state.active_plan_id,
-                        objective=self._session_state.active_plan_objective,
-                        step_index=self._session_state.active_plan_step_index,
-                        status="in_progress",
-                        l1_coordinates=self._session_state.l1_coordinates,
-                    )
-                except Exception:  # 防御: 计划进度落盘失败则忽略
-                    logger.debug("plan progress store failed", exc_info=True)
-
-            # If reflection says we need user input, set pending confirmation.
-            if reflection.needs_user_input:
-                self._session_state.request_confirmation(
-                    reflection.confirm_type or "continue",
-                    f"Tool '{tr.get('tool_name', 'unknown')}' reported issues. "
-                    f"Continue or adjust approach?",
+        # 哥德尔机闭环: S6 + 实质 gap → S7_SELF_MODIFY (打通 L232 flag 断层)
+        if new_state == CognitiveState.S6_FEEDBACK and self._has_substantive_gap(
+            reflection
+        ):
+            new_state = self._csm.transition(
+                TransitionSignal(
+                    "gap_found", {"gap": getattr(reflection, "message", "")}
                 )
-                self._csm.request_confirmation(reflection.confirm_type or "continue")
+            )
+        # S7 状态: 调 meta critique 评估 proposal, accept→stable_principle / reject→rejection log
+        # S7 是 meta 状态, benchmark 场景也不触发 compaction (与 S3/S6 不同)
+        if new_state == CognitiveState.S7_SELF_MODIFY:
+            self._needs_compaction = False
+            try:
+                self._schedule_s7_self_modify(reflection, self._csm)
+            except Exception:  # 防御: S7自改处理失败仅告警
+                logger.warning("S7 self-modify handler failed", exc_info=True)
 
-            # 反思驱动的 cognitive mode 切换: should_switch_mode + suggested_mode 时切.
-            # P1-6: 之前调 self.set_mode() 只接受 chat/research/plan, 但 suggested_mode
-            # 是 "discover"/"construct" (CognitiveMode), 永远 ValueError 被静默吞 → 闭环断裂.
-            # 现在改调 session_state.switch_cognitive_mode, 走正确的接收者.
-            if reflection.should_switch_mode and reflection.suggested_mode:
-                try:
-                    from huginn.session_state import CognitiveMode
+    def _write_reflection_sidecar(self, tr: dict, reflection: Any) -> None:
+        """Write reflection conclusions to a sidecar file (avoids self-pollution)."""
+        # 反思 sidecar: 把反思结论写文件, 主上下文只引用结论不引用推理过程.
+        # 避免自我污染: 反思文本进入 history 会抬高 P(next_支持_反思结论).
+        # ponytail: 只在有实质内容时写. 升级: 按反思类型分文件.
+        try:
+            self._append_reflection_sidecar(tr, reflection)
+        except Exception:  # 防御: 反思sidecar写入失败则忽略
+            logger.debug("reflection sidecar write failed", exc_info=True)
 
-                    target = CognitiveMode(reflection.suggested_mode)
-                    self._session_state.switch_cognitive_mode(
-                        target,
-                        reason=f"reflection after {tr.get('tool_name', 'unknown')}",
-                    )
-                    logger.info(
-                        "reflection switched cognitive mode -> %s (tool=%s)",
-                        target.value,
-                        tr.get("tool_name", "unknown"),
-                    )
-                except (ValueError, AttributeError):
-                    logger.debug(
-                        "switch_cognitive_mode(%s) failed",
-                        reflection.suggested_mode,
-                        exc_info=True,
-                    )
+    def _persist_plan_progress(self, reflection: Any) -> None:
+        """Persist plan progress when a step is judged done."""
+        if not (reflection.plan_step_completed and self._session_state.active_plan_id):
+            return
+        self._session_state.advance_step()
+        try:
+            self.memory.store_plan_progress(
+                plan_id=self._session_state.active_plan_id,
+                objective=self._session_state.active_plan_objective,
+                step_index=self._session_state.active_plan_step_index,
+                status="in_progress",
+                l1_coordinates=self._session_state.l1_coordinates,
+            )
+        except Exception:  # 防御: 计划进度落盘失败则忽略
+            logger.debug("plan progress store failed", exc_info=True)
 
+    def _request_user_confirmation(self, tr: dict, reflection: Any) -> None:
+        """Set a pending confirmation when reflection asks for user input."""
+        self._session_state.request_confirmation(
+            reflection.confirm_type or "continue",
+            f"Tool '{tr.get('tool_name', 'unknown')}' reported issues. "
+            f"Continue or adjust approach?",
+        )
+        self._csm.request_confirmation(reflection.confirm_type or "continue")
+
+    def _maybe_switch_cognitive_mode(self, tr: dict, reflection: Any) -> None:
+        """Switch cognitive mode when reflection suggests one."""
+        # 反思驱动的 cognitive mode 切换: should_switch_mode + suggested_mode 时切.
+        # P1-6: 之前调 self.set_mode() 只接受 chat/research/plan, 但 suggested_mode
+        # 是 "discover"/"construct" (CognitiveMode), 永远 ValueError 被静默吞 → 闭环断裂.
+        # 现在改调 session_state.switch_cognitive_mode, 走正确的接收者.
+        try:
+            from huginn.session_state import CognitiveMode
+
+            target = CognitiveMode(reflection.suggested_mode)
+            self._session_state.switch_cognitive_mode(
+                target,
+                reason=f"reflection after {tr.get('tool_name', 'unknown')}",
+            )
+            logger.info(
+                "reflection switched cognitive mode -> %s (tool=%s)",
+                target.value,
+                tr.get("tool_name", "unknown"),
+            )
+        except (ValueError, AttributeError):
+            logger.debug(
+                "switch_cognitive_mode(%s) failed",
+                reflection.suggested_mode,
+                exc_info=True,
+            )
+
+    def _run_post_loop_signals(self) -> None:
+        """Feed event / belief-entropy / SignalHub signals into the CSM."""
         # 新增: 信号驱动 CSM (G5 events / G6 belief_entropy). G7 在 evolution 调用点触发.
         # ponytail: 补充现有 reflection 规则信号, 不替代. try/except 静默, 不破坏 turn.
         try:
@@ -461,64 +500,77 @@ class ReflectionMixin:
         # H1: drain SignalHub pending queue — tool runtime error 等无 csm 引用的
         # emit 方发的信号在这里统一进 CSM. 之前 FailureModeRegistry.record_observation
         # 调 route() 返回值被丢, 信号永远不进 CSM. 现在 emit() enqueue, 这里 drain.
-        if SignalHub is not None:
-            try:
-                for sig in SignalHub.shared().drain_pending():
-                    try:
-                        self._csm.transition(sig)
-                    except Exception:  # 防御: 信号切换失败则忽略
-                        logger.debug("drain signal transition failed", exc_info=True)
-            except Exception:  # 防御: 信号队列导出失败则忽略
-                logger.debug("signal hub drain failed", exc_info=True)
+        if SignalHub is None:
+            return
+        try:
+            for sig in SignalHub.shared().drain_pending():
+                try:
+                    self._csm.transition(sig)
+                except Exception:  # 防御: 信号切换失败则忽略
+                    logger.debug("drain signal transition failed", exc_info=True)
+        except Exception:  # 防御: 信号队列导出失败则忽略
+            logger.debug("signal hub drain failed", exc_info=True)
 
+    def _maybe_save_session_snapshot(self) -> None:
+        """Throttled session snapshot: every 3 turns, for cross-session resume."""
         # 节流保存 session snapshot: 每 3 turn 一次, 让下次会话能恢复 _mode/_csm/_phase.
         # 之前 session resume 只恢复消息历史, mode/csm/phase 全丢. 放这里集中, 不污染 mutation 点.
         # ponytail: 节流 + try/except 静默. 升级: dirty flag + 增量 diff.
-        if getattr(self, "_turn_count", 0) % 3 == 0:
-            try:
-                self._save_session_snapshot()
-            except Exception:  # 防御: 会话快照失败则忽略
-                logger.debug("session snapshot save failed", exc_info=True)
+        if getattr(self, "_turn_count", 0) % 3 != 0:
+            return
+        try:
+            self._save_session_snapshot()
+        except Exception:  # 防御: 会话快照失败则忽略
+            logger.debug("session snapshot save failed", exc_info=True)
 
+    def _maybe_evaluate_meta_rules(self) -> None:
+        """Every 10 ticks, feed meta-rule stats back into skill / knowledge upkeep."""
         # 元技能规则反哺: 每 N 次反思跑一次, 让 record_invocation 的
         # usage/success 统计回流成技能库维护决策 (promote/flag_failure/untested).
         # 节流避免每个 tool result 都重写 sidecar. 失败静默, 不破坏 turn.
-        _ticks = getattr(self, "_meta_rule_ticks", 0) + 1
-        self._meta_rule_ticks = _ticks
-        if _ticks % 10 == 0:
-            try:
-                ev_engine = self._get_evolution_engine()
-                _report = ev_engine.evaluate_meta_skill_rules()
-                if _report.get("promote_to_primitive") or _report.get(
-                    "flag_high_failure"
-                ):
-                    logger.info(
-                        "meta skill rules: promote=%d flag_failure=%d untested=%d",
-                        len(_report.get("promote_to_primitive", [])),
-                        len(_report.get("flag_high_failure", [])),
-                        len(_report.get("untested", [])),
-                    )
-            except Exception:  # 防御: 元技能规则评估失败则忽略
-                logger.debug("meta skill rules evaluation failed", exc_info=True)
+        ticks = getattr(self, "_meta_rule_ticks", 0) + 1
+        self._meta_rule_ticks = ticks
+        if ticks % 10 != 0:
+            return
+        self._evaluate_meta_skill_rules()
+        self._evaluate_meta_knowledge_rules()
 
-            # 元蒸馏反哺: 同节拍跑一次, 让蒸馏知识库的复用/置信统计回流成
-            # 维护决策 (promote/flag_low_value/untested + 各 source_type 质量).
-            # 与技能层 evaluate_meta_skill_rules 同构, 是知识层的"meta"层.
-            try:
-                from huginn.evolution.knowledge_distiller import KnowledgeDistiller
-                _kdl = KnowledgeDistiller()
-                _krep = _kdl.evaluate_meta_knowledge_rules()
-                if _krep.get("promote_to_stable") or _krep.get("flag_low_value"):
-                    logger.info(
-                        "meta knowledge rules: promote=%d flag=%d untested=%d",
-                        len(_krep.get("promote_to_stable", [])),
-                        len(_krep.get("flag_low_value", [])),
-                        len(_krep.get("untested", [])),
-                    )
-            except Exception:  # 防御: 元知识规则评估失败则忽略
-                logger.debug("meta knowledge rules evaluation failed", exc_info=True)
+    def _evaluate_meta_skill_rules(self) -> None:
+        """Distill skill-invocation stats into promote / flag / untested decisions."""
+        try:
+            ev_engine = self._get_evolution_engine()
+            report = ev_engine.evaluate_meta_skill_rules()
+            if report.get("promote_to_primitive") or report.get("flag_high_failure"):
+                logger.info(
+                    "meta skill rules: promote=%d flag_failure=%d untested=%d",
+                    len(report.get("promote_to_primitive", [])),
+                    len(report.get("flag_high_failure", [])),
+                    len(report.get("untested", [])),
+                )
+        except Exception:  # 防御: 元技能规则评估失败则忽略
+            logger.debug("meta skill rules evaluation failed", exc_info=True)
 
-        self._session_state.clear_turn_results()
+    def _evaluate_meta_knowledge_rules(self) -> None:
+        """Distill knowledge-base reuse stats into promote / flag decisions."""
+        # 元蒸馏反哺: 同节拍跑一次, 让蒸馏知识库的复用/置信统计回流成
+        # 维护决策 (promote/flag_low_value/untested + 各 source_type 质量).
+        # 与技能层 evaluate_meta_skill_rules 同构, 是知识层的"meta"层.
+        try:
+            from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+
+            kdl = KnowledgeDistiller()
+            krep = kdl.evaluate_meta_knowledge_rules()
+            if krep.get("promote_to_stable") or krep.get("flag_low_value"):
+                logger.info(
+                    "meta knowledge rules: promote=%d flag=%d untested=%d",
+                    len(krep.get("promote_to_stable", [])),
+                    len(krep.get("flag_low_value", [])),
+                    len(krep.get("untested", [])),
+                )
+        except Exception:  # 防御: 元知识规则评估失败则忽略
+            logger.debug("meta knowledge rules evaluation failed", exc_info=True)
+
+
 
     # ── S7 self-modification helpers ────────────────────────────────────
     # 哥德尔机闭环: 把 reflection gap → proposal, 调 meta critique 评估,

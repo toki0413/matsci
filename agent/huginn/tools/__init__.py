@@ -223,6 +223,22 @@ def _make_tool_kwargs(resolved_config, executor):
     return _tool_kwargs
 
 
+def _inject_rag_kb(cls: type, kwargs: dict[str, Any]) -> None:
+    """RAGTool 若支持 kb 参数, 就把 server_context 的 KB 共用给它."""
+    import inspect
+
+    if "kb" not in inspect.signature(cls.__init__).parameters:
+        return
+    try:
+        from huginn import server_context as _sc
+
+        _ctx = _sc._server_context
+        if _ctx is not None and _ctx.kb is not None:
+            kwargs["kb"] = _ctx.kb
+    except Exception:
+        logger.debug("tool kwargs failed", exc_info=True)
+
+
 def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
     """Import and register a list of (module, class) tuples."""
     import importlib
@@ -238,18 +254,7 @@ def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
 
             # RAGTool shares the KB collection if available
             if class_name == "RAGTool":
-                import inspect
-
-                sig = inspect.signature(cls.__init__)
-                if "kb" in sig.parameters:
-                    try:
-                        from huginn import server_context as _sc
-
-                        _ctx = _sc._server_context
-                        if _ctx is not None and _ctx.kb is not None:
-                            kwargs["kb"] = _ctx.kb
-                    except Exception:
-                        logger.debug("tool kwargs failed", exc_info=True)
+                _inject_rag_kb(cls, kwargs)
 
             ToolRegistry.register(cls(**kwargs))
             registered.append(class_name)
@@ -383,6 +388,42 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     return deps
 
 
+def _demote_unavailable_tool(
+    module_name: str, class_name: str, missing: list[str]
+) -> bool:
+    """把依赖缺失的工具标成 runtime unavailable (从 LLM 可见面摘除).
+
+    注册 ≠ 可用: 模块能 import (重依赖被 try/except 包住) 但类里没有真实能力.
+    LLM 仍会看到它并尝试调用, 每次必然失败 (run 实测 31 个这类工具, 占可用面
+    一半). 这里用实例级 ``is_available()`` 覆盖实现运行时摘除 —— 不动注册表
+    (``ToolRegistry.get()`` 直接调用仍然可用), 只让 ``get_all_schemas()`` 把它
+    过滤掉, 模型就不会再浪费轮次去点一个死工具.
+
+    返回是否成功摘除 (工具未注册/无法赋值时 False, 调用方据此决定日志措辞).
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    target = None
+    for name in ToolRegistry.list_tools():
+        candidate = ToolRegistry.get(name)
+        if candidate is None:
+            continue
+        if (
+            type(candidate).__name__ == class_name
+            or type(candidate).__module__ == module_name
+        ):
+            target = candidate
+            break
+    if target is None:
+        return False
+    try:
+        target.is_available = lambda: False  # type: ignore[method-assign]
+        target._unavailable_reason = f"missing deps: {', '.join(missing)}"
+    except Exception:  # 防御: 摘除失败退回仅告警, 不阻断注册
+        return False
+    return True
+
+
 def probe_tool_dependencies(
     tool_lists: list[tuple[str, str]] | None = None,
 ) -> dict[str, list[str]]:
@@ -425,10 +466,12 @@ def probe_tool_dependencies(
                 missing.append(dep)
         if missing:
             report[module_name] = missing
+            demoted = _demote_unavailable_tool(module_name, _class_name, missing)
             logger.warning(
-                "Tool %s registered but its deps are missing — capability degraded: %s",
+                "Tool %s registered but its deps are missing — capability degraded: %s%s",
                 module_name,
                 ", ".join(missing),
+                " (已从 LLM 可见工具面摘除)" if demoted else " (摘除失败, 仍在可见面)",
             )
     return report
 

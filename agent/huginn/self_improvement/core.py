@@ -375,6 +375,19 @@ class BenchmarkSuite:
         Source: arXiv:2510.12171, KDD 2026.
         6 domains, 31 subfields, 3 difficulty levels.
         """
+        for build in (
+            self._msb_materials,
+            self._msb_properties,
+            self._msb_structures,
+            self._msb_mechanisms,
+            self._msb_processes,
+            self._msb_failures,
+        ):
+            build()
+        return self
+
+    def _msb_materials(self) -> None:
+        """MatSciBench Materials domain."""
         # ═══ Materials domain ═══
         self.add(BenchmarkCase(
             task="What are the three primary classes of engineering materials? Give one "
@@ -528,6 +541,9 @@ class BenchmarkSuite:
             category="materials", tags=["semiconductors", "band_gap_engineering", "quantum_well", "hard"],
             case_id="matscibench_015",
         ))
+
+    def _msb_properties(self) -> None:
+        """MatSciBench Properties domain."""
         # ═══ Properties domain ═══
         self.add(BenchmarkCase(
             task="A steel wire of length 2 m and cross-sectional area 1 mm² is subjected "
@@ -693,6 +709,9 @@ class BenchmarkSuite:
             category="properties", tags=["dielectric", "ferroelectric", "batio3", "hard"],
             case_id="matscibench_033",
         ))
+
+    def _msb_structures(self) -> None:
+        """MatSciBench Structures domain."""
         # ═══ Structures domain ═══
         self.add(BenchmarkCase(
             task="Using Bragg's law (nλ = 2d·sinθ), calculate the d-spacing for a first- "
@@ -846,6 +865,9 @@ class BenchmarkSuite:
             category="structures", tags=["grain_boundaries", "superplasticity", "sliding", "hard"],
             case_id="matscibench_048",
         ))
+
+    def _msb_mechanisms(self) -> None:
+        """MatSciBench Fundamental mechanisms domain."""
         # ═══ Fundamental mechanisms domain ═══
         self.add(BenchmarkCase(
             task="Calculate ΔG for a process with ΔH = -100 kJ/mol and ΔS = -50 J/(mol·K) "
@@ -1004,6 +1026,9 @@ class BenchmarkSuite:
             category="fundamental_mechanisms", tags=["electronic_structure", "fermi_level", "doped", "hard"],
             case_id="matscibench_063",
         ))
+
+    def _msb_processes(self) -> None:
+        """MatSciBench Processes domain."""
         # ═══ Processes domain ═══
         self.add(BenchmarkCase(
             task="Describe the basic solidification process in metal casting. What are the "
@@ -1174,6 +1199,9 @@ class BenchmarkSuite:
             category="processes", tags=["deposition", "ald", "thin_film", "hard"],
             case_id="matscibench_078",
         ))
+
+    def _msb_failures(self) -> None:
+        """MatSciBench Failure mechanisms domain."""
         # ═══ Failure mechanisms domain ═══
         self.add(BenchmarkCase(
             task="Explain the difference between ductile and brittle fracture. What "
@@ -1335,13 +1363,29 @@ class BenchmarkSuite:
             category="failure_mechanisms", tags=["wear", "fretting", "hard"],
             case_id="matscibench_093",
         ))
-        return self
 
     def csmbench_cases(self) -> BenchmarkSuite:
         """CSMBench-style cases — cross-scale material science perception.
         Source: arXiv:2603.19327. 4 physical scales + cross-scale = 5 categories.
         8 cases per category = 40 total.
         """
+        for build in (
+            self._csm_atomic_a,
+            self._csm_atomic_b,
+            self._csm_micro_a,
+            self._csm_micro_b,
+            self._csm_meso_a,
+            self._csm_meso_b,
+            self._csm_macro_a,
+            self._csm_macro_b,
+            self._csm_cross_a,
+            self._csm_cross_b,
+        ):
+            build()
+        return self
+
+    def _csm_atomic_a(self) -> None:
+        """Atomic scale 1/2: crystal structure, diffraction."""
         # atomic scale: crystal structure, diffraction, point defects
         self.add(BenchmarkCase(
             case_id="csmbench_001",
@@ -1385,6 +1429,10 @@ class BenchmarkSuite:
             evaluator=keyword_evaluator,
             tags=["silicon", "diamond-cubic", "crystal-structure"],
         ))
+
+
+    def _csm_atomic_b(self) -> None:
+        """Atomic scale 2/2: point defects."""
         self.add(BenchmarkCase(
             case_id="csmbench_005",
             category="atomic",
@@ -1432,6 +1480,8 @@ class BenchmarkSuite:
             tags=["apf", "fcc", "bcc", "hcp", "comparison"],
         ))
 
+    def _csm_micro_a(self) -> None:
+        """Micro scale 1/2: dislocations, TEM."""
         # micro scale: dislocations, TEM, precipitates, interfaces
         self.add(BenchmarkCase(
             case_id="csmbench_009",
@@ -1480,6 +1530,10 @@ class BenchmarkSuite:
             evaluator=numeric_evaluator,
             tags=["nucleation", "precipitate", "thermodynamics", "driving-force"],
         ))
+
+
+    def _csm_micro_b(self) -> None:
+        """Micro scale 2/2: precipitates, interfaces."""
         self.add(BenchmarkCase(
             case_id="csmbench_013",
             category="micro",
@@ -1525,6 +1579,8 @@ class BenchmarkSuite:
             tags=["precipitate", "interface", "coherent", "incoherent", "misfit"],
         ))
 
+    def _csm_meso_a(self) -> None:
+        """Meso scale 1/2: grains, porosity."""
         # meso scale: grains, porosity, fracture, phase distribution
         self.add(BenchmarkCase(
             case_id="csmbench_017",
@@ -1573,6 +1629,10 @@ class BenchmarkSuite:
             evaluator=numeric_evaluator,
             tags=["porosity", "elastic-modulus", "alumina", "spriggs"],
         ))
+
+
+    def _csm_meso_b(self) -> None:
+        """Meso scale 2/2: fracture, phase distribution."""
         self.add(BenchmarkCase(
             case_id="csmbench_021",
             category="meso",
@@ -1619,6 +1679,8 @@ class BenchmarkSuite:
             tags=["crack", "grain-boundary", "propagation", "deflection"],
         ))
 
+    def _csm_macro_a(self) -> None:
+        """Macro scale 1/2: mechanical testing, thermal."""
         # macro scale: mechanical testing, thermal, fatigue, creep
         self.add(BenchmarkCase(
             case_id="csmbench_025",
@@ -1669,6 +1731,10 @@ class BenchmarkSuite:
             evaluator=numeric_evaluator,
             tags=["bending", "stress", "three-point", "flexural"],
         ))
+
+
+    def _csm_macro_b(self) -> None:
+        """Macro scale 2/2: fatigue, creep."""
         self.add(BenchmarkCase(
             case_id="csmbench_029",
             category="macro",
@@ -1716,6 +1782,8 @@ class BenchmarkSuite:
             tags=["creep", "deformation", "stages", "high-temperature"],
         ))
 
+    def _csm_cross_a(self) -> None:
+        """Cross-scale 1/2: multi-scale causal chains."""
         # cross-scale reasoning: multi-scale causal chains
         self.add(BenchmarkCase(
             case_id="csmbench_033",
@@ -1781,6 +1849,10 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["sintering", "diffusion", "grain-growth", "hall-petch"],
         ))
+
+
+    def _csm_cross_b(self) -> None:
+        """Cross-scale 2/2: multi-scale causal chains."""
         self.add(BenchmarkCase(
             case_id="csmbench_037",
             category="cross_scale",
@@ -1846,8 +1918,6 @@ class BenchmarkSuite:
             evaluator=rubric_evaluator,
             tags=["composition", "phase-diagram", "equilibrium", "property"],
         ))
-
-        return self
 
     def tool_calling_cases(self) -> BenchmarkSuite:
         """Tool-calling benchmarks: pick the right method/code for a matsci problem.

@@ -74,6 +74,17 @@ class ExportStats:
         }
 
 
+def _merge_sessions_into_threads(sessions: list, merge: bool) -> None:
+    """把导入的会话写进 server_core 的线程表 (merge 时跳过已存在 id)."""
+    from huginn import server_core
+
+    with server_core._state_lock:
+        for s in sessions:
+            tid = s.get("id")
+            if tid and (merge or tid not in server_core._threads):
+                server_core._threads[tid] = s
+
+
 class ExportShareManager:
     """统一管理 Huginn 数据的导出、导入、压缩和分享."""
 
@@ -803,15 +814,7 @@ class ExportShareManager:
             sessions = json.loads(threads_file.read_text(encoding="utf-8"))
             # 会话是临时状态，合并时直接加入内存
             try:
-                from huginn import server_core
-
-                with server_core._state_lock:
-                    for s in sessions:
-                        tid = s.get("id")
-                        if tid:
-                            if not merge and tid in server_core._threads:
-                                continue
-                            server_core._threads[tid] = s
+                _merge_sessions_into_threads(sessions, merge)
                 result["imported"]["sessions"] = len(sessions)
             except Exception:
                 # server_core 不可用，只记录数量

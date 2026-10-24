@@ -63,6 +63,19 @@ class ReportSection:
     order: int = 0
 
 
+def _extract_encut(text: str) -> str | None:
+    """从 OUTCAR 前 100 行里抓 ENCUT 值, 没有返回 None."""
+    if "ENCUT" not in text:
+        return None
+    for line in text.split("\n")[:100]:
+        if "ENCUT" in line and "=" in line:
+            parts = line.split("=")
+            if len(parts) >= 2:
+                return parts[-1].strip().split()[0]
+            return None
+    return None
+
+
 class ReportGenerator:
     """Generate computational reports from materials science workflows."""
 
@@ -612,18 +625,12 @@ class ReportTool(HuginnTool):
 
         # Try to extract basic info from OUTCAR-like files
         for f in files:
-            if f.name.upper() == "OUTCAR":
-                text = f.read_text(errors="ignore")
-                if "ENCUT" in text:
-                    for line in text.split("\n")[:100]:
-                        if "ENCUT" in line and "=" in line:
-                            parts = line.split("=")
-                            if len(parts) >= 2:
-                                data.setdefault("methods", {})["encut"] = (
-                                    parts[-1].strip().split()[0]
-                                )
-                            break
-                break
+            if f.name.upper() != "OUTCAR":
+                continue
+            encut = _extract_encut(f.read_text(errors="ignore"))
+            if encut is not None:
+                data.setdefault("methods", {})["encut"] = encut
+            break
 
         return data
 

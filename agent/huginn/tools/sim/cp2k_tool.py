@@ -22,6 +22,73 @@ from huginn.tools.base import HuginnTool, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _cp2k_parse_energy(lines: list[str]) -> float | None:
+    """扫描 total energy 行, 取最后一个像总能 (负值或 >1) 的数."""
+    energy: float | None = None
+    for line in lines:
+        if "Total energy:" in line or "ENERERGY| Total FORCE_EVAL" in line:
+            for p in line.split():
+                with contextlib.suppress(ValueError):
+                    val = float(p)
+                    # Accept values that look like total energies (negative or large)
+                    if val < 0 or abs(val) > 1:
+                        energy = val
+                        break
+    return energy
+
+
+def _cp2k_parse_forces(lines: list[str]) -> list[list[float]]:
+    """取最后一个 ATOMIC FORCES 块的原子受力."""
+    in_forces = False
+    force_block: list[list[float]] = []
+    for line in lines:
+        if (
+            "ATOMIC FORCES in" in line
+            or "FORCES" in line
+            and "atom" in line.lower()
+        ):
+            in_forces = True
+            force_block = []
+            continue
+        if not in_forces:
+            continue
+        parts = line.split()
+        if len(parts) >= 6 and parts[0].isdigit():
+            with contextlib.suppress(ValueError, IndexError):
+                force_block.append(
+                    [float(parts[-3]), float(parts[-2]), float(parts[-1])]
+                )
+        elif line.strip() == "":
+            in_forces = False
+    return force_block
+
+
+def _cp2k_stress_row(lines: list[str], i: int, offset: int) -> list[float] | None:
+    """取 lines[i+offset] 末 3 个浮点数作为一行应力, 越界/解析失败返回 None."""
+    idx = i + offset
+    if idx >= len(lines):
+        return None
+    parts = lines[idx].split()
+    if len(parts) < 3:
+        return None
+    with contextlib.suppress(ValueError, IndexError):
+        return [float(parts[-3]), float(parts[-2]), float(parts[-1])]
+    return None
+
+
+def _cp2k_parse_stress(lines: list[str]) -> list[list[float]]:
+    """取最后一个 stress 张量 (3x3)."""
+    stress_result: list[list[float]] = []
+    for i, line in enumerate(lines):
+        if not ("STRESS|" in line or "Stress tensor" in line):
+            continue
+        rows = (_cp2k_stress_row(lines, i, j) for j in range(1, 4))
+        stress = [row for row in rows if row is not None]
+        if len(stress) == 3:
+            stress_result = stress
+    return stress_result
+
+
 class Cp2kToolInput(BaseModel):
     action: Literal["generate", "run", "parse"] = Field(default="run")
     run_type: Literal["ENERGY_FORCE", "GEO_OPT", "MD", "CELL_OPT"] = Field(
@@ -268,80 +335,16 @@ class Cp2kTool(HuginnTool):
         return self._parse_output(content)
 
     def _parse_output(self, content: str) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "energy": None,
-            "converged": False,
-            "forces": [],
-            "stress": [],
-            "n_scf_steps": 0,
-        }
-
         lines = content.splitlines()
-
-        # Energy
-        for line in lines:
-            if "Total energy:" in line or "ENERERGY| Total FORCE_EVAL" in line:
-                parts = line.split()
-                for p in parts:
-                    with contextlib.suppress(ValueError):
-                        val = float(p)
-                        # Accept values that look like total energies (negative or large)
-                        if val < 0 or abs(val) > 1:
-                            result["energy"] = val
-                            break
-
-        # Convergence
-        result["converged"] = (
-            "SCF run converged" in content or "*** SCF run converged" in content
-        )
-
-        # SCF steps
-        result["n_scf_steps"] = content.count("SCF iteration")
-
-        # Forces
-        in_forces = False
-        force_block: list[list[float]] = []
-        for line in lines:
-            if (
-                "ATOMIC FORCES in" in line
-                or "FORCES" in line
-                and "atom" in line.lower()
-            ):
-                in_forces = True
-                force_block = []
-                continue
-            if in_forces:
-                parts = line.split()
-                if len(parts) >= 6 and parts[0].isdigit():
-                    with contextlib.suppress(ValueError, IndexError):
-                        force_block.append(
-                            [float(parts[-3]), float(parts[-2]), float(parts[-1])]
-                        )
-                elif line.strip() == "":
-                    in_forces = False
-        if force_block:
-            result["forces"] = force_block
-
-        # Stress
-        for i, line in enumerate(lines):
-            if "STRESS|" in line or "Stress tensor" in line:
-                stress = []
-                for j in range(1, 4):
-                    if i + j < len(lines):
-                        parts = lines[i + j].split()
-                        if len(parts) >= 3:
-                            with contextlib.suppress(ValueError, IndexError):
-                                stress.append(
-                                    [
-                                        float(parts[-3]),
-                                        float(parts[-2]),
-                                        float(parts[-1]),
-                                    ]
-                                )
-                if len(stress) == 3:
-                    result["stress"] = stress
-
-        return result
+        return {
+            "energy": _cp2k_parse_energy(lines),
+            "converged": (
+                "SCF run converged" in content or "*** SCF run converged" in content
+            ),
+            "forces": _cp2k_parse_forces(lines),
+            "stress": _cp2k_parse_stress(lines),
+            "n_scf_steps": content.count("SCF iteration"),
+        }
 
     def _parse_results(self, args: Cp2kToolInput, work_dir: Path) -> ToolResult:
         parsed: dict[str, Any] = {}

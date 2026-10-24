@@ -256,6 +256,118 @@ class SubagentDispatch:
 
     # ------------------------------------------------------------------ API
 
+    def _create_subagent(
+        self,
+        spec: SubagentSpec,
+        factory: Any,
+        thread_id: str,
+        approval_callback: Any,
+    ) -> Any:
+        """按 spec 创建子 agent, 并应用工具白名单与调用预算."""
+        profile_id = self._pick_profile(factory)
+        agent = factory.create(
+            profile_id=profile_id,
+            thread_id=thread_id,
+            system_prompt_override=spec.system_prompt,
+            approval_callback=approval_callback,
+        )
+        # 应用工具白名单: 清掉 factory 注册的默认工具, 按白名单重新注册
+        if spec.allowed_tools:
+            agent.tool_filter = set(spec.allowed_tools)
+            agent.langchain_tools.clear()
+            agent.register_tools_from_registry()
+        # 设工具调用预算, chat() 里会据此建 ToolCallBudget
+        agent._max_tool_calls = spec.max_tool_calls
+        return agent
+
+    async def _run_subagent_stream(
+        self, agent: Any, task: str, thread_id: str, on_state: Any
+    ) -> Any:
+        """消费子 agent 的 chat 流, 返回最后一个带非空 messages 的真实状态."""
+        final_state = None
+        async for state in agent.chat(task, thread_id):
+            if not isinstance(state, dict):
+                continue
+            # chat() 除 langgraph state (含 "messages") 外, 还 yield 一批
+            # **控制事件**: {"_token":..} / {"_reasoning":..} /
+            # {"tool_break":True,"state":{...}} / {"_auto_continue":True} /
+            # {"_compacted":..}. 末条常是控制事件 → 若直接取最后一条,
+            # 后面的 _extract_output/_extract_tool_calls/_estimate_tokens
+            # 读到的 state 根本没有 "messages", 整个子 agent 产出被判为空
+            # (run62/64 实测: blind_recon dispatch success=True 却
+            # summary_len=0, 6 次派发里 3 次空手).
+            # 故只认带非空 messages 的真实状态; {"state": {...}} 一层解开.
+            # 从未见过 messages 时兜底保留首条 dict (保持旧行为).
+            cand = state.get("state") if "messages" not in state else state
+            if isinstance(cand, dict) and cand.get("messages"):
+                final_state = cand
+            elif final_state is None:
+                final_state = state
+            if on_state is not None:
+                try:
+                    await on_state(state)
+                except Exception:  # 防御: 状态回调失败则忽略
+                    logger.debug("on_state callback failed", exc_info=True)
+        return final_state
+
+    async def _fire_subagent_stop(
+        self,
+        ctx: dict | None,
+        agent: Any,
+        spec_name: str,
+        thread_id: str,
+        task: str,
+    ) -> None:
+        """子 agent 完成后触发 SUBAGENT_STOP hook."""
+        try:
+            from huginn.hooks import SUBAGENT_STOP, HookContext
+
+            # 优先用父 agent 的 hook_manager, 这样父 agent 能观察到子 agent
+            # 完成; fallback 到子 agent 自己的保持向后兼容.
+            parent_mgr = ctx.get("hook_manager") if ctx else None
+            hook_mgr = parent_mgr or getattr(agent, "hook_manager", None)
+            if hook_mgr is None:
+                return
+            sub_ctx = HookContext(
+                tool_name="subagent",
+                metadata={
+                    "spec_name": spec_name,
+                    "thread_id": thread_id,
+                    "task": task,
+                },
+            )
+            await hook_mgr.trigger(SUBAGENT_STOP, sub_ctx)
+        except Exception:  # 防御: 停止钩子失败则忽略
+            logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
+
+    async def _maybe_summarize(
+        self,
+        spec: SubagentSpec,
+        agent: Any,
+        factory: Any,
+        output: str,
+        task: str,
+    ) -> str:
+        """按 spec 配置决定是否总结子 agent 的长输出."""
+        if not (spec.summarize_result and len(output) > _SUMMARIZE_THRESHOLD):
+            return output
+        # H5-a: 走 task 路由选总结模型, 与 engine._llm_chat(task="summarize")
+        # 行为一致. 子 agent 无 model_router / select_model 失败时回退到
+        # factory 的 default_alias — 保持向后兼容.
+        summarize_model = None
+        try:
+            if hasattr(agent, "select_model"):
+                summarize_model = agent.select_model("summarize")
+        except Exception:  # 防御: 总结模型选择失败回退默认
+            logger.debug(
+                "select summarize model failed, fallback to default",
+                exc_info=True,
+            )
+        return await self._summarize(
+            factory, output, task, summary_format=spec.summary_format,
+            model=summarize_model,
+        )
+
     async def dispatch(
         self,
         spec_name: str,
@@ -312,13 +424,7 @@ class SubagentDispatch:
         thread_id = f"subagent_{spec_name}_{uuid.uuid4().hex[:8]}"
 
         try:
-            profile_id = self._pick_profile(factory)
-            agent = factory.create(
-                profile_id=profile_id,
-                thread_id=thread_id,
-                system_prompt_override=spec.system_prompt,
-                approval_callback=approval_callback,
-            )
+            agent = self._create_subagent(spec, factory, thread_id, approval_callback)
         except Exception as exc:
             logger.debug("subagent creation failed", exc_info=True)
             return SubagentResult(
@@ -328,89 +434,21 @@ class SubagentDispatch:
                 spec_name=spec_name,
             )
 
-        # 应用工具白名单: 清掉 factory 注册的默认工具, 按白名单重新注册
-        if spec.allowed_tools:
-            agent.tool_filter = set(spec.allowed_tools)
-            agent.langchain_tools.clear()
-            agent.register_tools_from_registry()
-
-        # 设工具调用预算, chat() 里会据此建 ToolCallBudget
-        agent._max_tool_calls = spec.max_tool_calls
-
         # G1: 把 _depth+1 注入 contextvar, 子 agent 调 subagent_tool 时
         # 能读到正确的递归深度. chat() 里的 tool call 同 task, contextvar 可见.
         token = _current_depth.set(_depth + 1)
         try:
-            final_state = None
-            async for state in agent.chat(task, thread_id):
-                if isinstance(state, dict):
-                    # chat() 除 langgraph state (含 "messages") 外, 还 yield 一批
-                    # **控制事件**: {"_token":..} / {"_reasoning":..} /
-                    # {"tool_break":True,"state":{...}} / {"_auto_continue":True} /
-                    # {"_compacted":..}. 末条常是控制事件 → 若直接取最后一条,
-                    # 后面的 _extract_output/_extract_tool_calls/_estimate_tokens
-                    # 读到的 state 根本没有 "messages", 整个子 agent 产出被判为空
-                    # (run62/64 实测: blind_recon dispatch success=True 却
-                    # summary_len=0, 6 次派发里 3 次空手).
-                    # 故只认带非空 messages 的真实状态; {"state": {...}} 一层解开.
-                    # 从未见过 messages 时兜底保留首条 dict (保持旧行为).
-                    _cand = state.get("state") if "messages" not in state else state
-                    if isinstance(_cand, dict) and _cand.get("messages"):
-                        final_state = _cand
-                    elif final_state is None:
-                        final_state = state
-                    if on_state is not None:
-                        try:
-                            await on_state(state)
-                        except Exception:  # 防御: 状态回调失败则忽略
-                            logger.debug("on_state callback failed", exc_info=True)
+            final_state = await self._run_subagent_stream(
+                agent, task, thread_id, on_state
+            )
 
             # 子 agent 完成: 触发 SUBAGENT_STOP hook.
-            # 优先用父 agent 的 hook_manager (从 context 取 "hook_manager"),
-            # 这样父 agent 能观察到子 agent 完成. 之前只取子 agent 自己的
-            # hook_manager, 父 agent 永远收不到 SUBAGENT_STOP. fallback 到
-            # 子 agent 的保持向后兼容 (调用方未传 hook_manager 时).
-            try:
-                from huginn.hooks import SUBAGENT_STOP, HookContext
-
-                _parent_hook_mgr = ctx.get("hook_manager") if ctx else None
-                _hook_mgr = _parent_hook_mgr or getattr(agent, "hook_manager", None)
-                if _hook_mgr is not None:
-                    _sub_ctx = HookContext(
-                        tool_name="subagent",
-                        metadata={
-                            "spec_name": spec_name,
-                            "thread_id": thread_id,
-                            "task": task,
-                        },
-                    )
-                    await _hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
-            except Exception:  # 防御: 停止钩子失败则忽略
-                logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
+            await self._fire_subagent_stop(ctx, agent, spec_name, thread_id, task)
 
             output = self._extract_output(final_state)
             tool_calls = self._extract_tool_calls(final_state)
             tokens = self._estimate_tokens(final_state)
-
-            if spec.summarize_result and len(output) > _SUMMARIZE_THRESHOLD:
-                # H5-a: 走 task 路由选总结模型, 与 engine._llm_chat(task="summarize")
-                # 行为一致. 子 agent 无 model_router / select_model 失败时回退到
-                # factory 的 default_alias — 保持向后兼容.
-                summarize_model = None
-                try:
-                    if hasattr(agent, "select_model"):
-                        summarize_model = agent.select_model("summarize")
-                except Exception:  # 防御: 总结模型选择失败回退默认
-                    logger.debug(
-                        "select summarize model failed, fallback to default",
-                        exc_info=True,
-                    )
-                summary = await self._summarize(
-                    factory, output, task, summary_format=spec.summary_format,
-                    model=summarize_model,
-                )
-            else:
-                summary = output
+            summary = await self._maybe_summarize(spec, agent, factory, output, task)
 
             return SubagentResult(
                 summary=summary,

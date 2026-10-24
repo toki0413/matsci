@@ -124,6 +124,42 @@ def _parse_substitute_headers(report_md: Path) -> list[dict]:
     return out
 
 
+def _count_evals_failures(evals_history: list, key: str) -> int:
+    """(a) 内存里的 evals: on_track=false 且 attempted 含组件名."""
+    n = 0
+    for ev in evals_history or []:
+        try:
+            on_track = str(getattr(ev, "on_track", "")).lower()
+            attempted = str(getattr(ev, "attempted", "") or "").lower()
+        except Exception:
+            continue
+        if on_track == "false" and key in attempted:
+            n += 1
+    return n
+
+
+def _count_trace_failures(trace_path: Path, key: str) -> int:
+    """(b) 磁盘 meta_trace.jsonl: 同上口径, 覆盖 resume/跨进程历史."""
+    n = 0
+    try:
+        with trace_path.open(encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                on_track = str(entry.get("on_track", "")).lower()
+                attempted = str(entry.get("attempted", "") or "").lower()
+                if on_track == "false" and key in attempted:
+                    n += 1
+    except OSError:
+        logger.debug("meta_trace read failed in _count_failed_attempts", exc_info=True)
+    return n
+
+
 def _count_failed_attempts(ws: Path, evals_history: list, component: str) -> int:
     """统计 [EXACT] 组件的失败尝试次数.
 
@@ -133,36 +169,11 @@ def _count_failed_attempts(ws: Path, evals_history: list, component: str) -> int
     升级路径: 用 LLM 读 attempted 文本判语义相关性, 而非子串匹配.
     """
     key = component.lower()
-    n = 0
-    # (a) in-memory evals
-    for ev in evals_history or []:
-        try:
-            on_track = str(getattr(ev, "on_track", "")).lower()
-            attempted = str(getattr(ev, "attempted", "") or "").lower()
-            if on_track == "false" and key in attempted:
-                n += 1
-        except Exception:
-            continue
+    n = _count_evals_failures(evals_history, key)
     # (b) on-disk trace — resume/跨进程场景 evals_history 未必含全部历史
     trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
     if trace_path.exists():
-        try:
-            with trace_path.open(encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except Exception:
-                        continue
-                    if (
-                        str(entry.get("on_track", "")).lower() == "false"
-                        and key in str(entry.get("attempted", "") or "").lower()
-                    ):
-                        n += 1
-        except OSError:
-            logger.debug("meta_trace read failed in _count_failed_attempts", exc_info=True)
+        n += _count_trace_failures(trace_path, key)
     return n
 
 

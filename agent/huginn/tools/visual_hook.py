@@ -375,106 +375,148 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
     坐标归一化到 0-999, 跟 1D primitives 同格式, LLM 可以跨维度引用.
     ponytail: 只处理结构化字段, 不重建 2D 矩阵. 升级: 等高线 + 热点检测.
     """
-    out: list[str] = []
     measurements = result.get("measurements") or result
+    if not isinstance(measurements, dict):
+        return []
+    img_shape = measurements.get("image_shape") or [1, 1]
+    h, w = float(img_shape[0]), float(img_shape[1])
+    out = _eds_mapping_lines(measurements, w, h)
+    out += _phase_field_lines(measurements, w, h)
+    return out
 
-    # EDS mapping: elements 字段 — 元素质心坐标 + 覆盖率 + hotspots
-    elements = measurements.get("elements") if isinstance(measurements, dict) else None
-    if isinstance(elements, dict) and elements:
-        img_shape = measurements.get("image_shape") or [1, 1]
-        h, w = float(img_shape[0]), float(img_shape[1])
-        parts: list[str] = []
-        for elem, stats in elements.items():
-            if not isinstance(stats, dict):
+
+def _eds_mapping_lines(
+    measurements: dict[str, Any], w: float, h: float
+) -> list[str]:
+    """EDS mapping: elements 字段 — 元素质心坐标 + 覆盖率 + hotspots."""
+    elements = measurements.get("elements")
+    if not isinstance(elements, dict) or not elements:
+        return []
+    parts: list[str] = []
+    for elem, stats in elements.items():
+        if isinstance(stats, dict):
+            parts.extend(_eds_element_parts(elem, stats, w, h))
+    if not parts:
+        return []
+    lines = [f"[EDS_mapping] {len(elements)} elements:\n" + "\n".join(parts)]
+    ov_parts = _overlap_parts(measurements.get("overlaps"))
+    if ov_parts:
+        lines.append("  overlaps: " + ", ".join(ov_parts))
+    return lines
+
+
+def _eds_element_parts(
+    elem: Any, stats: dict[str, Any], w: float, h: float
+) -> list[str]:
+    """单个元素的质心 + 覆盖率 + top-3 热点坐标."""
+    try:
+        cx, cy = stats.get("centroid_px", [0, 0])
+        cov = float(stats.get("coverage_fraction", 0))
+        # 质心归一化到 0-999
+        nx = int(float(cx) / w * 999) if w > 0 else 0
+        ny = int(float(cy) / h * 999) if h > 0 else 0
+        cov_y = int(cov * 999)
+        parts = [
+            f"  {elem}: centroid=<point>[{nx},{ny}]</point>, "
+            f"coverage=<point>[{cov_y}]</point>={cov * 100:.1f}%"
+        ]
+        # hotspots: top-N 聚集域质心, 比 overall centroid 更精确
+        hotspots = stats.get("hotspots") or []
+        for hi, hs in enumerate(hotspots[:3]):
+            if not isinstance(hs, dict):
                 continue
             try:
-                cx, cy = stats.get("centroid_px", [0, 0])
-                cov = float(stats.get("coverage_fraction", 0))
-                # 质心归一化到 0-999
-                nx = int(float(cx) / w * 999) if w > 0 else 0
-                ny = int(float(cy) / h * 999) if h > 0 else 0
-                cov_y = int(cov * 999)
-                parts.append(
-                    f"  {elem}: centroid=<point>[{nx},{ny}]</point>, "
-                    f"coverage=<point>[{cov_y}]</point>={cov * 100:.1f}%"
-                )
-                # hotspots: top-N 聚集域质心, 比 overall centroid 更精确
-                hotspots = stats.get("hotspots") or []
-                for hi, hs in enumerate(hotspots[:3]):
-                    if not isinstance(hs, dict):
-                        continue
-                    hcx, hcy = hs.get("centroid_px", [0, 0])
-                    area = int(hs.get("area_px2", 0))
-                    hnx = int(float(hcx) / w * 999) if w > 0 else 0
-                    hny = int(float(hcy) / h * 999) if h > 0 else 0
-                    parts.append(
-                        f"    hotspot{hi+1}=<point>[{hnx},{hny}]</point> "
-                        f"(area={area}px²)"
-                    )
+                parts.append(_hotspot_part(hi, hs, w, h))
             except (ValueError, TypeError, IndexError):
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
-        if parts:
-            out.append(f"[EDS_mapping] {len(elements)} elements:\n" + "\n".join(parts))
-            overlaps = measurements.get("overlaps")
-            if isinstance(overlaps, dict) and overlaps:
-                ov_parts = []
-                for pair, ov in overlaps.items():
-                    if isinstance(ov, dict):
-                        iou = float(ov.get("iou", 0))
-                        iou_y = int(iou * 999)
-                        ov_parts.append(f"{pair}: IoU=<point>[{iou_y}]</point>={iou:.2f}")
-                if ov_parts:
-                    out.append("  overlaps: " + ", ".join(ov_parts))
+        return parts
+    except (ValueError, TypeError, IndexError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return []
 
-    # phase_field: volume_fractions + morphology + interface
-    vol_fracs = measurements.get("volume_fractions") if isinstance(measurements, dict) else None
-    if isinstance(vol_fracs, dict) and vol_fracs:
-        pf_shape = measurements.get("image_shape") or [1, 1]
-        pf_h, pf_w = float(pf_shape[0]), float(pf_shape[1])
-        parts = []
-        for phase, frac in vol_fracs.items():
+
+def _hotspot_part(hi: int, hs: dict[str, Any], w: float, h: float) -> str:
+    hcx, hcy = hs.get("centroid_px", [0, 0])
+    area = int(hs.get("area_px2", 0))
+    hnx = int(float(hcx) / w * 999) if w > 0 else 0
+    hny = int(float(hcy) / h * 999) if h > 0 else 0
+    return f"    hotspot{hi+1}=<point>[{hnx},{hny}]</point> (area={area}px\u00b2)"
+
+
+def _overlap_parts(overlaps: Any) -> list[str]:
+    if not isinstance(overlaps, dict) or not overlaps:
+        return []
+    out: list[str] = []
+    for pair, ov in overlaps.items():
+        if not isinstance(ov, dict):
+            continue
+        iou = float(ov.get("iou", 0))
+        iou_y = int(iou * 999)
+        out.append(f"{pair}: IoU=<point>[{iou_y}]</point>={iou:.2f}")
+    return out
+
+
+def _phase_field_lines(
+    measurements: dict[str, Any], w: float, h: float
+) -> list[str]:
+    """phase_field: volume_fractions + morphology + interface."""
+    vol_fracs = measurements.get("volume_fractions")
+    if not isinstance(vol_fracs, dict) or not vol_fracs:
+        return []
+    out: list[str] = []
+    parts: list[str] = []
+    for phase, frac in vol_fracs.items():
+        try:
+            y = int(float(frac) * 999)
+            parts.append(f"{phase}=<point>[{y}]</point>={float(frac) * 100:.1f}%")
+        except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+    if parts:
+        out.append(f"[phase_field] volume_fractions: {', '.join(parts)}")
+
+    interface = measurements.get("interface_pixel_fraction")
+    if isinstance(interface, int | float):
+        iy = int(float(interface) * 999)
+        out.append(f"  interface_fraction=<point>[{iy}]</point>={float(interface) * 100:.2f}%")
+
+    morph_parts = _phase_morphology_parts(measurements.get("morphology"), w, h)
+    if morph_parts:
+        out.append("  morphology: " + "; ".join(morph_parts))
+    return out
+
+
+def _phase_morphology_parts(
+    morphology: Any, pf_w: float, pf_h: float
+) -> list[str]:
+    if not isinstance(morphology, dict) or not morphology:
+        return []
+    morph_parts: list[str] = []
+    for phase, morph in morphology.items():
+        if not isinstance(morph, dict):
+            continue
+        n_dom = int(morph.get("n_domains", 0))
+        if n_dom <= 0:
+            continue
+        mean_area = float(morph.get("mean_domain_area_px2", 0))
+        morph_parts.append(f"{phase}: domains={n_dom}, mean_area={mean_area:.0f}px\u00b2")
+        # top domain 质心坐标化, 让 LLM 指向最大 domain 位置
+        top_cents = morph.get("top_domain_centroids_px") or []
+        for ci, c in enumerate(top_cents[:3]):
             try:
-                y = int(float(frac) * 999)
-                parts.append(f"{phase}=<point>[{y}]</point>={float(frac) * 100:.1f}%")
-            except (ValueError, TypeError):
+                cx, cy = c
+                nx = int(float(cx) / pf_w * 999) if pf_w > 0 else 0
+                ny = int(float(cy) / pf_h * 999) if pf_h > 0 else 0
+                morph_parts.append(
+                    f"    {phase} top{ci+1}=<point>[{nx},{ny}]</point>"
+                )
+            except (ValueError, TypeError, IndexError):
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
-        if parts:
-            out.append(f"[phase_field] volume_fractions: {', '.join(parts)}")
+    return morph_parts
 
-        interface = measurements.get("interface_pixel_fraction")
-        if isinstance(interface, int | float):
-            iy = int(float(interface) * 999)
-            out.append(f"  interface_fraction=<point>[{iy}]</point>={float(interface) * 100:.2f}%")
 
-        morphology = measurements.get("morphology")
-        if isinstance(morphology, dict) and morphology:
-            morph_parts = []
-            for phase, morph in morphology.items():
-                if not isinstance(morph, dict):
-                    continue
-                n_dom = int(morph.get("n_domains", 0))
-                if n_dom > 0:
-                    mean_area = float(morph.get("mean_domain_area_px2", 0))
-                    morph_parts.append(f"{phase}: domains={n_dom}, mean_area={mean_area:.0f}px²")
-                    # top domain 质心坐标化, 让 LLM 指向最大 domain 位置
-                    top_cents = morph.get("top_domain_centroids_px") or []
-                    for ci, c in enumerate(top_cents[:3]):
-                        try:
-                            cx, cy = c
-                            nx = int(float(cx) / pf_w * 999) if pf_w > 0 else 0
-                            ny = int(float(cy) / pf_h * 999) if pf_h > 0 else 0
-                            morph_parts.append(
-                                f"    {phase} top{ci+1}=<point>[{nx},{ny}]</point>"
-                            )
-                        except (ValueError, TypeError, IndexError):
-                            logger.debug("best-effort op failed", exc_info=True)
-                            continue
-            if morph_parts:
-                out.append("  morphology: " + "; ".join(morph_parts))
-
-    return out
 
 
 def _normalize_coord(idx: int, n: int, val: float, all_vals: list[float]) -> str:

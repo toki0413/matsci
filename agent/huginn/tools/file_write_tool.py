@@ -60,7 +60,7 @@ class FileWriteTool(HuginnTool):
     ) -> ToolResult:
         input_data = FileWriteToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
         )
         # C7: Windows 路径修复 — normpath 归一化反斜杠/盘符/..
         # 原 bug: agent 传 "submission\model.py" 在 Windows 上被当单文件名,

@@ -38,7 +38,11 @@ from typing import Any
 # with_retry: autoloop 的 LLM 调用此前**绕开**了统一重试层 (agent/streaming.py 有,
 # 这条路径没有), 一次限流/网络抖动就被当成"阶段无产出" → redirect→pivot→停机
 # (run74). 这里接上.
-from huginn.autoloop.engine_reflect import _REPEAT_HARD_STREAK
+from huginn.autoloop.engine_reflect import (
+    _CITATION_MIN_MAGNITUDE,
+    _REPEAT_HARD_STREAK,
+    _numeric_tokens,
+)
 from huginn.autoloop.exec_observation import classify_exit_class
 from huginn.llm_retry import with_retry
 
@@ -47,6 +51,32 @@ logger = logging.getLogger(__name__)
 # 报告 citation 台账容量: 每条一次真实 execute, 只留紧凑"数值面".
 _EXEC_LEDGER_MAX = 24
 _EXEC_LEDGER_ENTRY_CHARS = 600
+
+# code_lab 超时后的最小重试预算 (秒): 低于此值的沙箱跑不出任何有意义的实验.
+_CODELAB_MIN_TIMEOUT_S = 60.0
+# 未拿到显式超时时的兜底 (与 HUGINN_CODELAB_TIMEOUT_S 的默认档一致).
+_CODELAB_FALLBACK_TIMEOUT_S = 600.0
+
+
+def _next_timeout_cap(
+    current_cap: float | None,
+    effective_timeout: float | None,
+    timed_out: bool,
+) -> tuple[float | None, bool]:
+    """超时后的下一轮超时预算: ``(新上限, 是否还允许再试)``.
+
+    超时是**算力预算**问题而非代码 bug: 代码不变时按原超时重跑只会再烧一遍
+    (ws9 iteration 3 实测 600s x 4). 首次超时把上限减半再给一次机会; 连续
+    第二次超时就停 —— 继续重试的期望收益为零, 挂钟代价是线性的.
+    """
+    if not timed_out:
+        return current_cap, True
+    if current_cap is not None:
+        return current_cap, False
+    base = effective_timeout if effective_timeout and effective_timeout > 0 else (
+        _CODELAB_FALLBACK_TIMEOUT_S
+    )
+    return max(_CODELAB_MIN_TIMEOUT_S, base / 2.0), True
 
 
 class EngineAct:
@@ -74,6 +104,104 @@ class EngineAct:
             return
         setattr(self.engine, name, value)
 
+    #: plan / validate 阶段允许挂载的**只读**工具白名单.
+    #: 只收 read_only=True 且无副作用的工具 —— 这两个阶段此前完全没有工具面,
+    #: 书生只能凭记忆"编"计划与批评, 无法查文献/翻记忆/看自己的执行 trace.
+    _READONLY_PHASE_TOOLS: tuple[str, ...] = (
+        "literature_tool",
+        "recall",
+        "self_observe",
+        "recall_observation",
+        "web_search_tool",
+        "agentic_search_tool",
+        "paper_tool",
+    )
+
+    def _resolve_readonly_tools(self) -> list[Any]:
+        """按白名单取只读工具并适配为 LangChain 工具 (best-effort).
+
+        三重过滤: 已注册 → ``read_only`` → 运行时 ``is_available()``. 任一不满足
+        即跳过; 适配失败也跳过. 全部失效时返回 [], 调用方退化为无工具调用.
+        """
+        try:
+            from huginn.core_types import PermissionMode
+            from huginn.permissions import PermissionConfig
+            from huginn.tools import register_all_tools
+            from huginn.tools.adapter import ToolAdapter
+            from huginn.tools.registry import ToolRegistry
+        except Exception:  # 防御: 工具子系统不可用时不阻塞 plan/validate
+            logger.debug("readonly tool import failed", exc_info=True)
+            return []
+
+        # 注册时机修正: run_cognitive_driver 只构造 AutoloopEngine, 从不调用
+        # register_all_tools(); 工具要到 execute/coder 内部才被懒注册. 于是 plan
+        # (execute 之前) 看到的 ToolRegistry 是空的 → 白名单过滤后恒为 [].
+        # register_all_tools 自带 "非空即返回" 幂等门, 这里按需补一次, 代价只在
+        # 首次 (~秒级), 之后是常数返回.
+        if not ToolRegistry.list_tools():
+            try:
+                register_all_tools()
+            except Exception:  # 防御: 注册失败按无工具处理, 不阻塞阶段推进
+                logger.debug("register_all_tools failed", exc_info=True)
+
+        # 显式授权: 默认权限表把多数工具判成 ASK, 而阶段内没有审批人 → 每次调用
+        # 都恒拒 (实测回执 "recall 工具需要授权"). 这里按**最小权限**只给白名单
+        # 内这 7 个只读工具 AUTO, 其余仍走 plan_mode 的 ASK/写工具降级.
+        perm = PermissionConfig(plan_mode=True)
+        for name in self._READONLY_PHASE_TOOLS:
+            perm.set_mode(name, PermissionMode.AUTO)
+
+        adapter = ToolAdapter()
+        out: list[Any] = []
+        for name in self._READONLY_PHASE_TOOLS:
+            tool = ToolRegistry.get(name)
+            if tool is None or not getattr(tool, "read_only", False):
+                continue
+            if name == "recall_observation" and not self._has_archived_observations():
+                # 前置状态工具: 没有 offload 句柄时它 100% 失败 (ws7 实测书生
+                # 只能瞎传 '@obs:' → malformed handle). 按需裁剪, 不给"必然失败"
+                # 的选项, 免得浪费一轮工具调用并污染成功率.
+                continue
+            if not getattr(tool, "active", True):
+                continue
+            try:
+                if not tool.is_available():
+                    continue
+            except Exception:  # 防御: 可用性探测异常按不可用处理
+                continue
+            try:
+                # memory_manager 必须透传: engine 持有 MemoryManager, 但 adapter
+                # 默认丢弃 → recall/remember 在 driver 上下文恒返回 "Memory manager
+                # not available" (ws7 实测 2/2 失败). 工具面给了却不给运行期依赖,
+                # 等于又一层"注册≠可用".
+                out.append(
+                    adapter.adapt(
+                        tool,
+                        permission_config=perm,
+                        memory_manager=getattr(self, "memory", None),
+                    )
+                )
+            except Exception:  # 防御: 单个工具适配失败不影响其余工具
+                logger.debug("adapt readonly tool %s failed", name, exc_info=True)
+        if out:
+            # info 级: 触发率评估需要"这一阶段到底给了模型哪些工具"的可见证据.
+            logger.info(
+                "readonly phase tools available: %s",
+                [getattr(t, "name", "?") for t in out],
+            )
+        return out
+
+    def _has_archived_observations(self) -> bool:
+        """本 session 是否已有 offload 句柄 (决定 recall_observation 是否挂出)."""
+        try:
+            from huginn.tools.observation_pack import ObservationArchive
+
+            # adapter 构造 ToolContext 时 session_id 固定为 "default", 这里必须
+            # 用同一口径, 否则裁剪判断与实际召回目录对不上.
+            return ObservationArchive("default").has_entries()
+        except Exception:  # 防御: 探测失败按"无句柄"处理, 只是少给一个工具
+            return False
+
     async def _plan(
         self, hypothesis: str, context: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -87,7 +215,10 @@ class EngineAct:
             # OAK 启发: 三阶段角色分工 — hypothesize 用 reasoning (强模型发散),
             # plan 用 planning (中档模型收敛), execute 不调 LLM 直接跑工具
             response = await self._llm_chat(
-                prompt, persona_name="default", task="planning"
+                prompt,
+                persona_name="default",
+                task="planning",
+                tools=self._resolve_readonly_tools(),
             )
             plan = self._parse_plan(response)
             # LLM 可达 (即便解析为空) → 不是"不可用": 清标记, 让空产出正常驱动
@@ -456,6 +587,8 @@ class EngineAct:
         #   可选 slice (修复重写 attempt>=1) 启动前查可负担性, 门槛自校准 = max(下限,
         #   上一片实测挂钟). 非长程/关开关时两函数 fail-open → 逐字节等价旧行为.
         _prev_slice_cost = 0.0  # 上一片 (上一次尝试: 沙箱 + 其后作者 LLM) 的实测挂钟
+        # 超时是算力问题: 首次超时减半预算, 连续超时直接停.
+        _timeout_cap: float | None = None
         # D6 钩子: 长程宿主 (Engine/engine_control) 提供预算切片三函数; 短程宿主 /
         # 离线 stub 无这三个属性 → None, 门与封顶整体 fail-open, 行为 100% 不变
         # (与 branch_incubator 的 fail-open 一致). getattr 兜底避免 stub 上 AttributeError.
@@ -488,10 +621,16 @@ class EngineAct:
                 )
                 break
             _t_slice = time.monotonic()
-            res, reason = self._run_code_lab(
-                code,
-                timeout_s=_attempt_timeout() if callable(_attempt_timeout) else None,
+            _effective_timeout = (
+                _attempt_timeout() if callable(_attempt_timeout) else None
             )
+            if _timeout_cap is not None:
+                _effective_timeout = (
+                    min(_effective_timeout, _timeout_cap)
+                    if _effective_timeout
+                    else _timeout_cap
+                )
+            res, reason = self._run_code_lab(code, timeout_s=_effective_timeout)
             _prev_slice_cost = time.monotonic() - _t_slice  # D6 自校准: 实测本片
             if res is not None:
                 return {
@@ -512,6 +651,16 @@ class EngineAct:
                     f"attempt={attempt + 1}/{max_repairs + 1} {str(reason)[:120]}",
                     action="advisory_hint",
                 )
+                _timeout_cap, _allow_more = _next_timeout_cap(
+                    _timeout_cap, _effective_timeout, True
+                )
+                if not _allow_more:
+                    logger.warning(
+                        "code_lab 连续超时, 停止重试 (超时属算力预算, "
+                        "按原超时重跑只会空转): 本轮已用 %d 次尝试",
+                        attempt + 1,
+                    )
+                    break
             if attempt < max_repairs:
                 # D6 自校准: 修复重写的作者 LLM 调用也是下一个 slice 的成本, 计入
                 # 实测 —— 否则低估下一片 (run79 超支主要来自作者调用, 非沙箱).
@@ -574,6 +723,7 @@ class EngineAct:
                         "reproducible": True,
                     }
                     self._record_provenance("closed_form_exec", plan, result)
+                    self._record_internal_tool_call("closed_form_exec", plan, result)
                     self._last_execution_result = {
                         "_tool_name": "closed_form_exec",
                         "_tool_input": plan,
@@ -596,6 +746,8 @@ class EngineAct:
                 str(getattr(self, "_objective", "") or "")
             ):
                 _lab = await self._execute_code_lab(description, context)
+                # 成败都记: 失败的内建实验也占用了真实算力, 不能从遥测里消失.
+                self._record_internal_tool_call("code_lab", plan, _lab)
                 if _lab.get("success"):
                     self._record_provenance("code_lab", plan, _lab)
                     self._last_execution_result = {
@@ -629,6 +781,7 @@ class EngineAct:
                             "reproducible": True,
                         }
                         self._record_provenance("probe_exec", plan, result)
+                        self._record_internal_tool_call("probe_exec", plan, result)
                         self._last_execution_result = {
                             "_tool_name": "probe_exec",
                             "_tool_input": plan,
@@ -744,8 +897,25 @@ class EngineAct:
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
 
+        # P1: coder 失败不再直接落盘成终态. 未产出可用结果时按 code_lab →
+        # probe_exec 的顺序自动回落 (两条快路都真实执行、产出可复算证据),
+        # 都不行才保留原始失败回执, 交给 validate 的诚实层判定.
+        if (
+            mode == "coder"
+            and isinstance(result, dict)
+            and not result.get("success", True)
+        ):
+            fallback = await self._fallback_from_coder(description, context)
+            if fallback is not None:
+                result = fallback
+                mode = str(fallback.get("mode", mode))
+
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
+        # dispatch / 回落阶段的内建执行成功路径: 同样补 tool_call span,
+        # 与快路的记法一致 (快路已提前 return, 不会重复).
+        if mode in self._INTERNAL_EXEC_MODES:
+            self._record_internal_tool_call(mode, plan, result)
         # VISTA 借鉴: 本轮若产出视觉帧, 原样落盘进无损观测记忆.
         # flag (visual_frame_memory) 关时 capture_if_enabled 直返, 零成本零回归.
         # frame_inspect 本身是"回看已有帧", 不重复入库.
@@ -765,6 +935,42 @@ class EngineAct:
         # (高重叠 → 下轮降级引导). context 无 changed_files 时记空, 不触发门控.
         self._last_execution_files = context.get("changed_files", [])
         return result
+
+    #: 引擎内建执行快路 (不经 ToolAdapter 的 LLM function call).
+    #: 这些路径真实跑代码/数值, 必须进 trajectory.tool_calls, 否则利用率被低估.
+    _INTERNAL_EXEC_MODES: frozenset[str] = frozenset(
+        {"code_lab", "probe_exec", "closed_form_exec"}
+    )
+
+    def _record_internal_tool_call(
+        self, tool_name: str, input_params: Any, output: Any
+    ) -> None:
+        """把内建执行快路记成一条与 adapter 同形的 tool_call span.
+
+        code_lab / probe_exec / closed_form_exec 不经过 ToolAdapter, 以前只在
+        provenance.tool_chain 留痕 → trajectory.tool_calls 恒为 0: 利用率被系统性
+        低估, G31 审计还会把"真跑了实验"误判成空转. success 口径与
+        `_derive_coder_outcome` 一致: 显式 False 或带 error 即失败.
+        """
+        try:
+            from huginn.telemetry import get_telemetry_collector
+            from huginn.tools.adapter import _truncate_for_trajectory
+
+            ok = not (
+                isinstance(output, dict)
+                and (output.get("success") is False or output.get("error"))
+            )
+            with get_telemetry_collector().span("tool_call", tool=tool_name) as span:
+                span.metadata["success"] = ok
+                span.metadata["stage"] = "internal"
+                span.metadata["args"] = _truncate_for_trajectory(input_params)
+                span.metadata["result"] = _truncate_for_trajectory(output)
+                if not ok and isinstance(output, dict):
+                    span.metadata["error"] = str(
+                        output.get("error") or "internal execution failed"
+                    )[:2000]
+        except Exception:  # 遥测 fail-open, 绝不阻断执行
+            logger.debug("internal tool_call span failed (fail-open)", exc_info=True)
 
     def _record_provenance(
         self, tool_name: str, input_params: dict[str, Any], output: Any
@@ -820,7 +1026,19 @@ class EngineAct:
             }
             text = json.dumps(slim, ensure_ascii=False, default=str)
             if len(text) > _EXEC_LEDGER_ENTRY_CHARS:
-                text = text[:_EXEC_LEDGER_ENTRY_CHARS]
+                # 硬截断会把"真实存在但落在窗口外"的数值从证据面抹掉: ws9 的
+                # ev5 在 600 字符后才写 max_l2_err / score, 报告如实抄了这些数,
+                # 审计门却在台账里查不到 → 判成编造. 截在词边界, 再把窗口外的
+                # **数值面**补成紧凑后缀 —— 报告面照样短, 证据面不失真.
+                cut = text.rfind(" ", 0, _EXEC_LEDGER_ENTRY_CHARS)
+                if cut < _EXEC_LEDGER_ENTRY_CHARS // 2:
+                    cut = _EXEC_LEDGER_ENTRY_CHARS
+                tail_nums = sorted(
+                    _numeric_tokens(text[cut:], _CITATION_MIN_MAGNITUDE)
+                )
+                text = text[:cut] + (
+                    " nums_after_cut=" + " ".join(tail_nums) if tail_nums else ""
+                )
             ledger.append(
                 {
                     "idx": len(ledger) + 1,
@@ -1124,6 +1342,72 @@ class EngineAct:
     # Execution helpers
     # ──────────────────────────────────────────────────────────────
 
+    #: CoderRunner 命中迭代上限时 final_answer 的固定前缀 (见 coder/loop.py run()).
+    _CODER_LIMIT_PREFIX = "Coder reached the maximum iteration limit."
+
+    def _derive_coder_outcome(
+        self, final_answer: Any, messages: list[Any]
+    ) -> tuple[bool, dict[str, Any]]:
+        """由真实回执/产物推导 coder 是否成功, 不再硬编码 ``success=True``.
+
+        CoderRunner.run() 只回 ``{final_answer, messages}``, 本身不含 success 字段,
+        因此此前的实现无论 coder 是否空转都写死成功 (run 实测 100 次工具调用
+        全部报错, 结果仍被当成 completed). 这里按三个可观测信号裁决:
+
+        1. 至少发生过一次真实工具调用 (``AIMessage.tool_calls`` 非空);
+        2. 没有命中迭代上限 (``final_answer`` 不以固定前缀开头);
+        3. 至少有一次工具回执**不是错误** (``ToolMessage.content`` 为
+           ``json.dumps({"error": ...})`` 的记为失败).
+
+        允许部分工具失败 (agent 试错后修正是正常行为), 只要求有可用回执.
+        返回 ``(success, diagnostics)``, 诊断字段可直接写进遥测/报告.
+        """
+        import json
+
+        final = final_answer if isinstance(final_answer, str) else str(final_answer or "")
+        n_tool_calls = 0
+        n_tool_results = 0
+        tool_errors: list[str] = []
+        for msg in messages or []:
+            if getattr(msg, "tool_calls", None):
+                n_tool_calls += len(msg.tool_calls)
+            if getattr(msg, "type", "") != "tool":
+                continue
+            n_tool_results += 1
+            content = getattr(msg, "content", "")
+            if not isinstance(content, str):
+                continue
+            try:
+                payload = json.loads(content)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(payload, dict) and payload.get("error"):
+                name = getattr(msg, "name", "") or "?"
+                tool_errors.append(f"{name}: {str(payload['error'])[:200]}")
+
+        usable = n_tool_results - len(tool_errors)
+        hit_limit = final.startswith(self._CODER_LIMIT_PREFIX)
+        success = bool(n_tool_calls) and not hit_limit and usable > 0 and bool(final.strip())
+
+        diag: dict[str, Any] = {
+            "tool_calls": n_tool_calls,
+            "tool_results": n_tool_results,
+            "usable_tool_results": usable,
+            "tool_error_count": len(tool_errors),
+            "tool_errors": tool_errors[:5],
+            "hit_iteration_limit": hit_limit,
+        }
+        if not success:
+            if hit_limit:
+                diag["failure_reason"] = "iteration_limit"
+            elif not n_tool_calls:
+                diag["failure_reason"] = "no_tool_calls"
+            elif usable <= 0:
+                diag["failure_reason"] = "all_tool_calls_failed"
+            else:
+                diag["failure_reason"] = "empty_answer"
+        return success, diag
+
     async def _execute_coder(
         self, description: str, context: dict[str, Any]
     ) -> dict[str, Any]:
@@ -1139,14 +1423,21 @@ Please modify the code to address this task."""
             # CoderRunner.run 是同步的, 丢线程里避免阻塞事件循环
             result = await asyncio.to_thread(self.coder.run, task)
             messages = result.get("messages", [])
-            tool_calls = sum(1 for m in messages if getattr(m, "tool_calls", None))
-            return {
+            final_answer = result.get("final_answer", "")
+            success, outcome = self._derive_coder_outcome(final_answer, messages)
+            payload: dict[str, Any] = {
                 "mode": "coder",
-                "status": "completed",
-                "success": True,
-                "final_answer": result.get("final_answer", ""),
-                "tool_calls": tool_calls,
+                "status": "completed" if success else "failed",
+                "success": success,
+                "final_answer": final_answer,
+                "tool_calls": outcome["tool_calls"],
+                "coder_outcome": outcome,
             }
+            if not success:
+                payload["error"] = (
+                    f"coder 未产出可用结果 ({outcome.get('failure_reason', 'unknown')})"
+                )
+            return payload
         except Exception as e:
             logger.exception("coder execution failed")
             return {
@@ -1155,6 +1446,69 @@ Please modify the code to address this task."""
                 "success": False,
                 "error": str(e),
             }
+
+    async def _fallback_from_coder(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """coder 未产出可用结果时的降级执行链: code_lab → probe_exec.
+
+        只在 coder 已判定失败时调用 (见 `_execute` 末尾), 因此不改变任何正常
+        路径; 每条回落都必须**真实执行并产出证据**才算数, 否则继续下一条.
+        全部落空返回 None, 调用方保留原始失败回执 (如实失败优于伪造成功).
+
+        顺序与 `_execute` 快路一致: 实验意图优先 (code_lab 可写完整实验),
+        平凡确定性数值再退 probe_exec.
+        """
+        reasons: list[str] = []
+        objective = str(getattr(self, "_objective", "") or "")
+
+        try:
+            lab = await self._execute_code_lab(description, context)
+            if isinstance(lab, dict) and lab.get("success"):
+                lab["fallback_from"] = "coder"
+                logger.info("coder 未产出可用结果 → 回落 code_lab 真实执行成功")
+                return lab
+            # 失败尝试也要可见 (成功路径由 _execute 末尾统一补 span).
+            self._record_internal_tool_call(
+                "code_lab", {"fallback_from": "coder"}, lab
+            )
+            reasons.append("code_lab: " + str((lab or {}).get("error", "no evidence")))
+        except Exception as exc:  # 防御: 回落本身失败不能带挂 execute
+            logger.warning("coder→code_lab fallback failed", exc_info=True)
+            reasons.append(f"code_lab: {exc}")
+
+        if self._is_deterministic_numeric(description) or self._is_deterministic_numeric(
+            objective
+        ):
+            src = description if self._is_deterministic_numeric(description) else objective
+            try:
+                probe = await self._request_numeric_probe(src)
+                if probe:
+                    cout = self._run_snippet_to_output(probe)
+                    if cout:
+                        logger.info(
+                            "coder 未产出可用结果 → 回落 probe_exec 真实执行成功"
+                        )
+                        return {
+                            "mode": "probe_exec",
+                            "status": "completed",
+                            "success": True,
+                            "result": cout.strip(),
+                            "script": probe,
+                            "reproducible": True,
+                            "fallback_from": "coder",
+                        }
+                reasons.append("probe_exec: 未产出可执行片段或执行无输出")
+            except Exception as exc:  # 防御: 同上, 纯回落路径 fail-open
+                logger.warning("coder→probe_exec fallback failed", exc_info=True)
+                reasons.append(f"probe_exec: {exc}")
+        else:
+            reasons.append("probe_exec: 目标非确定性数值, 跳过")
+
+        # warning 级: 回落全失败是"本可修但没修成"的信号, 必须在默认日志级别可见,
+        # 否则又回到"失败静默"的老问题.
+        logger.warning("coder 回落链已耗尽: %s", "; ".join(reasons))
+        return None
 
     # domain → 默认模板名; get_template 拿不到就 fallback standard_dft
     # ponytail: 硬编码映射表, 新模板加一行即可; 想自动发现就扫 WORKFLOW_TEMPLATES
@@ -1379,6 +1733,8 @@ Please modify the code to address this task."""
         persona_name: str | None = None,
         model: Any = None,
         task: str | None = None,
+        tools: list[Any] | None = None,
+        max_tool_rounds: int = 2,
     ) -> str:
         """Send a prompt to the LLM and return the response.
 
@@ -1480,7 +1836,13 @@ Please modify the code to address this task."""
         if effort_directive:
             prompt = f"[Thinking effort: {effort_directive}]\n\n{prompt}"
         messages.append(HumanMessage(content=prompt))
-        # P0-1: 流式化 — astream 替代 ainvoke, 增量 chunk 通过 progress_cb 推 WS.
+        # P2-1: plan/validate 等"推理型"阶段可挂只读工具. 有工具时走有界工具循环
+        # (disable 流式: tool_calls 需完整 AIMessage, 增量 chunk 无法可靠拼装).
+        # 无工具时逐字节等价原路径.
+        if tools:
+            return await self._llm_chat_with_tools(
+                llm, messages, tools, max_tool_rounds=max_tool_rounds
+            )
         # 700 万步场景: decider 思考过程实时可见, 不再黑盒. fail 回退 ainvoke.
         # ponytail: 只在 progress_cb 存在时流式, 否则 ainvoke (兼容无 WS 场景).
         from huginn.core_types import progress_cb as _progress_cb
@@ -1534,3 +1896,76 @@ Please modify the code to address this task."""
             )
             await self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)
+
+    async def _llm_chat_with_tools(
+        self,
+        llm: Any,
+        messages: list[Any],
+        tools: list[Any],
+        max_tool_rounds: int = 2,
+    ) -> str:
+        """有界工具循环: 让推理型阶段 (plan/validate) 能真正调用只读工具.
+
+        provider 不支持 ``bind_tools`` 时 fail-open 退化为无工具单次调用 ——
+        绝不让"多给一个能力"变成"原本能跑的阶段跑不动". 每轮最多执行模型返回
+        的全部 tool_calls, 轮数封顶 ``max_tool_rounds``, 之后强制取最后一条
+        文本, 保证一定终止且 token 有界.
+        """
+        try:
+            bound = llm.bind_tools(tools)
+        except Exception as exc:  # 防御: 无 function-calling 的 provider 退回原行为
+            logger.info("bind_tools unsupported (%s) — 退化为无工具调用", exc)
+            response = await with_retry(
+                lambda: llm.ainvoke(messages), source="autoloop"
+            )
+            await self._track_llm_usage(getattr(response, "usage_metadata", None))
+            return str(response.content)
+
+        history = list(messages)
+        last_text = ""
+        for _ in range(max(0, max_tool_rounds) + 1):
+            response = await with_retry(
+                lambda: bound.ainvoke(history), source="autoloop"
+            )
+            await self._track_llm_usage(getattr(response, "usage_metadata", None))
+            content = getattr(response, "content", "")
+            last_text = content if isinstance(content, str) else str(content)
+            calls = getattr(response, "tool_calls", None) or []
+            if not calls:
+                return last_text
+            history.append(response)
+            for call in calls:
+                history.append(await self._run_phase_tool_call(tools, call))
+            logger.info(
+                "[%s] 阶段工具调用 %d 次: %s",
+                self._current_phase or "phase",
+                len(calls),
+                ", ".join(str(c.get("name", "?")) for c in calls),
+            )
+        # 轮数耗尽: 返回最后一轮文本 (可能为空), 不无限续跑
+        return last_text
+
+    async def _run_phase_tool_call(self, tools: list[Any], call: dict[str, Any]) -> Any:
+        """执行单个阶段工具调用, 失败也回一条 ToolMessage (错误回执可自修)."""
+        import json
+
+        from langchain_core.messages import ToolMessage
+
+        name = str(call.get("name", "") or "")
+        args = call.get("args") or {}
+        call_id = str(call.get("id", "") or name or "phase_tool")
+        tool = next((t for t in tools if getattr(t, "name", "") == name), None)
+        if tool is None:
+            payload: Any = {"error": f"unknown or unavailable tool: {name}"}
+        else:
+            try:
+                payload = await tool.ainvoke(args)
+            except Exception as exc:  # 防御: 工具异常转结构化回执, 不中断循环
+                logger.debug("phase tool %s failed", name, exc_info=True)
+                payload = {"error": f"{type(exc).__name__}: {exc}"}
+        content = (
+            payload
+            if isinstance(payload, str)
+            else json.dumps(payload, default=str, ensure_ascii=False)
+        )
+        return ToolMessage(content=content, tool_call_id=call_id, name=name)

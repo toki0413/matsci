@@ -12,7 +12,6 @@ import os
 import re
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -21,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.sim._async_job import submit_background
 from huginn.validation.handle_validator import HandleValidator
 
 logger = logging.getLogger(__name__)
@@ -310,6 +310,38 @@ class LammpsTool(HuginnTool):
         return ValidationResult(result=True)
 
     async def call(self, args: LammpsToolInput, context: ToolContext) -> ToolResult:
+        handled = await self._dispatch_aux_action(args, context)
+        if handled is not None:
+            return handled
+
+        exe_error = self._ensure_executable()
+        if exe_error is not None:
+            return exe_error
+
+        work_dir, input_path = self._prepare_run_inputs(args, context)
+        work_dir_abs = work_dir.resolve()
+        input_path_abs = input_path.resolve()
+        log_path_abs = (work_dir_abs / "log.lammps").resolve()
+        cmd = self._build_command(input_path_abs, log_path_abs, args)
+
+        try:
+            outcome = self._run_with_autofix(
+                cmd, work_dir_abs, work_dir, input_path_abs, args
+            )
+            return self._build_run_result(outcome, args, work_dir)
+        except subprocess.TimeoutExpired:
+            return ToolResult(
+                data=None, success=False, error="LAMMPS execution timed out (3600s)"
+            )
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"LAMMPS execution failed: {e}"
+            )
+
+    async def _dispatch_aux_action(
+        self, args: LammpsToolInput, context: ToolContext
+    ) -> ToolResult | None:
+        """Actions that never spawn a LAMMPS run (job API / analysis / checks)."""
         # 异步作业管理动作: 不跑实际计算, 只查/等作业状态
         if args.action == "submit_async":
             return await self._handle_submit_async(args, context)
@@ -317,68 +349,80 @@ class LammpsTool(HuginnTool):
             return self._handle_poll_job(args)
         if args.action == "wait_job":
             return await self._handle_wait_job(args)
-
         # Equilibrium check: analyze thermo data from a log file, no LAMMPS run
         if args.action == "equilibrium_check":
             return self._run_equilibrium_check(args)
-
         # DEM packing: generate granular input script, then optionally run
         if args.action == "dem_packing":
             return await self._handle_dem_packing(args, context)
-
-        # Handle trajectory analysis without running LAMMPS
         if args.action == "analyze_trajectory":
-            traj_file = args.trajectory_file or args.input_script
-            if not traj_file or not Path(traj_file).exists():
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="Trajectory file not specified or not found",
-                )
-            analysis = self.parse_trajectory(traj_file)
-            # 分析也算一次计算, 带 provenance
-            try:
-                from huginn.provenance import capture
+            return self._analyze_trajectory_only(args)
+        return None
 
-                analysis["provenance"] = capture(
-                    "lammps_tool", args.model_dump(), output=dict(analysis)
-                ).to_dict()
-            except Exception:  # 防御: 溯源记录失败不阻断分析结果
-                logger.debug("suppressed in estimate_cost", exc_info=True)
-            # 轨迹里有 MSD, 提示 agent 用 GP 量化扩散系数的不确定性
-            analysis["uq_hint"] = self._uq_hint()
+    def _analyze_trajectory_only(self, args: LammpsToolInput) -> ToolResult:
+        """Handle trajectory analysis without running LAMMPS."""
+        traj_file = args.trajectory_file or args.input_script
+        if not traj_file or not Path(traj_file).exists():
             return ToolResult(
-                data=analysis,
-                success="error" not in analysis,
-                error=analysis.get("error"),
+                data=None,
+                success=False,
+                error="Trajectory file not specified or not found",
             )
+        analysis = self.parse_trajectory(traj_file)
+        # 分析也算一次计算, 带 provenance
+        try:
+            from huginn.provenance import capture
 
-        if not self.lammps_executable:
-            from huginn.tools.sim.executable_resolver import (
-                resolve_executable,
-            )
+            analysis["provenance"] = capture(
+                "lammps_tool", args.model_dump(), output=dict(analysis)
+            ).to_dict()
+        except Exception:  # 防御: 溯源记录失败不阻断分析结果
+            logger.debug("suppressed in estimate_cost", exc_info=True)
+        # 轨迹里有 MSD, 提示 agent 用 GP 量化扩散系数的不确定性
+        analysis["uq_hint"] = self._uq_hint()
+        return ToolResult(
+            data=analysis,
+            success="error" not in analysis,
+            error=analysis.get("error"),
+        )
 
-            resolution = resolve_executable("lammps")
-            if isinstance(resolution, str):
-                self.lammps_executable = resolution
-            else:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"LAMMPS executable not found. {resolution.install_hint}",
-                    metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
-                )
+    def _ensure_executable(self) -> ToolResult | None:
+        """Resolve the LAMMPS binary; returns an error result when unavailable."""
+        if self.lammps_executable:
+            return None
+        from huginn.tools.sim.executable_resolver import resolve_executable
 
+        resolution = resolve_executable("lammps")
+        if isinstance(resolution, str):
+            self.lammps_executable = resolution
+            return None
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"LAMMPS executable not found. {resolution.install_hint}",
+            metadata={
+                "needs_resolution": True,
+                "resolution_request": resolution.to_dict(),
+            },
+        )
+
+    def _prepare_run_inputs(
+        self, args: LammpsToolInput, context: ToolContext
+    ) -> tuple[Path, Path]:
+        """Create the run directory, write input.lammps, and copy potentials."""
         # Determine working directory
         if args.working_dir:
             work_dir = Path(args.working_dir)
         else:
             work_dir = Path(context.workspace) / f"lammps_{args.output_prefix}"
         work_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write input script
         input_path = work_dir / "input.lammps"
+        input_path.write_text(self._resolve_script_content(args), encoding="utf-8")
+        self._copy_potentials(args.potentials, work_dir)
+        return work_dir, input_path
 
+    def _resolve_script_content(self, args: LammpsToolInput) -> str:
+        """Read the input script from disk or inline, then prepend/auto-fix."""
         # Check if input_script is a file path or content
         script_path = Path(args.input_script)
         if script_path.exists():
@@ -391,13 +435,11 @@ class LammpsTool(HuginnTool):
             structure_path = Path(args.structure_file)
             if structure_path.exists():
                 # Detect format and prepend read command
-                if structure_path.suffix in [".data", ".lmp"]:
-                    prefix = f"read_data {structure_path}\n"
-                elif structure_path.suffix == ".xyz":
-                    prefix = f"read_xyz {structure_path}\n"
-                else:
-                    prefix = f"read_data {structure_path}\n"
-
+                prefix = (
+                    f"read_xyz {structure_path}\n"
+                    if structure_path.suffix == ".xyz"
+                    else f"read_data {structure_path}\n"
+                )
                 if (
                     "read_data" not in script_content
                     and "read_xyz" not in script_content
@@ -407,25 +449,26 @@ class LammpsTool(HuginnTool):
         # Apply auto-fixes from diagnosis to input script
         if args.fixes:
             script_content = self._apply_script_fixes(script_content, args.fixes)
+        return script_content
 
-        input_path.write_text(script_content, encoding="utf-8")
-
-        # Copy potential files to working directory
-        for pot in args.potentials:
+    @staticmethod
+    def _copy_potentials(potentials: list[str], work_dir: Path) -> None:
+        """Copy potential files into the run directory (skip existing)."""
+        for pot in potentials:
             pot_path = Path(pot)
-            if pot_path.exists():
-                dest = work_dir / pot_path.name
-                if not dest.exists():
-                    import shutil
+            if not pot_path.exists():
+                continue
+            dest = work_dir / pot_path.name
+            if dest.exists():
+                continue
+            import shutil
 
-                    shutil.copy2(pot_path, dest)
+            shutil.copy2(pot_path, dest)
 
-        # Resolve to absolute paths to avoid relative path issues on Windows
-        work_dir_abs = work_dir.resolve()
-        input_path_abs = input_path.resolve()
-        log_path_abs = (work_dir_abs / "log.lammps").resolve()
-
-        # Build command
+    def _build_command(
+        self, input_path_abs: Path, log_path_abs: Path, args: LammpsToolInput
+    ) -> list[str]:
+        """Assemble the LAMMPS command line (with optional MPI prefix)."""
         cmd = [
             self.lammps_executable,
             "-in",
@@ -435,175 +478,195 @@ class LammpsTool(HuginnTool):
         ]
         if args.num_processes > 1:
             cmd = ["mpiexec", "-n", str(args.num_processes)] + cmd
+        return cmd
 
-        # Run LAMMPS — 带 autofix 重试:
-        # 硬失败 (returncode!=0) 或物理审计报错 (温度爆炸 / 能量漂移) 都重试
-        autoheal_log: list[dict[str, Any]] = []
-        max_retries = args.max_auto_retries
-        result: Any = None
-        thermo_data: dict = {}
-        final_energy: float | None = None
-        warnings: list[str] = []
-        audit_report = None
-        # 软失败原因. returncode=0 但物理审计报错属于软失败,
-        # 这种情况 result.returncode==0, 不能当成功返回.
-        soft_failure_msg: str | None = None
+    def _run_with_autofix(
+        self,
+        cmd: list[str],
+        work_dir_abs: Path,
+        work_dir: Path,
+        input_path_abs: Path,
+        args: LammpsToolInput,
+    ) -> dict[str, Any]:
+        """Run LAMMPS — 带 autofix 重试.
 
-        try:
-            for attempt in range(max_retries + 1):
-                sb_result = self.sandbox.run(
-                    cmd,
-                    cwd=str(work_dir_abs),
-                    timeout=3600,
-                )
-                result = sb_result
+        硬失败 (returncode!=0) 或物理审计报错 (温度爆炸 / 能量漂移) 都重试.
+        """
+        outcome: dict[str, Any] = {
+            "result": None,
+            "thermo_data": {},
+            "final_energy": None,
+            "warnings": [],
+            "audit_report": None,
+            "soft_failure_msg": None,
+            "autoheal_log": [],
+        }
 
-                # Parse log file for thermo data
-                log_path = work_dir / "log.lammps"
-                thermo_data, final_energy, warnings = self._parse_log(log_path)
+        for attempt in range(args.max_auto_retries + 1):
+            outcome["result"] = self.sandbox.run(
+                cmd, cwd=str(work_dir_abs), timeout=3600
+            )
+            # Parse log file for thermo data
+            log_path = work_dir / "log.lammps"
+            (
+                outcome["thermo_data"],
+                outcome["final_energy"],
+                outcome["warnings"],
+            ) = self._parse_log(log_path)
 
-                # 判断这次跑完到底算成功还是失败:
-                # - returncode != 0 → 硬失败, stderr 诊断
-                # - returncode == 0 但物理审计报错 → 软失败,
-                #   LAMMPS 经常 exit=0 但轨迹是垃圾 (温度爆炸 / 能量漂移)
-                error: str | None = None
-                soft_failure_msg = None
-                if result.returncode != 0:
-                    error = result.stderr or ""
-                else:
-                    try:
-                        from huginn.execution.physics_auditor import PhysicsAuditor
+            error, soft_msg, report = self._assess_attempt(outcome, args)
+            if report is not None:
+                outcome["audit_report"] = report
+            outcome["soft_failure_msg"] = soft_msg
 
-                        auditor = PhysicsAuditor()
-                        audit_report = auditor.audit(
-                            "lammps_tool",
-                            args.compute_action or args.action,
-                            {
-                                "thermo_data": thermo_data,
-                                "final_energy": final_energy,
-                            },
-                            args.model_dump(),
-                        )
-                        if audit_report.has_errors:
-                            errs = [
-                                f.message
-                                for f in audit_report.findings
-                                if f.severity == "error"
-                            ]
-                            error = f"Physics audit found errors: {errs}"
-                            soft_failure_msg = error
-                    except Exception:  # 防御: 审计异常不阻断重试流程
-                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+            if error is None:
+                break  # 真正成功
 
-                if error is None:
-                    break  # 真正成功
-
-                # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
-                if attempt < max_retries:
-                    fixed = self._try_autofix(input_path_abs, error)
-                    if fixed:
-                        autoheal_log.append(
-                            {
-                                "attempt": attempt + 1,
-                                "error": error[:300],
-                                "fixes_applied": fixed["fixes"],
-                                "reasoning": fixed["reasoning"],
-                            }
-                        )
-                        continue
+            # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
+            fixed = (
+                self._try_autofix(input_path_abs, error)
+                if attempt < args.max_auto_retries
+                else None
+            )
+            if not fixed:
                 break  # 没修动或重试耗尽
-
-            # Find trajectory file
-            traj_path = None
-            for ext in [".lammpstrj", ".dump", ".xyz"]:
-                candidates = list(work_dir.glob(f"*{ext}"))
-                if candidates:
-                    traj_path = str(candidates[0])
-                    break
-
-            output = LammpsToolOutput(
-                log_path=str(work_dir / "log.lammps"),
-                trajectory_path=traj_path,
-                thermo_data=thermo_data,
-                final_energy=final_energy,
-                warnings=warnings,
+            outcome["autoheal_log"].append(
+                {
+                    "attempt": attempt + 1,
+                    "error": error[:300],
+                    "fixes_applied": fixed["fixes"],
+                    "reasoning": fixed["reasoning"],
+                }
             )
+        return outcome
 
-            # 最终成功判定: returncode==0 且没有遗留软失败 (物理审计报错)
-            ok = result.returncode == 0 and soft_failure_msg is None
-            error_out = (
-                None
-                if ok
-                else (
-                    result.stderr[:500]
-                    if result.returncode != 0
-                    else soft_failure_msg
-                )
+    def _assess_attempt(
+        self, outcome: dict[str, Any], args: LammpsToolInput
+    ) -> tuple[str | None, str | None, Any]:
+        """Judge one attempt: (error, soft_failure_msg, audit_report).
+
+        - returncode != 0 → 硬失败, 从 stderr 取诊断
+        - returncode == 0 但物理审计报错 → 软失败,
+          LAMMPS 经常 exit=0 但轨迹是垃圾 (温度爆炸 / 能量漂移)
+        """
+        result = outcome["result"]
+        if result.returncode != 0:
+            return result.stderr or "", None, None
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            report = PhysicsAuditor().audit(
+                "lammps_tool",
+                args.compute_action or args.action,
+                {
+                    "thermo_data": outcome["thermo_data"],
+                    "final_energy": outcome["final_energy"],
+                },
+                args.model_dump(),
             )
+        except Exception:  # 防御: 审计异常不阻断重试流程
+            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+            return None, None, None
+        if not report.has_errors:
+            return None, None, report
+        errs = [f.message for f in report.findings if f.severity == "error"]
+        error = f"Physics audit found errors: {errs}"
+        return error, error, report
 
-            data = output.model_dump()
+    def _build_run_result(
+        self, outcome: dict[str, Any], args: LammpsToolInput, work_dir: Path
+    ) -> ToolResult:
+        """Assemble the ToolResult from the last attempt plus on-disk artifacts."""
+        result = outcome["result"]
 
-            # Auto-parse trajectory if available
-            if traj_path:
-                traj_analysis = self.parse_trajectory(traj_path)
-                if "error" not in traj_analysis:
-                    data["trajectory_analysis"] = traj_analysis
+        # Find trajectory file
+        traj_path = None
+        for ext in [".lammpstrj", ".dump", ".xyz"]:
+            candidates = list(work_dir.glob(f"*{ext}"))
+            if candidates:
+                traj_path = str(candidates[0])
+                break
 
-            # Physics audit — check thermo data for unphysical values.
-            # LAMMPS can exit cleanly while the trajectory itself is garbage
-            # (e.g. exploded temperatures, runaway pressure). Flag those here.
-            # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
-            if audit_report is not None:
-                data["physics_audit"] = audit_report.to_dict()
-            else:
-                try:
-                    from huginn.execution.physics_auditor import PhysicsAuditor
+        output = LammpsToolOutput(
+            log_path=str(work_dir / "log.lammps"),
+            trajectory_path=traj_path,
+            thermo_data=outcome["thermo_data"],
+            final_energy=outcome["final_energy"],
+            warnings=outcome["warnings"],
+        )
 
-                    auditor = PhysicsAuditor()
-                    audit_report = auditor.audit(
-                        "lammps_tool",
-                        args.compute_action or args.action,
-                        {
-                            "thermo_data": thermo_data,
-                            "final_energy": final_energy,
-                        },
-                        args.model_dump(),
-                    )
-                    data["physics_audit"] = audit_report.to_dict()
-                except Exception:  # 防御: 审计失败不阻断结果返回
-                    logger.debug("audit is best-effort, never block the result", exc_info=True)
+        # 最终成功判定: returncode==0 且没有遗留软失败 (物理审计报错)
+        soft_failure_msg = outcome["soft_failure_msg"]
+        ok = result.returncode == 0 and soft_failure_msg is None
+        if ok:
+            error_out = None
+        elif result.returncode != 0:
+            error_out = result.stderr[:500]
+        else:
+            error_out = soft_failure_msg
 
-            if autoheal_log:
-                data["autoheal_attempts"] = autoheal_log
+        data = output.model_dump()
 
-            # 带上 provenance 快照, 事后能追溯参数/版本/环境
-            # 注意: 在加 provenance 字段前先 snapshot 输出, 避免 output_hash 自指
-            try:
-                from huginn.provenance import capture
+        # Auto-parse trajectory if available
+        if traj_path:
+            traj_analysis = self.parse_trajectory(traj_path)
+            if "error" not in traj_analysis:
+                data["trajectory_analysis"] = traj_analysis
 
-                data["provenance"] = capture(
-                    "lammps_tool", args.model_dump(), output=dict(data)
-                ).to_dict()
-            except Exception:  # 防御: 溯源失败不阻断结果返回
-                logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+        # Physics audit — check thermo data for unphysical values.
+        # LAMMPS can exit cleanly while the trajectory itself is garbage
+        # (e.g. exploded temperatures, runaway pressure). Flag those here.
+        # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
+        audit_dict = self._physics_audit_dict(outcome, args)
+        if audit_dict is not None:
+            data["physics_audit"] = audit_dict
+        if outcome["autoheal_log"]:
+            data["autoheal_attempts"] = outcome["autoheal_log"]
 
-            # 提示 agent 用 GP 拟合 MSD-vs-time, 量化扩散系数不确定性
-            data["uq_hint"] = self._uq_hint()
+        # 带上 provenance 快照, 事后能追溯参数/版本/环境
+        # 注意: 在加 provenance 字段前先 snapshot 输出, 避免 output_hash 自指
+        try:
+            from huginn.provenance import capture
 
-            return ToolResult(
-                data=data,
-                success=ok,
-                error=error_out,
+            data["provenance"] = capture(
+                "lammps_tool", args.model_dump(), output=dict(data)
+            ).to_dict()
+        except Exception:  # 防御: 溯源失败不阻断结果返回
+            logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+
+        # 提示 agent 用 GP 拟合 MSD-vs-time, 量化扩散系数不确定性
+        data["uq_hint"] = self._uq_hint()
+
+        return ToolResult(
+            data=data,
+            success=ok,
+            error=error_out,
+        )
+
+    @staticmethod
+    def _physics_audit_dict(
+        outcome: dict[str, Any], args: LammpsToolInput
+    ) -> dict | None:
+        """Reuse the loop's audit report; run one as a fallback when absent."""
+        report = outcome["audit_report"]
+        if report is not None:
+            return report.to_dict()
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            report = PhysicsAuditor().audit(
+                "lammps_tool",
+                args.compute_action or args.action,
+                {
+                    "thermo_data": outcome["thermo_data"],
+                    "final_energy": outcome["final_energy"],
+                },
+                args.model_dump(),
             )
-
-        except subprocess.TimeoutExpired:
-            return ToolResult(
-                data=None, success=False, error="LAMMPS execution timed out (3600s)"
-            )
-        except Exception as e:
-            return ToolResult(
-                data=None, success=False, error=f"LAMMPS execution failed: {e}"
-            )
+            return report.to_dict()
+        except Exception:  # 防御: 审计失败不阻断结果返回
+            logger.debug("audit is best-effort, never block the result", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------ async job API
 
@@ -631,43 +694,13 @@ class LammpsTool(HuginnTool):
             fixes=args.fixes,
         )
 
-        job_id = f"lammps-{uuid.uuid4().hex[:12]}"
-
-        job_entry: dict[str, Any] = {
-            "status": "running",
-            "task": None,
-            "result": None,
-            "error": None,
-            "compute_action": args.compute_action,
-            "working_dir": args.working_dir,
-            "started_at": time.time(),
-            "finished_at": None,
-        }
-        LammpsTool._async_jobs[job_id] = job_entry
-
-        async def _run_in_background() -> None:
-            """后台跑实际计算, 完成后更新 job_entry."""
-            try:
-                result = await self.call(sync_args, context)
-                job_entry["result"] = (
-                    result.data if result.success else None
-                )
-                job_entry["error"] = result.error
-                job_entry["status"] = "done" if result.success else "failed"
-            except Exception as exc:
-                job_entry["error"] = str(exc)
-                job_entry["status"] = "failed"
-            finally:
-                job_entry["finished_at"] = time.time()
-
-        # create_task 把协程排到当前事件循环, agent chat 期间会并发跑
-        try:
-            task = asyncio.create_task(_run_in_background())
-            job_entry["task"] = task
-        except RuntimeError:
-            # 没有运行中的事件循环 (比如同步路径调用), 退化为同步执行
-            # 这种情况下 "异步" 提交实际是阻塞的, 但至少功能正确
-            await _run_in_background()
+        job_id = await submit_background(
+            "lammps",
+            compute_action=args.compute_action,
+            working_dir=args.working_dir,
+            jobs=LammpsTool._async_jobs,
+            run=lambda: self.call(sync_args, context),
+        )
 
         return ToolResult(
             data={
@@ -780,79 +813,85 @@ class LammpsTool(HuginnTool):
         if not log_path.exists():
             return {}, None, ["Log file not found"]
 
-        thermo_data = {}
-        final_energy = None
-        warnings = []
+        thermo_data: dict = {}
+        final_energy: float | None = None
+        warnings: list[str] = []
 
         try:
             content = log_path.read_text(encoding="utf-8", errors="ignore")
-
-            # Identify thermo columns from the header
-            # Pattern: Step Temp Press TotEng ...
-            header_match = re.search(r"^(Step\s+.*?)$", content, re.MULTILINE)
-            columns = []
-            if header_match:
-                columns = header_match.group(1).split()
-
-            # Extract all thermo data rows
-            data_rows = []
-            # Match lines that start with an integer step number followed by numeric values
-            for line in content.split("\n"):
-                parts = line.split()
-                if len(parts) >= 2 and parts[0].isdigit():
-                    try:
-                        # Verify most parts are numeric
-                        numeric_count = sum(1 for p in parts if self._is_float(p))
-                        if numeric_count >= len(parts) - 1:
-                            data_rows.append([self._to_float_or_str(p) for p in parts])
-                    except ValueError:
-                        logger.debug("suppressed in _parse_log", exc_info=True)
-
+            columns = self._thermo_columns(content)
+            data_rows = self._thermo_rows(content)
             if data_rows and columns:
-                # Transpose: columns[0] is Step, columns[1] is Temp, etc.
-                for col_idx, col_name in enumerate(columns):
-                    if col_idx < len(data_rows[0]):
-                        values = [
-                            row[col_idx] for row in data_rows if col_idx < len(row)
-                        ]
-                        # Try to convert to float
-                        float_values = []
-                        for v in values:
-                            if isinstance(v, float):
-                                float_values.append(v)
-                            elif isinstance(v, str) and self._is_float(v):
-                                float_values.append(float(v))
-                        if float_values:
-                            thermo_data[col_name.lower()] = float_values
-
-            # Extract final energy
-            if "toteng" in thermo_data and thermo_data["toteng"]:
-                final_energy = thermo_data["toteng"][-1]
-            elif "toteng" not in thermo_data:
-                # Fallback: search for TotEng explicitly
-                energy_match = re.findall(r"TotEng\s+([-\d.eE]+)", content)
-                if energy_match:
-                    with contextlib.suppress(ValueError):
-                        final_energy = float(energy_match[-1])
-
-            # Check for warnings
-            if "WARNING" in content:
-                warn_lines = [
-                    line.strip() for line in content.split("\n") if "WARNING" in line
-                ]
-                warnings.extend(warn_lines[:5])
-
-            # Check for errors
-            if "ERROR" in content:
-                err_lines = [
-                    line.strip() for line in content.split("\n") if "ERROR" in line
-                ]
-                warnings.extend(err_lines[:3])
-
+                thermo_data = self._thermo_series(columns, data_rows)
+            final_energy = self._final_toteng(thermo_data, content)
+            warnings.extend(self._log_diagnostics(content))
         except Exception as e:
             warnings.append(f"Failed to parse log: {e}")
 
         return thermo_data, final_energy, warnings
+
+    @staticmethod
+    def _thermo_columns(content: str) -> list[str]:
+        """Thermo table header columns (``Step Temp Press TotEng ...``)."""
+        header_match = re.search(r"^(Step\s+.*?)$", content, re.MULTILINE)
+        return header_match.group(1).split() if header_match else []
+
+    def _thermo_rows(self, content: str) -> list[list]:
+        """Numeric data rows: integer step followed by (almost) all numeric fields."""
+        data_rows: list[list] = []
+        for line in content.split("\n"):
+            parts = line.split()
+            if len(parts) < 2 or not parts[0].isdigit():
+                continue
+            try:
+                # Verify most parts are numeric
+                numeric_count = sum(1 for p in parts if self._is_float(p))
+                if numeric_count >= len(parts) - 1:
+                    data_rows.append([self._to_float_or_str(p) for p in parts])
+            except ValueError:
+                logger.debug("suppressed in _parse_log", exc_info=True)
+        return data_rows
+
+    def _thermo_series(self, columns: list[str], data_rows: list[list]) -> dict:
+        """Transpose rows into ``{column: [floats]}`` (non-numeric cells dropped)."""
+        thermo_data: dict = {}
+        for col_idx, col_name in enumerate(columns):
+            if col_idx >= len(data_rows[0]):
+                continue
+            values = [row[col_idx] for row in data_rows if col_idx < len(row)]
+            float_values = [
+                v if isinstance(v, float) else float(v)
+                for v in values
+                if isinstance(v, float) or (isinstance(v, str) and self._is_float(v))
+            ]
+            if float_values:
+                thermo_data[col_name.lower()] = float_values
+        return thermo_data
+
+    @staticmethod
+    def _final_toteng(thermo_data: dict, content: str) -> float | None:
+        """Last TotEng from the thermo table, else a regex fallback."""
+        if thermo_data.get("toteng"):
+            return thermo_data["toteng"][-1]
+        if "toteng" in thermo_data:
+            return None
+        energy_match = re.findall(r"TotEng\s+([-\d.eE]+)", content)
+        if not energy_match:
+            return None
+        with contextlib.suppress(ValueError):
+            return float(energy_match[-1])
+        return None
+
+    @staticmethod
+    def _log_diagnostics(content: str) -> list[str]:
+        """Up to 5 WARNING lines followed by up to 3 ERROR lines."""
+        warnings = [
+            line.strip() for line in content.split("\n") if "WARNING" in line
+        ][:5]
+        warnings.extend(
+            [line.strip() for line in content.split("\n") if "ERROR" in line][:3]
+        )
+        return warnings
 
     def _run_equilibrium_check(self, args: LammpsToolInput) -> ToolResult:
         """Check if an MD run has reached thermal/mechanical equilibrium.
@@ -1160,216 +1199,290 @@ class LammpsTool(HuginnTool):
         }
 
         try:
-            frames = []
-            current_frame = None
-
-            with traj_path.open("r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-
-            i = 0
-            while i < len(lines):
-                line = lines[i].strip()
-                if line == "ITEM: TIMESTEP":
-                    if current_frame:
-                        frames.append(current_frame)
-                    current_frame = {"atoms": []}
-                    i += 1
-                    if i < len(lines):
-                        current_frame["timestep"] = int(lines[i].strip())
-                        result["timesteps"].append(current_frame["timestep"])
-                elif line.startswith("ITEM: NUMBER OF ATOMS"):
-                    i += 1
-                    if i < len(lines):
-                        current_frame["n_atoms"] = int(lines[i].strip())
-                        result["n_atoms"] = current_frame["n_atoms"]
-                elif line.startswith("ITEM: BOX BOUNDS"):
-                    bounds = []
-                    for _ in range(3):
-                        i += 1
-                        if i < len(lines):
-                            bounds.append([float(x) for x in lines[i].strip().split()])
-                    current_frame["box"] = bounds
-                    if not result["box_bounds"]:
-                        result["box_bounds"] = bounds
-                elif line.startswith("ITEM: ATOMS"):
-                    # Parse atom data
-                    atom_headers = line.replace("ITEM: ATOMS ", "").split()
-                    atoms = []
-                    for _ in range(current_frame.get("n_atoms", 0)):
-                        i += 1
-                        if i < len(lines):
-                            parts = lines[i].strip().split()
-                            atom = {}
-                            for h, p in zip(atom_headers, parts):
-                                try:
-                                    atom[h] = float(p)
-                                except ValueError:
-                                    atom[h] = p
-                            atoms.append(atom)
-                            if "type" in atom:
-                                result["atom_types"].add(int(atom["type"]))
-                    current_frame["atoms"] = atoms
-                i += 1
-
-            if current_frame:
-                frames.append(current_frame)
-
+            frames = self._read_dump_frames(traj_path, result)
             result["n_frames"] = len(frames)
             result["atom_types"] = sorted(result["atom_types"])
 
-            # Compute MSD if positions available
-            if frames and len(frames) > 1 and all("x" in a for a in frames[0]["atoms"]):
-                msd = self._compute_msd(frames)
-                if msd:
-                    result["msd"] = msd
-                # _compute_msd sets self._msd_warnings — surface to caller so
-                # downstream agents don't trust a saturated diffusion coeff.
-                if getattr(self, "_msd_warnings", None):
-                    result["msd_warnings"] = list(self._msd_warnings)
-                    self._msd_warnings = []
-
-            # Compute RDF time series — 每帧一条 g(r), 看结构弛豫过程.
-            # ponytail: 这不是真正的 van Hove g(r,t), 只是按帧采样的 g(r) 序列.
-            # 真 van Hove 见下方 _compute_van_hove — 那才是 spatio-temporal correlation.
-            if (
-                frames
-                and len(frames) >= 1
-                and all("x" in a for a in frames[0]["atoms"])
-            ):
-                # 采样帧数限制: 大轨迹取均匀采样避免 O(n_frames * n_atoms²) 爆炸
-                max_rdf_frames = 20
-                if len(frames) <= max_rdf_frames:
-                    sample_frames = frames
-                else:
-                    idx = [int(round(i * (len(frames) - 1) / (max_rdf_frames - 1)))
-                           for i in range(max_rdf_frames)]
-                    sample_frames = [frames[i] for i in idx]
-                rdf_series = []
-                for fi, frame in enumerate(sample_frames):
-                    rdf = self._compute_rdf(frame)
-                    if rdf:
-                        rdf_series.append({
-                            "frame_index": idx[fi] if len(frames) > max_rdf_frames else fi,
-                            "timestep": frame.get("timestep", idx[fi] if len(frames) > max_rdf_frames else fi),
-                            **rdf,
-                        })
-                if rdf_series:
-                    result["rdf_series"] = rdf_series
-                    # 末帧 RDF 保留兼容老字段
-                    result["rdf"] = rdf_series[-1]
-
-            # VACF + Green-Kubo 扩散系数: 第一性原理方法, 比 Einstein 关系
-            # 在短时模拟上更准. 需要速度列 (vx vy vz).
-            if (
-                frames
-                and len(frames) > 1
-                and all("vx" in a and "vy" in a and "vz" in a
-                        for a in frames[0]["atoms"])
-            ):
-                vacf = self._compute_vacf(frames)
-                if vacf:
-                    result["vacf"] = vacf
-                    gk = self._green_kubo_diffusion(vacf)
-                    if gk is not None:
-                        result["diffusion_green_kubo"] = gk
-
-            # P3: 把物理时序统一注册为标准化通道, 让 cognition loop 收集后注入 prompt.
-            # 每条时序: {name, unit, data: [(t, v), ...], meaning, source}.
-            # engine 算 trend (rising/decaying/flat) 判动力学 regime:
-            #   - VACF decaying + MSD rising → 扩散型 (同一物理两种表征, 可交叉验证)
-            #   - VACF 振荡 + MSD flat → 束缚态
-            #   - RDF 峰位漂移 → 结构弛豫/相变 (与 VACF 解耦的独立维度)
-            _ts: list[dict] = []
-            if result.get("msd"):
-                _ts.append({
-                    "name": "MSD",
-                    "unit": "Å²",
-                    "data": [
-                        (d.get("timestep", i), d.get("msd", 0.0))
-                        for i, d in enumerate(result["msd"])
-                    ],
-                    "meaning": "mean squared displacement <Δr²>",
-                    "source": "lammps",
-                })
-            if result.get("rdf_series"):
-                # RDF 是 g(r) 曲线每帧一条, 提取第一峰位置 (argmax g) 作为标量趋势 —
-                # 峰位漂移直接对应结构弛豫. ponytail: argmax 取最高峰, 对液体/固体
-                # 第一峰通常就是最高峰; 多峰体系升级路径是找第一个局部最大.
-                peak_data: list[tuple] = []
-                for fi, fr in enumerate(result["rdf_series"]):
-                    g = fr.get("g") or (fr.get("rdf") or {}).get("g")
-                    r = fr.get("r") or (fr.get("rdf") or {}).get("r")
-                    if not (g and r and len(g) == len(r) and len(g) > 0):
-                        continue
-                    try:
-                        peak_idx = max(range(len(g)), key=lambda k: g[k])
-                        peak_data.append((fr.get("timestep", fi), r[peak_idx]))
-                    except (ValueError, TypeError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                if peak_data:
-                    _ts.append({
-                        "name": "RDF_first_peak",
-                        "unit": "Å",
-                        "data": peak_data,
-                        "meaning": "RDF first peak position (structural relaxation)",
-                        "source": "lammps",
-                    })
-            if result.get("vacf"):
-                _ts.append({
-                    "name": "VACF",
-                    "unit": "Å²/ps²",
-                    "data": [
-                        (d.get("timestep", i), d.get("vacf", 0.0))
-                        for i, d in enumerate(result["vacf"])
-                    ],
-                    "meaning": "velocity autocorrelation <v(0)·v(t)>",
-                    "source": "lammps",
-                })
-            # S1: van Hove G_s(r,t) — spatio-temporal correlation, 三元组 (t, r, G_s).
-            # 这是时空表征的数学根: MSD 是它的二阶矩, F(q,t) 是它的空间傅立叶变换.
-            if frames and len(frames) > 1 and all("x" in a for a in frames[0]["atoms"]):
-                _vh = self._compute_van_hove(frames)
-                if _vh:
-                    result["van_hove"] = _vh
-                    # 展开为 (t, r, G_s) 三元组让 _format_timeseries_context 识别空间维度
-                    _vh_data: list[tuple] = []
-                    for entry in _vh:
-                        _t = entry["timestep"]
-                        for _r, _gs in zip(entry["r"], entry["G_s"]):
-                            _vh_data.append((_t, _r, _gs))
-                    _ts.append({
-                        "name": "van_hove_G_s",
-                        "unit": "1/Å³",
-                        "data": _vh_data,
-                        "meaning": "van Hove self-part G_s(r,t) — single-atom displacement distribution",
-                        "source": "lammps",
-                        "spatial": True,  # 标记: data 是 (t, r, v) 三元组, 不是 (t, v) 二元组
-                    })
-                # S1: F(q,t) — 中间散射函数, G(r,t) 的空间傅立叶变换, 与原位 XRD 帧间峰位漂移对偶
-                _fqt = self._compute_F_q_t(frames)
-                if _fqt:
-                    result["F_q_t"] = _fqt
-                    _fqt_data: list[tuple] = []
-                    for entry in _fqt:
-                        _t = entry["timestep"]
-                        for _q, _f in zip(entry["q_values"], entry["F"]):
-                            _fqt_data.append((_t, _q, _f))
-                    _ts.append({
-                        "name": "F_q_t",
-                        "unit": "1",
-                        "data": _fqt_data,
-                        "meaning": "intermediate scattering function F(q,t) — Fourier transform of G(r,t)",
-                        "source": "lammps",
-                        "spatial": True,
-                    })
-            if _ts:
-                result["_physical_timeseries"] = _ts
+            self._attach_trajectory_analyses(result, frames)
 
         except Exception as e:
             result["error"] = str(e)
 
         return result
+
+    def _read_dump_frames(
+        self, traj_path: Path, result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Parse a LAMMPS dump file into per-frame atom dicts.
+
+        Fills the ``result`` aggregates (n_atoms / atom_types / box_bounds /
+        timesteps) in place while scanning, and returns the frame list.
+        """
+        frames: list[dict[str, Any]] = []
+        current_frame: dict[str, Any] | None = None
+        lines = traj_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line == "ITEM: TIMESTEP":
+                if current_frame is not None:
+                    frames.append(current_frame)
+                current_frame = {"atoms": []}
+                i += 1
+                if i < len(lines):
+                    current_frame["timestep"] = int(lines[i].strip())
+                    result["timesteps"].append(current_frame["timestep"])
+            elif line.startswith("ITEM: NUMBER OF ATOMS"):
+                i += 1
+                if i < len(lines):
+                    if current_frame is None:
+                        raise ValueError("dump truncated before ITEM: TIMESTEP")
+                    current_frame["n_atoms"] = int(lines[i].strip())
+                    result["n_atoms"] = current_frame["n_atoms"]
+            elif line.startswith("ITEM: BOX BOUNDS"):
+                bounds: list[list[float]] = []
+                for _ in range(3):
+                    i += 1
+                    if i < len(lines):
+                        bounds.append([float(x) for x in lines[i].strip().split()])
+                if current_frame is not None:
+                    current_frame["box"] = bounds
+                if not result["box_bounds"]:
+                    result["box_bounds"] = bounds
+            elif line.startswith("ITEM: ATOMS") and current_frame is not None:
+                atoms, i = self._parse_atom_rows(
+                    lines,
+                    i,
+                    line.replace("ITEM: ATOMS ", "").split(),
+                    current_frame.get("n_atoms", 0),
+                    result["atom_types"],
+                )
+                current_frame["atoms"] = atoms
+            i += 1
+
+        if current_frame is not None:
+            frames.append(current_frame)
+        return frames
+
+    @staticmethod
+    def _parse_atom_rows(
+        lines: list[str],
+        header_idx: int,
+        headers: list[str],
+        n_atoms: int,
+        atom_types: set[int],
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Parse ``n_atoms`` atom rows following the ``ITEM: ATOMS`` header line.
+
+        Returns the atom dicts plus the index of the last consumed line.
+        """
+        atoms: list[dict[str, Any]] = []
+        i = header_idx
+        for _ in range(n_atoms):
+            i += 1
+            if i >= len(lines):
+                break
+            parts = lines[i].strip().split()
+            atom: dict[str, Any] = {}
+            for header, part in zip(headers, parts):
+                try:
+                    atom[header] = float(part)
+                except ValueError:
+                    atom[header] = part
+            atoms.append(atom)
+            if "type" in atom:
+                atom_types.add(int(atom["type"]))
+        return atoms, i
+
+    def _attach_trajectory_analyses(
+        self, result: dict[str, Any], frames: list[dict[str, Any]]
+    ) -> None:
+        """Attach MSD / RDF / VACF / van Hove / F(q,t) and the standardized timeseries."""
+        if not frames:
+            return
+        first_atoms = frames[0]["atoms"]
+        has_positions = all("x" in a for a in first_atoms)
+        if has_positions and len(frames) > 1:
+            self._attach_msd(result, frames)
+        if has_positions:
+            self._attach_rdf_series(result, frames)
+        if len(frames) > 1 and all(
+            "vx" in a and "vy" in a and "vz" in a for a in first_atoms
+        ):
+            self._attach_vacf(result, frames)
+
+        timeseries: list[dict] = self._collect_scalar_timeseries(result)
+        if has_positions and len(frames) > 1:
+            timeseries.extend(self._collect_spatial_timeseries(result, frames))
+        if timeseries:
+            result["_physical_timeseries"] = timeseries
+
+    def _attach_msd(self, result: dict[str, Any], frames: list[dict[str, Any]]) -> None:
+        """Compute MSD and surface ``_msd_warnings`` (saturated diffusion guard)."""
+        # _compute_msd sets self._msd_warnings — surface to caller so
+        # downstream agents don't trust a saturated diffusion coeff.
+        msd = self._compute_msd(frames)
+        if msd:
+            result["msd"] = msd
+        if getattr(self, "_msd_warnings", None):
+            result["msd_warnings"] = list(self._msd_warnings)
+            self._msd_warnings = []
+
+    def _attach_rdf_series(
+        self, result: dict[str, Any], frames: list[dict[str, Any]]
+    ) -> None:
+        """Per-frame g(r) series (uniformly subsampled for large trajectories).
+
+        ponytail: 这不是真正的 van Hove g(r,t), 只是按帧采样的 g(r) 序列.
+        真 van Hove 见 _compute_van_hove — 那才是 spatio-temporal correlation.
+        """
+        # 采样帧数限制: 大轨迹取均匀采样避免 O(n_frames * n_atoms²) 爆炸
+        max_rdf_frames = 20
+        if len(frames) <= max_rdf_frames:
+            sample_frames = frames
+            idx = list(range(len(frames)))
+        else:
+            idx = [
+                int(round(i * (len(frames) - 1) / (max_rdf_frames - 1)))
+                for i in range(max_rdf_frames)
+            ]
+            sample_frames = [frames[i] for i in idx]
+
+        rdf_series = []
+        for fi, frame in enumerate(sample_frames):
+            rdf = self._compute_rdf(frame)
+            if not rdf:
+                continue
+            frame_index = idx[fi] if len(frames) > max_rdf_frames else fi
+            rdf_series.append({
+                "frame_index": frame_index,
+                "timestep": frame.get("timestep", frame_index),
+                **rdf,
+            })
+        if not rdf_series:
+            return
+        result["rdf_series"] = rdf_series
+        # 末帧 RDF 保留兼容老字段
+        result["rdf"] = rdf_series[-1]
+
+    def _attach_vacf(self, result: dict[str, Any], frames: list[dict[str, Any]]) -> None:
+        """VACF + Green-Kubo diffusion (needs vx/vy/vz columns).
+
+        第一性原理方法, 比 Einstein 关系在短时模拟上更准.
+        """
+        vacf = self._compute_vacf(frames)
+        if not vacf:
+            return
+        result["vacf"] = vacf
+        gk = self._green_kubo_diffusion(vacf)
+        if gk is not None:
+            result["diffusion_green_kubo"] = gk
+
+    @staticmethod
+    def _collect_scalar_timeseries(result: dict[str, Any]) -> list[dict]:
+        """MSD / RDF-first-peak / VACF as standardized ``(t, v)`` channels."""
+        # P3: 把物理时序统一注册为标准化通道, 让 cognition loop 收集后注入 prompt.
+        # 每条时序: {name, unit, data: [(t, v), ...], meaning, source}.
+        # engine 算 trend (rising/decaying/flat) 判动力学 regime:
+        #   - VACF decaying + MSD rising → 扩散型 (同一物理两种表征, 可交叉验证)
+        #   - VACF 振荡 + MSD flat → 束缚态
+        #   - RDF 峰位漂移 → 结构弛豫/相变 (与 VACF 解耦的独立维度)
+        timeseries: list[dict] = []
+        if result.get("msd"):
+            timeseries.append({
+                "name": "MSD",
+                "unit": "Å²",
+                "data": [
+                    (d.get("timestep", i), d.get("msd", 0.0))
+                    for i, d in enumerate(result["msd"])
+                ],
+                "meaning": "mean squared displacement <Δr²>",
+                "source": "lammps",
+            })
+        peak_data = LammpsTool._rdf_first_peaks(result.get("rdf_series") or [])
+        if peak_data:
+            timeseries.append({
+                "name": "RDF_first_peak",
+                "unit": "Å",
+                "data": peak_data,
+                "meaning": "RDF first peak position (structural relaxation)",
+                "source": "lammps",
+            })
+        if result.get("vacf"):
+            timeseries.append({
+                "name": "VACF",
+                "unit": "Å²/ps²",
+                "data": [
+                    (d.get("timestep", i), d.get("vacf", 0.0))
+                    for i, d in enumerate(result["vacf"])
+                ],
+                "meaning": "velocity autocorrelation <v(0)·v(t)>",
+                "source": "lammps",
+            })
+        return timeseries
+
+    @staticmethod
+    def _rdf_first_peaks(rdf_series: list[dict]) -> list[tuple]:
+        """g(r) 第一峰位置序列 — 峰位漂移直接对应结构弛豫.
+
+        ponytail: argmax 取最高峰, 对液体/固体第一峰通常就是最高峰;
+        多峰体系升级路径是找第一个局部最大.
+        """
+        peak_data: list[tuple] = []
+        for fi, fr in enumerate(rdf_series):
+            g = fr.get("g") or (fr.get("rdf") or {}).get("g")
+            r = fr.get("r") or (fr.get("rdf") or {}).get("r")
+            if not (g and r and len(g) == len(r) and len(g) > 0):
+                continue
+            try:
+                peak_idx = max(range(len(g)), key=lambda k: g[k])
+                peak_data.append((fr.get("timestep", fi), r[peak_idx]))
+            except (ValueError, TypeError):
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+        return peak_data
+
+    def _collect_spatial_timeseries(
+        self, result: dict[str, Any], frames: list[dict[str, Any]]
+    ) -> list[dict]:
+        """van Hove G_s(r,t) and F(q,t) as ``(t, r, v)`` spatial channels."""
+        # S1: van Hove G_s(r,t) — spatio-temporal correlation, 三元组 (t, r, G_s).
+        # 这是时空表征的数学根: MSD 是它的二阶矩, F(q,t) 是它的空间傅立叶变换.
+        timeseries: list[dict] = []
+        van_hove = self._compute_van_hove(frames)
+        if van_hove:
+            result["van_hove"] = van_hove
+            # 展开为 (t, r, G_s) 三元组让 _format_timeseries_context 识别空间维度
+            timeseries.append({
+                "name": "van_hove_G_s",
+                "unit": "1/Å³",
+                "data": [
+                    (entry["timestep"], r, gs)
+                    for entry in van_hove
+                    for r, gs in zip(entry["r"], entry["G_s"])
+                ],
+                "meaning": "van Hove self-part G_s(r,t) — single-atom displacement distribution",
+                "source": "lammps",
+                "spatial": True,  # 标记: data 是 (t, r, v) 三元组, 不是 (t, v) 二元组
+            })
+        # S1: F(q,t) — 中间散射函数, G(r,t) 的空间傅立叶变换, 与原位 XRD 帧间峰位漂移对偶
+        fqt = self._compute_F_q_t(frames)
+        if fqt:
+            result["F_q_t"] = fqt
+            timeseries.append({
+                "name": "F_q_t",
+                "unit": "1",
+                "data": [
+                    (entry["timestep"], q, f)
+                    for entry in fqt
+                    for q, f in zip(entry["q_values"], entry["F"])
+                ],
+                "meaning": "intermediate scattering function F(q,t) — Fourier transform of G(r,t)",
+                "source": "lammps",
+                "spatial": True,
+            })
+        return timeseries
 
     def _compute_msd(self, frames: list[dict]) -> list[dict] | None:
         """Compute mean squared displacement across frames.

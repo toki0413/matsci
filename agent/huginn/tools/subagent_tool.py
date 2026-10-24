@@ -688,9 +688,42 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
 # P1-2 验证: CRDT 半格三公理 + 字段级合并. `python -m huginn.tools.subagent_tool` 跑.
 
 def _selfcheck() -> None:
+    """assert-based demo: CRDT 半格三公理 + 字段级合并 + Bayesian belief."""
+    _sc_crdt_gset()
+    _sc_crdt_lww()
+    _sc_crdt_axioms()
+    _sc_crdt_integration()
+    _sc_crdt_toggle()
+    _sc_belief_gaussian()
+    _sc_belief_beta()
+    _sc_belief_fallback()
+    _sc_belief_gaussian_merge()
+    _sc_belief_beta_merge()
+    _sc_belief_kl()
+    _sc_belief_conflict_high()
+    _sc_belief_conflict_low()
+    _sc_belief_toggle()
+    print("subagent_tool selfcheck OK (33-37 CRDT + 42-47 Bayesian belief)")
+
+
+def _sc_canon(d: dict) -> str:
+    """半格比较用的规范化 JSON: 去掉 sources/n_sources/ts, 列表排序."""
     import json as _json
 
-    # 33. G-Set union — evidence 合并, 无 dup
+    skip = {"sources", "n_sources", "ts"}
+    d2: dict = {}
+    for k, v in d.items():
+        if k in skip or k.endswith("_ts"):
+            continue
+        if isinstance(v, list):
+            d2[k] = sorted(v, key=lambda x: str(x))
+        else:
+            d2[k] = v
+    return _json.dumps(d2, sort_keys=True, default=str)
+
+
+def _sc_crdt_gset() -> None:
+    """33. G-Set union — evidence 合并, 无 dup."""
     r_a = {"findings": ["encut=520 OK"], "evidence": ["ref1", "ref2"], "success": True}
     r_b = {"findings": ["kpoints=4x4x4"], "evidence": ["ref2", "ref3"], "success": True}
     m33 = _crdt_merge([r_a, r_b])
@@ -700,7 +733,9 @@ def _selfcheck() -> None:
     assert f_set == {"encut=520 OK", "kpoints=4x4x4"}, f"findings union: {m33['findings']}"
     print("33. CRDT G-Set union (evidence + findings, dedupe) OK")
 
-    # 34. LWW-Register — best_value ts 大者胜
+
+def _sc_crdt_lww() -> None:
+    """34. LWW-Register — best_value ts 大者胜."""
     r_old = {"best_value": 520, "ts": 100.0}
     r_new = {"best_value": 572, "ts": 200.0}
     m34 = _crdt_merge([r_old, r_new])
@@ -711,42 +746,29 @@ def _selfcheck() -> None:
     assert m34b["best_value"] == 572, f"交换律: LWW 应仍取 572: {m34b.get('best_value')}"
     print("34. CRDT LWW-Register (ts 大者胜 + 交换律) OK")
 
-    # 35. 半格三公理 — 交换 / 结合 / 幂等
-    import random
-    random.seed(35)
+
+def _sc_crdt_axioms() -> None:
+    """35. 半格三公理 — 交换 / 结合 / 幂等."""
     r1 = {"findings": ["a"], "evidence": ["e1"], "best_value": 1, "ts": 1.0, "success": True}
     r2 = {"findings": ["b"], "evidence": ["e2"], "best_value": 2, "ts": 2.0, "success": False}
     r3 = {"findings": ["c"], "evidence": ["e3"], "best_value": 3, "ts": 3.0, "success": True}
-    # 交换律: merge(a, b) == merge(b, a) — 比较 JSON 字符串 (顺序无关)
-    def _canon(d: dict) -> str:
-        # 去掉 sources (含原始 list, 顺序敏感) + 元信息字段 (n_sources / ts 是
-        # 审计/计数, 不是半格 join 的状态值), 只看合并字段.
-        # G-Set 字段在半格语义里是 set, list 顺序无关 — 排序后再比.
-        _skip = {"sources", "n_sources", "ts"}
-        d2: dict = {}
-        for k, v in d.items():
-            if k in _skip or k.endswith("_ts"):
-                continue
-            if isinstance(v, list):
-                d2[k] = sorted(v, key=lambda x: str(x))
-            else:
-                d2[k] = v
-        return _json.dumps(d2, sort_keys=True, default=str)
-    m_ab = _canon(_crdt_merge([r1, r2]))
-    m_ba = _canon(_crdt_merge([r2, r1]))
+    m_ab = _sc_canon(_crdt_merge([r1, r2]))
+    m_ba = _sc_canon(_crdt_merge([r2, r1]))
     assert m_ab == m_ba, f"交换律失败:\n{m_ab}\n{m_ba}"
     # 结合律: merge(merge(a, b), c) == merge(a, merge(b, c))
     # 注意: merge 的输入是 list[dict], 输出是 dict — 要把 merge(a, b) 包回 list
-    m_ab_c = _canon(_crdt_merge([_crdt_merge([r1, r2]), r3]))
-    m_a_bc = _canon(_crdt_merge([r1, _crdt_merge([r2, r3])]))
+    m_ab_c = _sc_canon(_crdt_merge([_crdt_merge([r1, r2]), r3]))
+    m_a_bc = _sc_canon(_crdt_merge([r1, _crdt_merge([r2, r3])]))
     assert m_ab_c == m_a_bc, f"结合律失败:\n{m_ab_c}\n{m_a_bc}"
     # 幂等: merge(a, a) == a (在半格意义下 — 去掉 sources 后)
-    m_aa = _canon(_crdt_merge([r1, r1]))
-    m_a = _canon(_crdt_merge([r1]))
+    m_aa = _sc_canon(_crdt_merge([r1, r1]))
+    m_a = _sc_canon(_crdt_merge([r1]))
     assert m_aa == m_a, f"幂等律失败:\n{m_aa}\n{m_a}"
     print("35. CRDT 半格三公理 (交换 / 结合 / 幂等) OK")
 
-    # 36. 整合 — 4 subagent, 2 失败 2 成功, mixed fields
+
+def _sc_crdt_integration() -> None:
+    """36. 整合 — 4 subagent, 2 失败 2 成功, mixed fields."""
     r_s1 = {
         "findings": ["encut=572 OK"], "evidence": ["conv1"],
         "best_encut": 572, "ts": 100.0, "success": True,
@@ -760,29 +782,26 @@ def _selfcheck() -> None:
     r_f1 = {"success": False, "error": "OOM", "ts": 150.0}
     r_f2 = {"success": False, "error": "OOM", "ts": 180.0}  # 重复 error
     m36 = _crdt_merge([r_s1, r_s2, r_f1, r_f2])
-    # findings dedupe
     assert len(m36["findings"]) == 1, f"重复 finding 应 dedupe: {m36['findings']}"
-    # evidence union
     assert set(m36["evidence"]) == {"conv1", "conv2"}
-    # LWW: best_encut ts=200 胜 (520)
     assert m36["best_encut"] == 520, f"LWW 应取 ts=200 的 520: {m36.get('best_encut')}"
-    # success OR-join
     assert m36["success"] is True, "OR-join: 任一 True → True"
-    # errors dedupe
     assert len(m36["errors"]) == 1, f"重复 error 应 dedupe: {m36['errors']}"
-    # summary 拼接 (dedupe)
     assert "subagent A" in m36["summary"] and "subagent B" in m36["summary"]
     print("36. CRDT 整合 (4 subagent, 2 成功 2 失败, mixed fields) OK")
 
-    # 37. toggle off — 不合并 (回归原 list[dict])
+
+def _sc_crdt_toggle() -> None:
+    """37. toggle off — 不合并 (回归原 list[dict])."""
     FeatureFlags.shared().disable("crdt_merge")
     assert _crdt_merge_enabled() is False
     FeatureFlags.shared().enable("crdt_merge")
     assert _crdt_merge_enabled() is True
     print("37. CRDT toggle (crdt_merge off/on) OK")
 
-    # ── P2-6: Bayesian belief update ──────────────────────────────
-    # 42. Gaussian update — prior N(520, 20²), obs N(572, 10²)
+
+def _sc_belief_gaussian() -> None:
+    """42. Gaussian update — prior N(520, 20²), obs N(572, 10²)."""
     mu42, s2_42 = _gaussian_update(520.0, 400.0, 572.0, 100.0)
     # 后验 μ ≈ (520/400 + 572/100) / (1/400 + 1/100) = (1.3 + 5.72) / 0.0125 = 561.6
     # 后验 σ² ≈ 1/0.0125 = 80
@@ -790,7 +809,9 @@ def _selfcheck() -> None:
     assert abs(s2_42 - 80.0) < 0.1, f"Gaussian σ'² 应 ≈ 80, got {s2_42}"
     print("42. Gaussian Bayesian update (μ=520→561.6, σ²=400→80) OK")
 
-    # 43. Beta update — prior Beta(1, 1), 3 success 1 fail
+
+def _sc_belief_beta() -> None:
+    """43. Beta update — prior Beta(1, 1), 3 success 1 fail."""
     a43, b43 = _beta_update(1.0, 1.0, 3, 1)
     assert a43 == 4.0 and b43 == 2.0, f"Beta(1,1)+3s1f 应 Beta(4,2), got ({a43},{b43})"
     # point estimate = 4/(4+2) = 2/3
@@ -798,7 +819,9 @@ def _selfcheck() -> None:
     assert abs(mean43 - 0.667) < 0.001, f"mean 应 ≈ 0.667, got {mean43}"
     print("43. Beta Bayesian update (Beta(1,1)→Beta(4,2), mean=0.667) OK")
 
-    # 44. 无 belief → fallback LWW (兼容 P1-2)
+
+def _sc_belief_fallback() -> None:
+    """44. 无 belief → fallback LWW (兼容 P1-2)."""
     r44a = {"best_value": 520, "ts": 100.0}
     r44b = {"best_value": 572, "ts": 200.0}
     m44 = _belief_merge([r44a, r44b], {"best_value"})
@@ -806,7 +829,9 @@ def _selfcheck() -> None:
     assert m44["best_value_ts"] == 200.0
     print("44. belief_merge 无 belief → fallback LWW OK")
 
-    # 45. 有 belief → Bayesian update
+
+def _sc_gaussian_belief_pair() -> tuple[dict, dict]:
+    """45/46b/47 共用的 Gaussian belief 输入对 (μ=520 vs μ=572)."""
     r45a = {
         "best_encut": 520, "ts": 100.0,
         "belief": {"best_encut": {"type": "gaussian", "mu": 520, "sigma2": 400, "obs_sigma2": 100}},
@@ -815,6 +840,12 @@ def _selfcheck() -> None:
         "best_encut": 572, "ts": 200.0,
         "belief": {"best_encut": {"type": "gaussian", "mu": 572, "sigma2": 100, "obs_sigma2": 100}},
     }
+    return r45a, r45b
+
+
+def _sc_belief_gaussian_merge() -> None:
+    """45. 有 belief → Bayesian update (520+572 → 561.6 + belief)."""
+    r45a, r45b = _sc_gaussian_belief_pair()
     m45 = _belief_merge([r45a, r45b], {"best_encut"})
     # r45a 做 prior, r45b 做 obs → 同 42 的计算
     assert abs(m45["best_encut"] - 561.6) < 0.1, (
@@ -824,7 +855,9 @@ def _selfcheck() -> None:
     assert m45["best_encut_belief"]["type"] == "gaussian"
     print("45. belief_merge Gaussian (520+572 → 561.6 + belief) OK")
 
-    # 45b. Beta belief merge
+
+def _sc_belief_beta_merge() -> None:
+    """45b. Beta belief merge (Beta(1,1)+5s4f → Beta(6,5))."""
     r45c = {
         "success_rate": 0.5, "ts": 1.0,
         "belief": {"success_rate": {"type": "beta", "alpha": 1, "beta": 1, "n_success": 3, "n_fail": 1}},
@@ -842,14 +875,19 @@ def _selfcheck() -> None:
     assert m45b["success_rate_belief"]["beta"] == 5.0
     print("45b. belief_merge Beta (Beta(1,1)+5s4f → Beta(6,5)) OK")
 
-    # 46. KL 冲突检测 — 两个 Gaussian belief KL 大 = 严重不一致
+
+def _sc_belief_kl() -> None:
+    """46. KL 冲突检测 — 两个 Gaussian belief KL 大 = 严重不一致."""
     kl46 = _gaussian_kl(520.0, 100.0, 572.0, 100.0)
     kl46_close = _gaussian_kl(520.0, 100.0, 521.0, 100.0)
     assert kl46 > kl46_close, f"KL(520,572) 应 > KL(520,521): {kl46} vs {kl46_close}"
     assert kl46 > 0.1, f"严重冲突 KL 应 > 0.1, got {kl46}"
     print("46. Gaussian KL 冲突检测 (520 vs 572 KL > 0.1) OK")
 
-    # 46b. M6: _belief_merge 接入 KL — 高冲突时输出 _conflict + _conflict_kl
+
+def _sc_belief_conflict_high() -> None:
+    """46b. M6: _belief_merge 接入 KL — 高冲突时输出 _conflict + _conflict_kl."""
+    r45a, r45b = _sc_gaussian_belief_pair()
     # r45a (mu=520) vs r45b (mu=572): KL(520,100,572,100) ≈ 13.5 > 1.0 → 标冲突
     m46b = _belief_merge([r45a, r45b], {"best_encut"})
     assert m46b.get("best_encut_conflict") is True, \
@@ -860,7 +898,9 @@ def _selfcheck() -> None:
     assert "best_encut_belief" in m46b, "冲突时仍应输出 belief"
     print(f"46b. M6 _belief_merge KL 冲突标记 (kl={m46b['best_encut_conflict_kl']:.2f} > 1.0) OK")
 
-    # 46c. M6: 低 KL (mu 接近) → 不标冲突
+
+def _sc_belief_conflict_low() -> None:
+    """46c. M6: 低 KL (mu 接近) → 不标冲突."""
     r46c_a = {
         "best_encut": 520, "ts": 100.0,
         "belief": {"best_encut": {"type": "gaussian", "mu": 520, "sigma2": 100, "obs_sigma2": 100}},
@@ -875,7 +915,10 @@ def _selfcheck() -> None:
     assert "best_encut_conflict_kl" not in m46c, "低 KL 不应输出 _conflict_kl"
     print("46c. M6 _belief_merge 低 KL 不标冲突 OK")
 
-    # 47. toggle off — 回退 P1-2 LWW
+
+def _sc_belief_toggle() -> None:
+    """47. toggle off — 回退 P1-2 LWW."""
+    r45a, r45b = _sc_gaussian_belief_pair()
     FeatureFlags.shared().disable("belief_update")
     assert _belief_update_enabled() is False
     # toggle off 时 _crdt_merge 应走 LWW (不调 _belief_merge)
@@ -888,8 +931,6 @@ def _selfcheck() -> None:
     FeatureFlags.shared().enable("belief_update")
     assert _belief_update_enabled() is True
     print("47. belief toggle (belief_update off/on) + LWW fallback OK")
-
-    print("subagent_tool selfcheck OK (33-37 CRDT + 42-47 Bayesian belief)")
 
 
 if __name__ == "__main__":

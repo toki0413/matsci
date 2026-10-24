@@ -11,11 +11,13 @@ import asyncio
 import json
 import re
 import urllib.parse
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.tools._llm import invoke_llm_text
 from huginn.tools.base import HuginnTool
 
 # ───────────────────────── search 增强 (P0-1 / P1-4) ─────────────────────────
@@ -514,6 +516,18 @@ class LiteratureInput(BaseModel):
 # ───────────────────────── Tool ─────────────────────────
 
 
+@dataclass
+class _CitationGraphState:
+    """Mutable BFS state for ``_do_citation_graph``."""
+
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, str]]
+    visited: set[str]
+    errors: list[str]
+    source_mode: str = "s2"  # 默认用 S2, 限速后切 "opencitations"
+    depth_reached: int = 0
+
+
 class LiteratureTool(HuginnTool):
     """学术文献+材料数据库调研工具. 15 路并发搜索 (arXiv/S2/CrossRef/OpenAlex/PubMed/
     DOAJ/CORE/EuropePMC/Zenodo/OpenAIRE/COD/MaterialsCloud/NOMAD/DataCite/MaterialsProject),
@@ -747,7 +761,7 @@ class LiteratureTool(HuginnTool):
                 error=f"LLM 初始化失败: {exc}",
             )
 
-        content = await self._llm_invoke(model, _SUMMARY_SYSTEM_PROMPT, user_prompt)
+        content = await invoke_llm_text(model, _SUMMARY_SYSTEM_PROMPT, user_prompt)
 
         # 顺带生成 bibtex, 方便用户直接拿去用
         bibtex = self._to_bibtex(papers)
@@ -996,7 +1010,7 @@ class LiteratureTool(HuginnTool):
             f"请抽出关于 {system} 的 {property} 报道值."
         )
         try:
-            content = await self._llm_invoke(model, _BENCHMARK_SYSTEM_PROMPT, user_prompt)
+            content = await invoke_llm_text(model, _BENCHMARK_SYSTEM_PROMPT, user_prompt)
         except Exception as exc:
             logger.debug("benchmark value extraction failed: %s", exc)
             return []
@@ -1520,11 +1534,7 @@ class LiteratureTool(HuginnTool):
                 error="无法解析 paper_id, 需要 doi/arxiv_id 或 paper dict (含 doi/url)",
             )
 
-        visited: set[str] = set()
-        nodes: list[dict[str, Any]] = []
-        edges: list[dict[str, str]] = []
-        errors: list[str] = []
-        source_mode = "s2"  # 默认用 S2, 限速后切 "opencitations"
+        st = _CitationGraphState(nodes=[], edges=[], visited=set(), errors=[])
 
         # 种子节点
         seed_node = {
@@ -1534,8 +1544,8 @@ class LiteratureTool(HuginnTool):
             "doi": doi,
             "depth": 0,
         }
-        nodes.append(seed_node)
-        visited.add(seed_node["paper_id"])
+        st.nodes.append(seed_node)
+        st.visited.add(seed_node["paper_id"])
 
         # 双向 snowballing 开关: forward=沿被引(向上游), backward=沿被引(向下游)
         # 这里沿用 citations 的 direction 语义:
@@ -1550,145 +1560,208 @@ class LiteratureTool(HuginnTool):
         current_layer: list[str] = [seed_node["paper_id"]]
         # 同步维护 current_dois, 用于 OpenCitations fallback
         current_dois: list[str] = [doi] if doi else []
-        depth_reached = 0
 
         for depth in range(1, args.max_depth + 1):
-            if len(nodes) >= args.max_nodes or not current_layer:
+            if len(st.nodes) >= args.max_nodes or not current_layer:
                 break
             next_layer: list[str] = []
             next_dois: list[str] = []
 
             for idx, parent_id in enumerate(current_layer):
-                if len(nodes) >= args.max_nodes:
+                if len(st.nodes) >= args.max_nodes:
                     break
                 parent_doi = current_dois[idx] if idx < len(current_dois) else None
 
-                # ── backward: 这篇引用了谁 (references 端点) ──
                 if do_backward:
-                    if source_mode == "s2" and parent_id:
-                        try:
-                            pid_enc = urllib.parse.quote(parent_id, safe="")
-                            data = await _http_get_json(
-                                f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
-                                f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
-                            )
-                            for ref in data.get("data", []) or []:
-                                cp = ref.get("citedPaper", {}) or {}
-                                child_id = cp.get("paperId") or ""
-                                if not child_id:
-                                    continue
-                                edges.append({"from": parent_id, "to": child_id, "direction": "backward"})
-                                added = self._add_node(
-                                    nodes, visited, next_layer, next_dois,
-                                    child_id=child_id, title=cp.get("title", "") or "",
-                                    year=cp.get("year"), doi=(cp.get("externalIds") or {}).get("DOI"),
-                                    depth=depth, max_nodes=args.max_nodes,
-                                )
-                                if added is False:
-                                    break
-                            depth_reached = depth
-                        except Exception as exc:
-                            errors.append(f"depth={depth} {parent_id} backward s2: {exc}"[:200])
-                            logger.warning(
-                                "S2 BFS depth=%d backward failed, switching to OpenCitations: %s",
-                                depth, exc,
-                            )
-                            source_mode = "opencitations"
-
-                    if source_mode == "opencitations" and parent_doi:
-                        try:
-                            oc_refs = await _opencitations_references(parent_doi, args.max_citations)
-                            if oc_refs:
-                                oc_refs = await _enrich_with_crossref(oc_refs)
-                                for ref in oc_refs:
-                                    child_doi = ref.get("doi", "")
-                                    child_id = f"DOI:{child_doi}" if child_doi else ""
-                                    if not child_id or child_id in visited:
-                                        continue
-                                    edges.append({"from": parent_id, "to": child_id, "direction": "backward"})
-                                    added = self._add_node(
-                                        nodes, visited, next_layer, next_dois,
-                                        child_id=child_id, title=ref.get("title", ""),
-                                        year=ref.get("year"), doi=child_doi,
-                                        depth=depth, max_nodes=args.max_nodes,
-                                        source="opencitations",
-                                    )
-                                    if added is False:
-                                        break
-                                depth_reached = depth
-                        except Exception as exc:
-                            errors.append(f"depth={depth} {parent_id} backward oc: {exc}"[:200])
-
-                # ── forward: 谁引用了这篇 (citations 端点) ──
+                    await self._expand_backward(
+                        st, parent_id, parent_doi, depth, args, next_layer, next_dois
+                    )
                 if do_forward:
-                    if source_mode == "s2" and parent_id:
-                        try:
-                            pid_enc = urllib.parse.quote(parent_id, safe="")
-                            data = await _http_get_json(
-                                f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/citations"
-                                f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
-                            )
-                            for cit in data.get("data", []) or []:
-                                cp = cit.get("citingPaper", {}) or {}
-                                child_id = cp.get("paperId") or ""
-                                if not child_id:
-                                    continue
-                                edges.append({"from": child_id, "to": parent_id, "direction": "forward"})
-                                added = self._add_node(
-                                    nodes, visited, next_layer, next_dois,
-                                    child_id=child_id, title=cp.get("title", "") or "",
-                                    year=cp.get("year"), doi=(cp.get("externalIds") or {}).get("DOI"),
-                                    depth=depth, max_nodes=args.max_nodes,
-                                )
-                                if added is False:
-                                    break
-                            depth_reached = depth
-                        except Exception as exc:
-                            errors.append(f"depth={depth} {parent_id} forward s2: {exc}"[:200])
-
-                    if source_mode == "opencitations" and parent_doi:
-                        try:
-                            oc_cites = await _opencitations_citations(parent_doi, args.max_citations)
-                            if oc_cites:
-                                oc_cites = await _enrich_with_crossref(oc_cites)
-                                for cit in oc_cites:
-                                    child_doi = cit.get("doi", "")
-                                    child_id = f"DOI:{child_doi}" if child_doi else ""
-                                    if not child_id or child_id in visited:
-                                        continue
-                                    edges.append({"from": child_id, "to": parent_id, "direction": "forward"})
-                                    added = self._add_node(
-                                        nodes, visited, next_layer, next_dois,
-                                        child_id=child_id, title=cit.get("title", ""),
-                                        year=cit.get("year"), doi=child_doi,
-                                        depth=depth, max_nodes=args.max_nodes,
-                                        source="opencitations",
-                                    )
-                                    if added is False:
-                                        break
-                                depth_reached = depth
-                        except Exception as exc:
-                            errors.append(f"depth={depth} {parent_id} forward oc: {exc}"[:200])
+                    await self._expand_forward(
+                        st, parent_id, parent_doi, depth, args, next_layer, next_dois
+                    )
 
             current_layer = next_layer
             current_dois = next_dois
 
-        # L2b: 双向 snowballing 统计 — 区分前向 (被引) / 后向 (被引)
-        n_forward = n_backward = 0
-        for e in edges:
-            if e.get("direction") == "forward":
-                n_forward += 1
-            elif e.get("direction") == "backward":
-                n_backward += 1
+        n_forward = sum(1 for e in st.edges if e.get("direction") == "forward")
+        n_backward = sum(1 for e in st.edges if e.get("direction") == "backward")
 
-        # 引文图持久化到 KG — Zotero 启发: 引用关系应持久存储供后续查询.
-        # 之前是 ephemeral 的, agent 每次都要重新 BFS. 现在写一次, 后续
-        # KG query 和 /graph 可视化都能看到.
+        self._persist_citation_graph(st.nodes, st.edges)
+
+        return ToolResult(
+            data={
+                "action": "citation_graph",
+                "seed_paper_id": seed_node["paper_id"],
+                "direction": direction,
+                "depth_reached": st.depth_reached,
+                "n_unique_papers": len(st.nodes),
+                "n_edges": len(st.edges),
+                "n_forward_edges": n_forward,
+                "n_backward_edges": n_backward,
+                "nodes": st.nodes,
+                "edges": st.edges,
+                "errors": st.errors,
+                "truncated": len(st.nodes) >= args.max_nodes,
+                "source_mode": st.source_mode,
+            },
+            success=True,
+        )
+
+    async def _expand_backward(
+        self, st, parent_id, parent_doi, depth, args, next_layer, next_dois
+    ) -> None:
+        """backward: 这篇引用了谁 (references 端点)."""
+        if st.source_mode == "s2" and parent_id:
+            try:
+                children = await self._s2_children(
+                    parent_id, "references", "citedPaper", args.max_citations
+                )
+            except Exception as exc:
+                st.errors.append(f"depth={depth} {parent_id} backward s2: {exc}"[:200])
+                logger.warning(
+                    "S2 BFS depth=%d backward failed, switching to OpenCitations: %s",
+                    depth, exc,
+                )
+                st.source_mode = "opencitations"
+            else:
+                self._append_children(
+                    st, children, parent_id, "backward", depth, args,
+                    next_layer, next_dois, source="s2", dedupe_visited=False,
+                )
+                st.depth_reached = depth
+
+        if st.source_mode == "opencitations" and parent_doi:
+            try:
+                children = await self._oc_children(
+                    "backward", parent_doi, args.max_citations
+                )
+            except Exception as exc:
+                st.errors.append(f"depth={depth} {parent_id} backward oc: {exc}"[:200])
+                return
+            if children is None:
+                return
+            self._append_children(
+                st, children, parent_id, "backward", depth, args,
+                next_layer, next_dois, source="opencitations", dedupe_visited=True,
+            )
+            st.depth_reached = depth
+
+    async def _expand_forward(
+        self, st, parent_id, parent_doi, depth, args, next_layer, next_dois
+    ) -> None:
+        """forward: 谁引用了这篇 (citations 端点)."""
+        if st.source_mode == "s2" and parent_id:
+            try:
+                children = await self._s2_children(
+                    parent_id, "citations", "citingPaper", args.max_citations
+                )
+            except Exception as exc:
+                st.errors.append(f"depth={depth} {parent_id} forward s2: {exc}"[:200])
+            else:
+                self._append_children(
+                    st, children, parent_id, "forward", depth, args,
+                    next_layer, next_dois, source="s2", dedupe_visited=False,
+                )
+                st.depth_reached = depth
+
+        if st.source_mode == "opencitations" and parent_doi:
+            try:
+                children = await self._oc_children(
+                    "forward", parent_doi, args.max_citations
+                )
+            except Exception as exc:
+                st.errors.append(f"depth={depth} {parent_id} forward oc: {exc}"[:200])
+                return
+            if children is None:
+                return
+            self._append_children(
+                st, children, parent_id, "forward", depth, args,
+                next_layer, next_dois, source="opencitations", dedupe_visited=True,
+            )
+            st.depth_reached = depth
+
+    @staticmethod
+    async def _s2_children(
+        parent_id: str, endpoint: str, wrapper_key: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """Fetch one S2 references/citations endpoint as normalized child dicts."""
+        pid_enc = urllib.parse.quote(parent_id, safe="")
+        data = await _http_get_json(
+            f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/{endpoint}"
+            f"?fields=title,year,externalIds,paperId&limit={limit}"
+        )
+        children: list[dict[str, Any]] = []
+        for item in data.get("data", []) or []:
+            cp = item.get(wrapper_key, {}) or {}
+            child_id = cp.get("paperId") or ""
+            if not child_id:
+                continue
+            children.append({
+                "child_id": child_id,
+                "title": cp.get("title", "") or "",
+                "year": cp.get("year"),
+                "doi": (cp.get("externalIds") or {}).get("DOI"),
+            })
+        return children
+
+    @staticmethod
+    async def _oc_children(kind: str, parent_doi: str, limit: int) -> list[dict[str, Any]] | None:
+        """OpenCitations children (enriched via CrossRef). None = no refs at all."""
+        if kind == "backward":
+            refs = await _opencitations_references(parent_doi, limit)
+        else:
+            refs = await _opencitations_citations(parent_doi, limit)
+        if not refs:
+            return None
+        children: list[dict[str, Any]] = []
+        for ref in await _enrich_with_crossref(refs):
+            child_doi = ref.get("doi", "")
+            child_id = f"DOI:{child_doi}" if child_doi else ""
+            if not child_id:
+                continue
+            children.append({
+                "child_id": child_id,
+                "title": ref.get("title", ""),
+                "year": ref.get("year"),
+                "doi": child_doi,
+            })
+        return children
+
+    def _append_children(
+        self, st, children, parent_id, direction, depth, args,
+        next_layer, next_dois, *, source: str, dedupe_visited: bool,
+    ) -> None:
+        """Append edges + nodes for one fetched child batch."""
+        for ch in children:
+            child_id = ch["child_id"]
+            if dedupe_visited and child_id in st.visited:
+                continue
+            if direction == "backward":
+                st.edges.append({"from": parent_id, "to": child_id, "direction": "backward"})
+            else:
+                st.edges.append({"from": child_id, "to": parent_id, "direction": "forward"})
+            added = self._add_node(
+                st.nodes, st.visited, next_layer, next_dois,
+                child_id=child_id, title=ch["title"], year=ch["year"], doi=ch["doi"],
+                depth=depth, max_nodes=args.max_nodes, source=source,
+            )
+            if added is False:
+                break
+
+    @staticmethod
+    def _persist_citation_graph(nodes: list[dict[str, Any]], edges: list[dict[str, str]]) -> None:
+        """引文图持久化到 KG — Zotero 启发: 引用关系应持久存储供后续查询.
+
+        之前是 ephemeral 的, agent 每次都要重新 BFS. 现在写一次, 后续
+        KG query 和 /graph 可视化都能看到.
+        """
         try:
             from pathlib import Path
 
             from huginn.kg.entities import EntityType, Relation
             from huginn.kg.graph import ProjectKnowledgeGraph
+
             kg = ProjectKnowledgeGraph(Path("."))
             # pid -> node eid, 供 add_relation 用
             eid_map: dict[str, str] = {}
@@ -1715,25 +1788,6 @@ class LiteratureTool(HuginnTool):
             kg.save()
         except Exception:
             logger.debug("citation graph kg.save() failed, best-effort", exc_info=True)
-
-        return ToolResult(
-            data={
-                "action": "citation_graph",
-                "seed_paper_id": seed_node["paper_id"],
-                "direction": direction,
-                "depth_reached": depth_reached,
-                "n_unique_papers": len(nodes),
-                "n_edges": len(edges),
-                "n_forward_edges": n_forward,
-                "n_backward_edges": n_backward,
-                "nodes": nodes,
-                "edges": edges,
-                "errors": errors,
-                "truncated": len(nodes) >= args.max_nodes,
-                "source_mode": source_mode,
-            },
-            success=True,
-        )
 
     @staticmethod
     def _add_node(
@@ -2130,7 +2184,7 @@ class LiteratureTool(HuginnTool):
                 f"请用 '{lens_name}' 透镜分析, 按 JSON 格式输出."
             )
             try:
-                content = await self._llm_invoke(model, system_prompt, user_prompt)
+                content = await invoke_llm_text(model, system_prompt, user_prompt)
                 parsed = self._parse_json(content)
                 if not parsed or "findings" not in parsed:
                     logger.warning("lens %s 返回无效 JSON: %s", lens_name, content[:200])
@@ -2363,19 +2417,6 @@ class LiteratureTool(HuginnTool):
 
         config = getattr(context, "config", None)
         return get_model(config=config, temperature=0.2, max_tokens=6000)
-
-    async def _llm_invoke(self, model: Any, system_prompt: str, user_prompt: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        if hasattr(model, "ainvoke"):
-            response = await model.ainvoke(messages)
-        else:
-            response = await asyncio.to_thread(model.invoke, messages)
-        content = response.content if hasattr(response, "content") else str(response)
-        if not isinstance(content, str):
-            content = json.dumps(content, ensure_ascii=False)
-        return content
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any] | None:

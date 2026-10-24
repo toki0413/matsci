@@ -43,8 +43,8 @@
 
 | 开关 | 已注册 | 默认 | 消费点 |
 |---|---|---|---|
-| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2967 |
-| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:2968 |
+| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:3132 |
+| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:3133 |
 
 ## 工作流面: 执行 mode 分发 vs planner 提示面
 
@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 283 站点, 按值域 Jaccard 重叠自动聚成 258 簇 (其中闭集簇 169). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 287 站点, 按值域 Jaccard 重叠自动聚成 262 簇 (其中闭集簇 172). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -135,6 +135,7 @@
 | `knowledge` | `huginn/export_share.py::ALL_COMPONENTS`, `huginn/routes/knowledge.py::ALLOWED_SOURCES`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES` |
 | `lammps_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
 | `learn` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/ontology/actions.py::class ActionCategory` |
+| `literature_tool` | `huginn/autoloop/engine_act.py::_READONLY_PHASE_TOOLS`, `huginn/runtime/task_tool_router.py::CORE_TOOL_NAMES` |
 | `local` | `huginn/cli/lazy_loader.py::CommandType`, `huginn/models/router.py::TaskT`, `huginn/routes/tunnels.py::TunnelType` |
 | `main` | `huginn/lean/supply_chain.py::_FLOATING_REFS`, `huginn/plugins/prompt_segments.py::_APPLICABLE_PATHS` |
 | `math` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/cli/rcb_utils.py::_DOMAIN_KNOWN` |
@@ -153,6 +154,7 @@
 | `prompt` | `huginn/catalog/models.py::KINDS`, `huginn/cli/lazy_loader.py::CommandType` |
 | `provenance` | `huginn/routes/knowledge.py::ALLOWED_SOURCES`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES` |
 | `qe_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
+| `recall` | `huginn/agent/context.py::_ALWAYS_ON_TOOLS`, `huginn/autoloop/engine_act.py::_READONLY_PHASE_TOOLS` |
 | `reflect` | `huginn/memory/reasoning.py::class ReasoningPhase`, `huginn/session_state.py::class SessionPhase` |
 | `relax` | `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
 | `report` | `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/session_state.py::class SessionPhase` |
@@ -177,7 +179,7 @@
 | `validate` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES` |
 | `vasp_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
 | `verification` | `huginn/models/router.py::TaskT`, `huginn/research_log.py::class RecordType` |
-| `web_search_tool` | `huginn/agent/context.py::_ALWAYS_ON_TOOLS`, `huginn/runtime/task_tool_router.py::CORE_TOOL_NAMES` |
+| `web_search_tool` | `huginn/agent/context.py::_ALWAYS_ON_TOOLS`, `huginn/autoloop/engine_act.py::_READONLY_PHASE_TOOLS`, `huginn/runtime/task_tool_router.py::CORE_TOOL_NAMES` |
 | `workflow` | `huginn/autoloop/budget.py::PlanMode`, `huginn/catalog/models.py::KINDS`, `huginn/evolution/semantic_distiller.py::KINDS`, `huginn/share.py::_KINDS` |
 
 ### 簇内分歧 (同簇成员值域不等)
@@ -218,12 +220,13 @@
 
 ## 工具面: 注册声明面 vs 允许面
 
-注册声明面: `tools/__init__.py` 注册清单 157 条 → 全仓 HuginnTool 子类声明的工具名 157 个. 允许面: 全仓工具名白名单 26 张. **死项** = 白名单里无同名工具声明的条目 (永不命中), **别名** = 裸名↔`_tool` 对应项 (非死项). 两类表不做死项判定: 与工具名零重叠的**外部命名空间** (MCP 外部工具名等), 以及含空格条目的 **关键词表** (匹配用户 prompt 文本, 不是工具名).
+注册声明面: `tools/__init__.py` 注册清单 157 条 → 全仓 HuginnTool 子类声明的工具名 157 个. 允许面: 全仓工具名白名单 27 张. **死项** = 白名单里无同名工具声明的条目 (永不命中), **别名** = 裸名↔`_tool` 对应项 (非死项). 两类表不做死项判定: 与工具名零重叠的**外部命名空间** (MCP 外部工具名等), 以及含空格条目的 **关键词表** (匹配用户 prompt 文本, 不是工具名).
 
 | 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |
 |---|---|---|---|---|---|---|---|---|
 | `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:35` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
 | `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:42` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_READONLY_PHASE_TOOLS` | `huginn/autoloop/engine_act.py:110` | 7 | 7 | registry | `internal-only` | 0 | 0 | 0 |
 | `_DFT_MD_TOOLS` | `huginn/execution/compute_router.py:15` | 8 | 4 | registry | `internal-only` | 0 | 0 | 4 |
 | `_QC_TOOLS` | `huginn/execution/compute_router.py:29` | 4 | 2 | registry | `internal-only` | 0 | 0 | 2 |
 | `CORE_BOOTSTRAP_TOOLS` | `huginn/harness/promotion.py:25` | 2 | 2 | registry | `internal-only` | 0 | 0 | 0 |
@@ -242,14 +245,14 @@
 | `_BLOCKED_TOOLS` | `huginn/security/code_act_sandbox.py:29` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_EDIT_TOOLS` | `huginn/server_core.py:96` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_SNAPSHOT_TOOLS` | `huginn/snapshot/integration.py:26` | 26 | 26 | registry | `internal-only` | 0 | 0 | 0 |
-| `_HASHLINE_TOOLS` | `huginn/tools/adapter.py:340` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
-| `_CODING_TOOLS` | `huginn/tools/adapter.py:918` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `_REVIEWING_TOOLS` | `huginn/tools/adapter.py:925` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_HASHLINE_TOOLS` | `huginn/tools/adapter.py:662` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_CODING_TOOLS` | `huginn/tools/adapter.py:1250` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
+| `_REVIEWING_TOOLS` | `huginn/tools/adapter.py:1257` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
 | `GATED_TOOLS` | `huginn/tools/design/design_plan_tool.py:45` | 12 | 12 | registry | `wired` | 1 | 0 | 0 |
 | `_HIGH_VALUE_MCP_TOOLS` | `huginn/tools/mcp_adapter.py:27` | 6 | 0 | external | `internal-only` | 0 | 0 | 0 |
 | `PREFETCH_SAFE_TOOLS` | `huginn/tools/tool_cache.py:38` | 3 | 3 | registry | `wired` | 1 | 0 | 0 |
 
-- 被白名单覆盖的工具名: 75 / 157
+- 被白名单覆盖的工具名: 79 / 157
 - 外部命名空间 (整表与注册名零重叠, 不判死项): `_HIGH_VALUE_MCP_TOOLS`
 - 关键词表 (含空格条目, 匹配 prompt 文本, 不判死项): `_EXPENSIVE_TOOLS`
 
@@ -290,9 +293,9 @@
 | `SESSION_END` | `huginn/events/unified_bus.py:169` | — |
 | `STOP` | `huginn/events/unified_bus.py:208` | `huginn/hooks/safety_collapse_hook.py:398`, `huginn/hooks/science_hooks.py:843` |
 | `SUBAGENT_STOP` | `huginn/agents/subagent.py:387` | — |
-| `PRE_COMPACT` | `huginn/agent/streaming.py:918` | — |
+| `PRE_COMPACT` | `huginn/agent/streaming.py:993` | — |
 | `POST_COMPACT` | `huginn/events/unified_bus.py:374` | — |
-| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1639` | `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332`, `huginn/agents/factory.py:337`, `huginn/hooks/safety_collapse_hook.py:397` |
+| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1834` | `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332`, `huginn/agents/factory.py:337`, `huginn/hooks/safety_collapse_hook.py:397` |
 | `POST_TOOL_USE_FAILURE` | `huginn/hooks/__init__.py:280` | — |
 
 ### 互斥违例 (mutually exclusive)
@@ -340,10 +343,10 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2868`, `huginn/autoloop/cognitive_loop.py:2904` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1561`, `huginn/autoloop/engine_observe.py:936`, `huginn/autoloop/engine_reflect.py:1617` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3465` | `huginn/events/audit_log.py:571` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3485` | `huginn/events/audit_log.py:571` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:2913`, `huginn/autoloop/cognitive_loop.py:2949` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1594`, `huginn/autoloop/engine_observe.py:1031`, `huginn/autoloop/engine_reflect.py:1766` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3510` | `huginn/events/audit_log.py:571` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3530` | `huginn/events/audit_log.py:571` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:346` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:212` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:206`, `huginn/knowledge/store.py:216`, `huginn/knowledge/store.py:314` | — |

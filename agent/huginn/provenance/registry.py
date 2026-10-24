@@ -33,6 +33,62 @@ logger = logging.getLogger(__name__)
 _MEM_CACHE_LIMIT = 200
 
 
+def _collect_rollback_targets(
+    events: list[Any],
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """按 reverse 顺序收集要回滚的路径 / snapshot id / sid→path 映射."""
+    reverted_paths: list[str] = []
+    snap_step_ids: list[str] = []
+    sid_to_path: dict[str, str] = {}  # revert 失败时按 sid 移除对应路径
+    # reverse 顺序: 先回滚最新的
+    for ev in reversed(events):
+        if ev.reverted:
+            continue
+        reverted_paths.append(ev.file_path)
+        if ev.snapshot_step_id:
+            snap_step_ids.append(ev.snapshot_step_id)
+            sid_to_path[ev.snapshot_step_id] = ev.file_path
+    return reverted_paths, snap_step_ids, sid_to_path
+
+
+def _revert_one_snapshot(
+    mgr: Any, sid: str, sid_to_path: dict[str, str], reverted_paths: list[str]
+) -> None:
+    """调 SnapshotManager.revert 回滚一个 step; 失败时移除对应路径."""
+    # workspace 从 snapshot 记录里取
+    snap = mgr._load(sid)
+    if snap is None or snap.reverted:
+        return
+    ws = Path(snap.workspace)
+    try:
+        mgr.revert(sid, ws)
+    except Exception:
+        logger.warning("revert %s failed (non-fatal)", sid, exc_info=True)
+        # 失败的 path 从 reverted_paths 移除, 让调用方区分
+        # 真回滚 vs 标记回滚但文件没动
+        failed_path = sid_to_path.get(sid)
+        if failed_path and failed_path in reverted_paths:
+            reverted_paths.remove(failed_path)
+
+
+def _revert_snapshots(
+    snap_step_ids: list[str],
+    sid_to_path: dict[str, str],
+    reverted_paths: list[str],
+) -> None:
+    """真正的文件回滚: 调 SnapshotManager."""
+    if not snap_step_ids:
+        return
+    try:
+        from huginn.snapshot import SnapshotManager
+
+        mgr = SnapshotManager()
+        for sid in snap_step_ids:
+            _revert_one_snapshot(mgr, sid, sid_to_path, reverted_paths)
+    except ImportError:
+        logger.debug("SnapshotManager not available, skipping file revert")
+
+
 class VersionConflict(Exception):  # noqa: N818
     """乐观并发冲突: 注册时版本号已变, 说明有其他写入插队."""
 
@@ -704,41 +760,10 @@ class ProvenanceRegistry:
         if not events:
             return []
 
-        reverted_paths: list[str] = []
-        snap_step_ids: list[str] = []
-        sid_to_path: dict[str, str] = {}  # revert 失败时按 sid 移除对应路径
-
-        # reverse 顺序: 先回滚最新的
-        for ev in reversed(events):
-            if ev.reverted:
-                continue
-            reverted_paths.append(ev.file_path)
-            if ev.snapshot_step_id:
-                snap_step_ids.append(ev.snapshot_step_id)
-                sid_to_path[ev.snapshot_step_id] = ev.file_path
+        reverted_paths, snap_step_ids, sid_to_path = _collect_rollback_targets(events)
 
         # 真正的文件回滚: 调 SnapshotManager
-        if snap_step_ids:
-            try:
-                from huginn.snapshot import SnapshotManager
-
-                mgr = SnapshotManager()
-                for sid in snap_step_ids:
-                    # workspace 从 snapshot 记录里取
-                    snap = mgr._load(sid)
-                    if snap is not None and not snap.reverted:
-                        ws = Path(snap.workspace)
-                        try:
-                            mgr.revert(sid, ws)
-                        except Exception:
-                            logger.warning("revert %s failed (non-fatal)", sid, exc_info=True)
-                            # 失败的 path 从 reverted_paths 移除, 让调用方区分
-                            # 真回滚 vs 标记回滚但文件没动
-                            failed_path = sid_to_path.get(sid)
-                            if failed_path and failed_path in reverted_paths:
-                                reverted_paths.remove(failed_path)
-            except ImportError:
-                logger.debug("SnapshotManager not available, skipping file revert")
+        _revert_snapshots(snap_step_ids, sid_to_path, reverted_paths)
 
         # 标记 provenance 事件为已回滚 (用 store 封装方法, 不直接访问 _lock/_conn)
         ev_ids = self._store.get_unreverted_ids_since(target_id)

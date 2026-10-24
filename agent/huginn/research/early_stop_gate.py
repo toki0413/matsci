@@ -17,35 +17,11 @@ P-A 让每层结算增量可见, P-B 让边在证据到达后可修订; 但"到�
 
 注意: 执行编排是 orchestration/executor 的职责 —— 本模块只提供确定性判定,
 不发起终止. 与 :func:`huginn.research.replan_gate` 同族(P-B 逐实验修订边, P-C
-全局终止剩余层), 同 share 全仓统一的 ``_first_scalar`` 取数语义.
+全局终止剩余层).
 """
 from __future__ import annotations
 
 from typing import Any
-
-
-def _first_scalar(node: Any) -> float | None:
-    """从任意结构取第一个可量标量(与 program/decision_gate/replan_gate 同语义)."""
-    if isinstance(node, bool):
-        return None
-    if isinstance(node, int | float):
-        return float(node)
-    if isinstance(node, dict):
-        for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
-            if k in node:
-                v = _first_scalar(node[k])
-                if v is not None:
-                    return v
-        for v in node.values():
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    elif isinstance(node, list | tuple):
-        for v in node:
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    return None
 
 
 def _top1(pairs: list[tuple[str, float]]) -> tuple[str, float] | None:

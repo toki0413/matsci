@@ -52,6 +52,71 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             logger.debug("best-effort op failed", exc_info=True)
             return True
 
+    @staticmethod
+    def _has_cv_context(messages: list) -> bool:
+        """扫 str content 和 list[text block], 判断 [CV context] 是否已注入."""
+        for m in messages:
+            c = getattr(m, "content", None)
+            if isinstance(c, str) and "[CV context]" in c:
+                return True
+            if isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and "[CV context]" in str(b.get("text", "")):
+                        return True
+        return False
+
+    def _patch_block_list(self, blocks: list, cv_already: bool) -> tuple[list, bool]:
+        """替换一条消息的 content blocks, 返回 (新 blocks, 是否改动)."""
+        new_blocks = []
+        changed = False
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") not in ("text", None):
+                btype = block.get("type", "unknown")
+                if btype in ("image_url", "image"):
+                    # vision=False: image block 交给 CV 工作流提取结构化视觉特征,
+                    # 而不是删成占位. CV 失败/已注入时降级 [content omitted].
+                    new_blocks.append(self._cv_text_for_block(block, cv_already))
+                else:
+                    # 非 image 的非 text block (file 等) 仍走原占位逻辑
+                    new_blocks.append(self._omitted_block(block))
+                changed = True
+            else:
+                new_blocks.append(block)
+        return new_blocks, changed
+
+    def _patch_message_content(self, msg: Any, cv_already: bool) -> tuple[Any, bool]:
+        """就地把一条消息的 content blocks 打补丁, 返回 (msg, 是否改动)."""
+        content = getattr(msg, "content", None)
+        if not isinstance(content, list):
+            return msg, False
+        new_blocks, changed = self._patch_block_list(content, cv_already)
+        if not changed:
+            return msg, False
+        try:
+            return msg.model_copy(update={"content": new_blocks}), True
+        except Exception:  # 防御: model_copy 失败则回退直接改 content
+            try:
+                msg.content = new_blocks
+                return msg, True
+            except Exception:  # 非致命: 直接改 content 也失败则忽略
+                logger.debug("message content patch failed", exc_info=True)
+                return msg, False
+
+    @staticmethod
+    def _has_orphan_tool_calls(messages: list) -> bool:
+        """是否存在没有对应 ToolMessage 的 tool_call."""
+        answered_ids = {
+            getattr(msg, "tool_call_id", None)
+            for msg in messages
+            if hasattr(msg, "type") and msg.type == "tool"
+        }
+        return any(
+            tc.get("id") is not None and tc["id"] not in answered_ids
+            for msg in messages
+            if isinstance(msg, AIMessage)
+            for tc in (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
+        )
+
     def _patch_messages(self, messages: list) -> list:
         if not messages:
             return messages
@@ -67,51 +132,12 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             return self._reorder_tool_messages(messages)
         patched = list(messages)
         # 双保险去重: streaming.py 入口层已注入 [CV context] 时, middleware 不重复
-        # 提取, image block 退回 [content omitted]. 扫 str content 和 list[text block].
-        _cv_already = False
-        for _m in patched:
-            _c = getattr(_m, "content", None)
-            if isinstance(_c, str) and "[CV context]" in _c:
-                _cv_already = True
-                break
-            if isinstance(_c, list):
-                for _b in _c:
-                    if isinstance(_b, dict) and "[CV context]" in str(_b.get("text", "")):
-                        _cv_already = True
-                        break
-                if _cv_already:
-                    break
-        _changed_blocks = False
-        for _i, _msg in enumerate(patched):
-            _content = getattr(_msg, "content", None)
-            if not isinstance(_content, list):
-                continue
-            _new_blocks = []
-            _msg_changed = False
-            for _block in _content:
-                if isinstance(_block, dict) and _block.get("type") not in ("text", None):
-                    _btype = _block.get("type", "unknown")
-                    if _btype in ("image_url", "image"):
-                        # vision=False: image block 交给 CV 工作流提取结构化视觉特征,
-                        # 而不是删成占位. 视觉工作流是给文本 LLM 补 vision 能力的
-                        # 工程通道, 不是辅助. CV 失败/已注入时降级 [content omitted].
-                        _new_blocks.append(self._cv_text_for_block(_block, _cv_already))
-                    else:
-                        # 非 image 的非 text block (file 等) 仍走原占位逻辑
-                        _new_blocks.append(self._omitted_block(_block))
-                    _msg_changed = True
-                else:
-                    _new_blocks.append(_block)
-            if _msg_changed:
-                try:
-                    patched[_i] = _msg.model_copy(update={"content": _new_blocks})
-                    _changed_blocks = True
-                except Exception:  # 防御: model_copy 失败则回退直接改 content 后退出
-                    try:
-                        _msg.content = _new_blocks
-                        _changed_blocks = True
-                    except Exception:  # 非致命: 直接改 content 也失败则忽略
-                        logger.debug("message content patch failed", exc_info=True)
+        # 提取, image block 退回 [content omitted].
+        cv_already = self._has_cv_context(patched)
+        changed_blocks = False
+        for i, msg in enumerate(patched):
+            patched[i], changed = self._patch_message_content(msg, cv_already)
+            changed_blocks = changed_blocks or changed
 
         # 再重建 list 保证 ToolMessage 紧跟 AIMessage(tool_calls), 同时补 orphan.
         # DeepSeek 严格要求 assistant(tool_calls) 后面必须紧跟 tool messages
@@ -122,17 +148,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         # ponytail: 重建可能改变语义连续性, 但比 400 强. 升级路径: 修上游
         # 不产生错位 (langgraph add_messages reducer ID 冲突 / ctx 注入位置).
         # 检测 orphan: 没对应 ToolMessage 的 tool_call
-        answered_ids = {
-            getattr(msg, "tool_call_id", None)
-            for msg in patched
-            if hasattr(msg, "type") and msg.type == "tool"
-        }
-        has_orphan = any(
-            tc.get("id") is not None and tc["id"] not in answered_ids
-            for msg in patched
-            if isinstance(msg, AIMessage)
-            for tc in (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
-        )
+        has_orphan = self._has_orphan_tool_calls(patched)
         # 总是调 _reorder_tool_messages: 它内部 _changed 检测, 顺序没错位时
         # 返回原 list (零开销). 不能只在 has_orphan 时调 — 顺序错位但无 orphan
         # 时 (ToolMessage 在但被 SystemMessage 隔开) 也需要修.
@@ -141,8 +157,8 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         )
         if rebuilt is not patched:
             patched = rebuilt
-            _changed_blocks = True
-        return patched if _changed_blocks else messages
+            changed_blocks = True
+        return patched if changed_blocks else messages
 
     @staticmethod
     def _omitted_block(block: dict) -> dict:

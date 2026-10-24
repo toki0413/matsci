@@ -22,6 +22,79 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _qe_parse_energy(lines: list[str]) -> float | None:
+    """取最后一个 `!    total energy = ...` 行的数值."""
+    energy: float | None = None
+    for line in lines:
+        if "!    total energy" in line:
+            parts = line.split("=")
+            if len(parts) > 1:
+                with contextlib.suppress(ValueError, IndexError):
+                    energy = float(parts[-1].strip().split()[0])
+    return energy
+
+
+def _qe_parse_forces(lines: list[str]) -> list[list[float]]:
+    """取最后一个 `Forces acting on atoms` 块的原子受力."""
+    force_blocks: list[list[list[float]]] = []
+    current_block: list[list[float]] = []
+    in_forces = False
+    for line in lines:
+        if "Forces acting on atoms" in line:
+            in_forces = True
+            current_block = []
+            continue
+        if not in_forces:
+            continue
+        if line.strip().startswith("atom"):
+            parts = line.split()
+            if len(parts) >= 8:
+                with contextlib.suppress(ValueError, IndexError):
+                    fx = float(parts[-3])
+                    fy = float(parts[-2])
+                    fz = float(parts[-1])
+                    current_block.append([fx, fy, fz])
+        elif "Total force" in line:
+            if current_block:
+                force_blocks.append(current_block)
+                current_block = []
+            in_forces = False
+        elif line.strip() == "" and current_block:
+            force_blocks.append(current_block)
+            current_block = []
+            in_forces = False
+    if current_block:
+        force_blocks.append(current_block)
+    return force_blocks[-1] if force_blocks else []
+
+
+def _qe_stress_row(lines: list[str], i: int, offset: int) -> list[float] | None:
+    """取 lines[i+offset] 前 3 个浮点数作为一行应力, 越界/解析失败返回 None."""
+    idx = i + offset
+    if idx >= len(lines):
+        return None
+    parts = lines[idx].split()
+    if len(parts) < 3:
+        return None
+    with contextlib.suppress(ValueError, IndexError):
+        return [float(parts[0]), float(parts[1]), float(parts[2])]
+    return None
+
+
+def _qe_parse_stress(lines: list[str]) -> list[list[float]]:
+    """取最后一个 stress 张量 (3x3)."""
+    stress_result: list[list[float]] = []
+    for i, line in enumerate(lines):
+        lowered = line.lower()
+        if not ("total   stress" in line or ("stress" in lowered and "kbar" in lowered)):
+            continue
+        rows = (_qe_stress_row(lines, i, j) for j in range(1, 4))
+        stress = [row for row in rows if row is not None]
+        if len(stress) == 3:
+            stress_result = stress
+    return stress_result
+
+
 class QuantumEspressoToolInput(BaseModel):
     action: Literal["generate", "run", "parse"] = Field(default="run")
     calculation: Literal["scf", "relax", "vc-relax", "md", "bands"] = Field(
@@ -461,82 +534,14 @@ class QuantumEspressoTool(HuginnTool):
         return self._parse_output(content)
 
     def _parse_output(self, content: str) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "energy": None,
-            "converged": False,
-            "forces": [],
-            "stress": [],
-            "n_scf_steps": 0,
-        }
-
         lines = content.splitlines()
-
-        # Energy
-        for line in lines:
-            if "!    total energy" in line:
-                parts = line.split("=")
-                if len(parts) > 1:
-                    with contextlib.suppress(ValueError, IndexError):
-                        result["energy"] = float(parts[-1].strip().split()[0])
-
-        # Convergence
-        result["converged"] = "convergence has been achieved" in content
-
-        # SCF steps
-        result["n_scf_steps"] = content.count("iteration #")
-
-        # Forces (last block)
-        force_blocks = []
-        current_block = []
-        in_forces = False
-        for line in lines:
-            if "Forces acting on atoms" in line:
-                in_forces = True
-                current_block = []
-                continue
-            if in_forces:
-                if line.strip().startswith("atom"):
-                    parts = line.split()
-                    if len(parts) >= 8:
-                        with contextlib.suppress(ValueError, IndexError):
-                            fx = float(parts[-3])
-                            fy = float(parts[-2])
-                            fz = float(parts[-1])
-                            current_block.append([fx, fy, fz])
-                elif "Total force" in line:
-                    if current_block:
-                        force_blocks.append(current_block)
-                        current_block = []
-                    in_forces = False
-                elif line.strip() == "" and current_block:
-                    force_blocks.append(current_block)
-                    current_block = []
-                    in_forces = False
-        if current_block:
-            force_blocks.append(current_block)
-        if force_blocks:
-            result["forces"] = force_blocks[-1]
-
-        # Stress (last occurrence)
-        for i, line in enumerate(lines):
-            if (
-                "total   stress" in line
-                or "stress" in line.lower()
-                and "kbar" in line.lower()
-            ):
-                stress = []
-                for j in range(1, 4):
-                    if i + j < len(lines):
-                        parts = lines[i + j].split()
-                        if len(parts) >= 3:
-                            with contextlib.suppress(ValueError, IndexError):
-                                stress.append(
-                                    [float(parts[0]), float(parts[1]), float(parts[2])]
-                                )
-                if len(stress) == 3:
-                    result["stress"] = stress
-
-        return result
+        return {
+            "energy": _qe_parse_energy(lines),
+            "converged": "convergence has been achieved" in content,
+            "forces": _qe_parse_forces(lines),
+            "stress": _qe_parse_stress(lines),
+            "n_scf_steps": content.count("iteration #"),
+        }
 
     def _parse_results(
         self, args: QuantumEspressoToolInput, work_dir: Path

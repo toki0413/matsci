@@ -703,46 +703,15 @@ class MLPotentialTool(HuginnTool):
         柏拉图收敛风险: 如果互补模型之间偏差大 (std > 阈值), 说明预测不可靠,
         即使模型们彼此一致也不能全信 (它们可能一起错).
         """
-        # ---- 选模型 ----
-        if args.models:
-            models = args.models
-        else:
-            meta = UMLIP_REGISTRY.get(args.backend, {})
-            complementary = (
-                meta.get("diversity_metadata", {}).get("complementary_models", [])
-            )
-            models = [args.backend] + complementary[:2]
-
-        # 去重保序, 只留注册表里有的
-        seen: set[str] = set()
-        selected: list[str] = []
-        for m in models:
-            if m not in seen and m in UMLIP_REGISTRY:
-                seen.add(m)
-                selected.append(m)
-
+        selected = self._cv_select_models(args)
         if len(selected) < 2:
             return ToolResult(
                 data=None,
                 success=False,
                 error="cross_validate needs at least 2 models, got: " + str(selected),
             )
-
         property_type = args.property_type or "energy"
-
-        # ---- 逐模型跑 predict ----
-        predictions: dict[str, dict[str, Any]] = {}
-        errors: dict[str, str] = {}
-        for model in selected:
-            try:
-                result = self._predict_single(model, args)
-                if result.success and result.data:
-                    predictions[model] = result.data
-                else:
-                    errors[model] = result.error or "prediction failed"
-            except Exception as exc:
-                errors[model] = str(exc)
-
+        predictions, errors = self._cv_predict_all(selected, args)
         if len(predictions) < 2:
             return ToolResult(
                 data={
@@ -756,167 +725,225 @@ class MLPotentialTool(HuginnTool):
                 success=False,
                 error="At least 2 models must succeed for cross-validation",
             )
+        n_atoms = self._cv_count_atoms(args.structure_file)
+        if property_type == "energy":
+            return self._cv_energy_result(selected, predictions, errors, n_atoms)
+        if property_type == "forces":
+            return self._cv_forces_result(selected, predictions, errors)
+        return self._cv_phonon_result(selected, predictions, errors, n_atoms)
 
-        # ---- 拿原子数 (算 per-atom 量用) ----
-        n_atoms = 1
+    @staticmethod
+    def _cv_select_models(args: MLPotentialInput) -> list[str]:
+        """选模型: 用户指定优先, 否则 backend + 互补模型 (最多 3), 去重保序."""
+        if args.models:
+            models = args.models
+        else:
+            meta = UMLIP_REGISTRY.get(args.backend, {})
+            complementary = (
+                meta.get("diversity_metadata", {}).get("complementary_models", [])
+            )
+            models = [args.backend] + complementary[:2]
+        seen: set[str] = set()
+        selected: list[str] = []
+        for m in models:
+            if m not in seen and m in UMLIP_REGISTRY:
+                seen.add(m)
+                selected.append(m)
+        return selected
+
+    def _cv_predict_all(
+        self, selected: list[str], args: MLPotentialInput,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+        """逐模型跑 predict, 分开收集成功预测与错误."""
+        predictions: dict[str, dict[str, Any]] = {}
+        errors: dict[str, str] = {}
+        for model in selected:
+            try:
+                result = self._predict_single(model, args)
+                if result.success and result.data:
+                    predictions[model] = result.data
+                else:
+                    errors[model] = result.error or "prediction failed"
+            except Exception as exc:
+                errors[model] = str(exc)
+        return predictions, errors
+
+    @staticmethod
+    def _cv_count_atoms(structure_file: str | None) -> int:
+        """读结构文件拿原子数; 读不了就用 1 (energy_per_atom == energy)."""
         try:
             from ase.io import read
 
-            n_atoms = len(read(args.structure_file))
+            return len(read(structure_file))
         except Exception:
-            logger.debug("cross validate umlips failed", exc_info=True)  # 读不了就用 1, energy_per_atom == energy
+            logger.debug(
+                "cross validate umlips failed", exc_info=True
+            )  # 读不了就用 1, energy_per_atom == energy
+            return 1
 
-        # ---- 按性质类型算统计量 ----
-        warnings: list[str] = []
-
-        if property_type == "energy":
-            per_model_e: dict[str, float] = {}
-            for model, data in predictions.items():
-                e = data.get("energy")
-                if e is not None:
-                    per_model_e[model] = float(e) / n_atoms
-
-            values = list(per_model_e.values())
-            if len(values) < 2:
-                return ToolResult(
-                    data={
-                        "property_type": "energy",
-                        "selected_models": selected,
-                        "predictions": predictions,
-                        "errors": errors,
-                        "status": "insufficient_energy_data",
-                    },
-                    success=False,
-                    error="Not enough models returned valid energy",
-                )
-
-            mean_e = float(np.mean(values))
-            std_e = float(np.std(values))
-            # 一致性分数: 1.0 = 完全一致, 0.0 = 差异 >= 2x 阈值
-            consistency = max(0.0, 1.0 - std_e / (2 * self._CV_ENERGY_THRESHOLD))
-
-            if std_e > self._CV_ENERGY_THRESHOLD:
-                warnings.append(
-                    f"Multi-model inconsistency: std={std_e * 1000:.1f} meV/atom > "
-                    f"threshold={self._CV_ENERGY_THRESHOLD * 1000:.0f} meV/atom. "
-                    f"Plato-convergence risk — models may agree but all be wrong."
-                )
-
-            # 附上每个模型的 diversity_metadata, 方便判断哪些模型互补
-            model_metadata = {
-                m: UMLIP_REGISTRY.get(m, {}).get("diversity_metadata", {})
-                for m in per_model_e
-            }
-
-            return ToolResult(
-                data={
-                    "property_type": "energy",
-                    "selected_models": selected,
-                    "per_model": {
-                        m: {"energy_per_atom": e} for m, e in per_model_e.items()
-                    },
-                    "mean": mean_e,
-                    "std": std_e,
-                    "consistency_score": round(consistency, 4),
-                    "threshold": self._CV_ENERGY_THRESHOLD,
-                    "warnings": warnings,
-                    "errors": errors,
-                    "model_diversity_metadata": model_metadata,
-                },
-                success=True,
-            )
-
-        if property_type == "forces":
-            per_model_f: dict[str, np.ndarray] = {}
-            for model, data in predictions.items():
-                f = data.get("forces")
-                if f:
-                    per_model_f[model] = np.asarray(f, dtype=float)
-
-            if len(per_model_f) < 2:
-                return ToolResult(
-                    data={
-                        "property_type": "forces",
-                        "selected_models": selected,
-                        "predictions": predictions,
-                        "errors": errors,
-                        "status": "insufficient_force_data",
-                    },
-                    success=False,
-                    error="Not enough models returned valid forces",
-                )
-
-            # 两两算 RMSE
-            model_names = list(per_model_f.keys())
-            pairwise_rmses: list[float] = []
-            for i in range(len(model_names)):
-                for j in range(i + 1, len(model_names)):
-                    diff = per_model_f[model_names[i]] - per_model_f[model_names[j]]
-                    pairwise_rmses.append(float(np.sqrt(np.mean(diff ** 2))))
-
-            mean_rmse = float(np.mean(pairwise_rmses))
-            max_rmse = float(np.max(pairwise_rmses))
-            consistency = max(
-                0.0, 1.0 - mean_rmse / (2 * self._CV_FORCE_THRESHOLD)
-            )
-
-            if mean_rmse > self._CV_FORCE_THRESHOLD:
-                warnings.append(
-                    f"Multi-model force inconsistency: mean RMSE={mean_rmse * 1000:.1f} "
-                    f"meV/Å > threshold={self._CV_FORCE_THRESHOLD * 1000:.0f} meV/Å. "
-                    f"Plato-convergence risk."
-                )
-
-            model_metadata = {
-                m: UMLIP_REGISTRY.get(m, {}).get("diversity_metadata", {})
-                for m in per_model_f
-            }
-
-            return ToolResult(
-                data={
-                    "property_type": "forces",
-                    "selected_models": selected,
-                    "per_model": {
-                        m: {"forces": per_model_f[m].tolist()} for m in model_names
-                    },
-                    "mean_rmse": mean_rmse,
-                    "max_rmse": max_rmse,
-                    "consistency_score": round(consistency, 4),
-                    "threshold": self._CV_FORCE_THRESHOLD,
-                    "warnings": warnings,
-                    "errors": errors,
-                    "model_diversity_metadata": model_metadata,
-                },
-                success=True,
-            )
-
-        # property_type == "phonons"
-        # phonon 交叉验证需要力常数 (有限差分), 单点预测不够.
-        # 退而求其次: 用能量一致性做 proxy, 附说明.
-        per_model_e = {}
+    @staticmethod
+    def _cv_per_atom_energy(
+        predictions: dict[str, dict[str, Any]], n_atoms: int,
+    ) -> dict[str, float]:
+        """各模型能量归一化到 per-atom."""
+        per_model_e: dict[str, float] = {}
         for model, data in predictions.items():
             e = data.get("energy")
             if e is not None:
                 per_model_e[model] = float(e) / n_atoms
+        return per_model_e
 
+    def _cv_energy_consistency(
+        self, values: list[float],
+    ) -> tuple[float, float, float, str | None]:
+        """能量一致性统计: (mean, std, consistency, 不一致警告)."""
+        mean_e = float(np.mean(values))
+        std_e = float(np.std(values))
+        consistency = max(0.0, 1.0 - std_e / (2 * self._CV_ENERGY_THRESHOLD))
+        warning = None
+        if std_e > self._CV_ENERGY_THRESHOLD:
+            warning = (
+                f"Multi-model inconsistency: std={std_e * 1000:.1f} meV/atom > "
+                f"threshold={self._CV_ENERGY_THRESHOLD * 1000:.0f} meV/atom. "
+                f"Plato-convergence risk — models may agree but all be wrong."
+            )
+        return mean_e, std_e, consistency, warning
+
+    @staticmethod
+    def _cv_model_metadata(models: Any) -> dict[str, Any]:
+        """附上每个模型的 diversity_metadata, 方便判断哪些模型互补."""
+        return {
+            m: UMLIP_REGISTRY.get(m, {}).get("diversity_metadata", {})
+            for m in models
+        }
+
+    def _cv_energy_result(
+        self, selected: list[str], predictions: dict[str, dict[str, Any]],
+        errors: dict[str, str], n_atoms: int,
+    ) -> ToolResult:
+        """property_type=energy: per-atom 能量一致性."""
+        per_model_e = self._cv_per_atom_energy(predictions, n_atoms)
+        values = list(per_model_e.values())
+        if len(values) < 2:
+            return ToolResult(
+                data={
+                    "property_type": "energy",
+                    "selected_models": selected,
+                    "predictions": predictions,
+                    "errors": errors,
+                    "status": "insufficient_energy_data",
+                },
+                success=False,
+                error="Not enough models returned valid energy",
+            )
+        mean_e, std_e, consistency, warning = self._cv_energy_consistency(values)
+        return ToolResult(
+            data={
+                "property_type": "energy",
+                "selected_models": selected,
+                "per_model": {
+                    m: {"energy_per_atom": e} for m, e in per_model_e.items()
+                },
+                "mean": mean_e,
+                "std": std_e,
+                "consistency_score": round(consistency, 4),
+                "threshold": self._CV_ENERGY_THRESHOLD,
+                "warnings": [warning] if warning else [],
+                "errors": errors,
+                "model_diversity_metadata": self._cv_model_metadata(per_model_e),
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _cv_pairwise_rmse(
+        per_model_f: dict[str, np.ndarray], model_names: list[str],
+    ) -> tuple[float, float]:
+        """两两力场 RMSE: (mean_rmse, max_rmse)."""
+        pairwise_rmses: list[float] = []
+        for i in range(len(model_names)):
+            for j in range(i + 1, len(model_names)):
+                diff = per_model_f[model_names[i]] - per_model_f[model_names[j]]
+                pairwise_rmses.append(float(np.sqrt(np.mean(diff ** 2))))
+        return float(np.mean(pairwise_rmses)), float(np.max(pairwise_rmses))
+
+    def _cv_force_consistency(self, mean_rmse: float) -> tuple[float, list[str]]:
+        """力场一致性分数 + 超阈值警告."""
+        consistency = max(0.0, 1.0 - mean_rmse / (2 * self._CV_FORCE_THRESHOLD))
+        warnings: list[str] = []
+        if mean_rmse > self._CV_FORCE_THRESHOLD:
+            warnings.append(
+                f"Multi-model force inconsistency: mean RMSE={mean_rmse * 1000:.1f} "
+                f"meV/Å > threshold={self._CV_FORCE_THRESHOLD * 1000:.0f} meV/Å. "
+                f"Plato-convergence risk."
+            )
+        return consistency, warnings
+
+    def _cv_forces_result(
+        self, selected: list[str], predictions: dict[str, dict[str, Any]],
+        errors: dict[str, str],
+    ) -> ToolResult:
+        """property_type=forces: 两两 RMSE 一致性."""
+        per_model_f: dict[str, np.ndarray] = {}
+        for model, data in predictions.items():
+            f = data.get("forces")
+            if f:
+                per_model_f[model] = np.asarray(f, dtype=float)
+        if len(per_model_f) < 2:
+            return ToolResult(
+                data={
+                    "property_type": "forces",
+                    "selected_models": selected,
+                    "predictions": predictions,
+                    "errors": errors,
+                    "status": "insufficient_force_data",
+                },
+                success=False,
+                error="Not enough models returned valid forces",
+            )
+        model_names = list(per_model_f.keys())
+        mean_rmse, max_rmse = self._cv_pairwise_rmse(per_model_f, model_names)
+        consistency, warnings = self._cv_force_consistency(mean_rmse)
+        return ToolResult(
+            data={
+                "property_type": "forces",
+                "selected_models": selected,
+                "per_model": {
+                    m: {"forces": per_model_f[m].tolist()} for m in model_names
+                },
+                "mean_rmse": mean_rmse,
+                "max_rmse": max_rmse,
+                "consistency_score": round(consistency, 4),
+                "threshold": self._CV_FORCE_THRESHOLD,
+                "warnings": warnings,
+                "errors": errors,
+                "model_diversity_metadata": self._cv_model_metadata(per_model_f),
+            },
+            success=True,
+        )
+
+    def _cv_phonon_result(
+        self, selected: list[str], predictions: dict[str, dict[str, Any]],
+        errors: dict[str, str], n_atoms: int,
+    ) -> ToolResult:
+        """property_type=phonons: 力常数缺失, 用能量一致性做 proxy."""
+        per_model_e = self._cv_per_atom_energy(predictions, n_atoms)
         values = list(per_model_e.values())
         mean_e = float(np.mean(values)) if values else 0.0
         std_e = float(np.std(values)) if values else 0.0
         consistency = max(0.0, 1.0 - std_e / (2 * self._CV_ENERGY_THRESHOLD))
-
-        warnings.append(
+        warnings = [
             "Phonon cross-validation requires force constants via finite differences. "
             "Energy consistency is used as a proxy here. "
             "For rigorous phonon validation, run energy_landscape with each model "
             "and compare curvatures, or use phonopy with multiple MLIP backends."
-        )
+        ]
         if std_e > self._CV_ENERGY_THRESHOLD:
             warnings.append(
                 f"Multi-model energy inconsistency (phonon proxy): "
                 f"std={std_e * 1000:.1f} meV/atom > "
                 f"threshold={self._CV_ENERGY_THRESHOLD * 1000:.0f} meV/atom."
             )
-
         return ToolResult(
             data={
                 "property_type": "phonons",

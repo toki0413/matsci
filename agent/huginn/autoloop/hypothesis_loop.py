@@ -3327,67 +3327,16 @@ class HypothesisLoop:
             source_domain = context.get("domain") or "mathematics"
             target_domain = context.get("target_domain") or "another scientific domain"
 
-            # P13: flag on 时查 CrossDomain 历史, 决定是否跳过 / 引用
-            hint_prefix = ""
-            if os.environ.get("HUGINN_USE_CROSS_DOMAIN", "0") in ("1", "true", "True"):
-                try:
-                    kg = getattr(self, "kg", None)
-                    if kg is not None:
-                        history = kg.query_transfer_history(
-                            target_domain=target_domain, limit=3
-                        )
-                        # isinstance 兜底: 测试里 kg 可能是 MagicMock,
-                        # query_transfer_history 返 MagicMock 不是 list
-                        if isinstance(history, list):
-                            if history and all(
-                                h.get("status") == "failed" for h in history
-                            ):
-                                logger.info(
-                                    "CrossDomain skipped (3 recent failed transfers)"
-                                )
-                                return ""  # 3 条都失败, 不重复猜想
-                            successful = [
-                                h for h in history
-                                if h.get("status") == "succeeded"
-                            ]
-                            if successful:
-                                hint_prefix = (
-                                    f"Previous successful transfer: "
-                                    f"{successful[0].get('original_problem')} -> "
-                                    f"{successful[0].get('target_domain')}\n"
-                                )
-                except Exception:  # 防御: 迁移历史查询失败继续
-                    logger.warning(
-                        "query_transfer_history failed, proceed without history",
-                        exc_info=True,
-                    )
+            hint_prefix, should_skip = self._cross_domain_hint_prefix(target_domain)
+            if should_skip:
+                return ""
 
             gen = get_conjecture_generator()
 
             if self._should_imaginate():
-                known = self._recent_failed_hypotheses()
-                # P4-5: Carnot 循环做功 W = Δ(belief space 体积).
-                # forget_then_generate 前后 idea_count 差值作为 belief_space_delta 代理.
-                # ponytail: 0 维代理, 不真算 belief space 体积. 升级路径: 用 hypothesis
-                # graph 节点/边数变化, 或 embedding 空间 PCA 体积变化.
-                _pre_ideas = 0
-                with contextlib.suppress(Exception):
-                    _pre_ideas = len(self.hypothesis_graph.all_nodes())
-                result = gen.forget_then_generate(
-                    source_problem=str(source_problem)[:500],
-                    source_domain=str(source_domain),
-                    target_domain=str(target_domain),
-                    known_solutions=known,
-                    model=None,
+                result = self._run_imagination_conjecture(
+                    gen, source_problem, source_domain, target_domain
                 )
-                _post_ideas = 0
-                with contextlib.suppress(Exception):
-                    _post_ideas = len(self.hypothesis_graph.all_nodes())
-                try:
-                    from huginn.metacog.cognitive_heat_engine import get_heat_engine
-                    get_heat_engine().record_work(float(_post_ideas - _pre_ideas))
-                except Exception:  # 防御: 工作记录失败忽略
-                    logger.debug("record_work failed (non-fatal)", exc_info=True)
             else:
                 result = gen.run(
                     source_problem=str(source_problem)[:500],
@@ -3400,37 +3349,111 @@ class HypothesisLoop:
             prediction = conjecture.get("prediction", "")
             if not statement:
                 return ""
-            # P7: category_functor 接入 — 源/目标域命中已知 category 时, 用 functor
-            # 验证跨域结构保持, 命中才附加保结构提示 (advisory, 不改变现有 hint).
-            # 之前 functor 只活在模块自检里, 生产跨域猜想走不到它.
-            functor_note = ""
-            try:
-                from huginn.metacog.category_functor import get_category
-                src_cat = get_category(source_domain.strip().lower())
-                tgt_cat = get_category(target_domain.strip().lower())
-                if src_cat is not None and tgt_cat is not None:
-                    functor_note = (
-                        f"[functor: {src_cat.name}→{tgt_cat.name}] "
-                        f"两域结构同构, 迁移前用 functor 对象/态射映射核对.\n"
-                    )
-            except Exception:  # 防御: 范畴函子记录失败忽略
-                logger.debug("category_functor note failed (non-fatal)", exc_info=True)
-            # Prerequisite Inversion: 跨域类比不是直接用, 而是问"什么条件必须暗中获得满足"
-            # 4 维反转防止结构错配 (Dream Layer v1.1 核心贡献)
-            return (
-                f"{hint_prefix}{functor_note}[Cross-domain analogy hint]\n"
-                f"Conjecture: {statement}\n"
-                f"Prediction: {prediction}\n"
-                f"Before using this analogy, perform Prerequisite Inversion:\n"
-                f"- Necessary: What condition MUST hold for this analogy to be valid?\n"
-                f"- Boundary: In what parameter range does it break down?\n"
-                f"- Hidden: What implicit assumption from the source domain may NOT hold here?\n"
-                f"- Failure: If this analogy is wrong, what would the system look like instead?\n"
-                f"(Template-based analogy — verify conditions before adopting.)"
+            functor_note = self._functor_note(str(source_domain), str(target_domain))
+            return self._format_conjecture_hint(
+                hint_prefix, functor_note, statement, prediction
             )
         except Exception:  # 防御: 尽力生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
+
+    def _cross_domain_hint_prefix(self, target_domain: Any) -> tuple[str, bool]:
+        """P13: 查 CrossDomain transfer 历史, 返回 (hint_prefix, should_skip)."""
+        if os.environ.get("HUGINN_USE_CROSS_DOMAIN", "0") not in ("1", "true", "True"):
+            return "", False
+        try:
+            kg = getattr(self, "kg", None)
+            if kg is None:
+                return "", False
+            history = kg.query_transfer_history(target_domain=target_domain, limit=3)
+            # isinstance 兜底: 测试里 kg 可能是 MagicMock,
+            # query_transfer_history 返 MagicMock 不是 list
+            if not isinstance(history, list):
+                return "", False
+            if history and all(h.get("status") == "failed" for h in history):
+                logger.info("CrossDomain skipped (3 recent failed transfers)")
+                return "", True  # 3 条都失败, 不重复猜想
+            successful = [h for h in history if h.get("status") == "succeeded"]
+            if not successful:
+                return "", False
+            prefix = (
+                f"Previous successful transfer: "
+                f"{successful[0].get('original_problem')} -> "
+                f"{successful[0].get('target_domain')}\n"
+            )
+            return prefix, False
+        except Exception:  # 防御: 迁移历史查询失败继续
+            logger.warning(
+                "query_transfer_history failed, proceed without history",
+                exc_info=True,
+            )
+            return "", False
+
+    def _run_imagination_conjecture(
+        self, gen: Any, source_problem: Any, source_domain: Any, target_domain: Any
+    ) -> dict[str, Any]:
+        """想象力模式: 遗忘已 refuted 假设后从第一性原理重新生成猜想."""
+        known = self._recent_failed_hypotheses()
+        # P4-5: Carnot 循环做功 W = Δ(belief space 体积).
+        # forget_then_generate 前后 idea_count 差值作为 belief_space_delta 代理.
+        # ponytail: 0 维代理, 不真算 belief space 体积. 升级路径: 用 hypothesis
+        # graph 节点/边数变化, 或 embedding 空间 PCA 体积变化.
+        _pre_ideas = 0
+        with contextlib.suppress(Exception):
+            _pre_ideas = len(self.hypothesis_graph.all_nodes())
+        result = gen.forget_then_generate(
+            source_problem=str(source_problem)[:500],
+            source_domain=str(source_domain),
+            target_domain=str(target_domain),
+            known_solutions=known,
+            model=None,
+        )
+        _post_ideas = 0
+        with contextlib.suppress(Exception):
+            _post_ideas = len(self.hypothesis_graph.all_nodes())
+        try:
+            from huginn.metacog.cognitive_heat_engine import get_heat_engine
+
+            get_heat_engine().record_work(float(_post_ideas - _pre_ideas))
+        except Exception:  # 防御: 工作记录失败忽略
+            logger.debug("record_work failed (non-fatal)", exc_info=True)
+        return result
+
+    @staticmethod
+    def _functor_note(source_domain: str, target_domain: str) -> str:
+        """P7: category_functor 接入 —— 源/目标域命中已知 category 时附加保结构提示."""
+        try:
+            from huginn.metacog.category_functor import get_category
+
+            src_cat = get_category(source_domain.strip().lower())
+            tgt_cat = get_category(target_domain.strip().lower())
+            if src_cat is None or tgt_cat is None:
+                return ""
+            return (
+                f"[functor: {src_cat.name}\u2192{tgt_cat.name}] "
+                f"\u4e24\u57df\u7ed3\u6784\u540c\u6784, \u8fc1\u79fb\u524d\u7528 functor "
+                f"\u5bf9\u8c61/\u6001\u5c04\u6620\u5c04\u6838\u5bf9.\n"
+            )
+        except Exception:  # 防御: 范畴函子记录失败忽略
+            logger.debug("category_functor note failed (non-fatal)", exc_info=True)
+            return ""
+
+    @staticmethod
+    def _format_conjecture_hint(
+        hint_prefix: str, functor_note: str, statement: str, prediction: str
+    ) -> str:
+        """把猜想组装成 hint; Prerequisite Inversion 是 Dream Layer v1.1 核心贡献."""
+        return (
+            f"{hint_prefix}{functor_note}[Cross-domain analogy hint]\n"
+            f"Conjecture: {statement}\n"
+            f"Prediction: {prediction}\n"
+            f"Before using this analogy, perform Prerequisite Inversion:\n"
+            f"- Necessary: What condition MUST hold for this analogy to be valid?\n"
+            f"- Boundary: In what parameter range does it break down?\n"
+            f"- Hidden: What implicit assumption from the source domain may NOT hold here?\n"
+            f"- Failure: If this analogy is wrong, what would the system look like instead?\n"
+            f"(Template-based analogy \u2014 verify conditions before adopting.)"
+        )
 
     async def _symreg_hint(self, context: dict[str, Any]) -> str:
         """从 observation_data 跑符号回归, 把最优解析表达式作为 hint 返回.
@@ -3542,67 +3565,92 @@ class HypothesisLoop:
         if routing_surprise(self) > 0.6:
             return "reviewer"
 
-        # C4: typed memory 默认 on, 旧行 NULL 走 lazy migrate 反推
-        # (旧行 tags 含 "autoloop" + "persona:reviewer" → 自动当 iteration_result)
-        if self.memory:
-            try:
-                _typed_rows = self.memory.recall_typed(
-                    memory_type="persona_history",
-                    persona_id="reviewer",
-                    limit=5,
-                )
-                if _typed_rows:
-                    # content 格式: "Persona: reviewer, r_phys: 0.78"
-                    import re as _re
-                    _scores: list[float] = []
-                    for _r in _typed_rows:
-                        _c = _r.get("content", "") if isinstance(_r, dict) else ""
-                        _m = _re.search(r"r_phys[:\s]+([\d.]+)", _c)
-                        if _m:
-                            _scores.append(float(_m.group(1)))
-                    if _scores:
-                        _avg = sum(_scores) / len(_scores)
-                        if _avg > 0.6:
-                            return "reviewer"
-            except Exception:  # 防御: 人物史召回失败跳过
-                logger.debug(
-                    "recall_typed(persona_history) failed", exc_info=True,
-                )
+        reviewer = self._reviewer_from_persona_memory()
+        if reviewer:
+            return reviewer
 
-        # C5: KG persona_use 召回 — knowledge→persona 闭环.
-        # 遍历 KG persona_use 节点, 按 persona 分组求 r_phys 均值, 取最高.
-        # ponytail: 不引入 embedding 相似度, 简单按 persona 聚合 r_phys.
-        # 升级路径: context_hash 距离或 embedding 召回相似 context.
-        try:
-            if hasattr(self, "kg") and self.kg is not None:
-                with self.kg._lock:
-                    persona_scores: dict[str, list[float]] = {}
-                    for _nid, _data in self.kg._graph.nodes(data=True):
-                        if _data.get("type") != "persona_use":
-                            continue
-                        _p = _data.get("persona")
-                        _r = _data.get("r_phys")
-                        if _p and _r is not None:
-                            try:
-                                persona_scores.setdefault(_p, []).append(float(_r))
-                            except (TypeError, ValueError):
-                                logger.debug("best-effort op failed", exc_info=True)
-                                continue
-                if persona_scores:
-                    _avg_scores = {
-                        p: sum(v) / len(v) for p, v in persona_scores.items()
-                    }
-                    _best = max(_avg_scores, key=_avg_scores.get)
-                    if _avg_scores[_best] > 0.5:
-                        return _best
-        except Exception:  # 防御: 人物用法召回失败跳过
-            logger.debug("persona_use KG recall failed", exc_info=True)
+        kg_persona = self._persona_from_kg()
+        if kg_persona:
+            return kg_persona
 
         blob = json.dumps(context, ensure_ascii=False).lower()
         md_markers = ("md", "lammps", "molecular dynamics", "nvt", "npt", "md_steps")
         if any(m in blob for m in md_markers):
             return "md_expert"
         return "dft_expert"
+
+    def _reviewer_from_persona_memory(self) -> str | None:
+        """查 persona_history, reviewer 历史 r_phys 均值 > 0.6 时继续用 reviewer."""
+        # C4: typed memory 默认 on, 旧行 NULL 走 lazy migrate 反推
+        # (旧行 tags 含 "autoloop" + "persona:reviewer" → 自动当 iteration_result)
+        if not self.memory:
+            return None
+        try:
+            _typed_rows = self.memory.recall_typed(
+                memory_type="persona_history",
+                persona_id="reviewer",
+                limit=5,
+            )
+            _avg = self._avg_r_phys(_typed_rows)
+            if _avg is not None and _avg > 0.6:
+                return "reviewer"
+        except Exception:  # 防御: 人物史召回失败跳过
+            logger.debug(
+                "recall_typed(persona_history) failed", exc_info=True,
+            )
+        return None
+
+    @staticmethod
+    def _avg_r_phys(rows: Any) -> float | None:
+        """从 persona_history 行解析 r_phys 均值 (content 格式 "Persona: reviewer, r_phys: 0.78")."""
+        import re as _re
+
+        _scores: list[float] = []
+        for _r in rows or []:
+            _c = _r.get("content", "") if isinstance(_r, dict) else ""
+            _m = _re.search(r"r_phys[:\s]+([\d.]+)", _c)
+            if _m:
+                _scores.append(float(_m.group(1)))
+        if not _scores:
+            return None
+        return sum(_scores) / len(_scores)
+
+    def _persona_from_kg(self) -> str | None:
+        """C5: KG persona_use 召回 — knowledge→persona 闭环, 取 r_phys 均值最高者."""
+        try:
+            if not (hasattr(self, "kg") and self.kg is not None):
+                return None
+            _avg_scores = self._persona_avg_scores()
+            if not _avg_scores:
+                return None
+            _best = max(_avg_scores, key=_avg_scores.get)
+            if _avg_scores[_best] > 0.5:
+                return _best
+        except Exception:  # 防御: 人物用法召回失败跳过
+            logger.debug("persona_use KG recall failed", exc_info=True)
+        return None
+
+    def _persona_avg_scores(self) -> dict[str, float]:
+        """遍历 KG persona_use 节点, 按 persona 分组求 r_phys 均值.
+
+        ponytail: 不引入 embedding 相似度, 简单按 persona 聚合 r_phys.
+        升级路径: context_hash 距离或 embedding 召回相似 context.
+        """
+        persona_scores: dict[str, list[float]] = {}
+        with self.kg._lock:
+            for _nid, _data in self.kg._graph.nodes(data=True):
+                if _data.get("type") != "persona_use":
+                    continue
+                _p = _data.get("persona")
+                _r = _data.get("r_phys")
+                if not (_p and _r is not None):
+                    continue
+                try:
+                    persona_scores.setdefault(_p, []).append(float(_r))
+                except (TypeError, ValueError):
+                    logger.debug("best-effort op failed", exc_info=True)
+        return {p: sum(v) / len(v) for p, v in persona_scores.items() if v}
+
 
     async def _evaluate_informativeness(self, hypothesis_id: str) -> dict[str, Any]:
         """P0 Task 3: 评估 hypothesis 的 expected_informativeness (新颖度 × 可验证性).

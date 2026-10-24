@@ -179,6 +179,33 @@ def _extract_sci_numbers(text: str, min_exp: int = 3) -> list[float]:
     return out
 
 
+def _numbers_from_file(p: Path, np: Any, nums: list[float], cap: int) -> None:
+    """把一个产物文件里的数值追加进 nums (npy/npz/json/txt/csv)."""
+    if p.suffix == ".npy" and np is not None:
+        a = np.asarray(np.load(p, allow_pickle=False), dtype=float).ravel()
+        nums.extend(a[: cap - len(nums)].tolist())
+    elif p.suffix == ".npz" and np is not None:
+        with np.load(p, allow_pickle=False) as z:
+            for k in z.files:
+                a = np.asarray(z[k], dtype=float).ravel()
+                nums.extend(a[: cap - len(nums)].tolist())
+    elif p.suffix == ".json":
+        # JSON 里的数字大部分是普通浮点 (0.004, 0.951057), 不是
+        # sci-notation. 旧版只用 _SCI_E 正则抓, 漏掉 99% 的真实
+        # 计算结果 → artifacts 只有 2 个值 → claim 匹配概率 ~0.
+        # 用 json.loads 递归收集所有 int/float.
+        _walk_json_numbers(json.loads(p.read_text(errors="replace")), nums, cap)
+    elif p.suffix in (".txt", ".csv"):
+        # 文本类仍用正则 (无结构保证), 但抓普通数字也抓 sci-notation.
+        for m in _ANY_NUMBER.finditer(p.read_text(errors="replace")):
+            if len(nums) >= cap:
+                break
+            try:
+                nums.append(float(m.group(0)))
+            except (ValueError, OverflowError):
+                logger.debug("best-effort op failed", exc_info=True)
+
+
 def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]:
     """收集 fork outputs 快照里的全部数值, 作为复现对照集."""
     nums: list[float] = []
@@ -193,32 +220,7 @@ def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]
         if len(nums) >= cap or not p.is_file():
             continue
         try:
-            if p.suffix == ".npy" and np is not None:
-                a = np.asarray(np.load(p, allow_pickle=False), dtype=float).ravel()
-                nums.extend(a[: cap - len(nums)].tolist())
-            elif p.suffix == ".npz" and np is not None:
-                with np.load(p, allow_pickle=False) as z:
-                    for k in z.files:
-                        a = np.asarray(z[k], dtype=float).ravel()
-                        nums.extend(a[: cap - len(nums)].tolist())
-            elif p.suffix == ".json":
-                # JSON 里的数字大部分是普通浮点 (0.004, 0.951057), 不是
-                # sci-notation. 旧版只用 _SCI_E 正则抓, 漏掉 99% 的真实
-                # 计算结果 → artifacts 只有 2 个值 → claim 匹配概率 ~0.
-                # 用 json.loads 递归收集所有 int/float.
-                _walk_json_numbers(
-                    json.loads(p.read_text(errors="replace")), nums, cap,
-                )
-            elif p.suffix in (".txt", ".csv"):
-                # 文本类仍用正则 (无结构保证), 但抓普通数字也抓 sci-notation.
-                for m in _ANY_NUMBER.finditer(p.read_text(errors="replace")):
-                    if len(nums) >= cap:
-                        break
-                    try:
-                        nums.append(float(m.group(0)))
-                    except (ValueError, OverflowError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
+            _numbers_from_file(p, np, nums, cap)
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)
             continue

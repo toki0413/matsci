@@ -33,7 +33,7 @@ def context(tmp_path):
 class TestStructureSymmetryDescriptorChain:
     """W1: structure_tool(analyze) → symmetry_tool(analyze) → descriptor_tool(composition)."""
 
-    async def test_chain(self, context):
+    async def test_structure_then_symmetry_then_descriptor(self, context):
         pytest.importorskip("pymatgen", reason="pymatgen not installed")
 
         # Step 1: structure_tool analyzes the Si POSCAR
@@ -76,7 +76,7 @@ class TestEOSFittingChain:
     diagnostics into validate_tool to confirm the data contract.
     """
 
-    async def test_chain(self, context):
+    async def test_eos_fit_then_validate(self, context):
         # Synthetic energy-volume data: exact parabola E = E0 + B*(V-V0)^2
         v0, e0, b = 20.0, -10.5, 0.05
         xdata = [18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0, 21.5, 22.0]
@@ -125,7 +125,7 @@ class TestEOSFittingChain:
 class TestSymmetryKpathChain:
     """W7: structure_tool(read) → symmetry_tool(kpath)."""
 
-    async def test_chain(self, context):
+    async def test_structure_then_kpath(self, context):
         pytest.importorskip("pymatgen", reason="pymatgen not installed")
 
         # Step 1: structure_tool reads the Si POSCAR
@@ -153,7 +153,7 @@ class TestSymmetryKpathChain:
 class TestStructureXRDSimChain:
     """W2: structure_tool(read) → xrd_sim_tool(simulate_xrd)."""
 
-    async def test_chain(self, context):
+    async def test_structure_then_xrd_simulation(self, context):
         pytest.importorskip("pymatgen", reason="pymatgen not installed")
 
         # Step 1: structure_tool reads the Si POSCAR
@@ -185,7 +185,7 @@ class TestStructureXRDSimChain:
 class TestStructureSymmetryValidateChain:
     """W4: structure_tool(analyze) → symmetry_tool(conventional) → validate_tool(validate)."""
 
-    async def test_chain(self, context):
+    async def test_structure_conventional_cell_then_validate(self, context):
         pytest.importorskip("pymatgen", reason="pymatgen not installed")
 
         # Step 1: structure_tool analyzes the Si POSCAR
@@ -233,7 +233,7 @@ class TestNumericalChain:
     validates the computed integral as a DFT-style scalar result.
     """
 
-    async def test_chain(self, context):
+    async def test_root_then_integral_then_validate(self, context):
         num_tool = NumericalTool()
 
         # Step 1: find root of x**2 - 4 starting at x0=1.0 → 2.0
@@ -276,7 +276,7 @@ class TestNumericalChain:
 class TestXRDSimIndexChain:
     """W6: structure_tool(read) → xrd_sim_tool(simulate_xrd) → xrd_sim_tool(index_peaks)."""
 
-    async def test_chain(self, context):
+    async def test_xrd_simulate_then_index_peaks(self, context):
         pytest.importorskip("pymatgen", reason="pymatgen not installed")
 
         # Step 1: structure_tool reads the Si POSCAR

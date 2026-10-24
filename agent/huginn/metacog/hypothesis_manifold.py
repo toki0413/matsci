@@ -1497,13 +1497,8 @@ def _mcmc_chain_worker(
 
 # ---------- Self-check ----------
 
-def _selfcheck() -> None:
-    """Assert-based demo: 经典 abduction 测试.
-
-    场景: 黑箱子里有个机制, 我们观察到输出值. 多个 hypothesis 解释这个机制.
-    Bayesian model selection 应该选最简且 fit 最好的 hypothesis (Occam razor).
-    """
-    # 三个 hypothesis 解释同一组观察
+def _sc_build_manifold() -> tuple[HypothesisManifold, list[Observation]]:
+    """三个 hypothesis 解释同一组观察 + 水星进动观测."""
     h_newton = Hypothesis(
         h_id="newton",
         description="F = G m1 m2 / r^2",  # 简短, MDL 低
@@ -1533,38 +1528,54 @@ def _selfcheck() -> None:
         Observation("orbital_period", 1.0, sigma=0.01),
         Observation("precession", 0.43, sigma=0.05),
     ]
+    return m, obs
 
-    # Test 1: abduction 应该选 GR, 不是 epicycle (Occam: GR 更简)
+
+def _sc_abduction(
+    m: HypothesisManifold, obs: list[Observation]
+) -> tuple[Hypothesis, Hypothesis]:
+    """Test 1: abduction 应选 GR (Occam). Test 2: 无进动数据时 Newton 赢."""
     best = m.abductive_inference(obs)
     assert best is not None, "abduction returned None on non-empty manifold"
     assert best.h_id == "gr", (
         f"expected GR (simplest fit), got {best.h_id}. "
         f"posterior={m.posterior(obs)}"
     )
-
-    # Test 2: 没有进动观察时, Newton 应该赢 (最简)
+    # 没有进动观察时, Newton 应该赢 (最简)
     obs_no_prec = [Observation("orbital_period", 1.0, sigma=0.01)]
     best_no_prec = m.abductive_inference(obs_no_prec)
+    assert best_no_prec is not None, "abduction returned None without precession"
     assert best_no_prec.h_id == "newton", (
         f"without precession data, Newton (simplest) should win, got {best_no_prec.h_id}"
     )
+    return best, best_no_prec
 
-    # Test 3: Fisher distance — Newton 跟 GR 在 precession 维度上有距离
+
+def _sc_fisher_distance(m: HypothesisManifold) -> float:
+    """Test 3: Newton 跟 GR 在 precession 维度上有距离."""
     d_newton_gr = m.fisher_distance("newton", "gr")
     d_newton_newton = m.fisher_distance("newton", "newton")
     assert d_newton_gr > 0.0, "Newton and GR should differ on precession"
     assert d_newton_newton == 0.0, "self-distance should be 0"
+    return d_newton_gr
 
-    # Test 4: active learning 应该提议测 precession (区分 newton vs gr 的关键)
+
+def _sc_active_learning(m: HypothesisManifold) -> Hypothesis:
+    """Test 4: active learning 应提议测 precession (区分 newton vs gr 的关键)."""
+    obs_no_prec = [Observation("orbital_period", 1.0, sigma=0.01)]
     next_h = m.propose_next_exploration(obs_no_prec)
     # 离 newton (当前 best) Fisher 距离最远的是 gr (precession 差 0.43)
     assert next_h is not None and next_h.h_id == "gr", (
         f"expected GR as next exploration (max Fisher distance to current best), "
         f"got {next_h.h_id if next_h else None}"
     )
+    return next_h
 
-    # Test 5: MCMC 在 posterior 上采样, 多步后访问 GR 的频率 ≈ posterior(GR)
-    # Step 2: 用 cached_log_p_current 跨步缓存, 验证增量路径与全量路径等价
+
+def _sc_mcmc_sampling(
+    m: HypothesisManifold, obs: list[Observation]
+) -> tuple[dict[str, int], int]:
+    """Test 5: MCMC 在 posterior 上采样, GR 访问频率 ≈ posterior(GR)."""
     rng = random.Random(42)
     current = "newton"
     cached_log_p: float | None = None  # 首步 None, 之后复用上步返回值
@@ -1581,7 +1592,20 @@ def _selfcheck() -> None:
     assert visit_count["gr"] > n_steps * 0.3, (
         f"GR should be visited >30% of time, got {visit_count['gr']/n_steps:.2%}"
     )
+    return visit_count, n_steps
 
+
+def _sc_print_classic(
+    m: HypothesisManifold,
+    obs: list[Observation],
+    best: Hypothesis,
+    best_no_prec: Hypothesis,
+    d_newton_gr: float,
+    next_h: Hypothesis,
+    visit_count: dict[str, int],
+    n_steps: int,
+) -> None:
+    """经典 abduction 段的结果汇总."""
     print("✓ hypothesis_manifold self-check passed")
     print(f"  posterior(obs) = {m.posterior(obs)}")
     print(f"  abduction → {best.h_id} (Occam + fit)")
@@ -1590,7 +1614,9 @@ def _selfcheck() -> None:
     print(f"  active learning → {next_h.h_id} (max info gain direction)")
     print(f"  MCMC visit freq: { {k: v/n_steps for k, v in visit_count.items()} }")
 
-    # B1: SubspacePartition R 矩阵投影专项验证
+
+def _sc_b1_r_matrix(m: HypothesisManifold, d_newton_gr: float) -> None:
+    """B1: SubspacePartition R 矩阵投影专项验证 (P1-3 后 lazy 构建)."""
     # P1-3 后 _R lazy rebuild: n <= _SUBSPACE_K 时不构建 (保持 None), 走 O(n) 等价路径.
     # 升级路径: n > _SUBSPACE_K 时 fisher_distance 触发 _rebuild_R, 走 R 矩阵投影.
     assert m._keys == ["orbital_period", "precession"], f"keys mismatch: {m._keys}"
@@ -1605,185 +1631,240 @@ def _selfcheck() -> None:
     assert d_newton_gr_v2 == 0.43, f"fisher(newton, gr) should be 0.43, got {d_newton_gr_v2}"
     print(f"  B1 R-matrix: keys={m._keys}, n={len(m._keys)} <= k={_SUBSPACE_K}, 走 O(n) 等价路径 (lazy)")
 
-    # SE(3) guided MCMC proposal verification
-    # Scenario: two hypotheses with identical structures, SE(3) proposal should match.
+
+def _sc_build_cmaps(np_mod: Any, cmap_cls: Any) -> tuple[Any, Any]:
+    """构造两个同结构 StructureCognitiveMap."""
+    coords = np_mod.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
+    lattice = np_mod.eye(3) * 5.0
+    cmap_a = cmap_cls.from_coords(
+        species=["Si", "Si", "Si"], coords=coords, lattice=lattice)
+    cmap_b = cmap_cls.from_coords(
+        species=["Si", "Si", "Si"], coords=coords, lattice=lattice)
+    return cmap_a, cmap_b
+
+
+def _sc_verify_structure_register(cmap_a: Any, cmap_b: Any) -> HypothesisManifold:
+    """register_structure / _match_nearest_hypothesis / _se3_proposal 验证."""
+    m_se3 = HypothesisManifold()
+    m_se3.add(Hypothesis("h_a", "structure A", predictions={"x": 1.0}))
+    m_se3.add(Hypothesis("h_b", "structure B (same as A)", predictions={"x": 1.0}))
+    m_se3.register_structure("h_a", "struct_a", cmap_a)
+    m_se3.register_structure("h_b", "struct_b", cmap_b)
+
+    # Test: register_structure + _has_structure
+    assert m_se3._hyp["h_a"].structure_id == "struct_a"
+    assert m_se3._structure_maps["struct_a"] is cmap_a
+    assert m_se3._has_structure("h_a") is True
+    assert m_se3._has_structure("h_b") is True
+
+    # Test: _match_nearest_hypothesis with identical structures (RMSD=0)
+    matched = m_se3._match_nearest_hypothesis(cmap_a, exclude="h_a")
+    assert matched == "h_b", f"expected h_b, got {matched}"
+
+    # Test: _se3_proposal with small angle (should match h_b)
+    rng_se3 = random.Random(123)
+    matched_se3 = m_se3._se3_proposal("h_a", rng_se3, angle_sigma=2.0)
+    if matched_se3 is not None:
+        assert matched_se3 == "h_b", f"expected h_b, got {matched_se3}"
+    return m_se3
+
+
+def _sc_build_no_structure() -> HypothesisManifold:
+    """两个无结构 hypothesis 的 manifold (se3/haptic 退化路径用)."""
+    m_nos = HypothesisManifold()
+    m_nos.add(Hypothesis("h_x", "no struct", predictions={"x": 1.0}))
+    m_nos.add(Hypothesis("h_y", "no struct", predictions={"x": 2.0}))
+    return m_nos
+
+
+def _sc_verify_se3_paths(
+    m_se3: HypothesisManifold, m_nos: HypothesisManifold
+) -> tuple[str, float | None]:
+    """se3_enabled=True mcmc_step 跑通 + 无结构安全退化 fisher."""
+    cur = "h_a"
+    cached: float | None = None
+    for _ in range(100):
+        cur, cached = m_se3.mcmc_step(
+            [Observation("x", 1.0)], cur,
+            rng=random.Random(42), se3_enabled=True,
+            cached_log_p_current=cached,
+        )
+    cn = "h_x"
+    cn_cached: float | None = None
+    for _ in range(50):
+        cn, cn_cached = m_nos.mcmc_step(
+            [Observation("x", 1.0)], cn,
+            rng=random.Random(42), se3_enabled=True,
+            cached_log_p_current=cn_cached,
+        )
+    print("  SE(3) proposal: register + match + degrade-to-fisher OK")
+    return cn, cn_cached
+
+
+def _sc_register_and_propose_haptic(
+    m_se3: HypothesisManifold, m_nos: HypothesisManifold
+) -> None:
+    """register_haptic + _haptic_proposal 验证."""
+    from huginn.metacog.haptic_property_layer import HapticPropertyLayer
+
+    # 同构不同性: h_a/h_b 结构相同 (上面已注册), haptic 差异大 (石墨 vs 金刚石)
+    hap_a = HapticPropertyLayer(density=2.27)   # 石墨密度
+    hap_b = HapticPropertyLayer(density=3.52)   # 金刚石密度
+    m_se3.register_haptic("h_a", hap_a)
+    m_se3.register_haptic("h_b", hap_b)
+    assert m_se3._has_haptic("h_a") is True
+    assert m_se3._has_haptic("h_b") is True
+    assert m_se3._has_haptic("h_x") is False  # 不同 manifold, 但确认 None 路径
+
+    # _haptic_proposal: h_a current, 只有 h_b 一个 other → 返回 h_b
+    rng_hap = random.Random(7)
+    prop = m_se3._haptic_proposal("h_a", rng_hap, 1.0)
+    assert prop == "h_b", f"expected h_b, got {prop}"
+    # 只 1 个 haptic hypothesis → None
+    m_one = HypothesisManifold()
+    m_one.add(Hypothesis("solo", "solo", predictions={"x": 1.0}))
+    m_one.register_haptic("solo", HapticPropertyLayer(density=1.0))
+    assert m_one._haptic_proposal("solo", rng_hap, 1.0) is None
+    # 无 haptic → None
+    assert m_nos._haptic_proposal("h_x", rng_hap, 1.0) is None
+
+
+def _sc_verify_haptic_paths(
+    m_se3: HypothesisManifold,
+    m_nos: HypothesisManifold,
+    cur_id: str,
+    cached_log_p: float | None,
+) -> None:
+    """haptic_enabled=True mcmc_step 跑通 + 无 haptic 安全退化到 fisher."""
+    cur_h = "h_a"
+    ch: float | None = None
+    for _ in range(100):
+        cur_h, ch = m_se3.mcmc_step(
+            [Observation("x", 1.0)], cur_h,
+            rng=random.Random(99), haptic_enabled=True,
+            cached_log_p_current=ch,
+        )
+    for _ in range(50):
+        cur_id, cached_log_p = m_nos.mcmc_step(
+            [Observation("x", 1.0)], cur_id,
+            rng=random.Random(99), haptic_enabled=True,
+            cached_log_p_current=cached_log_p,
+        )
+
+
+def _sc_cross_modal_basic(m_se3: HypothesisManifold) -> None:
+    """cross_modal_check: 同构不同性 (结构 match + haptic 不 match)."""
+    cm = m_se3.cross_modal_check("h_a", "h_b")
+    assert cm["structure"] is True, f"identical structures should match: {cm}"
+    # density 2.27 vs 3.52 → 相对差 ≈ 0.216 < 0.5 → haptic match!
+    # ponytail: 石墨/金刚石密度差不够大触发 haptic 不 match, 用 elastic 拉开距离
+    _ = cm  # density-only 距离 0.216 < 0.5, 这里验证 cross_modal 跑通即可
+
+
+def _sc_isomorphic_anomaly(
+    cmap_a: Any, cmap_b: Any
+) -> tuple[HypothesisManifold, HypothesisManifold]:
+    """用 elastic 制造真同构不同性 (结构同, 弹性天差地别)."""
+    import numpy as np2
+
+    from huginn.mechanics import ElasticTensor
+    from huginn.metacog.haptic_property_layer import HapticPropertyLayer
+
+    m_iso = HypothesisManifold()
+    m_iso.add(Hypothesis("graphite", "graphite", predictions={"x": 1.0}))
+    m_iso.add(Hypothesis("diamond", "diamond", predictions={"x": 1.0}))
+    m_iso.register_structure("graphite", "s_g", cmap_a)
+    m_iso.register_structure("diamond", "s_d", cmap_b)  # 同结构
+    m_iso.register_haptic(
+        "graphite", HapticPropertyLayer(elastic=ElasticTensor(C=np2.eye(6) * 10.0)))
+    m_iso.register_haptic(
+        "diamond", HapticPropertyLayer(elastic=ElasticTensor(C=np2.eye(6) * 1000.0)))
+    cm_iso = m_iso.cross_modal_check("graphite", "diamond")
+    assert cm_iso["structure"] is True, f"same structure should match: {cm_iso}"
+    assert cm_iso["haptic"] is False, f"very different elastic should not match: {cm_iso}"
+    assert cm_iso["agreement"] == "disagree_structure", (
+        f"graphite/diamond should be disagree_structure, got {cm_iso}"
+    )
+    # detect_isomorphic_anomaly 抓到这对
+    anom = m_iso.detect_isomorphic_anomaly()
+    assert ("graphite", "diamond") in anom, f"anomaly not detected: {anom}"
+
+    # agree: 同结构 + 同 haptic
+    m_agree = HypothesisManifold()
+    m_agree.add(Hypothesis("a1", "a1", predictions={"x": 1.0}))
+    m_agree.add(Hypothesis("a2", "a2", predictions={"x": 1.0}))
+    m_agree.register_structure("a1", "s1", cmap_a)
+    m_agree.register_structure("a2", "s2", cmap_b)
+    same_hap = HapticPropertyLayer(density=5.0)
+    m_agree.register_haptic("a1", same_hap)
+    m_agree.register_haptic("a2", same_hap)
+    cm_agree = m_agree.cross_modal_check("a1", "a2")
+    assert cm_agree["agreement"] == "agree", f"same struct+haptic should agree: {cm_agree}"
+    assert m_agree.detect_isomorphic_anomaly() == []
+    return m_iso, m_agree
+
+
+def _sc_adjust_confidence(
+    m_agree: HypothesisManifold, m_iso: HypothesisManifold
+) -> None:
+    """agree → +0.05, disagree_structure → 不改 confidence."""
+    m_agree._hyp["a1"].confidence = 0.5
+    m_agree._hyp["a2"].confidence = 0.5
+    m_agree.adjust_confidence("a1", "a2")
+    assert abs(m_agree._hyp["a1"].confidence - 0.55) < 1e-9, "agree should +0.05"
+    # disagree_structure 不改 confidence
+    m_iso._hyp["graphite"].confidence = 0.5
+    m_iso.adjust_confidence("graphite", "diamond")
+    assert m_iso._hyp["graphite"].confidence == 0.5, "disagree_structure should not change confidence"
+
+
+def _sc_cross_modal_insufficient(m_nos: HypothesisManifold) -> None:
+    """insufficient_data: 无 haptic."""
+    cm_no = m_nos.cross_modal_check("h_x", "h_y")
+    assert cm_no["agreement"] == "insufficient_data", (
+        f"no haptic should be insufficient_data: {cm_no}"
+    )
+    print("  haptic: register + proposal + cross_modal + anomaly + adjust OK")
+
+
+def _sc_se3_and_haptic() -> None:
+    """SE(3) guided MCMC proposal + 触觉层验证. pymatgen 缺失时降级."""
     try:
-        import numpy as _np
+        import numpy as np_mod
 
         from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
 
-        _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
-        _lattice = _np.eye(3) * 5.0
-        _cmap_a = StructureCognitiveMap.from_coords(
-            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
-        _cmap_b = StructureCognitiveMap.from_coords(
-            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
-
-        m_se3 = HypothesisManifold()
-        m_se3.add(Hypothesis("h_a", "structure A", predictions={"x": 1.0}))
-        m_se3.add(Hypothesis("h_b", "structure B (same as A)", predictions={"x": 1.0}))
-        m_se3.register_structure("h_a", "struct_a", _cmap_a)
-        m_se3.register_structure("h_b", "struct_b", _cmap_b)
-
-        # Test: register_structure + _has_structure
-        assert m_se3._hyp["h_a"].structure_id == "struct_a"
-        assert m_se3._structure_maps["struct_a"] is _cmap_a
-        assert m_se3._has_structure("h_a") is True
-        assert m_se3._has_structure("h_b") is True
-
-        # Test: _match_nearest_hypothesis with identical structures (RMSD=0)
-        _matched = m_se3._match_nearest_hypothesis(_cmap_a, exclude="h_a")
-        assert _matched == "h_b", f"expected h_b, got {_matched}"
-
-        # Test: _se3_proposal with small angle (should match h_b)
-        _rng_se3 = random.Random(123)
-        _matched_se3 = m_se3._se3_proposal("h_a", _rng_se3, angle_sigma=2.0)
-        if _matched_se3 is not None:
-            assert _matched_se3 == "h_b", f"expected h_b, got {_matched_se3}"
-
-        # Test: se3_enabled=True mcmc_step runs without crash
-        _cur = "h_a"
-        _cached = None
-        for _ in range(100):
-            _cur, _cached = m_se3.mcmc_step(
-                [Observation("x", 1.0)], _cur,
-                rng=random.Random(42), se3_enabled=True,
-                cached_log_p_current=_cached,
-            )
-
-        # Test: no structure -> se3_enabled=True safely degrades to fisher
-        m_nos = HypothesisManifold()
-        m_nos.add(Hypothesis("h_x", "no struct", predictions={"x": 1.0}))
-        m_nos.add(Hypothesis("h_y", "no struct", predictions={"x": 2.0}))
-        _cn = "h_x"
-        _cn_cached = None
-        for _ in range(50):
-            _cn, _cn_cached = m_nos.mcmc_step(
-                [Observation("x", 1.0)], _cn,
-                rng=random.Random(42), se3_enabled=True,
-                cached_log_p_current=_cn_cached,
-            )
-
-        print("  SE(3) proposal: register + match + degrade-to-fisher OK")
-
-        # ── 触觉层: register_haptic + _haptic_proposal + cross_modal + anomaly ──
-        from huginn.mechanics import ElasticTensor
-        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
-
-        # 同构不同性: h_a/h_b 结构相同 (上面已注册), haptic 差异大 (石墨 vs 金刚石)
-        _hap_a = HapticPropertyLayer(density=2.27)   # 石墨密度
-        _hap_b = HapticPropertyLayer(density=3.52)   # 金刚石密度
-        m_se3.register_haptic("h_a", _hap_a)
-        m_se3.register_haptic("h_b", _hap_b)
-        assert m_se3._has_haptic("h_a") is True
-        assert m_se3._has_haptic("h_b") is True
-        assert m_se3._has_haptic("h_x") is False  # 不同 manifold, 但确认 None 路径
-
-        # _haptic_proposal: h_a current, 只有 h_b 一个 other → 返回 h_b
-        _rng_hap = random.Random(7)
-        _prop = m_se3._haptic_proposal("h_a", _rng_hap, 1.0)
-        assert _prop == "h_b", f"expected h_b, got {_prop}"
-        # 只 1 个 haptic hypothesis → None
-        _m_one = HypothesisManifold()
-        _m_one.add(Hypothesis("solo", "solo", predictions={"x": 1.0}))
-        _m_one.register_haptic("solo", HapticPropertyLayer(density=1.0))
-        assert _m_one._haptic_proposal("solo", _rng_hap, 1.0) is None
-        # 无 haptic → None
-        assert m_nos._haptic_proposal("h_x", _rng_hap, 1.0) is None
-
-        # mcmc_step haptic_enabled=True 跑通 + 无 haptic 安全退化到 fisher
-        _cur_h = "h_a"
-        _ch = None
-        for _ in range(100):
-            _cur_h, _ch = m_se3.mcmc_step(
-                [Observation("x", 1.0)], _cur_h,
-                rng=random.Random(99), haptic_enabled=True,
-                cached_log_p_current=_ch,
-            )
-        for _ in range(50):
-            _cn, _cn_cached = m_nos.mcmc_step(
-                [Observation("x", 1.0)], _cn,
-                rng=random.Random(99), haptic_enabled=True,
-                cached_log_p_current=_cn_cached,
-            )
-
-        # cross_modal_check: 同构不同性 (结构 match + haptic 不 match)
-        _cm = m_se3.cross_modal_check("h_a", "h_b")
-        assert _cm["structure"] is True, f"identical structures should match: {_cm}"
-        # density 2.27 vs 3.52 → 相对差 ≈ 0.216 < 0.5 → haptic match!
-        # ponytail: 石墨/金刚石密度差不够大触发 haptic 不 match, 用 elastic 拉开距离
-        _ = _cm  # density-only 距离 0.216 < 0.5, 这里验证 cross_modal 跑通即可
-
-        # 用 elastic 制造真同构不同性 (结构同, 弹性天差地别)
-        import numpy as _np2
-        _m_iso = HypothesisManifold()
-        _m_iso.add(Hypothesis("graphite", "graphite", predictions={"x": 1.0}))
-        _m_iso.add(Hypothesis("diamond", "diamond", predictions={"x": 1.0}))
-        _m_iso.register_structure("graphite", "s_g", _cmap_a)
-        _m_iso.register_structure("diamond", "s_d", _cmap_b)  # 同结构
-        _m_iso.register_haptic(
-            "graphite", HapticPropertyLayer(elastic=ElasticTensor(C=_np2.eye(6) * 10.0)))
-        _m_iso.register_haptic(
-            "diamond", HapticPropertyLayer(elastic=ElasticTensor(C=_np2.eye(6) * 1000.0)))
-        _cm_iso = _m_iso.cross_modal_check("graphite", "diamond")
-        assert _cm_iso["structure"] is True, f"same structure should match: {_cm_iso}"
-        assert _cm_iso["haptic"] is False, f"very different elastic should not match: {_cm_iso}"
-        assert _cm_iso["agreement"] == "disagree_structure", (
-            f"graphite/diamond should be disagree_structure, got {_cm_iso}"
-        )
-        # detect_isomorphic_anomaly 抓到这对
-        _anom = _m_iso.detect_isomorphic_anomaly()
-        assert ("graphite", "diamond") in _anom, f"anomaly not detected: {_anom}"
-
-        # agree: 同结构 + 同 haptic
-        _m_agree = HypothesisManifold()
-        _m_agree.add(Hypothesis("a1", "a1", predictions={"x": 1.0}))
-        _m_agree.add(Hypothesis("a2", "a2", predictions={"x": 1.0}))
-        _m_agree.register_structure("a1", "s1", _cmap_a)
-        _m_agree.register_structure("a2", "s2", _cmap_b)
-        _same_hap = HapticPropertyLayer(density=5.0)
-        _m_agree.register_haptic("a1", _same_hap)
-        _m_agree.register_haptic("a2", _same_hap)
-        _cm_agree = _m_agree.cross_modal_check("a1", "a2")
-        assert _cm_agree["agreement"] == "agree", f"same struct+haptic should agree: {_cm_agree}"
-        assert _m_agree.detect_isomorphic_anomaly() == []
-
-        # adjust_confidence: agree → +0.05, disagree_haptic → -0.1
-        _m_agree._hyp["a1"].confidence = 0.5
-        _m_agree._hyp["a2"].confidence = 0.5
-        _m_agree.adjust_confidence("a1", "a2")
-        assert abs(_m_agree._hyp["a1"].confidence - 0.55) < 1e-9, "agree should +0.05"
-        # disagree_structure 不改 confidence
-        _m_iso._hyp["graphite"].confidence = 0.5
-        _m_iso.adjust_confidence("graphite", "diamond")
-        assert _m_iso._hyp["graphite"].confidence == 0.5, "disagree_structure should not change confidence"
-
-        # insufficient_data: 无 haptic
-        _cm_no = m_nos.cross_modal_check("h_x", "h_y")
-        assert _cm_no["agreement"] == "insufficient_data", (
-            f"no haptic should be insufficient_data: {_cm_no}"
-        )
-
-        print("  haptic: register + proposal + cross_modal + anomaly + adjust OK")
+        cmap_a, cmap_b = _sc_build_cmaps(np_mod, StructureCognitiveMap)
+        m_se3 = _sc_verify_structure_register(cmap_a, cmap_b)
+        m_nos = _sc_build_no_structure()
+        cn, cn_cached = _sc_verify_se3_paths(m_se3, m_nos)
+        _sc_register_and_propose_haptic(m_se3, m_nos)
+        _sc_verify_haptic_paths(m_se3, m_nos, cn, cn_cached)
+        _sc_cross_modal_basic(m_se3)
+        m_iso, m_agree = _sc_isomorphic_anomaly(cmap_a, cmap_b)
+        _sc_adjust_confidence(m_agree, m_iso)
+        _sc_cross_modal_insufficient(m_nos)
     except ImportError:
         print("  SE(3) proposal: pymatgen unavailable, skipped (degrades to fisher)")
 
-    # Gramian 谱预条件: 位移沿主轴张开时, 主特征向量应指向该轴.
+
+def _sc_gramian() -> None:
+    """Gramian 谱预条件: 位移沿主轴张开时, 主特征向量应指向该轴."""
     m_g = HypothesisManifold()
     m_g.add(Hypothesis("cur", "current", predictions={"a": 0.0, "b": 0.0}))
     m_g.add(Hypothesis("ax1", "axial +", predictions={"a": 10.0, "b": 0.1}))
     m_g.add(Hypothesis("ax2", "axial -", predictions={"a": -10.0, "b": -0.1}))
     m_g.add(Hypothesis("mn", "minor", predictions={"a": 0.1, "b": 2.0}))
 
-    _vecs = [m_g._shared_displacement("cur", h) for h in ("ax1", "ax2", "mn")]
-    _eig = m_g._gramian_eigvecs([v for v in _vecs if v], k=1)
-    assert len(_eig) == 1, f"应返回 1 个主特征向量, got {_eig}"
-    _n = math.sqrt(sum(t * t for t in _eig[0]))
-    assert abs(_n - 1.0) < 1e-6, f"特征向量应为单位向量, got norm={_n}"
-    assert abs(_eig[0][0]) > 0.9, f"主轴应指向 a 方向, got {_eig[0]}"
+    vecs = [m_g._shared_displacement("cur", h) for h in ("ax1", "ax2", "mn")]
+    eig = m_g._gramian_eigvecs([v for v in vecs if v], k=1)
+    assert len(eig) == 1, f"应返回 1 个主特征向量, got {eig}"
+    n = math.sqrt(sum(t * t for t in eig[0]))
+    assert abs(n - 1.0) < 1e-6, f"特征向量应为单位向量, got norm={n}"
+    assert abs(eig[0][0]) > 0.9, f"主轴应指向 a 方向, got {eig[0]}"
 
-    _pc = m_g._gramian_precond("cur", k=1)
-    assert _pc is not None and abs(_pc[0][0]) > 0.9, f"precond 主向量应指向 a, got {_pc}"
+    pc = m_g._gramian_precond("cur", k=1)
+    assert pc is not None and abs(pc[0][0]) > 0.9, f"precond 主向量应指向 a, got {pc}"
 
     # 数据不足 (仅 1 个其他点) → None (退化 fisher)
     m_1 = HypothesisManifold()
@@ -1795,25 +1876,43 @@ def _selfcheck() -> None:
         "全零 Gramian 应返回 []"
 
     # flag off 行为不变: 同 seed 下 gramian_enabled=False 与不带该参一致
-    _obs_g = [Observation("a", 0.0, sigma=5.0), Observation("b", 0.0, sigma=5.0)]
-    _r1, _r2 = random.Random(7), random.Random(7)
-    _c1, _c2 = "cur", "cur"
-    _lp1 = _lp2 = None
+    obs_g = [Observation("a", 0.0, sigma=5.0), Observation("b", 0.0, sigma=5.0)]
+    r1, r2 = random.Random(7), random.Random(7)
+    c1, c2 = "cur", "cur"
+    lp1 = lp2 = None
     for _ in range(50):
-        _c1, _lp1 = m_g.mcmc_step(
-            _obs_g, _c1, rng=_r1, cached_log_p_current=_lp1)
-        _c2, _lp2 = m_g.mcmc_step(
-            _obs_g, _c2, rng=_r2, cached_log_p_current=_lp2, gramian_enabled=False)
-    assert _c1 == _c2, f"flag off 应与旧路径一致, got {_c1} vs {_c2}"
+        c1, lp1 = m_g.mcmc_step(
+            obs_g, c1, rng=r1, cached_log_p_current=lp1)
+        c2, lp2 = m_g.mcmc_step(
+            obs_g, c2, rng=r2, cached_log_p_current=lp2, gramian_enabled=False)
+    assert c1 == c2, f"flag off 应与旧路径一致, got {c1} vs {c2}"
 
     # flag on: 正常返回合法 id (预条件生效但不破坏契约)
-    _r3 = random.Random(7)
-    _c3, _lp3 = "cur", None
+    r3 = random.Random(7)
+    c3, lp3 = "cur", None
     for _ in range(200):
-        _c3, _lp3 = m_g.mcmc_step(
-            _obs_g, _c3, rng=_r3, cached_log_p_current=_lp3, gramian_enabled=True)
-        assert _c3 in m_g._hyp, f"gramian 提议应返回合法 h_id, got {_c3}"
+        c3, lp3 = m_g.mcmc_step(
+            obs_g, c3, rng=r3, cached_log_p_current=lp3, gramian_enabled=True)
+        assert c3 in m_g._hyp, f"gramian 提议应返回合法 h_id, got {c3}"
     print("  Gramian precond: eigvec + precond + off-invariance + on-path OK")
+
+
+def _selfcheck() -> None:
+    """Assert-based demo: 经典 abduction 测试.
+
+    场景: 黑箱子里有个机制, 我们观察到输出值. 多个 hypothesis 解释这个机制.
+    Bayesian model selection 应该选最简且 fit 最好的 hypothesis (Occam razor).
+    """
+    m, obs = _sc_build_manifold()
+    best, best_no_prec = _sc_abduction(m, obs)
+    d_newton_gr = _sc_fisher_distance(m)
+    next_h = _sc_active_learning(m)
+    visit_count, n_steps = _sc_mcmc_sampling(m, obs)
+    _sc_print_classic(
+        m, obs, best, best_no_prec, d_newton_gr, next_h, visit_count, n_steps)
+    _sc_b1_r_matrix(m, d_newton_gr)
+    _sc_se3_and_haptic()
+    _sc_gramian()
 
 
 if __name__ == "__main__":

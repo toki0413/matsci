@@ -943,6 +943,64 @@ def _vocab_mapping(name: str, value: ast.AST) -> dict[str, str] | None:
     return out or None
 
 
+def _vocab_class_site(rel: str, node: ast.ClassDef, sites: list[dict]) -> None:
+    vals = _vocab_enum_values(node)
+    if vals and len(vals) >= 3:
+        sites.append(
+            {"rel": rel, "name": f"class {node.name}", "kind": "Enum", "line": node.lineno, "values": vals}
+        )
+
+
+def _vocab_call_sites(rel: str, node: ast.Call, sites: list[dict]) -> None:
+    for kw in node.keywords:
+        if not (kw.arg and _VOCAB_KWARG_RE.search(kw.arg)):
+            continue
+        vals = _vocab_str_consts(kw.value)
+        if vals and len(vals) >= 3:
+            sites.append({"rel": rel, "name": kw.arg, "kind": "kwarg", "line": node.lineno, "values": vals})
+
+
+def _vocab_assign_sites(
+    rel: str, node: ast.AST, sites: list[dict], mappings: list[dict]
+) -> None:
+    target, value = _vocab_assign_target(node)
+    if target is None or value is None:
+        return
+    m = _vocab_mapping(target.id, value)
+    if m:
+        mappings.append({"rel": rel, "name": target.id, "line": node.lineno, "entries": m})
+    cand = _vocab_values(value)
+    if cand and len(cand[0]) >= 3:
+        vals, kind = cand
+        sites.append({"rel": rel, "name": target.id, "kind": kind, "line": node.lineno, "values": vals})
+
+
+def _vocab_collect(rel: str, tree: ast.AST, sites: list[dict], mappings: list[dict]) -> None:
+    """逐 AST 节点分流: ClassDef / Call / 赋值目标."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            _vocab_class_site(rel, node, sites)
+        elif isinstance(node, ast.Call):
+            _vocab_call_sites(rel, node, sites)
+        else:
+            _vocab_assign_sites(rel, node, sites, mappings)
+
+
+def _vocab_dedupe(sites: list[dict]) -> list[dict]:
+    """按 (rel, name, line) 去重, 再补 ``declared`` 标记."""
+    seen: set[tuple[str, str, int]] = set()
+    uniq: list[dict] = []
+    for s in sites:
+        key = (s["rel"], s["name"], s["line"])
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(s)
+    for s in uniq:
+        s["declared"] = _vocab_declared(s["name"], s["kind"])
+    return uniq
+
+
 def scan_vocabularies(root: Path) -> tuple[list[dict], list[dict]]:
     """AST 扫全仓值域词表站点 + 映射表. 跳过 tests/ (fixture 词表非生产契约)."""
     sites: list[dict] = []
@@ -954,42 +1012,8 @@ def scan_vocabularies(root: Path) -> tuple[list[dict], list[dict]]:
         tree = _parse(py)
         if tree is None:
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                vals = _vocab_enum_values(node)
-                if vals and len(vals) >= 3:
-                    sites.append(
-                        {"rel": rel, "name": f"class {node.name}", "kind": "Enum", "line": node.lineno, "values": vals}
-                    )
-                continue
-            if isinstance(node, ast.Call):
-                for kw in node.keywords:
-                    if kw.arg and _VOCAB_KWARG_RE.search(kw.arg):
-                        vals = _vocab_str_consts(kw.value)
-                        if vals and len(vals) >= 3:
-                            sites.append({"rel": rel, "name": kw.arg, "kind": "kwarg", "line": node.lineno, "values": vals})
-                continue
-            target, value = _vocab_assign_target(node)
-            if target is None or value is None:
-                continue
-            m = _vocab_mapping(target.id, value)
-            if m:
-                mappings.append({"rel": rel, "name": target.id, "line": node.lineno, "entries": m})
-            cand = _vocab_values(value)
-            if cand and len(cand[0]) >= 3:
-                vals, kind = cand
-                sites.append({"rel": rel, "name": target.id, "kind": kind, "line": node.lineno, "values": vals})
-
-    seen: set[tuple[str, str, int]] = set()
-    uniq: list[dict] = []
-    for s in sites:
-        key = (s["rel"], s["name"], s["line"])
-        if key not in seen:
-            seen.add(key)
-            uniq.append(s)
-    for s in uniq:
-        s["declared"] = _vocab_declared(s["name"], s["kind"])
-    return uniq, mappings
+        _vocab_collect(rel, tree, sites, mappings)
+    return _vocab_dedupe(sites), mappings
 
 
 def _assigned_names(root: Path) -> set[str]:
@@ -3078,103 +3102,144 @@ def _fe_field_read_rows(
     return rows
 
 
+def _sse_chan_of(assigns: list[tuple[int, str, str | None]], var: str, idx: int) -> str | None:
+    """最近一次 ``var = ...`` 赋值所绑定的通道名 (按行号向后找)."""
+    found = None
+    for ai, av, ac in assigns:
+        if av == var and ai <= idx:
+            found = ac
+    return found
+
+
+def _sse_assigns(lines: list[str]) -> list[tuple[int, str, str | None]]:
+    """收集每行 ``t = JSON.parse(e.data)`` 的 (行号, 变量名, 通道)."""
+    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
+    assigns: list[tuple[int, str, str | None]] = []
+    for i, ln in enumerate(lines):
+        m = _FE_ES_ASSIGN.search(ln)
+        if not m:
+            continue
+        arg = m.group(2)
+        ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
+        assigns.append((i, m.group(1), ch))
+    return assigns
+
+
+def _sse_prev_array_frames(lines: list[str], i: int) -> list[str]:
+    """``["a.b", "c.d"].forEach(...)`` 的帧名在 forEach 上一行的数组字面量里."""
+    for j in range(i - 1, max(-1, i - 6), -1):
+        am = _FE_ARRAY.match(lines[j])
+        if am:
+            return _FE_STR.findall(am.group(1))
+    return []
+
+
+def _sse_registrations(
+    lines: list[str], assigns: list[tuple[int, str, str | None]]
+) -> dict[str, list[tuple[str, str | None]]]:
+    """具名处理函数注册表: handler -> [(帧名, 通道)]."""
+    reg: dict[str, list[tuple[str, str | None]]] = {}
+    for i, ln in enumerate(lines):
+        m = _FE_LISTEN.search(ln)
+        if m:
+            reg.setdefault(m.group(3), []).append((m.group(2), _sse_chan_of(assigns, m.group(1), i)))
+            continue
+        m2 = _FE_LISTEN_IDENT.search(ln)
+        if not m2:
+            continue
+        var, handler = m2.group(1), m2.group(3)
+        chan = _sse_chan_of(assigns, var, i)
+        for frame in _sse_prev_array_frames(lines, i):
+            reg.setdefault(handler, []).append((frame, chan))
+    return reg
+
+
+def _sse_emit(
+    reads: list[dict],
+    rel: str,
+    body: str,
+    base_line: int,
+    frames: list[str],
+    ch: str | None,
+) -> None:
+    """抽出 handler 体内的顶层字段读取行, 累加到 ``reads``."""
+    pm = _FE_JSON_PARSE.search(body)
+    if pm is None:
+        return
+    reads.extend(
+        _fe_field_read_rows(
+            rel=rel,
+            channel=ch,
+            frames=frames,
+            body=body,
+            base_line=base_line,
+            readable=frozenset({pm.group(1)}),
+        )
+    )
+
+
+def _sse_unique_frames(pairs: list[tuple[str, str | None]]) -> list[str]:
+    frames: list[str] = []
+    for fr, _c in pairs:
+        if fr not in frames:
+            frames.append(fr)
+    return frames
+
+
+def _sse_named_handler_reads(
+    reads: list[dict], rel: str, text: str, reg: dict[str, list[tuple[str, str | None]]]
+) -> None:
+    """具名处理函数体内的字段读取."""
+    for m in _FE_HANDLER.finditer(text):
+        handler = m.group(1)
+        if handler not in reg:
+            continue
+        brace = m.end() - 1
+        end = _ws_ts_brace_end(text, brace)
+        if text[end - 1] != "}":
+            continue
+        _sse_emit(
+            reads,
+            rel,
+            text[brace + 1 : end - 1],
+            text.count("\n", 0, brace + 1) + 1,
+            _sse_unique_frames(reg[handler]),
+            reg[handler][0][1],
+        )
+
+
+def _sse_inline_handler_reads(
+    reads: list[dict],
+    rel: str,
+    text: str,
+    assigns: list[tuple[int, str, str | None]],
+) -> None:
+    """内联处理函数: ``es.addEventListener("帧名", (e: MessageEvent) => { … })``."""
+    for m in _FE_LISTEN_INLINE_HANDLER.finditer(text):
+        var, frame = m.group(1), m.group(2)
+        brace = m.end() - 1
+        end = _ws_ts_brace_end(text, brace)
+        if text[end - 1] != "}":
+            continue
+        _sse_emit(
+            reads,
+            rel,
+            text[brace + 1 : end - 1],
+            text.count("\n", 0, brace + 1) + 1,
+            [frame],
+            _sse_chan_of(assigns, var, text.count("\n", 0, m.start())),
+        )
+
+
 def _sse_payload_reads(frontend: Path) -> list[dict]:
     """扫前端 SSE 处理函数里的 `t.<字段>` 顶层读取 (t = `JSON.parse(e.data)` 结果)."""
     reads: list[dict] = []
-    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
     for _p, rel, text in _fe_ts_files(frontend):
         lines = text.splitlines()
-
-        assigns: list[tuple[int, str, str | None]] = []
-        for i, ln in enumerate(lines):
-            m = _FE_ES_ASSIGN.search(ln)
-            if m:
-                arg = m.group(2)
-                ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
-                assigns.append((i, m.group(1), ch))
-
-        # 闭包按默认参数绑定当轮局部 (B023: 循环内定义且引用循环变量).
-        def chan_of(
-            var: str, idx: int, _assigns: list[tuple[int, str, str | None]] = assigns
-        ) -> str | None:
-            found = None
-            for ai, av, ac in _assigns:
-                if av == var and ai <= idx:
-                    found = ac
-            return found
-
-        def emit(
-            body: str,
-            base_line: int,
-            frames: list[str],
-            ch: str | None,
-            _rel: str = rel,
-        ) -> None:
-            pm = _FE_JSON_PARSE.search(body)
-            if pm is None:
-                return
-            reads.extend(
-                _fe_field_read_rows(
-                    rel=_rel,
-                    channel=ch,
-                    frames=frames,
-                    body=body,
-                    base_line=base_line,
-                    readable=frozenset({pm.group(1)}),
-                )
-            )
-
-        # 具名处理函数: addEventListener(<帧名>, <handler>) → handler → 帧/通道
-        reg: dict[str, list[tuple[str, str | None]]] = {}
-        for i, ln in enumerate(lines):
-            m = _FE_LISTEN.search(ln)
-            if m:
-                reg.setdefault(m.group(3), []).append((m.group(2), chan_of(m.group(1), i)))
-                continue
-            m2 = _FE_LISTEN_IDENT.search(ln)
-            if m2:
-                var, handler = m2.group(1), m2.group(3)
-                # `[ "a.b", "c.d" ].forEach((ev) => es.addEventListener(ev, h))`:
-                # 帧名在上一行的数组字面量里, 通道取 forEach 那一行的事件源.
-                for j in range(i - 1, max(-1, i - 6), -1):
-                    am = _FE_ARRAY.match(lines[j])
-                    if am:
-                        for s in _FE_STR.findall(am.group(1)):
-                            reg.setdefault(handler, []).append((s, chan_of(var, i)))
-                        break
-
-        for m in _FE_HANDLER.finditer(text):
-            handler = m.group(1)
-            if handler not in reg:
-                continue
-            brace = m.end() - 1
-            end = _ws_ts_brace_end(text, brace)
-            if text[end - 1] != "}":
-                continue
-            frames: list[str] = []
-            for fr, _c in reg[handler]:
-                if fr not in frames:
-                    frames.append(fr)
-            emit(
-                text[brace + 1 : end - 1],
-                text.count("\n", 0, brace + 1) + 1,
-                frames,
-                reg[handler][0][1],
-            )
-
-        # 内联处理函数: es.addEventListener("帧名", (e: MessageEvent) => { … })
-        for m in _FE_LISTEN_INLINE_HANDLER.finditer(text):
-            var, frame = m.group(1), m.group(2)
-            brace = m.end() - 1
-            end = _ws_ts_brace_end(text, brace)
-            if text[end - 1] != "}":
-                continue
-            emit(
-                text[brace + 1 : end - 1],
-                text.count("\n", 0, brace + 1) + 1,
-                [frame],
-                chan_of(var, text.count("\n", 0, m.start())),
-            )
+        assigns = _sse_assigns(lines)
+        reg = _sse_registrations(lines, assigns)
+        _sse_named_handler_reads(reads, rel, text, reg)
+        _sse_inline_handler_reads(reads, rel, text, assigns)
     return reads
 
 
@@ -6801,6 +6866,148 @@ def _http_field_sends(frontend: Path, live: list[dict]) -> dict[tuple[str, str],
     return out
 
 
+def _match_send_record(e: dict, sends: dict) -> tuple:
+    """按方法顺序找前端实际调用该端点的 record, 返回 ``(key, record, method)``."""
+    for m in e["methods"]:
+        key = (m, e["path"])
+        if key in sends:
+            return key, sends[key], m
+    return None, None, (e["methods"][0] if e["methods"] else "")
+
+
+def _new_field_row(e: dict, method: str) -> dict:
+    """建一行端点巡检记录 (字段面初始为空)."""
+    return {
+        "rel": e["rel"],
+        "line": e["line"],
+        "method": method,
+        "endpoint": e["path"],
+        "kind": e["kind"],
+        "model": e["model"],
+        "declared": [],
+        "read": [],
+        "sent": [],
+        "shape": "封闭",
+    }
+
+
+def _field_violation(kind: str, e: dict, method: str, field: str, rel: str,
+                     line: int, detail: str, model: str = "") -> dict:
+    """构造一条字段面违例记录."""
+    return {
+        "kind": kind,
+        "method": method,
+        "endpoint": e["path"],
+        "field": field,
+        "model": model,
+        "rel": rel,
+        "line": line,
+        "detail": detail,
+    }
+
+
+def _audit_body_model(
+    e: dict,
+    attrs: set,
+    row: dict,
+    rec: dict | None,
+    method: str,
+    *,
+    models: dict,
+    extra_allow: dict,
+    cov: dict,
+    violations: list,
+    cand_read_unsent: list,
+    cand_unread_unsent: list,
+) -> None:
+    """核 body-model 端点: 声明字段 / handler 读取 / 前端发送 三面一致."""
+    declared = models.get(e["model"])
+    if declared is None:
+        cov["handler_skipped"] += 1
+        row["shape"] = "开放(模型解析不到)"
+        return
+    open_model = e["model"] in extra_allow
+    row["declared"] = sorted(declared)
+    row["read"] = sorted(attrs & declared)
+    if open_model:
+        row["shape"] = "开放(extra=allow)"
+    # (1) handler 读模型未声明字段 (读面与 extra 配置无关, 照核).
+    cov["handler_checked"] += 1
+    for f in sorted(attrs - declared):
+        violations.append(
+            _field_violation(
+                "handler-undeclared", e, method, f, e["rel"], e["line"],
+                f"handler 读 `{e['param']}.{f}` 而模型 `{e['model']}` 未声明",
+                model=e["model"],
+            )
+        )
+    if rec is None:
+        return
+    # (2) 前端发模型未声明键 + 反向候选.
+    row["sent"] = sorted(rec["keys"])
+    if open_model:
+        cov["fe_skipped"] += len(rec["sites"])
+    else:
+        for site in rec["sites"]:
+            if site["unknown"]:
+                cov["fe_skipped"] += 1
+                continue
+            cov["fe_checked"] += 1
+            for f in sorted(set(site["keys"]) - declared):
+                violations.append(
+                    _field_violation(
+                        "fe-undeclared", e, method, f, site["rel"], site["line"],
+                        f"前端发 body 键 `{f}` 而模型 `{e['model']}` 未声明 (静默丢弃)",
+                        model=e["model"],
+                    )
+                )
+    if open_model or rec["unknown"]:
+        return
+    sent = rec["keys"]
+    for f in sorted((attrs & declared) - sent):
+        cand_read_unsent.append(
+            {
+                "method": method,
+                "endpoint": e["path"],
+                "field": f,
+                "model": e["model"],
+                "rel": e["rel"],
+                "line": e["line"],
+            }
+        )
+    for f in sorted(declared - attrs - sent):
+        cand_unread_unsent.append(
+            {
+                "method": method,
+                "endpoint": e["path"],
+                "field": f,
+                "model": e["model"],
+                "rel": e["rel"],
+                "line": e["line"],
+            }
+        )
+
+
+def _audit_body_dict(e: dict, row: dict, rec: dict | None, method: str,
+                     cov: dict, violations: list) -> None:
+    """核 body-dict 端点: handler 下标读键 vs 前端发送键."""
+    row["read"] = sorted(e["keys"])
+    if rec is None or rec["unknown"]:
+        cov["dict_skipped"] += 1
+        row["shape"] = "开放(无前端调用)" if rec is None else "开放(调用含展开)"
+        return
+    cov["dict_checked"] += 1
+    sent = rec["keys"]
+    row["sent"] = sorted(sent)
+    for k in sorted(set(e["keys"]) - sent):
+        violations.append(
+            _field_violation(
+                "dict-key-unsent", e, method, k, e["rel"], e["line"],
+                f'handler 下标读 `{e["param"]}["{k}"]` 而该端点前端调用从不发此键',
+            )
+        )
+
+
 def build_http_field_contract(
     root: Path | None = None, frontend: Path | None = None
 ) -> dict:
@@ -6835,125 +7042,25 @@ def build_http_field_contract(
     rows: list[dict] = []
 
     for e in endpoints:
-        key = None
-        for m in e["methods"]:
-            if (m, e["path"]) in sends:
-                key = (m, e["path"])
-                break
-        rec = sends.get(key) if key is not None else None
-        method = key[0] if key is not None else (e["methods"][0] if e["methods"] else "")
+        key, rec, method = _match_send_record(e, sends)
         attrs = set(e["attrs"]) - _HTTP_FIELD_PYDANTIC_ATTRS
-        row = {
-            "rel": e["rel"],
-            "line": e["line"],
-            "method": method,
-            "endpoint": e["path"],
-            "kind": e["kind"],
-            "model": e["model"],
-            "declared": [],
-            "read": [],
-            "sent": [],
-            "shape": "封闭",
-        }
+        row = _new_field_row(e, method)
         if e["kind"] == "body-model":
-            declared = models.get(e["model"])
-            if declared is None:
-                cov["handler_skipped"] += 1
-                row["shape"] = "开放(模型解析不到)"
-            else:
-                open_model = e["model"] in extra_allow
-                row["declared"] = sorted(declared)
-                row["read"] = sorted(attrs & declared)
-                if open_model:
-                    row["shape"] = "开放(extra=allow)"
-                # (1) handler 读模型未声明字段 (读面与 extra 配置无关, 照核).
-                cov["handler_checked"] += 1
-                for f in sorted(attrs - declared):
-                    violations.append(
-                        {
-                            "kind": "handler-undeclared",
-                            "method": method,
-                            "endpoint": e["path"],
-                            "field": f,
-                            "model": e["model"],
-                            "rel": e["rel"],
-                            "line": e["line"],
-                            "detail": f"handler 读 `{e['param']}.{f}` 而模型 "
-                            f"`{e['model']}` 未声明",
-                        }
-                    )
-                # (2) 前端发模型未声明键 + 反向候选.
-                if rec is not None:
-                    row["sent"] = sorted(rec["keys"])
-                    if open_model:
-                        cov["fe_skipped"] += len(rec["sites"])
-                    else:
-                        for site in rec["sites"]:
-                            if site["unknown"]:
-                                cov["fe_skipped"] += 1
-                                continue
-                            cov["fe_checked"] += 1
-                            for f in sorted(set(site["keys"]) - declared):
-                                violations.append(
-                                    {
-                                        "kind": "fe-undeclared",
-                                        "method": method,
-                                        "endpoint": e["path"],
-                                        "field": f,
-                                        "model": e["model"],
-                                        "rel": site["rel"],
-                                        "line": site["line"],
-                                        "detail": f"前端发 body 键 `{f}` 而模型 "
-                                        f"`{e['model']}` 未声明 (静默丢弃)",
-                                    }
-                                )
-                    if not open_model and not rec["unknown"]:
-                        sent = rec["keys"]
-                        for f in sorted((attrs & declared) - sent):
-                            cand_read_unsent.append(
-                                {
-                                    "method": method,
-                                    "endpoint": e["path"],
-                                    "field": f,
-                                    "model": e["model"],
-                                    "rel": e["rel"],
-                                    "line": e["line"],
-                                }
-                            )
-                        for f in sorted(declared - attrs - sent):
-                            cand_unread_unsent.append(
-                                {
-                                    "method": method,
-                                    "endpoint": e["path"],
-                                    "field": f,
-                                    "model": e["model"],
-                                    "rel": e["rel"],
-                                    "line": e["line"],
-                                }
-                            )
+            _audit_body_model(
+                e,
+                attrs,
+                row,
+                rec,
+                method,
+                models=models,
+                extra_allow=extra_allow,
+                cov=cov,
+                violations=violations,
+                cand_read_unsent=cand_read_unsent,
+                cand_unread_unsent=cand_unread_unsent,
+            )
         else:  # body-dict: 无声明面, 只核「下标读键 vs 前端发送键」
-            row["read"] = sorted(e["keys"])
-            if rec is None or rec["unknown"]:
-                cov["dict_skipped"] += 1
-                row["shape"] = "开放(无前端调用)" if rec is None else "开放(调用含展开)"
-            else:
-                cov["dict_checked"] += 1
-                sent = rec["keys"]
-                row["sent"] = sorted(sent)
-                for k in sorted(set(e["keys"]) - sent):
-                    violations.append(
-                        {
-                            "kind": "dict-key-unsent",
-                            "method": method,
-                            "endpoint": e["path"],
-                            "field": k,
-                            "model": "",
-                            "rel": e["rel"],
-                            "line": e["line"],
-                            "detail": f'handler 下标读 `{e["param"]}["{k}"]` 而该端点'
-                            "前端调用从不发此键",
-                        }
-                    )
+            _audit_body_dict(e, row, rec, method, cov, violations)
         rows.append(row)
 
     _HTTP_FIELD_TRIAGE.stamp(violations)

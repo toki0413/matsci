@@ -31,6 +31,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.metacog._json import parse_first_json as _parse_first_json
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -399,33 +400,68 @@ class SelfModel:
 
 # ---------- helpers ----------
 
-def _parse_first_json(text: str) -> dict | None:
-    """从 text 抓第一个平衡的 {...} JSON. 失败返回 None.
+def _matches_step(rec: dict, step_id: int) -> bool:
+    """判断 audit 记录属于 step_id; schema 没 step_id 时全收 (同 step_evaluator)."""
+    rec_step = rec.get("step_id") or rec.get("iteration")
+    if rec_step is None:
+        return True
+    try:
+        return int(rec_step) == step_id
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return True
 
-    ponytail: 跟 imagination._parse_first_json 同款. 不 import 是为了
-    避免 imagination -> self_model 循环依赖 (imagination 不调 self_model,
-    但 step_evaluator 路径上 import 顺序不可控, 独立更稳).
-    """
-    if not text:
-        return None
-    depth = 0
-    start = -1
-    for i, ch in enumerate(text):
-        if ch == '{':
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == '}':
-            if depth == 0:
-                continue
-            depth -= 1
-            if depth == 0 and start >= 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    return None
+
+def _record_timestamp(rec: dict) -> float:
+    """取记录时间戳; 缺失/不可解析一律 0.0 (不伪造)."""
+    ts = rec.get("timestamp") or rec.get("ts") or 0
+    try:
+        return float(ts) if ts else 0.0
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return 0.0
+
+
+def _take_pending(pending: dict[str, dict], tool_name: str) -> tuple[str, dict] | None:
+    """取该工具最早的一条未完成 call (FIFO, 保证 call/result 配对不串台)."""
+    for sig, call in pending.items():
+        if call["tool_name"] == tool_name and not call["success"]:
+            return sig, call
     return None
+
+
+def _consume_tool_event(rec: dict, etype: str, calls: list[dict], pending: dict[str, dict]) -> None:
+    """把一条 tool.call / tool.result / tool.error 记录并入 calls / pending."""
+    data = rec.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    tool_name = data.get("tool") or rec.get("tool_name") or rec.get("tool") or "?"
+    ts_f = _record_timestamp(rec)
+
+    if etype == "tool.call":
+        sig = f"{tool_name}:{str(data.get('input', ''))[:64]}"
+        pending[sig] = {
+            "tool_name": str(tool_name),
+            "success": False,  # 默认失败, 等 result/error 改
+            "error_message": "",
+            "duration": 0.0,
+            "_call_ts": ts_f,
+        }
+        return
+
+    found = _take_pending(pending, tool_name)
+    if found is None:
+        return
+    sig, call = found
+    if etype == "tool.result":
+        call["success"] = True
+    else:
+        call["success"] = False
+        call["error_message"] = str(data.get("error") or rec.get("error_type") or "")
+    if call.get("_call_ts") and ts_f:
+        call["duration"] = ts_f - call["_call_ts"]
+    calls.append(call)
+    del pending[sig]
 
 
 def extract_step_result_from_audit(
@@ -460,62 +496,12 @@ def extract_step_result_from_audit(
                 except json.JSONDecodeError:
                     logger.debug("best-effort op failed", exc_info=True)
                     continue
-                # schema 没有 step_id 就全收; 有了就按 step_id 过滤
-                rec_step = rec.get("step_id") or rec.get("iteration")
-                if rec_step is not None:
-                    try:
-                        if int(rec_step) != step_id:
-                            continue
-                    except (TypeError, ValueError):
-                        logger.debug("best-effort op failed", exc_info=True)
                 etype = rec.get("type", "")
                 if etype not in ("tool.call", "tool.result", "tool.error"):
                     continue
-                data = rec.get("data") or {}
-                if not isinstance(data, dict):
-                    data = {}
-                tool_name = (
-                    data.get("tool") or rec.get("tool_name")
-                    or rec.get("tool") or "?"
-                )
-                ts = rec.get("timestamp") or rec.get("ts") or 0
-                try:
-                    ts_f = float(ts) if ts else 0.0
-                except (TypeError, ValueError):
-                    logger.debug("best-effort op failed", exc_info=True)
-                    ts_f = 0.0
-                if etype == "tool.call":
-                    sig = f"{tool_name}:{str(data.get('input', ''))[:64]}"
-                    pending[sig] = {
-                        "tool_name": str(tool_name),
-                        "success": False,  # 默认失败, 等 result/error 改
-                        "error_message": "",
-                        "duration": 0.0,
-                        "_call_ts": ts_f,
-                    }
-                elif etype == "tool.result":
-                    # 找最近的 pending call 同 tool
-                    for sig, call in list(pending.items()):
-                        if call["tool_name"] == tool_name and not call["success"]:
-                            call["success"] = True
-                            if call.get("_call_ts") and ts_f:
-                                call["duration"] = ts_f - call["_call_ts"]
-                            calls.append(call)
-                            del pending[sig]
-                            break
-                elif etype == "tool.error":
-                    err = str(
-                        data.get("error") or rec.get("error_type") or ""
-                    )
-                    for sig, call in list(pending.items()):
-                        if call["tool_name"] == tool_name and not call["success"]:
-                            call["success"] = False
-                            call["error_message"] = err
-                            if call.get("_call_ts") and ts_f:
-                                call["duration"] = ts_f - call["_call_ts"]
-                            calls.append(call)
-                            del pending[sig]
-                            break
+                if not _matches_step(rec, step_id):
+                    continue
+                _consume_tool_event(rec, etype, calls, pending)
     except Exception as exc:
         logger.debug("extract_step_result_from_audit failed: %s", exc)
         return []

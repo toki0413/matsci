@@ -55,6 +55,15 @@ def get_executor(
         )
 
     if allow_local_bash():
+        if config is None:
+            # 无显式 config 时按 run workspace 建作用域: 空 allowed_work_dirs 会
+            # 让 strict_work_dir 静默失效 ("path scoping inactive"), 命令可以
+            # 在任意 cwd 落地 (ws9 实测).
+            from huginn.utils.common import default_workspace_dir
+
+            config = SandboxConfig(
+                allowed_work_dirs={default_workspace_dir().resolve()}
+            )
         return SandboxExecutor(config)
 
     raise SandboxError(

@@ -91,7 +91,7 @@ class MultiEditTool(HuginnTool):
     ) -> ToolResult:
         input_data = MultiEditToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
         )
 
         # ── 1. 按文件分组 + 链式预检 ──

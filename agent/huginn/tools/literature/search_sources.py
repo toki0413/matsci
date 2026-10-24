@@ -996,26 +996,10 @@ async def _search_openaire(
     No API key required. Covers EU-funded research including
     Horizon 2020 / Horizon Europe materials science projects.
     """
-    q = urllib.parse.quote(query)
-    url = (
-        f"https://api.openaire.eu/search/publications"
-        f"?keywords={q}&size={min(max_results, 25)}&format=json"
-    )
-    if year_from:
-        url += f"&fromDateAccepted={year_from}-01-01"
-    if year_to:
-        url += f"&untilDateAccepted={year_to}-12-31"
-
-    def _fetch() -> dict[str, Any]:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
+    url = _openaire_query_url(query, max_results, year_from, year_to)
     try:
         with circuit_guard("openaire"):
-            data = await asyncio.to_thread(_fetch)
+            data = await asyncio.to_thread(_openaire_fetch, url)
     except CircuitOpenError:
         logger.info("OpenAIRE circuit open, skipping")
         return []
@@ -1024,115 +1008,178 @@ async def _search_openaire(
         return []
 
     papers: list[dict[str, Any]] = []
-    # OpenAIRE wraps results under response -> results -> result
-    results_root = data.get("response", {})
-    results = results_root.get("results", {}).get("result", []) or []
-    if isinstance(results, dict):
-        results = [results]
-
-    for wrapper in results:
-        item = (wrapper.get("metadata", {})
-                .get("oaf:entity", {})
-                .get("oaf:result", {}))
+    for wrapper in _openaire_items(data):
+        item = _openaire_item(wrapper)
         if not item:
             continue
-
-        # Title — list of dicts with "$" key, pick the first non-empty
-        title = ""
-        title_field = item.get("title", [])
-        if isinstance(title_field, list):
-            for t in title_field:
-                if isinstance(t, dict) and t.get("$"):
-                    title = t["$"].strip()
-                    break
-        elif isinstance(title_field, dict) and title_field.get("$"):
-            title = title_field["$"].strip()
-        if not title:
+        paper = _openaire_record(item)
+        if not paper["title"]:
             continue
-
-        # Authors — under "creator" field
-        authors: list[str] = []
-        creators = item.get("creator", [])
-        if isinstance(creators, list):
-            for c in creators:
-                if isinstance(c, dict) and c.get("$"):
-                    authors.append(c["$"])
-        elif isinstance(creators, dict) and creators.get("$"):
-            authors.append(creators["$"])
-
-        # Year
-        year: int | None = None
-        date_field = item.get("dateofacceptance", {})
-        if isinstance(date_field, dict):
-            date_str = date_field.get("$", "") or ""
-            if date_str:
-                m = re.match(r"(\d{4})", date_str)
-                if m:
-                    year = int(m.group(1))
-
-        # DOI — under "pid" field (dict with @classid="doi")
-        doi = None
-        pid = item.get("pid", {})
-        if isinstance(pid, dict):
-            if pid.get("@classid") == "doi" and pid.get("$"):
-                doi = pid["$"].lower()
-        elif isinstance(pid, list):
-            for p in pid:
-                if isinstance(p, dict) and p.get("@classid") == "doi" and p.get("$"):
-                    doi = p["$"].lower()
-                    break
-
-        # URL
-        url_ = ""
-        instances = item.get("instance", [])
-        if isinstance(instances, list):
-            for inst in instances:
-                if isinstance(inst, dict):
-                    webres = inst.get("webresource", {})
-                    if isinstance(webres, dict):
-                        url_ = webres.get("url", {}).get("$", "") or ""
-                        if url_:
-                            break
-        elif isinstance(instances, dict):
-            webres = instances.get("webresource", {})
-            url_ = webres.get("url", {}).get("$", "") or ""
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-
-        # Abstract
-        abstract = ""
-        desc = item.get("description", {})
-        if isinstance(desc, dict) and desc.get("$"):
-            abstract = desc["$"][:500]
-        elif isinstance(desc, list):
-            for d in desc:
-                if isinstance(d, dict) and d.get("$"):
-                    abstract = d["$"][:500]
-                    break
-
-        # Citation count — under "measure" list with @id="citationCount"
-        citations = None
-        measures = item.get("measure", [])
-        if isinstance(measures, list):
-            for m_entry in measures:
-                if isinstance(m_entry, dict) and m_entry.get("@id") == "citationCount":
-                    with contextlib.suppress(ValueError, TypeError):
-                        citations = int(float(m_entry.get("@score", "0")))
-                    break
-
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": item.get("publisher", {}).get("$", "") or "OpenAIRE",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": citations,
-            "source": "openaire",
-            "open_access": True,
-        })
+        papers.append(paper)
     return papers
+
+
+def _openaire_query_url(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> str:
+    """拼 OpenAIRE Search API URL (含年份过滤)."""
+    url = (
+        f"https://api.openaire.eu/search/publications"
+        f"?keywords={urllib.parse.quote(query)}&size={min(max_results, 25)}&format=json"
+    )
+    if year_from:
+        url += f"&fromDateAccepted={year_from}-01-01"
+    if year_to:
+        url += f"&untilDateAccepted={year_to}-12-31"
+    return url
+
+
+def _openaire_fetch(url: str) -> dict[str, Any]:
+    """同步抓取 (由 asyncio.to_thread 调用)."""
+    if not _is_safe_url(url):
+        raise RuntimeError("URL blocked by SSRF protection")
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    with _OPENER.open(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def _openaire_items(data: dict[str, Any]) -> list[Any]:
+    """OpenAIRE wraps results under response -> results -> result."""
+    results = data.get("response", {}).get("results", {}).get("result", []) or []
+    if isinstance(results, dict):
+        return [results]
+    return results
+
+
+def _openaire_item(wrapper: dict[str, Any]) -> dict[str, Any]:
+    """剥到 oaf:result 层; 空则返回 {}."""
+    return (
+        wrapper.get("metadata", {})
+        .get("oaf:entity", {})
+        .get("oaf:result", {})
+    )
+
+
+def _openaire_record(item: dict[str, Any]) -> dict[str, Any]:
+    """把 oaf:result 归一化成统一 paper dict."""
+    doi = _openaire_doi(item)
+    return {
+        "title": _openaire_title(item),
+        "authors": _openaire_authors(item),
+        "year": _openaire_year(item),
+        "venue": item.get("publisher", {}).get("$", "") or "OpenAIRE",
+        "doi": doi,
+        "abstract": _openaire_abstract(item),
+        "url": _openaire_record_url(item, doi),
+        "citations": _openaire_citations(item),
+        "source": "openaire",
+        "open_access": True,
+    }
+
+
+def _openaire_title(item: dict[str, Any]) -> str:
+    """Title — list of dicts with "$" key, pick the first non-empty."""
+    title_field = item.get("title", [])
+    if isinstance(title_field, list):
+        for t in title_field:
+            if isinstance(t, dict) and t.get("$"):
+                return t["$"].strip()
+        return ""
+    if isinstance(title_field, dict) and title_field.get("$"):
+        return title_field["$"].strip()
+    return ""
+
+
+def _openaire_authors(item: dict[str, Any]) -> list[str]:
+    """Authors — under "creator" field."""
+    creators = item.get("creator", [])
+    if isinstance(creators, list):
+        return [c["$"] for c in creators if isinstance(c, dict) and c.get("$")]
+    if isinstance(creators, dict) and creators.get("$"):
+        return [creators["$"]]
+    return []
+
+
+def _openaire_year(item: dict[str, Any]) -> int | None:
+    """Year — 从 dateofacceptance 取前 4 位数字."""
+    date_field = item.get("dateofacceptance", {})
+    if not isinstance(date_field, dict):
+        return None
+    date_str = date_field.get("$", "") or ""
+    if not date_str:
+        return None
+    match = re.match(r"(\d{4})", date_str)
+    return int(match.group(1)) if match else None
+
+
+def _openaire_doi(item: dict[str, Any]) -> str | None:
+    """DOI — under "pid" field (dict with @classid="doi")."""
+    pid = item.get("pid", {})
+    if isinstance(pid, dict):
+        if pid.get("@classid") == "doi" and pid.get("$"):
+            return pid["$"].lower()
+        return None
+    if isinstance(pid, list):
+        for p in pid:
+            if isinstance(p, dict) and p.get("@classid") == "doi" and p.get("$"):
+                return p["$"].lower()
+    return None
+
+
+def _openaire_record_url(item: dict[str, Any], doi: str | None) -> str:
+    """实例 webresource URL; 缺失时回落 doi.org."""
+    url = _openaire_instance_url(item.get("instance", []))
+    if not url and doi:
+        url = f"https://doi.org/{doi}"
+    return url
+
+
+def _openaire_instance_url(instances: Any) -> str:
+    """从 instance (dict 或 list) 取第一个 webresource.url."""
+    if isinstance(instances, dict):
+        return _openaire_webresource_url(instances)
+    if not isinstance(instances, list):
+        return ""
+    for inst in instances:
+        if not isinstance(inst, dict):
+            continue
+        url = _openaire_webresource_url(inst)
+        if url:
+            return url
+    return ""
+
+
+def _openaire_webresource_url(inst: dict[str, Any]) -> str:
+    """instance.webresource.url.$ (缺失返回空串)."""
+    webres = inst.get("webresource", {})
+    if not isinstance(webres, dict):
+        return ""
+    return webres.get("url", {}).get("$", "") or ""
+
+
+def _openaire_abstract(item: dict[str, Any]) -> str:
+    """Abstract — 前 500 字符."""
+    desc = item.get("description", {})
+    if isinstance(desc, dict):
+        return desc["$"][:500] if desc.get("$") else ""
+    if isinstance(desc, list):
+        for d in desc:
+            if isinstance(d, dict) and d.get("$"):
+                return d["$"][:500]
+    return ""
+
+
+def _openaire_citations(item: dict[str, Any]) -> int | None:
+    """Citation count — under "measure" list with @id="citationCount"."""
+    measures = item.get("measure", [])
+    if not isinstance(measures, list):
+        return None
+    for entry in measures:
+        if isinstance(entry, dict) and entry.get("@id") == "citationCount":
+            with contextlib.suppress(ValueError, TypeError):
+                return int(float(entry.get("@score", "0")))
+            return None
+    return None
 
 
 # ───────────────────────── Crystallography Open Database ─────────────────────────

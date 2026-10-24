@@ -114,7 +114,7 @@ def web_search_health_check(timeout: float = 8.0) -> tuple[bool, str]:
     if _web_search_disabled():
         return False, "web_search disabled by HUGINN_DISABLE_WEB_SEARCH"
     try:
-        url = "http://export.arxiv.org/api/query?search_query=all:test&max_results=1"
+        url = "https://export.arxiv.org/api/query?search_query=all:test&max_results=1"
         req = urllib.request.Request(url, headers={"User-Agent": "huginn-healthcheck/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             _ = resp.read(512)  # 只读前 512 字节, 够确认连通
@@ -502,8 +502,11 @@ class WebSearchTool(HuginnTool):
         import xml.etree.ElementTree as ET
 
         try:
+            # https 而非 http: 在带 HTTP(S)_PROXY 的环境里, 明文 http 走代理
+            # 会握手失败 (ws7 实测 SSL: UNEXPECTED_EOF / 502), 同一 URL 换 https
+            # urllib 直接 200. arxiv 官方也早已只推 https.
             api_url = (
-                f"http://export.arxiv.org/api/query?"
+                f"https://export.arxiv.org/api/query?"
                 f"search_query=all:{urllib.parse.quote(query)}"
                 f"&max_results={max_results}"
             )

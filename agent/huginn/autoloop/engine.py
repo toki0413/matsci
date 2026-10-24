@@ -671,70 +671,86 @@ class AutoloopEngine:
         # off 时不触发 (向后兼容). ponytail: 复用 longterm typed memory 存储.
         self._experiment_count_since_self_model_update = 0
 
+    def _resolve_resume_id(self, resume_from_state: str | None) -> str | None:
+        """未显式传 resume_from_state 时, 默认加载最新 checkpoint (按 mtime)."""
+        if resume_from_state:
+            return resume_from_state
+        try:
+            from huginn.runtime.engine_state import latest_run_id
+            return latest_run_id(self.workspace)
+        except Exception:  # 防御: 恢复上下文读取失败置空
+            logger.debug("best-effort op failed", exc_info=True)
+            return None
+
+    def _restore_projected_phase(self) -> None:
+        """H3: 事件投影优先 — 有 autoloop 事件日志时用投影恢复当前 phase.
+
+        best-effort: 投影读失败时沿用快照值, 不阻塞.
+        """
+        try:
+            projected = self.read_runtime_state()
+            if projected.get("phase"):
+                self._current_phase = projected["phase"]
+                logger.info(
+                    "restored autoloop phase from event projection: %s",
+                    projected["phase"],
+                )
+        except Exception:  # 防御: 事件投影恢复失败忽略
+            logger.debug(
+                "autoloop event projection restore failed (non-fatal)",
+                exc_info=True,
+            )
+
+    def _restore_hypothesis_graph(self, resume_id: str) -> None:
+        """hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)."""
+        from huginn.runtime.engine_state import _hypothesis_graph_path
+        try:
+            loaded_graph = self.hypothesis_graph.load(
+                _hypothesis_graph_path(self.workspace, resume_id)
+            )
+            if loaded_graph is not None:
+                self.hypothesis_graph = loaded_graph
+        except Exception:  # 防御: 假设图恢复失败忽略
+            logger.debug(
+                "resume: hypothesis_graph.load failed (non-fatal)",
+                exc_info=True,
+            )
+
+    def _apply_resume_snapshot(self, resume_id: str) -> None:
+        """按 run_id 加载并应用引擎快照 (含 phase / 假设图恢复)."""
+        from huginn.runtime.engine_state import (
+            apply_state_to_engine,
+            load_engine_state,
+            use_persistence,
+        )
+        if not use_persistence():
+            return
+        state = load_engine_state(resume_id, self.workspace)
+        if state is None:
+            logger.info(
+                "resume requested but no snapshot for run_id=%s, starting fresh",
+                resume_id,
+            )
+            return
+        apply_state_to_engine(state, self)
+        self._restore_projected_phase()
+        self._restore_hypothesis_graph(resume_id)
+        logger.info(
+            "resumed engine from run_id=%s: iteration=%d persona=%s",
+            resume_id, state._iteration,
+            state._last_persona or "(none)",
+        )
+
     def _init_resume_state(self, resume_from_state: str | None) -> None:
         """crash-safe resume + WakeStore 自动唤醒 flag (原 __init__ 主体, 行为等价)."""
         # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
         # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
         # Task 2.2: 未显式传 resume_from_state 时, 默认尝试加载最新 checkpoint
         # (按 mtime). 加载失败不 fatal, warn 后从零开始.
-        _resume_id = resume_from_state
-        if not _resume_id:
-            try:
-                from huginn.runtime.engine_state import latest_run_id
-                _resume_id = latest_run_id(self.workspace)
-            except Exception:  # 防御: 恢复上下文读取失败置空
-                logger.debug("best-effort op failed", exc_info=True)
-                _resume_id = None
+        _resume_id = self._resolve_resume_id(resume_from_state)
         if _resume_id:
             try:
-                from huginn.runtime.engine_state import (
-                    _hypothesis_graph_path,
-                    apply_state_to_engine,
-                    load_engine_state,
-                    use_persistence,
-                )
-                if use_persistence():
-                    state = load_engine_state(_resume_id, self.workspace)
-                    if state is not None:
-                        apply_state_to_engine(state, self)
-                        # H3: 事件投影优先 — 若 workspace 有 autoloop 事件日志,
-                        # 用投影恢复当前 phase (而非只信任可变快照的 phase 字段).
-                        # best-effort: 投影读失败时沿用快照值, 不阻塞.
-                        try:
-                            projected = self.read_runtime_state()
-                            if projected.get("phase"):
-                                self._current_phase = projected["phase"]
-                                logger.info(
-                                    "restored autoloop phase from event projection: %s",
-                                    projected["phase"],
-                                )
-                        except Exception:  # 防御: 事件投影恢复失败忽略
-                            logger.debug(
-                                "autoloop event projection restore failed (non-fatal)",
-                                exc_info=True,
-                            )
-                        # hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)
-                        try:
-                            loaded_graph = self.hypothesis_graph.load(
-                                _hypothesis_graph_path(self.workspace, _resume_id)
-                            )
-                            if loaded_graph is not None:
-                                self.hypothesis_graph = loaded_graph
-                        except Exception:  # 防御: 假设图恢复失败忽略
-                            logger.debug(
-                                "resume: hypothesis_graph.load failed (non-fatal)",
-                                exc_info=True,
-                            )
-                        logger.info(
-                            "resumed engine from run_id=%s: iteration=%d persona=%s",
-                            _resume_id, state._iteration,
-                            state._last_persona or "(none)",
-                        )
-                    else:
-                        logger.info(
-                            "resume requested but no snapshot for run_id=%s, "
-                            "starting fresh", _resume_id,
-                        )
+                self._apply_resume_snapshot(_resume_id)
             except Exception:  # 防御: 恢复状态失败新建会话
                 logger.warning(
                     "resume_from_state=%s failed, starting fresh",
@@ -752,6 +768,7 @@ class AutoloopEngine:
         self._auto_wake_enabled = os.environ.get(
             "HUGINN_AUTO_WAKE", "1"
         ) == "1"
+
 
     def _init_runtime_ledger(self) -> None:
         """MCMC 状态 + token/cost 预算 (原 __init__ 主体, 纯默认值)."""
@@ -996,10 +1013,21 @@ class AutoloopEngine:
         persona_name: str | None = None,
         model: Any = None,
         task: str | None = None,
+        tools: list[Any] | None = None,
+        max_tool_rounds: int = 2,
     ) -> str:
         return await self._engine_actor._llm_chat(
-            prompt, persona_name=persona_name, model=model, task=task
+            prompt,
+            persona_name=persona_name,
+            model=model,
+            task=task,
+            tools=tools,
+            max_tool_rounds=max_tool_rounds,
         )
+
+    def _resolve_readonly_tools(self) -> list[Any]:
+        """plan/validate 阶段可挂的只读工具面 (实现在 EngineAct, 此处薄委托)."""
+        return self._engine_actor._resolve_readonly_tools()
 
     # ── 去 mixin 阶段5: EngineControl 薄委托 ─────────────────────
     # 循环控制/checkpoint/状态持久化/澄清交互/事件总线方法族已下沉为 EngineControl

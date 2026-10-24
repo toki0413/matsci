@@ -114,14 +114,8 @@ def _ev(nodes, edges):
     return (list(nodes), [tuple(e) for e in edges])
 
 
-def build_test_cases() -> list[TestCase]:
-    """120+ 对 hypothesis, 6 场景, 每对带 2 重独立 ground truth.
-
-    human_label: 人工语义判断 (写死, 不从任何距离算出)
-    hodge_label: Hodge 签名判断 (拓扑独立, 不从 predictions/n_params/text 算出)
-    """
-    cases = []
-
+def _scene_same_theory(cases: list[TestCase]) -> None:
+    """场景 1: 同理论不同表述 (20 对) — human=False, hodge=False."""
     # ── 场景 1: 同理论不同表述 (20 对) ── human=False, hodge=False
     # predictions 相同, 文本不同, 证据图同构 → 几何对, 文本错
     same_theory_pairs = [
@@ -178,6 +172,8 @@ def build_test_cases() -> list[TestCase]:
             evidence_a=ev, evidence_b=ev,  # 同理论 → 同证据图
         ))
 
+def _scene_same_pred_diff_structure(cases: list[TestCase]) -> None:
+    """场景 2: 同预测不同结构 (20 对) — human=True, hodge=True."""
     # ── 场景 2: 同预测不同结构 (20 对) ── human=True, hodge=True
     # predictions 相同, 理论本质不同, 证据图拓扑不同 → 几何 blind spot (Fisher), Hodge 对
     same_pred_diff_struct = [
@@ -253,6 +249,9 @@ def build_test_cases() -> list[TestCase]:
             evidence_a=_ev(na, ea), evidence_b=_ev(nb, eb),
         ))
 
+
+def _scene_diff_theory_diff_pred(cases: list[TestCase]) -> None:
+    """场景 3: 不同理论不同预测 (30 对) — human=True, hodge=True."""
     # ── 场景 3: 不同理论不同预测 (30 对) ── human=True, hodge=True
     diff_pred_pairs = [
         ("Newton gravity precession=0", "General Relativity precession=0.43",
@@ -333,6 +332,9 @@ def build_test_cases() -> list[TestCase]:
             evidence_b=_ev(nodes_b, edges_b),
         ))
 
+
+def _scene_same_theory_same_wording(cases: list[TestCase]) -> None:
+    """场景 4: 同理论同表述 (20 对) — human=False, hodge=False."""
     # ── 场景 4: 同理论同表述 (20 对) ── human=False, hodge=False
     for i, formula in enumerate([
         "F = G m1 m2 / r^2", "E = mc^2", "PV = nRT", "sigma = E * epsilon",
@@ -351,6 +353,10 @@ def build_test_cases() -> list[TestCase]:
             evidence_a=ev, evidence_b=ev,
         ))
 
+    # ── 场景 5: 同字不同理论 (20 对) ── human=True, hodge=True
+
+def _scene_same_wording_diff_theory(cases: list[TestCase]) -> None:
+    """场景 5: 同字不同理论 (20 对) — human=True, hodge=True."""
     # ── 场景 5: 同字不同理论 (20 对) ── human=True, hodge=True
     same_wording_diff_theory = [
         ("E = mc^2 (Einstein)", "E = mc^2 (Young's modulus)"),
@@ -389,6 +395,9 @@ def build_test_cases() -> list[TestCase]:
             evidence_a=_ev(na, ea), evidence_b=_ev(nb, eb),
         ))
 
+
+def _scene_same_structure_same_pred(cases: list[TestCase]) -> None:
+    """场景 6: 同结构同预测 (10 对) — 控制组, human=False, hodge=False."""
     # ── 场景 6: 同结构同预测 (10 对) ── human=False, hodge=False
     # 控制组: 同理论同预测同结构 → 所有方法都应判等价
     for i in range(10):
@@ -402,6 +411,20 @@ def build_test_cases() -> list[TestCase]:
             evidence_a=ev, evidence_b=ev,
         ))
 
+
+def build_test_cases() -> list[TestCase]:
+    """120+ 对 hypothesis, 6 场景, 每对带 2 重独立 ground truth.
+
+    human_label: 人工语义判断 (写死, 不从任何距离算出)
+    hodge_label: Hodge 签名判断 (拓扑独立, 不从 predictions/n_params/text 算出)
+    """
+    cases: list[TestCase] = []
+    _scene_same_theory(cases)
+    _scene_same_pred_diff_structure(cases)
+    _scene_diff_theory_diff_pred(cases)
+    _scene_same_theory_same_wording(cases)
+    _scene_same_wording_diff_theory(cases)
+    _scene_same_structure_same_pred(cases)
     return cases
 
 

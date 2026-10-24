@@ -42,6 +42,7 @@ import threading
 from datetime import UTC, datetime
 from typing import Any
 
+from huginn.metacog.text_to_json import extract_json_object
 from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -838,23 +839,8 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any]:
-        """从 LLM 输出里抠 JSON. 处理 markdown 代码块包裹的情况."""
-        if not text:
-            return {}
-        # 去掉 ```json ... ``` 包裹
-        if "```" in text:
-            parts = text.split("```")
-            if len(parts) >= 2:
-                text = parts[1]
-                if text.startswith("json"):
-                    text = text[4:]
-        try:
-            result = json.loads(text.strip())
-            if isinstance(result, dict):
-                return result
-        except (json.JSONDecodeError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
-        return {}
+        """从 LLM 输出里抠 JSON 对象 (围栏/散文容忍统一由 text_to_json 负责)."""
+        return extract_json_object(text) or {}
 
     def _log_research(
         self,

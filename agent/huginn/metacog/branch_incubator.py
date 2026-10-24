@@ -691,8 +691,49 @@ class _MockSubagentDispatch:
 
 
 def _selfcheck() -> None:
-    import asyncio
+    _sc_family_assignment()
+    _sc_run_round_basic()
+    _sc_run_round_partial()
+    _sc_anti_completion()
+    _sc_serialisation()
+    _sc_depth2_normal()
+    _sc_depth2_partial()
+    _sc_depth2_fallback()
+    _sc_depth2_parent()
+    _sc_depth2_parent_hypothesis()
+    _sc_wave_verify()
+    _sc_wave_push()
+    _sc_model_families()
+    _sc_model_families_none()
+    _sc_model_families_wrap()
+    _sc_combo()
+    _sc_pick_winner()
+    _sc_value_fn()
+    _sc_async_value_fn()
+    _sc_dslice_affordable()
+    _sc_dslice_low_budget()
+    _sc_dslice_rich_budget()
+    _sc_dslice_assign_values()
+    _sc_dslice_trace()
+    _sc_dslice_self_calibrate()
+    print("branch_incubator selfcheck OK")
 
+
+class _ValMock(_MockSubagentDispatch):
+    """tokens_used 递增, 便于区分 value 驱动 vs token 驱动选主."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._n = 0
+
+    async def dispatch(self, spec_name, task, context=None, on_state=None):
+        r = await super().dispatch(spec_name, task, context, on_state)
+        self._n += 1
+        r.tokens_used = self._n
+        return r
+
+
+def _sc_family_assignment() -> None:
     # 1. _assign_families: 冷门优先, 避开阻塞族
     inc = BranchIncubator()
     assignments = inc._assign_families(3)
@@ -706,6 +747,9 @@ def _selfcheck() -> None:
     assignments2 = inc._assign_families(3)
     assert "dft-direct" not in assignments2, "阻塞族不应被分配"
 
+
+
+def _sc_run_round_basic() -> None:
     # 3. run_round: mock dispatch, 3 个 branch 都成功
     # 保留本地 mock 引用, 避免访问 inc._dispatch 私有属性 (消除 type: ignore)
     mock = _MockSubagentDispatch()
@@ -736,6 +780,8 @@ def _selfcheck() -> None:
     # task 含可见族列表 (exploratory 放宽后)
     assert "Visible method families" in task_content
 
+
+def _sc_run_round_partial() -> None:
     # 5. 部分失败: 1 个 family 失败, 降级到 fallback hypothesis
     inc3 = BranchIncubator(dispatch=_MockSubagentDispatch(
         fail_families={"gaussian-process"},
@@ -754,6 +800,13 @@ def _selfcheck() -> None:
     assert all(r.hypothesis.startswith("[fallback]") for r in failed), (
         "失败应降级到 fallback hypothesis"
     )
+
+
+
+
+
+def _sc_anti_completion() -> None:
+    import asyncio
 
     # 6. 反完成审计: round_idx=0 + families_explored 少 → 标过热族
     # 第 0 轮 3 个 branch, 如果都分到不同族 families_explored=3 ≥ min=3 不触发
@@ -794,6 +847,9 @@ def _selfcheck() -> None:
         f"dft-direct 应被标 blocked (过热), got blocked={dft.is_blocked if dft else None}"
     )
 
+
+
+def _sc_serialisation() -> None:
     # 7. BranchResult.to_dict 序列化 (含 parent_agent_id)
     r = BranchResult(
         family_id="x", agent_id="y", hypothesis="z", round_idx=5,
@@ -812,6 +868,9 @@ def _selfcheck() -> None:
         family_id="a", agent_id="b", hypothesis="c", value=0.7,
     ).to_dict()["value"] == 0.7
 
+
+
+def _sc_depth2_normal() -> None:
     # 8. depth=2 正常路径: 3 layer1 + 2×3 layer2 = 9 dispatch 调用
     mock_tree = _MockSubagentDispatch()
     inc_tree = BranchIncubator(dispatch=mock_tree)
@@ -836,6 +895,8 @@ def _selfcheck() -> None:
     assert len(layer1_calls) == 3
     assert len(layer2_calls) == 6
 
+
+def _sc_depth2_partial() -> None:
     # 9. layer1 部分失败: dft-direct fail → layer2 只对 2 个成功 parent 派
     # 总 dispatch = 3 layer1 + 2×2 layer2 = 7
     mock_partial = _MockSubagentDispatch(
@@ -863,6 +924,8 @@ def _selfcheck() -> None:
     assert len(success_results) == 2
     assert all(r.parent_agent_id for r in success_results)
 
+
+def _sc_depth2_fallback() -> None:
     # 10. layer2 全失败 fallback layer1
     # fail_when_parent_hypothesis=True: layer1 全成功, layer2 全失败
     mock_l2fail = _MockSubagentDispatch(
@@ -883,6 +946,8 @@ def _selfcheck() -> None:
     # 3 layer1 + 6 layer2 (layer2 全失败但仍 dispatch)
     assert len(mock_l2fail.calls) == 9
 
+
+def _sc_depth2_parent() -> None:
     # 11. parent_agent_id: layer1 为空, layer2 = layer1 父 agent_id
     mock_pa = _MockSubagentDispatch()
     inc_pa = BranchIncubator(dispatch=mock_pa)
@@ -905,6 +970,8 @@ def _selfcheck() -> None:
         # 找 parent: layer1 dispatch 里 family 跟 winner.family_id 相同的
         # (这里只验证格式, 具体匹配在场景 12 验)
 
+
+def _sc_depth2_parent_hypothesis() -> None:
     # 12. enhanced_task 含 [Parent hypothesis: ...] 当 parent_hypothesis 非空
     mock_ph = _MockSubagentDispatch()
     inc_ph = BranchIncubator(dispatch=mock_ph)
@@ -919,7 +986,7 @@ def _selfcheck() -> None:
     assert len(layer2_calls_ph) == 6, "应有 6 个 layer2 task 含 [Parent hypothesis]"
     # layer2 task 含 family + essence + Parent hypothesis + Visible
     for _spec_name, task_content, _ in layer2_calls_ph:
-        assert spec_name == "explore"
+        assert _spec_name == "explore"
         assert "[Method family assigned:" in task_content
         assert "[Family essence:" in task_content
         assert "[Parent hypothesis:" in task_content
@@ -928,6 +995,11 @@ def _selfcheck() -> None:
     for _spec_name, task_content, _ in layer1_calls_ph:
         assert "[Parent hypothesis:" not in task_content
 
+
+
+
+
+def _sc_wave_verify() -> None:
     # 13. P4: wave_mode="verify" 时 enhanced_task 含 VERIFY 引导
     mock_wv = _MockSubagentDispatch()
     inc_wv = BranchIncubator(dispatch=mock_wv)
@@ -942,6 +1014,8 @@ def _selfcheck() -> None:
             "verify 模式 enhanced_task 应含 VERIFY 引导"
     print("13. P4 wave_mode=verify 注入 VERIFY 引导 OK")
 
+
+def _sc_wave_push() -> None:
     # 14. P4: wave_mode="push" (默认) 不含 VERIFY 引导 (向后兼容)
     mock_wp = _MockSubagentDispatch()
     inc_wp = BranchIncubator(dispatch=mock_wp)
@@ -954,6 +1028,8 @@ def _selfcheck() -> None:
             "push 模式不应含 VERIFY 引导"
     print("14. P4 wave_mode=push (默认) 不含 VERIFY 引导 OK")
 
+
+def _sc_model_families() -> None:
     # 15. P4: model_families 分配 — 3 个 branch 分到不同 model_family
     inc_mf = BranchIncubator(dispatch=_MockSubagentDispatch())
     results_mf = asyncio.run(inc_mf.run_round(
@@ -967,6 +1043,8 @@ def _selfcheck() -> None:
         f"3 个 branch 应分到 3 个不同 model_family, got {_mfs}"
     print("15. P4 model_families 分配 (3 branch → 3 不同 model_family) OK")
 
+
+def _sc_model_families_none() -> None:
     # 16. P4: model_families=None (默认) → model_family 空串 (向后兼容)
     inc_nf = BranchIncubator(dispatch=_MockSubagentDispatch())
     results_nf = asyncio.run(inc_nf.run_round(
@@ -977,6 +1055,8 @@ def _selfcheck() -> None:
         "model_families=None 时 model_family 应为空串"
     print("16. P4 model_families=None 向后兼容 (model_family 空串) OK")
 
+
+def _sc_model_families_wrap() -> None:
     # 17. P4: model_families 不足时循环复用 (2 family → 3 branch, 有重复)
     inc_lr = BranchIncubator(dispatch=_MockSubagentDispatch())
     results_lr = asyncio.run(inc_lr.run_round(
@@ -989,6 +1069,8 @@ def _selfcheck() -> None:
         f"2 family → 3 branch 应循环复用, got {_mfs_lr}"
     print("17. P4 model_families 不足循环复用 OK")
 
+
+def _sc_combo() -> None:
     # 18. P4: wave_mode + model_families 组合 (verify wave + model 多样性)
     mock_combo = _MockSubagentDispatch()
     inc_combo = BranchIncubator(dispatch=mock_combo)
@@ -1004,6 +1086,11 @@ def _selfcheck() -> None:
     assert [r.model_family for r in results_combo] == ["openai", "anthropic", "deepseek"]
     print("18. P4 wave_mode=verify + model_families 组合 OK")
 
+
+
+
+
+def _sc_pick_winner() -> None:
     # 19. _pick_winner: 有 value 按 value 最大 (忽略 tokens); 全无 value 回退 min tokens
     _s_low = BranchResult(family_id="f", agent_id="a1", hypothesis="h",
                           tokens_used=1, value=0.2)
@@ -1017,19 +1104,9 @@ def _selfcheck() -> None:
         "无 value 时应回退 min(tokens_used)"
     print("19. _pick_winner value-priority + token fallback OK")
 
+
+def _sc_value_fn() -> None:
     # 20. run_round value_fn: 注入 rollout value, prune 按 value 选 (不同于 token 选)
-    class _ValMock(_MockSubagentDispatch):
-        """tokens_used 递增, 便于区分 value 驱动 vs token 驱动选主."""
-
-        def __init__(self) -> None:
-            super().__init__()
-            self._n = 0
-
-        async def dispatch(self, spec_name, task, context=None, on_state=None):
-            r = await super().dispatch(spec_name, task, context, on_state)
-            self._n += 1
-            r.tokens_used = self._n
-            return r
 
     _res_val = asyncio.run(BranchIncubator(dispatch=_ValMock()).run_round(
         task="test", agent_factory=object(),
@@ -1055,6 +1132,8 @@ def _selfcheck() -> None:
     )
     print("20. run_round value_fn rollout-value pruning OK")
 
+
+def _sc_async_value_fn() -> None:
     # 21. async value_fn: 协程自动 await (如 step_verifier 的 PRM 打分)
     async def _async_val(r: BranchResult) -> float | None:
         await asyncio.sleep(0)
@@ -1071,6 +1150,11 @@ def _selfcheck() -> None:
     )
     print("21. run_round async value_fn (PRM coroutine) OK")
 
+
+
+
+
+def _sc_dslice_affordable() -> None:
     # 22. D-slice _slice_affordable: None / None-return / 高 / 低 / 异常 五态
     assert BranchIncubator._slice_affordable(None, 60.0) is True, \
         "budget_remaining_fn=None (非长程) 应视为不受约束"
@@ -1088,6 +1172,8 @@ def _selfcheck() -> None:
         "预算查询异常应 fail-open (不误判耗尽)"
     print("22. D-slice _slice_affordable 五态 OK")
 
+
+def _sc_dslice_low_budget() -> None:
     # 23. D-slice 预算不足: depth=2 也跳过 layer2, 只跑 layer1 (3 dispatch)
     mock_low = _MockSubagentDispatch()
     results_low = asyncio.run(BranchIncubator(dispatch=mock_low).run_round(
@@ -1104,6 +1190,8 @@ def _selfcheck() -> None:
     assert all(r.hypothesis for r in results_low), "layer1 结果仍应可用"
     print("23. D-slice 预算不足跳过 layer2 (3 dispatch) OK")
 
+
+def _sc_dslice_rich_budget() -> None:
     # 24. D-slice 预算充足 / 无预算约束: 行为与旧版一致 (9 dispatch)
     mock_rich = _MockSubagentDispatch()
     _res_rich = asyncio.run(BranchIncubator(dispatch=mock_rich).run_round(
@@ -1124,6 +1212,8 @@ def _selfcheck() -> None:
     assert len(mock_none.calls) == 9, "无 budget_remaining_fn 行为应不变 (9 dispatch)"
     print("24. D-slice 预算充足/无约束行为不变 (9 dispatch) OK")
 
+
+def _sc_dslice_assign_values() -> None:
     # 25. D-slice _assign_values 逐 branch 预算门: 中途预算掉线 → 后续保持 None
     _rs = [BranchResult(family_id="f", agent_id=f"a{i}", hypothesis="h")
            for i in range(4)]
@@ -1137,6 +1227,8 @@ def _selfcheck() -> None:
     )
     print("25. D-slice _assign_values 逐 branch 预算门 OK")
 
+
+def _sc_dslice_trace() -> None:
     # 26. D-slice trace_fn: 跳过 slice 时上报 branch_slice_skip (控制面可观测)
     _traces: list[tuple[str, str, str]] = []
 
@@ -1153,6 +1245,8 @@ def _selfcheck() -> None:
     )
     print("26. D-slice trace_fn branch_slice_skip 上报 OK")
 
+
+def _sc_dslice_self_calibrate() -> None:
     # 27. D-slice 自校准: layer1 实测成本 > 剩余预算 → 跳过同形状的 layer2.
     #     场景复刻 run72: layer1 烧掉大部分预算, 只剩一点, 不足以再跑一个 layer2.
     #     用"模拟花费时钟"记账 (不依赖真 LLM 计时, 也不依赖 streaming 是否可导入).
@@ -1199,7 +1293,7 @@ def _selfcheck() -> None:
     )
     print("27. D-slice 自校准门槛 (layer1 实测 → 决定 layer2 是否负担得起) OK")
 
-    print("branch_incubator selfcheck OK")
+
 
 
 if __name__ == "__main__":

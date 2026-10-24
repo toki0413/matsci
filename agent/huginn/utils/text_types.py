@@ -124,22 +124,31 @@ class TextHandler:
             return bool(re.search(pattern, self._text, flags))
         return bool(pattern.search(self._text))
 
+    def _json_from_brackets(self) -> Any | None:
+        """从 { 或 [ 开始截取一段再试解析, 找不到返回 None."""
+        for start_char in ("{", "["):
+            start = self._text.find(start_char)
+            if start == -1:
+                continue
+            end_char = "}" if start_char == "{" else "]"
+            end = self._text.rfind(end_char)
+            if end <= start:
+                continue
+            try:
+                return json.loads(self._text[start : end + 1])
+            except json.JSONDecodeError:
+                continue
+        return None
+
     def json(self) -> Any:
         """解析 JSON, 失败抛 ValueError."""
         try:
             return json.loads(self._text)
         except json.JSONDecodeError as e:
             # 尝试从 { 或 [ 开始截取
-            for start_char in ("{", "["):
-                start = self._text.find(start_char)
-                if start != -1:
-                    end_char = "}" if start_char == "{" else "]"
-                    end = self._text.rfind(end_char)
-                    if end > start:
-                        try:
-                            return json.loads(self._text[start : end + 1])
-                        except json.JSONDecodeError:
-                            continue
+            extracted = self._json_from_brackets()
+            if extracted is not None:
+                return extracted
             raise ValueError(f"Invalid JSON: {e}") from e
 
     def truncate(self, max_len: int, suffix: str = "...") -> TextHandler:

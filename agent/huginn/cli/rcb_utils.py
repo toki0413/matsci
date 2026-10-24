@@ -8,6 +8,19 @@ import os
 import re
 from pathlib import Path
 
+# metric 白名单 / 配对正则 — 与 agent.hint_coordinator 共用同一事实来源
+# (huginn.utils.numeric_targets). 此处保留 re-export: rcb_runner / rcb_cognition
+# 历史上从这里取这三个名字.
+from huginn.utils.numeric_targets import (
+    METRIC_WHITELIST as _METRIC_WHITELIST,  # noqa: F401
+)
+from huginn.utils.numeric_targets import (
+    NUMERIC_PAIR_RE as _NUMERIC_PAIR_RE,  # noqa: F401
+)
+from huginn.utils.numeric_targets import (  # noqa: F401
+    extract_numeric_targets as _extract_numeric_targets,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,40 +114,8 @@ def _detect_file_rewrite_stagnation(code_dir: Path) -> tuple[bool, str]:
         return False, ""
 
 
-# metric 白名单 — 抓数值时只保留这些, 避免误抓年份/版本号
-_METRIC_WHITELIST = frozenset({
-    "mae", "rmse", "mse", "r2", "r²", "r3", "accuracy",
-    "precision", "recall", "f1", "auc", "pearson", "spearman",
-    "loss", "error", "score", "bias",
-})
-# regex: metric = value / metric: value / metric of value / metric ≈ value
-_NUMERIC_PAIR_RE = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9_²³]{1,15})\s*(?:=|:|of|≈|~|is)\s*"
-    r"([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-)
-
-
-def _extract_numeric_targets(text: str) -> dict[str, float]:
-    """从 text 抓 'metric = value' 模式, 返回 {metric: value}.
-
-    metric 名白名单过滤, 避免误抓年份/版本号. 不抓单位.
-    """
-    if not text:
-        return {}
-    targets: dict[str, float] = {}
-    for m in _NUMERIC_PAIR_RE.finditer(text):
-        name = m.group(1).lower()
-        try:
-            val = float(m.group(2))
-        except ValueError:
-            logger.debug("best-effort op failed", exc_info=True)
-            continue
-        if name not in _METRIC_WHITELIST:
-            continue
-        if abs(val) > 1e6:
-            continue
-        targets[name] = val
-    return targets
+# metric 白名单 / 配对正则 — 与 agent.hint_coordinator 共用同一事实来源
+# (huginn.utils.numeric_targets, 见文件顶部 re-export).
 
 
 def _save_manifold(manifold, path: Path) -> None:

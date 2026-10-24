@@ -23,6 +23,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.tools._embed import lazy_embed_fn
 from huginn.tools.base import HuginnTool
 from huginn.utils.cache import TimedLRUCache
 
@@ -82,31 +83,6 @@ def _expand_query_tokens(query: str) -> list[str]:
             seen.add(e)
             tokens.append(e)
     return tokens
-
-
-def _lazy_embed_fn() -> Callable[[list[str]], list[list[float]]] | None:
-    """复用 RAG 的 embedding 模型 (chroma DefaultEF ONNX), 未缓存则 None.
-
-    与 agentic_search_tool 同源: 语义打分是可选增强, embedding 模型没下载时
-    安静降级为关键词打分, 不阻塞工具发现.
-    """
-    try:
-        from huginn.rag.vector_store import _embedding_model_cached
-
-        if not _embedding_model_cached():
-            return None
-        from chromadb.utils.embedding_functions import DefaultEF
-
-        ef = DefaultEF()
-        _ = ef(["probe"])  # 触发加载, 失败会抛异常
-
-        def embed(texts: list[str]) -> list[list[float]]:
-            return ef(texts)
-
-        return embed
-    except Exception:
-        logger.debug("semantic embed unavailable, keyword scoring only", exc_info=True)
-        return None
 
 
 def _query_tokens(query: str) -> list[str]:
@@ -267,7 +243,7 @@ class ToolSearchTool(HuginnTool):
             return result
 
         # 2) embedding 语义召回: 子串没命中但语义相近的工具
-        embed = _lazy_embed_fn() if semantic else None
+        embed = lazy_embed_fn() if semantic else None
         query_vec: list[float] | None = None
         if embed is not None:
             try:

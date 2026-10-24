@@ -7,10 +7,12 @@ and keeps the construction + graph-building + convenience methods.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import SystemMessage
@@ -51,6 +53,100 @@ from .session import SessionMixin
 from .streaming import StreamingMixin
 
 logger = logging.getLogger(__name__)
+
+
+# 负结果提示要扫的指标名关键词 (小写匹配).
+_WEAK_METRIC_TOKENS = ("auc", "accuracy", "r2", "r_squared", "f1")
+
+
+def _weak_signal_hint(outputs_dir: Path) -> str | None:
+    """扫 outputs/*.json 找 < 0.6 的指标, 组装 negative-result 提示; 无则 None."""
+    weak: list[str] = []
+    for jp in outputs_dir.glob("*.json"):
+        try:
+            payload = json.loads(jp.read_text(encoding="utf-8"))
+        except Exception:  # 防御: weak-metric 扫描失败则忽略
+            logger.debug("weak-metric scan failed", exc_info=True)
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for key, value in payload.items():
+            if not any(t in str(key).lower() for t in _WEAK_METRIC_TOKENS):
+                continue
+            try:
+                fv = float(value)
+            except (TypeError, ValueError):
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+            if 0 <= fv < 0.6:
+                weak.append(f"{key}={fv:.3f}")
+    if not weak:
+        return None
+    return (
+        "⚠️ WEAK SIGNAL DETECTED in outputs/: "
+        + ", ".join(weak[:5])
+        + ". If model performance is below target, write a 'Negative Results' "
+        "section in report.md explaining WHY signal is weak (data quantity, "
+        "feature design, model architecture, compute budget). Honest negative "
+        "results with root-cause analysis score better than silence."
+    )
+
+
+def _coverage_hints(
+    cov_mw: DeliverableCoverageMiddleware,
+    inst_text: str,
+    rpt_text: str | None,
+) -> list[str]:
+    """按 report 是否已产出, 生成 planning 或 frontier 覆盖率提示."""
+    quantities = cov_mw._extract_quantities(inst_text)
+    if not quantities:
+        return []
+    if rpt_text is None:
+        return [cov_mw._build_planning_msg(quantities)]
+    hints: list[str] = []
+    missing = cov_mw._check_coverage(inst_text, rpt_text)
+    gaps = cov_mw._check_layer_gaps(inst_text, rpt_text)
+    if missing:
+        hints.append(cov_mw._build_frontier_msg(missing))
+    if gaps:
+        hints.append(cov_mw._build_layer_frontier_msg(gaps))
+    return hints
+
+
+def _collect_benchmark_hints(cov_mw: DeliverableCoverageMiddleware) -> list[str]:
+    """时间感知 / benchmark / 负结果 / 覆盖率 四层 hint (读 cwd 下的产物)."""
+    extra: list[str] = []
+    cwd = Path.cwd()
+    rpt_path = cwd / "report" / "report.md"
+
+    # Benchmark Mode: 通用 env var 注入, agent 不感知具体 benchmark 框架.
+    bm_prompt = os.environ.get("HUGINN_BENCHMARK_MODE_PROMPT", "")
+    if bm_prompt:
+        extra.append(bm_prompt)
+    # 方案 C: Negative Result — 还没写报告且已有 outputs/ 时提醒低分指标.
+    if not rpt_path.exists() and (cwd / "outputs").exists():
+        hint = _weak_signal_hint(cwd / "outputs")
+        if hint:
+            extra.append(hint)
+    # DeliverableCoverage: benchmark 路径没走 deepagents middleware 协议,
+    # 手动复用纯函数注入 frontier/planning hint.
+    inst = cwd / "INSTRUCTIONS.md"
+    if inst.exists():
+        inst_text = inst.read_text(encoding="utf-8")
+        rpt_text = rpt_path.read_text(encoding="utf-8") if rpt_path.exists() else None
+        extra.extend(_coverage_hints(cov_mw, inst_text, rpt_text))
+    return extra
+
+
+def _bandit_effort_hint() -> str | None:
+    """v18 bandit effort controller 的 advisory 提示; 失败静默返回 None."""
+    try:
+        from huginn.agent.bandit_controller import EffortBandit
+
+        return EffortBandit.get_instance().build_hint() or None
+    except Exception:  # 防御: bandit 提示注入失败则忽略
+        logger.debug("bandit effort hint failed", exc_info=True)
+        return None
 
 
 class HuginnAgent(
@@ -887,96 +983,20 @@ class HuginnAgent(
                 # 时间感知 + 覆盖率 + 负结果三层 hint, 失败静默不阻塞 LLM 调用.
                 # ponytail: 每次读 INSTRUCTIONS+report+outputs (~2ms IO), 相比
                 # LLM 调用 1-5s 零开销. 升级: langgraph config 传 deadline.
-                _extra_hints: list[str] = []
+                extra_hints: list[str] = []
+                bandit_hint: str | None = None
                 try:
-                    import json as _json
-                    from pathlib import Path as _P  # noqa: N814
-
-                    _cwd = _P.cwd()
-                    _rpt_path = _cwd / "report" / "report.md"
-                    # Benchmark Mode: 通用 env var 注入, agent 不感知具体 benchmark 框架.
-                    # 调用方 (如 rcb_runner) setdefault HUGINN_BENCHMARK_MODE_PROMPT 即可.
-                    _bm_prompt = os.environ.get("HUGINN_BENCHMARK_MODE_PROMPT", "")
-                    if _bm_prompt:
-                        _extra_hints.append(_bm_prompt)
-                    # 方案 C: Negative Result — 扫 outputs/*.json 找低分指标,
-                    # 注入 "写 negative result 分析" hint. 不阻塞, 只提醒.
-                    if not _rpt_path.exists() and (_cwd / "outputs").exists():
-                        _weak_metrics: list[str] = []
-                        for _jp in (_cwd / "outputs").glob("*.json"):
-                            try:
-                                _d = _json.loads(_jp.read_text(encoding="utf-8"))
-                                if not isinstance(_d, dict):
-                                    continue
-                                for _k, _v in _d.items():
-                                    _kl = str(_k).lower()
-                                    if any(
-                                        _t in _kl
-                                        for _t in (
-                                            "auc",
-                                            "accuracy",
-                                            "r2",
-                                            "r_squared",
-                                            "f1",
-                                        )
-                                    ):
-                                        try:
-                                            _fv = float(_v)
-                                            if 0 <= _fv < 0.6:
-                                                _weak_metrics.append(f"{_k}={_fv:.3f}")
-                                        except (TypeError, ValueError):
-                                            logger.debug("best-effort op failed", exc_info=True)
-                            except Exception:  # 防御: weak-metric 扫描失败则忽略
-                                logger.debug("weak-metric scan failed", exc_info=True)
-                        if _weak_metrics:
-                            _extra_hints.append(
-                                "⚠️ WEAK SIGNAL DETECTED in outputs/: "
-                                + ", ".join(_weak_metrics[:5])
-                                + ". If model performance is below target, write a 'Negative Results' "
-                                "section in report.md explaining WHY signal is weak (data quantity, "
-                                "feature design, model architecture, compute budget). Honest negative "
-                                "results with root-cause analysis score better than silence."
-                            )
-                    # DeliverableCoverage: benchmark 路径没走 deepagents middleware 协议,
-                    # 手动复用纯函数注入 frontier/planning hint.
-                    _inst = _cwd / "INSTRUCTIONS.md"
-                    if _inst.exists():
-                        _inst_text = _inst.read_text(encoding="utf-8")
-                        _qs = _cov_mw._extract_quantities(_inst_text)
-                        if _qs:
-                            if not _rpt_path.exists():
-                                _hint = _cov_mw._build_planning_msg(_qs)
-                                _extra_hints.append(_hint)
-                            else:
-                                _rpt_text = _rpt_path.read_text(encoding="utf-8")
-                                _missing = _cov_mw._check_coverage(
-                                    _inst_text, _rpt_text
-                                )
-                                _gaps = _cov_mw._check_layer_gaps(_inst_text, _rpt_text)
-                                if _missing:
-                                    _extra_hints.append(
-                                        _cov_mw._build_frontier_msg(_missing)
-                                    )
-                                if _gaps:
-                                    _extra_hints.append(
-                                        _cov_mw._build_layer_frontier_msg(_gaps)
-                                    )
-                    if _extra_hints:
-                        patched = [
-                            SystemMessage(content="\n\n".join(_extra_hints))
-                        ] + patched
+                    extra_hints = _collect_benchmark_hints(_cov_mw)
                     # v18: bandit effort controller hint (advisory).
-                    # ponytail: 失败静默, build_hint 已 catch. 不阻塞 LLM 调用.
-                    try:
-                        from huginn.agent.bandit_controller import EffortBandit
-
-                        _bandit_hint = EffortBandit.get_instance().build_hint()
-                        if _bandit_hint:
-                            patched = [SystemMessage(content=_bandit_hint)] + patched
-                    except Exception:  # 防御: bandit 提示注入失败则忽略
-                        logger.debug("bandit effort hint failed", exc_info=True)
+                    bandit_hint = _bandit_effort_hint()
                 except Exception:  # 防御: pre-model 提示注入失败则忽略
                     logger.debug("pre-model hint injection failed", exc_info=True)
+                if extra_hints:
+                    patched = [
+                        SystemMessage(content="\n\n".join(extra_hints))
+                    ] + patched
+                if bandit_hint:
+                    patched = [SystemMessage(content=bandit_hint)] + patched
                 return {"llm_input_messages": patched}
 
             agent = create_react_agent(

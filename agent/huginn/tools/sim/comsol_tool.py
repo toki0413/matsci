@@ -6,7 +6,6 @@ returns the generated COMSOL Java script so the user can run it manually.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -18,8 +17,27 @@ from pydantic import BaseModel, Field
 from huginn.core_types import ToolContext, ToolResult
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.sim._packing import load_packing_objects
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_table(lines: list[str]) -> tuple[list[str], list[dict[str, Any]]]:
+    """解析首行表头 + 逗号/空格分隔的数值表."""
+    header = lines[0].replace(",", " ").split()
+    rows: list[dict[str, Any]] = []
+    for line in lines[1:]:
+        parts = line.replace(",", " ").split()
+        if len(parts) < len(header):
+            continue
+        row: dict[str, Any] = {}
+        for h, p in zip(header, parts):
+            try:
+                row[h] = float(p)
+            except ValueError:
+                row[h] = p
+        rows.append(row)
+    return header, rows
 
 
 class BoundaryCondition(BaseModel):
@@ -321,7 +339,7 @@ public class {prefix} {{
 
     def _import_packing(self, args: ComsolToolInput, work_dir: Path) -> ToolResult:
         """Generate a COMSOL Java script that imports packed particle data and run it if available."""
-        objects = self._load_packing_data(args.packing_data, work_dir)
+        objects = load_packing_objects(args.packing_data, work_dir)
         if not objects:
             return ToolResult(
                 data=None,
@@ -342,20 +360,6 @@ public class {prefix} {{
             data=data,
             success=exec_result.success,
         )
-
-    def _load_packing_data(
-        self, packing_data: dict[str, Any] | str | None, work_dir: Path
-    ) -> list[dict[str, Any]]:
-        if packing_data is None:
-            return []
-        if isinstance(packing_data, str):
-            path = Path(packing_data)
-            if not path.is_absolute():
-                path = work_dir / path
-            data = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            data = packing_data
-        return data.get("objects", [])
 
     def _generate_packing_import_script(
         self, prefix: str, objects: list[dict[str, Any]]
@@ -481,18 +485,7 @@ public class {prefix} {{
                 continue
 
             # Simple CSV/space-delimited parser
-            header = lines[0].replace(",", " ").split()
-            rows = []
-            for line in lines[1:]:
-                parts = line.replace(",", " ").split()
-                if len(parts) >= len(header):
-                    row = {}
-                    for h, p in zip(header, parts):
-                        try:
-                            row[h] = float(p)
-                        except ValueError:
-                            row[h] = p
-                    rows.append(row)
+            header, rows = _parse_table(lines)
 
             parsed[file_name] = {
                 "header": header,

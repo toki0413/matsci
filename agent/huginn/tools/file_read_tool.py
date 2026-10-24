@@ -69,7 +69,7 @@ class FileReadTool(HuginnTool):
     ) -> ToolResult:
         input_data = FileReadToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
         )
         path = work_dir / input_data.file_path
         if not path.is_absolute():

@@ -29,6 +29,14 @@ from huginn.models.registry import ModelCaps, get_model_capabilities
 logger = logging.getLogger(__name__)
 
 
+def _extract_member_usage(state: Any, usage: dict[str, int]) -> None:
+    """尝试从 state 拿 token usage (各 agent 字段名不完全一致)."""
+    for key in ("usage", "_usage", "token_usage", "_tokens"):
+        u = state.get(key) if isinstance(state, dict) else None
+        if isinstance(u, dict) and any(u.values()):
+            usage.update({k: int(v) for k, v in u.items() if isinstance(v, int | float)})
+
+
 class TeamRole(enum.StrEnum):
     PLANNER = "planner"
     SCIENTIST = "scientist"
@@ -384,6 +392,20 @@ class ModelTeam:
             return ""
         return await self._run_member(member, task, ctx, traces, run_id)
 
+    async def _publish_member_tool_calls(self, base: dict[str, Any], tcs: Any) -> None:
+        """把一个 state 里的全部 tool_call 逐条发布成 team.member.tool 事件."""
+        for tc in tcs:
+            if isinstance(tc, dict):
+                name = tc.get("name") or (tc.get("function") or {}).get("name", "?")
+                args = tc.get("args") or (tc.get("function") or {}).get("arguments", "")
+            else:
+                name = getattr(tc, "name", "?")
+                args = ""
+            await self._publish(
+                "team.member.tool",
+                {**base, "tool": str(name), "args": str(args)[:300]},
+            )
+
     async def _run_member(
         self,
         member: TeamMember,
@@ -418,27 +440,11 @@ class ModelTeam:
                 for msg in state.get("messages", []):
                     tcs = getattr(msg, "tool_calls", None)
                     if tcs:
-                        for tc in tcs:
-                            name = "?"
-                            if isinstance(tc, dict):
-                                name = tc.get("name") or (tc.get("function") or {}).get("name", "?")
-                            else:
-                                name = getattr(tc, "name", "?")
-                            args = ""
-                            if isinstance(tc, dict):
-                                args = tc.get("args") or (tc.get("function") or {}).get("arguments", "")
-                            await self._publish(
-                                "team.member.tool",
-                                {**base, "tool": str(name), "args": str(args)[:300]},
-                            )
+                        await self._publish_member_tool_calls(base, tcs)
                     content = getattr(msg, "content", None)
                     if content:
                         final_output = str(content)
-                # 尝试从 state 拿 token usage (各 agent 字段名不完全一致)
-                for key in ("usage", "_usage", "token_usage", "_tokens"):
-                    u = state.get(key) if isinstance(state, dict) else None
-                    if isinstance(u, dict) and any(u.values()):
-                        usage.update({k: int(v) for k, v in u.items() if isinstance(v, int | float)})
+                _extract_member_usage(state, usage)
         except Exception as exc:
             await self._publish("team.member.done", {
                 **base,
