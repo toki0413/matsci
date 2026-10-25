@@ -106,6 +106,46 @@ def _semantic_tokenize(text: str) -> list[str]:
     return re.findall(r"\b\w\w+\b", text_l)
 
 
+def _sklearn_overlap(a: str, b: str) -> float | None:
+    """sklearn TF-IDF cosine; 不可用/空 vocab 时返回 None 让调用方走兜底."""
+    if not _SKLEARN_OK:
+        return None
+    try:
+        # 自定义 tokenizer 让 TF-IDF 也吃到 jieba 中文分词 (英文词由
+        # _semantic_tokenize 兜底保留). lowercase=False 因为 _semantic_tokenize
+        # 内部已 lower.
+        vec = TfidfVectorizer(tokenizer=_semantic_tokenize, lowercase=False)
+        X = vec.fit_transform([a, b])
+        # 矩阵只有 2 行, [0,1] 是 a vs b 的 cosine.
+        return float(_sklearn_cosine(X)[0, 1])
+    except ValueError:
+        # TfidfVectorizer 在空 vocab (全 stop word / 全 1-char) 时抛 ValueError,
+        # 走 stdlib 兜底.
+        logger.debug("best-effort op failed", exc_info=True)
+    except Exception:
+        logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
+    return None
+
+
+def _stdlib_overlap(a: str, b: str) -> float:
+    """stdlib 兜底: Counter (TF, 无 IDF) + math.sqrt 算 cosine."""
+    # 用 jieba 分词 (中文语义词元), 无 jieba 时回退 ASCII 2+ char 词.
+    ta = _semantic_tokenize(a)
+    tb = _semantic_tokenize(b)
+    if not ta or not tb:
+        return 0.0
+    ca = Counter(ta)
+    cb = Counter(tb)
+    dot = sum(ca[t] * cb[t] for t in ca.keys() & cb.keys())
+    if dot == 0:
+        return 0.0
+    na = math.sqrt(sum(v * v for v in ca.values()))
+    nb = math.sqrt(sum(v * v for v in cb.values()))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
 def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
     """TF-IDF + cosine similarity between two free-form texts.
 
@@ -129,39 +169,47 @@ def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
     b = text_b.strip()
     if not a or not b:
         return 0.0
+    sklearn_score = _sklearn_overlap(a, b)
+    if sklearn_score is not None:
+        return sklearn_score
+    return _stdlib_overlap(a, b)
 
-    if _SKLEARN_OK:
+
+def _kb_chunk_lines(
+    idx: int,
+    chunk: dict[str, Any],
+    *,
+    memory_recall_fn: Any,
+    with_image_ref: bool,
+    max_chars: int,
+    cross_ref_top_k: int,
+) -> list[str]:
+    """单个 chunk → prompt 行 (正文 + 视觉压缩页引用 + memory 交叉召回)."""
+    text = (chunk.get("text") or "").strip()
+    if not text:
+        return []
+    if len(text) > max_chars:
+        text = text[:max_chars] + "…"
+    lines = [f"[{idx}] {text}"]
+
+    # 视觉压缩页引用: metadata 带 image_ref 的 chunk 是整页视觉压缩,
+    # 多模态 agent 可以直接读图. 文本里只加引用路径, 不加载图像.
+    if with_image_ref:
+        meta = chunk.get("metadata") or {}
+        img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
+        if img_ref:
+            lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
+
+    # KB chunk → memory cross-ref: 用 chunk 文本做 query 召回相关长期记忆,
+    # 建立 memory↔KB 双向链接. 只对前 N 个 chunk 做, 避免每 chunk 都查一次.
+    if memory_recall_fn is not None and idx <= cross_ref_top_k:
         try:
-            # 自定义 tokenizer 让 TF-IDF 也吃到 jieba 中文分词 (英文词由
-            # _semantic_tokenize 兜底保留). lowercase=False 因为 _semantic_tokenize
-            # 内部已 lower.
-            vec = TfidfVectorizer(tokenizer=_semantic_tokenize, lowercase=False)
-            X = vec.fit_transform([a, b])
-            # 矩阵只有 2 行, [0,1] 是 a vs b 的 cosine.
-            return float(_sklearn_cosine(X)[0, 1])
-        except ValueError:
-            # TfidfVectorizer 在空 vocab (全 stop word / 全 1-char) 时抛 ValueError,
-            # 走 stdlib 兜底.
-            logger.debug("best-effort op failed", exc_info=True)
+            related = memory_recall_fn(text[:200], max_entries=1)
+            if related:
+                lines.append(f"    ↳ Memory: {related[:200]}")
         except Exception:
-            logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
-
-    # stdlib fallback: Counter (TF, 无 IDF) + math.sqrt 算 cosine.
-    # 用 jieba 分词 (中文语义词元), 无 jieba 时回退 ASCII 2+ char 词.
-    ta = _semantic_tokenize(a)
-    tb = _semantic_tokenize(b)
-    if not ta or not tb:
-        return 0.0
-    ca = Counter(ta)
-    cb = Counter(tb)
-    dot = sum(ca[t] * cb[t] for t in ca.keys() & cb.keys())
-    if dot == 0:
-        return 0.0
-    na = math.sqrt(sum(v * v for v in ca.values()))
-    nb = math.sqrt(sum(v * v for v in cb.values()))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
+            logger.debug("recall for prompt failed", exc_info=True)
+    return lines
 
 
 def format_kb_chunks(
@@ -192,57 +240,40 @@ def format_kb_chunks(
         return ""
     lines: list[str] = []
     for i, c in enumerate(chunks, 1):
-        text = (c.get("text") or "").strip()
-        if not text:
-            continue
-        if len(text) > max_chars:
-            text = text[:max_chars] + "…"
-        lines.append(f"[{i}] {text}")
-
-        # 视觉压缩页引用: metadata 带 image_ref 的 chunk 是整页视觉压缩,
-        # 多模态 agent 可以直接读图. 文本里只加引用路径, 不加载图像.
-        if with_image_ref:
-            meta = c.get("metadata") or {}
-            img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
-            if img_ref:
-                lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
-
-        # KB chunk → memory cross-ref: 用 chunk 文本做 query 召回相关长期记忆,
-        # 建立 memory↔KB 双向链接. 只对前 N 个 chunk 做, 避免每 chunk 都查一次.
-        if memory_recall_fn is not None and i <= cross_ref_top_k:
-            try:
-                related = memory_recall_fn(text[:200], max_entries=1)
-                if related:
-                    lines.append(f"    ↳ Memory: {related[:200]}")
-            except Exception:
-                logger.debug("recall for prompt failed", exc_info=True)
+        lines.extend(
+            _kb_chunk_lines(
+                i,
+                c,
+                memory_recall_fn=memory_recall_fn,
+                with_image_ref=with_image_ref,
+                max_chars=max_chars,
+                cross_ref_top_k=cross_ref_top_k,
+            )
+        )
 
     if not lines:
         return ""
     return "\n".join(lines)
 
 
-def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
-    """读 .huginn/meta_trace.jsonl, 取最近 last_n 条拼成结构化摘要文本.
+def _short_trace_field(s: Any, n: int = 200) -> str:
+    """trace 字段压成单行并截断 (超长补省略号)."""
+    s = str(s or "").strip().replace("\n", " ")
+    return s[:n] + ("…" if len(s) > n else "")
 
-    engine (autoloop) 和 ContextBuilder 共享 — 之前 engine 只写不读, 导致
-    autoloop 长轨迹里 agent 看不到自己上轮蒸馏的结构化历史. 文件不存在/
-    空/读失败都返回 "".
 
-    ponytail: 每字段截 200 字符, 总量约 2K tokens. 不做 schema 校验, 旧 entry
-      补默认值. 升级路径: pydantic model + version tag + 按 darwin_score top-K.
-    """
-    trace_path = Path(workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl"
+def _read_trace_entries(trace_path: Path, last_n: int) -> list[dict]:
+    """读 jsonl 取最近 last_n 条 (倒序), 旧 entry 补默认字段; 失败返回 []."""
     if not trace_path.exists():
-        return ""
+        return []
     try:
         with trace_path.open("r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except (OSError, UnicodeDecodeError):
         logger.debug("best-effort op failed", exc_info=True)
-        return ""
+        return []
     if not lines:
-        return ""
+        return []
 
     # 取最后 last_n 条, 倒序展示 (最新在前)
     recent = lines[-last_n:][::-1]
@@ -265,41 +296,56 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
             e.setdefault("domain", "unknown")
             e.setdefault("task_id", "legacy")
         entries.append(e)
+    return entries
 
+
+def _render_trace_entry(e: dict) -> list[str]:
+    """单条 trace entry → 展示行 (空字段略过)."""
+    it = e.get("iteration", "?")
+    ds = e.get("darwin_score", "?")
+    sr = e.get("supported_ratio", "?")
+    out = [f"[iter {it}] darwin={ds} supported={sr}"]
+    att = _short_trace_field(e.get("attempted", ""))
+    if att:
+        out.append(f"  attempted: {att}")
+    fnd = _short_trace_field(e.get("found", ""))
+    if fnd:
+        out.append(f"  found: {fnd}")
+    ev = e.get("evidence") or []
+    if isinstance(ev, list) and ev:
+        ev_text = "; ".join(_short_trace_field(x, 100) for x in ev[:3])
+        out.append(f"  evidence: {ev_text}")
+    lim = e.get("limitations") or []
+    if isinstance(lim, list) and lim:
+        lim_text = "; ".join(_short_trace_field(x, 150) for x in lim[:2])
+        out.append(f"  limitations: {lim_text}")
+    art = e.get("artifacts") or []
+    if isinstance(art, list) and art:
+        art_text = ", ".join(_short_trace_field(x, 80) for x in art[:5])
+        out.append(f"  artifacts: {art_text}")
+    hint = _short_trace_field(e.get("next_hint", ""), 250)
+    if hint:
+        out.append(f"  next_hint: {hint}")
+    return out
+
+
+def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
+    """读 .huginn/meta_trace.jsonl, 取最近 last_n 条拼成结构化摘要文本.
+
+    engine (autoloop) 和 ContextBuilder 共享 — 之前 engine 只写不读, 导致
+    autoloop 长轨迹里 agent 看不到自己上轮蒸馏的结构化历史. 文件不存在/
+    空/读失败都返回 "".
+
+    ponytail: 每字段截 200 字符, 总量约 2K tokens. 不做 schema 校验, 旧 entry
+      补默认值. 升级路径: pydantic model + version tag + 按 darwin_score top-K.
+    """
+    trace_path = Path(workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    entries = _read_trace_entries(trace_path, last_n)
     if not entries:
         return ""
-
-    def _short(s: Any, n: int = 200) -> str:
-        s = str(s or "").strip().replace("\n", " ")
-        return s[:n] + ("…" if len(s) > n else "")
-
     out = ["### Research Trace (recent iterations, newest first)"]
     for e in entries:
-        it = e.get("iteration", "?")
-        ds = e.get("darwin_score", "?")
-        sr = e.get("supported_ratio", "?")
-        out.append(f"[iter {it}] darwin={ds} supported={sr}")
-        att = _short(e.get("attempted", ""))
-        if att:
-            out.append(f"  attempted: {att}")
-        fnd = _short(e.get("found", ""))
-        if fnd:
-            out.append(f"  found: {fnd}")
-        ev = e.get("evidence") or []
-        if isinstance(ev, list) and ev:
-            ev_text = "; ".join(_short(x, 100) for x in ev[:3])
-            out.append(f"  evidence: {ev_text}")
-        lim = e.get("limitations") or []
-        if isinstance(lim, list) and lim:
-            lim_text = "; ".join(_short(x, 150) for x in lim[:2])
-            out.append(f"  limitations: {lim_text}")
-        art = e.get("artifacts") or []
-        if isinstance(art, list) and art:
-            art_text = ", ".join(_short(x, 80) for x in art[:5])
-            out.append(f"  artifacts: {art_text}")
-        hint = _short(e.get("next_hint", ""), 250)
-        if hint:
-            out.append(f"  next_hint: {hint}")
+        out.extend(_render_trace_entry(e))
     out.append("### End Research Trace")
     return "\n".join(out)
 

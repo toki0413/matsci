@@ -1,4 +1,5 @@
 """RCB Step 2 执行 — 依赖 rcb_utils / rcb_cognition / rcb_audit."""
+
 from __future__ import annotations
 
 import contextlib
@@ -56,6 +57,7 @@ logger = logging.getLogger(__name__)
 try:
     from huginn.metacog.step_evaluator import _compute_darwin_score
 except Exception:  # pragma: no cover
+
     def _compute_darwin_score(_step_eval: Any) -> float:
         return 0.5
 
@@ -63,6 +65,7 @@ except Exception:  # pragma: no cover
 @dataclass
 class _RCBStep2Ctx:
     """Step 2 执行循环的上下文 — 核心对象 + Step 1 产物 + 闭包."""
+
     ws: Path
     model: Any
     agent: Any
@@ -93,6 +96,29 @@ class _RCBStep2Ctx:
     max_exec_iters: int = 1
 
 
+@dataclass
+class _McmcOpts:
+    """MCMC 单步的可选配置 (已缓存的 log_p + haptic/alignment 开关)."""
+
+    cached_log_p: float | None
+    haptic_enabled: bool
+    haptic_temperature: float
+    alignment_enabled: bool
+    alignment_temperature: float
+
+
+@dataclass
+class _MetaTraceDeps:
+    """meta-trace 写入的管道依赖: 分片 writer / 证据链 / betti 计算."""
+
+    trace_task_id: str
+    trace_history: list
+    shard_writer: Any
+    shard: Any
+    betti_path: Path
+    compute_betti: Any
+
+
 def _announce_hypothesis_cycle(history: list[str]) -> None:
     """P4 Task 23: cycle_detect 顶层函数接入 — hypothesis id 序列卡顿检测."""
     # ponytail: 不扩展 VF2 cycle 检测到更长周期轨道, 保持现状 (Floyd 算法).
@@ -106,7 +132,9 @@ def _announce_hypothesis_cycle(history: list[str]) -> None:
         logger.debug("hypothesis cycle detection skipped", exc_info=True)
 
 
-def _register_imagined_hypothesis(manifold: Any, new_h: Any, manifold_path: Path) -> None:
+def _register_imagined_hypothesis(
+    manifold: Any, new_h: Any, manifold_path: Path
+) -> None:
     """把想象出的假设挂到 manifold 上; 重复 h_id 视为正常跳过."""
     try:
         manifold.add(new_h)
@@ -162,7 +190,41 @@ def _record_imagination_entry(
         logger.debug("imagination trace entry upgrade skipped", exc_info=True)
     with trace_path.open("a", encoding="utf-8") as f:
         f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
-    print(f"[v15] imagination: {parent_h.h_id} -> {new_h.h_id} ({transform})", flush=True)
+    print(
+        f"[v15] imagination: {parent_h.h_id} -> {new_h.h_id} ({transform})", flush=True
+    )
+
+
+def _si_try_transforms(
+    parent_h: Any,
+    manifold: Any,
+    model: Any,
+    *,
+    iter_n: int,
+    task_id: str,
+    log_path: Path,
+    manifold_path: Path,
+    trace_path: Path,
+) -> None:
+    """轮试三族变换 (algebraic/topological/order), 第一个成功就用."""
+    from huginn.metacog.imagination import imagine_with_checks
+
+    for t_type in ("algebraic", "topological", "order"):
+        new_h = imagine_with_checks(
+            parent_h, t_type, manifold, model=model, sigma=0.5, log_path=log_path
+        )
+        if new_h is None:
+            continue
+        _register_imagined_hypothesis(manifold, new_h, manifold_path)
+        _record_imagination_entry(
+            iter_n=iter_n,
+            transform=t_type,
+            parent_h=parent_h,
+            new_h=new_h,
+            task_id=task_id,
+            trace_path=trace_path,
+        )
+        break
 
 
 def _run_stagnation_imagination(
@@ -180,41 +242,27 @@ def _run_stagnation_imagination(
     """检测 hypothesis 卡顿, 轮试三族变换生成新假设; 全链路 best-effort."""
     try:
         from huginn.metacog.imagination import detect_stagnation as _detect_stagnation
-        from huginn.metacog.imagination import (
-            imagine_with_checks as _imagine_with_checks,
-        )
 
         if not _detect_stagnation(history, N=3):
             return
         print(
-            f"[v15] stagnation detected (best h={best_h_id} for 3 iters), triggering imagination",
+            f"[v15] stagnation detected (best h={best_h_id} for 3 iters), "
+            "triggering imagination",
             flush=True,
         )
         parent_h = manifold._hyp.get(best_h_id)
         if parent_h is None:
             return
-        # 轮试三族变换, 第一个成功就用
-        for t_type in ("algebraic", "topological", "order"):
-            new_h = _imagine_with_checks(
-                parent_h,
-                t_type,
-                manifold,
-                model=model,
-                sigma=0.5,
-                log_path=log_path,
-            )
-            if new_h is None:
-                continue
-            _register_imagined_hypothesis(manifold, new_h, manifold_path)
-            _record_imagination_entry(
-                iter_n=iter_n,
-                transform=t_type,
-                parent_h=parent_h,
-                new_h=new_h,
-                task_id=task_id,
-                trace_path=trace_path,
-            )
-            break
+        _si_try_transforms(
+            parent_h,
+            manifold,
+            model,
+            iter_n=iter_n,
+            task_id=task_id,
+            log_path=log_path,
+            manifold_path=manifold_path,
+            trace_path=trace_path,
+        )
     except Exception as _e:
         print(f"[v15] imagination skipped: {_e}", flush=True)
 
@@ -252,7 +300,9 @@ async def _coverage_and_derivation(
         scheduled = iter_n >= 2 and iter_n % 3 == 0
         if not (model and compass and (scheduled or drift_fire)):
             return compass, derivation_audit
-        derivation_audit = await _derivation_chain_audit(model, ws, checklist, compass) or ""
+        derivation_audit = (
+            await _derivation_chain_audit(model, ws, checklist, compass) or ""
+        )
         if not derivation_audit:
             return compass, derivation_audit
         print(
@@ -291,7 +341,9 @@ def _append_ucv_chunks(
         from huginn.metacog.unified_complex import UnifiedComplexView
 
         view = UnifiedComplexView(cross_task_store=_cross_task_store, kg=kg)
-        vertices = view.query(domain=domain, task_id=task_id, keyword=gap_query, top_k=2)
+        vertices = view.query(
+            domain=domain, task_id=task_id, keyword=gap_query, top_k=2
+        )
         for v in vertices[:2]:
             txt = getattr(v, "content", "") or ""
             if txt:
@@ -326,7 +378,9 @@ def _retrieve_kb_chunks(
                     chunks.append(txt[:400])
         if not chunks:
             return ""
-        return "\n\n## Domain Knowledge (KB retrieval, top-2)\n" + "\n---\n".join(chunks)
+        return "\n\n## Domain Knowledge (KB retrieval, top-2)\n" + "\n---\n".join(
+            chunks
+        )
     except Exception:
         logger.debug("kb gap retrieval skipped", exc_info=True)
         return ""
@@ -356,60 +410,51 @@ def _posterior_guided_hint(
         return ""
 
 
-async def _build_continuation_prompt(
-    ctx: _RCBStep2Ctx,
-    *,
-    iter_n: int,
-    max_iters: int,
-    evals_history: list,
-    last_step_eval: Any,
-    trace_domain: str,
-    trace_task_id: str,
-    hint_coord_enabled: bool,
-    hint_coord: Any,
-    drift_info: Any,
-    manifold: Any,
-    iter_observations: list,
-    trace_history: list,
-    mcmc_engine: Any,
-    step2_prompt_base: str,
-    cross_task_prior: Any,
-) -> tuple[str, str]:
-    """构造 iter>0 的完整 prompt; 返回 (prompt, derivation_audit)."""
-    iter_base = _continuation_base_prompt(iter_n, max_iters)
-    compass, derivation_audit = await _coverage_and_derivation(
-        ctx.ws, ctx.checklist, ctx.model, iter_n, evals_history
-    )
-    # F4: FCM winner_plan 每轮提醒, 防 compaction 后漂移.
-    fcm_winner = (ctx.fcm.get("winner_plan") or "").strip() if ctx.fcm else ""
-    fcm_reminder = (
+def _cp_fcm(fcm: dict) -> tuple[str, str]:
+    """F4: FCM winner_plan 每轮提醒, 防 compaction 后漂移; 返回 (winner, 提醒段)."""
+    fcm_winner = (fcm.get("winner_plan") or "").strip() if fcm else ""
+    if not fcm_winner:
+        return "", ""
+    return fcm_winner, (
         "\n\n## Selected Execution Plan (reminder — Step 1.7 FCM winner)\n"
         + fcm_winner[:1200]
-    ) if fcm_winner else ""
-    kb_text = _retrieve_kb_chunks(
-        ctx.kb,
-        last_step_eval,
-        ctx.checklist,
-        domain=trace_domain,
-        task_id=trace_task_id,
-        kg=ctx.kg,
     )
-    # v14 Task 6: HintCoordinator 接 gradient/curl/harmonic, retrieval 族直接拼后面.
-    if not hint_coord_enabled:
-        prompt = iter_base
-        if compass:
-            prompt += "\n\n" + compass
-        if fcm_reminder:
-            prompt += fcm_reminder
-        if kb_text:
-            prompt += kb_text
-        return prompt, derivation_audit
-    drift_text = None
+
+
+def _cp_drift_text(drift_info: Any) -> str | None:
+    """drift_info 是 (bool, text) 元组时取第二项文本."""
     if isinstance(drift_info, tuple) and drift_info and drift_info[0]:
-        drift_text = str(drift_info[1]) if len(drift_info) > 1 else None
-    posterior_hint = _posterior_guided_hint(
-        manifold, iter_observations, trace_history, mcmc_engine
-    )
+        return str(drift_info[1]) if len(drift_info) > 1 else None
+    return None
+
+
+def _cp_append_extras(
+    prompt: str, *, compass: str, fcm_reminder: str, kb_text: str
+) -> str:
+    """按 compass → fcm_reminder → kb_text 顺序追加可选段落."""
+    if compass:
+        prompt += "\n\n" + compass
+    if fcm_reminder:
+        prompt += fcm_reminder
+    if kb_text:
+        prompt += kb_text
+    return prompt
+
+
+def _cp_coordinate(
+    *,
+    hint_coord: Any,
+    iter_n: int,
+    fcm_winner: str,
+    step2_prompt_base: str,
+    iter_base: str,
+    compass: str,
+    drift_text: str | None,
+    cross_task_prior: Any,
+    manifold: Any,
+    posterior_hint: str | None,
+) -> str:
+    """HintCoordinator 拼装 S4_CONSTRUCT 提示."""
     prompt, _hint_trace_events = hint_coord.coordinate(
         iter_n=iter_n,
         csm_state="S4_CONSTRUCT",
@@ -428,8 +473,48 @@ async def _build_continuation_prompt(
         manifold=manifold,
         posterior_hint=posterior_hint or None,
     )
-    if kb_text:
-        prompt += kb_text
+    return prompt
+
+
+async def _build_continuation_prompt(
+    ctx: _RCBStep2Ctx, st: _S2State, *, iter_n: int
+) -> tuple[str, str]:
+    """构造 iter>0 的完整 prompt; 返回 (prompt, derivation_audit)."""
+    iter_base = _continuation_base_prompt(iter_n, st.max_exec_iters)
+    compass, derivation_audit = await _coverage_and_derivation(
+        ctx.ws, ctx.checklist, ctx.model, iter_n, st.evals_history
+    )
+    fcm_winner, fcm_reminder = _cp_fcm(ctx.fcm)
+    kb_text = _retrieve_kb_chunks(
+        ctx.kb,
+        st.last_step_eval,
+        ctx.checklist,
+        domain=st.trace_domain,
+        task_id=st.trace_task_id,
+        kg=ctx.kg,
+    )
+    # v14 Task 6: HintCoordinator 接 gradient/curl/harmonic, retrieval 族直接拼后面.
+    if not st.hint_coord_enabled:
+        prompt = _cp_append_extras(
+            iter_base, compass=compass, fcm_reminder=fcm_reminder, kb_text=kb_text
+        )
+        return prompt, derivation_audit
+    posterior_hint = _posterior_guided_hint(
+        st.hypo_manifold, st.iter_observations, st.trace_history, st.mcmc_engine
+    )
+    prompt = _cp_coordinate(
+        hint_coord=st.hint_coord,
+        iter_n=iter_n,
+        fcm_winner=fcm_winner,
+        step2_prompt_base=st.step2_prompt_base,
+        iter_base=iter_base,
+        compass=compass,
+        drift_text=_cp_drift_text(st.drift_info),
+        cross_task_prior=st.cross_task_prior,
+        manifold=st.hypo_manifold,
+        posterior_hint=posterior_hint,
+    )
+    prompt = _cp_append_extras(prompt, compass="", fcm_reminder="", kb_text=kb_text)
     return prompt, derivation_audit
 
 
@@ -530,7 +615,9 @@ def _snapshot_fork_outputs(ws: Path, persp: str) -> None:
     if not out_src.is_dir():
         return
     try:
-        shutil.copytree(out_src, ws / "report" / f"outputs_fork_{persp}", dirs_exist_ok=True)
+        shutil.copytree(
+            out_src, ws / "report" / f"outputs_fork_{persp}", dirs_exist_ok=True
+        )
     except Exception as e:
         print(f"[tfm outputs snap {persp} skipped: {e}]", flush=True)
 
@@ -600,7 +687,46 @@ def _apply_fork_verdict(
             backup_path.write_text(backup_text, encoding="utf-8")
         except Exception as e:
             print(f"[tfm restore main report failed: {e}]", flush=True)
-    return "[tfm: all forks produced empty reports, main trajectory unchanged]", "", thread_id
+    return (
+        "[tfm: all forks produced empty reports, main trajectory unchanged]",
+        "",
+        thread_id,
+    )
+
+
+def _fork_trace_entry(
+    iter_n: int,
+    k: int,
+    t_hot: float,
+    winner: str | None,
+    verdict: dict,
+    fork_reports: dict[str, str],
+    task_id: str,
+) -> dict:
+    """组装分叉合并轮的 meta-trace entry."""
+    return {
+        "iteration": iter_n + 1,
+        "ts": time.time(),
+        "role": "trajectory_fork_merge",
+        "attempted": f"{k}-fork trajectory exploration (T_hot={t_hot:.2f})",
+        "found": f"winner={winner} scores={verdict.get('scores')} gate={verdict.get('gate')}",
+        "evidence": [fork_reports.get(winner, "")[:150]] if winner else [],
+        "limitations": [
+            "sequential forks share workspace; outputs snapshotted per fork"
+        ],
+        "artifacts": [f"report/report_fork_{p}.md" for p in fork_reports],
+        "next_hint": "salvage merge_notes"
+        if verdict.get("merge_notes")
+        else "continue winner trajectory",
+        "darwin_score": 0.0,
+        "supported_ratio": 0.0,
+        # v14 Task 1: trajectory_fork_merge 跟 FCM winner 同族 (gradient).
+        "simplex_id": _make_simplex_id(task_id, iter_n + 1, "trajectory_fork_merge"),
+        "cochain_type": "gradient",
+        "domain": _infer_domain(task_id),
+        "task_id": task_id,
+        "model_version": _MODEL_VERSION,
+    }
 
 
 def _record_fork_trace(
@@ -615,30 +741,10 @@ def _record_fork_trace(
     trace_path: Path,
 ) -> None:
     """Meta-Trace: 分叉轮也留痕 (role=trajectory_fork_merge)."""
-    import json as _json
-    import time as _time
-
     try:
-        entry = {
-            "iteration": iter_n + 1,
-            "ts": _time.time(),
-            "role": "trajectory_fork_merge",
-            "attempted": f"{k}-fork trajectory exploration (T_hot={t_hot:.2f})",
-            "found": f"winner={winner} scores={verdict.get('scores')} gate={verdict.get('gate')}",
-            "evidence": [fork_reports.get(winner, "")[:150]] if winner else [],
-            "limitations": ["sequential forks share workspace; outputs snapshotted per fork"],
-            "artifacts": [f"report/report_fork_{p}.md" for p in fork_reports],
-            "next_hint": "salvage merge_notes" if verdict.get("merge_notes")
-                         else "continue winner trajectory",
-            "darwin_score": 0.0,
-            "supported_ratio": 0.0,
-            # v14 Task 1: trajectory_fork_merge 跟 FCM winner 同族 (gradient).
-            "simplex_id": _make_simplex_id(task_id, iter_n + 1, "trajectory_fork_merge"),
-            "cochain_type": "gradient",
-            "domain": _infer_domain(task_id),
-            "task_id": task_id,
-            "model_version": _MODEL_VERSION,
-        }
+        entry = _fork_trace_entry(
+            iter_n, k, t_hot, winner, verdict, fork_reports, task_id
+        )
         # v15: upgrade_entry 补默认字段, 保证 schema 一致.
         try:
             from huginn.metacog.trace_topology import upgrade_entry as _upgrade_entry
@@ -647,35 +753,21 @@ def _record_fork_trace(
         except Exception:
             logger.debug("tfm trace entry upgrade skipped", exc_info=True)
         with trace_path.open("a", encoding="utf-8") as f:
-            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         print(f"[tfm trace skipped: {e}]", flush=True)
 
 
-async def _run_fork_iteration(
+async def _fork_gather(
     ctx: _RCBStep2Ctx,
-    *,
-    iter_n: int,
-    max_iters: int,
-    k: int,
-    t_hot: float,
-    iter_prompt: str,
-    thread_id: str,
+    tree: Any,
     branch_point: str,
-    trace_task_id: str,
-    trace_path: Path,
-) -> tuple[str, str, str]:
-    """TFM 分叉执行 + judge + 合并; 返回 (ai_text, merge_hint, thread_id)."""
-    print(
-        f"\n--- Step 2 iter {iter_n + 1}/{max_iters} "
-        f"[TFM: T_hot={t_hot:.2f} → {k} forks] ---\n",
-        flush=True,
-    )
-    # 顺序 fork 共享 workspace, 后序会覆盖主 report.md → 先备份, winner=None 时恢复.
-    backup_path = ctx.ws / "report" / "report.md"
-    backup_text = backup_path.read_text(encoding="utf-8") if backup_path.exists() else None
-
-    tree = ctx.agent._conversation_tree
+    iter_prompt: str,
+    iter_n: int,
+    thread_id: str,
+    k: int,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """顺序跑 k 个 fork, 收集 perspective → (leaf, report)."""
     fork_reports: dict[str, str] = {}
     fork_leaves: dict[str, str] = {}
     for persp, bias in _FCM_PERSPECTIVES[:k]:
@@ -684,13 +776,41 @@ async def _run_fork_iteration(
         )
         fork_leaves[persp] = leaf
         fork_reports[persp] = report
+    return fork_reports, fork_leaves
 
-    verdict = await judge_fork_reports(
+
+async def _fork_judge(ctx: _RCBStep2Ctx, fork_reports: dict[str, str]) -> dict:
+    """多份 fork 报告交给 judge 打分."""
+    return await judge_fork_reports(
         fork_reports,
         ctx.checklist,
         ctx.model,
-        artifact_dirs={p: ctx.ws / "report" / f"outputs_fork_{p}" for p in fork_reports},
+        artifact_dirs={
+            p: ctx.ws / "report" / f"outputs_fork_{p}" for p in fork_reports
+        },
     )
+
+
+async def _run_fork_iteration(
+    ctx: _RCBStep2Ctx, st: _S2State, *, iter_n: int, k: int, branch_point: str
+) -> tuple[str, str, str]:
+    """TFM 分叉执行 + judge + 合并; 返回 (ai_text, merge_hint, thread_id)."""
+    thread_id = st.thread_id
+    print(
+        f"\n--- Step 2 iter {iter_n + 1}/{st.max_exec_iters} "
+        f"[TFM: T_hot={st.t_hot:.2f} → {k} forks] ---\n",
+        flush=True,
+    )
+    # 顺序 fork 共享 workspace, 后序会覆盖主 report.md → 先备份, winner=None 时恢复.
+    backup_path = ctx.ws / "report" / "report.md"
+    backup_text = (
+        backup_path.read_text(encoding="utf-8") if backup_path.exists() else None
+    )
+    tree = st.agent._conversation_tree
+    fork_reports, fork_leaves = await _fork_gather(
+        ctx, tree, branch_point, st.iter_prompt, iter_n, thread_id, k
+    )
+    verdict = await _fork_judge(ctx, fork_reports)
     ai_text, merge_hint, thread_id = _apply_fork_verdict(
         ctx,
         tree,
@@ -706,12 +826,12 @@ async def _run_fork_iteration(
     _record_fork_trace(
         iter_n=iter_n,
         k=k,
-        t_hot=t_hot,
+        t_hot=st.t_hot,
         winner=verdict["winner"],
         verdict=verdict,
         fork_reports=fork_reports,
-        task_id=trace_task_id,
-        trace_path=trace_path,
+        task_id=st.trace_task_id,
+        trace_path=st.trace_path,
     )
     return ai_text, merge_hint, thread_id
 
@@ -754,7 +874,9 @@ def _metacog_block(
         rep_md = report_text or (
             report_path.read_text(encoding="utf-8") if report_path.exists() else ""
         )
-        completion = metacog_check_completion(report_md=rep_md, outputs_dir=ws / "outputs")
+        completion = metacog_check_completion(
+            report_md=rep_md, outputs_dir=ws / "outputs"
+        )
         blocked = not completion.get("passed", True)
         if blocked:
             print(
@@ -763,14 +885,22 @@ def _metacog_block(
                 flush=True,
             )
         # 拓扑层反完成审计: hypothesis space 多样性检测.
-        topo = metacog_check_topology_collapse(hypothesis_graph=None, hypothesis_list=None)
+        topo = metacog_check_topology_collapse(
+            hypothesis_graph=None, hypothesis_list=None
+        )
         if topo.get("collapsed", False):
-            print(f"[TaskComplete] blocked by topology collapse: {topo.get('reason')}", flush=True)
+            print(
+                f"[TaskComplete] blocked by topology collapse: {topo.get('reason')}",
+                flush=True,
+            )
             blocked = True
         # 选择偏差反完成审计: 样本系统性缺一类 (幸存者偏差) 时阻断.
         selection_bias = metacog_check_selection_bias(observations=iter_observations)
         if selection_bias.get("biased", False):
-            print(f"[TaskComplete] blocked by selection bias: {selection_bias.get('reason')}", flush=True)
+            print(
+                f"[TaskComplete] blocked by selection bias: {selection_bias.get('reason')}",
+                flush=True,
+            )
             blocked = True
         return blocked, completion
     except Exception as e:
@@ -778,88 +908,99 @@ def _metacog_block(
         return False, completion
 
 
+async def _tc_final_derivation(
+    ctx: _RCBStep2Ctx, derivation_audit: str, force_accept: bool
+) -> str:
+    """force_accept 或有存量结果时直接复用, 否则补跑一次派生链审计."""
+    final_derivation = derivation_audit
+    if not force_accept and ctx.model and not final_derivation:
+        try:
+            final_derivation = (
+                await _derivation_chain_audit(
+                    ctx.model,
+                    ctx.ws,
+                    ctx.checklist,
+                    _report_coverage_compass(ctx.ws, ctx.checklist) or "",
+                )
+                or ""
+            )
+        except Exception as e:
+            print(f"[v16] final derivation audit skipped: {e}", flush=True)
+    return final_derivation
+
+
+def _tc_effort_floor(
+    ctx: _RCBStep2Ctx, final_derivation: str, force_accept: bool
+) -> tuple[bool, str]:
+    """force_accept 直接放行; 否则用 _rcb_effort_floor 判 effort."""
+    if force_accept:
+        return True, "force_accept skipped"
+    return _rcb_effort_floor(
+        ctx.ws, ctx.checklist, derivation_audit=final_derivation or None
+    )
+
+
+def _tc_final_evidence(
+    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int, completion: Any
+) -> None:
+    """P0-C: TASK COMPLETE 时写 final cognitive evidence snapshot."""
+    _write_cognitive_evidence(
+        ctx.ws,
+        iter_n,
+        entry=st.entry,
+        pmk_state=st.pmk_state,
+        hypo_manifold=st.hypo_manifold,
+        heat_engine=st.heat_engine,
+        bandit_controller=st.bandit,
+        completion_audit=completion,
+        mcmc_info=st.mcmc_current_info,
+        anomaly_info=st.anomaly_info,
+        is_final=True,
+    )
+
+
 async def _handle_task_complete(
-    ctx: _RCBStep2Ctx,
-    *,
-    iter_n: int,
-    max_iters: int,
-    derivation_audit: str,
-    report_text: str,
-    report_path: Path,
-    iter_observations: list | None,
-    entry: Any,
-    pmk_state: Any,
-    manifold: Any,
-    heat_engine: Any,
-    bandit: Any,
-    completion_audit: Any,
-    mcmc_current_info: Any,
-    anomaly_info: Any,
-    rejections: int,
-    max_rejections: int,
+    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int
 ) -> tuple[int, bool, str | None]:
     """TASK COMPLETE 收尾: effort floor + 反完成审计.
 
     返回 (新的连续驳回数, 是否接受, 下一轮 prompt 覆盖).
     """
     # 连续驳回计数: agent 反复 'TASK COMPLETE' 不调工具时, 第 N+1 次接受.
-    rejections += 1
-    force_accept = rejections > max_rejections
+    rejections = st.consecutive_complete_rejections + 1
+    force_accept = rejections > st.max_complete_rejections
     if force_accept:
         print(
             f"[effort floor] 接受 TASK COMPLETE: 连续驳回 "
-            f"{rejections - 1} 次达上限 "
-            f"{max_rejections}. agent 已尽力, 强制收尾.",
+            f"{rejections - 1} 次达上限 {st.max_complete_rejections}. "
+            "agent 已尽力, 强制收尾.",
             flush=True,
         )
-    final_derivation = derivation_audit
-    if not force_accept and ctx.model and not final_derivation:
-        try:
-            final_derivation = await _derivation_chain_audit(
-                ctx.model,
-                ctx.ws,
-                ctx.checklist,
-                _report_coverage_compass(ctx.ws, ctx.checklist) or "",
-            ) or ""
-        except Exception as e:
-            print(f"[v16] final derivation audit skipped: {e}", flush=True)
-    if force_accept:
-        eff_ok, eff_reason = True, "force_accept skipped"
-    else:
-        eff_ok, eff_reason = _rcb_effort_floor(
-            ctx.ws, ctx.checklist, derivation_audit=final_derivation or None
-        )
+    final_derivation = await _tc_final_derivation(
+        ctx, st.derivation_audit, force_accept
+    )
+    eff_ok, eff_reason = _tc_effort_floor(ctx, final_derivation, force_accept)
     if not eff_ok:
         print(
             f"[effort floor] TASK COMPLETE 被驳回: {eff_reason}. 继续迭代补缺.",
             flush=True,
         )
-        return rejections, False, _effort_reject_prompt(iter_n, max_iters, eff_reason)
-
+        return (
+            rejections,
+            False,
+            _effort_reject_prompt(iter_n, st.max_exec_iters, eff_reason),
+        )
     if force_accept:
-        blocked, completion = False, completion_audit
+        blocked, completion = False, st.completion_audit
     else:
         blocked, completion = _metacog_block(
-            ctx.ws, report_text, report_path, iter_observations
+            ctx.ws, st.report_text, st.report_path_iter, st.iter_observations
         )
     if blocked:
-        return rejections, False, _metacog_reject_prompt(iter_n, max_iters)
+        return rejections, False, _metacog_reject_prompt(iter_n, st.max_exec_iters)
 
     print("[agent signalled TASK COMPLETE, breaking]", flush=True)
-    # P0-C: TASK COMPLETE 时写 final cognitive evidence snapshot.
-    _write_cognitive_evidence(
-        ctx.ws,
-        iter_n,
-        entry=entry,
-        pmk_state=pmk_state,
-        hypo_manifold=manifold,
-        heat_engine=heat_engine,
-        bandit_controller=bandit,
-        completion_audit=completion,
-        mcmc_info=mcmc_current_info,
-        anomaly_info=anomaly_info,
-        is_final=True,
-    )
+    _tc_final_evidence(ctx, st, iter_n, completion)
     return rejections, True, None
 
 
@@ -883,7 +1024,9 @@ def _resolve_audit_path() -> Any:
         return None
 
 
-def _update_self_model_from_audit(self_model: Any, audit_path: Any, iter_n: int) -> None:
+def _update_self_model_from_audit(
+    self_model: Any, audit_path: Any, iter_n: int
+) -> None:
     """v15 Phase 5 Task 10.2: 从 audit_log 抓工具调用记录, 更新 SelfModel."""
     if self_model is None or audit_path is None:
         return
@@ -906,18 +1049,20 @@ def _remember_prospective(mem_mgr: Any, step_eval: Any, iter_n: int) -> None:
     try:
         from huginn.memory.prospective import _new_intention_id
 
-        mem_mgr.remember_prospective({
-            "intention_id": _new_intention_id(),
-            "description": (
-                f"上一步脱轨需复核: attempted={step_eval.attempted[:80]}"
-                f"; deviation={step_eval.deviation[:80]}"
-            ),
-            "trigger_type": "dependency",
-            "trigger_payload": {"depends_on_step": iter_n},
-            "priority": 5,
-            "created_at": _now(),
-            "source_step": iter_n,
-        })
+        mem_mgr.remember_prospective(
+            {
+                "intention_id": _new_intention_id(),
+                "description": (
+                    f"上一步脱轨需复核: attempted={step_eval.attempted[:80]}"
+                    f"; deviation={step_eval.deviation[:80]}"
+                ),
+                "trigger_type": "dependency",
+                "trigger_payload": {"depends_on_step": iter_n},
+                "priority": 5,
+                "created_at": _now(),
+                "source_step": iter_n,
+            }
+        )
     except Exception as pe:
         print(f"[prospective store skipped: {pe}]", flush=True)
 
@@ -964,8 +1109,13 @@ def _update_drift_and_metrics(
 
         # target_chain_progress 取所有 chain 的平均 progress — 整体任务完成度.
         tc_prog = (
-            sum(getattr(tc, "progress", 0.0) for tc in target_chains) / len(target_chains)
-        ) if target_chains else None
+            (
+                sum(getattr(tc, "progress", 0.0) for tc in target_chains)
+                / len(target_chains)
+            )
+            if target_chains
+            else None
+        )
         drift_info, task_metrics = update_drift_and_metrics(
             evals_history=evals_history,
             step_eval=step_eval,
@@ -1020,9 +1170,7 @@ def _append_step_eval_trace(
         f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def _should_continue_hint(
-    evals_history: list, step_eval: Any, merge_hint: str
-) -> str:
+def _should_continue_hint(evals_history: list, step_eval: Any, merge_hint: str) -> str:
     """should_continue=False 时把重定向 + Reflector 建议拼进下一轮 merge_hint."""
     from huginn.metacog.step_evaluator import should_continue
 
@@ -1050,67 +1198,87 @@ def _should_continue_hint(
     return merge_hint
 
 
-async def _evaluate_step_phase(
+def _ep_evaluate(
+    ctx: _RCBStep2Ctx, st: _S2State, prev_sid: int | None, audit_path: Any
+) -> Any:
+    """调用 evaluate_step 构造本轮 StepEvaluation."""
+    from huginn.metacog.step_evaluator import evaluate_step
+
+    return evaluate_step(
+        meta_trace_entry=st.entry,
+        target_chains=st.target_chains,
+        verification_signals=None,
+        memory=ctx.mem_mgr,
+        kb=ctx.kb,
+        persona=ctx.persona,
+        model=ctx.model,
+        tool_call_health=None,
+        kg=ctx.kg,
+        prev_step_id=prev_sid,
+        audit_log_path=audit_path,
+    )
+
+
+def _ep_run_eval(
+    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int, audit_path: Any, prev_sid: int | None
+) -> Any:
+    """跑 evaluate_step 并回写 progress/self-model/prospective/heat; 返回 step_eval."""
+    from huginn.metacog.target_chain import update_progress
+
+    step_eval = _ep_evaluate(ctx, st, prev_sid, audit_path)
+    st.evals_history.append(step_eval)
+    for tc in st.target_chains:
+        update_progress(tc, step_eval.found)
+    _update_self_model_from_audit(st.self_model, audit_path, iter_n)
+    _remember_prospective(ctx.mem_mgr, step_eval, iter_n)
+    _update_heat_after_step(
+        st.heat_engine,
+        step_eval,
+        iter_n,
+        st.step2_prompt,
+        st.iter_prompt,
+        st.target_chains,
+    )
+    return step_eval
+
+
+def _ep_run_drift(
     ctx: _RCBStep2Ctx,
-    *,
+    st: _S2State,
     iter_n: int,
-    entry: Any,
-    target_chains: list,
-    self_model: Any,
-    heat_engine: Any,
-    evals_history: list,
-    task_metrics: Any,
-    task_state_for_metrics: Any,
-    step2_prompt: str,
-    iter_prompt: str,
-    merge_hint: str,
-    trace_task_id: str,
-    trace_path: Path,
+    step_eval: Any,
+    outcome: _StepEvalOutcome,
+) -> None:
+    """drift/metrics 更新 + trace 留痕 + merge hint 判定."""
+    outcome.drift_info, outcome.task_metrics = _update_drift_and_metrics(
+        st.evals_history,
+        step_eval,
+        outcome.task_metrics,
+        st.task_state_for_metrics,
+        ctx.ws,
+        ctx.task_id,
+        ctx.max_exec_iters,
+        st.target_chains,
+    )
+    _append_step_eval_trace(iter_n, step_eval, st.trace_task_id, st.trace_path)
+    outcome.merge_hint = _should_continue_hint(
+        st.evals_history, step_eval, outcome.merge_hint
+    )
+
+
+async def _evaluate_step_phase(
+    ctx: _RCBStep2Ctx, st: _S2State, *, iter_n: int
 ) -> _StepEvalOutcome:
     """StepEvaluator 评估 + SelfModel/Prospective/heat/drift 闭环 + trace 留痕."""
-    outcome = _StepEvalOutcome(task_metrics=task_metrics, merge_hint=merge_hint)
+    outcome = _StepEvalOutcome(task_metrics=st.task_metrics, merge_hint=st.merge_hint)
     try:
-        from huginn.metacog.step_evaluator import evaluate_step
-        from huginn.metacog.target_chain import update_progress
-
         # scan_text 是 Step 1.5 的纯文本输出, 不是 list[dict] → 传 None 走 LLM 兜底.
         audit_path = _resolve_audit_path()
         # ponytail: prev_step_id 用上一轮的 iteration; 首轮 None, 不写 dep edge.
         prev_sid = iter_n if iter_n > 0 else None
-        step_eval = evaluate_step(
-            meta_trace_entry=entry,
-            target_chains=target_chains,
-            verification_signals=None,
-            memory=ctx.mem_mgr,
-            kb=ctx.kb,
-            persona=ctx.persona,
-            model=ctx.model,
-            tool_call_health=None,
-            kg=ctx.kg,
-            prev_step_id=prev_sid,
-            audit_log_path=audit_path,
-        )
+        step_eval = _ep_run_eval(ctx, st, iter_n, audit_path, prev_sid)
         outcome.step_eval = step_eval
-        evals_history.append(step_eval)
-        for tc in target_chains:
-            update_progress(tc, step_eval.found)
-        _update_self_model_from_audit(self_model, audit_path, iter_n)
-        _remember_prospective(ctx.mem_mgr, step_eval, iter_n)
-        _update_heat_after_step(
-            heat_engine, step_eval, iter_n, step2_prompt, iter_prompt, target_chains
-        )
-        outcome.drift_info, outcome.task_metrics = _update_drift_and_metrics(
-            evals_history,
-            step_eval,
-            outcome.task_metrics,
-            task_state_for_metrics,
-            ctx.ws,
-            ctx.task_id,
-            ctx.max_exec_iters,
-            target_chains,
-        )
-        _append_step_eval_trace(iter_n, step_eval, trace_task_id, trace_path)
-        outcome.merge_hint = _should_continue_hint(evals_history, step_eval, outcome.merge_hint)
+        _ep_run_drift(ctx, st, iter_n, step_eval, outcome)
     except Exception as e:
         print(f"[Step 2] step evaluator warning: {e}", flush=True)
     return outcome
@@ -1121,6 +1289,77 @@ def _entry_get(entry: dict | None, key: str, default: Any) -> Any:
     if not isinstance(entry, dict):
         return default
     return entry.get(key, default)
+
+
+def _icb_recall(mem_mgr: Any, iter_n: int) -> list:
+    """recall prospective; mem_mgr 为空或失败时返 []."""
+    if mem_mgr is None:
+        return []
+    try:
+        return mem_mgr.recall_prospective({"current_step": iter_n})
+    except Exception as e:
+        print(f"[prospective recall skipped: {e}]", flush=True)
+        return []
+
+
+def _icb_meta_agent_text(
+    ctx_b: Any, target_chains: list, last_step_eval: Any, drift_info: Any
+) -> str:
+    """元 Agent 文本; 失败返空串."""
+    try:
+        return (
+            ctx_b.build_meta_agent_text(
+                target_chains=target_chains,
+                last_step_evaluation=last_step_eval,
+                tool_call_health=getattr(last_step_eval, "tool_call_health", None),
+                drift_info=drift_info,
+            )
+            or ""
+        )
+    except Exception as e:
+        print(f"[meta_agent_text skipped: {e}]", flush=True)
+        return ""
+
+
+def _icb_pmk_text(
+    ctx_b: Any, persona: Any, mem_mgr: Any, kb: Any, last_step_eval: Any
+) -> str:
+    """PMK 文本; 失败返空串."""
+    try:
+        return (
+            ctx_b.build_pmk_text(
+                persona=persona,
+                memory=mem_mgr,
+                kb=kb,
+                last_step_evaluation=last_step_eval,
+            )
+            or ""
+        )
+    except Exception as e:
+        print(f"[pmk_text skipped: {e}]", flush=True)
+        return ""
+
+
+def _icb_build(
+    ctx_b: Any,
+    target_chains: list,
+    iter_n: int,
+    last_step_eval: Any,
+    kg: Any,
+    drift_info: Any,
+    persona: Any,
+    mem_mgr: Any,
+    kb: Any,
+    fired: list,
+) -> str:
+    """拼 target_chain / prospective / step_eval / episode / meta_agent / pmk 文本."""
+    tc_text = ctx_b.build_target_chain_text(target_chains, iter_n) or ""
+    pro_text = ctx_b.build_prospective_text(fired) or ""
+    se_text = ctx_b.build_step_eval_text(last_step_eval) or ""
+    eh_text = ctx_b.build_episode_history_text(kg, iter_n) if kg else ""
+    ma_text = _icb_meta_agent_text(ctx_b, target_chains, last_step_eval, drift_info)
+    pmk_text = _icb_pmk_text(ctx_b, persona, mem_mgr, kb, last_step_eval)
+    return tc_text + pro_text + se_text + eh_text + ma_text + pmk_text
 
 
 def _inject_context_blocks(
@@ -1140,37 +1379,20 @@ def _inject_context_blocks(
     fired: list = []
     try:
         ctx_b = getattr(agent, "_ctx_builder", None)
-        if mem_mgr is not None:
-            try:
-                fired = mem_mgr.recall_prospective({"current_step": iter_n})
-            except Exception as e:
-                print(f"[prospective recall skipped: {e}]", flush=True)
+        fired = _icb_recall(mem_mgr, iter_n)
         if ctx_b is not None:
-            tc_text = ctx_b.build_target_chain_text(target_chains, iter_n) or ""
-            pro_text = ctx_b.build_prospective_text(fired) or ""
-            se_text = ctx_b.build_step_eval_text(last_step_eval) or ""
-            eh_text = ctx_b.build_episode_history_text(kg, iter_n) if kg else ""
-            ma_text = ""
-            try:
-                ma_text = ctx_b.build_meta_agent_text(
-                    target_chains=target_chains,
-                    last_step_evaluation=last_step_eval,
-                    tool_call_health=getattr(last_step_eval, "tool_call_health", None),
-                    drift_info=drift_info,
-                ) or ""
-            except Exception as e:
-                print(f"[meta_agent_text skipped: {e}]", flush=True)
-            pmk_text = ""
-            try:
-                pmk_text = ctx_b.build_pmk_text(
-                    persona=persona,
-                    memory=mem_mgr,
-                    kb=kb,
-                    last_step_evaluation=last_step_eval,
-                ) or ""
-            except Exception as e:
-                print(f"[pmk_text skipped: {e}]", flush=True)
-            inject = tc_text + pro_text + se_text + eh_text + ma_text + pmk_text
+            inject = _icb_build(
+                ctx_b,
+                target_chains,
+                iter_n,
+                last_step_eval,
+                kg,
+                drift_info,
+                persona,
+                mem_mgr,
+                kb,
+                fired,
+            )
             if inject:
                 iter_prompt += "\n\n" + inject
     except Exception as e:
@@ -1196,7 +1418,8 @@ def _inject_curiosity_hint(iter_prompt: str, mem_mgr: Any) -> str:
             if weak:
                 iter_prompt += (
                     "\n\n[CURIOSITY] 历史预测不准的簇 (主动探索方向):\n"
-                    + "\n".join(weak[:5]) + "\n"
+                    + "\n".join(weak[:5])
+                    + "\n"
                 )
                 print(f"[curiosity] injected {len(weak)} weak personas", flush=True)
     except Exception as e:
@@ -1220,6 +1443,62 @@ def _inject_deliverable_hint(iter_prompt: str, ws: Path, iter_n: int) -> str:
     return iter_prompt
 
 
+def _co_read_observations(ws: Path, ai_text: str, checklist: str) -> list:
+    """读 report.md 并抽 observations; 无 report 时空串兜底."""
+    report_text = ""
+    report_path = ws / "report" / "report.md"
+    if report_path.exists():
+        report_text = report_path.read_text(encoding="utf-8")
+    return _collect_observations(
+        step_result=ai_text or "",
+        report_text=report_text,
+        checklist=checklist or "",
+    )
+
+
+def _co_abduction_fields(
+    manifold: Any,
+    observations: list,
+    *,
+    obs_path: Path,
+    manifold_path: Path,
+    trace_path: Path,
+    trace_task_id: str,
+    iter_n: int,
+) -> tuple[str | None, float, float]:
+    """写 observations 日志 + abduction trace + 持久化 manifold; 返回三联字段."""
+    best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, observations)
+    _append_observations_log(observations, obs_path, iteration=iter_n + 1)
+    _record_abduction(
+        manifold,
+        observations,
+        trace_path=trace_path,
+        task_id=trace_task_id,
+        iteration=iter_n + 1,
+        ts=time.time(),
+    )
+    # 持久化 manifold (predictions 可能被外部更新, 此处保状态)
+    _save_manifold(manifold, manifold_path)
+    return best_h_id, log_post, fisher_info
+
+
+def _co_abduction_dict(
+    best_h_id: str | None,
+    log_post: float,
+    fisher_info: float,
+    observations: list,
+    iter_n: int,
+) -> dict:
+    """打包本轮 abduction 结果."""
+    return {
+        "best_h_id": best_h_id,
+        "log_posterior": log_post,
+        "fisher_info": fisher_info,
+        "n_observations": len(observations),
+        "iteration": iter_n + 1,
+    }
+
+
 def _collect_iter_observations_and_abduction(
     *,
     manifold: Any,
@@ -1239,38 +1518,55 @@ def _collect_iter_observations_and_abduction(
     fisher_info = 0.0
     abduction: dict | None = None
     try:
-        report_text = ""
-        report_path = ws / "report" / "report.md"
-        if report_path.exists():
-            report_text = report_path.read_text(encoding="utf-8")
-        observations = _collect_observations(
-            step_result=ai_text or "",
-            report_text=report_text,
-            checklist=checklist or "",
-        )
+        observations = _co_read_observations(ws, ai_text, checklist)
         if observations:
-            best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, observations)
-            _append_observations_log(observations, obs_path, iteration=iter_n + 1)
-            _record_abduction(
+            best_h_id, log_post, fisher_info = _co_abduction_fields(
                 manifold,
                 observations,
+                obs_path=obs_path,
+                manifold_path=manifold_path,
                 trace_path=trace_path,
-                task_id=trace_task_id,
-                iteration=iter_n + 1,
-                ts=time.time(),
+                trace_task_id=trace_task_id,
+                iter_n=iter_n,
             )
-            # 持久化 manifold (predictions 可能被外部更新, 此处保状态)
-            _save_manifold(manifold, manifold_path)
-            abduction = {
-                "best_h_id": best_h_id,
-                "log_posterior": log_post,
-                "fisher_info": fisher_info,
-                "n_observations": len(observations),
-                "iteration": iter_n + 1,
-            }
+            abduction = _co_abduction_dict(
+                best_h_id, log_post, fisher_info, observations, iter_n
+            )
     except Exception as e:
         print(f"[v15] observation/abduction skipped: {e}", flush=True)
     return observations, best_h_id, log_post, fisher_info, abduction
+
+
+def _bsi_should_run(self_model: Any, manifold: Any, iter_n: int) -> bool:
+    """每 3 轮 (且真值对象齐备) 才触发一次 blind_spot 想象."""
+    return bool(
+        self_model is not None
+        and manifold is not None
+        and iter_n > 0
+        and iter_n % 3 == 0
+    )
+
+
+def _bsi_apply(
+    self_model: Any,
+    manifold: Any,
+    seed: Any,
+    new_h: Any,
+    manifold_path: Path,
+) -> None:
+    """把想象出的假设挂到 manifold + 乐观反馈 + 打印."""
+    try:
+        manifold.add(new_h)
+        _save_manifold(manifold, manifold_path)
+    except ValueError:
+        logger.debug("best-effort op failed", exc_info=True)  # duplicate h_id, 跳过
+    # imagination 成功 → uncertain 升 capable (乐观反馈, 新 h 进 manifold 即算 success).
+    with contextlib.suppress(Exception):
+        self_model.feedback_from_imagination(seed.skill, success=True)
+    print(
+        f"[v15] blind_spot imagination: {seed.skill} -> {new_h.h_id}",
+        flush=True,
+    )
 
 
 def _run_blind_spot_imagination(
@@ -1283,9 +1579,7 @@ def _run_blind_spot_imagination(
     manifold_path: Path,
 ) -> None:
     """v15 Phase 5: blind_spot 触发 imagination (每 3 轮一次, 失败不阻塞)."""
-    if not (
-        self_model is not None and manifold is not None and iter_n > 0 and iter_n % 3 == 0
-    ):
+    if not _bsi_should_run(self_model, manifold, iter_n):
         return
     try:
         from huginn.metacog.blind_spot_mapper import (
@@ -1294,29 +1588,143 @@ def _run_blind_spot_imagination(
         )
         from huginn.metacog.imagination import imagine_from_blind_spot
 
-        bs_list = infer_blind_spots(self_model)
-        seed = pick_imagination_seed(bs_list)
+        seed = pick_imagination_seed(infer_blind_spots(self_model))
         if seed is None:
             return
         new_h = imagine_from_blind_spot(
-            seed, manifold, model=model, log_path=log_path, sigma=0.5,
+            seed,
+            manifold,
+            model=model,
+            log_path=log_path,
+            sigma=0.5,
         )
         if new_h is None:
             return
-        try:
-            manifold.add(new_h)
-            _save_manifold(manifold, manifold_path)
-        except ValueError:
-            logger.debug("best-effort op failed", exc_info=True)  # duplicate h_id, 跳过
-        # imagination 成功 → uncertain 升 capable (乐观反馈, 新 h 进 manifold 即算 success).
-        with contextlib.suppress(Exception):
-            self_model.feedback_from_imagination(seed.skill, success=True)
-        print(
-            f"[v15] blind_spot imagination: {seed.skill} -> {new_h.h_id}",
-            flush=True,
-        )
+        _bsi_apply(self_model, manifold, seed, new_h, manifold_path)
     except Exception as e:
         print(f"[v15] blind_spot imagination skipped: {e}", flush=True)
+
+
+def _meta_attempted_text(
+    ai_text: str | None, iter_prompt: str, report_text: str
+) -> str:
+    """控制消息/短文本 → report 前 200 字符; 否则用 AI 回复或提示词."""
+    # v14 Task 3: 控制消息 ([tfm:...] / TASK COMPLETE) 与 evidence TF-IDF 必然失配,
+    # fallback 到 report.md 前 200 字符, 让 supported_ratio 反映 report.md 自我一致性.
+    ai_text_stripped = (ai_text or "").strip()
+    is_control_msg = (
+        not ai_text_stripped
+        or ai_text_stripped.startswith("[tfm:")
+        or ai_text_stripped.upper().startswith("TASK COMPLETE")
+        or len(ai_text_stripped) < 50
+    )
+    if is_control_msg and report_text:
+        return report_text[:200].replace("\n", " ")
+    return (ai_text[:200] if ai_text else iter_prompt[:200]).replace("\n", " ")
+
+
+def _meta_supported_ratio(trace_history: list, attempted_text: str) -> float:
+    """supported_ratio = 命中数(overlap>0.7) / max(历史总数, 1)."""
+    supported_hits = 0
+    if trace_history:
+        try:
+            from huginn.context_builder import _compute_semantic_overlap
+
+            for hist in trace_history:
+                hev = hist.get("evidence") or []
+                hev_text = " ".join(hev) if isinstance(hev, list) else str(hev)
+                if _compute_semantic_overlap(attempted_text, hev_text) > 0.7:
+                    supported_hits += 1
+        except Exception as e:
+            print(f"[supported_ratio skipped: {e}]", flush=True)
+    return supported_hits / max(len(trace_history), 1)
+
+
+def _meta_trace_entry(
+    *,
+    iter_n: int,
+    max_iters: int,
+    ai_text: str | None,
+    attempted_text: str,
+    report_text: str,
+    report_path: Path,
+    last_step_eval: Any,
+    supported_ratio: float,
+    trace_task_id: str,
+) -> dict:
+    """组装 rcb_exec 的 meta-trace entry (v14 基础字段)."""
+    return {
+        "iteration": iter_n + 1,
+        "ts": time.time(),
+        "role": "rcb_exec",
+        "attempted": attempted_text,
+        "found": (ai_text or "")[:300],
+        "evidence": [report_text[:150]] if report_text else [],
+        "limitations": [],
+        "artifacts": ["report/report.md"] if report_path.exists() else [],
+        "next_hint": (
+            "continue execution" if iter_n < max_iters - 1 else "step3 critique"
+        ),
+        # v14 Task 2: darwin = 1 - gap_severity, 首轮 _last_step_eval=None → 0.5.
+        "darwin_score": _compute_darwin_score(last_step_eval),
+        "supported_ratio": supported_ratio,
+        "simplex_id": _make_simplex_id(trace_task_id, iter_n + 1, "rcb_exec"),
+        "cochain_type": "gradient",
+        "domain": _infer_domain(trace_task_id),
+        "task_id": trace_task_id,
+        "model_version": _MODEL_VERSION,
+    }
+
+
+def _upgrade_meta_entry(
+    entry: dict,
+    *,
+    best_h_id: str | None,
+    log_post: float,
+    fisher_info: float,
+) -> None:
+    """v15 Phase 2 Task 3.4: 补 v15 默认值 + 填本轮 abduction 结果; 失败静默."""
+    try:
+        from huginn.metacog.trace_topology import upgrade_entry
+
+        upgrade_entry(entry)
+        entry["hypothesis_id"] = best_h_id
+        entry["log_posterior"] = log_post
+        entry["fisher_info"] = fisher_info
+    except Exception:
+        logger.debug("meta trace entry upgrade skipped", exc_info=True)
+
+
+def _write_betti_entry(
+    betti_path: Path, compute_betti: Any, trace_history: list, iter_n: int
+) -> None:
+    """v14 Task 4: 累积 entry 后算 betti 追加 jsonl; 失败只 warn."""
+    try:
+        b0, b1 = compute_betti(trace_history)
+        with betti_path.open("a", encoding="utf-8") as bf:
+            bf.write(
+                json.dumps(
+                    {
+                        "ts": time.time(),
+                        "iteration": iter_n + 1,
+                        "beta_0": b0,
+                        "beta_1": b1,
+                        "n_entries": len(trace_history),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception as e:
+        print(f"[betti write skipped: {e}]", flush=True)
+
+
+def _meta_read_report(ws: Path) -> tuple[str, Path]:
+    """读 report.md 文本 (不存在时空串); 返回 (text, path)."""
+    report_path = ws / "report" / "report.md"
+    if report_path.exists():
+        return report_path.read_text(encoding="utf-8"), report_path
+    return "", report_path
 
 
 def _write_meta_trace_entry(
@@ -1326,104 +1734,94 @@ def _write_meta_trace_entry(
     iter_prompt: str,
     iter_n: int,
     max_iters: int,
-    trace_history: list,
     last_step_eval: Any,
     best_h_id: str | None,
     log_post: float,
     fisher_info: float,
-    trace_task_id: str,
-    shard_writer: Any,
-    shard: Any,
-    betti_path: Path,
-    compute_betti: Any,
+    deps: _MetaTraceDeps,
 ) -> tuple[str, Path, dict | None]:
     """写本轮 Meta-Trace entry + betti; 失败降级为空 report / None entry."""
-    report_text = ""
     report_path = ws / "report" / "report.md"
-    entry: dict | None = None
     try:
-        if report_path.exists():
-            report_text = report_path.read_text(encoding="utf-8")
-        # v14 Task 3: supported_ratio = 命中数(overlap>0.7) / max(历史总数, 1).
-        # 控制消息 ([tfm:...] / TASK COMPLETE) 与 evidence TF-IDF 必然失配, fallback
-        # 到 report.md 前 200 字符, 让 supported_ratio 反映 report.md 自我一致性.
-        ai_text_stripped = (ai_text or "").strip()
-        is_control_msg = (
-            not ai_text_stripped
-            or ai_text_stripped.startswith("[tfm:")
-            or ai_text_stripped.upper().startswith("TASK COMPLETE")
-            or len(ai_text_stripped) < 50
+        report_text, report_path = _meta_read_report(ws)
+        attempted_text = _meta_attempted_text(ai_text, iter_prompt, report_text)
+        supported_ratio = _meta_supported_ratio(deps.trace_history, attempted_text)
+        entry = _meta_trace_entry(
+            iter_n=iter_n,
+            max_iters=max_iters,
+            ai_text=ai_text,
+            attempted_text=attempted_text,
+            report_text=report_text,
+            report_path=report_path,
+            last_step_eval=last_step_eval,
+            supported_ratio=supported_ratio,
+            trace_task_id=deps.trace_task_id,
         )
-        if is_control_msg and report_text:
-            attempted_text = report_text[:200].replace("\n", " ")
-        else:
-            attempted_text = (
-                ai_text[:200] if ai_text else iter_prompt[:200]
-            ).replace("\n", " ")
-        supported_hits = 0
-        if trace_history:
-            try:
-                from huginn.context_builder import _compute_semantic_overlap
-
-                for hist in trace_history:
-                    hev = hist.get("evidence") or []
-                    hev_text = " ".join(hev) if isinstance(hev, list) else str(hev)
-                    if _compute_semantic_overlap(attempted_text, hev_text) > 0.7:
-                        supported_hits += 1
-            except Exception as e:
-                print(f"[supported_ratio skipped: {e}]", flush=True)
-        supported_ratio = supported_hits / max(len(trace_history), 1)
-        entry = {
-            "iteration": iter_n + 1,
-            "ts": time.time(),
-            "role": "rcb_exec",
-            "attempted": attempted_text,
-            "found": (ai_text or "")[:300],
-            "evidence": [report_text[:150]] if report_text else [],
-            "limitations": [],
-            "artifacts": ["report/report.md"] if report_path.exists() else [],
-            "next_hint": (
-                "continue execution" if iter_n < max_iters - 1 else "step3 critique"
-            ),
-            # v14 Task 2: darwin = 1 - gap_severity, 首轮 _last_step_eval=None → 0.5.
-            "darwin_score": _compute_darwin_score(last_step_eval),
-            "supported_ratio": supported_ratio,
-            "simplex_id": _make_simplex_id(trace_task_id, iter_n + 1, "rcb_exec"),
-            "cochain_type": "gradient",
-            "domain": _infer_domain(trace_task_id),
-            "task_id": trace_task_id,
-            "model_version": _MODEL_VERSION,
-        }
-        # v15 Phase 2 Task 3.4: upgrade_entry 补 v15 默认值 + 填本轮 abduction 结果.
-        try:
-            from huginn.metacog.trace_topology import upgrade_entry
-
-            upgrade_entry(entry)
-            entry["hypothesis_id"] = best_h_id
-            entry["log_posterior"] = log_post
-            entry["fisher_info"] = fisher_info
-        except Exception:
-            logger.debug("meta trace entry upgrade skipped", exc_info=True)
+        _upgrade_meta_entry(
+            entry, best_h_id=best_h_id, log_post=log_post, fisher_info=fisher_info
+        )
         # v26 Task 26.11: 走分片写入, 跨 shard 边界自动 gzip 归档老分片.
-        shard_writer(shard, entry, entry.get("iteration"))
-        # v14 Task 4: 累积 entry 到 _trace_history, 算 betti 写 jsonl.
-        trace_history.append(entry)
-        if compute_betti is not None:
-            try:
-                b0, b1 = compute_betti(trace_history)
-                with betti_path.open("a", encoding="utf-8") as bf:
-                    bf.write(json.dumps({
-                        "ts": time.time(),
-                        "iteration": iter_n + 1,
-                        "beta_0": b0,
-                        "beta_1": b1,
-                        "n_entries": len(trace_history),
-                    }, ensure_ascii=False) + "\n")
-            except Exception as e:
-                print(f"[betti write skipped: {e}]", flush=True)
+        deps.shard_writer(deps.shard, entry, entry.get("iteration"))
+        deps.trace_history.append(entry)
+        if deps.compute_betti is not None:
+            _write_betti_entry(
+                deps.betti_path, deps.compute_betti, deps.trace_history, iter_n
+            )
+        return report_text, report_path, entry
     except Exception as e:
         print(f"[meta_trace write skipped: {e}]", flush=True)
-    return report_text, report_path, entry
+        return "", report_path, None
+
+
+def _pmk_memory_edge(mem_mgr: Any, pmk_state: dict, iter_n: int) -> None:
+    """反向边 2: PMK memory → prospective memory."""
+    if mem_mgr is None or not pmk_state.get("memory"):
+        return
+    from huginn.memory.prospective import _new_intention_id
+
+    mem_mgr.remember_prospective(
+        {
+            "intention_id": _new_intention_id(),
+            "description": f"PMK memory reverse edge: {pmk_state['memory'][:160]}",
+            "trigger_type": "dependency",
+            "trigger_payload": {"depends_on_step": iter_n},
+            "priority": 3,
+            "created_at": time.time(),
+            "source_step": iter_n,
+        }
+    )
+
+
+def _pmk_kb_edge(
+    kb: Any,
+    entry: dict | None,
+    iter_n: int,
+    task_id: str,
+    prev_darwin: float | None,
+    cur_darwin: float,
+) -> None:
+    """反向边 3: PMK → KB (darwin 上升时入库, 下降/持平不入库)."""
+    if not (
+        kb is not None
+        and prev_darwin is not None
+        and cur_darwin > prev_darwin
+        and isinstance(entry, dict)
+    ):
+        return
+    kb.add_text(
+        f"[iter {iter_n + 1} darwin={cur_darwin:.3f}] "
+        f"{(entry.get('attempted') or '')[:200]}",
+        metadata={
+            "source": "pmk_reverse_edge",
+            "iter": iter_n + 1,
+            "darwin_score": cur_darwin,
+            "task_id": task_id,
+        },
+    )
+    print(
+        f"[PMK reverse edge] KB add_text (darwin {prev_darwin:.3f}→{cur_darwin:.3f})",
+        flush=True,
+    )
 
 
 def _apply_pmk_reverse_edges(
@@ -1442,67 +1840,23 @@ def _apply_pmk_reverse_edges(
     try:
         cur_darwin = float(_entry_get(entry, "darwin_score", 0.5))
         # 反向边 1 (persona.adaptive_layer) 原实现依赖未定义的 `_pm`, 恒为死分支, 已移除.
-        # 反向边 2: PMK memory → prospective memory
-        if mem_mgr is not None and pmk_state.get("memory"):
-            from huginn.memory.prospective import _new_intention_id
-
-            mem_mgr.remember_prospective({
-                "intention_id": _new_intention_id(),
-                "description": f"PMK memory reverse edge: {pmk_state['memory'][:160]}",
-                "trigger_type": "dependency",
-                "trigger_payload": {"depends_on_step": iter_n},
-                "priority": 3,
-                "created_at": time.time(),
-                "source_step": iter_n,
-            })
-        # 反向边 3: PMK → KB (darwin 上升时入库, 下降/持平不入库).
-        if (
-            kb is not None
-            and prev_darwin is not None
-            and cur_darwin > prev_darwin
-            and isinstance(entry, dict)
-        ):
-            kb.add_text(
-                f"[iter {iter_n + 1} darwin={cur_darwin:.3f}] "
-                f"{(entry.get('attempted') or '')[:200]}",
-                metadata={
-                    "source": "pmk_reverse_edge",
-                    "iter": iter_n + 1,
-                    "darwin_score": cur_darwin,
-                    "task_id": task_id,
-                },
-            )
-            print(
-                f"[PMK reverse edge] KB add_text "
-                f"(darwin {prev_darwin:.3f}→{cur_darwin:.3f})",
-                flush=True,
-            )
+        _pmk_memory_edge(mem_mgr, pmk_state, iter_n)
+        _pmk_kb_edge(kb, entry, iter_n, task_id, prev_darwin, cur_darwin)
         return cur_darwin
     except Exception as e:
         print(f"[PMK reverse edge] skipped: {e}", flush=True)
         return prev_darwin
 
 
-def _handle_pause_decision(
-    *,
+def _pause_request(
     pause_reason: str,
     pause_opts: list,
     iter_n: int,
-    task_id: str,
-    trace_task_id: str,
-    ws: Path,
-    trace_path: Path,
     evals_history: list,
     kb: Any,
-) -> None:
-    """Task 29: 人机协同 pause — RCB 测试环境自动选 A resume."""
-    from huginn.runtime.task_lifecycle import (
-        DecisionRequest,
-        TaskLifecycle,
-        TaskState,
-        load_task_lifecycle,
-        save_task_lifecycle,
-    )
+) -> tuple[int, Any]:
+    """构造 DecisionRequest; 返回 (pause_step, request)."""
+    from huginn.runtime.task_lifecycle import DecisionRequest
 
     pause_step = iter_n + 1
     request = DecisionRequest(
@@ -1515,6 +1869,18 @@ def _handle_pause_decision(
             f"kb={'empty' if kb is None else 'available'}"
         ),
     )
+    return pause_step, request
+
+
+def _pause_open_lifecycle(request: Any, task_id: str, ws: Path) -> Any:
+    """载入/重建 lifecycle 并进入 pause 态; 返回 lifecycle."""
+    from huginn.runtime.task_lifecycle import (
+        TaskLifecycle,
+        TaskState,
+        load_task_lifecycle,
+        save_task_lifecycle,
+    )
+
     lifecycle = load_task_lifecycle(task_id, ws) or TaskLifecycle(task_id=task_id)
     if lifecycle.state != TaskState.RUNNING:
         try:
@@ -1525,15 +1891,24 @@ def _handle_pause_decision(
             lifecycle.transition(TaskState.RUNNING)
     lifecycle.pause_for_decision(request)
     save_task_lifecycle(lifecycle, ws)
-    print(
-        f"\n[human-in-loop] PAUSE step={pause_step}: {pause_reason}", flush=True)
+    return lifecycle
+
+
+def _pause_announce(pause_step: int, pause_reason: str, pause_opts: list) -> None:
+    """打印 pause 原因与全部选项."""
+    print(f"\n[human-in-loop] PAUSE step={pause_step}: {pause_reason}", flush=True)
     for opt in pause_opts:
         print(
             f"  {opt.get('id', '?')}: {opt.get('label', '')} "
             f"(pros: {opt.get('pros', '')}, cons: {opt.get('cons', '')})",
             flush=True,
         )
-    # RCB 测试环境: 默认选 A 自动 resume, 不等真人
+
+
+def _pause_auto_resume(lifecycle: Any, ws: Path, pause_opts: list) -> str:
+    """RCB 测试环境: 默认选 A 自动 resume, 不等真人; 返回选项 id."""
+    from huginn.runtime.task_lifecycle import save_task_lifecycle
+
     auto_choice = pause_opts[0].get("id", "A") if pause_opts else "A"
     lifecycle.resume(answer=auto_choice)
     save_task_lifecycle(lifecycle, ws)
@@ -1542,6 +1917,20 @@ def _handle_pause_decision(
         f"{pause_opts[0].get('label', '') if pause_opts else ''}",
         flush=True,
     )
+    return auto_choice
+
+
+def _pause_write_trace(
+    *,
+    pause_step: int,
+    pause_reason: str,
+    auto_choice: str,
+    pause_opts: list,
+    iter_n: int,
+    trace_task_id: str,
+    trace_path: Path,
+) -> None:
+    """把 human_decision 决策写进 meta-trace; 失败只 warn."""
     try:
         hd_entry = {
             "iteration": pause_step,
@@ -1577,56 +1966,101 @@ def _handle_pause_decision(
         print(f"[human-in-loop] meta_trace write skipped: {e}", flush=True)
 
 
-def _maybe_pause_for_human(
+def _handle_pause_decision(
     *,
-    evals_history: list,
-    target_chains: list,
-    kb: Any,
-    fired: list,
-    persona: Any,
-    last_step_eval: Any,
-    run_start_iso: str | None,
-    mem_mgr: Any,
-    entry: dict | None,
-    prev_darwin: float | None,
+    pause_reason: str,
+    pause_opts: list,
     iter_n: int,
     task_id: str,
     trace_task_id: str,
     ws: Path,
     trace_path: Path,
+    evals_history: list,
+    kb: Any,
+) -> None:
+    """Task 29: 人机协同 pause — RCB 测试环境自动选 A resume."""
+    pause_step, request = _pause_request(
+        pause_reason, pause_opts, iter_n, evals_history, kb
+    )
+    lifecycle = _pause_open_lifecycle(request, task_id, ws)
+    _pause_announce(pause_step, pause_reason, pause_opts)
+    auto_choice = _pause_auto_resume(lifecycle, ws, pause_opts)
+    _pause_write_trace(
+        pause_step=pause_step,
+        pause_reason=pause_reason,
+        auto_choice=auto_choice,
+        pause_opts=pause_opts,
+        iter_n=iter_n,
+        trace_task_id=trace_task_id,
+        trace_path=trace_path,
+    )
+
+
+def _mph_build_state(
+    persona: Any,
+    last_step_eval: Any,
+    kb: Any,
+    run_start_iso: str | None,
+    mem_mgr: Any,
+) -> Any:
+    """构建 PMK 状态 (persona / 上轮评估 / KB 本 run 新知识窗口)."""
+    from huginn.autoloop.cognitive_loop import build_pmk_state
+
+    return build_pmk_state(
+        persona,
+        last_step_eval,
+        kb,
+        since=run_start_iso,
+        mem_mgr=mem_mgr,
+    )
+
+
+def _mph_maybe_pause(st: _S2State, iter_n: int, pmk_state: Any) -> None:
+    """判定是否需要 pause; 需要则走 _handle_pause_decision."""
+    from huginn.autoloop.cognitive_loop import check_pause_decision
+
+    pause, pause_reason, pause_opts = check_pause_decision(
+        st.evals_history,
+        st.target_chains,
+        st.kb,
+        st.fired,
+        pmk_state,
+    )
+    if not pause:
+        return
+    _handle_pause_decision(
+        pause_reason=pause_reason,
+        pause_opts=pause_opts,
+        iter_n=iter_n,
+        task_id=st.task_id,
+        trace_task_id=st.trace_task_id,
+        ws=st.ws,
+        trace_path=st.trace_path,
+        evals_history=st.evals_history,
+        kb=st.kb,
+    )
+
+
+def _maybe_pause_for_human(
+    ctx: _RCBStep2Ctx, st: _S2State, *, iter_n: int
 ) -> tuple[dict | None, float | None]:
     """AV4 + P1-B: 构建 PMK 状态, 跑反向边, 判定是否 pause."""
     pmk_state = None
+    prev_darwin = st.prev_darwin
     try:
-        from huginn.autoloop.cognitive_loop import build_pmk_state, check_pause_decision
-
-        pmk_state = build_pmk_state(
-            persona, last_step_eval, kb, since=run_start_iso, mem_mgr=mem_mgr,
+        pmk_state = _mph_build_state(
+            st.persona, st.last_step_eval, st.kb, ctx.run_start_iso, st.mem_mgr
         )
         prev_darwin = _apply_pmk_reverse_edges(
             pmk_state=pmk_state,
-            entry=entry,
-            mem_mgr=mem_mgr,
-            kb=kb,
+            entry=st.entry,
+            mem_mgr=st.mem_mgr,
+            kb=st.kb,
             iter_n=iter_n,
-            task_id=task_id,
+            task_id=st.task_id,
             prev_darwin=prev_darwin,
         )
-        pause, pause_reason, pause_opts = check_pause_decision(
-            evals_history, target_chains, kb, fired, pmk_state,
-        )
-        if pause:
-            _handle_pause_decision(
-                pause_reason=pause_reason,
-                pause_opts=pause_opts,
-                iter_n=iter_n,
-                task_id=task_id,
-                trace_task_id=trace_task_id,
-                ws=ws,
-                trace_path=trace_path,
-                evals_history=evals_history,
-                kb=kb,
-            )
+        _mph_maybe_pause(st, iter_n, pmk_state)
     except Exception as e:
         print(f"[Step 2] human-in-loop pause warning: {e}", flush=True)
     return pmk_state, prev_darwin
@@ -1649,7 +2083,8 @@ def _save_loop_checkpoint(
         tc_progress = {tc.target_id: tc.progress for tc in target_chains}
         pending = (
             [i.intention_id for i in prospective_mem.list_pending()]
-            if prospective_mem is not None else []
+            if prospective_mem is not None
+            else []
         )
         darwin_cp = float(_entry_get(entry, "darwin_score", 0.5))
         sup_ratio_cp = float(_entry_get(entry, "supported_ratio", 0.0))
@@ -1663,7 +2098,8 @@ def _save_loop_checkpoint(
             phase="execute",
             workspace=ws,
             context_digest=hashlib.md5(
-                (ai_text or "").encode(), usedforsecurity=False).hexdigest(),
+                (ai_text or "").encode(), usedforsecurity=False
+            ).hexdigest(),
             memory_cursor=None,
             target_chain_progress=tc_progress,
             prospective_queue=pending,
@@ -1716,7 +2152,8 @@ def _update_stagnation_heat(
     """报告 hash 不变则计停滞并升温; 返回 (新 hash, 计数, T_hot)."""
     curr_hash = (
         hashlib.md5(report_text.encode(), usedforsecurity=False).hexdigest()
-        if report_text else None
+        if report_text
+        else None
     )
     if curr_hash == prev_hash and curr_hash is not None:
         stagnation_count += 1
@@ -1756,9 +2193,7 @@ def _push_score_history(score_history: Any, entry: dict | None, iter_n: int) -> 
         print(f"[score_history push skipped: {e}]", flush=True)
 
 
-def _run_cumulative_audit(
-    auditor: Any, ws: Path, task_type: str, iter_n: int
-) -> bool:
+def _run_cumulative_audit(auditor: Any, ws: Path, task_type: str, iter_n: int) -> bool:
     """P4 Task 22: 累积产出审计; 返回 True 表示需阻断主循环."""
     if auditor is None:
         return False
@@ -1807,6 +2242,73 @@ def _run_darwin_ratchet(
         return None, stagnation_count
 
 
+def _mcmc_kwargs(engine: Any, opts: _McmcOpts) -> dict:
+    """组装 mcmc_step 的可选参数 (Gramian 预条件 + haptic/alignment)."""
+    kwargs = {
+        "rng": engine._mcmc_rng,
+        "cached_log_p_current": opts.cached_log_p,
+        # Gramian 谱预条件 (沿高可控/高信息主轴提议); 数据不足自动退化.
+        "gramian_enabled": os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1",
+        "gramian_k": int(os.environ.get("HUGINN_MCMC_GRAMIAN_K", "1")),
+    }
+    if opts.haptic_enabled:
+        kwargs["haptic_enabled"] = True
+        kwargs["haptic_temperature"] = opts.haptic_temperature
+    if opts.alignment_enabled:
+        kwargs["alignment_enabled"] = True
+        kwargs["alignment_temperature"] = opts.alignment_temperature
+    return kwargs
+
+
+def _mcmc_update_bandit(accepted: bool) -> None:
+    """接受率注入 bandit 作探索/利用信号; 失败静默, 不阻塞 MCMC."""
+    try:
+        from huginn.agent.bandit_controller import EffortBandit
+
+        EffortBandit.get_instance().update_mcmc_acceptance(1.0 if accepted else 0.0)
+    except Exception:
+        logger.debug("bandit mcmc acceptance update skipped", exc_info=True)
+
+
+def _mcmc_apply_step(
+    engine: Any, manifold: Any, observations: list, iter_n: int, kwargs: dict
+) -> tuple[bool, float]:
+    """执行一次 mcmc_step 并更新引擎计数/bandit; 返回 (accepted, log_p)."""
+    prev = engine._mcmc_current
+    next_h, next_log_p = manifold.mcmc_step(
+        observations, engine._mcmc_current, **kwargs
+    )
+    engine._mcmc_current = next_h
+    accepted = engine._mcmc_current != prev
+    if accepted:
+        engine._mcmc_accept_count += 1
+    engine._mcmc_step_count += 1
+    engine._iteration = iter_n
+    _mcmc_update_bandit(accepted)
+    return accepted, next_log_p
+
+
+def _mcmc_log(iter_n: int, accepted: bool, h_id: Any, next_log_p: float) -> None:
+    """打印单步 mcmc 结果."""
+    print(
+        f"[mcmc] iter {iter_n}: "
+        f"{'accepted' if accepted else 'rejected'} "
+        f"h={h_id} llh={next_log_p:.3f}",
+        flush=True,
+    )
+
+
+def _mcmc_checkpoint(engine: Any, task_id: str, ws: Path) -> None:
+    """周期 checkpoint — 每 HUGINN_MCMC_CHECKPOINT_INTERVAL 步落盘."""
+    try:
+        from huginn.runtime.engine_state import save_engine_state
+
+        engine._mcmc_rng_state = engine._mcmc_rng.getstate()
+        save_engine_state(engine, task_id, ws)
+    except Exception:
+        print("[mcmc] checkpoint save failed (non-fatal)", flush=True)
+
+
 def _run_mcmc_step(
     *,
     manifold: Any,
@@ -1814,17 +2316,14 @@ def _run_mcmc_step(
     iter_n: int,
     best_h_id: str | None,
     engine: Any,
-    cached_log_p: float | None,
+    opts: _McmcOpts,
     interval: int,
     checkpoint_interval: int,
-    haptic_enabled: bool,
-    haptic_temperature: float,
-    alignment_enabled: bool,
-    alignment_temperature: float,
     task_id: str,
     ws: Path,
 ) -> tuple[float | None, dict | None]:
     """P1-A: 周期性 mcmc_step; 返回 (新 cached_log_p, current_info)."""
+    cached_log_p = opts.cached_log_p
     info: dict | None = None
     if manifold is None or not observations or iter_n % interval != 0:
         return cached_log_p, info
@@ -1834,61 +2333,19 @@ def _run_mcmc_step(
             engine._mcmc_current = best_h_id
         if engine._mcmc_current is None or len(manifold._hyp) < 2:
             return cached_log_p, info
-        prev = engine._mcmc_current
         # 增量路径 — cached_log_p 跨步复用, 不再调 log_posterior 全量.
-        kwargs = {
-            "rng": engine._mcmc_rng,
-            "cached_log_p_current": cached_log_p,
-            # Gramian 谱预条件 (沿高可控/高信息主轴提议); 数据不足自动退化.
-            "gramian_enabled": os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1",
-            "gramian_k": int(os.environ.get("HUGINN_MCMC_GRAMIAN_K", "1")),
-        }
-        if haptic_enabled:
-            kwargs["haptic_enabled"] = True
-            kwargs["haptic_temperature"] = haptic_temperature
-        if alignment_enabled:
-            kwargs["alignment_enabled"] = True
-            kwargs["alignment_temperature"] = alignment_temperature
-        next_h, next_log_p = manifold.mcmc_step(
-            observations, engine._mcmc_current, **kwargs)
-        engine._mcmc_current = next_h
-        cached_log_p = next_log_p
-        accepted = engine._mcmc_current != prev
-        if accepted:
-            engine._mcmc_accept_count += 1
-        engine._mcmc_step_count += 1
-        engine._iteration = iter_n
-        # 接受率注入 bandit 作探索/利用信号; 失败静默, 不阻塞 MCMC.
-        try:
-            from huginn.agent.bandit_controller import EffortBandit
-
-            EffortBandit.get_instance().update_mcmc_acceptance(
-                1.0 if accepted else 0.0)
-        except Exception:
-            logger.debug("bandit mcmc acceptance update skipped", exc_info=True)
-        print(
-            f"[mcmc] iter {iter_n}: "
-            f"{'accepted' if accepted else 'rejected'} "
-            f"h={engine._mcmc_current} llh={next_log_p:.3f}",
-            flush=True,
+        kwargs = _mcmc_kwargs(engine, opts)
+        accepted, next_log_p = _mcmc_apply_step(
+            engine, manifold, observations, iter_n, kwargs
         )
-        info = {
-            "accepted": accepted,
-            "h_id": engine._mcmc_current,
-            "llh": next_log_p,
-        }
-        # 周期 checkpoint — 每 HUGINN_MCMC_CHECKPOINT_INTERVAL 步落盘
+        cached_log_p = next_log_p
+        _mcmc_log(iter_n, accepted, engine._mcmc_current, next_log_p)
+        info = {"accepted": accepted, "h_id": engine._mcmc_current, "llh": next_log_p}
         if (
             checkpoint_interval > 0
             and engine._mcmc_step_count % checkpoint_interval == 0
         ):
-            try:
-                from huginn.runtime.engine_state import save_engine_state
-
-                engine._mcmc_rng_state = engine._mcmc_rng.getstate()
-                save_engine_state(engine, task_id, ws)
-            except Exception:
-                print("[mcmc] checkpoint save failed (non-fatal)", flush=True)
+            _mcmc_checkpoint(engine, task_id, ws)
     except Exception as e:
         print(f"[mcmc] skipped: {e}", flush=True)
         info = None
@@ -1914,8 +2371,7 @@ def _run_completion_audit(
         rep_md = report_text or (
             report_path.read_text(encoding="utf-8") if report_path.exists() else ""
         )
-        audit = metacog_check_completion(
-            report_md=rep_md, outputs_dir=ws / "outputs")
+        audit = metacog_check_completion(report_md=rep_md, outputs_dir=ws / "outputs")
         if not audit.get("passed", True):
             gaps = audit.get("block_reasons", [])
             print(f"[completion audit iter {iter_n}] NOT passed: {gaps}", flush=True)
@@ -1962,6 +2418,7 @@ class _S2State:
     字段赋值/读取顺序与原 `_step2_execute` 完全一致; 未赋值字段用 None/"" 兜底,
     与原先 `"_x" in dir()` 守卫的语义等价.
     """
+
     # --- 只读上下文 (来自 _RCBStep2Ctx) ---
     ws: Path
     model: Any
@@ -2128,9 +2585,11 @@ def _s2_build_step2_prompt(st: _S2State) -> None:
     """iter 0 prompt: HintCoordinator Hodge 合并, 或旧拼接路径兜底."""
     st.step2_prompt_base = _s2_step2_prompt_base()
     st.hint_coord_enabled = os.environ.get(
-        "HUGINN_HINT_COORDINATOR", "1").lower() not in ("0", "false", "no")
+        "HUGINN_HINT_COORDINATOR", "1"
+    ).lower() not in ("0", "false", "no")
     if st.hint_coord_enabled:
         from huginn.agent.hint_coordinator import HintCoordinator
+
         st.hint_coord = HintCoordinator()
         st.step2_prompt, _hint_trace_events = st.hint_coord.coordinate(
             iter_n=0,
@@ -2155,7 +2614,8 @@ def _s2_build_step2_prompt(st: _S2State) -> None:
         )
     else:
         st.step2_prompt = _legacy_build_step2_prompt(
-            st.step2_prompt_base, st.scan_hint, st.fcm_hint)
+            st.step2_prompt_base, st.scan_hint, st.fcm_hint
+        )
 
 
 def _s2_init_trace(st: _S2State) -> None:
@@ -2169,6 +2629,7 @@ def _s2_init_trace(st: _S2State) -> None:
     # 升级路径: 整套换 Postgres/Cassandra, 文件分片只在单机 dev 场景留作 fallback.
     from huginn.events.audit_log import _ShardState as _MetaTraceShard
     from huginn.events.audit_log import write_sharded_jsonl as _mt_write_shard
+
     st.meta_trace_shard = _MetaTraceShard(
         base_dir=st.trace_path.parent,
         default_path=st.trace_path,
@@ -2177,10 +2638,12 @@ def _s2_init_trace(st: _S2State) -> None:
         task_id=st.trace_task_id,
     )
     st.meta_trace_writer = _mt_write_shard
-    st.max_exec_iters = int(os.environ.get(
-        "HUGINN_RCB_EXEC_ITERS",
-        "20" if st.extreme else "2",
-    ))
+    st.max_exec_iters = int(
+        os.environ.get(
+            "HUGINN_RCB_EXEC_ITERS",
+            "20" if st.extreme else "2",
+        )
+    )
 
 
 def _s2_init_loop_timers(st: _S2State) -> None:
@@ -2193,6 +2656,7 @@ def _s2_init_loop_timers(st: _S2State) -> None:
     st.score_history = None
     try:
         from huginn.runtime.score_history import ScoreHistory
+
         st.score_history = ScoreHistory()
     except Exception as _she:
         print(f"[score_history init skipped: {_she}]", flush=True)
@@ -2204,6 +2668,7 @@ def _s2_init_auditors(st: _S2State) -> None:
     st.audit_task_type = "repro"
     try:
         from huginn.security.cumulative_audit import CumulativeAuditor
+
         st.cumulative_auditor = CumulativeAuditor()
         _ck_lower = (st.checklist or "").lower()
         if "optim" in _ck_lower and "repro" not in _ck_lower:
@@ -2222,8 +2687,11 @@ def _s2_init_fork_state(st: _S2State) -> None:
     #   autoloop 接入后换 belief_entropy 驱动 (cognitive_heat_engine 已有接口).
     st.t_hot = 1.0
     st.fork_k_max = int(os.environ.get("HUGINN_RCB_FORK_K_MAX", "3"))
-    st.fork_enabled = os.environ.get(
-        "HUGINN_RCB_FORK_ENABLED", "1").lower() not in ("0", "false", "no")
+    st.fork_enabled = os.environ.get("HUGINN_RCB_FORK_ENABLED", "1").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
     st.merge_hint = ""
 
 
@@ -2236,6 +2704,7 @@ def _s2_init_eval_state(st: _S2State) -> None:
     st.compute_betti = None
     try:
         from huginn.metacog.trace_topology import compute_betti as _compute_betti
+
         st.compute_betti = _compute_betti
     except Exception as _tte:
         print(f"[betti init skipped: {_tte}]", flush=True)
@@ -2243,6 +2712,7 @@ def _s2_init_eval_state(st: _S2State) -> None:
     st.prospective_mem = None
     try:
         from huginn.memory.prospective import ProspectiveMemory
+
         st.prospective_mem = ProspectiveMemory(workspace=st.ws)
     except Exception as _e:
         print(f"[Prospective] init warning: {_e}", flush=True)
@@ -2262,15 +2732,19 @@ def _s2_init_task_metrics(st: _S2State) -> None:
             TaskMetrics,
             load_metrics,
         )
+
         st.task_metrics = load_metrics(st.task_id, st.ws) or TaskMetrics(
-            task_id=st.task_id, total_steps=st.max_exec_iters)
+            task_id=st.task_id, total_steps=st.max_exec_iters
+        )
         # 跨领域: 用 suggest_domain 推断 domain_label (材料/物理/化学/医学/数学)
         # ponytail: keyword 匹配, 不上分类器. 失败默认 unknown.
         try:
             from huginn.personas import PersonaManager
+
             _pm_for_domain = PersonaManager()
             _domain = _pm_for_domain.suggest_domain(
-                (st.checklist or "") + " " + (st.instructions or ""))
+                (st.checklist or "") + " " + (st.instructions or "")
+            )
             st.task_metrics.domain_label = _domain
         except Exception:
             logger.debug("task domain label inference skipped", exc_info=True)
@@ -2309,6 +2783,7 @@ def _s2_init_heat(st: _S2State) -> None:
     st.heat_engine = None
     try:
         from huginn.metacog.cognitive_heat_engine import get_heat_engine
+
         st.heat_engine = get_heat_engine()
     except Exception as _he:
         print(f"[heat_engine init skipped: {_he}]", flush=True)
@@ -2331,10 +2806,10 @@ def _s2_init_mcmc(st: _S2State) -> None:
     # rcb_runner 不接 AutoloopEngine, 用 SimpleNamespace 当 holder 让 save_engine_state 能拉到字段
     import random as _mcmc_random
     import types as _mcmc_types
+
     st.mcmc_engine = _mcmc_types.SimpleNamespace(
         _mcmc_current=None,
-        _mcmc_rng=_mcmc_random.Random(
-            int(os.environ.get("HUGINN_MCMC_SEED", "42"))),
+        _mcmc_rng=_mcmc_random.Random(int(os.environ.get("HUGINN_MCMC_SEED", "42"))),
         _mcmc_rng_state=None,
         _mcmc_accept_count=0,
         _mcmc_step_count=0,
@@ -2346,22 +2821,28 @@ def _s2_init_mcmc(st: _S2State) -> None:
     # Step 2: 跨步缓存 current 的 log_posterior, 拒绝时复用避免重算
     st.mcmc_cached_log_p = None
     st.mcmc_interval = int(os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
-    st.mcmc_ckpt_interval = int(os.environ.get(
-        "HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000"))
+    st.mcmc_ckpt_interval = int(
+        os.environ.get("HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000")
+    )
     # 触觉层 env var: extreme 默认开, 非 extreme 默认关 (行为不变).
     # ponytail: haptic_layers.json 不存在时 _haptic_proposal 全返 None, 自动退化 fisher.
-    st.mcmc_haptic_enabled = os.environ.get(
-        "HUGINN_MCMC_HAPTIC", "1" if st.extreme else "0") == "1"
+    st.mcmc_haptic_enabled = (
+        os.environ.get("HUGINN_MCMC_HAPTIC", "1" if st.extreme else "0") == "1"
+    )
     st.mcmc_haptic_temperature = float(
-        os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0"))
+        os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0")
+    )
     st.mcmc_alignment_enabled = os.environ.get("HUGINN_MCMC_ALIGNMENT", "0") == "1"
     st.mcmc_alignment_temperature = float(
-        os.environ.get("HUGINN_MCMC_ALIGNMENT_TEMPERATURE", "1.0"))
+        os.environ.get("HUGINN_MCMC_ALIGNMENT_TEMPERATURE", "1.0")
+    )
 
 
 def _s2_init_completion_state(st: _S2State) -> None:
     """P1-C 完成度审计间隔 + v15 stagnation 历史 / imagination 日志路径."""
-    st.completion_interval = int(os.environ.get("HUGINN_COMPLETION_CHECK_INTERVAL", "10"))
+    st.completion_interval = int(
+        os.environ.get("HUGINN_COMPLETION_CHECK_INTERVAL", "10")
+    )
     st.prev_completion_hint = ""
     st.stagnation_history = []
     st.imagination_log_path = st.ws / HUGINN_DIR_NAME / "imagination_log.jsonl"
@@ -2383,8 +2864,11 @@ def _s2_init_self_model(st: _S2State) -> None:
             _sm_cross_dir.mkdir(parents=True, exist_ok=True)
             _self_model_cross_path = _sm_cross_dir / "self_model_cross_task.json"
         else:
-            _self_model_cross_path = st.ws / HUGINN_DIR_NAME / "self_model_cross_task.json"
+            _self_model_cross_path = (
+                st.ws / HUGINN_DIR_NAME / "self_model_cross_task.json"
+            )
         from huginn.metacog.self_model import SelfModel
+
         st.self_model = SelfModel(
             task_local_path=_self_model_path,
             cross_task_path=_self_model_cross_path,
@@ -2431,11 +2915,15 @@ def _s2_init_bandit(st: _S2State) -> None:
         st.budget_items = _checklist_item_parser(st.checklist or "")
         if st.budget_items and len(st.budget_items) >= 2:
             from huginn.agent.bandit_controller import EffortBandit
+
             _bandit = EffortBandit.get_instance()
             _bandit.set_items(st.budget_items)
             _bandit.switch_item(0)
-            print(f"[v18] bandit registered {len(st.budget_items)} items, "
-                  f"Q-table size={len(_bandit._Q)}", flush=True)
+            print(
+                f"[v18] bandit registered {len(st.budget_items)} items, "
+                f"Q-table size={len(_bandit._Q)}",
+                flush=True,
+            )
         else:
             st.budget_items = None
     except Exception as _e:
@@ -2457,7 +2945,8 @@ def _s2_init_loop_counters(st: _S2State) -> None:
     st.report_text = ""
     st.report_path_iter = st.ws / "report" / "report.md"
     st.max_complete_rejections = int(
-        os.environ.get("HUGINN_RCB_MAX_COMPLETE_REJECTIONS", "3"))
+        os.environ.get("HUGINN_RCB_MAX_COMPLETE_REJECTIONS", "3")
+    )
 
 
 def _s2_make_state(ctx: _RCBStep2Ctx) -> _S2State:
@@ -2469,7 +2958,8 @@ def _s2_make_state(ctx: _RCBStep2Ctx) -> _S2State:
     _trace_domain = _infer_domain(_trace_task_id)
     _cross_task_prior = (
         _cross_task_store.query_high_darwin(domain=_trace_domain, top_k=5)
-        if _cross_task_store is not None else []
+        if _cross_task_store is not None
+        else []
     )
     return _S2State(
         ws=ctx.ws,
@@ -2546,22 +3036,7 @@ async def _s2_build_iter_prompt(ctx: _RCBStep2Ctx, st: _S2State, iter_n: int) ->
         st.iter_prompt = st.step2_prompt
     else:
         st.iter_prompt, st.derivation_audit = await _build_continuation_prompt(
-            ctx,
-            iter_n=iter_n,
-            max_iters=st.max_exec_iters,
-            evals_history=st.evals_history,
-            last_step_eval=st.last_step_eval,
-            trace_domain=st.trace_domain,
-            trace_task_id=st.trace_task_id,
-            hint_coord_enabled=st.hint_coord_enabled,
-            hint_coord=st.hint_coord,
-            drift_info=st.drift_info,
-            manifold=st.hypo_manifold,
-            iter_observations=st.iter_observations,
-            trace_history=st.trace_history,
-            mcmc_engine=st.mcmc_engine,
-            step2_prompt_base=st.step2_prompt_base,
-            cross_task_prior=st.cross_task_prior,
+            ctx, st, iter_n=iter_n
         )
     st.iter_prompt += st.merge_hint
     st.merge_hint = ""
@@ -2585,7 +3060,10 @@ def _s2_inject_imagery_and_blindspot(st: _S2State, iter_n: int) -> None:
     """P1 想象力 directive + v15 Phase 5 Task 11 blind_spot hint (均失败降级)."""
     # 触发条件: Re_cog > Re_crit (概念湍流) 或 T_hot > 0.7 (高熵).
     # P0-B: 加 HUGINN_USE_MENTAL_IMAGERY=1 守卫, 非 extreme 模式默认关.
-    if st.heat_engine is not None and os.environ.get("HUGINN_USE_MENTAL_IMAGERY", "0") == "1":
+    if (
+        st.heat_engine is not None
+        and os.environ.get("HUGINN_USE_MENTAL_IMAGERY", "0") == "1"
+    ):
         st.iter_prompt = _maybe_inject_imagery(
             st.heat_engine,
             iter_n,
@@ -2605,6 +3083,7 @@ def _s2_inject_imagery_and_blindspot(st: _S2State, iter_n: int) -> None:
             from huginn.metacog.blind_spot_mapper import (
                 map_blind_spots_to_hint as _map_bs_hint,
             )
+
             _bs_list = _infer_bs(st.self_model)
             _bs_hint = _map_bs_hint(_bs_list, max_n=3)
             if _bs_hint:
@@ -2649,9 +3128,7 @@ def _s2_inject_context(st: _S2State, iter_n: int) -> None:
         )
 
 
-async def _s2_run_iteration_llm(
-    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int
-) -> None:
+async def _s2_run_iteration_llm(ctx: _RCBStep2Ctx, st: _S2State, iter_n: int) -> None:
     """TFM 单轨迹 / k 路分叉执行 + 退火降温 + 连续驳回计数清零."""
     _k = anneal_fork_count(st.t_hot, st.fork_k_max) if st.fork_enabled else 1
     _tree = st.agent._conversation_tree
@@ -2661,21 +3138,11 @@ async def _s2_run_iteration_llm(
 
     if _k > 1:
         st.ai_text, st.merge_hint, st.thread_id = await _run_fork_iteration(
-            ctx,
-            iter_n=iter_n,
-            max_iters=st.max_exec_iters,
-            k=_k,
-            t_hot=st.t_hot,
-            iter_prompt=st.iter_prompt,
-            thread_id=st.thread_id,
-            branch_point=_branch_point,
-            trace_task_id=st.trace_task_id,
-            trace_path=st.trace_path,
+            ctx, st, iter_n=iter_n, k=_k, branch_point=_branch_point
         )
     else:
         print(f"\n--- Step 2 iter {iter_n + 1}/{st.max_exec_iters} ---\n", flush=True)
-        st.ai_text = await ctx.stream_chat_fn(
-            st.iter_prompt, f"step2_iter{iter_n + 1}")
+        st.ai_text = await ctx.stream_chat_fn(st.iter_prompt, f"step2_iter{iter_n + 1}")
 
     # 退火降温 (在停滞重热之前, 停滞信号下一轮生效)
     st.t_hot = max(0.0, st.t_hot * 0.5)
@@ -2745,22 +3212,25 @@ def _s2_write_trace(st: _S2State, iter_n: int) -> None:
     """写 Meta-Trace entry (P1 下一轮 build_meta_trace_text 会读到) + bandit iter-end."""
     # ponytail: 字段从 self/agent 状态抽, 不调 LLM. RCB mini-loop 不跑 darwin
     #   ratchet, darwin_score 用 _compute_darwin_score, supported_ratio 见下方.
+    deps = _MetaTraceDeps(
+        trace_task_id=st.trace_task_id,
+        trace_history=st.trace_history,
+        shard_writer=st.meta_trace_writer,
+        shard=st.meta_trace_shard,
+        betti_path=st.betti_path,
+        compute_betti=st.compute_betti,
+    )
     st.report_text, st.report_path_iter, st.entry = _write_meta_trace_entry(
         ws=st.ws,
         ai_text=st.ai_text,
         iter_prompt=st.iter_prompt,
         iter_n=iter_n,
         max_iters=st.max_exec_iters,
-        trace_history=st.trace_history,
         last_step_eval=st.last_step_eval,
         best_h_id=st.iter_best_h_id,
         log_post=st.iter_log_post,
         fisher_info=st.iter_fisher_info,
-        trace_task_id=st.trace_task_id,
-        shard_writer=st.meta_trace_writer,
-        shard=st.meta_trace_shard,
-        betti_path=st.betti_path,
-        compute_betti=st.compute_betti,
+        deps=deps,
     )
     # v18: bandit iter-end — reward_slow = β * Δdarwin_score.
     # ponytail: 失败静默, bandit 内部 catch. _entry 可能未定义, 用 get 兜.
@@ -2775,26 +3245,9 @@ def _s2_write_trace(st: _S2State, iter_n: int) -> None:
         logger.debug("bandit iter-end update skipped", exc_info=True)
 
 
-async def _s2_evaluate(
-    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int
-) -> None:
+async def _s2_evaluate(ctx: _RCBStep2Ctx, st: _S2State, iter_n: int) -> None:
     """StepEvaluator 评估 + 回填 last_step_eval / drift / metrics / merge hint."""
-    _eval_outcome = await _evaluate_step_phase(
-        ctx,
-        iter_n=iter_n,
-        entry=st.entry,
-        target_chains=st.target_chains,
-        self_model=st.self_model,
-        heat_engine=st.heat_engine,
-        evals_history=st.evals_history,
-        task_metrics=st.task_metrics,
-        task_state_for_metrics=st.task_state_for_metrics,
-        step2_prompt=st.step2_prompt,
-        iter_prompt=st.iter_prompt,
-        merge_hint=st.merge_hint,
-        trace_task_id=st.trace_task_id,
-        trace_path=st.trace_path,
-    )
+    _eval_outcome = await _evaluate_step_phase(ctx, st, iter_n=iter_n)
     if _eval_outcome.step_eval is not None:
         st.last_step_eval = _eval_outcome.step_eval  # Task 18: 供下一轮 prompt 注入
     st.drift_info = _eval_outcome.drift_info
@@ -2805,23 +3258,7 @@ async def _s2_evaluate(
 def _s2_pause(ctx: _RCBStep2Ctx, st: _S2State, iter_n: int) -> None:
     """Task 29 人机协同 pause 检查 (G71); 默认自动 resume."""
     # ponytail: RCB 是自动化测试环境, 真人在环是 v8 升级路径.
-    st.pmk_state, st.prev_darwin = _maybe_pause_for_human(
-        evals_history=st.evals_history,
-        target_chains=st.target_chains,
-        kb=st.kb,
-        fired=st.fired,
-        persona=st.persona,
-        last_step_eval=st.last_step_eval,
-        run_start_iso=ctx.run_start_iso,
-        mem_mgr=st.mem_mgr,
-        entry=st.entry,
-        prev_darwin=st.prev_darwin,
-        iter_n=iter_n,
-        task_id=st.task_id,
-        trace_task_id=st.trace_task_id,
-        ws=st.ws,
-        trace_path=st.trace_path,
-    )
+    st.pmk_state, st.prev_darwin = _maybe_pause_for_human(ctx, st, iter_n=iter_n)
 
 
 def _s2_save_checkpoint(st: _S2State, iter_n: int) -> None:
@@ -2863,9 +3300,7 @@ def _s2_update_heat(st: _S2State, iter_n: int) -> None:
 
 def _s2_run_gates(st: _S2State, iter_n: int) -> bool:
     """早停门: cumulative audit 越权 / darwin ratchet action=stop. True 表示 break."""
-    if _run_cumulative_audit(
-        st.cumulative_auditor, st.ws, st.audit_task_type, iter_n
-    ):
+    if _run_cumulative_audit(st.cumulative_auditor, st.ws, st.audit_task_type, iter_n):
         return True
     # advisory only — pivot/counterexample 不 break, 只有 action=stop 才 break.
     _action, st.stagnation_count = _run_darwin_ratchet(
@@ -2879,19 +3314,22 @@ def _s2_run_gates(st: _S2State, iter_n: int) -> bool:
 async def _s2_run_audits(st: _S2State, iter_n: int) -> None:
     """P1-A MCMC + P1-C 完成度审计 + 触觉层同构异常检测."""
     # ponytail: MCMC 是 advisory only, 不强制 agent 用 MCMC 选的 h.
+    opts = _McmcOpts(
+        cached_log_p=st.mcmc_cached_log_p,
+        haptic_enabled=st.mcmc_haptic_enabled,
+        haptic_temperature=st.mcmc_haptic_temperature,
+        alignment_enabled=st.mcmc_alignment_enabled,
+        alignment_temperature=st.mcmc_alignment_temperature,
+    )
     st.mcmc_cached_log_p, st.mcmc_current_info = _run_mcmc_step(
         manifold=st.hypo_manifold,
         observations=st.iter_observations,
         iter_n=iter_n,
         best_h_id=st.iter_best_h_id,
         engine=st.mcmc_engine,
-        cached_log_p=st.mcmc_cached_log_p,
+        opts=opts,
         interval=st.mcmc_interval,
         checkpoint_interval=st.mcmc_ckpt_interval,
-        haptic_enabled=st.mcmc_haptic_enabled,
-        haptic_temperature=st.mcmc_haptic_temperature,
-        alignment_enabled=st.mcmc_alignment_enabled,
-        alignment_temperature=st.mcmc_alignment_temperature,
         task_id=st.task_id,
         ws=st.ws,
     )
@@ -2926,9 +3364,7 @@ def _s2_write_evidence(st: _S2State, iter_n: int) -> None:
     )
 
 
-async def _s2_handle_complete(
-    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int
-) -> bool:
+async def _s2_handle_complete(ctx: _RCBStep2Ctx, st: _S2State, iter_n: int) -> bool:
     """TASK COMPLETE 收尾 (effort floor + 反完成审计). True 表示 break."""
     # P5 守卫: wall_clock 未耗尽才允许 TASK COMPLETE break.
     if not (st.ai_text and "TASK COMPLETE" in st.ai_text.upper()):
@@ -2940,33 +3376,13 @@ async def _s2_handle_complete(
         st.consecutive_complete_rejections,
         _accepted,
         _override,
-    ) = await _handle_task_complete(
-        ctx,
-        iter_n=iter_n,
-        max_iters=st.max_exec_iters,
-        derivation_audit=st.derivation_audit,
-        report_text=st.report_text,
-        report_path=st.report_path_iter,
-        iter_observations=st.iter_observations,
-        entry=st.entry,
-        pmk_state=st.pmk_state,
-        manifold=st.hypo_manifold,
-        heat_engine=st.heat_engine,
-        bandit=st.bandit,
-        completion_audit=st.completion_audit,
-        mcmc_current_info=st.mcmc_current_info,
-        anomaly_info=st.anomaly_info,
-        rejections=st.consecutive_complete_rejections,
-        max_rejections=st.max_complete_rejections,
-    )
+    ) = await _handle_task_complete(ctx, st, iter_n)
     if _override is not None:
         st.iter_prompt = _override
     return _accepted
 
 
-async def _s2_iteration(
-    ctx: _RCBStep2Ctx, st: _S2State, iter_n: int
-) -> bool:
+async def _s2_iteration(ctx: _RCBStep2Ctx, st: _S2State, iter_n: int) -> bool:
     """单轮 Step 2: prompt → LLM → 观测 → 评估 → 审计. True 表示停止循环."""
     _s2_begin_iteration(st, iter_n)
     if _s2_wall_expired(ctx, iter_n):

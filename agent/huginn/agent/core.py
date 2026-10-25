@@ -149,6 +149,37 @@ def _bandit_effort_hint() -> str | None:
         return None
 
 
+def _make_pre_model_hook(fix_mw: Any, cov_mw: Any) -> Any:
+    """langgraph pre_model_hook: 修悬空 tool_calls + 注入时基/覆盖率/bandit hint.
+
+    langgraph 1.2+ 的 pre_model_hook 支持 llm_input_messages key — 只作 LLM 输入,
+    不经 add_messages reducer, 顺序保留. 比 wrap model.bind_tools 干净: 不用
+    fake Runnable, create_react_agent 的 model 类型校验直接过.
+    """
+
+    def _pre_model_hook(state: Any) -> dict[str, Any]:
+        msgs = state.get("messages", []) or []
+        patched = fix_mw._patch_messages(list(msgs))
+        # 时间感知 + 覆盖率 + 负结果三层 hint, 失败静默不阻塞 LLM 调用.
+        # ponytail: 每次读 INSTRUCTIONS+report+outputs (~2ms IO), 相比
+        # LLM 调用 1-5s 零开销. 升级: langgraph config 传 deadline.
+        extra_hints: list[str] = []
+        bandit_hint: str | None = None
+        try:
+            extra_hints = _collect_benchmark_hints(cov_mw)
+            # v18: bandit effort controller hint (advisory).
+            bandit_hint = _bandit_effort_hint()
+        except Exception:  # 防御: pre-model 提示注入失败则忽略
+            logger.debug("pre-model hint injection failed", exc_info=True)
+        if extra_hints:
+            patched = [SystemMessage(content="\n\n".join(extra_hints))] + patched
+        if bandit_hint:
+            patched = [SystemMessage(content=bandit_hint)] + patched
+        return {"llm_input_messages": patched}
+
+    return _pre_model_hook
+
+
 def _unpack_agent_config(config: AgentConfig) -> tuple[Any, ...]:
     """按原顺序拆出 AgentConfig 的九个子配置段."""
     return (
@@ -225,93 +256,131 @@ class HuginnAgent(
         if config is None:
             config = AgentConfig.from_env()
 
-        m, t, mem = config.model, config.tools, config.memory
-        sec, tel, cb = config.security, config.telemetry, config.context_budget
-        kg, pers, core = (
-            config.knowledge_graph,
-            config.personalization,
-            config.core,
+        # 参数表本身就是覆盖集合 (45 个关键字逐个手抄 = 长函数); 具体应用见 _init_agent.
+        self._init_agent(config, locals())
+
+    def _init_agent(self, config: AgentConfig, p: dict[str, Any]) -> None:
+        """装配入口: 应用显式覆盖 → _init_from_config."""
+        self._apply_model_tool_memory_overrides(config, p)
+        self._apply_security_persona_overrides(config, p)
+        self._apply_core_overrides(config, p)
+        self._init_from_config(
+            config, scheduler=p["scheduler"], kb_enabled=p["kb_enabled"]
         )
 
-        if model is not None:
-            m.model = model
-        if model_router is not None:
-            m.model_router = model_router
-        if system_prompt is not None:
-            m.system_prompt = system_prompt
-        if begin_dialogs is not None:
-            m.begin_dialogs = begin_dialogs
-        if prompt_cache_control is not None:
-            m.prompt_cache_control = prompt_cache_control
-        if tools is not None:
-            t.tools = tools
-        if tool_filter is not None:
-            t.tool_filter = tool_filter
-        if max_tool_output_tokens is not None:
-            t.max_tool_output_tokens = max_tool_output_tokens
-        if max_tool_calls is not None:
-            t.max_tool_calls = max_tool_calls
-        if max_tool_calls_per_tool is not None:
-            t.max_tool_calls_per_tool = max_tool_calls_per_tool
-        if compression_max_tokens is not None:
-            t.compression_max_tokens = compression_max_tokens
-        if memory_manager is not None:
-            mem.memory_manager = memory_manager
-        if checkpointer is not None:
-            mem.checkpointer = checkpointer
-        if checkpointer_path is not None:
-            mem.checkpointer_path = checkpointer_path
-        if memory_decay_enabled is not None:
-            mem.memory_decay_enabled = memory_decay_enabled
-        if memory_decay_interval_turns is not None:
-            mem.memory_decay_interval_turns = memory_decay_interval_turns
-        if memory_decay_prune_threshold is not None:
-            mem.memory_decay_prune_threshold = memory_decay_prune_threshold
-        if sandbox is not None:
-            sec.sandbox = sandbox
-        if audit is not None:
-            sec.audit = audit
-        if privacy_redact_secrets is not None:
-            sec.privacy_redact_secrets = privacy_redact_secrets
-        if privacy_block_on_secrets is not None:
-            sec.privacy_block_on_secrets = privacy_block_on_secrets
-        if auto_approve is not None:
-            sec.auto_approve = auto_approve
-        if approval_callback is not None:
-            sec.approval_callback = approval_callback
-        if telemetry_enabled is not None:
-            tel.telemetry_enabled = telemetry_enabled
-        if context_budget_tokens is not None:
-            cb.context_budget_tokens = context_budget_tokens
-        if persona_name is not None:
-            pers.persona_name = persona_name
-        if emotion_tracker is not None:
-            pers.emotion_tracker = emotion_tracker
-        if style_learner is not None:
-            pers.style_learner = style_learner
-        if thread_id is not None:
-            core.thread_id = thread_id
-        if agent_factory is not None:
-            core.agent_factory = agent_factory
-        if skill_executor is not None:
-            core.skill_executor = skill_executor
+    @staticmethod
+    def _apply_overrides(target: Any, values: dict[str, Any]) -> None:
+        """把非 None 的显式覆盖写入配置子结构 (None = 未指定)."""
+        for name, value in values.items():
+            if value is not None:
+                setattr(target, name, value)
 
-        if enable_exploration is not _UNSET_SENTINEL:
-            core.enable_exploration = enable_exploration
-        if profile_id is not _UNSET_SENTINEL:
-            core.profile_id = profile_id
-        if workspace is not _UNSET_SENTINEL:
-            kg.workspace = workspace
-        if kg_enabled is not _UNSET_SENTINEL:
-            kg.kg_enabled = kg_enabled
-        if kg_depth is not _UNSET_SENTINEL:
-            kg.kg_depth = kg_depth
-        if kg_top_k is not _UNSET_SENTINEL:
-            kg.kg_top_k = kg_top_k
-        if break_after_tool is not _UNSET_SENTINEL:
-            t.break_after_tool = break_after_tool
+    @staticmethod
+    def _apply_sentinels(target: Any, values: dict[str, Any]) -> None:
+        """把非 _UNSET_SENTINEL 的覆盖写入 (哨兵 = 未指定; None 是合法值)."""
+        for name, value in values.items():
+            if value is not _UNSET_SENTINEL:
+                setattr(target, name, value)
 
-        self._init_from_config(config, scheduler=scheduler, kb_enabled=kb_enabled)
+    @classmethod
+    def _apply_model_tool_memory_overrides(
+        cls, config: AgentConfig, p: dict[str, Any]
+    ) -> None:
+        """model / tools / memory 三组覆盖."""
+        cls._apply_overrides(
+            config.model,
+            {
+                "model": p["model"],
+                "model_router": p["model_router"],
+                "system_prompt": p["system_prompt"],
+                "begin_dialogs": p["begin_dialogs"],
+                "prompt_cache_control": p["prompt_cache_control"],
+            },
+        )
+        cls._apply_overrides(
+            config.tools,
+            {
+                "tools": p["tools"],
+                "tool_filter": p["tool_filter"],
+                "max_tool_output_tokens": p["max_tool_output_tokens"],
+                "max_tool_calls": p["max_tool_calls"],
+                "max_tool_calls_per_tool": p["max_tool_calls_per_tool"],
+                "compression_max_tokens": p["compression_max_tokens"],
+            },
+        )
+        cls._apply_overrides(
+            config.memory,
+            {
+                "memory_manager": p["memory_manager"],
+                "checkpointer": p["checkpointer"],
+                "checkpointer_path": p["checkpointer_path"],
+                "memory_decay_enabled": p["memory_decay_enabled"],
+                "memory_decay_interval_turns": p["memory_decay_interval_turns"],
+                "memory_decay_prune_threshold": p["memory_decay_prune_threshold"],
+            },
+        )
+
+    @classmethod
+    def _apply_security_persona_overrides(
+        cls, config: AgentConfig, p: dict[str, Any]
+    ) -> None:
+        """security / telemetry / context_budget / personalization 覆盖."""
+        cls._apply_overrides(
+            config.security,
+            {
+                "sandbox": p["sandbox"],
+                "audit": p["audit"],
+                "privacy_redact_secrets": p["privacy_redact_secrets"],
+                "privacy_block_on_secrets": p["privacy_block_on_secrets"],
+                "auto_approve": p["auto_approve"],
+                "approval_callback": p["approval_callback"],
+            },
+        )
+        cls._apply_overrides(
+            config.telemetry,
+            {"telemetry_enabled": p["telemetry_enabled"]},
+        )
+        cls._apply_overrides(
+            config.context_budget,
+            {"context_budget_tokens": p["context_budget_tokens"]},
+        )
+        cls._apply_overrides(
+            config.personalization,
+            {
+                "persona_name": p["persona_name"],
+                "emotion_tracker": p["emotion_tracker"],
+                "style_learner": p["style_learner"],
+            },
+        )
+
+    @classmethod
+    def _apply_core_overrides(cls, config: AgentConfig, p: dict[str, Any]) -> None:
+        """core 组 + 哨兵语义组 (enable_exploration / workspace / kg_* / break)."""
+        cls._apply_overrides(
+            config.core,
+            {
+                "thread_id": p["thread_id"],
+                "agent_factory": p["agent_factory"],
+                "skill_executor": p["skill_executor"],
+            },
+        )
+        cls._apply_sentinels(
+            config.core,
+            {
+                "enable_exploration": p["enable_exploration"],
+                "profile_id": p["profile_id"],
+            },
+        )
+        cls._apply_sentinels(
+            config.knowledge_graph,
+            {
+                "workspace": p["workspace"],
+                "kg_enabled": p["kg_enabled"],
+                "kg_depth": p["kg_depth"],
+                "kg_top_k": p["kg_top_k"],
+            },
+        )
+        cls._apply_sentinels(config.tools, {"break_after_tool": p["break_after_tool"]})
 
     def _init_from_config(
         self,
@@ -444,9 +513,7 @@ class HuginnAgent(
                 "best-effort op failed", exc_info=True
             )  # 无事件日志不阻塞 agent
 
-    def _core_init_scheduler_state(
-        self, t: Any, core: Any, scheduler: Any
-    ) -> None:
+    def _core_init_scheduler_state(self, t: Any, core: Any, scheduler: Any) -> None:
         """tool_filter/agent_factory/scheduler 与图相关初始字段."""
         self.tool_filter = set(t.tool_filter) if t.tool_filter else None
         self.agent_factory = core.agent_factory
@@ -514,9 +581,7 @@ class HuginnAgent(
         self.privacy_redact_secrets = sec.privacy_redact_secrets
         self.privacy_block_on_secrets = sec.privacy_block_on_secrets
 
-    def _core_resolve_context_budget(
-        self, m: Any, t: Any, cb: Any
-    ) -> tuple[Any, Any]:
+    def _core_resolve_context_budget(self, m: Any, t: Any, cb: Any) -> tuple[Any, Any]:
         """解析工具输出上限与上下文预算 (预算 <=0 时按模型窗口回填)."""
         max_tool_output_tokens = t.max_tool_output_tokens
         context_budget_tokens = cb.context_budget_tokens
@@ -658,6 +723,43 @@ class HuginnAgent(
     _LONG_HORIZON_TOOL_BUDGET: tuple[int, int] = (300, 100)
     # 上下文窗口已到 1M (deepseek-v4), 200K 时代的 100/300 明显偏小.
 
+    def _set_long_horizon_env(self, enable: bool) -> None:
+        """长程模式联动: 开/关 HUGINN_EXTREME_DISPATCH 并重置研究阶段."""
+        import os
+
+        if enable:
+            # 长程模式联动: research/extreme 跑长程 (recursion_limit=500),
+            # 需要开 trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
+            if not hasattr(self, "_extreme_dispatch_saved"):
+                self._extreme_dispatch_saved = os.environ.get("HUGINN_EXTREME_DISPATCH")
+            os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
+            self._phase_manager.reset(ResearchPhase.LITERATURE)
+            return
+        # 退出长程模式: 恢复 HUGINN_EXTREME_DISPATCH 原值
+        saved = getattr(self, "_extreme_dispatch_saved", None)
+        if saved is None:
+            os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
+        else:
+            os.environ["HUGINN_EXTREME_DISPATCH"] = saved
+        self._extreme_dispatch_saved = None
+        self._phase_manager.reset(ResearchPhase.OPEN)
+
+    def _delegate_mode_switch(self, mode: str) -> None:
+        """R7: mode 切换 = cognitive switch, 委托 CSM S3_SWITCH.
+
+        reflection.py 的 should_switch_mode 路径也走 set_mode → 这里一处覆盖两边.
+        ponytail: getattr 兜底 + try/except 静默, 不破坏 turn. 升级: 显式 CSM 注入.
+        """
+        csm = getattr(self, "_csm", None)
+        if csm is None:
+            return
+        try:
+            from huginn.cognitive_engine import TransitionSignal
+
+            csm.transition(TransitionSignal("user_confirmed", {"mode": mode}))
+        except Exception:  # 防御: set_mode CSM 委托失败则忽略, state 保持原值
+            logger.debug("set_mode CSM delegation failed", exc_info=True)
+
     def set_mode(self, mode: str) -> None:
         """切换 agent mode (chat/research/plan/extreme).
 
@@ -669,50 +771,22 @@ class HuginnAgent(
             raise ValueError(
                 f"unknown mode: {mode}. options: chat, research, plan, extreme"
             )
-        if mode != self._mode:
-            old = self._mode
-            self._mode = mode
-            self._agent_graph = None
-            if mode in self._LONG_HORIZON_MODES:
-                # 长程模式联动: research/extreme 跑长程 (recursion_limit=500),
-                # 需要开 trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
-                import os
-
-                if not hasattr(self, "_extreme_dispatch_saved"):
-                    self._extreme_dispatch_saved = os.environ.get(
-                        "HUGINN_EXTREME_DISPATCH"
-                    )
-                os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
-                self._phase_manager.reset(ResearchPhase.LITERATURE)
-            elif old in self._LONG_HORIZON_MODES:
-                # 退出长程模式: 恢复 HUGINN_EXTREME_DISPATCH 原值
-                import os
-
-                saved = getattr(self, "_extreme_dispatch_saved", None)
-                if saved is None:
-                    os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
-                else:
-                    os.environ["HUGINN_EXTREME_DISPATCH"] = saved
-                self._extreme_dispatch_saved = None
-                self._phase_manager.reset(ResearchPhase.OPEN)
-            # plan mode 联动 permission_config: 写工具强制 ASK
-            # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
-            perm_cfg = getattr(self, "_permission_config", None)
-            if perm_cfg is not None:
-                perm_cfg.plan_mode = mode == "plan"
-            logger.info("agent mode switched to '%s'", mode)
-
-            # R7: mode 切换 = cognitive switch, 委托 CSM S3_SWITCH.
-            # reflection.py 的 should_switch_mode 路径也走 set_mode → 这里一处覆盖两边.
-            # ponytail: getattr 兜底 + try/except 静默, 不破坏 turn. 升级: 显式 CSM 注入.
-            csm = getattr(self, "_csm", None)
-            if csm is not None:
-                try:
-                    from huginn.cognitive_engine import TransitionSignal
-
-                    csm.transition(TransitionSignal("user_confirmed", {"mode": mode}))
-                except Exception:  # 防御: set_mode CSM 委托失败则忽略, state 保持原值
-                    logger.debug("set_mode CSM delegation failed", exc_info=True)
+        if mode == self._mode:
+            return
+        old = self._mode
+        self._mode = mode
+        self._agent_graph = None
+        if mode in self._LONG_HORIZON_MODES:
+            HuginnAgent._set_long_horizon_env(self, True)
+        elif old in self._LONG_HORIZON_MODES:
+            HuginnAgent._set_long_horizon_env(self, False)
+        # plan mode 联动 permission_config: 写工具强制 ASK
+        # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
+        perm_cfg = getattr(self, "_permission_config", None)
+        if perm_cfg is not None:
+            perm_cfg.plan_mode = mode == "plan"
+        logger.info("agent mode switched to '%s'", mode)
+        HuginnAgent._delegate_mode_switch(self, mode)
 
     def get_mode(self) -> str:
         return self._mode
@@ -831,40 +905,61 @@ class HuginnAgent(
         self.langchain_tools.append(self._wrap_tool_with_hooks(lc_tool))
         self._invalidate_tool_description_cache()
 
+    def _effective_tool_filter(self) -> set[str] | None:
+        """P4 Task-Dynamic Tool Router: 按 task 语义算有效子集.
+
+        默认关 (HUGINN_TASK_TOOL_ROUTER=1 开启). 失败或返回空 → fallback 到
+        原 self.tool_filter, 不破坏现有行为. 升级路径: LLM 版小模型打分.
+
+        跟 self.tool_filter 取交集而非覆盖: caller (如 benchmark runner) 显式设的
+        tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
+        task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
+        """
+        if not (
+            FeatureFlags.shared().is_enabled("task_tool_router") and self._current_task
+        ):
+            return self.tool_filter
+        try:
+            from huginn.runtime.task_tool_router import compute_effective_subset
+
+            candidate = compute_effective_subset(
+                self._current_task, ToolRegistry.list_tools()
+            )
+        except Exception:  # 防御: task_tool_router 异常则回退 tool_filter
+            logger.debug(
+                "task_tool_router failed, fallback to tool_filter", exc_info=True
+            )
+            return self.tool_filter
+        if not candidate:
+            return self.tool_filter
+        candidate_set = set(candidate)
+        if self.tool_filter is None:
+            return candidate_set
+        inter = candidate_set & self.tool_filter
+        # 交集空 → task router 误判, 保留原 tool_filter
+        return inter if inter else self.tool_filter
+
+    def _adapt_registry_tool(self, tool: Any, huginn_tool_cls: Any) -> Any:
+        """registry 工具 → LangChain 工具 (非 HuginnTool 原样返回)."""
+        if not isinstance(tool, huginn_tool_cls):
+            return tool
+        return self._tool_adapter.adapt(
+            tool,
+            memory_manager=self.memory,
+            agent_factory=self.agent_factory,
+            max_tool_output_tokens=self.max_tool_output_tokens,
+            compression_max_tokens=self.compression_max_tokens,
+            permission_config=self._permission_config,
+            approval_callback=self._approval_callback,
+            boundary_state=self._boundary_state,
+        )
+
     def register_tools_from_registry(self) -> None:
         from huginn.tools.assembly import collect_denied_tool_names
         from huginn.tools.base import HuginnTool
 
         denied = collect_denied_tool_names(self._permission_config.rules)
-
-        # P4 Task-Dynamic Tool Router: 根据 task 语义动态过滤工具子集.
-        # 默认关 (HUGINN_TASK_TOOL_ROUTER=1 开启). 失败或返回空 → fallback 到
-        # 原 self.tool_filter, 不破坏现有行为. 升级路径: LLM 版小模型打分.
-        #
-        # 跟 self.tool_filter 取交集而非覆盖: caller (如 benchmark runner) 显式设的
-        # tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
-        # task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
-        effective_filter: set[str] | None = self.tool_filter
-        if FeatureFlags.shared().is_enabled("task_tool_router") and self._current_task:
-            try:
-                from huginn.runtime.task_tool_router import compute_effective_subset
-
-                available = ToolRegistry.list_tools()
-                candidate = compute_effective_subset(self._current_task, available)
-                if candidate:
-                    candidate_set = set(candidate)
-                    if self.tool_filter is not None:
-                        inter = candidate_set & self.tool_filter
-                        if inter:
-                            effective_filter = inter
-                        # else: 交集空 → task router 误判, 保留原 tool_filter
-                    else:
-                        effective_filter = candidate_set
-            except Exception:  # 防御: task_tool_router 异常则回退 tool_filter
-                logger.debug(
-                    "task_tool_router failed, fallback to tool_filter",
-                    exc_info=True,
-                )
+        effective_filter = self._effective_tool_filter()
 
         tools = []
         # C: 懒加载边界 — 先按名过滤 (effective_filter/denied), 命中才 get()/adapt.
@@ -879,20 +974,9 @@ class HuginnAgent(
             tool = ToolRegistry.get(name)
             if tool is None:
                 continue
-            if isinstance(tool, HuginnTool):
-                lc_tool = self._tool_adapter.adapt(
-                    tool,
-                    memory_manager=self.memory,
-                    agent_factory=self.agent_factory,
-                    max_tool_output_tokens=self.max_tool_output_tokens,
-                    compression_max_tokens=self.compression_max_tokens,
-                    permission_config=self._permission_config,
-                    approval_callback=self._approval_callback,
-                    boundary_state=self._boundary_state,
-                )
-            else:
-                lc_tool = tool
-            tools.append(self._wrap_tool_with_hooks(lc_tool))
+            tools.append(
+                self._wrap_tool_with_hooks(self._adapt_registry_tool(tool, HuginnTool))
+            )
         # replace 语义而非 extend: 避免 MCP 重连 / mock fallback 重复调用导致工具重复注册.
         # 之前 extend 会让 LLM 在工具 schema 里看到 N 份同名 tool, 浪费 context tokens.
         # ponytail: 直接覆盖, 假设所有工具都来自 registry. 升级: 保留非 registry 来源工具.
@@ -984,74 +1068,76 @@ class HuginnAgent(
             provenance = ProvenanceRegistry.shared()
         except Exception:  # 防御: ProvenanceRegistry 不可用则 provenance 置空
             logger.debug("ProvenanceRegistry.shared() unavailable", exc_info=True)
-        return Explainer(audit=getattr(self, "audit", None), provenance=provenance).explain(
-            goal=goal, actor=actor, tool=tool, limit=limit
-        )
+        return Explainer(
+            audit=getattr(self, "audit", None), provenance=provenance
+        ).explain(goal=goal, actor=actor, tool=tool, limit=limit)
 
     # ── Graph building ────────────────────────────────────────────
+
+    def _deep_agent_backend(self) -> Any:
+        """deepagents 内置 fs 工具的落盘后端 (LocalShellBackend).
+
+        deepagents 内置 fs 工具 (ls/read_file/write_file/edit_file/execute) 默认走
+        StateBackend — 虚拟内存 fs, write_file 返回成功但没落盘, agent 以为
+        写了 report.md 实际没有 (σ₁₀). 换 LocalShellBackend 落真盘 +
+        支持 execute 命令执行 (FilesystemBackend 不实现 SandboxBackendProtocol,
+        导致 execute 工具报 "backend does not support command execution").
+        virtual_mode=True 把 "/report.md" 映射进 root 且禁止路径逃逸.
+        inherit_env=True 让 subprocess 有 PATH 等环境变量.
+        """
+        from deepagents.backends import LocalShellBackend
+
+        fs_root = str(self.workspace) if self.workspace else None
+        return LocalShellBackend(
+            root_dir=fs_root,
+            virtual_mode=True,
+            inherit_env=True,
+        )
+
+    def _build_deep_agent(self) -> Any:
+        """deepagents.create_deep_agent 建图 (含 middleware + recursion_limit)."""
+        from deepagents import create_deep_agent
+
+        system_message = self._effective_system_prompt()
+        fs_backend = self._deep_agent_backend()
+        _agent_model = self.select_model("agent")
+        return create_deep_agent(
+            name="HuginnAgent",
+            model=_agent_model,
+            tools=self._effective_tools(query=get_user_message()),
+            system_prompt=system_message,
+            checkpointer=self.checkpointer,
+            backend=fs_backend,
+            middleware=[
+                FixDanglingToolCallsMiddleware(
+                    model_name=getattr(_agent_model, "model_name", "")
+                ),
+                DeliverableCoverageMiddleware(),
+                RateLimitMiddleware(),
+            ],
+        ).with_config(
+            {
+                # research mode → 500; extreme dispatch 开启但非 research → 400
+                # (极限模式跑长程, 250 不够用). 普通 chat/plan 保持 250.
+                "recursion_limit": self._effective_recursion_limit(),
+            }
+        )
 
     def build_graph(self) -> Any:
         if self._agent_graph is not None:
             return self._agent_graph
 
         try:
-            from deepagents import create_deep_agent
-
-            system_message = self._effective_system_prompt()
-
-            # deepagents 内置 fs 工具 (ls/read_file/write_file/edit_file/execute) 默认走
-            # StateBackend — 虚拟内存 fs, write_file 返回成功但没落盘, agent 以为
-            # 写了 report.md 实际没有 (σ₁₀). 换 LocalShellBackend 落真盘 +
-            # 支持 execute 命令执行 (FilesystemBackend 不实现 SandboxBackendProtocol,
-            # 导致 execute 工具报 "backend does not support command execution").
-            # virtual_mode=True 把 "/report.md" 映射进 root 且禁止路径逃逸.
-            # inherit_env=True 让 subprocess 有 PATH 等环境变量.
-            from deepagents.backends import LocalShellBackend
-
-            fs_root = str(self.workspace) if self.workspace else None
-            fs_backend = LocalShellBackend(
-                root_dir=fs_root,
-                virtual_mode=True,
-                inherit_env=True,
-            )
-
-            _agent_model = self.select_model("agent")
-            _agent_model_name = getattr(_agent_model, "model_name", "")
-            self._agent_graph = create_deep_agent(
-                name="HuginnAgent",
-                model=_agent_model,
-                tools=self._effective_tools(query=get_user_message()),
-                system_prompt=system_message,
-                checkpointer=self.checkpointer,
-                backend=fs_backend,
-                middleware=[
-                    FixDanglingToolCallsMiddleware(model_name=_agent_model_name),
-                    DeliverableCoverageMiddleware(),
-                    RateLimitMiddleware(),
-                ],
-            ).with_config(
-                {
-                    # research mode → 500; extreme dispatch 开启但非 research → 400
-                    # (极限模式跑长程, 250 不够用). 普通 chat/plan 保持 250.
-                    "recursion_limit": self._effective_recursion_limit(),
-                }
-            )
-
+            self._agent_graph = self._build_deep_agent()
             return self._agent_graph
-
         except ImportError:
             return self._build_simple_graph()
 
     def _build_simple_graph(self) -> Any:
+        """deepagents 未装时的 langgraph prebuilt 兜底图."""
         try:
             from langgraph.prebuilt import create_react_agent
 
-            system_prompt = self._effective_system_prompt()
-
-            # deepagents 没装时走 fallback. langgraph 1.2+ 的 pre_model_hook 支持
-            # llm_input_messages key — 只作 LLM 输入, 不经 add_messages reducer,
-            # 顺序保留. 比 wrap model.bind_tools 干净: 不用 fake Runnable,
-            # create_react_agent 的 model 类型校验直接过.
             from huginn.agent.middlewares import (
                 DeliverableCoverageMiddleware,
                 FixDanglingToolCallsMiddleware,
@@ -1060,35 +1146,13 @@ class HuginnAgent(
             _fix_mw = FixDanglingToolCallsMiddleware(
                 model_name=getattr(self.select_model("agent"), "model_name", "")
             )
-            _cov_mw = DeliverableCoverageMiddleware()
-
-            def _pre_model_hook(state):
-                msgs = state.get("messages", []) or []
-                patched = _fix_mw._patch_messages(list(msgs))
-                # 时间感知 + 覆盖率 + 负结果三层 hint, 失败静默不阻塞 LLM 调用.
-                # ponytail: 每次读 INSTRUCTIONS+report+outputs (~2ms IO), 相比
-                # LLM 调用 1-5s 零开销. 升级: langgraph config 传 deadline.
-                extra_hints: list[str] = []
-                bandit_hint: str | None = None
-                try:
-                    extra_hints = _collect_benchmark_hints(_cov_mw)
-                    # v18: bandit effort controller hint (advisory).
-                    bandit_hint = _bandit_effort_hint()
-                except Exception:  # 防御: pre-model 提示注入失败则忽略
-                    logger.debug("pre-model hint injection failed", exc_info=True)
-                if extra_hints:
-                    patched = [
-                        SystemMessage(content="\n\n".join(extra_hints))
-                    ] + patched
-                if bandit_hint:
-                    patched = [SystemMessage(content=bandit_hint)] + patched
-                return {"llm_input_messages": patched}
-
             agent = create_react_agent(
                 model=self.select_model("agent"),
                 tools=self._effective_tools(query=get_user_message()),
-                prompt=SystemMessage(content=system_prompt),
-                pre_model_hook=_pre_model_hook,
+                prompt=SystemMessage(content=self._effective_system_prompt()),
+                pre_model_hook=_make_pre_model_hook(
+                    _fix_mw, DeliverableCoverageMiddleware()
+                ),
                 checkpointer=self.checkpointer,
             )
 
