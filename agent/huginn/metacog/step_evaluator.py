@@ -15,6 +15,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -23,14 +24,54 @@ logger = logging.getLogger(__name__)
 # ponytail: 不绑死类型, getattr 兼容 dict 和 dataclass. 升级路径: 真有了再 import.
 
 _HARD_VIA = frozenset({"dimensional", "exact_formula", "conservation_law"})
-_SOFT_VIA = frozenset({"asymptotic_limit", "symmetry_argument", "topological_invariant"})
+_SOFT_VIA = frozenset(
+    {"asymptotic_limit", "symmetry_argument", "topological_invariant"}
+)
 
-_STOPWORDS = frozenset({
-    "the", "a", "an", "of", "to", "in", "for", "and", "or", "with", "by",
-    "on", "at", "from", "as", "is", "are", "was", "were", "be", "been",
-    "that", "this", "these", "those", "it", "its", "then", "than", "but",
-    "we", "you", "they", "i", "he", "she", "into", "via", "using", "use",
-})
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "of",
+        "to",
+        "in",
+        "for",
+        "and",
+        "or",
+        "with",
+        "by",
+        "on",
+        "at",
+        "from",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "that",
+        "this",
+        "these",
+        "those",
+        "it",
+        "its",
+        "then",
+        "than",
+        "but",
+        "we",
+        "you",
+        "they",
+        "i",
+        "he",
+        "she",
+        "into",
+        "via",
+        "using",
+        "use",
+    }
+)
 
 # ponytail: 结构信号的文本启发式, 正则够用, 不上 NLP. 升级路径: embedding + few-shot.
 # 注意 meV/keV 要放在 eV 之前, 否则 eV 会先吃掉 "meV" 里的 "eV" 段.
@@ -42,9 +83,21 @@ _UNIT_RE = re.compile(
 )
 _FORMULA_RE = re.compile(r"[=≈≠≤≥<>]\s*[\d\-+a-zA-Z(]")
 _CONSERVATION_RE = re.compile(r"conserv|守恒|invariant|不变|preserv", re.IGNORECASE)
-_ASYMPTOTIC_RE = re.compile(r"limit|asymptotic|渐近|∞|large[\s\-]?[nNtT]|t→|n→|x→", re.IGNORECASE)
+_ASYMPTOTIC_RE = re.compile(
+    r"limit|asymptotic|渐近|∞|large[\s\-]?[nNtT]|t→|n→|x→", re.IGNORECASE
+)
 _SYMMETRY_RE = re.compile(r"symmetr|对称|invariant|不变|group|群", re.IGNORECASE)
 _TOPOLOGICAL_RE = re.compile(r"topolog|拓扑|winding|homotop|同伦|betti", re.IGNORECASE)
+
+# verifiable_via → 该结构在 found 文本里应留下的痕迹
+_STRUCTURE_HEURISTICS: dict[str, re.Pattern[str]] = {
+    "dimensional": _UNIT_RE,
+    "exact_formula": _FORMULA_RE,
+    "conservation_law": _CONSERVATION_RE,
+    "asymptotic_limit": _ASYMPTOTIC_RE,
+    "symmetry_argument": _SYMMETRY_RE,
+    "topological_invariant": _TOPOLOGICAL_RE,
+}
 
 
 @dataclass
@@ -108,13 +161,49 @@ class StepEvaluation:
     tool_call_health: ToolCallHealth = field(default_factory=ToolCallHealth)  # G69
     pmk_feedback: str = ""  # PMK 循环反馈文本
     measurement_uncertainty: MeasurementUncertainty = field(
-        default_factory=MeasurementUncertainty)  # P2
+        default_factory=MeasurementUncertainty
+    )  # P2
 
     def is_on_track(self) -> bool:
         return self.on_track == "true"
 
 
 # === 内部 helper ===
+
+
+def _uncertainty_for_entry(
+    ev: Any,
+) -> tuple[dict[str, Any] | None, tuple[int, Any, Any] | None]:
+    """单条 evaluation: 返回 (issue, 待传播的点估计)."""
+    mu = getattr(ev, "measurement_uncertainty", None)
+    if mu is None or mu.point_estimate is None:
+        return None, None
+    sid = getattr(ev, "step_id", -1)
+
+    if mu.is_point_only():
+        issue = {
+            "step_id": sid,
+            "issue": "point_only",
+            "detail": f"点估计 {mu.point_estimate} {mu.unit} 无不确定度",
+        }
+        return issue, (sid, mu.point_estimate, mu.unit)
+
+    if not mu.has_uncertainty():
+        return None, None
+
+    issue = None
+    rel = mu.relative_uncertainty()
+    if rel is not None and rel > 0.3:
+        issue = {
+            "step_id": sid,
+            "issue": "high_relative",
+            "detail": (
+                f"相对不确定度 {rel:.2%} > 30% "
+                f"(value={mu.point_estimate}±{mu.uncertainty} {mu.unit})"
+            ),
+        }
+    pending = None if mu.propagated else (sid, mu.point_estimate, mu.unit)
+    return issue, pending
 
 
 def check_uncertainty_propagation(
@@ -131,41 +220,24 @@ def check_uncertainty_propagation(
     ponytail: 不做完整 GUM 传播公式, 只标记问题. 升级路径: 接 uncertainties 库.
     """
     issues: list[dict] = []
-    point_estimates: list[tuple[int, float, str]] = []  # (step_id, value, unit)
+    point_estimates: list[tuple[int, Any, Any]] = []  # (step_id, value, unit)
 
     for ev in evaluations:
-        mu = getattr(ev, "measurement_uncertainty", None)
-        if mu is None or mu.point_estimate is None:
-            continue
-        sid = getattr(ev, "step_id", -1)
-
-        if mu.is_point_only():
-            issues.append({
-                "step_id": sid,
-                "issue": "point_only",
-                "detail": f"点估计 {mu.point_estimate} {mu.unit} 无不确定度",
-            })
-            point_estimates.append((sid, mu.point_estimate, mu.unit))
-            continue
-
-        if mu.has_uncertainty():
-            rel = mu.relative_uncertainty()
-            if rel is not None and rel > 0.3:
-                issues.append({
-                    "step_id": sid,
-                    "issue": "high_relative",
-                    "detail": f"相对不确定度 {rel:.2%} > 30% (value={mu.point_estimate}±{mu.uncertainty} {mu.unit})",
-                })
-            if not mu.propagated:
-                point_estimates.append((sid, mu.point_estimate, mu.unit))
+        issue, pending = _uncertainty_for_entry(ev)
+        if issue is not None:
+            issues.append(issue)
+        if pending is not None:
+            point_estimates.append(pending)
 
     # 多步有点估计但都没 propagated → 误差链断裂
     if len(point_estimates) >= 2:
-        issues.append({
-            "step_id": point_estimates[-1][0],
-            "issue": "unpropagated",
-            "detail": f"{len(point_estimates)} 步有点估计但未做误差传播 — 最终结论置信度未知",
-        })
+        issues.append(
+            {
+                "step_id": point_estimates[-1][0],
+                "issue": "unpropagated",
+                "detail": f"{len(point_estimates)} 步有点估计但未做误差传播 — 最终结论置信度未知",
+            }
+        )
 
     return issues
 
@@ -203,7 +275,9 @@ def _compute_darwin_score(step_eval: Any) -> float:
             try:
                 return _clamp01(1.0 - float(gs))
             except (TypeError, ValueError):
-                logger.debug("best-effort op failed", exc_info=True)  # 坏值降级到 on_track 派生
+                logger.debug(
+                    "best-effort op failed", exc_info=True
+                )  # 坏值降级到 on_track 派生
         on_track = step_eval.get("on_track", "unsure")
     else:
         on_track = getattr(step_eval, "on_track", "unsure")
@@ -252,6 +326,19 @@ def _check_target_chain_match(
     return (None, "")
 
 
+def _structure_verdict(sig: dict, found_text: str, via: str) -> bool:
+    """单条 signal 的 ok 判定: 显式 verdict 优先, 否则看 found 文本痕迹."""
+    explicit = sig.get("verified", sig.get("passed"))
+    if explicit is not None:
+        return bool(explicit)
+    if "status" in sig:
+        return str(sig["status"]).lower() in {"passed", "ok", "true", "success"}
+    pattern = _STRUCTURE_HEURISTICS.get(via)
+    if pattern is not None:
+        return bool(pattern.search(found_text))
+    return True  # 未知 via 不算失败
+
+
 def _check_structure(
     verification_signals: list[dict] | None,
     found: str,
@@ -273,37 +360,12 @@ def _check_structure(
         if not isinstance(sig, dict):
             continue
         via = str(sig.get("verifiable_via") or "none").lower()
+        # 未知 via 不算失败也不算应用过
         if via == "none" or via not in (_HARD_VIA | _SOFT_VIA):
-            if via != "none":
-                # 未知 via 不算失败也不算应用过
-                pass
             continue
         applied = True
 
-        # 显式 verdict 优先
-        explicit = sig.get("verified", sig.get("passed"))
-        if explicit is not None:
-            ok = bool(explicit)
-        elif "status" in sig:
-            ok = str(sig["status"]).lower() in {"passed", "ok", "true", "success"}
-        else:
-            # 启发式: 看 found 是否带该结构应有的痕迹
-            if via == "dimensional":
-                ok = bool(_UNIT_RE.search(found_text))
-            elif via == "exact_formula":
-                ok = bool(_FORMULA_RE.search(found_text))
-            elif via == "conservation_law":
-                ok = bool(_CONSERVATION_RE.search(found_text))
-            elif via == "asymptotic_limit":
-                ok = bool(_ASYMPTOTIC_RE.search(found_text))
-            elif via == "symmetry_argument":
-                ok = bool(_SYMMETRY_RE.search(found_text))
-            elif via == "topological_invariant":
-                ok = bool(_TOPOLOGICAL_RE.search(found_text))
-            else:
-                ok = True  # 未知 via 不算失败
-
-        if not ok:
+        if not _structure_verdict(sig, found_text, via):
             return "failed" if via in _HARD_VIA else "soft_warning"
 
     return "passed" if applied else "not_applicable"
@@ -313,6 +375,7 @@ def _build_messages(sys_text: str, usr_text: str) -> list:
     """构造 langchain 消息, 失败时退到纯元组列表."""
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
+
         return [SystemMessage(content=sys_text), HumanMessage(content=usr_text)]
     except Exception:
         return [("system", sys_text), ("human", usr_text)]
@@ -355,13 +418,15 @@ def _parse_llm_json(text: str) -> tuple[str, str, str]:
     return (on_track, eq, dev)
 
 
-def _recall_context_bits(memory: Any | None, kb: Any | None, query: str, top_k: int = 2) -> str:
+def _recall_context_bits(
+    memory: Any | None, kb: Any | None, query: str, top_k: int = 2
+) -> str:
     """从 memory/kb 捞一点上下文喂给 LLM. 失败一律返回空串."""
     bits: list[str] = []
     if memory is not None:
         try:
             # category 是可选的, 不传试试看, 不行就退
-            for m in (memory.recall(query=query, top_k=top_k) or []):
+            for m in memory.recall(query=query, top_k=top_k) or []:
                 c = m.get("content", "") if isinstance(m, dict) else str(m)
                 if c:
                     bits.append(f"[memory] {c[:200]}")
@@ -369,13 +434,67 @@ def _recall_context_bits(memory: Any | None, kb: Any | None, query: str, top_k: 
             logger.debug("memory recall failed: %s", exc)
     if kb is not None:
         try:
-            for k in (kb.query(text=query, top_k=top_k) or []):
+            for k in kb.query(text=query, top_k=top_k) or []:
                 c = k.get("content", "") if isinstance(k, dict) else str(k)
                 if c:
                     bits.append(f"[kb] {c[:200]}")
         except Exception as exc:
             logger.debug("kb query failed: %s", exc)
     return "\n".join(bits)
+
+
+_EVAL_SYS_PROMPT = (
+    "你是中间步骤评估器. 判断当前步骤是否在目标链上, 证据质量如何, 偏差是什么."
+    '严格输出一行 JSON: {"on_track": "true|false|unsure", '
+    '"evidence_quality": "high|medium|low|unknown", "deviation": "一句话偏差或空"}.'
+    "不要输出 JSON 以外的内容."
+)
+
+
+def _chain_text(target_chains: list) -> str:
+    """目标链摘要文本."""
+    chain_lines = []
+    for tc in target_chains or []:
+        tid = _tc_attr(tc, "target_id", "?")
+        results = _tc_attr(tc, "required_results", []) or []
+        chain_lines.append(f"- {tid}: {'; '.join(str(r) for r in results)}")
+    return "\n".join(chain_lines) if chain_lines else "(无目标链)"
+
+
+def _evaluate_user_text(
+    chain_text: str, attempted: str, found: str, ctx_text: str
+) -> str:
+    """评估请求的 user 文本; 长文本截到 2000 字符."""
+    # ponytail: agent 可能写 20KB+ report, 全塞 LLM prompt 会让评估调 4-8 分钟.
+    #   截到 2000 字符够 LLM 判 on_track. ceiling: 分段摘要再评估.
+    usr = (
+        f"目标链:\n{chain_text}\n\n"
+        f"本步 attempted: {(attempted or '')[:2000]}\n"
+        f"本步 found: {(found or '')[:2000]}\n"
+    )
+    if ctx_text:
+        usr += f"\n参考上下文:\n{ctx_text}\n"
+    return usr
+
+
+def _invoke_eval_model(model: Any, messages: list) -> tuple[Any, str]:
+    """按 invoke/ainvoke 可用性调模型; 失败返回 (None, 错误说明)."""
+    try:
+        try:
+            asyncio.get_running_loop()
+            has_loop = True
+        except RuntimeError:
+            logger.debug("best-effort op failed", exc_info=True)
+            has_loop = False
+
+        if hasattr(model, "ainvoke") and not has_loop:
+            return asyncio.run(model.ainvoke(messages)), ""
+        if hasattr(model, "invoke"):
+            return model.invoke(messages), ""
+        return None, "LLM 评估失败: model 无 invoke"
+    except Exception as exc:
+        logger.debug("LLM evaluate failed: %s", exc)
+        return None, "LLM 评估失败"
 
 
 def _llm_evaluate(
@@ -394,56 +513,11 @@ def _llm_evaluate(
     if model is None:
         return ("unsure", "unknown", "LLM 评估失败: 无 model")
 
-    # 拼目标链摘要
-    chain_lines = []
-    for tc in target_chains or []:
-        tid = _tc_attr(tc, "target_id", "?")
-        results = _tc_attr(tc, "required_results", []) or []
-        chain_lines.append(f"- {tid}: {'; '.join(str(r) for r in results)}")
-    chain_text = "\n".join(chain_lines) if chain_lines else "(无目标链)"
-
     ctx_text = _recall_context_bits(memory, kb, found)
-
-    # ponytail: agent 可能写 20KB+ report, 全塞 LLM prompt 会让评估调 4-8 分钟.
-    #   截到 2000 字符够 LLM 判 on_track. ceiling: 分段摘要再评估.
-    _attempted_trunc = (attempted or "")[:2000]
-    _found_trunc = (found or "")[:2000]
-
-    sys = (
-        "你是中间步骤评估器. 判断当前步骤是否在目标链上, 证据质量如何, 偏差是什么."
-        '严格输出一行 JSON: {"on_track": "true|false|unsure", '
-        '"evidence_quality": "high|medium|low|unknown", "deviation": "一句话偏差或空"}.'
-        "不要输出 JSON 以外的内容."
-    )
-    usr = (
-        f"目标链:\n{chain_text}\n\n"
-        f"本步 attempted: {_attempted_trunc}\n"
-        f"本步 found: {_found_trunc}\n"
-    )
-    if ctx_text:
-        usr += f"\n参考上下文:\n{ctx_text}\n"
-
-    messages = _build_messages(sys, usr)
-
-    try:
-        # 优先 ainvoke, 已在事件循环里就退到同步 invoke. 两都没有就降级.
-        try:
-            asyncio.get_running_loop()
-            has_loop = True
-        except RuntimeError:
-            logger.debug("best-effort op failed", exc_info=True)
-            has_loop = False
-
-        if hasattr(model, "ainvoke") and not has_loop:
-            resp = asyncio.run(model.ainvoke(messages))
-        elif hasattr(model, "invoke"):
-            resp = model.invoke(messages)
-        else:
-            return ("unsure", "unknown", "LLM 评估失败: model 无 invoke")
-    except Exception as exc:
-        logger.debug("LLM evaluate failed: %s", exc)
-        return ("unsure", "unknown", "LLM 评估失败")
-
+    usr = _evaluate_user_text(_chain_text(target_chains), attempted, found, ctx_text)
+    resp, error = _invoke_eval_model(model, _build_messages(_EVAL_SYS_PROMPT, usr))
+    if resp is None:
+        return ("unsure", "unknown", error)
     return _parse_llm_json(_resp_to_text(resp))
 
 
@@ -531,12 +605,40 @@ def _parse_darwin_json(text: str) -> list[dict]:
         score_f = float(score)
         if score_f < 0.0 or score_f > 1.0:
             continue
-        result.append({
-            "simplex_id": sid,
-            "darwin_score": score_f,
-            "reason": reason,
-        })
+        result.append(
+            {
+                "simplex_id": sid,
+                "darwin_score": score_f,
+                "reason": reason,
+            }
+        )
     return result
+
+
+def _darwin_llm_enabled() -> bool:
+    """env HUGINN_DARWIN_LLM_EVAL=1 启用."""
+    return os.environ.get("HUGINN_DARWIN_LLM_EVAL", "0").lower() in ("1", "true", "yes")
+
+
+def _darwin_current_iter(trace_entries: list) -> int:
+    """从最后一条 entry 取 current_iter, 跟 rcb_runner 主循环的 iteration 对齐."""
+    last = trace_entries[-1]
+    if not isinstance(last, dict):
+        return 0
+    try:
+        return int(last.get("iteration", 0) or 0)
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return 0
+
+
+async def _darwin_call(model: Any, messages: list) -> str:
+    """调模型拿 darwin 评估文本."""
+    if hasattr(model, "ainvoke"):
+        return _resp_to_text(await model.ainvoke(messages))
+    if hasattr(model, "invoke"):
+        return _resp_to_text(model.invoke(messages))
+    raise ValueError("model 无 invoke/ainvoke")
 
 
 async def _llm_evaluate_darwin(
@@ -554,44 +656,26 @@ async def _llm_evaluate_darwin(
       升级路径: 用更便宜的 model (haiku) 或 batch API.
     """
     try:
-        if os.environ.get("HUGINN_DARWIN_LLM_EVAL", "0").lower() not in ("1", "true", "yes"):
+        if not _darwin_llm_enabled() or not trace_entries:
             return []
-
-        if not trace_entries:
-            return []
-
-        # current_iter 从最后一条 entry 取, 跟 rcb_runner 主循环的 iteration 对齐
-        last = trace_entries[-1]
-        current_iter = 0
-        if isinstance(last, dict):
-            try:
-                current_iter = int(last.get("iteration", 0) or 0)
-            except (TypeError, ValueError):
-                logger.debug("best-effort op failed", exc_info=True)
-                current_iter = 0
 
         interval = int(os.environ.get("HUGINN_DARWIN_LLM_INTERVAL", "5"))
-        if current_iter % interval != 0:
+        if _darwin_current_iter(trace_entries) % interval != 0:
             return []
-
         if model is None:
             return []
 
-        recent = trace_entries[-5:]
-        sys_text, user_text = _build_darwin_eval_prompt(recent, task_description)
+        sys_text, user_text = _build_darwin_eval_prompt(
+            trace_entries[-5:], task_description
+        )
         messages = _build_messages(sys_text, user_text)
 
         # 复用项目 with_retry 包装, 走统一的 429/529/超时 重试机制
         from huginn.llm_retry import with_retry
 
-        async def _call() -> str:
-            if hasattr(model, "ainvoke"):
-                return _resp_to_text(await model.ainvoke(messages))
-            if hasattr(model, "invoke"):
-                return _resp_to_text(model.invoke(messages))
-            raise ValueError("model 无 invoke/ainvoke")
-
-        result_text = await with_retry(_call, source="darwin_llm_eval")
+        result_text = await with_retry(
+            lambda: _darwin_call(model, messages), source="darwin_llm_eval"
+        )
         return _parse_darwin_json(result_text)
     except Exception as e:
         logger.warning("darwin_llm_eval_fallback: reason=%s", e)
@@ -674,6 +758,43 @@ def _classify_tool_error(err: str) -> str:
     return ""
 
 
+def _accumulate_tool_event(
+    event: dict[str, Any], stats: dict[str, int], seen_calls: list[str]
+) -> None:
+    """把单条工具事件累加进 stats."""
+    etype = event["etype"]
+    if etype == "tool.call":
+        stats["total"] += 1
+        sig = f"{event['tool_name']}:{str(event['data'].get('input', ''))[:64]}"
+        if sig in seen_calls:
+            stats["retry"] += 1
+        seen_calls.append(sig)
+    elif etype == "tool.result":
+        stats["success"] += 1
+    elif etype == "tool.error":
+        kind = _classify_tool_error(event["error"])
+        if kind == "timeout":
+            stats["timeout"] += 1
+        elif kind == "param":
+            stats["param_err"] += 1
+
+
+def _scan_tool_events(path: Path, step_id: int) -> dict[str, int] | None:
+    """扫 audit.jsonl 统计工具事件; 读失败返回 None."""
+    stats = {"total": 0, "success": 0, "retry": 0, "timeout": 0, "param_err": 0}
+    seen_calls: list[str] = []  # retry 检测: 同 tool+input 二次出现算 retry
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                event = _parse_tool_event(line, step_id)
+                if event is not None:
+                    _accumulate_tool_event(event, stats, seen_calls)
+    except Exception as exc:
+        logger.debug("compute_tool_call_health failed: %s", exc)
+        return None
+    return stats
+
+
 def compute_tool_call_health(
     audit_log_path: Any,
     step_id: int,
@@ -690,55 +811,98 @@ def compute_tool_call_health(
     """
     if audit_log_path is None:
         return None
-    from pathlib import Path
-
     path = Path(audit_log_path)
     if not path.exists():
         return None
 
-    total = 0
-    success = 0
-    retry = 0
-    timeout = 0
-    param_err = 0
-    seen_calls: list[str] = []  # retry 检测: 同 tool+input 二次出现算 retry
-
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                event = _parse_tool_event(line, step_id)
-                if event is None:
-                    continue
-                if event["etype"] == "tool.call":
-                    total += 1
-                    sig = f"{event['tool_name']}:{str(event['data'].get('input', ''))[:64]}"
-                    if sig in seen_calls:
-                        retry += 1
-                    seen_calls.append(sig)
-                elif event["etype"] == "tool.result":
-                    success += 1
-                elif event["etype"] == "tool.error":
-                    kind = _classify_tool_error(event["error"])
-                    if kind == "timeout":
-                        timeout += 1
-                    elif kind == "param":
-                        param_err += 1
-    except Exception as exc:
-        logger.debug("compute_tool_call_health failed: %s", exc)
+    stats = _scan_tool_events(path, step_id)
+    if stats is None or stats["total"] == 0:
         return None
 
-    if total == 0:
-        return None
-
-    sr = success / total if total > 0 else 1.0
+    total = stats["total"]
     return ToolCallHealth(
-        success_rate=sr,
+        success_rate=stats["success"] / total if total > 0 else 1.0,
         total_calls=total,
-        retry_count=retry,
-        timeout_count=timeout,
-        param_error_count=param_err,
+        retry_count=stats["retry"],
+        timeout_count=stats["timeout"],
+        param_error_count=stats["param_err"],
     )
 
+
+def _mechanical_verdict(
+    target_id: str | None, struct: str
+) -> tuple[str, str, str] | None:
+    """机械信号能定 on_track 就返回 (on_track, evidence_quality, deviation), 否则 None."""
+    if target_id is not None and struct != "failed":
+        # 命中目标链 + 结构没硬失败 → 在轨
+        return "true", "high" if struct == "passed" else "medium", ""
+    if struct == "failed":
+        # 结构硬失败 → 明确脱轨, 不再调 LLM 浪费 token
+        return "false", "low", "结构不变量检查 failed"
+    return None
+
+
+def _auto_tool_health(
+    tool_call_health: ToolCallHealth | None,
+    audit_log_path: Any,
+    step_id: int,
+) -> ToolCallHealth | None:
+    """没传 health 就从 audit_log 自动算; 失败保持原值."""
+    if tool_call_health is not None or audit_log_path is None:
+        return tool_call_health
+    try:
+        return compute_tool_call_health(audit_log_path, step_id)
+    except Exception as exc:
+        logger.debug("auto tool_call_health failed: %s", exc)
+        return tool_call_health
+
+
+def _kg_write_episode(
+    kg: Any,
+    step_id: int,
+    attempted: str,
+    found: str,
+    on_track: str,
+    persona: Any | None,
+    target_id: str | None,
+    prev_step_id: int | None,
+) -> None:
+    """25.1: 写 episode + dep edge 到 kg. 失败不阻塞评估返回."""
+    # ponytail: result 直接用 on_track ("true"/"false"/"unsure"), 颗粒度对
+    #   caller 够用. 升级路径: 单独 pass/fail 字段 + LLM 判 dep_type (data/causal).
+    try:
+        kg.add_episode_node(
+            step_id=step_id,
+            attempted=attempted,
+            found=found,
+            result=on_track,
+            persona=(str(persona) if persona is not None else None),
+            target_chain_ref=target_id,
+        )
+        if prev_step_id is not None:
+            # ponytail: 默认 method 依赖, data/causal 升级路径是 LLM 判定
+            kg.add_dependency_edge(prev_step_id, step_id, dep_type="method")
+    except Exception as exc:
+        print(f"[StepEvaluator] kg write warning: {exc}", flush=True)
+
+
+def _resolve_verdict(
+    target_id: str | None,
+    struct: str,
+    model: Any | None,
+    attempted: str,
+    found: str,
+    target_chains: list,
+    memory: Any | None,
+    kb: Any | None,
+) -> tuple[str, str, str]:
+    """机械信号优先判定 on_track, 不足再 LLM 兜底."""
+    verdict = _mechanical_verdict(target_id, struct)
+    if verdict is not None:
+        return verdict
+    if model is not None:
+        return _llm_evaluate(attempted, found, target_chains, memory, kb, model)
+    return "unsure", "unknown", "机械信号不足且无 model"
 
 
 def evaluate_step(
@@ -760,57 +924,22 @@ def evaluate_step(
     found = str(meta_trace_entry.get("found", "") or "")
 
     # 25.3: 没传 health 就从 audit_log 自动算
-    if tool_call_health is None and audit_log_path is not None:
-        try:
-            tool_call_health = compute_tool_call_health(audit_log_path, step_id)
-        except Exception as exc:
-            logger.debug("auto tool_call_health failed: %s", exc)
+    tool_call_health = _auto_tool_health(tool_call_health, audit_log_path, step_id)
 
     target_id, _matched = _check_target_chain_match(found, target_chains)
     struct = _check_structure(verification_signals, found)
 
-    # 机械信号优先判定 on_track
-    if target_id is not None and struct != "failed":
-        # 命中目标链 + 结构没硬失败 → 在轨
-        on_track = "true"
-        evidence_quality = "high" if struct == "passed" else "medium"
-        deviation = ""
-    elif struct == "failed":
-        # 结构硬失败 → 明确脱轨, 不再调 LLM 浪费 token
-        on_track = "false"
-        evidence_quality = "low"
-        deviation = "结构不变量检查 failed"
-    else:
-        # 机械信号不足 → LLM 兜底
-        if model is not None:
-            on_track, evidence_quality, deviation = _llm_evaluate(
-                attempted, found, target_chains, memory, kb, model,
-            )
-        else:
-            on_track, evidence_quality, deviation = (
-                "unsure", "unknown", "机械信号不足且无 model",
-            )
+    # 机械信号优先判定 on_track, 不足再 LLM 兜底
+    on_track, evidence_quality, deviation = _resolve_verdict(
+        target_id, struct, model, attempted, found, target_chains, memory, kb
+    )
 
     pmk = _make_pmk_feedback(persona, memory, kb, on_track, evidence_quality, deviation)
 
-    # 25.1: 写 episode + dep edge 到 kg. 失败不阻塞评估返回.
-    # ponytail: result 直接用 on_track ("true"/"false"/"unsure"), 颗粒度对
-    #   caller 够用. 升级路径: 单独 pass/fail 字段 + LLM 判 dep_type (data/causal).
     if kg is not None:
-        try:
-            kg.add_episode_node(
-                step_id=step_id,
-                attempted=attempted,
-                found=found,
-                result=on_track,
-                persona=(str(persona) if persona is not None else None),
-                target_chain_ref=target_id,
-            )
-            if prev_step_id is not None:
-                # ponytail: 默认 method 依赖, data/causal 升级路径是 LLM 判定
-                kg.add_dependency_edge(prev_step_id, step_id, dep_type="method")
-        except Exception as exc:
-            print(f"[StepEvaluator] kg write warning: {exc}", flush=True)
+        _kg_write_episode(
+            kg, step_id, attempted, found, on_track, persona, target_id, prev_step_id
+        )
 
     return StepEvaluation(
         step_id=step_id,
@@ -899,69 +1028,139 @@ if __name__ == "__main__":
 
     # dict 形式也兼容
     tc_dict = {"target_id": "T2", "required_results": ["diffusion coefficient"]}
-    tid, matched = _check_target_chain_match("diffusion coefficient = 1e-9 m²/s", [tc_dict])
-    assert tid == "T2" and "diffusion" in matched.lower(), f"dict tc: tid={tid} matched={matched!r}"
+    tid, matched = _check_target_chain_match(
+        "diffusion coefficient = 1e-9 m²/s", [tc_dict]
+    )
+    assert tid == "T2" and "diffusion" in matched.lower(), (
+        f"dict tc: tid={tid} matched={matched!r}"
+    )
 
     # 2) _check_structure
     sig_dim = [{"verifiable_via": "dimensional"}]
-    assert _check_structure(sig_dim, "no units here") == "failed", "dimensional missing units should fail"
-    assert _check_structure(sig_dim, "energy = -3.5 eV") == "passed", "dimensional with units should pass"
+    assert _check_structure(sig_dim, "no units here") == "failed", (
+        "dimensional missing units should fail"
+    )
+    assert _check_structure(sig_dim, "energy = -3.5 eV") == "passed", (
+        "dimensional with units should pass"
+    )
 
     sig_none = [{"verifiable_via": "none"}]
-    assert _check_structure(sig_none, "anything") == "not_applicable", "none via → not_applicable"
-    assert _check_structure(None, "anything") == "not_applicable", "no signals → not_applicable"
-    assert _check_structure([], "anything") == "not_applicable", "empty signals → not_applicable"
+    assert _check_structure(sig_none, "anything") == "not_applicable", (
+        "none via → not_applicable"
+    )
+    assert _check_structure(None, "anything") == "not_applicable", (
+        "no signals → not_applicable"
+    )
+    assert _check_structure([], "anything") == "not_applicable", (
+        "empty signals → not_applicable"
+    )
 
     # hard 失败 vs soft 警告
     sig_sym = [{"verifiable_via": "symmetry_argument"}]
-    assert _check_structure(sig_sym, "plain text without relevant markers") == "soft_warning", "soft fail → soft_warning"
-    assert _check_structure(sig_sym, "follows from symmetry of the lattice") == "passed", "soft pass → passed"
+    assert (
+        _check_structure(sig_sym, "plain text without relevant markers")
+        == "soft_warning"
+    ), "soft fail → soft_warning"
+    assert (
+        _check_structure(sig_sym, "follows from symmetry of the lattice") == "passed"
+    ), "soft pass → passed"
 
     sig_cons = [{"verifiable_via": "conservation_law"}]
-    assert _check_structure(sig_cons, "energy conserved") == "passed", "conservation pass"
-    assert _check_structure(sig_cons, "no relevant text") == "failed", "conservation fail → failed"
+    assert _check_structure(sig_cons, "energy conserved") == "passed", (
+        "conservation pass"
+    )
+    assert _check_structure(sig_cons, "no relevant text") == "failed", (
+        "conservation fail → failed"
+    )
 
     # 显式 verified 覆盖启发式
     sig_explicit = [{"verifiable_via": "dimensional", "verified": True}]
-    assert _check_structure(sig_explicit, "no units") == "passed", "explicit verified=True overrides heuristic"
+    assert _check_structure(sig_explicit, "no units") == "passed", (
+        "explicit verified=True overrides heuristic"
+    )
     sig_explicit_fail = [{"verifiable_via": "dimensional", "verified": False}]
-    assert _check_structure(sig_explicit_fail, "energy = -3.5 eV") == "failed", "explicit verified=False overrides heuristic"
+    assert _check_structure(sig_explicit_fail, "energy = -3.5 eV") == "failed", (
+        "explicit verified=False overrides heuristic"
+    )
 
     # 3) evaluate_step 机械信号足够 (匹配 target chain) → on_track="true", 不调 LLM
-    entry = {"iteration": 1, "attempted": "compute formation energy", "found": "formation energy = -3.5 eV"}
-    ev = evaluate_step(entry, [tc], sig_dim, memory=None, kb=None, persona=None, model=None)
-    assert ev.on_track == "true", f"mechanical on_track should be true, got {ev.on_track}"
-    assert ev.target_chain_ref == "T1", f"target_chain_ref should be T1, got {ev.target_chain_ref}"
-    assert ev.evidence_quality == "high", f"passed struct → high evidence, got {ev.evidence_quality}"
+    entry = {
+        "iteration": 1,
+        "attempted": "compute formation energy",
+        "found": "formation energy = -3.5 eV",
+    }
+    ev = evaluate_step(
+        entry, [tc], sig_dim, memory=None, kb=None, persona=None, model=None
+    )
+    assert ev.on_track == "true", (
+        f"mechanical on_track should be true, got {ev.on_track}"
+    )
+    assert ev.target_chain_ref == "T1", (
+        f"target_chain_ref should be T1, got {ev.target_chain_ref}"
+    )
+    assert ev.evidence_quality == "high", (
+        f"passed struct → high evidence, got {ev.evidence_quality}"
+    )
     assert ev.step_id == 1
 
     # 结构硬失败 → on_track=false (有 model 也不该调, 机械已经判死)
-    entry_bad = {"iteration": 2, "attempted": "compute energy", "found": "some text without units"}
-    ev_bad = evaluate_step(entry_bad, [tc], sig_dim, memory=None, kb=None, persona=None, model=None)
-    assert ev_bad.on_track == "false", f"hard struct fail → false, got {ev_bad.on_track}"
-    assert ev_bad.evidence_quality == "low", f"hard struct fail → low, got {ev_bad.evidence_quality}"
+    entry_bad = {
+        "iteration": 2,
+        "attempted": "compute energy",
+        "found": "some text without units",
+    }
+    ev_bad = evaluate_step(
+        entry_bad, [tc], sig_dim, memory=None, kb=None, persona=None, model=None
+    )
+    assert ev_bad.on_track == "false", (
+        f"hard struct fail → false, got {ev_bad.on_track}"
+    )
+    assert ev_bad.evidence_quality == "low", (
+        f"hard struct fail → low, got {ev_bad.evidence_quality}"
+    )
     assert ev_bad.structure_check == "failed"
 
     # 机械不足 (无目标链匹配 + 无结构信号) + 无 model → unsure
-    entry_unsure = {"iteration": 3, "attempted": "explore", "found": "no match no signal"}
-    ev_unsure = evaluate_step(entry_unsure, [tc], None, memory=None, kb=None, persona=None, model=None)
-    assert ev_unsure.on_track == "unsure", f"no mechanical signal + no model → unsure, got {ev_unsure.on_track}"
+    entry_unsure = {
+        "iteration": 3,
+        "attempted": "explore",
+        "found": "no match no signal",
+    }
+    ev_unsure = evaluate_step(
+        entry_unsure, [tc], None, memory=None, kb=None, persona=None, model=None
+    )
+    assert ev_unsure.on_track == "unsure", (
+        f"no mechanical signal + no model → unsure, got {ev_unsure.on_track}"
+    )
     assert ev_unsure.evidence_quality == "unknown"
 
     # 命中目标链但结构 soft_warning → 仍在轨, evidence medium
-    entry_soft = {"iteration": 4, "attempted": "analyze", "found": "follows from symmetry of the lattice"}
-    ev_soft = evaluate_step(entry_soft, [tc], sig_sym, memory=None, kb=None, persona=None, model=None)
+    entry_soft = {
+        "iteration": 4,
+        "attempted": "analyze",
+        "found": "follows from symmetry of the lattice",
+    }
+    ev_soft = evaluate_step(
+        entry_soft, [tc], sig_sym, memory=None, kb=None, persona=None, model=None
+    )
     # 注意: "symmetry" 不在 tc 的 required_results 关键词里 → target_id 是 None
     # 但 struct=passed, 既没命中目标链也没硬失败 → 走 LLM 兜底, 无 model → unsure
     # 这里验证: 结构 soft_warning 时 found 没匹配目标链的兜底路径
-    assert ev_soft.structure_check == "passed", f"symmetry present → passed, got {ev_soft.structure_check}"
+    assert ev_soft.structure_check == "passed", (
+        f"symmetry present → passed, got {ev_soft.structure_check}"
+    )
 
     # 4) should_continue 连续 3 步 false → (False, msg); 有 true → (True, "")
     def _mk(on_track: str, eq: str = "medium") -> StepEvaluation:
         return StepEvaluation(
-            step_id=0, attempted="", found="", target_chain_ref=None,
-            on_track=on_track, structure_check="not_applicable",
-            evidence_quality=eq, deviation="",
+            step_id=0,
+            attempted="",
+            found="",
+            target_chain_ref=None,
+            on_track=on_track,
+            structure_check="not_applicable",
+            evidence_quality=eq,
+            deviation="",
         )
 
     ok, msg = should_continue([_mk("false"), _mk("false"), _mk("false")])
@@ -976,7 +1175,9 @@ if __name__ == "__main__":
     # 5) should_continue 连续 3 步 tool_call_health 异常 → (False, "Reflector")
     def _mk_anomalous() -> StepEvaluation:
         ev_ = _mk("true")
-        ev_.tool_call_health = ToolCallHealth(success_rate=0.1, timeout_count=1, total_calls=5)
+        ev_.tool_call_health = ToolCallHealth(
+            success_rate=0.1, timeout_count=1, total_calls=5
+        )
         return ev_
 
     ok, msg = should_continue([_mk_anomalous(), _mk_anomalous(), _mk_anomalous()])
@@ -988,32 +1189,49 @@ if __name__ == "__main__":
     assert ok is True, f"middle non-anomalous → continue, got {ok}/{msg!r}"
 
     # 6) ToolCallHealth.is_anomalous
-    assert ToolCallHealth(success_rate=0.2).is_anomalous() is True, "0.2 < 0.3 → anomalous"
+    assert ToolCallHealth(success_rate=0.2).is_anomalous() is True, (
+        "0.2 < 0.3 → anomalous"
+    )
     assert ToolCallHealth(success_rate=0.9).is_anomalous() is False, "0.9 >= 0.3 → ok"
-    assert ToolCallHealth(success_rate=1.0, timeout_count=1).is_anomalous() is True, "timeout → anomalous"
-    assert ToolCallHealth(success_rate=1.0, param_error_count=1).is_anomalous() is True, "param_err → anomalous"
+    assert ToolCallHealth(success_rate=1.0, timeout_count=1).is_anomalous() is True, (
+        "timeout → anomalous"
+    )
+    assert (
+        ToolCallHealth(success_rate=1.0, param_error_count=1).is_anomalous() is True
+    ), "param_err → anomalous"
     assert ToolCallHealth().is_anomalous() is False, "default → ok"
 
     # 7) format_step_eval_text 输出含 on_track、evidence_quality
     text = format_step_eval_text(ev)
-    assert "on_track" in text and "evidence_quality" in text, f"format missing fields: {text!r}"
+    assert "on_track" in text and "evidence_quality" in text, (
+        f"format missing fields: {text!r}"
+    )
     assert "[StepEval #1]" in text, f"format missing step id: {text!r}"
 
     # 异常工具健康也会出现在文本里
     ev_anom = _mk_anomalous()
     ev_anom.step_id = 99
     text_anom = format_step_eval_text(ev_anom)
-    assert "tool_health" in text_anom and "anomalous" in text_anom, f"format missing tool health: {text_anom!r}"
+    assert "tool_health" in text_anom and "anomalous" in text_anom, (
+        f"format missing tool health: {text_anom!r}"
+    )
 
     # evidence_quality 持续低 → 触发"补数据"
-    ok, msg = should_continue([_mk("unsure", "low"), _mk("unsure", "low"), _mk("unsure", "low")])
-    assert ok is False and ("补数据" in msg or "文献" in msg), f"3x low → 补数据, got {ok}/{msg!r}"
+    ok, msg = should_continue(
+        [_mk("unsure", "low"), _mk("unsure", "low"), _mk("unsure", "low")]
+    )
+    assert ok is False and ("补数据" in msg or "文献" in msg), (
+        f"3x low → 补数据, got {ok}/{msg!r}"
+    )
 
     # 8) compute_tool_call_health: 缺文件 → None; 解析正常 → 字段对得上
     import tempfile as _tf
     from pathlib import Path as _Path
+
     assert compute_tool_call_health(None, 1) is None, "None path → None"
-    assert compute_tool_call_health(_Path("/no/such/file.jsonl"), 1) is None, "missing file → None"
+    assert compute_tool_call_health(_Path("/no/such/file.jsonl"), 1) is None, (
+        "missing file → None"
+    )
     with _tf.TemporaryDirectory() as _td:
         _ap = _Path(_td) / "audit.jsonl"
         _ap.write_text(
@@ -1023,15 +1241,19 @@ if __name__ == "__main__":
             '{"type":"tool.error","data":{"tool":"qe","error":"TimeoutError"}}\n'
             '{"type":"tool.error","data":{"tool":"qe","error":"ValidationError: bad param"}}\n'
             '{"type":"tool.error","data":{"tool":"qe","error":"OtherError"}}\n'
-            'not-json-line\n',  # 解析失败的行跳过
+            "not-json-line\n",  # 解析失败的行跳过
             encoding="utf-8",
         )
         _h = compute_tool_call_health(_ap, 1)
         assert _h is not None, "valid audit → health obj"
         assert _h.total_calls == 2, f"2 tool.call → total=2, got {_h.total_calls}"
         assert _h.retry_count == 1, f"重复 input → retry=1, got {_h.retry_count}"
-        assert _h.timeout_count == 1, f"timeout error → timeout=1, got {_h.timeout_count}"
-        assert _h.param_error_count == 1, f"validation error → param=1, got {_h.param_error_count}"
+        assert _h.timeout_count == 1, (
+            f"timeout error → timeout=1, got {_h.timeout_count}"
+        )
+        assert _h.param_error_count == 1, (
+            f"validation error → param=1, got {_h.param_error_count}"
+        )
         # success_rate = 1 success / 2 calls = 0.5
         assert abs(_h.success_rate - 0.5) < 1e-9, f"sr=0.5, got {_h.success_rate}"
         # 空文件 → None
@@ -1042,6 +1264,7 @@ if __name__ == "__main__":
     # === v14 Task 11: LLM darwin 评估 self-check ===
     class _MockLLM:
         """简单 mock, 跟 langchain BaseChatModel 的 ainvoke 接口对齐."""
+
         def __init__(self, response: str = "", error: Exception | None = None):
             self.response = response
             self.error = error
@@ -1057,6 +1280,7 @@ if __name__ == "__main__":
         def __init__(self):
             super().__init__()
             self.records: list[str] = []
+
         def emit(self, record):
             self.records.append(self.format(record))
 
@@ -1066,11 +1290,23 @@ if __name__ == "__main__":
         # case 1: mock LLM 返回固定 JSON, 断言 darwin_score 被覆盖
         os.environ["HUGINN_DARWIN_LLM_EVAL"] = "1"
         os.environ["HUGINN_DARWIN_LLM_INTERVAL"] = "5"
-        _entries = [{"iteration": 5, "simplex_id": "s1", "attempted": "a", "found": "f", "evidence": "e"}]
-        _mock = _MockLLM(response='[{"simplex_id": "s1", "darwin_score": 0.9, "reason": "good"}]')
+        _entries = [
+            {
+                "iteration": 5,
+                "simplex_id": "s1",
+                "attempted": "a",
+                "found": "f",
+                "evidence": "e",
+            }
+        ]
+        _mock = _MockLLM(
+            response='[{"simplex_id": "s1", "darwin_score": 0.9, "reason": "good"}]'
+        )
         _result = asyncio.run(_llm_evaluate_darwin(_entries, _mock, "test task"))
         assert len(_result) == 1, f"case1: expect 1 entry, got {len(_result)}"
-        assert _result[0]["darwin_score"] == 0.9, f"case1: darwin_score=0.9, got {_result[0]['darwin_score']}"
+        assert _result[0]["darwin_score"] == 0.9, (
+            f"case1: darwin_score=0.9, got {_result[0]['darwin_score']}"
+        )
         assert _result[0]["simplex_id"] == "s1"
         assert _mock.call_count == 1, f"case1: LLM called once, got {_mock.call_count}"
 
@@ -1080,36 +1316,72 @@ if __name__ == "__main__":
         logger.addHandler(_cap)
         try:
             _mock_err = _MockLLM(error=RuntimeError("simulated timeout"))
-            _result2 = asyncio.run(_llm_evaluate_darwin(_entries, _mock_err, "test task"))
-            assert _result2 == [], f"case2: expect empty list on fallback, got {_result2}"
+            _result2 = asyncio.run(
+                _llm_evaluate_darwin(_entries, _mock_err, "test task")
+            )
+            assert _result2 == [], (
+                f"case2: expect empty list on fallback, got {_result2}"
+            )
             _log_text = " ".join(_cap.records)
-            assert "darwin_llm_eval_fallback: reason=" in _log_text, f"case2: log missing fallback marker, got {_log_text!r}"
+            assert "darwin_llm_eval_fallback: reason=" in _log_text, (
+                f"case2: log missing fallback marker, got {_log_text!r}"
+            )
         finally:
             logger.removeHandler(_cap)
 
         # case 3: env HUGINN_DARWIN_LLM_EVAL=0, 断言直接返回空 list 不调 LLM
         os.environ["HUGINN_DARWIN_LLM_EVAL"] = "0"
-        _mock3 = _MockLLM(response='[{"simplex_id": "s1", "darwin_score": 0.9, "reason": "good"}]')
+        _mock3 = _MockLLM(
+            response='[{"simplex_id": "s1", "darwin_score": 0.9, "reason": "good"}]'
+        )
         _result3 = asyncio.run(_llm_evaluate_darwin(_entries, _mock3, "test task"))
         assert _result3 == [], f"case3: env=0 → empty list, got {_result3}"
-        assert _mock3.call_count == 0, f"case3: LLM not called, got call_count={_mock3.call_count}"
+        assert _mock3.call_count == 0, (
+            f"case3: LLM not called, got call_count={_mock3.call_count}"
+        )
 
         # case 4: env=1 + interval=5 + current_iter=3, 断言不触发 LLM (3%5!=0)
         os.environ["HUGINN_DARWIN_LLM_EVAL"] = "1"
         os.environ["HUGINN_DARWIN_LLM_INTERVAL"] = "5"
-        _entries4 = [{"iteration": 3, "simplex_id": "s4", "attempted": "a", "found": "f", "evidence": "e"}]
-        _mock4 = _MockLLM(response='[{"simplex_id": "s4", "darwin_score": 0.9, "reason": "good"}]')
+        _entries4 = [
+            {
+                "iteration": 3,
+                "simplex_id": "s4",
+                "attempted": "a",
+                "found": "f",
+                "evidence": "e",
+            }
+        ]
+        _mock4 = _MockLLM(
+            response='[{"simplex_id": "s4", "darwin_score": 0.9, "reason": "good"}]'
+        )
         _result4 = asyncio.run(_llm_evaluate_darwin(_entries4, _mock4, "test task"))
         assert _result4 == [], f"case4: iter=3%5!=0 → empty, got {_result4}"
-        assert _mock4.call_count == 0, f"case4: LLM not called, got call_count={_mock4.call_count}"
+        assert _mock4.call_count == 0, (
+            f"case4: LLM not called, got call_count={_mock4.call_count}"
+        )
 
         # case 5: env=1 + interval=5 + current_iter=5, 断言触发 LLM (5%5==0)
-        _entries5 = [{"iteration": 5, "simplex_id": "s5", "attempted": "a", "found": "f", "evidence": "e"}]
-        _mock5 = _MockLLM(response='[{"simplex_id": "s5", "darwin_score": 0.7, "reason": "ok"}]')
+        _entries5 = [
+            {
+                "iteration": 5,
+                "simplex_id": "s5",
+                "attempted": "a",
+                "found": "f",
+                "evidence": "e",
+            }
+        ]
+        _mock5 = _MockLLM(
+            response='[{"simplex_id": "s5", "darwin_score": 0.7, "reason": "ok"}]'
+        )
         _result5 = asyncio.run(_llm_evaluate_darwin(_entries5, _mock5, "test task"))
         assert len(_result5) == 1, f"case5: iter=5%5==0 → 1 entry, got {len(_result5)}"
-        assert _result5[0]["darwin_score"] == 0.7, f"case5: darwin_score=0.7, got {_result5[0]['darwin_score']}"
-        assert _mock5.call_count == 1, f"case5: LLM called once, got call_count={_mock5.call_count}"
+        assert _result5[0]["darwin_score"] == 0.7, (
+            f"case5: darwin_score=0.7, got {_result5[0]['darwin_score']}"
+        )
+        assert _mock5.call_count == 1, (
+            f"case5: LLM called once, got call_count={_mock5.call_count}"
+        )
 
         # 额外: _parse_darwin_json 字段校验 — 非法值跳过, 不整体抛
         _parsed = _parse_darwin_json(
@@ -1120,7 +1392,9 @@ if __name__ == "__main__":
             ' {"simplex_id": "ok4", "darwin_score": true, "reason": "bool score"}]'
         )
         assert len(_parsed) == 1, f"parse: only 1 valid entry, got {len(_parsed)}"
-        assert _parsed[0]["simplex_id"] == "ok", f"parse: valid entry sid=ok, got {_parsed[0]['simplex_id']}"
+        assert _parsed[0]["simplex_id"] == "ok", (
+            f"parse: valid entry sid=ok, got {_parsed[0]['simplex_id']}"
+        )
     finally:
         # 恢复原 env, 不污染其它测试
         if _saved_eval is not None:

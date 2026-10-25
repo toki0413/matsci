@@ -18,6 +18,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
@@ -59,6 +60,83 @@ def self_check_v14_task4() -> None:
     print("v14 Task 4 self-check PASSED")
 
 
+# v14 Task 6 self-check 的 base prompt 字面量 (抽成常量便于复用)
+_V14T6_STEP2_BASE = (
+    "Now execute the task following your methodology checklist. "
+    "Implement each [EXACT] component as-specified in the paper. "
+    "If a component fails, debug and push through — do NOT silently substitute a simpler model. "
+    "Write report/report.md with your results, referencing the checklist items you covered. "
+    "Use file_write_tool for report.md, code_tool for analysis/plotting, bash_tool for running scripts."
+)
+_V14T6_ITER_BASE = (
+    "Continue execution. Iteration 3/4.\n"
+    "Review the Research Trace section above for what you've already tried.\n"
+    "Identify the NEXT gap from your checklist and address it.\n"
+    "OVERWRITE report/report.md with updated results as you make progress."
+)
+
+
+def _v14t6_coordinate(hc: Any) -> tuple[str, list]:
+    """场景 1: iter 2 + β_1=1 + verdict=fix_needed — 触发 curl+harmonic+conflict 仲裁."""
+    return hc.coordinate(
+        iter_n=2,
+        csm_state="S4_CONSTRUCT",
+        beta=(1, 1),
+        last_verdict="fix_needed",
+        fcm_winner="按选定方案执行: 用 PDE 求解器数值离散化",
+        scan_text=None,
+        step2_prompt=_V14T6_STEP2_BASE,
+        iter_prompt=_V14T6_ITER_BASE,
+        compass="coverage=60%, missing band gap section",
+        step_eval="gap_severity=0.4, missing [EXACT] component: band_gap_calculation",
+        drift_info="drift=0.2, target_chain进度偏离 20%",
+        imagination="换数学结构家族: PDE ↔ variational formulation",
+        meta_agent="Reflector: 上轮 tool_call_health=poor, 3 次 retry",
+    )
+
+
+def _v14t6_check_markers(prompt: str) -> list[str]:
+    """断言 hint 至少含一个族标识, 返回命中的标识列表."""
+    family_markers = ("[gradient block]", "[progress audit]", "[topology probe]")
+    found_markers = [m for m in family_markers if m in prompt]
+    assert found_markers, (
+        f"no family marker in prompt, expected ≥1 of {family_markers}:\n{prompt}"
+    )
+    return found_markers
+
+
+def _v14t6_check_hint_len(prompt: str) -> int:
+    """断言 hint 块 (去掉 base instruction) ≤1500 chars, 返回其长度."""
+    # ponytail: 估算法 — iter 2 时 gradient block 内容就是 iter_base (无 scan/fcm 叠加),
+    #   所以 prompt 总长减去 iter_base 长度, 余下视为 hint 部分 (含 marker header + curl/harmonic 块).
+    #   天花板: gradient block 里若再嵌 scan_text/fcm_winner (iter 0 场景), 这部分会被
+    #   当成 hint 多算, 但 spec 对 iter 0 限制更宽松 (verdict=None 不触发 curl), 影响可控.
+    hint_len = max(0, len(prompt) - len(_V14T6_ITER_BASE))
+    assert hint_len <= 1500, (
+        f"hint block {hint_len} chars > 1500, prompt total={len(prompt)}:\n{prompt}"
+    )
+    return hint_len
+
+
+def _v14t6_check_legacy(legacy_step2_fn: Any, legacy_iter_fn: Any) -> None:
+    """legacy 路径也跑一遍 — 确认 _legacy_build_* 函数不抛错, 产物是字符串."""
+    legacy_step2 = legacy_step2_fn(
+        _V14T6_STEP2_BASE, "\n\n## scan hint", "\n\n## fcm hint"
+    )
+    assert isinstance(legacy_step2, str) and "scan hint" in legacy_step2
+    legacy_iter = legacy_iter_fn(
+        _V14T6_ITER_BASE,
+        "compass text",
+        "\n\n## fcm reminder",
+        "\n\n## kb chunks",
+        "\n\n## merge hint",
+        "\n\n## imagination",
+        "\n\n## ctx inject",
+    )
+    assert isinstance(legacy_iter, str) and "compass text" in legacy_iter
+    assert "kb chunks" in legacy_iter and "imagination" in legacy_iter
+
+
 def self_check_v14_task6() -> None:
     """v14 Task 6 self-check: HintCoordinator 接入 rcb_runner 后产物.
 
@@ -74,69 +152,121 @@ def self_check_v14_task6() -> None:
         _legacy_build_step2_prompt,
     )
 
-    _hc = HintCoordinator()
-    _step2_base = (
-        "Now execute the task following your methodology checklist. "
-        "Implement each [EXACT] component as-specified in the paper. "
-        "If a component fails, debug and push through — do NOT silently substitute a simpler model. "
-        "Write report/report.md with your results, referencing the checklist items you covered. "
-        "Use file_write_tool for report.md, code_tool for analysis/plotting, bash_tool for running scripts."
-    )
-    _iter_base = (
-        "Continue execution. Iteration 3/4.\n"
-        "Review the Research Trace section above for what you've already tried.\n"
-        "Identify the NEXT gap from your checklist and address it.\n"
-        "OVERWRITE report/report.md with updated results as you make progress."
-    )
-    # 场景 1: iter 2 + β_1=1 + verdict=fix_needed — 触发 curl+harmonic+conflict 仲裁
-    prompt, events = _hc.coordinate(
-        iter_n=2,
-        csm_state="S4_CONSTRUCT",
-        beta=(1, 1),
-        last_verdict="fix_needed",
-        fcm_winner="按选定方案执行: 用 PDE 求解器数值离散化",
-        scan_text=None,
-        step2_prompt=_step2_base,
-        iter_prompt=_iter_base,
-        compass="coverage=60%, missing band gap section",
-        step_eval="gap_severity=0.4, missing [EXACT] component: band_gap_calculation",
-        drift_info="drift=0.2, target_chain进度偏离 20%",
-        imagination="换数学结构家族: PDE ↔ variational formulation",
-        meta_agent="Reflector: 上轮 tool_call_health=poor, 3 次 retry",
-    )
+    prompt, events = _v14t6_coordinate(HintCoordinator())
+    found_markers = _v14t6_check_markers(prompt)
+    hint_len = _v14t6_check_hint_len(prompt)
+    _v14t6_check_legacy(_legacy_build_step2_prompt, _legacy_build_iter_prompt)
 
-    # 1. 至少一个族标识
-    family_markers = ("[gradient block]", "[progress audit]", "[topology probe]")
-    found_markers = [m for m in family_markers if m in prompt]
-    assert found_markers, (
-        f"no family marker in prompt, expected ≥1 of {family_markers}:\n{prompt}"
+    print(
+        f"[CHECK v14 Task 6] HintCoordinator OK "
+        f"(markers={found_markers}, hint_len={hint_len}, events={events})"
     )
-
-    # 2. hint 部分字符数 ≤1500 — 去掉 base instruction 后的 hint 块
-    # ponytail: 估算法 — iter 2 时 gradient block 内容就是 iter_base (无 scan/fcm 叠加),
-    #   所以 prompt 总长减去 iter_base 长度, 余下视为 hint 部分 (含 marker header + curl/harmonic 块).
-    #   天花板: gradient block 里若再嵌 scan_text/fcm_winner (iter 0 场景), 这部分会被
-    #   当成 hint 多算, 但 spec 对 iter 0 限制更宽松 (verdict=None 不触发 curl), 影响可控.
-    base_len = len(_iter_base)
-    hint_len = max(0, len(prompt) - base_len)
-    assert hint_len <= 1500, (
-        f"hint block {hint_len} chars > 1500, prompt total={len(prompt)}:\n{prompt}"
-    )
-
-    # 3. legacy 路径也跑一遍 — 确认 _legacy_build_* 函数不抛错, 产物是字符串
-    legacy_step2 = _legacy_build_step2_prompt(_step2_base, "\n\n## scan hint", "\n\n## fcm hint")
-    assert isinstance(legacy_step2, str) and "scan hint" in legacy_step2
-    legacy_iter = _legacy_build_iter_prompt(
-        _iter_base, "compass text", "\n\n## fcm reminder", "\n\n## kb chunks",
-        "\n\n## merge hint", "\n\n## imagination",
-        "\n\n## ctx inject",
-    )
-    assert isinstance(legacy_iter, str) and "compass text" in legacy_iter
-    assert "kb chunks" in legacy_iter and "imagination" in legacy_iter
-
-    print(f"[CHECK v14 Task 6] HintCoordinator OK "
-          f"(markers={found_markers}, hint_len={hint_len}, events={events})")
     print("v14 Task 6 self-check PASSED")
+
+
+def _a3_check_extract(extract_fn: Any) -> None:
+    """1. _extract_exact_components 正确抽 [EXACT], 忽略 [VARIANT] / 空行."""
+    cl = (
+        "## Methodology checklist\n"
+        "- [EXACT] GVAE encoder (GraphSAGE backbone)\n"
+        "- [EXACT] C2ST classifier (MLP, 2 hidden layers)\n"
+        "- [VARIANT] Latent dimension (paper 用 64, 可降为 32)\n"
+        "- [EXACT] Prior N(0, I) over latent\n"
+        "Some prose without markers.\n"
+    )
+    comps = extract_fn(cl)
+    assert len(comps) == 3, f"expected 3 [EXACT], got {comps}"
+    assert "GVAE encoder (GraphSAGE backbone)" in comps
+    assert "C2ST classifier (MLP, 2 hidden layers)" in comps
+    assert "Prior N(0, I) over latent" in comps
+    # empty / no-marker
+    assert extract_fn("") == []
+    assert extract_fn("no markers here") == []
+    print("[CHECK A3.1] _extract_exact_components OK")
+
+
+def _a3_write_ws(ws: Path) -> None:
+    """铺 A3 用的最小 workspace: code/ + report/ + .huginn/ trace."""
+    (ws / "code").mkdir()
+    (ws / "code" / "model.py").write_text(
+        "# GVAE encoder implementation (GraphSAGE backbone)\n"
+        "class GVAE_Encoder: pass\n",
+        encoding="utf-8",
+    )
+    (ws / "report").mkdir()
+    (ws / "report" / "report.md").write_text(
+        "# Report\nWe used C2ST classifier with MLP.\n", encoding="utf-8"
+    )
+    # .huginn/ 内 trace 不算产物
+    (ws / HUGINN_DIR_NAME).mkdir()
+    (ws / HUGINN_DIR_NAME / "trace.json").write_text(
+        '{"attempted": "Prior N(0, I) over latent"}', encoding="utf-8"
+    )
+
+
+def _a3_check_scan(scan_fn: Any, ws: Path) -> None:
+    """2. _scan_implementation_traces 子串匹配 + 跳过 .huginn/."""
+    traces = scan_fn(
+        ws,
+        [
+            "GVAE encoder",
+            "C2ST classifier",
+            "Prior N(0, I) over latent",
+            "nonexistent component",
+        ],
+    )
+    assert traces["GVAE encoder"] is True
+    assert traces["C2ST classifier"] is True
+    # Prior 只在 .huginn/ 里 — 不应算产物痕迹
+    assert traces["Prior N(0, I) over latent"] is False
+    assert traces["nonexistent component"] is False
+    print("[CHECK A3.2] _scan_implementation_traces OK")
+
+
+def _a3_check_headers(parse_fn: Any, ws: Path) -> None:
+    """3. _parse_substitute_headers 只扫 report.md 顶部, 严格匹配格式."""
+    (ws / "report" / "report.md").write_text(
+        "# Title\n\n"
+        "METHOD SUBSTITUTE: GVAE encoder replaced MLP encoder because OOM on 150M params (2 attempts, see traceback below)\n"
+        "## Method\n"
+        "METHOD SUBSTITUTE: this should not match (too late in file)\n",
+        encoding="utf-8",
+    )
+    subs = parse_fn(ws / "report" / "report.md")
+    assert len(subs) == 1, f"expected 1 sub header, got {subs}"
+    assert subs[0]["replaced"] == "GVAE encoder"
+    assert "OOM" in subs[0]["reason"]
+    print("[CHECK A3.3] _parse_substitute_headers OK")
+
+
+def _a3_check_failed(count_fn: Any, ws: Path) -> None:
+    """4. _count_failed_attempts 从 trace + evals 双源计数."""
+    # 写 trace 文件
+    trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    trace_path.write_text(
+        '{"on_track": "false", "attempted": "GVAE encoder training failed"}\n'
+        '{"on_track": "false", "attempted": "GVAE encoder second attempt"}\n'
+        '{"on_track": "true", "attempted": "GVAE encoder worked"}\n'
+        '{"on_track": "false", "attempted": "unrelated component"}\n',
+        encoding="utf-8",
+    )
+
+    # evals_history mock
+    class _MockEval:
+        def __init__(self, on_track, attempted):
+            self.on_track = on_track
+            self.attempted = attempted
+
+    evals = [
+        _MockEval("false", "GVAE encoder eval-fail-1"),
+        _MockEval("true", "GVAE encoder eval-ok"),
+    ]
+    n = count_fn(ws, evals, "GVAE encoder")
+    # trace 2 + evals 1 = 3
+    assert n == 3, f"expected 3 failures, got {n}"
+    # 未出现组件 = 0
+    assert count_fn(ws, evals, "nonexistent") == 0
+    print("[CHECK A3.4] _count_failed_attempts OK")
 
 
 def self_check_a3() -> None:
@@ -159,88 +289,65 @@ def self_check_a3() -> None:
         _scan_implementation_traces,
     )
 
-    # 1. _extract_exact_components
-    cl = (
-        "## Methodology checklist\n"
-        "- [EXACT] GVAE encoder (GraphSAGE backbone)\n"
-        "- [EXACT] C2ST classifier (MLP, 2 hidden layers)\n"
-        "- [VARIANT] Latent dimension (paper 用 64, 可降为 32)\n"
-        "- [EXACT] Prior N(0, I) over latent\n"
-        "Some prose without markers.\n"
-    )
-    comps = _extract_exact_components(cl)
-    assert len(comps) == 3, f"expected 3 [EXACT], got {comps}"
-    assert "GVAE encoder (GraphSAGE backbone)" in comps
-    assert "C2ST classifier (MLP, 2 hidden layers)" in comps
-    assert "Prior N(0, I) over latent" in comps
-    # empty / no-marker
-    assert _extract_exact_components("") == []
-    assert _extract_exact_components("no markers here") == []
-    print("[CHECK A3.1] _extract_exact_components OK")
+    _a3_check_extract(_extract_exact_components)
 
-    # 2. _scan_implementation_traces
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
-        (ws / "code").mkdir()
-        (ws / "code" / "model.py").write_text(
-            "# GVAE encoder implementation (GraphSAGE backbone)\n"
-            "class GVAE_Encoder: pass\n", encoding="utf-8")
-        (ws / "report").mkdir()
-        (ws / "report" / "report.md").write_text(
-            "# Report\nWe used C2ST classifier with MLP.\n", encoding="utf-8")
-        # .huginn/ 内 trace 不算产物
-        (ws / HUGINN_DIR_NAME).mkdir()
-        (ws / HUGINN_DIR_NAME / "trace.json").write_text(
-            '{"attempted": "Prior N(0, I) over latent"}', encoding="utf-8")
-        traces = _scan_implementation_traces(
-            ws, ["GVAE encoder", "C2ST classifier", "Prior N(0, I) over latent",
-                 "nonexistent component"])
-        assert traces["GVAE encoder"] is True
-        assert traces["C2ST classifier"] is True
-        # Prior 只在 .huginn/ 里 — 不应算产物痕迹
-        assert traces["Prior N(0, I) over latent"] is False
-        assert traces["nonexistent component"] is False
-        print("[CHECK A3.2] _scan_implementation_traces OK")
-
-        # 3. _parse_substitute_headers
-        (ws / "report" / "report.md").write_text(
-            "# Title\n\n"
-            "METHOD SUBSTITUTE: GVAE encoder replaced MLP encoder because OOM on 150M params (2 attempts, see traceback below)\n"
-            "## Method\n"
-            "METHOD SUBSTITUTE: this should not match (too late in file)\n",
-            encoding="utf-8")
-        subs = _parse_substitute_headers(ws / "report" / "report.md")
-        assert len(subs) == 1, f"expected 1 sub header, got {subs}"
-        assert subs[0]["replaced"] == "GVAE encoder"
-        assert "OOM" in subs[0]["reason"]
-        print("[CHECK A3.3] _parse_substitute_headers OK")
-
-        # 4. _count_failed_attempts
-        # 写 trace 文件
-        trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        trace_path.write_text(
-            '{"on_track": "false", "attempted": "GVAE encoder training failed"}\n'
-            '{"on_track": "false", "attempted": "GVAE encoder second attempt"}\n'
-            '{"on_track": "true", "attempted": "GVAE encoder worked"}\n'
-            '{"on_track": "false", "attempted": "unrelated component"}\n',
-            encoding="utf-8")
-        # evals_history mock
-        class _MockEval:
-            def __init__(self, on_track, attempted):
-                self.on_track = on_track
-                self.attempted = attempted
-        evals = [
-            _MockEval("false", "GVAE encoder eval-fail-1"),
-            _MockEval("true", "GVAE encoder eval-ok"),
-        ]
-        n = _count_failed_attempts(ws, evals, "GVAE encoder")
-        # trace 2 + evals 1 = 3
-        assert n == 3, f"expected 3 failures, got {n}"
-        # 未出现组件 = 0
-        assert _count_failed_attempts(ws, evals, "nonexistent") == 0
-        print("[CHECK A3.4] _count_failed_attempts OK")
+        _a3_write_ws(ws)
+        _a3_check_scan(_scan_implementation_traces, ws)
+        _a3_check_headers(_parse_substitute_headers, ws)
+        _a3_check_failed(_count_failed_attempts, ws)
 
     print("[CHECK A3] ALL ASSERTS PASSED")
+
+
+def _a2_write_outputs(ws: Path) -> bool:
+    """铺 outputs/ 各样本 (真实 / 占位 / 空 / 长文本 / npy), 返回 npy 是否真写过."""
+    out_dir = ws / "outputs"
+    out_dir.mkdir()
+    (out_dir / "metrics.json").write_text(
+        '{"loss": 0.5, "rmse": 0.1, "epoch": 100}', encoding="utf-8"
+    )
+    (out_dir / "results.csv").write_text("epoch,loss\n1,0.5\n2,0.3\n", encoding="utf-8")
+    # .npy 二进制 (numpy)
+    try:
+        import numpy as _np
+
+        _np.save(out_dir / "arr.npy", _np.array([1.0, 2.0, 3.0]))
+        _has_npy = True
+    except ImportError:
+        _has_npy = False
+        (out_dir / "arr.npy").write_bytes(b"\x93NUMPY\x00v0")
+    # 占位文件
+    (out_dir / "todo.txt").write_text("TODO: fill in", encoding="utf-8")
+    (out_dir / "expected.txt").write_text("Expected: 0.5", encoding="utf-8")
+    # 空文件
+    (out_dir / "empty.json").write_text("", encoding="utf-8")
+    # 长文本含 'expected' 但是正常叙述 (>200 chars after strip)
+    (out_dir / "long.json").write_text(
+        '{"narrative": "the expected behavior of the model is described '
+        'in detail here. this is a long text to exceed the 200 char limit. '
+        'we discuss the theoretical guarantees, empirical observations, '
+        'and edge cases that inform the experimental design choices made '
+        'throughout this study, along with references to prior work."}',
+        encoding="utf-8",
+    )
+    return _has_npy
+
+
+def _a2_check_metrics(scan_fn: Any, ws: Path, has_npy: bool) -> None:
+    """断言真实 metrics 命中, 占位 / 空文件被过滤."""
+    metrics = scan_fn(ws)
+    names = {p.name for p in metrics}
+    assert "metrics.json" in names, f"metrics.json missing: {names}"
+    assert "results.csv" in names, f"results.csv missing: {names}"
+    assert "todo.txt" not in names, f"todo.txt should be filtered: {names}"
+    assert "expected.txt" not in names, f"expected.txt should be filtered: {names}"
+    assert "empty.json" not in names, f"empty.json should be filtered: {names}"
+    assert "long.json" in names, f"long.json should pass: {names}"
+    if has_npy:
+        assert "arr.npy" in names, f"arr.npy missing: {names}"
+    print(f"[CHECK A2.2] real metrics filter OK ({len(metrics)} files)")
 
 
 def self_check_a2() -> None:
@@ -264,46 +371,9 @@ def self_check_a2() -> None:
         assert _scan_real_metrics(ws) == []
         print("[CHECK A2.1] no outputs/ OK")
 
-        # 2. 真实 metrics 文件
-        out_dir = ws / "outputs"
-        out_dir.mkdir()
-        (out_dir / "metrics.json").write_text(
-            '{"loss": 0.5, "rmse": 0.1, "epoch": 100}', encoding="utf-8")
-        (out_dir / "results.csv").write_text(
-            "epoch,loss\n1,0.5\n2,0.3\n", encoding="utf-8")
-        # .npy 二进制 (numpy)
-        try:
-            import numpy as _np
-            _np.save(out_dir / "arr.npy", _np.array([1.0, 2.0, 3.0]))
-            _has_npy = True
-        except ImportError:
-            _has_npy = False
-            (out_dir / "arr.npy").write_bytes(b"\x93NUMPY\x00v0")
-        # 占位文件
-        (out_dir / "todo.txt").write_text("TODO: fill in", encoding="utf-8")
-        (out_dir / "expected.txt").write_text("Expected: 0.5", encoding="utf-8")
-        # 空文件
-        (out_dir / "empty.json").write_text("", encoding="utf-8")
-        # 长文本含 'expected' 但是正常叙述 (>200 chars after strip)
-        (out_dir / "long.json").write_text(
-            '{"narrative": "the expected behavior of the model is described '
-            'in detail here. this is a long text to exceed the 200 char limit. '
-            'we discuss the theoretical guarantees, empirical observations, '
-            'and edge cases that inform the experimental design choices made '
-            'throughout this study, along with references to prior work."}',
-            encoding="utf-8")
-
-        metrics = _scan_real_metrics(ws)
-        names = {p.name for p in metrics}
-        assert "metrics.json" in names, f"metrics.json missing: {names}"
-        assert "results.csv" in names, f"results.csv missing: {names}"
-        assert "todo.txt" not in names, f"todo.txt should be filtered: {names}"
-        assert "expected.txt" not in names, f"expected.txt should be filtered: {names}"
-        assert "empty.json" not in names, f"empty.json should be filtered: {names}"
-        assert "long.json" in names, f"long.json should pass: {names}"
-        if _has_npy:
-            assert "arr.npy" in names, f"arr.npy missing: {names}"
-        print(f"[CHECK A2.2] real metrics filter OK ({len(metrics)} files)")
+        # 2. 真实 metrics 文件 / 占位 / 空 / npy
+        has_npy = _a2_write_outputs(ws)
+        _a2_check_metrics(_scan_real_metrics, ws, has_npy)
 
     print("[CHECK A2] ALL ASSERTS PASSED")
 

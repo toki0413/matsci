@@ -84,8 +84,8 @@ remaining_budget_s: contextvars.ContextVar[float | None] = contextvars.ContextVa
 # deadline 一设即成**绝对时刻**, 任何时刻读取都能算出**实时**剩余 = deadline - now,
 # 不受冻结影响. 这是"不设硬时长、只做更细切片"的最小实现: 每个阻塞动作自限到
 # **当前**剩余 (而非某个固定档), 天然随预算收敛.
-budget_deadline_monotonic: contextvars.ContextVar[float | None] = contextvars.ContextVar(
-    "huginn_budget_deadline_monotonic", default=None
+budget_deadline_monotonic: contextvars.ContextVar[float | None] = (
+    contextvars.ContextVar("huginn_budget_deadline_monotonic", default=None)
 )
 
 
@@ -113,7 +113,10 @@ def live_budget_left() -> float | None:
 
 
 def _cap_timeout_by_budget(
-    total: float, budget_left: float | None, *, reserve: float | None = None,
+    total: float,
+    budget_left: float | None,
+    *,
+    reserve: float | None = None,
 ) -> float:
     """D7: 把单个阻塞动作的**总**超时封顶到**实时**剩余预算 (留收尾余量).
 
@@ -129,6 +132,7 @@ def _cap_timeout_by_budget(
     _reserve = env_float("HUGINN_BUDGET_RESERVE_S") if reserve is None else reserve
     _floor = env_float("HUGINN_BUDGET_MIN_SLICE_S")
     return max(_floor, min(total, budget_left - _reserve))
+
 
 # ainvoke 超时随 thinking 强度放宽 — 我们鼓励深度思考 (thinking=high) 却给
 # 固定 300s, 长推理一超就 kill, 自相矛盾. 按档位给足预算, 避免"三思而后行
@@ -157,7 +161,8 @@ def _thinking_stream_idle() -> float:
 
 
 def _fallback_stream_idle(
-    total_timeout: float, budget_left: float | None = None,
+    total_timeout: float,
+    budget_left: float | None = None,
 ) -> float:
     """降级收集的空闲超时 — 必须比刚失败的那次更宽, 否则只是重演同一失败.
 
@@ -194,11 +199,52 @@ def _fallback_collect_inputs(states_yielded: int, inputs: Any) -> Any:
     ``_ainvoke_timeout``, 两次各烧 300s 且产出为空. 零进度时无 checkpoint 可续,
     只能回 ``inputs`` 重放. ``HUGINN_STREAM_FALLBACK_RESUME=0`` 强制重放 (回滚开关).
     """
-    if states_yielded > 0 and os.environ.get(
-        "HUGINN_STREAM_FALLBACK_RESUME", "1"
-    ) == "1":
+    if (
+        states_yielded > 0
+        and os.environ.get("HUGINN_STREAM_FALLBACK_RESUME", "1") == "1"
+    ):
         return None
     return inputs
+
+
+def _fallback_params(turn: Any) -> tuple[float, float, Any]:
+    """算降级收集的三个参数: 总超时 / 空闲阈值 / 续跑输入 (均按预算封顶)."""
+    ainvoke_base = float(
+        os.environ.get("HUGINN_AINVOKE_TIMEOUT", str(_thinking_scale_timeout()))
+    )
+    budget_left = live_budget_left()
+    ainvoke_timeout = _cap_timeout_by_budget(ainvoke_base, budget_left)
+    collect_idle = _fallback_stream_idle(ainvoke_timeout, budget_left=budget_left)
+    collect_inputs = _fallback_collect_inputs(turn.states_yielded, turn.inputs)
+    return ainvoke_timeout, collect_idle, collect_inputs
+
+
+async def _fallback_collect(
+    collect_states: Any,
+    turn: Any,
+    collect_inputs: Any,
+    collect_idle: float,
+    ainvoke_timeout: float,
+) -> Any:
+    """跑降级收集, 超时/空状态转成明确的异常."""
+    try:
+        final_state = await asyncio.wait_for(
+            collect_states(turn.graph, turn.config, collect_inputs, collect_idle),
+            timeout=ainvoke_timeout,
+        )
+    except TimeoutError:
+        logger.warning(
+            "fallback stream collect timed out (idle=%ds, total=%ds)",
+            collect_idle,
+            ainvoke_timeout,
+        )
+        raise TimeoutError(
+            f"stream and fallback collect both timed out "
+            f"(collect idle={collect_idle}s, total={ainvoke_timeout}s)"
+        ) from None
+    if final_state is None:
+        raise RuntimeError("fallback stream collect produced no state") from None
+    return final_state
 
 
 async def _astream_with_watchdog(
@@ -329,10 +375,13 @@ def _c1_self_check() -> int:
 
     # 3. 部分 dangling: 保留已应答的
     msgs_partial = [
-        AIMessage(content="p", tool_calls=[
-            {"id": "tc3", "name": "f", "args": {}},
-            {"id": "tc4", "name": "g", "args": {}},
-        ]),
+        AIMessage(
+            content="p",
+            tool_calls=[
+                {"id": "tc3", "name": "f", "args": {}},
+                {"id": "tc4", "name": "g", "args": {}},
+            ],
+        ),
         ToolMessage(content="r3", tool_call_id="tc3"),
     ]
     n = _strip_dangling_tool_calls(msgs_partial)
@@ -385,6 +434,218 @@ def _is_root_message(msg: Any) -> bool:
     return False
 
 
+def _msg_text(content: Any) -> str:
+    """把消息 content (str / 内容块 list) 统一成纯文本."""
+    if isinstance(content, list):
+        return "".join(b.get("text", "") for b in content if isinstance(b, dict))
+    return str(content) if content else ""
+
+
+def _has_assistant_text(msgs: list) -> bool:
+    """已有非空助手文本 → 无需收尾兜底."""
+    for m in reversed(msgs):
+        if isinstance(m, AIMessage) and m.content and str(m.content).strip():
+            return True
+    return False
+
+
+def _closing_transcript(msgs: list) -> list[str]:
+    """抽取 human/assistant 可见文本, 每段截断到 800 字符."""
+    transcript: list[str] = []
+    for m in msgs:
+        role = getattr(m, "type", "unknown")
+        content = _msg_text(getattr(m, "content", ""))
+        if role in ("human", "user", "assistant") and content:
+            transcript.append(f"{role}: {content[:800]}")
+    return transcript
+
+
+_CLOSING_PROMPT = (
+    "The conversation below ended without a clear final answer. "
+    "Write a concise closing summary (2-5 sentences): what was done, "
+    "and the key conclusions or open questions. If information is "
+    "insufficient, say so honestly rather than guessing.\n\n"
+)
+
+
+async def _invoke_closing_summary(model: Any, transcript: list[str]) -> str:
+    """让模型把对话收尾成一段概要文本."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    resp = await model.ainvoke(
+        [
+            SystemMessage(content="You are a concise, honest research summarizer."),
+            HumanMessage(content=_CLOSING_PROMPT + "\n".join(transcript[-12:])),
+        ]
+    )
+    return _msg_text(resp.content).strip()
+
+
+def _pipeline_context_block() -> str:
+    """模拟管线上下文块; 失败返回空串."""
+    try:
+        from huginn.provenance.pipeline import SimulationPipeline
+
+        return SimulationPipeline().to_context_block()
+    except Exception:  # 防御: 管线上下文块跳过则省略
+        logger.debug("pipeline context block skipped", exc_info=True)
+        return ""
+
+
+def _provenance_context_blocks() -> tuple[str, str]:
+    """溯源上下文块 + 文件 DAG mermaid 块; 失败各返回空串."""
+    try:
+        from huginn.provenance import to_mermaid_for_context
+        from huginn.provenance.registry import ProvenanceRegistry
+
+        reg = ProvenanceRegistry.shared()
+        return reg.to_context_block(), to_mermaid_for_context(reg)
+    except Exception:  # 防御: 溯源上下文块跳过则省略
+        logger.debug("provenance context block skipped", exc_info=True)
+        return "", ""
+
+
+def _task_state_context_block(host: Any) -> str:
+    """长程任务状态上下文块; 无 thread / 失败返回空串."""
+    try:
+        from huginn.memory.task_state import get_tracker
+
+        tid = getattr(host, "thread_id", "") or ""
+        return get_tracker().context_block(tid) if tid else ""
+    except Exception:  # 防御: 任务状态上下文跳过则省略
+        logger.debug("task state context block skipped", exc_info=True)
+        return ""
+
+
+def _synthetic_continue_parts(
+    pipeline_block: str,
+    prov_block: str,
+    dag_block: str,
+    task_block: str,
+) -> list[str]:
+    """拼装 synthetic Continue 的正文分段."""
+    parts = ["[System] Continue if you have next steps."]
+    if pipeline_block:
+        parts.append(pipeline_block)
+    if prov_block:
+        parts.append(prov_block)
+    if dag_block:
+        parts.append(f"### File DAG (recent):\n```mermaid\n{dag_block}\n```")
+    if task_block:
+        parts.append(task_block)
+    parts.append(
+        "If the pipeline suggests a next step, proceed with it. "
+        "If you've completed the task, summarize the results."
+    )
+    return parts
+
+
+def _message_token_counts(msgs: list) -> list[int]:
+    """逐条消息的 token 估算."""
+    from huginn.utils.context import _msg_content, _msg_role
+    from huginn.utils.tokens import count_message_tokens
+
+    return [count_message_tokens(_msg_content(m), _msg_role(m)) for m in msgs]
+
+
+def _over_trim_limits(
+    total: int, count: int, budget: int, max_messages: int | None
+) -> bool:
+    """是否超 token 预算或消息数上限 (两者都未超 → 无需修剪)."""
+    under_budget = total <= budget
+    under_count = max_messages is None or count <= max_messages
+    return not (under_budget and under_count)
+
+
+def _root_indices(msgs: list, keep_root_n: int) -> set[int]:
+    """root 消息下标: 优先 metadata 标记, 无标记回退到按位置前 keep_root_n 条."""
+    root_indices = {i for i, m in enumerate(msgs) if _is_root_message(m)}
+    if root_indices:
+        return root_indices
+    return set(range(min(keep_root_n, len(msgs))))
+
+
+def _select_drop_indices(
+    droppable_order: list[int],
+    per_msg_tokens: list[int],
+    total: int,
+    count: int,
+    budget: int,
+    max_messages: int | None,
+) -> list[int]:
+    """从最旧开始选要 drop 的下标, 直到 token 与消息数都落回上限内."""
+    drop_indices: list[int] = []
+    acc = total
+    remaining = count
+    for i in droppable_order:
+        over_budget = acc > budget
+        over_count = max_messages is not None and remaining > max_messages
+        if not over_budget and not over_count:
+            break
+        acc -= per_msg_tokens[i]
+        remaining -= 1
+        drop_indices.append(i)
+    return drop_indices
+
+
+def _drop_message_ids(msgs: list, drop_indices: list[int]) -> list[str]:
+    """收集要删除消息的 ID — system 消息不删, 没 ID 的没法删."""
+    from langchain_core.messages import SystemMessage
+
+    drop_ids: list[str] = []
+    for i in drop_indices:
+        m = msgs[i]
+        if isinstance(m, SystemMessage):
+            continue
+        mid = getattr(m, "id", None)
+        if mid:
+            drop_ids.append(mid)
+    return drop_ids
+
+
+async def _tcm_snapshot_messages(graph: Any, config: dict[str, Any]) -> list:
+    """取 checkpointer 现有 messages (含 ID); 空/过短返回空列表."""
+    snapshot = await asyncio.to_thread(graph.get_state, config)
+    if snapshot is None or not snapshot.values:
+        return []
+    msgs = snapshot.values.get("messages", [])
+    return msgs if len(msgs) > 4 else []
+
+
+def _tcm_plan(
+    msgs: list,
+    per_msg_tokens: list[int],
+    budget: int,
+    max_messages: int | None,
+) -> list[int]:
+    """算要 drop 的消息下标 (空列表 = 无需修剪)."""
+    total = sum(per_msg_tokens)
+    if not _over_trim_limits(total, len(msgs), budget, max_messages):
+        return []
+    keep_last_n = 4
+    # AV5: 默认保前 2 条 root (user 初始任务 + system checklist).
+    keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "2"))
+    root_indices = _root_indices(msgs, keep_root_n)
+    # 可 drop 候选 = 尾部 keep_last_n 之外、且非 root 的消息, 从最旧开始丢
+    droppable_order = [
+        i for i in range(len(msgs) - keep_last_n) if i not in root_indices
+    ]
+    if not droppable_order:
+        return []
+    return _select_drop_indices(
+        droppable_order, per_msg_tokens, total, len(msgs), budget, max_messages
+    )
+
+
+async def _tcm_apply(graph: Any, config: dict[str, Any], drop_ids: list[str]) -> None:
+    """用 RemoveMessage 批量删除 checkpointer 里的旧消息."""
+    from langchain_core.messages import RemoveMessage
+
+    removals = [RemoveMessage(id=mid) for mid in drop_ids]
+    # update_state 是同步方法, 走 to_thread 不卡 event loop (G33 一致性)
+    await asyncio.to_thread(graph.update_state, config, {"messages": removals})
+
+
 def _compute_common_prefix(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> int:
     """返回两个 record 列表的公共前缀长度 (相同 type+content 连续计数).
 
@@ -424,6 +685,44 @@ def _read_completion_records(path: Path) -> list[dict[str, Any]]:
         return []
 
 
+def _completion_prefix_ref(
+    comp_dir: Path, turn_id: str, records: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """找同 thread 最新的前一 turn 文件, 计算可复用的公共前缀."""
+    prev_path = _latest_completion_path(comp_dir, exclude=f"{turn_id}.jsonl")
+    if prev_path is None:
+        return None
+    prev_recs = _read_completion_records(prev_path)
+    if not prev_recs:
+        return None
+    common = _compute_common_prefix(prev_recs, records)
+    # 阈值 2: 至少共享 2 条才值得去重 (1 条引用开销不划算).
+    if common < 2:
+        return None
+    return {
+        "type": "prefix_ref",
+        "prev_file": prev_path.name,
+        "prefix_len": common,
+    }
+
+
+def _completion_lines(
+    records: list[dict[str, Any]], prefix_ref: dict[str, Any] | None
+) -> list[str]:
+    """把记录渲染成 jsonl 行; 有 prefix_ref 时只写后缀增量."""
+    import json
+
+    if prefix_ref is None:
+        return [json.dumps(rec, ensure_ascii=False, default=str) for rec in records]
+    lines = [json.dumps(prefix_ref, ensure_ascii=False)]
+    # 只写后缀增量 records[common:], 前缀从 prev_file 重建.
+    lines.extend(
+        json.dumps(rec, ensure_ascii=False, default=str)
+        for rec in records[prefix_ref["prefix_len"] :]
+    )
+    return lines
+
+
 def _dump_completion_records(
     records: list[dict[str, Any]],
     thread_id: str,
@@ -443,38 +742,15 @@ def _dump_completion_records(
     if not records:
         return None
     try:
-        import json
-
         from huginn.utils.runtime import get_runtime_home
 
         comp_dir = get_runtime_home() / "completions" / thread_id
         comp_dir.mkdir(parents=True, exist_ok=True)
         comp_path = comp_dir / f"{turn_id}.jsonl"
 
-        # P2: 找同 thread 最新的前一 turn 文件, 算公共前缀.
-        prefix_ref = None
-        prev_path = _latest_completion_path(comp_dir, exclude=f"{turn_id}.jsonl")
-        if prev_path is not None:
-            prev_recs = _read_completion_records(prev_path)
-            if prev_recs:
-                common = _compute_common_prefix(prev_recs, records)
-                # 阈值 2: 至少共享 2 条才值得去重 (1 条引用开销不划算).
-                if common >= 2:
-                    prefix_ref = {
-                        "type": "prefix_ref",
-                        "prev_file": prev_path.name,
-                        "prefix_len": common,
-                    }
-
-        lines: list[str] = []
-        if prefix_ref is not None:
-            lines.append(json.dumps(prefix_ref, ensure_ascii=False))
-            # 只写后缀增量 records[common:], 前缀从 prev_file 重建.
-            for rec in records[prefix_ref["prefix_len"]:]:
-                lines.append(json.dumps(rec, ensure_ascii=False, default=str))
-        else:
-            for rec in records:
-                lines.append(json.dumps(rec, ensure_ascii=False, default=str))
+        lines = _completion_lines(
+            records, _completion_prefix_ref(comp_dir, turn_id, records)
+        )
         with open(comp_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         return comp_path
@@ -486,9 +762,7 @@ def _dump_completion_records(
 def _latest_completion_path(comp_dir: Path, exclude: str = "") -> Path | None:
     """返回 comp_dir 下按文件名倒序的最新 jsonl (排除 exclude). 无则 None."""
     try:
-        cands = [
-            p for p in comp_dir.glob("*.jsonl") if p.name != exclude
-        ]
+        cands = [p for p in comp_dir.glob("*.jsonl") if p.name != exclude]
         if not cands:
             return None
         return max(cands, key=lambda p: p.name)
@@ -609,7 +883,8 @@ class StreamingMixin:
                     except Exception:  # 防御: 分支合并失败则跳过该分支
                         logger.debug(
                             "ConversationTree merge skipped for branch %s",
-                            leaf, exc_info=True,
+                            leaf,
+                            exc_info=True,
                         )
         except Exception:  # 防御: 对话树切换操作失败则忽略
             logger.debug("ConversationTree fork/merge skipped", exc_info=True)
@@ -653,10 +928,7 @@ class StreamingMixin:
             m = entry.model
             llm_type = (getattr(m, "_llm_type", "") or "").lower()
             cls_name = m.__class__.__name__.lower()
-            if any(
-                k in llm_type or k in cls_name
-                for k in ("ollama", "vllm", "local")
-            ):
+            if any(k in llm_type or k in cls_name for k in ("ollama", "vllm", "local")):
                 return m
         return None
 
@@ -788,8 +1060,7 @@ class StreamingMixin:
                     "tool_name": getattr(msg, "name", None) or "unknown",
                     "content": msg.content,
                     "success": not (
-                        isinstance(msg.content, str)
-                        and msg.content.startswith("Error")
+                        isinstance(msg.content, str) and msg.content.startswith("Error")
                     ),
                     "tool_input": _tool_input,
                 }
@@ -850,39 +1121,14 @@ class StreamingMixin:
         if evt.type == "modify":
             try:
                 self.memory.add_message("user", f"[modified] {evt.message}")
-                self._conversation_tree.add_message(
-                    "user", f"[modified] {evt.message}"
-                )
+                self._conversation_tree.add_message("user", f"[modified] {evt.message}")
             except Exception:  # 防御: 用户输入保存失败仅告警
                 logger.warning("Failed to save user input to memory", exc_info=True)
             return {"modified": True, "message": evt.message}
         return None
 
-    async def _maybe_auto_compact(
-        self,
-        final_state: dict[str, Any],
-        turn_span: Any,
-        thread_id: str,
-        *,
-        graph: Any = None,
-        config: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Trigger PRE_COMPACT hook + promote session summary when context > 60%.
-
-        50% = warning (log only), 60% = trigger compaction.
-        Previous 70% was too late — a single large tool result could
-        push from 60% to 95%+ in one turn, bypassing compaction.
-
-        G34: 当 ``HUGINN_COMPACT_STRATEGY`` 含 ``trim`` 且 graph + config +
-        checkpointer 都在时, 用 ``RemoveMessage`` 真修剪 checkpointer 持久化
-        状态. 之前 compact_messages 只修 inputs["messages"] 临时 list, 历史
-        在 checkpointer 里无限累积 → 1.30 GB checkpoint (报告 17 维度 3 差距 3).
-
-        Returns ``{"before_pct": int, "after_pct": int}`` if compaction ran, else None.
-        """
-        if self._model_context_window <= 0:
-            return None
-
+    def _compact_thresholds(self) -> tuple[int, int]:
+        """按模型成本模式算压缩阈值 + 告警阈值."""
         # G34b/成本自适应: 按模型长上下文成本模式决定主动压缩阈值, 而非一刀切 60%.
         # linear(KDA)/hybrid(SALA) 线性注意力骨架便宜, 过早压缩 = 用信息换本不必省的
         # 算力 → 推迟; quadratic(旧全注意力) 维持既往 60%. 见 models.registry.compact_threshold_for.
@@ -893,17 +1139,17 @@ class StreamingMixin:
         )
         threshold = compact_threshold_for(str(model_name))
         # 告警阈值 = 压缩阈值 - 10 (仅 log, 不动作), 禁止 < 0.
-        warn_pct = max(0, threshold - 10)
+        return threshold, max(0, threshold - 10)
 
-        # P0: 无条件 checkpointer 消息数上限兜底 — 不依赖 token usage / 上下文
-        # 百分比. 长程任务消息条数可能无界增长 (即便每条 token 很小, 总量也常压
-        # 在 token 预算内 → 纯 G34 不触发). 这里按条数硬上限收敛, 保证即使
-        # compaction 门控失效 (如 LLM 不回 usage) 也有兜底.
-        ccap_trimmed = await self._enforce_checkpointer_count_cap(
-            graph, config, turn_span
-        )
-
-        usage = self._extract_usage_tokens()
+    def _compact_precheck(
+        self,
+        usage: dict[str, int],
+        warn_pct: int,
+        threshold: int,
+        ccap_trimmed: int,
+        turn_span: Any,
+    ) -> dict[str, Any] | None:
+        """判断是否该压缩; 该压则返回 before 用量, 否则 None."""
         if not any(usage.values()):
             # P1①: 无 token usage → 无法可靠计算上下文百分比, 跳过 token-%
             # compaction/summary, 但上面 P0 的消息数兜底已执行. 不再是纯 return None
@@ -931,7 +1177,66 @@ class StreamingMixin:
             before["used"],
             threshold,
         )
+        return before
 
+    async def _maybe_auto_compact(
+        self,
+        final_state: dict[str, Any],
+        turn_span: Any,
+        thread_id: str,
+        *,
+        graph: Any = None,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Trigger PRE_COMPACT hook + promote session summary when context > 60%.
+
+        50% = warning (log only), 60% = trigger compaction.
+        Previous 70% was too late — a single large tool result could
+        push from 60% to 95%+ in one turn, bypassing compaction.
+
+        G34: 当 ``HUGINN_COMPACT_STRATEGY`` 含 ``trim`` 且 graph + config +
+        checkpointer 都在时, 用 ``RemoveMessage`` 真修剪 checkpointer 持久化
+        状态. 之前 compact_messages 只修 inputs["messages"] 临时 list, 历史
+        在 checkpointer 里无限累积 → 1.30 GB checkpoint (报告 17 维度 3 差距 3).
+
+        Returns ``{"before_pct": int, "after_pct": int}`` if compaction ran, else None.
+        """
+        if self._model_context_window <= 0:
+            return None
+
+        threshold, warn_pct = self._compact_thresholds()
+
+        # P0: 无条件 checkpointer 消息数上限兜底 — 不依赖 token usage / 上下文
+        # 百分比. 长程任务消息条数可能无界增长 (即便每条 token 很小, 总量也常压
+        # 在 token 预算内 → 纯 G34 不触发). 这里按条数硬上限收敛, 保证即使
+        # compaction 门控失效 (如 LLM 不回 usage) 也有兜底.
+        ccap_trimmed = await self._enforce_checkpointer_count_cap(
+            graph, config, turn_span
+        )
+
+        usage = self._extract_usage_tokens()
+        before = self._compact_precheck(
+            usage, warn_pct, threshold, ccap_trimmed, turn_span
+        )
+        if before is None:
+            return None
+
+        after_pct = await self._compact_apply(
+            final_state, before, usage, turn_span, thread_id, graph, config
+        )
+        return {"before_pct": before["used"], "after_pct": after_pct}
+
+    async def _compact_apply(
+        self,
+        final_state: dict[str, Any],
+        before: dict[str, Any],
+        usage: dict[str, int],
+        turn_span: Any,
+        thread_id: str,
+        graph: Any,
+        config: dict[str, Any] | None,
+    ) -> int:
+        """执行压缩动作 + 落 span/事件, 返回压缩后百分比."""
         await self._run_online_compact_gate(final_state, before, turn_span)
         await self._run_pre_compact_hooks(usage, before, thread_id)
         await self._trim_checkpointer_state(final_state, graph, config, turn_span)
@@ -942,7 +1247,7 @@ class StreamingMixin:
         turn_span.metadata["compact_before_pct"] = before["used"]
         turn_span.metadata["compact_after_pct"] = after_pct
         await self._publish_compact_events(before["used"], after_pct, thread_id)
-        return {"before_pct": before["used"], "after_pct": after_pct}
+        return after_pct
 
     async def _run_online_compact_gate(
         self, final_state: dict[str, Any], before: dict[str, Any], turn_span: Any
@@ -1046,9 +1351,11 @@ class StreamingMixin:
 
     def _compact_strategy(self) -> list[str]:
         """Parse ``HUGINN_COMPACT_STRATEGY`` into an ordered strategy list."""
-        strategy = os.environ.get(
-            "HUGINN_COMPACT_STRATEGY", "trim,summarize"
-        ).lower().split(",")
+        strategy = (
+            os.environ.get("HUGINN_COMPACT_STRATEGY", "trim,summarize")
+            .lower()
+            .split(",")
+        )
         return [s.strip() for s in strategy if s.strip()]
 
     def _estimate_after_compact_pct(self) -> int:
@@ -1152,9 +1459,11 @@ class StreamingMixin:
         max_msgs = self._checkpointer_max_messages()
         if max_msgs is None:
             return 0
-        strategy = os.environ.get(
-            "HUGINN_COMPACT_STRATEGY", "trim,summarize"
-        ).lower().replace(" ", "")
+        strategy = (
+            os.environ.get("HUGINN_COMPACT_STRATEGY", "trim,summarize")
+            .lower()
+            .replace(" ", "")
+        )
         if "trim" not in strategy.split(","):
             return 0
         try:
@@ -1170,9 +1479,7 @@ class StreamingMixin:
                 turn_span.metadata["checkpointer_p0_trimmed"] = removed
             return removed
         except Exception:  # 防御: 消息数封顶修剪失败仅告警
-            logger.warning(
-                "checkpointer count-cap trim failed (P0)", exc_info=True
-            )
+            logger.warning("checkpointer count-cap trim failed (P0)", exc_info=True)
             return 0
 
     async def _trim_checkpointer_messages(
@@ -1185,109 +1492,35 @@ class StreamingMixin:
     ) -> int:
         """G34: 真修剪 checkpointer 持久化的 messages state.
 
-        从 ``graph.get_state(config)`` 取 checkpointer 现有 messages (带 ID),
-        用与 ``compact_messages`` 同款的 drop-oldest 逻辑算要删几条, 再用
-        LangGraph 官方 ``RemoveMessage`` + ``update_state`` 批量删.
+        从 ``graph.get_state(config)`` 取现有 messages (带 ID), 用与
+        ``compact_messages`` 同款的 drop-oldest 逻辑算要删几条, 再用
+        ``RemoveMessage`` + ``update_state`` 批量删. root 标记优先读消息
+        metadata (is_root/root), 无标记时回退到按位置 (前 keep_root_n 条).
 
-        跟 lean "参考设计不引入编译器" 一个套路: 不引新框架, 只用 langgraph
-        自带机制. ponytail: keep_last_n / keep_root_n 默认值与 compact_messages
-        对齐. root 标记已升级为按消息 metadata (additional_kwargs/metadata 的
-        is_root) 标记, 无 metadata 标记时回退到按位置 (前 keep_root_n 条).
-
-        ``max_messages`` (P0): 可选的消息数硬上限. 长程任务里消息条数可能无界
-        增长 (即使每条 token 很小, 总量也压在预算内 → 原逻辑不删). 传入后, 除
-        token 预算外, 还会把消息总数收紧到 ``max_messages`` 以内 (仍受
-        keep_last_n 尾部 + root 保护). 这是不依赖 token usage 的兜底.
-
+        ``max_messages`` (P0): 可选的消息数硬上限, 不依赖 token usage 的兜底.
         Returns 实际删除的消息数.
         """
         if self.context_budget_tokens <= 0 and max_messages is None:
             return 0
 
-        # 取 checkpointer 现有 state (含 messages + IDs)
-        snapshot = await asyncio.to_thread(graph.get_state, config)
-        if snapshot is None or not snapshot.values:
-            return 0
-        msgs = snapshot.values.get("messages", [])
-        if len(msgs) <= 4:
+        msgs = await _tcm_snapshot_messages(graph, config)
+        if not msgs:
             return 0
 
-        # 单条 msg 的 token 估算 (复用 utils.context 的 helper)
-        from huginn.utils.context import _msg_content, _msg_role
-        from huginn.utils.tokens import count_message_tokens
-
-        per_msg_tokens = [
-            count_message_tokens(_msg_content(m), _msg_role(m)) for m in msgs
-        ]
-        total = sum(per_msg_tokens)
-        # 既没超 token 预算、也没超消息数上限 → 无需修剪
-        under_budget = total <= self.context_budget_tokens
-        under_count = max_messages is None or len(msgs) <= max_messages
-        if under_budget and under_count:
-            return 0
-
-        keep_last_n = 4
-        # AV5: 默认保前 2 条 root (user 初始任务 + system checklist) — σ₂ compaction
-        # 丢 Step 1 checklist 不只影响 benchmark, 生产路径长对话也会丢 system prompt.
-        keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "2"))
-        body_end = len(msgs) - keep_last_n
-
-        # root 标记: 优先读消息 metadata / additional_kwargs 里的 is_root 标记
-        # (调用方在 checklist / winner_plan 等关键 early-turn 消息上设置).
-        # 没有任何 metadata 标记时, 回退到按位置 (前 keep_root_n 条) — 与历史
-        # 行为完全一致, 不破坏现有调用路径. 有 metadata 标记时, 标记位覆盖位置,
-        # root 消息可在任意位置 (不止开头) 被保护.
-        root_indices: set[int] = set()
-        for i, m in enumerate(msgs):
-            if _is_root_message(m):
-                root_indices.add(i)
-        if not root_indices:
-            # 回退: 无 metadata 标记 → 按位置保前 keep_root_n 条
-            root_indices = set(range(min(keep_root_n, len(msgs))))
-
-        # 可 drop 候选 = 尾部 keep_last_n 之外、且非 root 的消息, 从最旧开始丢
-        droppable_order = [i for i in range(body_end) if i not in root_indices]
-        if not droppable_order:
-            return 0
-
-        # 算要 drop 几条 (从最旧开始): 两条件满足任一即继续丢 —
-        #  (a) token 总量仍高于预算;  (b) 剩下消息数仍高于 max_messages.
-        # 丢弃后 acc 应落入预算内, 且保留条数应 ≤ 消息数上限.
-        drop_indices: list[int] = []
-        acc = total
-        remaining = len(msgs)
-        for i in droppable_order:
-            over_budget = acc > self.context_budget_tokens
-            over_count = max_messages is not None and remaining > max_messages
-            if not over_budget and not over_count:
-                break
-            acc -= per_msg_tokens[i]
-            remaining -= 1
-            drop_indices.append(i)
-
+        drop_indices = _tcm_plan(
+            msgs,
+            _message_token_counts(msgs),
+            self.context_budget_tokens,
+            max_messages,
+        )
         if not drop_indices:
             return 0
 
-        # 收集要 drop 的 message IDs — system 消息不删, 没 ID 的没法删
-        from langchain_core.messages import RemoveMessage, SystemMessage
-
-        drop_ids: list[str] = []
-        for i in drop_indices:
-            m = msgs[i]
-            if isinstance(m, SystemMessage):
-                continue
-            mid = getattr(m, "id", None)
-            if mid:
-                drop_ids.append(mid)
-
+        drop_ids = _drop_message_ids(msgs, drop_indices)
         if not drop_ids:
             return 0
 
-        removals = [RemoveMessage(id=mid) for mid in drop_ids]
-        # update_state 是同步方法, 走 to_thread 不卡 event loop (G33 一致性)
-        await asyncio.to_thread(
-            graph.update_state, config, {"messages": removals}
-        )
+        await _tcm_apply(graph, config, drop_ids)
         return len(drop_ids)
 
     async def _maybe_inject_synthetic_continue(
@@ -1301,67 +1534,37 @@ class StreamingMixin:
             if not messages:
                 return
 
-            last_msg = messages[-1] if messages else None
-            ended_at_tool = isinstance(last_msg, ToolMessage)
+            ended_at_tool = isinstance(messages[-1], ToolMessage)
 
-            pipeline_block = ""
-            try:
-                from huginn.provenance.pipeline import SimulationPipeline
-                pipeline = SimulationPipeline()
-                pipeline_block = pipeline.to_context_block()
-            except Exception:  # 防御: 管线上下文块跳过则省略
-                logger.debug("pipeline context block skipped", exc_info=True)
+            pipeline_block = _pipeline_context_block()
+            prov_block, dag_block = _provenance_context_blocks()
+            task_block = _task_state_context_block(self)
 
-            prov_block = ""
-            dag_block = ""
-            try:
-                from huginn.provenance.registry import ProvenanceRegistry
-                reg = ProvenanceRegistry.shared()
-                prov_block = reg.to_context_block()
-                # P1-1: 压缩后注入 DAG mermaid, 防止 agent 丢文件产出关系全局视图
-                from huginn.provenance import to_mermaid_for_context
-                dag_block = to_mermaid_for_context(reg)
-            except Exception:  # 防御: 溯源上下文块跳过则省略
-                logger.debug("provenance context block skipped", exc_info=True)
-
-            # Long-horizon task state — gives the agent a view of what it
-            # has already done across the full conversation, not just the
-            # current context window.
-            task_block = ""
-            try:
-                from huginn.memory.task_state import get_tracker
-                _tid = getattr(self, "thread_id", "") or ""
-                if _tid:
-                    task_block = get_tracker().context_block(_tid)
-            except Exception:  # 防御: 任务状态上下文跳过则省略
-                logger.debug("task state context block skipped", exc_info=True)
-
-            if not pipeline_block and not task_block and not ended_at_tool and not dag_block:
+            if (
+                not pipeline_block
+                and not task_block
+                and not ended_at_tool
+                and not dag_block
+            ):
                 return
 
-            parts = ["[System] Continue if you have next steps."]
-            if pipeline_block:
-                parts.append(pipeline_block)
-            if prov_block:
-                parts.append(prov_block)
-            if dag_block:
-                parts.append(f"### File DAG (recent):\n```mermaid\n{dag_block}\n```")
-            if task_block:
-                parts.append(task_block)
-            parts.append(
-                "If the pipeline suggests a next step, proceed with it. "
-                "If you've completed the task, summarize the results."
+            synthetic = HumanMessage(
+                content="\n\n".join(
+                    _synthetic_continue_parts(
+                        pipeline_block, prov_block, dag_block, task_block
+                    )
+                )
             )
-            synthetic = HumanMessage(content="\n\n".join(parts))
 
-            if hasattr(self, '_pending_synthetic_messages'):
+            if hasattr(self, "_pending_synthetic_messages"):
                 self._pending_synthetic_messages.append(synthetic)
             else:
                 self._pending_synthetic_messages = [synthetic]
 
             logger.info(
                 "Synthetic Continue injected (tool_boundary=%s, has_pipeline=%s)",
-                ended_at_tool, bool(pipeline_block),
+                ended_at_tool,
+                bool(pipeline_block),
             )
         except Exception:  # 防御: 合成续接注入失败则忽略
             logger.debug("synthetic continue injection skipped", exc_info=True)
@@ -1387,9 +1590,7 @@ class StreamingMixin:
 
             parts = ["[Pipeline Suggestion] Based on current progress:"]
             for s in ready[:3]:
-                parts.append(
-                    f"  - [{s.stage.value}] {s.tool_hint}: {s.description}"
-                )
+                parts.append(f"  - [{s.stage.value}] {s.tool_hint}: {s.description}")
             parts.append(
                 "Consider proceeding with one of these steps, "
                 "or explain why a different approach is needed."
@@ -1418,22 +1619,16 @@ class StreamingMixin:
     ) -> AsyncIterator[dict[str, Any]]:
         """Send a message to the Agent and stream responses.
 
-        Stores messages in session memory and tracks tool calls for
-        auto-promotion to long-term memory.
-
-        If *image_path* is provided, the agent routes the image through
-        the vision fallback chain.
-
-        If *budget_override* is provided (BudgetSpec), temporarily
-        overrides max_tool_calls / recursion_limit for this turn.
-        PhaseManager.proposed_budget → Orchestrator → chat(budget_override=...).
-
-        If *include_history* is False, skip pulling ConversationTree history
-        into input messages. Used by Step 3 retry — fresh thread 的 prompt
-        已结构化注入所有必要 state, 不需要 Step 2 的 1M+ tokens 历史累积.
+        Stores messages in session memory and tracks tool calls for auto-promotion
+        to long-term memory. *image_path* routes through the vision fallback chain;
+        *budget_override* (BudgetSpec) temporarily overrides max_tool_calls /
+        recursion_limit for this turn; *include_history*=False skips pulling
+        ConversationTree history (Step 3 retry uses a fresh thread with all
+        necessary state already injected into the prompt).
         """
         # 超长纯文本落盘, prompt 里只留"已保存"提示 (全文由 file_read_tool 读).
         from huginn.tools.paste_offload import maybe_offload_pasted_text
+
         message, _ = maybe_offload_pasted_text(message)
 
         state: dict[str, Any] = {}
@@ -1473,13 +1668,15 @@ class StreamingMixin:
         if degraded:
             # 降级路径: 切回 tool_call 并继续执行下面的原 chat 逻辑
             self.mode = "tool_call"
-            logger.warning(
-                "CodeAct degraded to tool_call after repeated code errors"
-            )
+            logger.warning("CodeAct degraded to tool_call after repeated code errors")
 
     async def _chat_preamble(
-        self, state: dict[str, Any], message: str, thread_id: str,
-        image_path: str | None, include_history: bool | None,
+        self,
+        state: dict[str, Any],
+        message: str,
+        thread_id: str,
+        image_path: str | None,
+        include_history: bool | None,
     ):
         """turn 前置阶段: 会话上下文 / mode banner / 澄清 / 视觉路由 / 隐私扫描."""
         set_thread_id(thread_id)
@@ -1519,7 +1716,10 @@ class StreamingMixin:
         state["include_history"] = include_history
 
     async def _chat_route_and_scrub(
-        self, state: dict[str, Any], message: str, thread_id: str,
+        self,
+        state: dict[str, Any],
+        message: str,
+        thread_id: str,
         image_path: str | None,
     ):
         """事件总线启动 → 视觉路由 → 隐私扫描 → turn 副作用."""
@@ -1548,7 +1748,10 @@ class StreamingMixin:
         )
 
     def _chat_make_turn(
-        self, state: dict[str, Any], thread_id: str, budget_override: Any,
+        self,
+        state: dict[str, Any],
+        thread_id: str,
+        budget_override: Any,
     ) -> _TurnStream:
         """构造本轮可变状态容器 (TPS/TTFT 计时 + completion capture)."""
         # TPS / TTFT 实时监控: t0=turn 起点, t_first_token=首个 chunk 时间.
@@ -1666,7 +1869,8 @@ class StreamingMixin:
         """OAK 启发: 把用户消息写进 ConversationTree (研究历史是树而非线性序列)."""
         try:
             self._conversation_tree.add_message(
-                role="user", content=message,
+                role="user",
+                content=message,
                 metadata={"thread_id": thread_id, "trace_id": thread_id},
             )
         except Exception:  # 防御: 对话树写用户消息失败则跳过
@@ -1772,9 +1976,7 @@ class StreamingMixin:
 
             # 把用户问题当 focus hint 传给视觉解码器, 让多模态模型回答
             # "当前这一步想知道什么", 而不是泛泛描述整张图.
-            decoded = await asyncio.to_thread(
-                decode_image, image_path, message or None
-            )
+            decoded = await asyncio.to_thread(decode_image, image_path, message or None)
         except Exception:  # 防御: 本地视觉解码不可用则回落
             logger.debug("local vision decoder unavailable", exc_info=True)
         if decoded:
@@ -1821,9 +2023,7 @@ class StreamingMixin:
             f"[用户问题]\n{message or '请根据上述视觉描述进行分析.'}"
         ), True
 
-    def _scrub_user_message(
-        self, message: str
-    ) -> tuple[str, dict[str, Any] | None]:
+    def _scrub_user_message(self, message: str) -> tuple[str, dict[str, Any] | None]:
         """Block or redact secrets/PII; returns (message, block_event)."""
         if self.privacy_block_on_secrets:
             found = scan_for_secrets(message)
@@ -1892,9 +2092,7 @@ class StreamingMixin:
             },
         )
         try:
-            prompt_ctx = await self.hook_manager.trigger(
-                USER_PROMPT_SUBMIT, prompt_ctx
-            )
+            prompt_ctx = await self.hook_manager.trigger(USER_PROMPT_SUBMIT, prompt_ctx)
         except Exception:  # 防御: 提交钩子失败则继续主流程
             logger.warning("USER_PROMPT_SUBMIT hook raised", exc_info=True)
 
@@ -1902,9 +2100,7 @@ class StreamingMixin:
         if not clarify_questions:
             return prompt_ctx.metadata.get("prompt_guidance"), None
 
-        q_text = "\n".join(
-            f"{i + 1}. {q}" for i, q in enumerate(clarify_questions)
-        )
+        q_text = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(clarify_questions))
         clarify_content = (
             f"Please answer the following questions to clarify intent:\n{q_text}"
         )
@@ -1949,9 +2145,7 @@ class StreamingMixin:
                 if isinstance(prompt_guidance, list)
                 else prompt_guidance
             )
-            messages.insert(
-                -1, SystemMessage(content=guidance_text, id="ctx_guidance")
-            )
+            messages.insert(-1, SystemMessage(content=guidance_text, id="ctx_guidance"))
 
         self._inject_style_directive(messages)
         self._inject_pending_synthetic(messages)
@@ -1986,7 +2180,9 @@ class StreamingMixin:
         if n_dangling:
             logger.warning(
                 "C1: stripped %d dangling tool_calls from %d messages "
-                "(prevents 400 invalid_request)", n_dangling, len(messages),
+                "(prevents 400 invalid_request)",
+                n_dangling,
+                len(messages),
             )
 
     def _apply_privacy_guard(
@@ -2053,9 +2249,7 @@ class StreamingMixin:
             logger.debug("event-driven discipline inject skipped", exc_info=True)
             return messages
 
-    async def _compact_turn_inputs(
-        self, inputs: dict[str, Any], ubus: Any
-    ) -> None:
+    async def _compact_turn_inputs(self, inputs: dict[str, Any], ubus: Any) -> None:
         """Compact history when a context budget is configured."""
         if self.context_budget_tokens <= 0:
             return
@@ -2109,9 +2303,7 @@ class StreamingMixin:
             return self._drop_old_messages(messages, root_mult)
         self._needs_compaction = False  # 清 flag, 避免重复触发
         logger.info("mode-switch triggered compaction (CSM S3/S6)")
-        keep_last_n = max(
-            1, int((4 // (2 if trace_avail else 1)) * keep_mult)
-        )
+        keep_last_n = max(1, int((4 // (2 if trace_avail else 1)) * keep_mult))
         messages, self._conversation_summary = await summarize_compact_messages(
             messages,
             self.context_budget_tokens,
@@ -2122,18 +2314,14 @@ class StreamingMixin:
         )
         return messages
 
-    def _drop_old_messages(
-        self, messages: list[Any], root_mult: float
-    ) -> list[Any]:
+    def _drop_old_messages(self, messages: list[Any], root_mult: float) -> list[Any]:
         """No summarizer available — plain token-budget drop keeping root messages."""
         return compact_messages(
             messages,
             self.context_budget_tokens,
             keep_last_n=1,
             # AV5: 默认 2 + markers, σ₂ 补丁下沉到生产路径
-            keep_root_n=int(
-                int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")) * root_mult
-            ),
+            keep_root_n=int(int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")) * root_mult),
             root_content_markers=_load_root_markers(),
         )
 
@@ -2155,8 +2343,7 @@ class StreamingMixin:
             keep_last_n = max(1, keep_last_n // 2)
         keep_last_n = max(1, int(keep_last_n * keep_mult))
         adaptive_budget = int(
-            self.context_budget_tokens
-            * getattr(self, "_adaptive_budget_ratio", 1.0)
+            self.context_budget_tokens * getattr(self, "_adaptive_budget_ratio", 1.0)
         )
         messages, self._conversation_summary = await summarize_compact_messages(
             messages,
@@ -2181,9 +2368,7 @@ class StreamingMixin:
         except Exception:  # 防御: 熵自适应读取失败回退默认
             logger.debug("belief_entropy adaptive read failed", exc_info=True)
 
-    async def _report_context_usage(
-        self, messages: list[Any], ubus: Any
-    ) -> None:
+    async def _report_context_usage(self, messages: list[Any], ubus: Any) -> None:
         estimated = (
             count_tokens(self.system_prompt)
             + estimate_message_tokens(messages)
@@ -2318,9 +2503,7 @@ class StreamingMixin:
 
     # ── streaming retry loop ──────────────────────────────────────
 
-    async def _stream_turn(
-        self, turn: _TurnStream
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def _stream_turn(self, turn: _TurnStream) -> AsyncIterator[dict[str, Any]]:
         """Run the graph with retries, then hand off to post-stream processing."""
         max_retries = 3
         try:
@@ -2354,9 +2537,7 @@ class StreamingMixin:
             )
             raise
 
-    async def _stream_sync(
-        self, turn: _TurnStream
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def _stream_sync(self, turn: _TurnStream) -> AsyncIterator[dict[str, Any]]:
         """Sync-checkpointer path: collect the blocking stream in a thread."""
         states = await asyncio.to_thread(
             lambda: list(
@@ -2377,9 +2558,7 @@ class StreamingMixin:
             if turn.stopped:
                 return
 
-    async def _stream_live(
-        self, turn: _TurnStream
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def _stream_live(self, turn: _TurnStream) -> AsyncIterator[dict[str, Any]]:
         """Primary streaming path guarded by the idle / total watchdog."""
         # D7: 主流空闲阈值按**实时**剩余预算封顶 — 预算见底时不再维持一段
         # 注定越预算的阻塞, 尽早降级/失败. 无预算 (None) 时原样 = 旧行为.
@@ -2473,46 +2652,22 @@ class StreamingMixin:
         logger.warning(
             "stream watchdog timeout after %ds (states_yielded=%d), "
             "falling back to progress-aware stream collect",
-            turn.primary_idle, turn.states_yielded,
+            turn.primary_idle,
+            turn.states_yielded,
         )
         turn.turn_span.metadata["stream_watchdog_timeout"] = True
-        ainvoke_base = float(
-            os.environ.get("HUGINN_AINVOKE_TIMEOUT", str(_thinking_scale_timeout()))
-        )
-        # D1/D7: 降级路径也按**实时**剩余挂钟预算封顶, 不让"降级"吞掉超过
-        # goal 剩余预算的时间 (未设置则保持旧行为).
-        budget_left = live_budget_left()
-        ainvoke_timeout = _cap_timeout_by_budget(ainvoke_base, budget_left)
-        # 降级必须放宽空闲阈值: 主流刚以 _primary_idle 空闲失败, 再用同一阈值
-        # 重跑只会重演同一失败, 白烧 ainvoke_timeout (run72 实测两次各 300s).
-        collect_idle = _fallback_stream_idle(ainvoke_timeout, budget_left=budget_left)
-        # run72 根因: 降级从 inputs 重放整个 turn 会把主流已提交的步骤重做一遍
-        # → 累计必然超时. 已有进度时改用 None 续跑 (checkpoint 恢复), 无进度
-        # (0 步) 时仍用 inputs, 否则无 checkpoint 可续.
-        collect_inputs = _fallback_collect_inputs(turn.states_yielded, turn.inputs)
+        ainvoke_timeout, collect_idle, collect_inputs = _fallback_params(turn)
         if collect_inputs is None:
             turn.turn_span.metadata["stream_fallback_resumed"] = True
         turn.final_state = None
-        try:
-            final_state = await asyncio.wait_for(
-                self._collect_states(
-                    turn.graph, turn.config, collect_inputs, collect_idle
-                ),
-                timeout=ainvoke_timeout,
-            )
-        except TimeoutError:
-            logger.warning(
-                "fallback stream collect timed out (idle=%ds, total=%ds)",
-                collect_idle, ainvoke_timeout,
-            )
-            raise TimeoutError(
-                f"stream and fallback collect both timed out "
-                f"(collect idle={collect_idle}s, total={ainvoke_timeout}s)"
-            ) from None
-        if final_state is None:
-            raise RuntimeError("fallback stream collect produced no state") from None
+        final_state = await _fallback_collect(
+            self._collect_states, turn, collect_inputs, collect_idle, ainvoke_timeout
+        )
         self._process_stream_state(
-            final_state, turn.turn_span, turn.thread_id, turn.pet,
+            final_state,
+            turn.turn_span,
+            turn.thread_id,
+            turn.pet,
             turn.completion_records,
         )
         turn.states_yielded += 1
@@ -2559,7 +2714,10 @@ class StreamingMixin:
         wait = self._retry_wait(exc, attempt)
         logger.warning(
             "Graph invocation failed (attempt %d/%d), retrying in %.2fs: %s",
-            attempt + 1, max_retries, wait, exc,
+            attempt + 1,
+            max_retries,
+            wait,
+            exc,
         )
         # 对齐 Kimi Code stepRetryService 的 turn.step.retrying: 统一走
         # unified_bus.publish_step_retry, 让 retry 信号对 SSE / audit 可见.
@@ -2619,9 +2777,7 @@ class StreamingMixin:
         except Exception:  # 防御: 事件上报失败仅记 debug
             logger.debug("step retry event publish failed", exc_info=True)
 
-    async def _post_stream(
-        self, turn: _TurnStream
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def _post_stream(self, turn: _TurnStream) -> AsyncIterator[dict[str, Any]]:
         """Post-stream bookkeeping: plan sync, compaction, synthetic continue, phase."""
         final_state = turn.final_state
         # Sync any executing plan from PlanStore to session_state
@@ -2630,8 +2786,11 @@ class StreamingMixin:
         await self._maybe_inject_proactive_suggestion()
         # Auto-compact when context > 60% (50% = warning)
         compact_info = await self._maybe_auto_compact(
-            final_state, turn.turn_span, turn.thread_id,
-            graph=turn.graph, config=turn.config,
+            final_state,
+            turn.turn_span,
+            turn.thread_id,
+            graph=turn.graph,
+            config=turn.config,
         )
         if compact_info:
             yield {"_compacted": compact_info}
@@ -2657,7 +2816,8 @@ class StreamingMixin:
         # OAK 启发: ai 消息写进 ConversationTree
         try:
             self._conversation_tree.add_message(
-                role="assistant", content=ai_content,
+                role="assistant",
+                content=ai_content,
                 metadata={"thread_id": thread_id, "phase": self.phase},
             )
         except Exception:  # 防御: 对话树写AI消息失败则跳过
@@ -2814,9 +2974,7 @@ class StreamingMixin:
         except Exception as exc:
             logger.warning("Memory maintenance failed: %s", exc, exc_info=True)
 
-    async def _synthesize_closing_answer(
-        self, final_state: Any
-    ) -> list[Any]:
+    async def _synthesize_closing_answer(self, final_state: Any) -> list[Any]:
         """若本轮结束却没有可用的助手文本答案 (循环终止 / 模型空响应 /
         纯工具轮), 用模型把已有对话合成一段收尾概要, 保证用户总能拿到有用回应.
 
@@ -2829,52 +2987,20 @@ class StreamingMixin:
                 if isinstance(final_state, dict)
                 else (final_state or [])
             )
-            # 已有非空助手文本 → 无需兜底
-            for m in reversed(msgs):
-                if isinstance(m, AIMessage) and m.content and str(m.content).strip():
-                    return []
+            if _has_assistant_text(msgs):
+                return []
 
             model = self.select_model("agent")
             if model is None or not hasattr(model, "ainvoke"):
                 return []
 
-            transcript: list[str] = []
-            for m in msgs:
-                role = getattr(m, "type", "unknown")
-                content = getattr(m, "content", "")
-                if isinstance(content, list):
-                    content = "".join(
-                        b.get("text", "") for b in content if isinstance(b, dict)
-                    )
-                if role in ("human", "user", "assistant") and content:
-                    transcript.append(f"{role}: {str(content)[:800]}")
+            transcript = _closing_transcript(msgs)
             if not transcript:
                 return []
 
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            prompt = (
-                "The conversation below ended without a clear final answer. "
-                "Write a concise closing summary (2-5 sentences): what was done, "
-                "and the key conclusions or open questions. If information is "
-                "insufficient, say so honestly rather than guessing.\n\n"
-                + "\n".join(transcript[-12:])
-            )
-            resp = await model.ainvoke(
-                [
-                    SystemMessage(
-                        content="You are a concise, honest research summarizer."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
-            )
-            text = resp.content
-            if isinstance(text, list):
-                text = "".join(
-                    b.get("text", "") for b in text if isinstance(b, dict)
-                )
-            if text and str(text).strip():
-                return [AIMessage(content=str(text).strip())]
+            text = await _invoke_closing_summary(model, transcript)
+            if text:
+                return [AIMessage(content=text)]
         except Exception:  # 防御: 收尾合成失败则返回空
             logger.debug("closing-answer synthesis skipped", exc_info=True)
         return []
@@ -2884,6 +3010,7 @@ class StreamingMixin:
 # 运行: python -m huginn.agent.streaming
 if __name__ == "__main__":
     import sys as _sys
+
     if "--self-check-c1" in _sys.argv:
         _sys.exit(_c1_self_check())
 
@@ -2922,7 +3049,9 @@ if __name__ == "__main__":
         empty_results = []
         async for item in _astream_with_watchdog(_empty_stream(), idle_timeout=1.0):
             empty_results.append(item)
-        assert empty_results == [], f"empty stream should yield nothing: {empty_results}"
+        assert empty_results == [], (
+            f"empty stream should yield nothing: {empty_results}"
+        )
 
         # 4. 单 chunk 后超时: 第一个 chunk 透传, 第二个超时
         async def _one_then_slow():
@@ -2932,7 +3061,9 @@ if __name__ == "__main__":
 
         seen = []
         try:
-            async for item in _astream_with_watchdog(_one_then_slow(), idle_timeout=0.5):
+            async for item in _astream_with_watchdog(
+                _one_then_slow(), idle_timeout=0.5
+            ):
                 seen.append(item)
         except TimeoutError:
             logger.debug("best-effort op failed", exc_info=True)
@@ -2952,7 +3083,9 @@ if __name__ == "__main__":
                 _trick_seen.append(item)
         except TimeoutError:
             logger.debug("best-effort op failed", exc_info=True)
-        assert 0 < len(_trick_seen) < 100, f"total_timeout failed to cap trickle: {len(_trick_seen)}"
+        assert 0 < len(_trick_seen) < 100, (
+            f"total_timeout failed to cap trickle: {len(_trick_seen)}"
+        )
 
         # 6. total_timeout=None → 完全等价旧行为 (全量透传)
         _all = []
@@ -2967,6 +3100,10 @@ if __name__ == "__main__":
     asyncio.run(_test_watchdog())
 
     # 5. _STREAM_IDLE_TIMEOUT 默认 60s, 可被 env 覆盖
-    assert _STREAM_IDLE_TIMEOUT == 60.0, f"default idle timeout should be 60, got {_STREAM_IDLE_TIMEOUT}"
+    assert _STREAM_IDLE_TIMEOUT == 60.0, (
+        f"default idle timeout should be 60, got {_STREAM_IDLE_TIMEOUT}"
+    )
 
-    print("A3 self-check OK (watchdog timeout + passthrough + thinking block protection)")
+    print(
+        "A3 self-check OK (watchdog timeout + passthrough + thinking block protection)"
+    )

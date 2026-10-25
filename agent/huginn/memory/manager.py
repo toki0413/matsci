@@ -9,7 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,326 @@ from huginn.memory.types import MemoryType
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
+
+
+def _split_typed_rows(
+    typed_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """把 typed rows 拆成 (通用, skill) 两路."""
+    generic = [tr for tr in typed_results if tr.get("memory_type") != "skill"]
+    skill_rows = [tr for tr in typed_results if tr.get("memory_type") == "skill"]
+    return generic, skill_rows
+
+
+def _merge_typed_results(
+    results: list[dict[str, Any]], typed_results: list[dict[str, Any]]
+) -> None:
+    """typed 结果按 content 去重后叠加到 FTS5 结果上 (typed 优先)."""
+    if not typed_results:
+        return
+    seen = {r.get("content", "") for r in results if r.get("content")}
+    for tr in typed_results:
+        if tr.get("content") and tr["content"] not in seen:
+            results.append(tr)
+            seen.add(tr["content"])
+
+
+def _conflict_warn(raw_tags: Any) -> str:
+    """消费 lint() 写入的 contradicts: tag, 生成矛盾告警后缀."""
+    if isinstance(raw_tags, str):
+        try:
+            tag_list = json.loads(raw_tags)
+        except (ValueError, TypeError):
+            tag_list = []
+    elif isinstance(raw_tags, list):
+        tag_list = raw_tags
+    else:
+        tag_list = []
+    contradicts = [
+        t for t in tag_list if isinstance(t, str) and t.startswith("contradicts:")
+    ]
+    if not contradicts:
+        return ""
+    ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
+    return f" [WARNING: conflicts with {ids}]"
+
+
+def _recall_prioritized(r: dict[str, Any]) -> bool:
+    """typed (结构化) 或 long tier 的记忆不设重要性阈值."""
+    return bool(r.get("memory_type") or r.get("tier") == "long")
+
+
+def _prioritize_recall_results(
+    results: list[dict[str, Any]], noise_floor: float
+) -> list[dict[str, Any]]:
+    """降噪门控: 排序 + 只对 mid/short 按 importance 过滤."""
+    results.sort(
+        key=lambda r: (not _recall_prioritized(r), float(r.get("importance", 0.5)))
+    )
+    return [
+        r
+        for r in results
+        if _recall_prioritized(r) or float(r.get("importance", 0.5)) >= noise_floor
+    ]
+
+
+def _knowledge_block(results: list[dict[str, Any]]) -> str:
+    """## Relevant past knowledge: 段落."""
+    lines = ["## Relevant past knowledge:"]
+    for r in results:
+        provenance = f" ({r.get('source', '')})" if r.get("source") else ""
+        conflict_warn = _conflict_warn(r.get("tags", "[]"))
+        lines.append(
+            f"- [{r.get('category', 'fact')}] "
+            f"{r.get('content', '')}{provenance}{conflict_warn}"
+        )
+    return "\n".join(lines)
+
+
+def _promoted_content(
+    tool_name: str, result_json: str, reasoning: list[str]
+) -> tuple[str, list[str]]:
+    """promote 到 longterm 的 content + tags (有推理时加双 block)."""
+    tags = [tool_name, "auto_promoted"]
+    if not reasoning:
+        return f"{tool_name}: {result_json}", tags
+    # 最近 N 条拼接后截断 2000 字符, 避免 content 撑爆 FTS5
+    recent = "\n".join(reasoning[-20:])[:2000]
+    content = f"[REASONING]\n{recent}\n\n[RESULT]\n{tool_name}: {result_json}"
+    tags.append("has_reasoning")
+    return content, tags
+
+
+def _distill_logs(session: Any) -> list[dict[str, Any]]:
+    """把 session tool_calls 拍平成 KnowledgeDistiller 要的 log dict."""
+    logs: list[dict[str, Any]] = []
+    for tc in session.tool_calls:
+        success = tc.result.success if tc.result else False
+        log: dict[str, Any] = {
+            "tool_name": tc.tool_name,
+            "success": success,
+            "session_id": session.session_id,
+            "tool_input": tc.input_args if isinstance(tc.input_args, dict) else {},
+            "error_message": "",
+            "software": (
+                tc.tool_name.replace("_tool", "") if tc.tool_name else "general"
+            ),
+            "calculation_type": "general",
+        }
+        if not success and tc.result and tc.result.error:
+            log["error_message"] = str(tc.result.error)
+        logs.append(log)
+    return logs
+
+
+def _store_unverified_distilled(longterm: Any, distiller: Any) -> None:
+    """把新蒸馏出的 unverified 知识写入 long-term memory 供 RAG 召回."""
+    for dk in distiller.knowledge_base:
+        if dk.verification_status != "unverified":
+            continue
+        longterm.store(
+            content=dk.content,
+            category="distilled_knowledge",
+            tags=dk.tags + [dk.source_type],
+            source=f"distiller:{dk.knowledge_id}",
+            importance=dk.confidence,
+            tier="long",
+        )
+
+
+def _auto_ingest_distilled(distiller: Any) -> None:
+    """把蒸馏知识桥接进 KnowledgeBase (仅 confirmed/高置信度)."""
+    try:
+        from huginn.server_core import get_context
+
+        ctx = get_context()
+        if ctx.kb is not None:
+            ingested = distiller.auto_ingest_to_kb(kb=ctx.kb)
+            if ingested > 0:
+                logger.info("Distilled knowledge → KB: %d chunks ingested", ingested)
+    except Exception:
+        logger.debug("distilled→KB auto-ingest skipped", exc_info=True)
+
+
+def _typed_recall_sql(
+    memory_type: str,
+    persona_id: str | None,
+    run_id: str | None,
+    status: str | None,
+    limit: int,
+) -> tuple[str, list[Any]]:
+    """拼 typed memory 严格匹配 SQL (含 alive 过滤), 返回 (sql, params)."""
+    sql = "SELECT * FROM memories AS m WHERE memory_type = ?"
+    params: list[Any] = [memory_type]
+    if persona_id is not None:
+        sql += " AND persona_id = ?"
+        params.append(persona_id)
+    if run_id is not None:
+        sql += " AND run_id = ?"
+        params.append(run_id)
+    if status is not None:
+        sql += " AND status = ?"
+        params.append(status)
+    # alive 过滤: 排除 expired + archived
+    sql += " AND (m.expires_at IS NULL OR m.expires_at > ?) AND m.archived = 0"
+    params.append(datetime.now().isoformat())
+    sql += " ORDER BY m.last_accessed DESC LIMIT ?"
+    params.append(limit)
+    return sql, params
+
+
+def _lazy_migrate_typed(conn: Any, memory_type: str, now: str, infer_fn: Any) -> int:
+    """扫 memory_type IS NULL 的行反推类型并回填, 返回迁移条数."""
+    null_rows = conn.execute(
+        "SELECT * FROM memories WHERE memory_type IS NULL"
+        " AND (expires_at IS NULL OR expires_at > ?)"
+        " AND archived = 0",
+        (now,),
+    ).fetchall()
+    migrated = 0
+    for r in null_rows:
+        tags = json.loads(r["tags"] or "[]")
+        inferred = infer_fn(tags, r["source"] or "", r["category"] or "")
+        if inferred == memory_type:
+            conn.execute(
+                "UPDATE memories SET memory_type = ? WHERE id = ?",
+                (inferred, r["id"]),
+            )
+            migrated += 1
+    return migrated
+
+
+def _norm_skill_key(ev: Any) -> str | None:
+    """attempted 归一化 (strip+lower+前 20 字符), 空则 None."""
+    a = (getattr(ev, "attempted", "") or "").strip().lower()
+    return a[:20] if a else None
+
+
+def _distill_candidate(step_evaluations: list) -> tuple[str, str] | None:
+    """检测连续 3 次同 skill 成功; 命中返回 (attempted, found)."""
+    if len(step_evaluations) < 3:
+        return None
+
+    recent = list(step_evaluations[-3:])
+    keys = [_norm_skill_key(ev) for ev in recent]
+    if any(k is None for k in keys):
+        return None
+    if len(set(keys)) != 1:
+        return None
+    if not all(getattr(ev, "on_track", "") == "true" for ev in recent):
+        return None
+
+    attempted = (getattr(recent[-1], "attempted", "") or "").strip()
+    found = (getattr(recent[-1], "found", "") or "").strip()
+    if not attempted or not found:
+        return None
+    return attempted, found
+
+
+def _store_principle(principle: str, workspace: Any) -> bool:
+    """写 stable principle; 失败返回 False."""
+    try:
+        from huginn.memory.longterm import store_stable_principle
+
+        # source 标个来源, 方便 load_stable_principles 那边排查
+        store_stable_principle(
+            principle,
+            source=f"episodic_distill:{str(workspace)[:64]}",
+        )
+    except Exception:
+        logger.debug("distill_episodic_to_procedural 写入失败", exc_info=True)
+        return False
+    return True
+
+
+def _run_evolution_distill(host: Any) -> None:
+    """P14: flag on 时同步跑 EvolutionManager.distill."""
+    if os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") != "1":
+        return
+    try:
+        from huginn.evolution.manager import EvolutionManager
+
+        EvolutionManager.shared(host).distill()
+    except Exception:
+        logger.warning("EvolutionManager.distill failed", exc_info=True)
+
+
+def _selfcheck_scenario_a(ltm: Any, mm: Any) -> None:
+    """A. 有 reasoning_trace → 双 block + has_reasoning tag."""
+    mm.session.reasoning_trace = [
+        "选 ENCUT=520 因为收敛测试显示 400 不够",
+        "排除 LDA, 用 PBE",
+    ]
+    mm._promote_tool_result(
+        ToolCallRecord(
+            tool_name="vasp_tool",
+            input_args={},
+            result=ToolResult(data={"energy": -3.5, "converged": True}, success=True),
+        )
+    )
+    rows = ltm.retrieve(query="energy", top_k=5, semantic=False)
+    assert rows, "场景 A: promote 后应能 retrieve 到"
+    a = rows[0]
+    assert "[REASONING]" in a["content"], "场景 A: content 缺 [REASONING] block"
+    assert "[RESULT]" in a["content"], "场景 A: content 缺 [RESULT] block"
+    assert "ENCUT=520" in a["content"], "场景 A: reasoning 文本丢失"
+    assert "has_reasoning" in json.loads(a["tags"]), "场景 A: tags 缺 has_reasoning"
+    print("A: 有 reasoning → [REASONING]/[RESULT] block + has_reasoning tag OK")
+
+
+def _selfcheck_scenario_b(ltm: Any, mm: Any) -> None:
+    """B. 无 reasoning_trace → 原单行格式 + 无 has_reasoning."""
+    mm.session.reasoning_trace = []
+    mm._promote_tool_result(
+        ToolCallRecord(
+            tool_name="lammps_tool",
+            input_args={},
+            result=ToolResult(data={"diffusivity": 1e-9}, success=True),
+        )
+    )
+    rows_b = ltm.retrieve(query="diffusivity", top_k=5, semantic=False)
+    assert rows_b, "场景 B: promote 后应能 retrieve 到"
+    b = rows_b[0]
+    assert "[REASONING]" not in b["content"], "场景 B: 不应含 [REASONING] block"
+    assert b["content"].startswith("lammps_tool:"), (
+        f"场景 B: 应走原 tool_name: result 格式, got {b['content'][:40]!r}"
+    )
+    assert "has_reasoning" not in json.loads(b["tags"]), "场景 B: 不应标 has_reasoning"
+    print("B: 无 reasoning → 原格式 + 无 has_reasoning OK")
+
+
+def _selfcheck_scenario_c(prefix: str) -> str:
+    """C. retrieve bonus — 同 keyword 下 has_reasoning 条目优先."""
+    tmp_c = tempfile.mkdtemp(prefix=prefix)
+    ltm_c = LongTermMemory(
+        db_path=str(Path(tmp_c) / "memory.db"), enable_semantic=False
+    )
+    mm_c = MemoryManager(longterm=ltm_c)
+    mm_c.session.reasoning_trace = []
+    mm_c._promote_tool_result(
+        ToolCallRecord(
+            tool_name="vasp_tool",
+            input_args={},
+            result=ToolResult(data={"energy": 1.0, "converged": True}, success=True),
+        )
+    )
+    mm_c.session.reasoning_trace = ["用 PBE 因为 LDA 低估 gap"]
+    mm_c._promote_tool_result(
+        ToolCallRecord(
+            tool_name="vasp_tool",
+            input_args={},
+            result=ToolResult(data={"energy": 2.0, "converged": True}, success=True),
+        )
+    )
+    rows_c = ltm_c.retrieve(query="energy", top_k=5, semantic=False)
+    assert len(rows_c) >= 2, f"场景 C: 应召回 >= 2 条, got {len(rows_c)}"
+    top = rows_c[0]
+    assert "has_reasoning" in json.loads(top["tags"]), (
+        f"场景 C: retrieve bonus 失败, rows[0] 应是 has_reasoning 条目, "
+        f"tags={json.loads(top['tags'])}"
+    )
+    print("C: retrieve bonus — has_reasoning 优先 OK")
+    return tmp_c
 
 
 @dataclass
@@ -222,14 +545,8 @@ class MemoryManager:
         typed_results = self._recall_typed_for_prompt(max_entries)
         # P0 Task 1 retrieve 端 (705e4d9 漏实现): skill typed memory 单独格式化为
         # [SKILL LIBRARY] block, 不混进通用 past knowledge 行.
-        skill_rows = [tr for tr in typed_results if tr.get("memory_type") == "skill"]
-        typed_results = [tr for tr in typed_results if tr.get("memory_type") != "skill"]
-        if typed_results:
-            seen = {r.get("content", "") for r in results if r.get("content")}
-            for tr in typed_results:
-                if tr.get("content") and tr["content"] not in seen:
-                    results.append(tr)
-                    seen.add(tr["content"])
+        generic_typed, skill_rows = _split_typed_rows(typed_results)
+        _merge_typed_results(results, generic_typed)
 
         blocks: list[str] = []
         # 降噪门控: 抑制低 importance 的中短期自动晋升噪音, 防止无关/弱相关
@@ -237,46 +554,10 @@ class MemoryManager:
         # 常用事实/洞察, 不设阈值; 只对 mid/short 做重要性过滤. ponytail: 阈值
         # 可经 HUGINN_RECALL_NOISE_FLOOR 覆盖, 默认 0.35 是启发式, 不区分领域;
         # 升级路径: 按 category 做自适应阈值或让 LLM 打分.
-        _noise_floor = float(
-            os.environ.get("HUGINN_RECALL_NOISE_FLOOR", "0.35")
-        )
-
-        def _prioritized(r: dict[str, Any]) -> bool:
-            return bool(r.get("memory_type") or r.get("tier") == "long")
-        results.sort(key=lambda r: (not _prioritized(r), float(r.get("importance", 0.5))))
-        results = [
-            r
-            for r in results
-            if _prioritized(r) or float(r.get("importance", 0.5)) >= _noise_floor
-        ]
+        noise_floor = float(os.environ.get("HUGINN_RECALL_NOISE_FLOOR", "0.35"))
+        results = _prioritize_recall_results(results, noise_floor)
         if results:
-            lines = ["## Relevant past knowledge:"]
-            for r in results:
-                provenance = f" ({r.get('source', '')})" if r.get("source") else ""
-                # 消费 lint() 写入的 contradicts: tag, 标注矛盾条目
-                conflict_warn = ""
-                raw_tags = r.get("tags", "[]")
-                if isinstance(raw_tags, str):
-                    try:
-                        tag_list = json.loads(raw_tags)
-                    except (ValueError, TypeError):
-                        tag_list = []
-                elif isinstance(raw_tags, list):
-                    tag_list = raw_tags
-                else:
-                    tag_list = []
-                contradicts = [
-                    t
-                    for t in tag_list
-                    if isinstance(t, str) and t.startswith("contradicts:")
-                ]
-                if contradicts:
-                    ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
-                    conflict_warn = f" [WARNING: conflicts with {ids}]"
-                lines.append(
-                    f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}{conflict_warn}"
-                )
-            blocks.append("\n".join(lines))
+            blocks.append(_knowledge_block(results))
 
         # P0 Task 1: skill library 注入 — Voyager-style 参数化模板, retrieve 命中
         # 直接给 LLM function_name + reasoning_template, 省去重复推理.
@@ -455,7 +736,7 @@ class MemoryManager:
         Lets the next session pick up where we left off — the agent can
         recall 'you were on step 2 of 3 for the GaN band structure calc.'
         """
-        content = f"Plan: {objective} | " f"Step: {step_index} | Status: {status}"
+        content = f"Plan: {objective} | Step: {step_index} | Status: {status}"
         if l1_coordinates:
             content += f" | Position: {l1_coordinates}"
         return self.longterm.store(
@@ -553,17 +834,7 @@ class MemoryManager:
         # tags 里加 has_reasoning 标记 (跟 record_failed_direction 的 math_concept:X
         # 同模式), retrieve 时按标记优先召回. 升级路径: 独立 has_reasoning 列.
         reasoning = getattr(self.session, "reasoning_trace", []) or []
-        tags = [record.tool_name, "auto_promoted"]
-        if reasoning:
-            # 最近 N 条拼接后截断 2000 字符, 避免 content 撑爆 FTS5
-            recent = "\n".join(reasoning[-20:])[:2000]
-            content = (
-                f"[REASONING]\n{recent}\n\n[RESULT]\n"
-                f"{record.tool_name}: {result_json}"
-            )
-            tags.append("has_reasoning")
-        else:
-            content = f"{record.tool_name}: {result_json}"
+        content, tags = _promoted_content(record.tool_name, result_json, reasoning)
         importance = self._score_importance(record)
         self.longterm.store(
             content=content,
@@ -600,9 +871,7 @@ class MemoryManager:
         if pending is None:
             return
 
-        outcome = (
-            ReasoningOutcome.CONFIRMED if success else ReasoningOutcome.REFUTED
-        )
+        outcome = ReasoningOutcome.CONFIRMED if success else ReasoningOutcome.REFUTED
         self.session.mark_reasoning_outcome(pending, outcome, verified_by=tool_name)
 
         # 蒸馏: 只蒸馏 confirmed 且有 estimate 的高分记录.
@@ -660,7 +929,7 @@ class MemoryManager:
                 if distiller is not None:
                     src = entry.get("source") or ""
                     if src.startswith("distiller:"):
-                        kid = src[len("distiller:"):]
+                        kid = src[len("distiller:") :]
                         if kid:
                             distiller.verify_knowledge(kid, "confirmed")
         except Exception:
@@ -773,24 +1042,7 @@ class MemoryManager:
             return 0
 
         # Convert session tool calls to the flat log format the distiller wants
-        logs: list[dict[str, Any]] = []
-        for tc in self.session.tool_calls:
-            success = tc.result.success if tc.result else False
-            log: dict[str, Any] = {
-                "tool_name": tc.tool_name,
-                "success": success,
-                "session_id": self.session.session_id,
-                "tool_input": tc.input_args if isinstance(tc.input_args, dict) else {},
-                "error_message": "",
-                "software": (
-                    tc.tool_name.replace("_tool", "") if tc.tool_name else "general"
-                ),
-                "calculation_type": "general",
-            }
-            if not success and tc.result and tc.result.error:
-                log["error_message"] = str(tc.result.error)
-            logs.append(log)
-
+        logs = _distill_logs(self.session)
         if not logs:
             return 0
 
@@ -803,34 +1055,14 @@ class MemoryManager:
         total += len(distiller.distill_tool_tips(logs))
 
         # Ingest distilled knowledge into long-term memory for RAG retrieval
-        for dk in distiller.knowledge_base:
-            if dk.verification_status == "unverified":
-                self.longterm.store(
-                    content=dk.content,
-                    category="distilled_knowledge",
-                    tags=dk.tags + [dk.source_type],
-                    source=f"distiller:{dk.knowledge_id}",
-                    importance=dk.confidence,
-                    tier="long",
-                )
+        _store_unverified_distilled(self.longterm, distiller)
 
         # ── Auto-ingest distilled knowledge into KnowledgeBase ────
         # This bridges Memory→KB: distilled experience (error lessons,
         # success patterns, tool tips) becomes RAG-retrievable via
         # the same ChromaDB collection that user-uploaded docs use.
         # Only confirmed or high-confidence knowledge is ingested.
-        try:
-            from huginn.server_core import get_context
-
-            ctx = get_context()
-            if ctx.kb is not None:
-                ingested = distiller.auto_ingest_to_kb(kb=ctx.kb)
-                if ingested > 0:
-                    logger.info(
-                        "Distilled knowledge → KB: %d chunks ingested", ingested
-                    )
-        except Exception:
-            logger.debug("distilled→KB auto-ingest skipped", exc_info=True)
+        _auto_ingest_distilled(distiller)
 
         return total
 
@@ -1207,51 +1439,18 @@ class MemoryManager:
         ponytail: 直接拼 SQL, 不走 retrieve (retrieve 走 FTS5 + vector search,
         不适合按字段精确过滤).
         """
-        import json
-        from datetime import datetime
-
         from huginn.memory.typing import _infer_memory_type_from_tags
 
-        sql = "SELECT * FROM memories AS m WHERE memory_type = ?"
-        params: list[Any] = [memory_type]
-        if persona_id is not None:
-            sql += " AND persona_id = ?"
-            params.append(persona_id)
-        if run_id is not None:
-            sql += " AND run_id = ?"
-            params.append(run_id)
-        if status is not None:
-            sql += " AND status = ?"
-            params.append(status)
-        # alive 过滤: 排除 expired + archived
-        sql += " AND (m.expires_at IS NULL OR m.expires_at > ?)" " AND m.archived = 0"
-        params.append(datetime.now().isoformat())
-        sql += " ORDER BY m.last_accessed DESC LIMIT ?"
-        params.append(limit)
+        sql, params = _typed_recall_sql(memory_type, persona_id, run_id, status, limit)
         now = datetime.now().isoformat()
         with self.longterm._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
             if rows:
                 return [dict(r) for r in rows]
             # lazy migrate: strict 返空, 扫 NULL 行反推
-            null_rows = conn.execute(
-                "SELECT * FROM memories WHERE memory_type IS NULL"
-                " AND (expires_at IS NULL OR expires_at > ?)"
-                " AND archived = 0",
-                (now,),
-            ).fetchall()
-            migrated = 0
-            for r in null_rows:
-                tags = json.loads(r["tags"] or "[]")
-                inferred = _infer_memory_type_from_tags(
-                    tags, r["source"] or "", r["category"] or ""
-                )
-                if inferred == memory_type:
-                    conn.execute(
-                        "UPDATE memories SET memory_type = ? WHERE id = ?",
-                        (inferred, r["id"]),
-                    )
-                    migrated += 1
+            migrated = _lazy_migrate_typed(
+                conn, memory_type, now, _infer_memory_type_from_tags
+            )
             if migrated:
                 conn.commit()
                 rows = conn.execute(sql, tuple(params)).fetchall()
@@ -1369,55 +1568,19 @@ class MemoryManager:
         所以文本即可当 id), 未触发或写入失败返回 None.
         ponytail: 关键词归一化不做语义聚类; principle 模板化, LLM 升级路径.
         """
-        if len(step_evaluations) < 3:
+        candidate = _distill_candidate(step_evaluations)
+        if candidate is None:
             return None
-
-        recent = list(step_evaluations[-3:])
-
-        def _norm_skill(ev) -> str | None:
-            a = getattr(ev, "attempted", "") or ""
-            a = a.strip().lower()
-            return a[:20] if a else None
-
-        keys = [_norm_skill(ev) for ev in recent]
-        if any(k is None for k in keys):
-            return None
-        if len(set(keys)) != 1:
-            return None
-        if not all(getattr(ev, "on_track", "") == "true" for ev in recent):
-            return None
-
-        attempted = (getattr(recent[-1], "attempted", "") or "").strip()
-        found = (getattr(recent[-1], "found", "") or "").strip()
-        if not attempted or not found:
-            return None
+        attempted, found = candidate
 
         principle = f"当遇到 {attempted} 时, 有效方法是 {found}"
-        try:
-            from huginn.memory.longterm import store_stable_principle
-
-            # source 标个来源, 方便 load_stable_principles 那边排查
-            store_stable_principle(
-                principle,
-                source=f"episodic_distill:{str(workspace)[:64]}",
-            )
-        except Exception:
-            logger.debug("distill_episodic_to_procedural 写入失败", exc_info=True)
+        if not _store_principle(principle, workspace):
             return None
 
         # P14: EvolutionManager.distill — 默认 ON, 同步把 failed_direction
         # 蒸馏成 STABLE_PRINCIPLE (avoid persona X for math concept Y).
         # flag off 回退原 episodic 蒸馏路径.
-        import os as _os
-
-        if _os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") == "1":
-            try:
-                from huginn.evolution.manager import EvolutionManager
-
-                em = EvolutionManager.shared(self)
-                em.distill()
-            except Exception:
-                logger.warning("EvolutionManager.distill failed", exc_info=True)
+        _run_evolution_distill(self)
         return principle
 
     def recall_procedural(self, query: str, top_k: int = 3) -> list[str]:
@@ -1456,90 +1619,19 @@ def _selfcheck_promote_reasoning() -> None:
     B. 无 reasoning_trace → 走原 tool_name: result 单行格式, tags 无 has_reasoning
     C. retrieve bonus: 同 keyword 下有推理条目优先于无推理条目 (stable sort 验证)
     """
-    import json as _json
-    import shutil
-    import tempfile
-    from pathlib import Path
-
-    from huginn.memory.longterm import LongTermMemory
-    from huginn.memory.session import ToolCallRecord
-
     tmp = tempfile.mkdtemp(prefix="huginn_promote_selfcheck_")
     db = Path(tmp) / "memory.db"
     ltm = LongTermMemory(db_path=str(db), enable_semantic=False)
     mm = MemoryManager(longterm=ltm)
 
     # 场景 A: 有 reasoning_trace
-    mm.session.reasoning_trace = [
-        "选 ENCUT=520 因为收敛测试显示 400 不够",
-        "排除 LDA, 用 PBE",
-    ]
-    mm._promote_tool_result(
-        ToolCallRecord(
-            tool_name="vasp_tool",
-            input_args={},
-            result=ToolResult(data={"energy": -3.5, "converged": True}, success=True),
-        )
-    )
-    rows = ltm.retrieve(query="energy", top_k=5, semantic=False)
-    assert rows, "场景 A: promote 后应能 retrieve 到"
-    a = rows[0]
-    assert "[REASONING]" in a["content"], "场景 A: content 缺 [REASONING] block"
-    assert "[RESULT]" in a["content"], "场景 A: content 缺 [RESULT] block"
-    assert "ENCUT=520" in a["content"], "场景 A: reasoning 文本丢失"
-    assert "has_reasoning" in _json.loads(a["tags"]), "场景 A: tags 缺 has_reasoning"
-    print("A: 有 reasoning → [REASONING]/[RESULT] block + has_reasoning tag OK")
-
+    _selfcheck_scenario_a(ltm, mm)
     # 场景 B: 无 reasoning_trace (空 list, 走原格式)
-    mm.session.reasoning_trace = []
-    mm._promote_tool_result(
-        ToolCallRecord(
-            tool_name="lammps_tool",
-            input_args={},
-            result=ToolResult(data={"diffusivity": 1e-9}, success=True),
-        )
-    )
-    rows_b = ltm.retrieve(query="diffusivity", top_k=5, semantic=False)
-    assert rows_b, "场景 B: promote 后应能 retrieve 到"
-    b = rows_b[0]
-    assert "[REASONING]" not in b["content"], "场景 B: 不应含 [REASONING] block"
-    assert b["content"].startswith(
-        "lammps_tool:"
-    ), f"场景 B: 应走原 tool_name: result 格式, got {b['content'][:40]!r}"
-    assert "has_reasoning" not in _json.loads(b["tags"]), "场景 B: 不应标 has_reasoning"
-    print("B: 无 reasoning → 原格式 + 无 has_reasoning OK")
-
+    _selfcheck_scenario_b(ltm, mm)
     # 场景 C: retrieve bonus — 同 keyword 下 has_reasoning 条目优先.
     # 先插无推理 (低 rowid → SQL 先返), 再插有推理; 默认返回路径 stable sort
     # 应把有推理那条提到 rows[0].
-    tmp_c = tempfile.mkdtemp(prefix="huginn_promote_bonus_")
-    db_c = Path(tmp_c) / "memory.db"
-    ltm_c = LongTermMemory(db_path=str(db_c), enable_semantic=False)
-    mm_c = MemoryManager(longterm=ltm_c)
-    mm_c.session.reasoning_trace = []
-    mm_c._promote_tool_result(
-        ToolCallRecord(
-            tool_name="vasp_tool",
-            input_args={},
-            result=ToolResult(data={"energy": 1.0, "converged": True}, success=True),
-        )
-    )
-    mm_c.session.reasoning_trace = ["用 PBE 因为 LDA 低估 gap"]
-    mm_c._promote_tool_result(
-        ToolCallRecord(
-            tool_name="vasp_tool",
-            input_args={},
-            result=ToolResult(data={"energy": 2.0, "converged": True}, success=True),
-        )
-    )
-    rows_c = ltm_c.retrieve(query="energy", top_k=5, semantic=False)
-    assert len(rows_c) >= 2, f"场景 C: 应召回 >= 2 条, got {len(rows_c)}"
-    top = rows_c[0]
-    assert "has_reasoning" in _json.loads(top["tags"]), (
-        f"场景 C: retrieve bonus 失败, rows[0] 应是 has_reasoning 条目, "
-        f"tags={_json.loads(top['tags'])}"
-    )
-    print("C: retrieve bonus — has_reasoning 优先 OK")
+    tmp_c = _selfcheck_scenario_c("huginn_promote_bonus_")
 
     shutil.rmtree(tmp, ignore_errors=True)
     shutil.rmtree(tmp_c, ignore_errors=True)
@@ -1687,21 +1779,21 @@ if __name__ == "__main__":
     assert out, "recall_for_prompt should return non-empty string"
 
     # typed 记录都应该出现在结果里
-    assert (
-        "Failed Direction" in out
-    ), f"failed_direction should appear in recall_for_prompt, got: {out[:200]}"
-    assert (
-        "iteration_result" in out or "run_m_ir" in out
-    ), f"iteration_result should appear in recall_for_prompt, got: {out[:200]}"
+    assert "Failed Direction" in out, (
+        f"failed_direction should appear in recall_for_prompt, got: {out[:200]}"
+    )
+    assert "iteration_result" in out or "run_m_ir" in out, (
+        f"iteration_result should appear in recall_for_prompt, got: {out[:200]}"
+    )
 
     # M2: priority 排序 — failed_direction 在 iteration_result 前面
     fd_pos = out.find("Failed Direction")
     ir_pos = out.find("run_m_ir")
     if ir_pos == -1:
         ir_pos = out.find("iteration_result")
-    assert (
-        fd_pos != -1 and ir_pos != -1
-    ), f"both typed records should be in output, fd_pos={fd_pos}, ir_pos={ir_pos}"
+    assert fd_pos != -1 and ir_pos != -1, (
+        f"both typed records should be in output, fd_pos={fd_pos}, ir_pos={ir_pos}"
+    )
     assert fd_pos < ir_pos, (
         f"failed_direction (priority 0) should come before iteration_result (priority 1), "
         f"fd_pos={fd_pos}, ir_pos={ir_pos}"
@@ -1710,9 +1802,9 @@ if __name__ == "__main__":
 
     # M3: FTS5 路径保留 — 普通记录仍能召回
     out_fts = mm_m.recall_for_prompt("GaN formation energy", max_entries=5)
-    assert (
-        "GaN formation energy" in out_fts and "VASP" in out_fts
-    ), f"FTS5 path broken: legacy record missing, got: {out_fts[:200]}"
+    assert "GaN formation energy" in out_fts and "VASP" in out_fts, (
+        f"FTS5 path broken: legacy record missing, got: {out_fts[:200]}"
+    )
     print("M3: FTS5 path preserved OK")
 
     # M4: _recall_typed_for_prompt 不走 lazy-migrate (直接 SQL WHERE memory_type=?)
@@ -1721,12 +1813,12 @@ if __name__ == "__main__":
     assert len(typed_only) >= 2, f"expected >= 2 typed records, got {len(typed_only)}"
     for tr in typed_only:
         mt = tr.get("memory_type")
-        assert (
-            mt is not None and mt != ""
-        ), f"_recall_typed_for_prompt returned non-typed row, memory_type={mt!r}"
-        assert (
-            tr["id"] != legacy_id
-        ), "_recall_typed_for_prompt returned legacy NULL row — not strict WHERE"
+        assert mt is not None and mt != "", (
+            f"_recall_typed_for_prompt returned non-typed row, memory_type={mt!r}"
+        )
+        assert tr["id"] != legacy_id, (
+            "_recall_typed_for_prompt returned legacy NULL row — not strict WHERE"
+        )
     # priority 排序在 _recall_typed_for_prompt 里也成立
     types_in_order = [tr["memory_type"] for tr in typed_only]
     if "failed_direction" in types_in_order and "iteration_result" in types_in_order:

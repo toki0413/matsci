@@ -148,11 +148,13 @@ async def send_plan_and_wait(
     future = loop.create_future()
     _pending_plans[plan_id] = future
 
-    await websocket.send_json({
-        "type": "plan",
-        "plan_id": plan_id,
-        "plan": plan,
-    })
+    await websocket.send_json(
+        {
+            "type": "plan",
+            "plan_id": plan_id,
+            "plan": plan,
+        }
+    )
 
     try:
         result = await asyncio.wait_for(future, timeout=timeout)
@@ -164,6 +166,96 @@ async def send_plan_and_wait(
         return {"confirmed": False, "edited_plan": None, "reason": "timeout"}
     finally:
         _pending_plans.pop(plan_id, None)
+
+
+# 用**注册名**: `file_delete_tool`/`terminal_tool` 无对应注册工具, 永不命中已删
+# (MECE 审计记的死项); 删除能力实际走 bash_tool 的 rm.
+_DANGEROUS_TOOLS = frozenset(
+    {
+        "bash_tool",
+        "file_edit_tool",
+        "multi_edit_tool",
+        "git_tool",
+    }
+)
+
+
+async def _send_approval_notice(
+    websocket: WebSocket,
+    *,
+    request_id: str,
+    tool_name: str,
+    reason: str,
+    approved: bool,
+    is_dangerous: bool,
+) -> None:
+    """发 tool_auto_approved / approval_request 事件 (send 失败只记 debug)."""
+    try:
+        msg_type = "tool_auto_approved" if approved else "approval_request"
+        await websocket.send_json(
+            {
+                "type": msg_type,
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "reason": reason,
+                "auto_approved": approved,
+                "dangerous": is_dangerous,
+            }
+        )
+    except Exception:
+        logger.debug("ws approval notification send failed", exc_info=True)
+
+
+def _warn_dangerous_tool(tool_name: str, approved: bool, reason: str) -> None:
+    """dangerous tool 必留 warning 级审计日志."""
+    logger.warning(
+        "Tool '%s' %s (reason: %s).",
+        tool_name,
+        "denied (auto-approve off)" if not approved else "auto-approved",
+        reason,
+    )
+
+
+def _register_pending_approval(
+    request_id: str,
+    pending_approvals: dict | None,
+    pending_approval_contexts: dict | None,
+    last_user_context: dict | None,
+) -> None:
+    """把未获批的请求登记到 pending, 供 approval_response 回填."""
+    if pending_approvals is not None:
+        loop = asyncio.get_running_loop()
+        pending_approvals[request_id] = loop.create_future()
+    if pending_approval_contexts is not None and last_user_context:
+        pending_approval_contexts[request_id] = dict(last_user_context)
+
+
+def _schedule_approval_notice(
+    websocket: WebSocket,
+    *,
+    request_id: str,
+    tool_name: str,
+    reason: str,
+    approved: bool,
+    is_dangerous: bool,
+) -> None:
+    """best-effort 把审批通知挂到事件循环 (无 loop 时只记 debug)."""
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(
+            _send_approval_notice(
+                websocket,
+                request_id=request_id,
+                tool_name=tool_name,
+                reason=reason,
+                approved=approved,
+                is_dangerous=is_dangerous,
+            )
+        )
+        _pending_tasks.add(task)
+        task.add_done_callback(_pending_tasks.discard)
+    except RuntimeError:
+        logger.debug("best-effort op failed", exc_info=True)
 
 
 def _make_ws_approval_callback(
@@ -180,13 +272,9 @@ def _make_ws_approval_callback(
     approval_response handler is the workaround — the user sees the
     denial, reviews it, and approves; the original turn re-runs.
     """
-    # 用**注册名**: `file_delete_tool`/`terminal_tool` 无对应注册工具, 永不命中已删
-    # (MECE 审计记的死项); 删除能力实际走 bash_tool 的 rm.
-    _DANGEROUS_TOOLS = frozenset({
-        "bash_tool", "file_edit_tool", "multi_edit_tool", "git_tool",
-    })
-
-    _auto = session_auto_approve if session_auto_approve is not None else {"enabled": True}
+    _auto = (
+        session_auto_approve if session_auto_approve is not None else {"enabled": True}
+    )
 
     def callback(tool_name: str, reason: str) -> bool:
         request_id = uuid.uuid4().hex
@@ -194,52 +282,109 @@ def _make_ws_approval_callback(
         approved = _auto["enabled"]
 
         if not approved:
-            if pending_approvals is not None:
-                loop = asyncio.get_running_loop()
-                fut = loop.create_future()
-                pending_approvals[request_id] = fut
-            if pending_approval_contexts is not None and last_user_context:
-                pending_approval_contexts[request_id] = dict(last_user_context)
+            _register_pending_approval(
+                request_id,
+                pending_approvals,
+                pending_approval_contexts,
+                last_user_context,
+            )
 
         # v6: auto_approve=True 时改发静默事件, 不再发 approval_request.
         # 之前发 approval_request (auto_approved=true) 让前端弹 "Auto-approved"
         # 消息污染对话, UX 与可见性双错位. 现在: 静默放行只记日志, 前端不弹消息.
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def _safe_send():
-                try:
-                    msg_type = "tool_auto_approved" if approved else "approval_request"
-                    await websocket.send_json(
-                        {
-                            "type": msg_type,
-                            "request_id": request_id,
-                            "tool_name": tool_name,
-                            "reason": reason,
-                            "auto_approved": approved,
-                            "dangerous": is_dangerous,
-                        }
-                    )
-                except Exception:
-                    logger.debug("ws approval notification send failed", exc_info=True)
-
-            task = loop.create_task(_safe_send())
-            _pending_tasks.add(task)
-            task.add_done_callback(_pending_tasks.discard)
-        except RuntimeError:
-            logger.debug("best-effort op failed", exc_info=True)
+        _schedule_approval_notice(
+            websocket,
+            request_id=request_id,
+            tool_name=tool_name,
+            reason=reason,
+            approved=approved,
+            is_dangerous=is_dangerous,
+        )
 
         if is_dangerous:
-            logger.warning(
-                "Tool '%s' %s (reason: %s).",
-                tool_name,
-                "denied (auto-approve off)" if not approved else "auto-approved",
-                reason,
-            )
+            _warn_dangerous_tool(tool_name, approved, reason)
 
         return approved
 
     return callback
+
+
+def _make_ws_sender(websocket: WebSocket, thread_id: str, closed: list[bool]):
+    """构造带 thread_id 补齐 + 断连熔断的 ws send 协程."""
+
+    async def _ws_send(msg: dict) -> None:
+        """Wrap send_json with thread_id for client-side routing."""
+        if closed[0]:
+            return
+        if "thread_id" not in msg:
+            msg["thread_id"] = thread_id
+        try:
+            await websocket.send_json(msg)
+        except Exception:
+            closed[0] = True
+            logger.debug("WS closed mid-stream, stopping sends")
+            # actively close so the client gets a close event
+            # instead of waiting for TCP timeout
+            with contextlib.suppress(Exception):
+                await websocket.close()
+
+    return _ws_send
+
+
+async def _consume_chat_states(
+    agent: Any,
+    content: str,
+    thread_id: str,
+    st: _WsStreamState,
+    send: Any,
+    *,
+    handle_clarification: bool,
+    auto_checkpoint: bool,
+) -> None:
+    """消费 agent.chat() 的每个 state 并转发, ``break`` 时提前结束."""
+    async for state in agent.chat(content, thread_id):
+        action = await _forward_stream_state(
+            state,
+            st,
+            send,
+            content=content,
+            agent=agent,
+            handle_clarification=handle_clarification,
+            auto_checkpoint=auto_checkpoint,
+        )
+        if action == "break":
+            break
+
+
+async def _finalize_stream(
+    agent: Any,
+    st: _WsStreamState,
+    send: Any,
+    cfg_chat: Any,
+    *,
+    plan_result: dict | None,
+    citations: list | None,
+    sediment_question: str | None,
+    sediment_type: str,
+) -> None:
+    """收尾: plan/citation → sediment → auto-continue → fallback → done."""
+    await _emit_plan_and_citations(send, plan_result, citations)
+    await _sediment_if_enabled(send, st, cfg_chat, sediment_question, sediment_type)
+    await _stream_auto_continues(agent, st, send)
+    await _emit_fallback_if_empty(send, st)
+    _record_completed_turn(st.thread_id, st.full_response)
+    await send({"type": "done"})
+
+
+def _open_stream(
+    websocket: WebSocket, thread_id: str, cfg_chat: Any, auto_checkpoint: bool
+) -> tuple[_WsStreamState, Any]:
+    """构造本轮流式状态 + 带断连熔断的 send 协程."""
+    st = _WsStreamState(
+        thread_id=thread_id,
+        workspace_path=Path(cfg_chat.workspace).resolve() if auto_checkpoint else None,
+    )
+    return st, _make_ws_sender(websocket, thread_id, [False])
 
 
 async def _stream_agent_response(
@@ -258,69 +403,37 @@ async def _stream_agent_response(
     error_log: str = "unexpected error",
     error_label: str = "Agent error",
 ) -> str:
-    """Stream ``agent.chat()`` to the websocket, emitting every WS message type.
-
-    Walks the async generator from ``agent.chat(content, thread_id)`` and
-    forwards ``tool_call`` / ``tool_result`` / ``text_delta`` / ``task_progress``
-    (plus optional ``auto_checkpoint``) messages to the client, then closes
-    with ``done`` (or ``error`` on failure).
+    """Stream ``agent.chat()`` to the websocket, closing with ``done``.
 
     Returns the concatenated assistant response text.
     """
-    st = _WsStreamState(
-        thread_id=thread_id,
-        workspace_path=Path(cfg_chat.workspace).resolve() if auto_checkpoint else None,
-    )
-
-    _ws_closed = [False]  # mutable holder so nested fn can update
+    st, send = _open_stream(websocket, thread_id, cfg_chat, auto_checkpoint)
 
     try:
-        async def _ws_send(msg: dict) -> None:
-            """Wrap send_json with thread_id for client-side routing."""
-            if _ws_closed[0]:
-                return
-            if "thread_id" not in msg:
-                msg["thread_id"] = thread_id
-            try:
-                await websocket.send_json(msg)
-            except Exception:
-                _ws_closed[0] = True
-                logger.debug("WS closed mid-stream, stopping sends")
-                # actively close so the client gets a close event
-                # instead of waiting for TCP timeout
-                with contextlib.suppress(Exception):
-                    await websocket.close()
-
         # let tools push progress events back through the same WS
-        progress_cb.set(_ws_send)
-
-        async for state in agent.chat(content, thread_id):
-            action = await _forward_stream_state(
-                state,
-                st,
-                _ws_send,
-                content=content,
-                agent=agent,
-                handle_clarification=handle_clarification,
-                auto_checkpoint=auto_checkpoint,
-            )
-            if action == "break":
-                break
-
-        await _emit_plan_and_citations(_ws_send, plan_result, citations)
-        await _sediment_if_enabled(
-            _ws_send, st, cfg_chat, sediment_question, sediment_type
+        progress_cb.set(send)
+        await _consume_chat_states(
+            agent,
+            content,
+            thread_id,
+            st,
+            send,
+            handle_clarification=handle_clarification,
+            auto_checkpoint=auto_checkpoint,
         )
-        await _stream_auto_continues(agent, st, _ws_send)
-        await _emit_fallback_if_empty(_ws_send, st)
-        _record_completed_turn(thread_id, st.full_response)
-        await _ws_send({"type": "done"})
-
+        await _finalize_stream(
+            agent,
+            st,
+            send,
+            cfg_chat,
+            plan_result=plan_result,
+            citations=citations,
+            sediment_question=sediment_question,
+            sediment_type=sediment_type,
+        )
     except Exception as e:
         logger.error(error_log, exc_info=True)
-        await _ws_send(
-            {"type": "error", "error": f"{error_label}: {str(e)}"}
-        )
+        await send({"type": "error", "error": f"{error_label}: {str(e)}"})
 
     return st.full_response
 
@@ -346,12 +459,13 @@ class _WsStreamState:
     pending_auto: bool = False
 
 
-async def _forward_stream_state(
-    state, st, send, *, content, agent, handle_clarification, auto_checkpoint
-) -> str:
-    """Forward one ``agent.chat()`` state; return ``"break"`` to stop the loop."""
-    _record_task_goal(st.thread_id, content, agent)
+async def _forward_side_channel(
+    state: Any, st: _WsStreamState, send: Any, handle_clarification: bool
+) -> str | None:
+    """转发 typed 事件 / token / reasoning / compacted / auto_continue / 死循环.
 
+    命中任一分支返回 ``"continue"``/``"break"``, 未命中返回 None.
+    """
     # Typed side-channel events yielded by the agent loop (e.g.
     # mode_banner / trust_update / budget_update / budget_escalation /
     # suggest_code / risk_threshold). These are emitted as
@@ -385,12 +499,27 @@ async def _forward_stream_state(
         return "continue"
 
     if handle_clarification and state.get("thought_loop_terminated"):
-        await send({
-            "type": "text_delta",
-            "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
-        })
+        await send(
+            {
+                "type": "text_delta",
+                "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
+            }
+        )
         await send({"type": "done"})
         return "break"
+
+    return None
+
+
+async def _forward_stream_state(
+    state, st, send, *, content, agent, handle_clarification, auto_checkpoint
+) -> str:
+    """Forward one ``agent.chat()`` state; return ``"break"`` to stop the loop."""
+    _record_task_goal(st.thread_id, content, agent)
+
+    action = await _forward_side_channel(state, st, send, handle_clarification)
+    if action is not None:
+        return action
 
     if (
         handle_clarification
@@ -404,9 +533,7 @@ async def _forward_stream_state(
     messages = state.get("messages", [])
     if not messages:
         return "continue"
-    await _emit_message_events(
-        messages[-1], st, send, auto_checkpoint=auto_checkpoint
-    )
+    await _emit_message_events(messages[-1], st, send, auto_checkpoint=auto_checkpoint)
     return "continue"
 
 
@@ -428,11 +555,13 @@ def _record_task_goal(thread_id: str, content: str, agent) -> None:
 async def _emit_compacted(state, thread_id: str, send) -> None:
     """Forward a compaction event and event-source it."""
     c = state["_compacted"]
-    await send({
-        "type": "context_compacted",
-        "before_pct": c.get("before_pct", 0),
-        "after_pct": c.get("after_pct", 0),
-    })
+    await send(
+        {
+            "type": "context_compacted",
+            "before_pct": c.get("before_pct", 0),
+            "after_pct": c.get("after_pct", 0),
+        }
+    )
     # Event-source the compaction so the block model can render a
     # `── compacted ──` divider in recovered history (T-BCSE-06).
     try:
@@ -452,12 +581,15 @@ async def _emit_auto_continue(st, send) -> None:
         st.pending_auto = True
         logger.info(
             "Auto-continue %d/%d (pipeline suggestions pending)",
-            st.auto_continue_count, _MAX_AUTO_CONTINUES,
+            st.auto_continue_count,
+            _MAX_AUTO_CONTINUES,
         )
-        await send({
-            "type": "text_delta",
-            "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
-        })
+        await send(
+            {
+                "type": "text_delta",
+                "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+            }
+        )
     else:
         logger.warning(
             "Auto-continue limit (%d) reached, stopping", _MAX_AUTO_CONTINUES
@@ -467,18 +599,18 @@ async def _emit_auto_continue(st, send) -> None:
 async def _emit_clarification(state, st, send) -> None:
     """Send the clarification request plus the accompanying assistant text."""
     questions = state["clarify_questions"]
-    await send({
-        "type": "clarification_request",
-        "thread_id": st.thread_id,
-        "questions": questions,
-    })
+    await send(
+        {
+            "type": "clarification_request",
+            "thread_id": st.thread_id,
+            "questions": questions,
+        }
+    )
     st.clarify_sent = True
     messages = state.get("messages", [])
     if messages:
         last_msg = messages[-1]
-        text = (
-            last_msg.content if hasattr(last_msg, "content") else str(last_msg)
-        )
+        text = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
         if text:
             st.full_response = text
             await send({"type": "text_delta", "text": text})
@@ -505,12 +637,14 @@ async def _emit_ai_tool_calls(msg, st, send, auto_checkpoint: bool) -> None:
         st.tool_names_used.add(name)
         if auto_checkpoint and name in _EDIT_TOOLS and st.auto_cp_id is None:
             await _maybe_auto_checkpoint(st, send)
-        await send({
-            "type": "tool_call",
-            "id": tid,
-            "name": name,
-            "args": tc.get("args", {}),
-        })
+        await send(
+            {
+                "type": "tool_call",
+                "id": tid,
+                "name": name,
+                "args": tc.get("args", {}),
+            }
+        )
         _record_session_tool_call(st.thread_id, tid, name, tc.get("args", {}))
         await _emit_governance_decision(name, tc.get("args", {}), send)
 
@@ -522,12 +656,14 @@ async def _maybe_auto_checkpoint(st, send) -> None:
         st.auto_cp_id = uuid.uuid4().hex[:8]
         with _state_lock:
             _checkpoints[st.auto_cp_id] = (st.workspace_path, snapshot)
-        await send({
-            "type": "auto_checkpoint",
-            "id": st.auto_cp_id,
-            "base": str(st.workspace_path),
-            "files": len(snapshot),
-        })
+        await send(
+            {
+                "type": "auto_checkpoint",
+                "id": st.auto_cp_id,
+                "base": str(st.workspace_path),
+                "files": len(snapshot),
+            }
+        )
     except Exception as e:
         logger.debug("[auto-cp] failed: %s", e)
 
@@ -544,7 +680,10 @@ def _record_session_tool_call(thread_id, tid, name, args) -> None:
 
 def _tool_category(name: str) -> str:
     """Map a tool name to an action category heuristically."""
-    if any(k in name for k in ("vasp", "qe", "cp2k", "lammps", "abaqus", "comsol", "openfoam")):
+    if any(
+        k in name
+        for k in ("vasp", "qe", "cp2k", "lammps", "abaqus", "comsol", "openfoam")
+    ):
         return "simulate"
     if any(k in name for k in ("file_edit", "file_write", "file_delete")):
         return "file_ops"
@@ -565,16 +704,18 @@ async def _emit_governance_decision(name, args, send) -> None:
         gov = get_governance()
         ctx = {"tool_name": name, "args": args}
         decision = gov.can_execute(name, ctx)
-        await send({
-            "type": "governance",
-            "action_name": name,
-            "category": _tool_category(name),
-            "risk_level": decision.risk_level,
-            "allowed": decision.allowed,
-            "reasons": decision.reasons,
-            "requires_approval": decision.requires_approval,
-            "predictability": decision.predictability,
-        })
+        await send(
+            {
+                "type": "governance",
+                "action_name": name,
+                "category": _tool_category(name),
+                "risk_level": decision.risk_level,
+                "allowed": decision.allowed,
+                "reasons": decision.reasons,
+                "requires_approval": decision.requires_approval,
+                "predictability": decision.predictability,
+            }
+        )
     except Exception:
         logger.debug("ws governance decision send failed", exc_info=True)
 
@@ -596,11 +737,13 @@ async def _emit_tool_result(msg, st, send) -> None:
     if warnings:
         tool_result_msg["warnings"] = warnings
         # 前端有专门的 hook_warning UI 渲染, 单独发一个事件
-        await send({
-            "type": "hook_warning",
-            "tool_name": tool_name,
-            "warnings": warnings,
-        })
+        await send(
+            {
+                "type": "hook_warning",
+                "tool_name": tool_name,
+                "warnings": warnings,
+            }
+        )
     await send(tool_result_msg)
     _record_session_tool_result(st.thread_id, tid, tool_content)
     _record_tool_step(st.thread_id, tool_name, tool_content)
@@ -658,21 +801,23 @@ async def _emit_governance_verification(tool_name, tool_content, send) -> None:
             {"tool_name": tool_name},
             {"result": tool_content[:500]},
         )
-        await send({
-            "type": "governance",
-            "action_name": tool_name,
-            "category": "",
-            "risk_level": "",
-            "allowed": True,
-            "reasons": [],
-            "requires_approval": False,
-            "predictability": 1.0 if v_ok else 0.5,
-            "audit_id": "",
-            "status": "verified" if v_ok else "failed",
-            "verification_passed": v_ok,
-            "verification_message": v_msg,
-            "rollback_available": False,
-        })
+        await send(
+            {
+                "type": "governance",
+                "action_name": tool_name,
+                "category": "",
+                "risk_level": "",
+                "allowed": True,
+                "reasons": [],
+                "requires_approval": False,
+                "predictability": 1.0 if v_ok else 0.5,
+                "audit_id": "",
+                "status": "verified" if v_ok else "failed",
+                "verification_passed": v_ok,
+                "verification_message": v_msg,
+                "rollback_available": False,
+            }
+        )
     except Exception:
         logger.debug("ws governance verification send failed", exc_info=True)
 
@@ -682,7 +827,7 @@ async def _emit_ai_text(msg, st, send) -> None:
     if st.token_streamed:
         st.full_response = msg.content
     elif isinstance(msg.content, str):
-        delta = msg.content[len(st.full_response):]
+        delta = msg.content[len(st.full_response) :]
         if delta:
             st.full_response = msg.content
             await send({"type": "text_delta", "text": delta})
@@ -696,23 +841,29 @@ async def _emit_plan_and_citations(send, plan_result, citations) -> None:
         criteria_results = []
         for ac in plan_result["acceptance_criteria"]:
             criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
-            criteria_results.append({
-                "criterion": criterion,
-                "passed": True,
-                "note": "Verified after execution",
-            })
-        await send({
-            "type": "plan_result",
-            "plan_id": plan_result.get("plan_id", ""),
-            "criteria": criteria_results,
-            "all_passed": all(c["passed"] for c in criteria_results),
-        })
+            criteria_results.append(
+                {
+                    "criterion": criterion,
+                    "passed": True,
+                    "note": "Verified after execution",
+                }
+            )
+        await send(
+            {
+                "type": "plan_result",
+                "plan_id": plan_result.get("plan_id", ""),
+                "criteria": criteria_results,
+                "all_passed": all(c["passed"] for c in criteria_results),
+            }
+        )
 
     if citations:
-        await send({
-            "type": "citations",
-            "sources": citations,
-        })
+        await send(
+            {
+                "type": "citations",
+                "sources": citations,
+            }
+        )
 
 
 async def _sediment_if_enabled(
@@ -732,10 +883,7 @@ async def _sediment_if_enabled(
     try:
         import time as _time
 
-        sediment_text = (
-            f"Q: {sediment_question[:500]}\n\n"
-            f"A: {st.full_response[:2000]}"
-        )
+        sediment_text = f"Q: {sediment_question[:500]}\n\nA: {st.full_response[:2000]}"
         get_context().kb.add_text(
             text=sediment_text,
             metadata={
@@ -745,12 +893,14 @@ async def _sediment_if_enabled(
                 "source": "auto_sediment",
             },
         )
-        await send({
-            "type": "sediment",
-            "stored": True,
-            "kind": sediment_type,
-            "preview": sediment_text[:200],
-        })
+        await send(
+            {
+                "type": "sediment",
+                "stored": True,
+                "kind": sediment_type,
+                "preview": sediment_text[:200],
+            }
+        )
         _publish_sediment_event(st.thread_id, sediment_type, sediment_text)
     except Exception:
         logger.debug(
@@ -802,10 +952,12 @@ async def _stream_auto_continues(agent, st, send) -> None:
                 if st.auto_continue_count < _MAX_AUTO_CONTINUES:
                     st.auto_continue_count += 1
                     st.pending_auto = True
-                    await send({
-                        "type": "text_delta",
-                        "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
-                    })
+                    await send(
+                        {
+                            "type": "text_delta",
+                            "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+                        }
+                    )
                 continue
             msgs = state.get("messages", [])
             if msgs and isinstance(msgs[-1], AIMessage):
@@ -817,7 +969,7 @@ async def _apply_auto_continue_text(last, st, send) -> None:
     if st.token_streamed:
         st.full_response = last.content
     elif isinstance(last.content, str):
-        delta = last.content[len(st.full_response):]
+        delta = last.content[len(st.full_response) :]
         if delta:
             st.full_response = last.content
             await send({"type": "text_delta", "text": delta})
@@ -833,10 +985,12 @@ async def _emit_fallback_if_empty(send, st) -> None:
     else:
         fallback = "（Agent 未能生成回复，可能是内部处理超时或出错。请尝试换一种问法，或稍后重试。）"
     st.full_response = fallback
-    await send({
-        "type": "text_delta",
-        "text": fallback,
-    })
+    await send(
+        {
+            "type": "text_delta",
+            "text": fallback,
+        }
+    )
 
 
 def _record_completed_turn(thread_id: str, full_response: str) -> None:
@@ -877,16 +1031,19 @@ async def _dispatch_user_spec(
     )
 
     if not result.success:
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"⚠️ subagent [{spec_name}] 执行失败: {result.error}\n",
-        })
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": f"⚠️ subagent [{spec_name}] 执行失败: {result.error}\n",
+            }
+        )
         await websocket.send_json({"type": "done", "thread_id": thread_id})
         return
 
     summary = result.summary or "（子代理未返回内容）"
     try:
         from huginn.events.session_writer import record_assistant_message
+
         record_assistant_message(thread_id, summary)
     except Exception:
         logger.debug("session subagent record skipped", exc_info=True)
@@ -896,6 +1053,59 @@ async def _dispatch_user_spec(
 
 
 # ── Message-type handlers (extracted from agent_websocket) ───────
+
+
+async def _run_special_modes(
+    websocket: WebSocket,
+    factory: Any,
+    agent: Any,
+    content: str,
+    thread_id: str,
+    cfg_chat: Any,
+    ctx: WSCtx,
+) -> bool:
+    """检测 plan/team/fusion/research 模式并分派; 已分派返回 True."""
+    use_team, use_fusion = _detect_chat_modes(content, cfg_chat)
+    plan_mode = _apply_plan_mode(agent, content)
+    _apply_research_mode(agent, content)
+    return await _dispatch_special_modes(
+        websocket,
+        factory,
+        agent,
+        content,
+        thread_id,
+        cfg_chat,
+        plan_mode,
+        use_team,
+        use_fusion,
+        ctx.pending_plan_contexts,
+    )
+
+
+async def _stream_user_turn(
+    websocket: WebSocket,
+    agent: Any,
+    content: str,
+    thread_id: str,
+    cfg_chat: Any,
+    rag_sources: list | None,
+) -> None:
+    """跑一轮用户对话的流式输出, 并排空侧问题队列."""
+    await _stream_agent_response(
+        websocket,
+        agent,
+        content,
+        thread_id,
+        cfg_chat,
+        auto_checkpoint=True,
+        handle_clarification=True,
+        plan_result=None,
+        citations=rag_sources,
+        sediment_question=content,
+        error_log="unexpected error",
+        error_label="Agent error",
+    )
+    await _drain_side_questions(websocket)
 
 
 async def _handle_user_input(
@@ -927,35 +1137,21 @@ async def _handle_user_input(
         return
     _attach_team_ref(agent)
 
-    use_team, use_fusion = _detect_chat_modes(content, cfg_chat)
-    plan_mode = _apply_plan_mode(agent, content)
-    _apply_research_mode(agent, content)
-    if await _dispatch_special_modes(
-        websocket, factory, agent, content, thread_id, cfg_chat,
-        plan_mode, use_team, use_fusion, ctx.pending_plan_contexts,
+    if await _run_special_modes(
+        websocket, factory, agent, content, thread_id, cfg_chat, ctx
     ):
         return
 
     content, rag_sources = await _augment_with_rag(content, cfg_chat)
-    ctx.last_user_context.update({
-        "content": content, "thread_id": thread_id,
-        "cfg_chat": cfg_chat, "agent": agent,
-    })
-    await _stream_agent_response(
-        websocket,
-        agent,
-        content,
-        thread_id,
-        cfg_chat,
-        auto_checkpoint=True,
-        handle_clarification=True,
-        plan_result=None,
-        citations=rag_sources,
-        sediment_question=content,
-        error_log="unexpected error",
-        error_label="Agent error",
+    ctx.last_user_context.update(
+        {
+            "content": content,
+            "thread_id": thread_id,
+            "cfg_chat": cfg_chat,
+            "agent": agent,
+        }
     )
-    await _drain_side_questions(websocket)
+    await _stream_user_turn(websocket, agent, content, thread_id, cfg_chat, rag_sources)
 
 
 async def _resolve_turn_config(websocket: WebSocket) -> tuple[Any, Any] | None:
@@ -1006,7 +1202,10 @@ async def _create_turn_agent(
             return None
     if agent.model is None:
         await websocket.send_json(
-            {"type": "text_delta", "text": "⚠️ No LLM model configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"}
+            {
+                "type": "text_delta",
+                "text": "⚠️ No LLM model configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.\n",
+            }
         )
         await websocket.send_json({"type": "done"})
         return None
@@ -1017,6 +1216,7 @@ def _record_user_turn(thread_id: str, content: str) -> None:
     """Event-source the user turn (T-BCSE closed loop); 写失败不阻塞对话."""
     try:
         from huginn.events.session_writer import record_user_message
+
         record_user_message(thread_id, content)
     except Exception:
         logger.debug("session user-message record skipped", exc_info=True)
@@ -1062,8 +1262,12 @@ async def _route_mentions(
 
             if spec_token in SubagentDispatch.BUILTIN_SPECS:
                 await _dispatch_user_spec(
-                    websocket, factory, spec_token, task_text,
-                    thread_id, ws_approval,
+                    websocket,
+                    factory,
+                    spec_token,
+                    task_text,
+                    thread_id,
+                    ws_approval,
                 )
                 return agent, content, True
     return agent, content, False
@@ -1073,6 +1277,7 @@ def _attach_team_ref(agent: Any) -> None:
     """给 agent 挂 ModelTeam 引用, 供跨 agent 视觉委派; 无团队配置则忽略."""
     try:
         from huginn.routes.team import _build_model_team
+
         agent._team_ref = _build_model_team()
     except Exception:
         logger.debug("best-effort op failed", exc_info=True)
@@ -1081,10 +1286,9 @@ def _attach_team_ref(agent: Any) -> None:
 def _detect_chat_modes(content: str, cfg_chat: Any) -> tuple[bool, bool]:
     """Team mode (关键字或 config flag) 与 Fusion mode (关键字) 触发."""
     lowered = content.lower()
-    use_team = (
-        any(kw in lowered for kw in ("/team", "delegate", "collaborate"))
-        or getattr(cfg_chat, "team_mode_enabled", False)
-    )
+    use_team = any(
+        kw in lowered for kw in ("/team", "delegate", "collaborate")
+    ) or getattr(cfg_chat, "team_mode_enabled", False)
     return use_team, "/fusion" in lowered
 
 
@@ -1098,9 +1302,16 @@ def _apply_plan_mode(agent: Any, content: str) -> bool:
     if any(kw in lowered for kw in ("/research", "research mode", "/chat")):
         return False
     signals = (
-        "design a", "design an", "propose a", "propose an",
-        "plan how", "step by step", "workflow for",
-        "strategy for", "roadmap", "outline a",
+        "design a",
+        "design an",
+        "propose a",
+        "propose an",
+        "plan how",
+        "step by step",
+        "workflow for",
+        "strategy for",
+        "roadmap",
+        "outline a",
     )
     if any(s in lowered for s in signals) and len(content) > 30:
         if hasattr(agent, "set_mode"):
@@ -1113,9 +1324,13 @@ def _apply_research_mode(agent: Any, content: str) -> None:
     """显式 /research 或自动研究意图 → set_mode('research')."""
     lowered = content.lower()
     signals = (
-        "/research", "research mode",
-        "literature review", "survey the", "systematically review",
-        "state of the art", "recent advances in",
+        "/research",
+        "research mode",
+        "literature review",
+        "survey the",
+        "systematically review",
+        "state of the art",
+        "recent advances in",
     )
     explicit = any(kw in lowered for kw in ("/research", "research mode"))
     auto = any(s in lowered for s in signals[:6]) and len(content) > 40
@@ -1139,12 +1354,8 @@ async def _dispatch_special_modes(
     if await _run_research_mode(websocket, agent, content, thread_id):
         return True
     if use_team:
-        return await _run_team_mode(
-            websocket, factory, agent, content, thread_id
-        )
-    if use_fusion and await _run_fusion_mode(
-        websocket, agent, content, thread_id
-    ):
+        return await _run_team_mode(websocket, factory, agent, content, thread_id)
+    if use_fusion and await _run_fusion_mode(websocket, agent, content, thread_id):
         return True
     if plan_mode:
         await _run_plan_mode(
@@ -1154,50 +1365,59 @@ async def _dispatch_special_modes(
     return False
 
 
+# research 事件类型 → (结果字段, 文本模板); 未列出的类型只产 task_progress
+_RESEARCH_TEXT_FIELDS: dict[str, tuple[str, str]] = {
+    "hypothesis": ("hypothesis", "📋 Hypothesis: {}"),
+    "experiment": ("description", "🧪 Experiment: {}"),
+    "result": ("summary", "📊 Result: {}"),
+    "error": ("message", "❌ Error: {}"),
+}
+
+
+def _research_status_message(result: dict) -> dict:
+    """status 事件 → task_progress 消息体."""
+    return {
+        "type": "task_progress",
+        "task_type": "pipeline",
+        "pipeline": "deli_research",
+        "stage": result.get("stage", ""),
+        "message": result.get("message", ""),
+        "stage_index": result.get("stage_index"),
+        "total_stages": result.get("total_stages"),
+        "progress_pct": result.get("progress_pct"),
+        "status": result.get("status", "running"),
+        "topic": result.get("topic", ""),
+    }
+
+
+def _research_draft_message(draft: str) -> dict:
+    """draft 事件 → 带分隔线的 text_delta 消息体."""
+    return {
+        "type": "text_delta",
+        "text": f"\n{'=' * 40}\n📝 Draft:\n{'=' * 40}\n{draft}\n",
+    }
+
+
 async def _emit_research_event(websocket: WebSocket, result: dict) -> str:
     """把一个 research 事件转成 WS 消息; 返回 draft 内容 (可能空串)."""
     evt_type = result.get("type")
+
     if evt_type == "status":
-        await websocket.send_json({
-            "type": "task_progress",
-            "task_type": "pipeline",
-            "pipeline": "deli_research",
-            "stage": result.get("stage", ""),
-            "message": result.get("message", ""),
-            "stage_index": result.get("stage_index"),
-            "total_stages": result.get("total_stages"),
-            "progress_pct": result.get("progress_pct"),
-            "status": result.get("status", "running"),
-            "topic": result.get("topic", ""),
-        })
-    elif evt_type == "hypothesis":
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"📋 Hypothesis: {result.get('hypothesis', '')}\n",
-        })
-    elif evt_type == "experiment":
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"🧪 Experiment: {result.get('description', '')}\n",
-        })
-    elif evt_type == "result":
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"📊 Result: {result.get('summary', '')}\n",
-        })
-    elif evt_type == "draft":
+        await websocket.send_json(_research_status_message(result))
+        return ""
+
+    if evt_type == "draft":
         draft = result.get("content", "")
         if draft:
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": f"\n{'='*40}\n📝 Draft:\n{'='*40}\n{draft}\n",
-            })
-            return draft
-    elif evt_type == "error":
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"❌ Error: {result.get('message', '')}\n",
-        })
+            await websocket.send_json(_research_draft_message(draft))
+        return draft
+
+    spec = _RESEARCH_TEXT_FIELDS.get(evt_type)
+    if spec is not None:
+        key, template = spec
+        await websocket.send_json(
+            {"type": "text_delta", "text": template.format(result.get(key, "")) + "\n"}
+        )
     return ""
 
 
@@ -1212,6 +1432,7 @@ async def _run_research_mode(
             ResearchWorkflow,
             ResearchWorkflowConfig,
         )
+
         research_config = ResearchWorkflowConfig(
             max_concurrent_branches=3,
             enable_hypothesis_generation=True,
@@ -1226,15 +1447,14 @@ async def _run_research_mode(
             output = draft or output
         try:
             from huginn.events.session_writer import record_assistant_message
+
             record_assistant_message(thread_id, output or "Research complete.")
         except Exception:
             logger.debug("session research record skipped", exc_info=True)
         await websocket.send_json({"type": "done"})
         return True
     except Exception as e:
-        logger.error(
-            "Research mode failed, falling back to chat: %s", e, exc_info=True
-        )
+        logger.error("Research mode failed, falling back to chat: %s", e, exc_info=True)
         return False
 
 
@@ -1249,6 +1469,7 @@ async def _run_team_mode(
         logger.warning("set_mode('research') for team failed: %s", e)
     try:
         from huginn.agents.orchestrator import Orchestrator
+
         orch = Orchestrator(factory=factory)
         await websocket.send_json(
             {"type": "text_delta", "text": "👥 Team mode activated.\n\n"}
@@ -1264,6 +1485,7 @@ async def _run_team_mode(
         await websocket.send_json({"type": "text_delta", "text": f"\n{summary}\n"})
         try:
             from huginn.events.session_writer import record_assistant_message
+
             record_assistant_message(thread_id, summary)
         except Exception:
             logger.debug("session team record skipped", exc_info=True)
@@ -1273,10 +1495,12 @@ async def _run_team_mode(
         logger.error(
             "Team mode failed, falling back to single agent: %s", e, exc_info=True
         )
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"⚠️ Team mode unavailable ({e}), using single agent.\n\n",
-        })
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": f"⚠️ Team mode unavailable ({e}), using single agent.\n\n",
+            }
+        )
         return False
 
 
@@ -1295,10 +1519,12 @@ async def _setup_fusion_panel(
         {"type": "text_delta", "text": f"Panel: {len(team.members)} members\n"}
     )
     for member in team.list_members():
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"  • [{member['role']}] {member['name']} ({member['model']})\n",
-        })
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": f"  • [{member['role']}] {member['name']} ({member['model']})\n",
+            }
+        )
     rounds = 1
     for tag in ("/fusion1", "/fusion2", "/fusion3"):
         if tag in content.lower():
@@ -1312,36 +1538,48 @@ async def _emit_fusion_result(websocket: WebSocket, result: dict) -> None:
     all_rounds = result.get("all_rounds", [])
     for idx, responses in enumerate(all_rounds):
         if len(all_rounds) > 1:
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": (
-                    f"\n{'='*40}\n📝 Round {idx + 1}/{len(all_rounds)}"
-                    f"\n{'='*40}\n"
-                ),
-            })
+            await websocket.send_json(
+                {
+                    "type": "text_delta",
+                    "text": (
+                        f"\n{'=' * 40}\n📝 Round {idx + 1}/{len(all_rounds)}"
+                        f"\n{'=' * 40}\n"
+                    ),
+                }
+            )
         for r in responses:
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": f"\n--- [{r['role']} ({r['model']})] ({r['duration_ms']}ms) ---\n",
-            })
-            await websocket.send_json({
-                "type": "text_delta",
-                "text": r["answer"] + "\n",
-            })
+            await websocket.send_json(
+                {
+                    "type": "text_delta",
+                    "text": f"\n--- [{r['role']} ({r['model']})] ({r['duration_ms']}ms) ---\n",
+                }
+            )
+            await websocket.send_json(
+                {
+                    "type": "text_delta",
+                    "text": r["answer"] + "\n",
+                }
+            )
     if result.get("consensus"):
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": "\n## 共识\n" + result["consensus"] + "\n",
-        })
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": "\n## 共识\n" + result["consensus"] + "\n",
+            }
+        )
     if result.get("dissent"):
-        await websocket.send_json({
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": "\n## 分歧\n" + result["dissent"] + "\n",
+            }
+        )
+    await websocket.send_json(
+        {
             "type": "text_delta",
-            "text": "\n## 分歧\n" + result["dissent"] + "\n",
-        })
-    await websocket.send_json({
-        "type": "text_delta",
-        "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
-    })
+            "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
+        }
+    )
 
 
 async def _run_fusion_mode(
@@ -1359,6 +1597,7 @@ async def _run_fusion_mode(
         await _emit_fusion_result(websocket, result)
         try:
             from huginn.events.session_writer import record_assistant_message
+
             record_assistant_message(thread_id, result.get("final_answer", ""))
         except Exception:
             logger.debug("session fusion record skipped", exc_info=True)
@@ -1368,10 +1607,12 @@ async def _run_fusion_mode(
         logger.error(
             "Fusion mode failed, falling back to single agent: %s", e, exc_info=True
         )
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": f"⚠️ Fusion mode unavailable ({e}), using single agent.\n\n",
-        })
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": f"⚠️ Fusion mode unavailable ({e}), using single agent.\n\n",
+            }
+        )
         return False
 
 
@@ -1448,6 +1689,7 @@ def _persist_plan(plan_data: dict, objective: str) -> None:
     """持久化到 PlanStore, 支持跨会话恢复; 失败忽略."""
     try:
         from huginn.autoloop.plan_store import PlanStep, PlanStore
+
         _store = PlanStore()
         _steps = [
             PlanStep(
@@ -1473,8 +1715,7 @@ async def _run_plan_mode(
     """Plan 模式: 生成结构化计划并发 plan 事件; 失败发错误."""
     try:
         objective = (
-            content.replace("/plan", "").replace("plan mode", "").strip()
-            or content
+            content.replace("/plan", "").replace("plan mode", "").strip() or content
         )
         context_hint = await _plan_context_hint(objective)
         plan_response = await agent.model.ainvoke(
@@ -1497,11 +1738,13 @@ async def _run_plan_mode(
             "rag_sources": [],
         }
         _persist_plan(plan_data, objective)
-        await websocket.send_json({
-            "type": "plan",
-            "plan_id": plan_id,
-            "plan": plan_data,
-        })
+        await websocket.send_json(
+            {
+                "type": "plan",
+                "plan_id": plan_id,
+                "plan": plan_data,
+            }
+        )
         return True
     except Exception as e:
         logger.error("plan mode error", exc_info=True)
@@ -1530,12 +1773,14 @@ async def _augment_with_rag(content: str, cfg_chat: Any) -> tuple[str, list]:
                 f"Question: {content}"
             )
             for i, c in enumerate(chunks):
-                sources.append({
-                    "ref": i + 1,
-                    "filename": c.get("filename") or c.get("source") or "unknown",
-                    "text": (c.get("text") or "")[:200],
-                    "distance": c.get("distance"),
-                })
+                sources.append(
+                    {
+                        "ref": i + 1,
+                        "filename": c.get("filename") or c.get("source") or "unknown",
+                        "text": (c.get("text") or "")[:200],
+                        "distance": c.get("distance"),
+                    }
+                )
     except Exception as e:
         logger.warning("[RAG] query failed: %s", e)
     return content, sources
@@ -1545,15 +1790,84 @@ async def _drain_side_questions(websocket: WebSocket) -> None:
     """Drain pending side-channel questions."""
     try:
         from huginn.side_conversation import get_shared_side_channel
+
         for sq in get_shared_side_channel().drain():
-            await websocket.send_json({
-                "type": "side_question_pending",
-                "question_id": sq.id,
-                "question": sq.question,
-                "created_at": sq.created_at,
-            })
+            await websocket.send_json(
+                {
+                    "type": "side_question_pending",
+                    "question_id": sq.id,
+                    "question": sq.question,
+                    "created_at": sq.created_at,
+                }
+            )
     except Exception:
         logger.debug("side-channel drain failed", exc_info=True)
+
+
+def _explore_initial_branches(content: str) -> list[dict]:
+    """未指定 initial_branches 时的默认单分支."""
+    return [{"name": "baseline", "hypothesis": f"Baseline for: {content}"}]
+
+
+def _explore_summary_text(result: Any) -> str:
+    """探索结果的汇总文本."""
+    return (
+        f"\n✅ Exploration complete!\n"
+        f"• Branches explored: {result.n_branches_explored}\n"
+        f"• Branches pruned: {result.n_branches_pruned}\n"
+        f"• Pareto front size: {len(result.pareto_front)}\n"
+        f"• Convergence: {result.convergence_reason}\n"
+    )
+
+
+def _explore_best_text(branch: dict) -> str:
+    """最优分支的展示文本."""
+    return (
+        f"\n🏆 Best branch: {branch['name']}\n"
+        f"   Hypothesis: {branch['hypothesis']}\n"
+        f"   Objectives: {branch['objectives']}\n"
+    )
+
+
+async def _run_exploration(websocket: WebSocket, content: str, config: dict) -> None:
+    """跑 orchestrator 并把结果推给前端 (异常由调用方转 error 事件)."""
+    # Late import so monkeypatch on huginn.routes.ws takes effect
+    from huginn.exploration.orchestrator import ExplorationOrchestrator
+    from huginn.exploration.strategies import ParetoPruningStrategy
+    from huginn.routes.ws import get_context
+
+    cfg = get_context().config
+    orch = ExplorationOrchestrator(
+        strategy=ParetoPruningStrategy(max_active=5),
+        max_parallel=cfg.max_parallel_branches,
+    )
+
+    result = await orch.explore(
+        objective=content,
+        initial_branches=config.get(
+            "initial_branches", _explore_initial_branches(content)
+        ),
+        objectives_config=config.get("objectives", {"score": "maximize"}),
+        max_iterations=config.get("max_iterations", 10),
+    )
+
+    await websocket.send_json(
+        {"type": "text_delta", "text": _explore_summary_text(result)}
+    )
+    if result.best_branch:
+        await websocket.send_json(
+            {"type": "text_delta", "text": _explore_best_text(result.best_branch)}
+        )
+    await websocket.send_json(
+        {
+            "type": "exploration_result",
+            "data": {
+                "pareto_front": result.pareto_front,
+                "best_branch": result.best_branch,
+                "convergence_reason": result.convergence_reason,
+            },
+        }
+    )
 
 
 async def _handle_explore_start(
@@ -1562,9 +1876,6 @@ async def _handle_explore_start(
     ctx: WSCtx,
 ) -> None:
     """Handle explore_start: run the exploration orchestrator."""
-    # Late import so monkeypatch on huginn.routes.ws takes effect
-    from huginn.routes.ws import get_context
-
     content = msg.content
     config = msg.config or {}
 
@@ -1575,66 +1886,7 @@ async def _handle_explore_start(
         }
     )
     try:
-        from huginn.exploration.orchestrator import ExplorationOrchestrator
-        from huginn.exploration.strategies import ParetoPruningStrategy
-
-        cfg = get_context().config
-        orch = ExplorationOrchestrator(
-            strategy=ParetoPruningStrategy(max_active=5),
-            max_parallel=cfg.max_parallel_branches,
-        )
-
-        config = msg.config or {}
-        initial_branches = config.get(
-            "initial_branches",
-            [
-                {
-                    "name": "baseline",
-                    "hypothesis": f"Baseline for: {content}",
-                }
-            ],
-        )
-        objectives = config.get("objectives", {"score": "maximize"})
-
-        result = await orch.explore(
-            objective=content,
-            initial_branches=initial_branches,
-            objectives_config=objectives,
-            max_iterations=config.get("max_iterations", 10),
-        )
-
-        await websocket.send_json(
-            {
-                "type": "text_delta",
-                "text": f"\n✅ Exploration complete!\n"
-                f"• Branches explored: {result.n_branches_explored}\n"
-                f"• Branches pruned: {result.n_branches_pruned}\n"
-                f"• Pareto front size: {len(result.pareto_front)}\n"
-                f"• Convergence: {result.convergence_reason}\n",
-            }
-        )
-
-        if result.best_branch:
-            await websocket.send_json(
-                {
-                    "type": "text_delta",
-                    "text": f"\n🏆 Best branch: {result.best_branch['name']}\n"
-                    f"   Hypothesis: {result.best_branch['hypothesis']}\n"
-                    f"   Objectives: {result.best_branch['objectives']}\n",
-                }
-            )
-
-        await websocket.send_json(
-            {
-                "type": "exploration_result",
-                "data": {
-                    "pareto_front": result.pareto_front,
-                    "best_branch": result.best_branch,
-                    "convergence_reason": result.convergence_reason,
-                },
-            }
-        )
-
+        await _run_exploration(websocket, content, config)
     except Exception as e:
         logger.error("unexpected error", exc_info=True)
         await websocket.send_json(
@@ -1677,6 +1929,103 @@ async def _handle_approval_response(
             ctx.session_auto_approve["enabled"] = False
 
 
+def _plan_context_text(plan_data: dict, plan_objective: str) -> str:
+    """把已确认的 plan 渲染成注入执行的上下文文本."""
+    return (
+        f"Agreed plan:\n"
+        f"{json.dumps(plan_data, indent=2, ensure_ascii=False)}\n\n"
+        f"Execute this plan step by step. "
+        f"After completion, verify each acceptance criterion.\n\n"
+        f"Original request: {plan_objective}"
+    )
+
+
+def _emit_campaign_plan_event(task_id: str, event_type: str, data: dict) -> None:
+    """向 campaign SSE 通道发 plan.* 事件 (best-effort)."""
+    try:
+        from huginn.interaction.progress import get_progress_tracker
+
+        get_progress_tracker().emit_campaign_event(
+            task_id=task_id, event_type=event_type, data=data
+        )
+    except Exception:
+        logger.debug("%s emit failed", event_type, exc_info=True)
+
+
+def _plan_exec_start_data(
+    plan_id: str, thread_id: str, objective: str, plan_data: dict
+) -> dict:
+    """plan.exec_start 事件的数据体."""
+    steps = plan_data.get("steps") or []
+    return {
+        "plan_id": plan_id,
+        "thread_id": thread_id,
+        "objective": objective,
+        "total_steps": len(steps),
+        "steps": [
+            {"name": s.get("name", "Step"), "description": s.get("description", "")}
+            for s in steps
+        ],
+    }
+
+
+def _plan_result_for(plan_id: str, plan_data: dict) -> dict | None:
+    """有验收标准时打包 plan_result 帧, 否则 None."""
+    criteria = plan_data.get("acceptance_criteria")
+    if not criteria:
+        return None
+    return {"plan_id": plan_id, "acceptance_criteria": criteria}
+
+
+async def _execute_plan(
+    websocket: WebSocket,
+    plan_context: str,
+    ctx_plan: dict,
+    plan_data: dict,
+    plan_id: str,
+) -> None:
+    """执行已确认的 plan, 配对 enter/exit_plan_execution 与 exec 事件."""
+    agent = ctx_plan["agent"]
+    thread_id = ctx_plan["thread_id"]
+    cfg_chat = ctx_plan["cfg_chat"]
+    plan_objective = ctx_plan["plan_objective"]
+
+    plan_result = _plan_result_for(plan_id, plan_data)
+
+    # 执行阶段开启 plan_mode — 写工具强制 ASK, 只读工具放行.
+    # 走 enter/exit_plan_execution 配对方法, 集中状态管理 (之前直接改 _permission_config
+    # 会让 is_plan_mode() 与 _mode 不一致, 误导 research_safety_hook).
+    agent.enter_plan_execution()
+    # 发 plan.exec_start / exec_complete 到 campaign SSE 通道, 前端拿到后给
+    # plan 卡片挂 "executing" / "done" 状态徽标. 之前用户点 Confirm 后整个
+    # 流式期间没有任何指示, 只能盯着 streaming 光标.
+    _emit_campaign_plan_event(
+        plan_id,
+        event_type="plan.exec_start",
+        data=_plan_exec_start_data(plan_id, thread_id, plan_objective, plan_data),
+    )
+    try:
+        await _stream_agent_response(
+            websocket,
+            agent,
+            plan_context,
+            thread_id,
+            cfg_chat,
+            plan_result=plan_result,
+            sediment_question=plan_objective,
+            sediment_type="plan_execution",
+            error_log="plan execution error",
+            error_label="Plan execution failed",
+        )
+    finally:
+        agent.exit_plan_execution()
+        _emit_campaign_plan_event(
+            plan_id,
+            event_type="plan.exec_complete",
+            data={"plan_id": plan_id, "thread_id": thread_id},
+        )
+
+
 async def _handle_plan_confirm(
     websocket: WebSocket,
     msg: WSMessage,
@@ -1697,88 +2046,27 @@ async def _handle_plan_confirm(
         return
 
     if not confirmed:
-        await websocket.send_json({
-            "type": "text_delta",
-            "text": "📋 Plan cancelled by user.\n",
-        })
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": "📋 Plan cancelled by user.\n",
+            }
+        )
         await websocket.send_json({"type": "done"})
         return
 
     plan_data = edited_plan or ctx_plan["plan_data"]
-    plan_objective = ctx_plan["plan_objective"]
-    agent = ctx_plan["agent"]
-    thread_id = ctx_plan["thread_id"]
-    cfg_chat = ctx_plan["cfg_chat"]
-
-    import json as _json2
-    plan_context = (
-        f"Agreed plan:\n"
-        f"{_json2.dumps(plan_data, indent=2, ensure_ascii=False)}\n\n"
-        f"Execute this plan step by step. "
-        f"After completion, verify each acceptance criterion.\n\n"
-        f"Original request: {plan_objective}"
+    plan_context = _plan_context_text(plan_data, ctx_plan["plan_objective"])
+    last_user_context.update(
+        {
+            "content": plan_context,
+            "thread_id": ctx_plan["thread_id"],
+            "cfg_chat": ctx_plan["cfg_chat"],
+            "agent": ctx_plan["agent"],
+        }
     )
 
-    _plan_result = None
-    if plan_data.get("acceptance_criteria"):
-        _plan_result = {
-            "plan_id": plan_id,
-            "acceptance_criteria": plan_data["acceptance_criteria"],
-        }
-    last_user_context.update({
-        "content": plan_context, "thread_id": thread_id,
-        "cfg_chat": cfg_chat, "agent": agent,
-    })
-
-    # 执行阶段开启 plan_mode — 写工具强制 ASK, 只读工具放行.
-    # 走 enter/exit_plan_execution 配对方法, 集中状态管理 (之前直接改 _permission_config
-    # 会让 is_plan_mode() 与 _mode 不一致, 误导 research_safety_hook).
-    agent.enter_plan_execution()
-    # 发 plan.exec_start / exec_complete 到 campaign SSE 通道, 前端拿到后给
-    # plan 卡片挂 "executing" / "done" 状态徽标. 之前用户点 Confirm 后整个
-    # 流式期间没有任何指示, 只能盯着 streaming 光标.
-    try:
-        from huginn.interaction.progress import get_progress_tracker
-        get_progress_tracker().emit_campaign_event(
-            task_id=plan_id,
-            event_type="plan.exec_start",
-            data={
-                "plan_id": plan_id,
-                "thread_id": thread_id,
-                "objective": plan_objective,
-                "total_steps": len(plan_data.get("steps") or []),
-                "steps": [
-                    {"name": s.get("name", "Step"), "description": s.get("description", "")}
-                    for s in (plan_data.get("steps") or [])
-                ],
-            },
-        )
-    except Exception:
-        logger.debug("plan.exec_start emit failed", exc_info=True)
-    try:
-        await _stream_agent_response(
-            websocket,
-            agent,
-            plan_context,
-            thread_id,
-            cfg_chat,
-            plan_result=_plan_result,
-            sediment_question=plan_objective,
-            sediment_type="plan_execution",
-            error_log="plan execution error",
-            error_label="Plan execution failed",
-        )
-    finally:
-        agent.exit_plan_execution()
-        try:
-            from huginn.interaction.progress import get_progress_tracker
-            get_progress_tracker().emit_campaign_event(
-                task_id=plan_id,
-                event_type="plan.exec_complete",
-                data={"plan_id": plan_id, "thread_id": thread_id},
-            )
-        except Exception:
-            logger.debug("plan.exec_complete emit failed", exc_info=True)
+    await _execute_plan(websocket, plan_context, ctx_plan, plan_data, plan_id)
 
 
 async def _handle_clarification_response(
@@ -1891,40 +2179,32 @@ async def _handle_guide_input(
 ) -> None:
     """Handle a `guide` message: 把用户补充内容注入当前 thread 的会话 memory.
 
-    引导与普通排队消息的区别:
-    - 排队消息会在下一轮作为"新问题"发送 (前端 pendingMessages drain).
-    - 引导消息不开启新回合, 而是直接写进 agent 的 session memory, 作为
-      一条 user 消息进入会话上下文 — agent 后续的 LLM 推理 (包括下一次
-      工具调用前的生成) 都会把这条引导纳入考量.
-
-    ponytail: 同回合内的"工具调用间隙注入"需要 langgraph interrupt 或
-    tool-adapter 层 hook 才能做到 (当前回合 agent.chat 的 message 快照
-    已固定), 本实现注入 memory 后从下一轮 LLM 生成起生效. 升级路径: 在
-    HuginnAgent 的工具执行前钩子 (approval_callback 同位置) 检查 pending
-    guidance 并改写输入 messages.
+    引导不开启新回合, 而是直接写进 agent 的 session memory, 作为一条 user
+    消息进入会话上下文, 从下一轮 LLM 生成起生效 (同回合间隙注入需
+    langgraph interrupt 或 tool-adapter hook).
     """
     from huginn.routes.ws import get_agent_factory
 
     content = (msg.content or "").strip()
     thread_id = msg.thread_id or "desktop"
     if not content:
-        await websocket.send_json({"type": "guide_ack", "stored": False, "error": "empty content"})
+        await websocket.send_json(
+            {"type": "guide_ack", "stored": False, "error": "empty content"}
+        )
         return
 
     try:
         factory = get_agent_factory()
-        agent = factory.create_lead(thread_id=thread_id, approval_callback=ctx.ws_approval)
+        agent = factory.create_lead(
+            thread_id=thread_id, approval_callback=ctx.ws_approval
+        )
         # 注入会话 memory: 引导成为持久上下文的一部分.
         agent.memory.add_message("user", f"[用户中途引导] {content}")
-        await websocket.send_json({
-            "type": "guide_ack",
-            "stored": True,
-            "thread_id": thread_id,
-        })
+        await websocket.send_json(
+            {"type": "guide_ack", "stored": True, "thread_id": thread_id}
+        )
     except Exception as exc:
         logger.debug("guide inject failed", exc_info=True)
-        await websocket.send_json({
-            "type": "guide_ack",
-            "stored": False,
-            "error": str(exc),
-        })
+        await websocket.send_json(
+            {"type": "guide_ack", "stored": False, "error": str(exc)}
+        )
