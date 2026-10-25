@@ -49,13 +49,74 @@ def _is_safe_url(url: str) -> bool:
         try:
             ip = socket.getaddrinfo(hostname, None)[0][4][0]
             ip_obj = ipaddress.ip_address(ip)
-            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
+            if (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_reserved
+            ):
                 return False
         except (socket.gaierror, ValueError):
             return False
         return True
     except Exception:
         return False
+
+
+# ───────────────────────── 带熔断的抓取封装 ─────────────────────────
+
+
+async def _guarded_json(source: str, label: str, url: str) -> dict[str, Any] | None:
+    """带熔断的 JSON GET; 熔断/失败返回 None (调用方当作空结果)."""
+    try:
+        with circuit_guard(source):
+            return await _http_get_json(url)
+    except CircuitOpenError:
+        logger.info("%s circuit open, skipping", label)
+    except Exception as exc:
+        logger.warning("%s 请求失败: %s", label, exc)
+    return None
+
+
+async def _guarded_text(source: str, label: str, url: str) -> str | None:
+    """带熔断的文本 GET; 熔断/失败返回 None."""
+    try:
+        with circuit_guard(source):
+            return await _http_get_text(url)
+    except CircuitOpenError:
+        logger.info("%s circuit open, skipping", label)
+    except Exception as exc:
+        logger.warning("%s 请求失败: %s", label, exc)
+    return None
+
+
+async def _guarded_thread_json(
+    source: str,
+    label: str,
+    url: str,
+    *,
+    timeout: float | None = None,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    """带熔断的线程内 JSON GET (含 SSRF 校验); 熔断/失败返回 None."""
+
+    def _fetch() -> Any:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
+        req = urllib.request.Request(
+            url, headers={"User-Agent": _USER_AGENT, **(headers or {})}
+        )
+        with _OPENER.open(req, timeout=timeout or _timeout()) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        with circuit_guard(source):
+            return await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("%s circuit open, skipping", label)
+    except Exception as exc:
+        logger.warning("%s 请求失败: %s", label, exc)
+    return None
 
 
 # ───────────────────────── 去重 / 规范化 ─────────────────────────
@@ -89,7 +150,9 @@ def _dedup(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen[key]["_sources"] = [p["source"]]
         else:
             existing = seen[key]
-            existing["_sources"] = list(set(existing.get("_sources", []) + [p["source"]]))
+            existing["_sources"] = list(
+                set(existing.get("_sources", []) + [p["source"]])
+            )
             # abstract 取更长的
             if len(p.get("abstract", "")) > len(existing.get("abstract", "")):
                 existing["abstract"] = p["abstract"]
@@ -197,11 +260,58 @@ def _apply_filters(
 
 # 查询重排停用词 (轻量, 覆盖最常见的连接词/疑问词, 避免它们刷命中)
 _QUERY_STOP: set[str] = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "of", "in",
-    "on", "for", "to", "and", "or", "not", "with", "by", "how", "what",
-    "when", "why", "which", "that", "this", "from", "as", "at", "it",
-    "our", "we", "use", "using", "study", "studies", "based", "的", "了", "是", "在", "和", "与", "及", "或", "请", "如何", "什么",
-    "为什么", "怎么", "哪些", "哪个",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "of",
+    "in",
+    "on",
+    "for",
+    "to",
+    "and",
+    "or",
+    "not",
+    "with",
+    "by",
+    "how",
+    "what",
+    "when",
+    "why",
+    "which",
+    "that",
+    "this",
+    "from",
+    "as",
+    "at",
+    "it",
+    "our",
+    "we",
+    "use",
+    "using",
+    "study",
+    "studies",
+    "based",
+    "的",
+    "了",
+    "是",
+    "在",
+    "和",
+    "与",
+    "及",
+    "或",
+    "请",
+    "如何",
+    "什么",
+    "为什么",
+    "怎么",
+    "哪些",
+    "哪个",
 }
 
 
@@ -220,7 +330,9 @@ def _query_keywords(query: str) -> list[str]:
     return kws
 
 
-def _rerank(query: str, papers: list[dict[str, Any]], top_n: int | None = None) -> list[dict[str, Any]]:
+def _rerank(
+    query: str, papers: list[dict[str, Any]], top_n: int | None = None
+) -> list[dict[str, Any]]:
     """按 query 相关度 + citation 重排多路合并后的结果 (P0-2).
 
     原 ``_sort_papers`` 只按 citation 排 — 高引但只沾边 B 的论文会压过
@@ -241,7 +353,9 @@ def _rerank(query: str, papers: list[dict[str, Any]], top_n: int | None = None) 
     def score(p: dict[str, Any]) -> float:
         title = (p.get("title") or "").lower()
         abstract = (p.get("abstract") or "").lower()
-        hits = 2 * sum(1 for k in kws if k in title) + sum(1 for k in kws if k in abstract)
+        hits = 2 * sum(1 for k in kws if k in title) + sum(
+            1 for k in kws if k in abstract
+        )
         if hits == 0:
             return 0.0
         return hits + math.log1p(p.get("citations") or 0) * 0.5
@@ -252,7 +366,7 @@ def _rerank(query: str, papers: list[dict[str, Any]], top_n: int | None = None) 
         papers,
         key=lambda p: (
             p["relevance"],
-            _is_oa(p),                     # OA 优先 (同一相关度下)
+            _is_oa(p),  # OA 优先 (同一相关度下)
             bool(p.get("abstract")),
             p.get("citations") or 0,
         ),
@@ -264,6 +378,49 @@ def _rerank(query: str, papers: list[dict[str, Any]], top_n: int | None = None) 
 # ───────────────────────── arXiv ─────────────────────────
 
 
+def _arxiv_paper(
+    entry: Any, year_from: int | None, year_to: int | None
+) -> dict[str, Any] | None:
+    """Parse one Atom <entry> into the unified paper dict."""
+    title_el = entry.find("atom:title", _ARXIV_NS)
+    summary_el = entry.find("atom:summary", _ARXIV_NS)
+    id_el = entry.find("atom:id", _ARXIV_NS)
+    published_el = entry.find("atom:published", _ARXIV_NS)
+    if title_el is None or id_el is None:
+        return None
+    title = re.sub(r"\s+", " ", (title_el.text or "").strip())
+    abstract = (summary_el.text or "").strip() if summary_el is not None else ""
+    authors: list[str] = []
+    for author in entry.findall("atom:author", _ARXIV_NS):
+        name_el = author.find("atom:name", _ARXIV_NS)
+        if name_el is not None and name_el.text:
+            authors.append(name_el.text.strip())
+    year: int | None = None
+    if published_el is not None and published_el.text:
+        m = re.match(r"(\d{4})", published_el.text)
+        if m:
+            year = int(m.group(1))
+    # year 过滤放这儿, arXiv API 本身不支持 year range
+    if year_from and year and year < year_from:
+        return None
+    if year_to and year and year > year_to:
+        return None
+    url_ = (id_el.text or "").strip()
+    doi_el = entry.find(_ARXIV_DOI_NS)
+    doi = doi_el.text.strip() if doi_el is not None and doi_el.text else None
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": "arXiv",
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,  # arXiv 不给引用数
+        "source": "arxiv",
+    }
+
+
 async def _search_arxiv(
     query: str, max_results: int, year_from: int | None, year_to: int | None
 ) -> list[dict[str, Any]]:
@@ -273,14 +430,8 @@ async def _search_arxiv(
         f"http://export.arxiv.org/api/query?search_query=all:{q}"
         f"&start=0&max_results={max_results}&sortBy=relevance"
     )
-    try:
-        with circuit_guard("arxiv"):
-            xml_text = await _http_get_text(url)
-    except CircuitOpenError:
-        logger.info("arXiv circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("arXiv 请求失败: %s", exc)
+    xml_text = await _guarded_text("arxiv", "arXiv", url)
+    if xml_text is None:
         return []
 
     try:
@@ -291,47 +442,44 @@ async def _search_arxiv(
 
     papers: list[dict[str, Any]] = []
     for entry in root.findall("atom:entry", _ARXIV_NS):
-        title_el = entry.find("atom:title", _ARXIV_NS)
-        summary_el = entry.find("atom:summary", _ARXIV_NS)
-        id_el = entry.find("atom:id", _ARXIV_NS)
-        published_el = entry.find("atom:published", _ARXIV_NS)
-        if title_el is None or id_el is None:
-            continue
-        title = re.sub(r"\s+", " ", (title_el.text or "").strip())
-        abstract = (summary_el.text or "").strip() if summary_el is not None else ""
-        authors: list[str] = []
-        for author in entry.findall("atom:author", _ARXIV_NS):
-            name_el = author.find("atom:name", _ARXIV_NS)
-            if name_el is not None and name_el.text:
-                authors.append(name_el.text.strip())
-        year: int | None = None
-        if published_el is not None and published_el.text:
-            m = re.match(r"(\d{4})", published_el.text)
-            if m:
-                year = int(m.group(1))
-        # year 过滤放这儿, arXiv API 本身不支持 year range
-        if year_from and year and year < year_from:
-            continue
-        if year_to and year and year > year_to:
-            continue
-        url_ = (id_el.text or "").strip()
-        doi_el = entry.find(_ARXIV_DOI_NS)
-        doi = doi_el.text.strip() if doi_el is not None and doi_el.text else None
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": "arXiv",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,  # arXiv 不给引用数
-            "source": "arxiv",
-        })
+        paper = _arxiv_paper(entry, year_from, year_to)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── Semantic Scholar ─────────────────────────
+
+
+def _s2_paper(
+    item: dict[str, Any], year_from: int | None, year_to: int | None
+) -> dict[str, Any] | None:
+    """Normalise one Semantic Scholar paper into the unified paper dict."""
+    year = item.get("year")
+    if year_from and year and year < year_from:
+        return None
+    if year_to and year and year > year_to:
+        return None
+    ext = item.get("externalIds", {}) or {}
+    doi = ext.get("DOI")
+    arxiv_id = ext.get("ArXiv")
+    url_ = item.get("url", "") or ""
+    if not url_ and doi:
+        url_ = f"https://doi.org/{doi}"
+    elif not url_ and arxiv_id:
+        url_ = f"https://arxiv.org/abs/{arxiv_id}"
+    authors = [a.get("name", "") for a in (item.get("authors") or []) if a.get("name")]
+    return {
+        "title": item.get("title", "") or "",
+        "authors": authors,
+        "year": year,
+        "venue": item.get("venue", "") or "",
+        "doi": doi,
+        "abstract": item.get("abstract", "") or "",
+        "url": url_,
+        "citations": item.get("citationCount"),
+        "source": "s2",
+    }
 
 
 async def _search_s2(
@@ -344,47 +492,57 @@ async def _search_s2(
         f"https://api.semanticscholar.org/graph/v1/paper/search?query={q}"
         f"&limit={max_results}&fields={fields}"
     )
-    try:
-        with circuit_guard("semantic_scholar"):
-            data = await _http_get_json(url)
-    except CircuitOpenError:
-        logger.info("Semantic Scholar circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("Semantic Scholar 请求失败: %s", exc)
+    data = await _guarded_json("semantic_scholar", "Semantic Scholar", url)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("data", []) or []:
-        year = item.get("year")
-        if year_from and year and year < year_from:
-            continue
-        if year_to and year and year > year_to:
-            continue
-        ext = item.get("externalIds", {}) or {}
-        doi = ext.get("DOI")
-        arxiv_id = ext.get("ArXiv")
-        url_ = item.get("url", "") or ""
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-        elif not url_ and arxiv_id:
-            url_ = f"https://arxiv.org/abs/{arxiv_id}"
-        authors = [a.get("name", "") for a in (item.get("authors") or []) if a.get("name")]
-        papers.append({
-            "title": item.get("title", "") or "",
-            "authors": authors,
-            "year": year,
-            "venue": item.get("venue", "") or "",
-            "doi": doi,
-            "abstract": item.get("abstract", "") or "",
-            "url": url_,
-            "citations": item.get("citationCount"),
-            "source": "s2",
-        })
+        paper = _s2_paper(item, year_from, year_to)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── CrossRef ─────────────────────────
+
+
+def _crossref_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one CrossRef work item into the unified paper dict."""
+    title_list = item.get("title") or []
+    title = title_list[0] if title_list else ""
+    if not title:
+        return None
+    authors: list[str] = []
+    for a in item.get("author", []) or []:
+        name = f"{a.get('given', '')} {a.get('family', '')}".strip()
+        if name:
+            authors.append(name)
+    year: int | None = None
+    issued = item.get("issued", {}) or {}
+    date_parts = issued.get("date-parts") or [[]]
+    if date_parts and date_parts[0]:
+        year = date_parts[0][0]
+    venue_list = item.get("container-title") or []
+    venue = venue_list[0] if venue_list else ""
+    doi = item.get("DOI")
+    abstract = item.get("abstract", "") or ""
+    # CrossRef abstract 带 <jats:p> 之类的 XML 标签, 全剥掉
+    abstract = re.sub(r"<[^>]+>", "", abstract).strip()
+    url_ = item.get("URL", "") or ""
+    if not url_ and doi:
+        url_ = f"https://doi.org/{doi}"
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,  # CrossRef 不给引用数
+        "source": "crossref",
+    }
 
 
 async def _search_crossref(
@@ -393,10 +551,7 @@ async def _search_crossref(
     """CrossRef Works API. JSON. DOI 权威源, 期刊文献全."""
     q = urllib.parse.quote(query)
     select = "DOI,title,author,issued,container-title,abstract,URL"
-    url = (
-        f"https://api.crossref.org/works?query={q}"
-        f"&rows={max_results}&select={select}"
-    )
+    url = f"https://api.crossref.org/works?query={q}&rows={max_results}&select={select}"
     # CrossRef 支持 filter 参数做 year range
     filters = []
     if year_from:
@@ -406,53 +561,16 @@ async def _search_crossref(
     if filters:
         url += "&filter=" + ",".join(filters)
 
-    try:
-        with circuit_guard("crossref"):
-            data = await _http_get_json(url)
-    except CircuitOpenError:
-        logger.info("CrossRef circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("CrossRef 请求失败: %s", exc)
+    data = await _guarded_json("crossref", "CrossRef", url)
+    if data is None:
         return []
 
-    papers: list[dict[str, Any]] = []
     items = (data.get("message") or {}).get("items", []) or []
+    papers: list[dict[str, Any]] = []
     for item in items:
-        title_list = item.get("title") or []
-        title = title_list[0] if title_list else ""
-        if not title:
-            continue
-        authors: list[str] = []
-        for a in item.get("author", []) or []:
-            name = f"{a.get('given', '')} {a.get('family', '')}".strip()
-            if name:
-                authors.append(name)
-        year: int | None = None
-        issued = item.get("issued", {}) or {}
-        date_parts = issued.get("date-parts") or [[]]
-        if date_parts and date_parts[0]:
-            year = date_parts[0][0]
-        venue_list = item.get("container-title") or []
-        venue = venue_list[0] if venue_list else ""
-        doi = item.get("DOI")
-        abstract = item.get("abstract", "") or ""
-        # CrossRef abstract 带 <jats:p> 之类的 XML 标签, 全剥掉
-        abstract = re.sub(r"<[^>]+>", "", abstract).strip()
-        url_ = item.get("URL", "") or ""
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": venue,
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,  # CrossRef 不给引用数
-            "source": "crossref",
-        })
+        paper = _crossref_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
@@ -477,6 +595,46 @@ def _openalex_abstract_from_inverted_index(inv: dict[str, list[int]] | None) -> 
     return " ".join(w for w in words if w)
 
 
+def _openalex_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one OpenAlex work into the unified paper dict."""
+    title = item.get("title") or item.get("display_name") or ""
+    if not title:
+        return None
+    year = item.get("publication_year")
+    authors = [
+        (a.get("author") or {}).get("display_name", "")
+        for a in (item.get("authorships") or [])
+        if (a.get("author") or {}).get("display_name")
+    ]
+    doi_raw = item.get("doi") or ""
+    doi = doi_raw.replace("https://doi.org/", "") if doi_raw else None
+    primary_loc = item.get("primary_location") or {}
+    source = primary_loc.get("source") or {}
+    venue = source.get("display_name") or ""
+    abstract = _openalex_abstract_from_inverted_index(
+        item.get("abstract_inverted_index")
+    )
+    oa = item.get("open_access") or {}
+    oa_url = oa.get("oa_url") or ""
+    # 优先用 oa_url, 没有就退回 doi.org
+    url_ = oa_url
+    if not url_ and doi:
+        url_ = f"https://doi.org/{doi}"
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": item.get("cited_by_count"),
+        "source": "openalex",
+        "oa_url": oa_url,  # 留着, fetch_pdf 直接能用
+        "is_oa": oa.get("is_oa"),
+    }
+
+
 async def _search_openalex(
     query: str, max_results: int, year_from: int | None, year_to: int | None
 ) -> list[dict[str, Any]]:
@@ -488,8 +646,10 @@ async def _search_openalex(
     q = urllib.parse.quote(query)
     # mailto 进 polite pool, 走更快的限流通道
     email = os.environ.get("HUGINN_UNPAYWALL_EMAIL", "user@example.com")
-    fields = "id,doi,title,abstract_inverted_index,publication_year," \
-             "cited_by_count,authorships,primary_location,open_access"
+    fields = (
+        "id,doi,title,abstract_inverted_index,publication_year,"
+        "cited_by_count,authorships,primary_location,open_access"
+    )
     url = (
         f"https://api.openalex.org/works?search={q}"
         f"&per-page={max_results}&select={fields}&mailto={email}"
@@ -503,59 +663,54 @@ async def _search_openalex(
     if filters:
         url += "&filter=" + ",".join(filters)
 
-    try:
-        with circuit_guard("openalex"):
-            data = await _http_get_json(url)
-    except CircuitOpenError:
-        logger.info("OpenAlex circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("OpenAlex 请求失败: %s", exc)
+    data = await _guarded_json("openalex", "OpenAlex", url)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("results", []) or []:
-        title = item.get("title") or item.get("display_name") or ""
-        if not title:
-            continue
-        year = item.get("publication_year")
-        authors = [
-            (a.get("author") or {}).get("display_name", "")
-            for a in (item.get("authorships") or [])
-            if (a.get("author") or {}).get("display_name")
-        ]
-        doi_raw = item.get("doi") or ""
-        doi = doi_raw.replace("https://doi.org/", "") if doi_raw else None
-        venue = ""
-        primary_loc = item.get("primary_location") or {}
-        source = primary_loc.get("source") or {}
-        venue = source.get("display_name") or ""
-        abstract = _openalex_abstract_from_inverted_index(
-            item.get("abstract_inverted_index")
-        )
-        oa = item.get("open_access") or {}
-        oa_url = oa.get("oa_url") or ""
-        # 优先用 oa_url, 没有就退回 doi.org
-        url_ = oa_url
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": venue,
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": item.get("cited_by_count"),
-            "source": "openalex",
-            "oa_url": oa_url,  # 留着, fetch_pdf 直接能用
-            "is_oa": oa.get("is_oa"),
-        })
+        paper = _openalex_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── PubMed (NCBI E-utilities) ─────────────────────────
+
+
+def _pubmed_paper(pmid: str, item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one PubMed esummary record into the unified paper dict."""
+    if not item.get("title"):
+        return None
+    title = item.get("title", "").strip()
+    authors = [a.get("name", "") for a in (item.get("authors") or []) if a.get("name")]
+    year: int | None = None
+    pubdate = item.get("pubdate", "") or ""
+    m = re.match(r"(\d{4})", pubdate)
+    if m:
+        year = int(m.group(1))
+    venue = item.get("fulljournalname") or item.get("source", "") or ""
+    doi = ""
+    for aid in item.get("articleids") or []:
+        if aid.get("idtype") == "doi":
+            doi = aid.get("value", "")
+            break
+    # PubMed esummary 不给 abstract, 得调 efetch; 这里先留空, fetch_pdf 可补
+    url_ = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+    if doi:
+        url_ = f"https://doi.org/{doi}"
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": doi or None,
+        "abstract": "",  # esummary 不给 abstract
+        "url": url_,
+        "citations": None,
+        "source": "pubmed",
+        "pmid": pmid,
+    }
 
 
 async def _search_pubmed(
@@ -576,16 +731,10 @@ async def _search_pubmed(
     if year_from or year_to:
         yf = year_from or 1900
         yt = year_to or 2100
-        esearch_url += f'&mindate={yf}&maxdate={yt}&datetype=pdat'
+        esearch_url += f"&mindate={yf}&maxdate={yt}&datetype=pdat"
 
-    try:
-        with circuit_guard("pubmed"):
-            esearch_data = await _http_get_json(esearch_url)
-    except CircuitOpenError:
-        logger.info("PubMed circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("PubMed esearch 失败: %s", exc)
+    esearch_data = await _guarded_json("pubmed", "PubMed esearch", esearch_url)
+    if esearch_data is None:
         return []
 
     pmids = (esearch_data.get("esearchresult") or {}).get("idlist", []) or []
@@ -598,56 +747,66 @@ async def _search_pubmed(
         f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
         f"?db=pubmed&id={pmid_str}&retmode=json"
     )
-    try:
-        with circuit_guard("pubmed"):
-            esummary_data = await _http_get_json(esummary_url)
-    except CircuitOpenError:
-        logger.info("PubMed circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("PubMed esummary 失败: %s", exc)
+    esummary_data = await _guarded_json("pubmed", "PubMed esummary", esummary_url)
+    if esummary_data is None:
         return []
 
-    papers: list[dict[str, Any]] = []
     result = esummary_data.get("result", {}) or {}
+    papers: list[dict[str, Any]] = []
     for pmid in pmids:
-        item = result.get(pmid, {}) or {}
-        if not item.get("title"):
-            continue
-        title = item.get("title", "").strip()
-        # 去掉 PMID 尾巴
-        authors = [a.get("name", "") for a in (item.get("authors") or []) if a.get("name")]
-        year: int | None = None
-        pubdate = item.get("pubdate", "") or ""
-        m = re.match(r"(\d{4})", pubdate)
-        if m:
-            year = int(m.group(1))
-        venue = item.get("fulljournalname") or item.get("source", "") or ""
-        doi = ""
-        for aid in (item.get("articleids") or []):
-            if aid.get("idtype") == "doi":
-                doi = aid.get("value", "")
-                break
-        # PubMed esummary 不给 abstract, 得调 efetch; 这里先留空, fetch_pdf 可补
-        url_ = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-        if doi:
-            url_ = f"https://doi.org/{doi}"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": venue,
-            "doi": doi or None,
-            "abstract": "",  # esummary 不给 abstract
-            "url": url_,
-            "citations": None,
-            "source": "pubmed",
-            "pmid": pmid,
-        })
+        paper = _pubmed_paper(pmid, result.get(pmid, {}) or {})
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── DOAJ ─────────────────────────
+
+
+def _doaj_paper(
+    item: dict[str, Any], year_from: int | None, year_to: int | None
+) -> dict[str, Any] | None:
+    """Normalise one DOAJ article into the unified paper dict."""
+    bibjson = item.get("bibjson", {}) or {}
+    title = bibjson.get("title", "") or ""
+    if not title:
+        return None
+    authors = [
+        a.get("name", "") for a in (bibjson.get("author") or []) if a.get("name")
+    ]
+    year: int | None = None
+    m = re.match(r"(\d{4})", bibjson.get("year", "") or "")
+    if m:
+        year = int(m.group(1))
+    if year_from and year and year < year_from:
+        return None
+    if year_to and year and year > year_to:
+        return None
+    journal = bibjson.get("journal") or {}
+    venue = journal.get("title", "") or ""
+    doi = bibjson.get("doi")
+    abstract = bibjson.get("abstract", "") or ""
+    # DOAJ abstract 偶尔带 HTML 标签
+    abstract = re.sub(r"<[^>]+>", "", abstract).strip()
+    links = bibjson.get("link") or []
+    url_ = ""
+    for link in links:
+        if link.get("type") == "fulltext" or link.get("url"):
+            url_ = link.get("url", "")
+            break
+    if not url_ and doi:
+        url_ = f"https://doi.org/{doi}"
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,
+        "source": "doaj",
+    }
 
 
 async def _search_doaj(
@@ -660,69 +819,54 @@ async def _search_doaj(
     """
     q = urllib.parse.quote(query)
     page_size = min(max_results, 100)
-    url = (
-        f"https://doaj.org/api/search/articles/{q}"
-        f"?page=1&pageSize={page_size}"
-    )
+    url = f"https://doaj.org/api/search/articles/{q}?page=1&pageSize={page_size}"
 
-    try:
-        with circuit_guard("doaj"):
-            data = await _http_get_json(url)
-    except CircuitOpenError:
-        logger.info("DOAJ circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("DOAJ 请求失败: %s", exc)
+    data = await _guarded_json("doaj", "DOAJ", url)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("results", []) or []:
-        bibjson = item.get("bibjson", {}) or {}
-        title = bibjson.get("title", "") or ""
-        if not title:
-            continue
-        authors = [
-            a.get("name", "")
-            for a in (bibjson.get("author") or [])
-            if a.get("name")
-        ]
-        year: int | None = None
-        m = re.match(r"(\d{4})", bibjson.get("year", "") or "")
-        if m:
-            year = int(m.group(1))
-        if year_from and year and year < year_from:
-            continue
-        if year_to and year and year > year_to:
-            continue
-        journal = (bibjson.get("journal") or {})
-        venue = journal.get("title", "") or ""
-        doi = bibjson.get("doi")
-        abstract = bibjson.get("abstract", "") or ""
-        # DOAJ abstract 偶尔带 HTML 标签
-        abstract = re.sub(r"<[^>]+>", "", abstract).strip()
-        links = bibjson.get("link") or []
-        url_ = ""
-        for link in links:
-            if link.get("type") == "fulltext" or link.get("url"):
-                url_ = link.get("url", "")
-                break
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": venue,
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "doaj",
-        })
+        paper = _doaj_paper(item, year_from, year_to)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── CORE ─────────────────────────
+
+
+def _core_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one CORE work into the unified paper dict."""
+    title = item.get("title", "") or ""
+    if not title:
+        return None
+    authors = [
+        a.get("name", "")
+        for a in (item.get("authors") or [])
+        if isinstance(a, dict) and a.get("name")
+    ]
+    year: int | None = item.get("year_published")
+    doi = item.get("doi")
+    abstract = item.get("abstract", "") or ""
+    # download_url 是 CORE 直接给的全文 PDF 链接, 留着给 fetch_pdf
+    download_url = item.get("download_url") or ""
+    source_urls = item.get("source_fulltext_urls") or []
+    url_ = download_url or (source_urls[0] if source_urls else "")
+    if not url_ and doi:
+        url_ = f"https://doi.org/{doi}"
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": item.get("publisher", "") or "",
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,
+        "source": "core",
+        "download_url": download_url,  # fetch_pdf 直接能用
+    }
 
 
 async def _search_core(
@@ -737,68 +881,77 @@ async def _search_core(
     api_key = os.environ.get("HUGINN_CORE_API_KEY", "")
     # 无 key 也能用, 带 key 进 polite 路径
     headers_extra = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    url = (
-        f"https://api.core.ac.uk/v3/search/works"
-        f"?q={q}&limit={max_results}"
-    )
+    url = f"https://api.core.ac.uk/v3/search/works?q={q}&limit={max_results}"
     # year range
     if year_from:
-        url += f'&year_created_min={year_from}-01-01'
+        url += f"&year_created_min={year_from}-01-01"
     if year_to:
-        url += f'&year_created_max={year_to}-12-31'
+        url += f"&year_created_max={year_to}-12-31"
 
-    def _fetch() -> dict[str, Any]:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT, **headers_extra})
-        with _OPENER.open(req, timeout=_timeout()) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("core"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("CORE circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("CORE 请求失败: %s", exc)
+    data = await _guarded_thread_json("core", "CORE", url, headers=headers_extra)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("results", []) or []:
-        title = item.get("title", "") or ""
-        if not title:
-            continue
-        authors = [
-            a.get("name", "")
-            for a in (item.get("authors") or [])
-            if isinstance(a, dict) and a.get("name")
-        ]
-        year: int | None = item.get("year_published")
-        doi = item.get("doi")
-        abstract = item.get("abstract", "") or ""
-        # download_url 是 CORE 直接给的全文 PDF 链接, 留着给 fetch_pdf
-        download_url = item.get("download_url") or ""
-        source_urls = item.get("source_fulltext_urls") or []
-        url_ = download_url or (source_urls[0] if source_urls else "")
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": item.get("publisher", "") or "",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "core",
-            "download_url": download_url,  # fetch_pdf 直接能用
-        })
+        paper = _core_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── Europe PMC ─────────────────────────
+
+
+def _europepmc_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one Europe PMC record into the unified paper dict."""
+    title = item.get("title", "") or ""
+    if not title:
+        return None
+    authors: list[str] = []
+    author_str = item.get("authorString", "") or ""
+    if author_str:
+        authors = [a.strip() for a in author_str.split(",") if a.strip()]
+    year = item.get("pubYear")
+    if year:
+        try:
+            year = int(year)
+        except (ValueError, TypeError):
+            year = None
+    doi = item.get("doi") or None
+    if doi:
+        doi = doi.lower()
+    pmid = item.get("pmid", "")
+    pmcid = item.get("pmcid", "")
+    venue = item.get("journalInfo", {}).get("journal", {}).get("title", "")
+    url_ = venue
+    if doi:
+        url_ = f"https://doi.org/{doi}"
+    elif pmcid:
+        url_ = f"https://europepmc.org/article/pmc/{pmcid}"
+    elif pmid:
+        url_ = f"https://europepmc.org/article/med/{pmid}"
+    citations = item.get("citedByCount")
+    if citations:
+        try:
+            citations = int(citations)
+        except (ValueError, TypeError):
+            citations = None
+    is_oa = item.get("isOpenAccess") == "Y" or bool(pmcid)
+    pdf_url = f"https://europepmc.org/articles/{pmcid}?pdf=render" if pmcid else ""
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": venue or "",
+        "doi": doi,
+        "abstract": "",
+        "url": url_,
+        "citations": citations,
+        "source": "europepmc",
+        "open_access": is_oa,
+        "download_url": pdf_url,
+    }
 
 
 async def _search_europepmc(
@@ -824,71 +977,70 @@ async def _search_europepmc(
     elif year_to:
         url += f"&filter=FIRST_PDATE:[1900-01-01 TO {year_to}-12-31]"
 
-    try:
-        with circuit_guard("europepmc"):
-            data = await _http_get_json(url)
-    except CircuitOpenError:
-        logger.info("Europe PMC circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("Europe PMC 请求失败: %s", exc)
+    data = await _guarded_json("europepmc", "Europe PMC", url)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("resultList", {}).get("result", []) or []:
-        title = item.get("title", "") or ""
-        if not title:
-            continue
-        authors: list[str] = []
-        author_str = item.get("authorString", "") or ""
-        if author_str:
-            authors = [a.strip() for a in author_str.split(",") if a.strip()]
-        year = item.get("pubYear")
-        if year:
-            try:
-                year = int(year)
-            except (ValueError, TypeError):
-                year = None
-        doi = item.get("doi") or None
-        if doi:
-            doi = doi.lower()
-        abstract = ""
-        pmid = item.get("pmid", "")
-        pmcid = item.get("pmcid", "")
-        url_ = item.get("journalInfo", {}).get("journal", {}).get("title", "")
-        if doi:
-            url_ = f"https://doi.org/{doi}"
-        elif pmcid:
-            url_ = f"https://europepmc.org/article/pmc/{pmcid}"
-        elif pmid:
-            url_ = f"https://europepmc.org/article/med/{pmid}"
-        citations = item.get("citedByCount")
-        if citations:
-            try:
-                citations = int(citations)
-            except (ValueError, TypeError):
-                citations = None
-        is_oa = item.get("isOpenAccess") == "Y" or bool(pmcid)
-        pdf_url = ""
-        if pmcid:
-            pdf_url = f"https://europepmc.org/articles/{pmcid}?pdf=render"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": item.get("journalInfo", {}).get("journal", {}).get("title", "") or "",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": citations,
-            "source": "europepmc",
-            "open_access": is_oa,
-            "download_url": pdf_url,
-        })
+        paper = _europepmc_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── Zenodo ─────────────────────────
+
+
+def _zenodo_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one Zenodo record into the unified paper dict."""
+    meta = item.get("metadata", {})
+    title = meta.get("title", "") or ""
+    if not title:
+        return None
+    authors: list[str] = []
+    for creator in meta.get("creators", []) or []:
+        name = creator.get("name", "")
+        if name:
+            authors.append(name)
+    year: int | None = None
+    pub_date = meta.get("publication_date", "") or ""
+    if pub_date:
+        m = re.match(r"(\d{4})", pub_date)
+        if m:
+            year = int(m.group(1))
+    doi = meta.get("doi") or None
+    rec_id = item.get("id", "")
+    url_ = f"https://zenodo.org/record/{rec_id}" if rec_id else ""
+    if doi:
+        url_ = f"https://doi.org/{doi}"
+    abstract = meta.get("description", "") or ""
+    # strip HTML tags from description
+    if abstract:
+        abstract = re.sub(r"<[^>]+>", "", abstract).strip()[:500]
+    upload_type = meta.get("upload_type", "publication")
+    # find PDF download URL in files
+    download_url = ""
+    for f in item.get("files", []) or []:
+        if f.get("type") == "pdf":
+            download_url = f.get("links", {}).get("self", "")
+            break
+        if not download_url:
+            download_url = f.get("links", {}).get("self", "")
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": "Zenodo",
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,
+        "source": "zenodo",
+        "open_access": meta.get("access_right") == "open",
+        "download_url": download_url,
+        "upload_type": upload_type,
+    }
 
 
 async def _search_zenodo(
@@ -916,72 +1068,15 @@ async def _search_zenodo(
     if date_filter:
         url += f"&publication_date={date_filter}"
 
-    def _fetch() -> dict[str, Any]:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=45) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("zenodo"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("Zenodo circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("Zenodo 请求失败: %s", exc)
+    data = await _guarded_thread_json("zenodo", "Zenodo", url, timeout=45)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("hits", {}).get("hits", []) or []:
-        meta = item.get("metadata", {})
-        title = meta.get("title", "") or ""
-        if not title:
-            continue
-        authors: list[str] = []
-        for creator in meta.get("creators", []) or []:
-            name = creator.get("name", "")
-            if name:
-                authors.append(name)
-        year: int | None = None
-        pub_date = meta.get("publication_date", "") or ""
-        if pub_date:
-            m = re.match(r"(\d{4})", pub_date)
-            if m:
-                year = int(m.group(1))
-        doi = meta.get("doi") or None
-        rec_id = item.get("id", "")
-        url_ = f"https://zenodo.org/record/{rec_id}" if rec_id else ""
-        if doi:
-            url_ = f"https://doi.org/{doi}"
-        abstract = meta.get("description", "") or ""
-        # strip HTML tags from description
-        if abstract:
-            abstract = re.sub(r"<[^>]+>", "", abstract).strip()[:500]
-        upload_type = meta.get("upload_type", "publication")
-        # find PDF download URL in files
-        download_url = ""
-        for f in item.get("files", []) or []:
-            if f.get("type") == "pdf":
-                download_url = f.get("links", {}).get("self", "")
-                break
-            if not download_url:
-                download_url = f.get("links", {}).get("self", "")
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": "Zenodo",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "zenodo",
-            "open_access": meta.get("access_right") == "open",
-            "download_url": download_url,
-            "upload_type": upload_type,
-        })
+        paper = _zenodo_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
@@ -1053,11 +1148,7 @@ def _openaire_items(data: dict[str, Any]) -> list[Any]:
 
 def _openaire_item(wrapper: dict[str, Any]) -> dict[str, Any]:
     """剥到 oaf:result 层; 空则返回 {}."""
-    return (
-        wrapper.get("metadata", {})
-        .get("oaf:entity", {})
-        .get("oaf:result", {})
-    )
+    return wrapper.get("metadata", {}).get("oaf:entity", {}).get("oaf:result", {})
 
 
 def _openaire_record(item: dict[str, Any]) -> dict[str, Any]:
@@ -1185,6 +1276,60 @@ def _openaire_citations(item: dict[str, Any]) -> int | None:
 # ───────────────────────── Crystallography Open Database ─────────────────────────
 
 
+def _cod_structures(data: Any) -> list:
+    """COD 返回 dict(structures/result) 或裸 list; 统一成 list."""
+    if isinstance(data, dict):
+        return data.get("structures", data.get("result", []))
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _cod_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one COD crystal entry into the unified paper dict."""
+    if not isinstance(item, dict):
+        return None
+    file_id = item.get("file", "") or ""
+    formula = item.get("formula", "") or ""
+    mineral = item.get("mineral", "") or ""
+    title = mineral or formula or f"COD entry {file_id}"
+    if not title:
+        return None
+    # Build URL to the CIF file
+    if file_id:
+        # COD stores files in directory hierarchy based on ID
+        dir_path = file_id[:1] + "/" + file_id[1:3] + "/"
+        url_ = f"http://www.crystallography.net/cod/{dir_path}{file_id}.cif"
+    else:
+        url_ = ""
+    sg = item.get("sg", "") or ""
+    a = item.get("a", "") or ""
+    b = item.get("b", "") or ""
+    c = item.get("c", "") or ""
+    abstract_parts = []
+    if formula:
+        abstract_parts.append(f"Formula: {formula}")
+    if sg:
+        abstract_parts.append(f"Space group: {sg}")
+    if a:
+        abstract_parts.append(f"a={a} b={b} c={c}")
+    return {
+        "title": title,
+        "authors": [],
+        "year": None,
+        "venue": "Crystallography Open Database",
+        "doi": None,
+        "abstract": "; ".join(abstract_parts),
+        "url": url_,
+        "citations": None,
+        "source": "cod",
+        "open_access": True,
+        "download_url": url_,
+        "formula": formula,
+        "space_group": sg,
+    }
+
+
 async def _search_cod(
     query: str, max_results: int, year_from: int | None, year_to: int | None
 ) -> list[dict[str, Any]]:
@@ -1203,29 +1348,8 @@ async def _search_cod(
         f"http://www.crystallography.net/cod/result"
         f"?format=json&count={limit}&formula={q}"
     )
-
-    def _fetch(url: str) -> Any:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=20) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("cod"):
-            data = await asyncio.to_thread(_fetch, formula_url)
-    except CircuitOpenError:
-        logger.info("COD circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("COD formula 请求失败: %s", exc)
-        data = []
-
-    structures: list = []
-    if isinstance(data, dict):
-        structures = data.get("structures", data.get("result", []))
-    elif isinstance(data, list):
-        structures = data
+    data = await _guarded_thread_json("cod", "COD formula", formula_url, timeout=20)
+    structures = _cod_structures(data)
 
     # Fall back to text search when formula yields nothing.
     if not structures:
@@ -1233,68 +1357,91 @@ async def _search_cod(
             f"http://www.crystallography.net/cod/result"
             f"?format=json&count={limit}&text={q}"
         )
-        try:
-            with circuit_guard("cod"):
-                data = await asyncio.to_thread(_fetch, text_url)
-        except CircuitOpenError:
-            logger.info("COD circuit open, skipping text search")
-            data = []
-        except Exception as exc:
-            logger.warning("COD text 请求失败: %s", exc)
-            data = []
-        if isinstance(data, dict):
-            structures = data.get("structures", data.get("result", []))
-        elif isinstance(data, list):
-            structures = data
+        data = await _guarded_thread_json("cod", "COD text", text_url, timeout=20)
+        structures = _cod_structures(data)
 
     papers: list[dict[str, Any]] = []
     for item in structures:
-        if not isinstance(item, dict):
-            continue
-        file_id = item.get("file", "") or ""
-        formula = item.get("formula", "") or ""
-        mineral = item.get("mineral", "") or ""
-        title = mineral or formula or f"COD entry {file_id}"
-        if not title:
-            continue
-        # Build URL to the CIF file
-        if file_id:
-            # COD stores files in directory hierarchy based on ID
-            dir_path = file_id[:1] + "/" + file_id[1:3] + "/"
-            url_ = f"http://www.crystallography.net/cod/{dir_path}{file_id}.cif"
-        else:
-            url_ = ""
-        sg = item.get("sg", "") or ""
-        a = item.get("a", "") or ""
-        b = item.get("b", "") or ""
-        c = item.get("c", "") or ""
-        abstract_parts = []
-        if formula:
-            abstract_parts.append(f"Formula: {formula}")
-        if sg:
-            abstract_parts.append(f"Space group: {sg}")
-        if a:
-            abstract_parts.append(f"a={a} b={b} c={c}")
-        abstract = "; ".join(abstract_parts)
-        papers.append({
-            "title": title,
-            "authors": [],
-            "year": None,
-            "venue": "Crystallography Open Database",
-            "doi": None,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "cod",
-            "open_access": True,
-            "download_url": url_,
-            "formula": formula,
-            "space_group": sg,
-        })
+        paper = _cod_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── Materials Cloud ─────────────────────────
+
+
+def _mc_authors(meta: dict[str, Any]) -> list[str]:
+    """Invenio v3: creators live under person_or_org.name."""
+    authors: list[str] = []
+    for creator in meta.get("creators", []) or []:
+        if not isinstance(creator, dict):
+            continue
+        porg = creator.get("person_or_org", {})
+        name = (porg or {}).get("name", "") if isinstance(porg, dict) else ""
+        if name:
+            authors.append(name)
+    return authors
+
+
+def _mc_doi(item: dict[str, Any], meta: dict[str, Any]) -> str | None:
+    """Invenio v3: DOI is under pids.doi.identifier; falls back to metadata."""
+    doi = None
+    pids = item.get("pids", {}) or {}
+    if isinstance(pids, dict):
+        doi_info = pids.get("doi", {})
+        if isinstance(doi_info, dict):
+            doi = doi_info.get("identifier", "") or None
+    if not doi:
+        doi = meta.get("doi") or None
+    return doi.lower() if doi else None
+
+
+def _materials_cloud_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one Invenio (Materials Cloud) record."""
+    meta = item.get("metadata", {})
+    title = meta.get("title", "") or ""
+    if not title:
+        return None
+    authors = _mc_authors(meta)
+    year: int | None = None
+    pub_date = meta.get("publication_date", "") or ""
+    if pub_date:
+        m = re.match(r"(\d{4})", pub_date)
+        if m:
+            year = int(m.group(1))
+    doi = _mc_doi(item, meta)
+    rec_id = item.get("id", "")
+    url_ = f"https://archive.materialscloud.org/record/{rec_id}" if rec_id else ""
+    if doi:
+        url_ = f"https://doi.org/{doi}"
+    abstract = meta.get("description", "") or ""
+    if abstract:
+        abstract = re.sub(r"<[^>]+>", "", abstract).strip()[:500]
+    # Invenio v3: files is a dict (metadata), not a list of file objects.
+    # Download links are under links.files or links.self.
+    download_url = ""
+    links = item.get("links", {}) or {}
+    if isinstance(links, dict):
+        download_url = links.get("files", "") or links.get("self", "")
+    # access control moved to a separate dict in v3
+    access = item.get("access", {}) or {}
+    is_open = True
+    if isinstance(access, dict):
+        is_open = access.get("record", "") != "restricted"
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": "Materials Cloud",
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,
+        "source": "materials_cloud",
+        "open_access": is_open,
+        "download_url": download_url,
+    }
 
 
 async def _search_materials_cloud(
@@ -1313,90 +1460,87 @@ async def _search_materials_cloud(
         f"?q={q}&size={min(max_results, 25)}&sort=newest"
     )
 
-    def _fetch() -> dict[str, Any]:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("materials_cloud"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("Materials Cloud circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("Materials Cloud 请求失败: %s", exc)
+    data = await _guarded_thread_json(
+        "materials_cloud", "Materials Cloud", url, timeout=30
+    )
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("hits", {}).get("hits", []) or []:
-        meta = item.get("metadata", {})
-        title = meta.get("title", "") or ""
-        if not title:
-            continue
-        # Invenio v3: creators live under person_or_org.name
-        authors: list[str] = []
-        for creator in meta.get("creators", []) or []:
-            if not isinstance(creator, dict):
-                continue
-            porg = creator.get("person_or_org", {})
-            name = (porg or {}).get("name", "") if isinstance(porg, dict) else ""
-            if name:
-                authors.append(name)
-        year: int | None = None
-        pub_date = meta.get("publication_date", "") or ""
-        if pub_date:
-            m = re.match(r"(\d{4})", pub_date)
-            if m:
-                year = int(m.group(1))
-        # Invenio v3: DOI is under pids.doi.identifier
-        doi = None
-        pids = item.get("pids", {}) or {}
-        if isinstance(pids, dict):
-            doi_info = pids.get("doi", {})
-            if isinstance(doi_info, dict):
-                doi = doi_info.get("identifier", "") or None
-        if not doi:
-            doi = meta.get("doi") or None
-        if doi:
-            doi = doi.lower()
-        rec_id = item.get("id", "")
-        url_ = f"https://archive.materialscloud.org/record/{rec_id}" if rec_id else ""
-        if doi:
-            url_ = f"https://doi.org/{doi}"
-        abstract = meta.get("description", "") or ""
-        if abstract:
-            abstract = re.sub(r"<[^>]+>", "", abstract).strip()[:500]
-        # Invenio v3: files is a dict (metadata), not a list of file objects.
-        # Download links are under links.files or links.self.
-        download_url = ""
-        links = item.get("links", {}) or {}
-        if isinstance(links, dict):
-            download_url = links.get("files", "") or links.get("self", "")
-        # access control moved to a separate dict in v3
-        access = item.get("access", {}) or {}
-        is_open = True
-        if isinstance(access, dict):
-            is_open = access.get("record", "") != "restricted"
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": "Materials Cloud",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "materials_cloud",
-            "open_access": is_open,
-            "download_url": download_url,
-        })
+        paper = _materials_cloud_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── NOMAD ─────────────────────────
+
+
+def _nomad_abstract(
+    material: dict[str, Any], workflow: str, code: str, elements: list[str]
+) -> str:
+    """Descriptor abstract for a NOMAD material/method pair."""
+    abstract_parts = []
+    formula = material.get("chemical_formula_descriptive", "") or ""
+    if formula:
+        abstract_parts.append(f"Formula: {formula}")
+    if elements:
+        abstract_parts.append(f"Elements: {', '.join(elements)}")
+    if workflow:
+        abstract_parts.append(f"Method: {workflow}")
+    if code:
+        abstract_parts.append(f"Code: {code}")
+    n_atoms = material.get("n_atoms")
+    if n_atoms:
+        abstract_parts.append(f"Atoms: {n_atoms}")
+    space_group = (material.get("symmetry") or {}).get("space_group_number")
+    if space_group:
+        abstract_parts.append(f"Space group: {space_group}")
+    return "; ".join(abstract_parts)
+
+
+def _nomad_paper(entry: dict[str, Any], total: int) -> dict[str, Any]:
+    """Normalise one NOMAD entry into the unified paper dict."""
+    results = entry.get("results", {}) or {}
+    material = results.get("material", {}) or {}
+    method = results.get("method", {}) or {}
+
+    formula = material.get("chemical_formula_descriptive", "") or ""
+    formula_reduced = material.get("chemical_formula_reduced", "") or ""
+    elements = material.get("elements", []) or []
+    material_id = material.get("material_id", "") or ""
+
+    # method info
+    workflow = method.get("workflow_name", "") or ""
+    code = method.get("program_name", "") or ""
+
+    entry_id = entry.get("entry_id", "") or ""
+    title = f"{formula} ({workflow}, {code})" if formula else f"NOMAD entry {entry_id}"
+
+    # Build URL to NOMAD entry
+    url_ = f"https://nomad-lab.eu/prod/v1/gui/entry/id/{entry_id}" if entry_id else ""
+
+    return {
+        "title": title,
+        "authors": [],
+        "year": None,
+        "venue": "NOMAD",
+        "doi": None,
+        "abstract": _nomad_abstract(material, workflow, code, elements),
+        "url": url_,
+        "citations": None,
+        "source": "nomad",
+        "open_access": True,
+        "formula": formula,
+        "formula_reduced": formula_reduced,
+        "elements": elements,
+        "material_id": material_id,
+        "entry_id": entry_id,
+        "method": workflow,
+        "code": code,
+        "total_entries": total,
+    }
 
 
 async def _search_nomad(
@@ -1415,91 +1559,76 @@ async def _search_nomad(
         f"?search={q}&page_size={page_size}&owner=public"
     )
 
-    def _fetch() -> dict[str, Any]:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("nomad"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("NOMAD circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("NOMAD 请求失败: %s", exc)
+    data = await _guarded_thread_json("nomad", "NOMAD", url, timeout=30)
+    if data is None:
         return []
 
     total = (data.get("pagination") or {}).get("total", 0)
-    logger.info("NOMAD search '%s': %d total entries, returning %d",
-                query, total, len(data.get("data", [])))
+    logger.info(
+        "NOMAD search '%s': %d total entries, returning %d",
+        query,
+        total,
+        len(data.get("data", [])),
+    )
 
-    papers: list[dict[str, Any]] = []
-    for entry in data.get("data", []) or []:
-        results = entry.get("results", {}) or {}
-        material = results.get("material", {}) or {}
-        method = results.get("method", {}) or {}
-
-        formula = material.get("chemical_formula_descriptive", "") or ""
-        formula_reduced = material.get("chemical_formula_reduced", "") or ""
-        elements = material.get("elements", []) or []
-        material_id = material.get("material_id", "") or ""
-
-        # method info
-        workflow = method.get("workflow_name", "") or ""
-        code = method.get("program_name", "") or ""
-
-        entry_id = entry.get("entry_id", "") or ""
-        entry.get("upload_id", "") or ""
-
-        title = f"{formula} ({workflow}, {code})" if formula else f"NOMAD entry {entry_id}"
-
-        # Build URL to NOMAD entry
-        url_ = f"https://nomad-lab.eu/prod/v1/gui/entry/id/{entry_id}" if entry_id else ""
-
-        abstract_parts = []
-        if formula:
-            abstract_parts.append(f"Formula: {formula}")
-        if elements:
-            abstract_parts.append(f"Elements: {', '.join(elements)}")
-        if workflow:
-            abstract_parts.append(f"Method: {workflow}")
-        if code:
-            abstract_parts.append(f"Code: {code}")
-        n_atoms = material.get("n_atoms")
-        if n_atoms:
-            abstract_parts.append(f"Atoms: {n_atoms}")
-        space_group = (material.get("symmetry") or {}).get("space_group_number")
-        if space_group:
-            abstract_parts.append(f"Space group: {space_group}")
-        abstract = "; ".join(abstract_parts)
-
-        papers.append({
-            "title": title,
-            "authors": [],
-            "year": None,
-            "venue": "NOMAD",
-            "doi": None,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "nomad",
-            "open_access": True,
-            "formula": formula,
-            "formula_reduced": formula_reduced,
-            "elements": elements,
-            "material_id": material_id,
-            "entry_id": entry_id,
-            "method": workflow,
-            "code": code,
-            "total_entries": total,
-        })
-    return papers
+    return [_nomad_paper(entry, total) for entry in data.get("data", []) or []]
 
 
 # ───────────────────────── DataCite ─────────────────────────
+
+
+def _first_field(items: Any, key: str) -> str:
+    """First non-empty string under `key` from a list-of-dicts field."""
+    for item in items or []:
+        if isinstance(item, dict) and item.get(key):
+            return item[key]
+    return ""
+
+
+def _datacite_paper(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one DataCite DOI record."""
+    attrs = item.get("attributes", {}) or {}
+    # titles is a list of {title: "...", titleType: "..."}
+    title = _first_field(attrs.get("titles"), "title")
+    if not title:
+        return None
+    # creators: list of {name: "...", nameType: "Personal"/"Organizational"}
+    authors = [
+        c["name"]
+        for c in attrs.get("creators", []) or []
+        if isinstance(c, dict) and c.get("name")
+    ]
+    year = attrs.get("publicationYear")
+    doi = (attrs.get("doi", "") or "").lower()
+    url_ = attrs.get("url", "") or ""
+    if not url_ and doi:
+        url_ = f"https://doi.org/{doi}"
+    # descriptions: list of {description: "...", descriptionType: "Abstract"}
+    abstract = _first_field(attrs.get("descriptions"), "description")[:500]
+    # subjects for keyword tagging
+    subjects = [
+        s["subject"]
+        for s in attrs.get("subjects", []) or []
+        if isinstance(s, dict) and s.get("subject")
+    ]
+    types = attrs.get("types", {}) or {}
+    resource_type = (
+        types.get("resourceTypeGeneral", "") or "" if isinstance(types, dict) else ""
+    )
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": attrs.get("publisher", "") or "DataCite",
+        "doi": doi,
+        "abstract": abstract,
+        "url": url_,
+        "citations": None,
+        "source": "datacite",
+        "open_access": True,
+        "resource_type": resource_type,
+        "subjects": subjects[:10],
+    }
 
 
 async def _search_datacite(
@@ -1513,10 +1642,7 @@ async def _search_datacite(
     """
     q = urllib.parse.quote(query)
     page_size = min(max_results, 25)
-    url = (
-        f"https://api.datacite.org/dois"
-        f"?page[size]={page_size}&query={q}"
-    )
+    url = f"https://api.datacite.org/dois?page[size]={page_size}&query={q}"
     # DataCite 支持逗号分隔的多个 filter (同一 filter 参数)
     filters = []
     if year_from:
@@ -1526,88 +1652,78 @@ async def _search_datacite(
     if filters:
         url += "&filter=" + ",".join(filters)
 
-    def _fetch() -> dict[str, Any]:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("datacite"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("DataCite circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("DataCite 请求失败: %s", exc)
+    data = await _guarded_thread_json("datacite", "DataCite", url, timeout=30)
+    if data is None:
         return []
 
     papers: list[dict[str, Any]] = []
     for item in data.get("data", []) or []:
-        attrs = item.get("attributes", {}) or {}
-        # titles is a list of {title: "...", titleType: "..."}
-        title = ""
-        titles = attrs.get("titles", []) or []
-        for t in titles:
-            if isinstance(t, dict) and t.get("title"):
-                title = t["title"]
-                break
-        if not title:
-            continue
-
-        # creators: list of {name: "...", nameType: "Personal"/"Organizational"}
-        authors: list[str] = []
-        for c in attrs.get("creators", []) or []:
-            if isinstance(c, dict) and c.get("name"):
-                authors.append(c["name"])
-
-        year = attrs.get("publicationYear")
-
-        doi = attrs.get("doi", "") or ""
-        if doi:
-            doi = doi.lower()
-
-        url_ = attrs.get("url", "") or ""
-        if not url_ and doi:
-            url_ = f"https://doi.org/{doi}"
-
-        # descriptions: list of {description: "...", descriptionType: "Abstract"}
-        abstract = ""
-        for d in attrs.get("descriptions", []) or []:
-            if isinstance(d, dict) and d.get("description"):
-                abstract = d["description"][:500]
-                break
-
-        # subjects for keyword tagging
-        subjects = []
-        for s in attrs.get("subjects", []) or []:
-            if isinstance(s, dict) and s.get("subject"):
-                subjects.append(s["subject"])
-
-        resource_type = ""
-        types = attrs.get("types", {}) or {}
-        if isinstance(types, dict):
-            resource_type = types.get("resourceTypeGeneral", "") or ""
-
-        papers.append({
-            "title": title,
-            "authors": authors,
-            "year": year,
-            "venue": attrs.get("publisher", "") or "DataCite",
-            "doi": doi,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "datacite",
-            "open_access": True,
-            "resource_type": resource_type,
-            "subjects": subjects[:10],
-        })
+        paper = _datacite_paper(item)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── Materials Project ─────────────────────────
+
+
+def _mp_abstract(m: dict[str, Any], formula: str) -> str:
+    """Build the descriptor abstract from MP summary properties."""
+    abstract_parts = [f"Formula: {formula}"]
+    band_gap = m.get("band_gap")
+    if band_gap is not None:
+        abstract_parts.append(f"Band gap: {band_gap:.3f} eV")
+    formation_energy = m.get("formation_energy_per_atom")
+    if formation_energy is not None:
+        abstract_parts.append(f"Formation energy: {formation_energy:.4f} eV/atom")
+    energy_above_hull = m.get("energy_above_hull")
+    if energy_above_hull is not None:
+        abstract_parts.append(f"Above hull: {energy_above_hull:.4f} eV")
+    density = m.get("density")
+    if density is not None:
+        abstract_parts.append(f"Density: {density:.2f} g/cm3")
+    symmetry = m.get("symmetry", {}) or {}
+    crystal_system = symmetry.get("crystal_system", "") or ""
+    space_group = symmetry.get("number", "") or ""
+    if crystal_system:
+        abstract_parts.append(f"Crystal system: {crystal_system}")
+    if space_group:
+        abstract_parts.append(f"Space group: {space_group}")
+    if m.get("deprecated", False):
+        abstract_parts.append("[DEPRECATED]")
+    return "; ".join(abstract_parts)
+
+
+def _mp_paper(m: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalise one Materials Project summary into the unified paper dict."""
+    formula = m.get("formula_pretty", "") or m.get("full_formula", "") or ""
+    if not formula:
+        return None
+    material_id = m.get("material_id", "") or ""
+    title = f"{formula} (MP-{material_id})" if material_id else formula
+    url_ = (
+        f"https://nextgen.materialsproject.org/materials/{material_id}"
+        if material_id
+        else ""
+    )
+    symmetry = m.get("symmetry", {}) or {}
+    return {
+        "title": title,
+        "authors": [],
+        "year": None,
+        "venue": "Materials Project",
+        "doi": None,
+        "abstract": _mp_abstract(m, formula),
+        "url": url_,
+        "citations": None,
+        "source": "materials_project",
+        "open_access": True,
+        "formula": formula,
+        "material_id": material_id,
+        "band_gap": m.get("band_gap"),
+        "formation_energy": m.get("formation_energy_per_atom"),
+        "crystal_system": symmetry.get("crystal_system", "") or "",
+    }
 
 
 async def _search_materials_project(
@@ -1624,7 +1740,6 @@ async def _search_materials_project(
         logger.info("Materials Project skipped: no HUGINN_MP_API_KEY set")
         return []
 
-    urllib.parse.quote(query)
     limit = min(max_results, 25)
     url = (
         f"https://api.materialsproject.org/materials/summary/"
@@ -1632,21 +1747,10 @@ async def _search_materials_project(
     )
     # year filtering not supported by MP; skip silently
 
-    def _fetch() -> Any:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("materials_project"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("Materials Project circuit open, skipping")
-        return []
-    except Exception as exc:
-        logger.warning("Materials Project 请求失败: %s", exc)
+    data = await _guarded_thread_json(
+        "materials_project", "Materials Project", url, timeout=30
+    )
+    if data is None:
         return []
 
     # MP returns a list of material summary dicts
@@ -1661,65 +1765,16 @@ async def _search_materials_project(
     for m in materials:
         if not isinstance(m, dict):
             continue
-        formula = m.get("formula_pretty", "") or m.get("full_formula", "") or ""
-        if not formula:
-            continue
-        material_id = m.get("material_id", "") or ""
-        title = f"{formula} (MP-{material_id})" if material_id else formula
-
-        url_ = f"https://nextgen.materialsproject.org/materials/{material_id}" if material_id else ""
-
-        abstract_parts = [f"Formula: {formula}"]
-        band_gap = m.get("band_gap")
-        if band_gap is not None:
-            abstract_parts.append(f"Band gap: {band_gap:.3f} eV")
-        formation_energy = m.get("formation_energy_per_atom")
-        if formation_energy is not None:
-            abstract_parts.append(f"Formation energy: {formation_energy:.4f} eV/atom")
-        energy_above_hull = m.get("energy_above_hull")
-        if energy_above_hull is not None:
-            abstract_parts.append(f"Above hull: {energy_above_hull:.4f} eV")
-        density = m.get("density")
-        if density is not None:
-            abstract_parts.append(f"Density: {density:.2f} g/cm3")
-        symmetry = m.get("symmetry", {}) or {}
-        crystal_system = symmetry.get("crystal_system", "") or ""
-        space_group = symmetry.get("number", "") or ""
-        if crystal_system:
-            abstract_parts.append(f"Crystal system: {crystal_system}")
-        if space_group:
-            abstract_parts.append(f"Space group: {space_group}")
-        deprecated = m.get("deprecated", False)
-        if deprecated:
-            abstract_parts.append("[DEPRECATED]")
-        abstract = "; ".join(abstract_parts)
-
-        papers.append({
-            "title": title,
-            "authors": [],
-            "year": None,
-            "venue": "Materials Project",
-            "doi": None,
-            "abstract": abstract,
-            "url": url_,
-            "citations": None,
-            "source": "materials_project",
-            "open_access": True,
-            "formula": formula,
-            "material_id": material_id,
-            "band_gap": band_gap,
-            "formation_energy": formation_energy,
-            "crystal_system": crystal_system,
-        })
+        paper = _mp_paper(m)
+        if paper is not None:
+            papers.append(paper)
     return papers
 
 
 # ───────────────────────── OpenCitations ─────────────────────────
 
 
-async def _opencitations_references(
-    doi: str, limit: int = 25
-) -> list[dict[str, Any]]:
+async def _opencitations_references(doi: str, limit: int = 25) -> list[dict[str, Any]]:
     """OpenCitations COCI API — backward references (papers this DOI cites).
 
     Free, no API key. Returns DOI-level citation edges without metadata.
@@ -1729,23 +1784,9 @@ async def _opencitations_references(
     encoded = urllib.parse.quote(doi_clean, safe="")
     url = f"https://opencitations.net/index/coci/api/v1/references/{encoded}"
 
-    def _fetch() -> Any:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=20) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("opencitations"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("OpenCitations circuit open, skipping references")
-        return []
-    except Exception as exc:
-        logger.warning("OpenCitations references 请求失败: %s", exc)
-        return []
-
+    data = await _guarded_thread_json(
+        "opencitations", "OpenCitations references", url, timeout=20
+    )
     if not isinstance(data, list):
         return []
 
@@ -1756,24 +1797,24 @@ async def _opencitations_references(
         cited_doi = (item.get("cited") or "").lower().strip()
         if not cited_doi:
             continue
-        refs.append({
-            "doi": cited_doi,
-            "title": "",
-            "authors": [],
-            "year": None,
-            "venue": "",
-            "citations": None,
-            "url": f"https://doi.org/{cited_doi}",
-            "source": "opencitations",
-            "creation": item.get("creation", ""),
-            "timespan": item.get("timespan", ""),
-        })
+        refs.append(
+            {
+                "doi": cited_doi,
+                "title": "",
+                "authors": [],
+                "year": None,
+                "venue": "",
+                "citations": None,
+                "url": f"https://doi.org/{cited_doi}",
+                "source": "opencitations",
+                "creation": item.get("creation", ""),
+                "timespan": item.get("timespan", ""),
+            }
+        )
     return refs
 
 
-async def _opencitations_citations(
-    doi: str, limit: int = 25
-) -> list[dict[str, Any]]:
+async def _opencitations_citations(doi: str, limit: int = 25) -> list[dict[str, Any]]:
     """OpenCitations COCI API — forward citations (papers that cite this DOI).
 
     Free, no API key. Returns DOI-level citation edges.
@@ -1782,23 +1823,9 @@ async def _opencitations_citations(
     encoded = urllib.parse.quote(doi_clean, safe="")
     url = f"https://opencitations.net/index/coci/api/v1/citations/{encoded}"
 
-    def _fetch() -> Any:
-        if not _is_safe_url(url):
-            raise RuntimeError("URL blocked by SSRF protection")
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with _OPENER.open(req, timeout=20) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-
-    try:
-        with circuit_guard("opencitations"):
-            data = await asyncio.to_thread(_fetch)
-    except CircuitOpenError:
-        logger.info("OpenCitations circuit open, skipping citations")
-        return []
-    except Exception as exc:
-        logger.warning("OpenCitations citations 请求失败: %s", exc)
-        return []
-
+    data = await _guarded_thread_json(
+        "opencitations", "OpenCitations citations", url, timeout=20
+    )
     if not isinstance(data, list):
         return []
 
@@ -1809,18 +1836,20 @@ async def _opencitations_citations(
         citing_doi = (item.get("citing") or "").lower().strip()
         if not citing_doi:
             continue
-        cites.append({
-            "doi": citing_doi,
-            "title": "",
-            "authors": [],
-            "year": None,
-            "venue": "",
-            "citations": None,
-            "url": f"https://doi.org/{citing_doi}",
-            "source": "opencitations",
-            "creation": item.get("creation", ""),
-            "timespan": item.get("timespan", ""),
-        })
+        cites.append(
+            {
+                "doi": citing_doi,
+                "title": "",
+                "authors": [],
+                "year": None,
+                "venue": "",
+                "citations": None,
+                "url": f"https://doi.org/{citing_doi}",
+                "source": "opencitations",
+                "creation": item.get("creation", ""),
+                "timespan": item.get("timespan", ""),
+            }
+        )
     return cites
 
 
@@ -1836,7 +1865,7 @@ async def _crossref_doi_lookup(doi: str) -> dict[str, Any] | None:
     except Exception:
         return None
 
-    item = (data.get("message") or {})
+    item = data.get("message") or {}
     if not item:
         return None
     title_list = item.get("title") or []
@@ -1885,7 +1914,7 @@ async def _enrich_with_crossref(
 
     # Process in small batches to avoid hammering CrossRef
     for i in range(0, len(to_enrich), batch_size):
-        batch = to_enrich[i:i + batch_size]
+        batch = to_enrich[i : i + batch_size]
         tasks = [asyncio.create_task(_crossref_doi_lookup(p["doi"])) for p in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for p, res in zip(batch, results):
