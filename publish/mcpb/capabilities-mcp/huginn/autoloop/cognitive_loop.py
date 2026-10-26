@@ -4409,23 +4409,33 @@ Physical time series collected this run:
 
         返回 AutoloopResult, 与 run() 接口一致, 调用方无需感知差异.
         """
-        ctx = self._rc_init(
-            objective, max_iterations, progressive_budget, goal, max_refines,
-            timeout_seconds,
-        )
-        loop = self._rc_build_loop(ctx)
-        state = await loop.run(LoopState(max_iterations=ctx.max_iterations))
-        await self._rc_post_run(ctx, state)
-        return await self._finalize_run(
-            objective,
-            ctx.cog["phases"],
-            ctx.run_id,
-            ctx.provenance_record,
-            ctx.run_collector,
-            ctx.tracker,
-            ctx.progress_task_id,
-            ctx.cog["completed_steps"],
-        )
+        # _prepare_run 会把 HUGINN_WORKSPACE 收敛到本 run 的 workspace (工具/沙箱
+        # 缺省 work_dir 跟随本轮 run). 进程级 env 是全局长状态, run 结束必须复原,
+        # 否则同进程后续 run / 测试的 default_workspace_dir() 会读到已结束的 run 目录.
+        prev_workspace = os.environ.get("HUGINN_WORKSPACE")
+        try:
+            ctx = self._rc_init(
+                objective, max_iterations, progressive_budget, goal, max_refines,
+                timeout_seconds,
+            )
+            loop = self._rc_build_loop(ctx)
+            state = await loop.run(LoopState(max_iterations=ctx.max_iterations))
+            await self._rc_post_run(ctx, state)
+            return await self._finalize_run(
+                objective,
+                ctx.cog["phases"],
+                ctx.run_id,
+                ctx.provenance_record,
+                ctx.run_collector,
+                ctx.tracker,
+                ctx.progress_task_id,
+                ctx.cog["completed_steps"],
+            )
+        finally:
+            if prev_workspace is None:
+                os.environ.pop("HUGINN_WORKSPACE", None)
+            else:
+                os.environ["HUGINN_WORKSPACE"] = prev_workspace
 
     def _rc_autowake(self) -> None:
         # P2-6 自动触发: WakeStore 有 pending wakes 时 lazy spawn scheduler.
