@@ -1,0 +1,116 @@
+name: Tmp OSQP Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./agent[dev]"
+          pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
+          pip install pymatgen ase paramiko pypdf pint spglib
+          pip install toml croniter fastapi uvicorn nbformat
+          pip install langchain-openai langgraph-checkpoint-sqlite
+          pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
+          pip install pytest-timeout
+
+      - name: Print env facts
+        run: |
+          python - <<'EOF'
+          import sys, platform
+          print("python", sys.version)
+          for mod in ("numpy", "scipy", "osqp", "qdldl", "cvxpy", "clarabel"):
+              try:
+                  m = __import__(mod)
+                  print(mod, getattr(m, "__version__", "?"))
+              except Exception as e:
+                  print(mod, "MISSING", e)
+          print("machine", platform.machine())
+          print("cpu flags avx512:", "avx512f" in open("/proc/cpuinfo").read())
+          EOF
+          free -m
+          nproc
+
+      - name: Probe A isolated test
+        continue-on-error: true
+        working-directory: agent
+        env:
+          HUGINN_CI: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: python -m pytest tests/test_math_programming.py -q -p no:cov -o addopts="" --timeout=60 --timeout-method=thread
+
+      - name: Probe B after heavy imports
+        continue-on-error: true
+        working-directory: agent
+        env:
+          HUGINN_CI: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          python - <<'EOF'
+          import torch, transformers, chromadb, onnxruntime, pymatgen, ase, matplotlib  # noqa
+          print("heavy imports ok")
+          EOF
+          python -m pytest tests/test_math_programming.py -q -p no:cov -o addopts="" --timeout=60 --timeout-method=thread
+
+      - name: Probe C minimal cvxpy script
+        continue-on-error: true
+        working-directory: agent
+        run: |
+          python - <<'EOF'
+          import numpy as np
+          import cvxpy as cp
+          A = np.array([[1, 0], [0, 1], [1, 1]], dtype=float)
+          b = np.array([1, 2, 3], dtype=float)
+          x = cp.Variable(2, name="x")
+          prob = cp.Problem(cp.Minimize(cp.sum_squares(A @ x - b)), [x >= 0])
+          prob.solve()
+          print("status", prob.status, "x", x.value.tolist())
+          EOF
+
+      - name: Probe D preceding files
+        continue-on-error: true
+        working-directory: agent
+        env:
+          HUGINN_CI: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: python -m pytest tests/test_math_eval.py tests/test_math_programming.py -q -p no:cov -o addopts="" --timeout=60 --timeout-method=thread
+
+      - name: Probe E unit imports of all huginn tools
+        continue-on-error: true
+        working-directory: agent
+        env:
+          HUGINN_CI: "1"
+        run: |
+          python - <<'EOF'
+          import pkgutil, importlib, huginn.tools
+          bad = []
+          for m in pkgutil.walk_packages(huginn.tools.__path__, "huginn.tools."):
+              try:
+                  importlib.import_module(m.name)
+              except Exception as e:
+                  bad.append((m.name, type(e).__name__))
+          print("import failures:", bad[:10], "count", len(bad))
+          EOF
+          python -m pytest tests/test_math_programming.py -q -p no:cov -o addopts="" --timeout=60 --timeout-method=thread
