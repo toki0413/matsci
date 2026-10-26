@@ -291,9 +291,24 @@ async def _reconnect_matdb_with_key(mp_api_key: Any) -> None:
         logger.warning(f"mat-db MCP 重连失败(不影响配置保存): {e}")
 
 
-def _legacy_env_mapping() -> dict[str, str]:
-    """老式 flat config 字段 → 环境变量名。"""
-    return {
+def _apply_env_value(env_name: str, val: Any) -> None:
+    """把单个配置值写进环境变量; None / 空串表示清除。"""
+    if val is None or val == "":
+        os.environ.pop(env_name, None)
+        return
+    if isinstance(val, bool):
+        os.environ[env_name] = "true" if val else "false"
+    elif isinstance(val, dict | list):
+        os.environ[env_name] = json.dumps(val)
+    else:
+        os.environ[env_name] = str(val)
+
+
+def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
+    """把老式 flat config 字段刷到环境变量, 给 from_env() 用。"""
+    # 映射表必须写在函数体内: 凭据归口门禁 (tests/test_arch_credential_gateway.py)
+    # 用 inspect.getsource 静态核对 operator 密钥不被写入、用户服务凭据不被漏掉.
+    mapping = {
         "provider": "HUGINN_PROVIDER",
         "model": "HUGINN_MODEL",
         "api_key": "HUGINN_API_KEY",
@@ -324,24 +339,7 @@ def _legacy_env_mapping() -> dict[str, str]:
         "pm_c_min": "HUGINN_PM_C_MIN",
         "wm_summarize_every_n": "HUGINN_WM_SUMMARIZE_EVERY_N",
     }
-
-
-def _apply_env_value(env_name: str, val: Any) -> None:
-    """把单个配置值写进环境变量; None / 空串表示清除。"""
-    if val is None or val == "":
-        os.environ.pop(env_name, None)
-        return
-    if isinstance(val, bool):
-        os.environ[env_name] = "true" if val else "false"
-    elif isinstance(val, dict | list):
-        os.environ[env_name] = json.dumps(val)
-    else:
-        os.environ[env_name] = str(val)
-
-
-def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
-    """把老式 flat config 字段刷到环境变量, 给 from_env() 用。"""
-    for key, env_name in _legacy_env_mapping().items():
+    for key, env_name in mapping.items():
         if key not in params:
             continue
         _apply_env_value(env_name, params[key])

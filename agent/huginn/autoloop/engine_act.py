@@ -1104,7 +1104,16 @@ class EngineAct:
             return await self._act_dispatch_from_table(
                 dispatch, mode, plan, description, context
             )
-        if mode in ("coder", "workflow", "dynamic_workflow", "explore", "code_lab"):
+        # 显式等值判断 (而非元组成员) 保留静态可见性: contract_audit 的"工作流面"
+        # 按 mode == "<mode>" 正则抽取执行面分支, 元组成员会让 code_lab 消失.
+        is_primary = (
+            mode == "coder"
+            or mode == "workflow"
+            or mode == "dynamic_workflow"
+            or mode == "explore"
+            or mode == "code_lab"
+        )
+        if is_primary:
             return await self._act_dispatch_primary(mode, plan, description, context)
         return await self._act_dispatch_inspect(mode, plan, description, context)
 

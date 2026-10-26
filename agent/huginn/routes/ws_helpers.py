@@ -1121,7 +1121,9 @@ async def _handle_user_input(
         return
     cfg_chat, factory = prepared
 
-    agent = await _create_turn_agent(websocket, msg, factory, ctx.ws_approval)
+    # WSMessage 上被消费的字段在 handler 内显式读取, 契约审计需静态可见
+    turn = (msg.thinking, msg.max_tokens, msg.persona)
+    agent = await _create_turn_agent(websocket, msg, factory, ctx.ws_approval, turn)
     if agent is None:
         return
 
@@ -1174,12 +1176,15 @@ async def _resolve_turn_config(websocket: WebSocket) -> tuple[Any, Any] | None:
 
 
 async def _create_turn_agent(
-    websocket: WebSocket, msg: WSMessage, factory: Any, ws_approval: Any
+    websocket: WebSocket,
+    msg: WSMessage,
+    factory: Any,
+    ws_approval: Any,
+    turn: tuple[Any, Any, Any],
 ) -> Any | None:
     """按 thinking/max_tokens/persona 创建 lead agent; 失败或无模型返回 None."""
-    thinking = msg.thinking
-    max_tokens = msg.max_tokens
-    if thinking is not None or max_tokens is not None or msg.persona:
+    thinking, max_tokens, persona = turn
+    if thinking is not None or max_tokens is not None or persona:
         try:
             agent = factory.create_lead(
                 thread_id=msg.thread_id,

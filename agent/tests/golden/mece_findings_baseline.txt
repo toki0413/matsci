@@ -26,11 +26,11 @@
 模式有 prompt 段却无 set_mode 生产者: extreme
 模式有 prompt 段却无 set_mode 生产者: fusion
 模式被 set_mode 却无 prompt 段: plan
-词汇: 同名跨模块定义值域不一致: KINDS @ huginn/catalog/models.py:20, huginn/evolution/semantic_distiller.py:39, huginn/research/cspace.py:32
+词汇: 同名跨模块定义值域不一致: KINDS @ huginn/catalog/models.py:20, huginn/evolution/semantic_distiller.py:46, huginn/research/cspace.py:32
 词汇: 同名跨模块定义值域不一致: Severity @ huginn/execution/physics_auditor.py:24, huginn/metacog/failure_modes.py:27
 词汇: 同名跨模块定义值域不一致: _KINDS @ huginn/share.py:21, huginn/workflows/registry.py:25
-词汇: 同名跨模块定义值域不一致: _NEGATIVE_WORDS @ huginn/persona_emotion.py:147, huginn/tools/design/gap_analysis_tool.py:30
-词汇: 同名跨模块定义值域不一致: _READ_ACTIONS @ huginn/tools/git_tool.py:85, huginn/tools/github_tool.py:55
+词汇: 同名跨模块定义值域不一致: _NEGATIVE_WORDS @ huginn/persona_emotion.py:147, huginn/tools/design/gap_analysis_tool.py:59
+词汇: 同名跨模块定义值域不一致: _READ_ACTIONS @ huginn/tools/git_tool.py:93, huginn/tools/github_tool.py:68
 词汇: 映射往返丢信息: AUTOLOOP_TO_PHASE 共像 [ResearchPhase.VALIDATION←["'validate'", "'learn'"]] 且有反向表 PHASE_TO_AUTOLOOP
 词汇: 词表漂移 (簇 huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES, 并集 8 词): huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES, huginn/hooks/research_safety_hook.py::_EXPENSIVE_TOOLS, huginn/research_budget.py::_EXPENSIVE_TOOLS
 词汇: 词表漂移 (簇 huginn/config.py::ContainerRuntimeLiteral, 并集 5 词): huginn/config.py::ContainerRuntimeLiteral, huginn/security/container_executor.py::_VALID_RUNTIMES

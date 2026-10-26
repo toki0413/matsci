@@ -37,7 +37,7 @@
 
 | 事件 | handler | 注册位置 |
 |---|---|---|
-| on_llm_request | inject_rules | plugins/ponytail/main.py:175 |
+| on_llm_request | inject_rules | plugins/ponytail/main.py:181 |
 
 ### 内置默认策略值 (无第三方接入时生效)
 

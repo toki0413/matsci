@@ -26,9 +26,7 @@ async def list_tools() -> list[dict[str, Any]]:
     return ToolRegistry.get_all_schemas()
 
 
-def _validate_tool_input(
-    tool: Any, args: dict[str, Any]
-) -> tuple[Any, dict[str, Any] | None]:
+def _validate_tool_input(tool: Any, args: dict[str, Any]) -> tuple[Any, str | None]:
     """按 strict 模式校验入参, 失败再退一步尝试宽松模式."""
     try:
         return tool.input_schema.model_validate(args, strict=True), None
@@ -37,7 +35,7 @@ def _validate_tool_input(
         try:
             return tool.input_schema(**args), None
         except Exception:
-            return None, {"error": f"Invalid input (strict): {strict_err}"}
+            return None, f"Invalid input (strict): {strict_err}"
 
 
 def _audit_denied(tool_name: str, args: dict[str, Any], reason: str) -> None:
@@ -84,9 +82,9 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     if not tool.input_schema:
         return {"error": f"Tool '{tool_name}' has no input schema"}
 
-    input_data, invalid = _validate_tool_input(tool, args)
-    if invalid is not None:
-        return invalid
+    input_data, invalid_reason = _validate_tool_input(tool, args)
+    if invalid_reason is not None:
+        return {"error": invalid_reason}
 
     allowed, reason = _server_allows_tool(tool_name, input_data)
     if not allowed:

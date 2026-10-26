@@ -1207,11 +1207,20 @@ _FULL_COMMANDS: dict[str, Callable[[str, Any, Any, Any], None]] = {
 
 def _handle_mode_switch(name: str, agent: Any, con: Any) -> None:
     """切 agent 运行模式 (plan/chat/research)."""
-    if agent is not None and hasattr(agent, "set_mode"):
-        agent.set_mode(name)
-        con.print(_MODE_MESSAGES[name])
-    else:
+    if agent is None or not hasattr(agent, "set_mode"):
         con.print("[yellow]Agent 未初始化[/yellow]")
+        return
+    # 保留 set_mode("<mode>") 字面量: contract_audit 的"模式面"按字面量抽取
+    # 生产者, 表驱动传变量会让 chat 变成"死提示词"假阳性.
+    if name == "plan":
+        agent.set_mode("plan")
+    elif name == "chat":
+        agent.set_mode("chat")
+    elif name == "research":
+        agent.set_mode("research")
+    else:
+        raise KeyError(name)
+    con.print(_MODE_MESSAGES[name])
 
 
 def _handle_unknown_command(name: str, command: str, ctx: Any, con: Any) -> str | None:

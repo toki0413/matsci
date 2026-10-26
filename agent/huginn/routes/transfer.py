@@ -251,18 +251,20 @@ async def transfer_browse(
         return {"success": False, "error": str(exc)}
 
 
-def _collect_sync_files(local_root: Path, req: SyncRequest) -> list[Path]:
+def _collect_sync_files(
+    local_root: Path, include_patterns: list[str], exclude_patterns: list[str]
+) -> list[Path]:
     """遍历本地目录树, 按 include/exclude 模式过滤出待同步文件."""
     local_files: list[Path] = []
     for fp in local_root.rglob("*"):
         if not fp.is_file():
             continue
         rel = fp.relative_to(local_root).as_posix()
-        if req.include_patterns and not any(
-            fnmatch.fnmatch(rel, pat) for pat in req.include_patterns
+        if include_patterns and not any(
+            fnmatch.fnmatch(rel, pat) for pat in include_patterns
         ):
             continue
-        if any(fnmatch.fnmatch(rel, pat) for pat in req.exclude_patterns):
+        if any(fnmatch.fnmatch(rel, pat) for pat in exclude_patterns):
             continue
         local_files.append(fp)
     return local_files
@@ -313,9 +315,11 @@ def _sync_and_prune(
     sftp: Any,
     local_files: list[Path],
     local_root: Path,
-    req: SyncRequest,
+    remote_dir: str,
     uploaded: list[dict[str, Any]],
     errors: list[str],
+    *,
+    delete: bool,
 ) -> tuple[int, int, int]:
     """上传需要更新的文件 (就地填充 uploaded/errors), 可选清理远端多余文件。
 
@@ -325,7 +329,7 @@ def _sync_and_prune(
     total_bytes = 0
     remote_file_map: dict[str, str] = {}
     for fp in local_files:
-        outcome = _sync_one_local_file(sftp, fp, local_root, req.remote_dir)
+        outcome = _sync_one_local_file(sftp, fp, local_root, remote_dir)
         remote_file_map[outcome["rel_path"]] = outcome["remote_path"]
         if outcome["status"] == "skipped":
             skipped += 1
@@ -344,14 +348,22 @@ def _sync_and_prune(
 
     # 3. 可选: 删掉远端多余的文件
     deleted = 0
-    if req.delete:
+    if delete:
         deleted = _delete_extra_remote_files(
-            sftp, req.remote_dir, set(remote_file_map.keys())
+            sftp, remote_dir, set(remote_file_map.keys())
         )
     return skipped, total_bytes, deleted
 
 
-def _sync_to_remote(cfg: Any, local_root: Path, req: SyncRequest) -> dict[str, Any]:
+def _sync_to_remote(
+    cfg: Any,
+    local_root: Path,
+    remote_dir: str,
+    include_patterns: list[str],
+    exclude_patterns: list[str],
+    *,
+    delete: bool,
+) -> dict[str, Any]:
     """连上远端执行同步, 返回同步汇总 dict; 失败时回 {success: False, error}。"""
     uploaded: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -361,14 +373,22 @@ def _sync_to_remote(cfg: Any, local_root: Path, req: SyncRequest) -> dict[str, A
             sftp = client._sftp
 
             # 1. 遍历本地文件, 逐个判断要不要传
-            local_files = _collect_sync_files(local_root, req)
+            local_files = _collect_sync_files(
+                local_root, include_patterns, exclude_patterns
+            )
 
             # 2. 上传需要更新的文件
             skipped, total_bytes, deleted = _sync_and_prune(
-                sftp, local_files, local_root, req, uploaded, errors
+                sftp,
+                local_files,
+                local_root,
+                remote_dir,
+                uploaded,
+                errors,
+                delete=delete,
             )
     except Exception as exc:
-        logger.warning("同步失败 %s -> %s: %s", local_root, req.remote_dir, exc)
+        logger.warning("同步失败 %s -> %s: %s", local_root, remote_dir, exc)
         return {"success": False, "error": str(exc)}
 
     return {
@@ -401,7 +421,14 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
         return {"success": False, "error": err or "无法解析 HPC 配置"}
 
     start = time.time()
-    outcome = _sync_to_remote(cfg, local_root, req)
+    outcome = _sync_to_remote(
+        cfg,
+        local_root,
+        req.remote_dir,
+        req.include_patterns,
+        req.exclude_patterns,
+        delete=req.delete,
+    )
     if not outcome["success"]:
         return outcome
 

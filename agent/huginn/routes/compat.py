@@ -258,15 +258,24 @@ async def analyze_dynamics(params: dict[str, Any]) -> dict[str, Any]:
 
     # MSD (Mean Squared Displacement)
     if n_frames > 1:
-        result.update(_msd_metrics(frames, timestep))
+        msd_metrics = _msd_metrics(frames, timestep)
+        result["msd"] = msd_metrics["msd"]
+        if "diffusion_coefficient_estimate" in msd_metrics:
+            result["diffusion_coefficient_estimate"] = msd_metrics[
+                "diffusion_coefficient_estimate"
+            ]
 
     # RMSD between consecutive frames
     if n_frames > 1:
-        result.update(_rmsd_metrics(frames))
+        rmsd_metrics = _rmsd_metrics(frames)
+        result["rmsd_consecutive_mean"] = rmsd_metrics["rmsd_consecutive_mean"]
+        result["rmsd_consecutive_max"] = rmsd_metrics["rmsd_consecutive_max"]
 
     # Kinetic energy estimate if masses provided
     if masses and n_frames > 1:
-        result.update(_kinetic_energy_metrics(frames, timestep, masses))
+        ke_metrics = _kinetic_energy_metrics(frames, timestep, masses)
+        result["kinetic_energy_mean"] = ke_metrics["kinetic_energy_mean"]
+        result["kinetic_energy_std"] = ke_metrics["kinetic_energy_std"]
 
     return result
 

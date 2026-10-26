@@ -37,6 +37,21 @@ TIER_TTL_HOURS = {
     "long": None,  # permanent
 }
 
+
+def _coerce_importance(raw: Any, default: float = 0.5) -> float:
+    """importance 落库前收敛成 float.
+
+    HTTP / LLM 调用方可能传进字符串, SQLite 会原样存成 TEXT, 之后衰减环节
+    ``importance * decay_per_day**idle_days`` 直接 TypeError 并让整次维护失败.
+    在存储边界收敛, 比让坏值污染整个库要好.
+    """
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning("invalid importance %r, falling back to %.2f", raw, default)
+        return default
+
+
 # 检索排序: long 层优先于 mid 优先于 short, 同层内按 importance + access_count.
 # 以前不区分层级, 一条 short 层的高 importance 记忆会排在 long 层前面.
 _TIER_ORDER = "CASE tier WHEN 'long' THEN 0 WHEN 'mid' THEN 1 WHEN 'short' THEN 2 ELSE 3 END"
@@ -746,6 +761,7 @@ class LongTermMemory:
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
+        importance = _coerce_importance(importance)
         entry_id = (
             f"mem_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         )
@@ -1392,6 +1408,7 @@ class LongTermMemory:
                 (json.dumps(tags), entry_id),
             )
         if importance is not None:
+            importance = _coerce_importance(importance)
             conn.execute(
                 "UPDATE memories SET importance = ? WHERE id = ?",
                 (importance, entry_id),

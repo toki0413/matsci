@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from huginn.memory.longterm import _coerce_importance
+
 if TYPE_CHECKING:
     from huginn.memory.longterm import LongTermMemory
 
@@ -81,7 +83,7 @@ class MemoryDecayPolicy:
         Returns ``(decayed, promoted, pruned)`` deltas for this row.
         """
         entry_id = row["id"]
-        importance = row["importance"]
+        importance = _coerce_importance(row["importance"])
         access_count = row["access_count"]
         keys = set(row.keys())
         tier = row["tier"] if "tier" in keys else "mid"
