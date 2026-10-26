@@ -1197,7 +1197,7 @@ class EngineReflect:
             for m in recent:
                 role = getattr(m, "role", "?")
                 content = getattr(m, "content", "")
-                if isinstance(content, (dict, list)):
+                if isinstance(content, dict | list):
                     content = str(content)[:500]
                 conv_snippets.append(f"[{role}] {str(content)[:500]}")
             return "\n".join(conv_snippets)

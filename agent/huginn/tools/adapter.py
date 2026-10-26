@@ -306,7 +306,7 @@ def _matches_annotation(value: Any, annotation: Any) -> bool:
         if origin is tuple:
             return isinstance(value, tuple)
         if origin in (set, frozenset):
-            return isinstance(value, (set, frozenset))
+            return isinstance(value, set | frozenset)
         return False
     try:
         return isinstance(value, annotation)
@@ -341,7 +341,7 @@ def _coerce_container_shape(raw: Any, container: type) -> tuple[Any, str]:
     """list/tuple/set/frozenset: 字符串反序列化 + 容器间形状互换."""
     if isinstance(raw, str):
         parsed = _jsonish(raw)
-        if parsed is _NO_PARSE or not isinstance(parsed, (list, tuple, set, frozenset)):
+        if parsed is _NO_PARSE or not isinstance(parsed, list | tuple | set | frozenset):
             return raw, ""
         value = parsed if container is list else container(parsed)
         return value, f"str→{container.__name__} (JSON 反序列化)"

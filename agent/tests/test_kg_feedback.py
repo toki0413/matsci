@@ -65,7 +65,7 @@ def test_writes_only_error_and_failed_warning_checks(fake_kg):
     assert created == 2, "只有 error 与未通过时的 warning 应落库"
     assert fake_kg.saved == 1, "有新增才 save 一次"
     assert len(fake_kg.edges) == 4, "两个约束各连 material 与 tool 各一条边"
-    assert {(src, dst, rel) for src, dst, rel in fake_kg.edges} == {
+    assert set(fake_kg.edges) == {
         (f"{EntityType.FACT}:physics:energy_must_be_negative", f"{EntityType.COMPOUND}:Si", Relation.VALIDATES),
         (f"{EntityType.FACT}:physics:energy_must_be_negative", f"{EntityType.TOOL}:vasp_tool", Relation.RELATED_TO),
         (f"{EntityType.FACT}:physics:lattice_constant_off_by_3%", f"{EntityType.COMPOUND}:Si", Relation.VALIDATES),

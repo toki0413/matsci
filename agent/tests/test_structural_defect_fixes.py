@@ -22,7 +22,6 @@ from huginn.telemetry import TelemetryCollector, set_telemetry_collector
 from huginn.tools.adapter import _emit_span, _validate_tool_args
 from huginn.tools.bash_tool import BashTool
 
-
 # ── P0-1: argument boundary validation ─────────────────────────────────────
 
 
