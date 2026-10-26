@@ -83,6 +83,199 @@ class AutoresearchInput(BaseModel):
     )
 
 
+# ── workspace initialization helpers ───────────────────────────────
+
+
+async def _clone_upstream(tool, args, ws):
+    """Clone the upstream repo into ``ws``; return an error result or None."""
+    repo = args.repo_url or "https://github.com/karpathy/autoresearch.git"
+    git_err = tool._require_git(args)
+    if git_err:
+        return git_err
+    clone = await tool._run_command(
+        ["git", "clone", repo, str(ws)],
+        cwd=ws.parent,
+        timeout=120,
+    )
+    if clone["returncode"] != 0:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Failed to clone {repo}: {clone['stderr']}",
+        )
+    return None
+
+
+async def _ensure_git_repo(tool, ws):
+    """Initialize ``ws`` as a git repo with an initial commit when needed."""
+    git_dir = ws / ".git"
+    if git_dir.exists():
+        return
+    await tool._run_command(["git", "init"], cwd=ws, timeout=30)
+    await tool._run_command(
+        ["git", "config", "user.email", "huginn@local"],
+        cwd=ws,
+        timeout=30,
+    )
+    await tool._run_command(
+        ["git", "config", "user.name", "Huginn AutoResearch"],
+        cwd=ws,
+        timeout=30,
+    )
+    await tool._run_command(["git", "add", "."], cwd=ws, timeout=30)
+    await tool._run_command(
+        ["git", "commit", "-m", "Initial commit from Huginn"],
+        cwd=ws,
+        timeout=30,
+    )
+
+
+async def _experiment_branch(tool, args, ws):
+    """Return the experiment branch name, creating it when git is available."""
+    branch = args.branch or f"autoresearch/huginn-{datetime.now():%Y%m%d}"
+    if not args.skip_git and tool._git_available():
+        await tool._run_command(
+            ["git", "checkout", "-b", branch],
+            cwd=ws,
+            timeout=30,
+        )
+    return branch
+
+
+def _init_results_tsv(ws):
+    """Return the results.tsv path, creating it with a header when missing."""
+    results_tsv = ws / "results.tsv"
+    if not results_tsv.exists():
+        results_tsv.write_text(
+            "commit\tval_bpb\tmemory_gb\tstatus\tdescription\n",
+            encoding="utf-8",
+        )
+    return results_tsv
+
+
+def _append_program_instructions(program_md, program_append):
+    """Append user-specific instructions to program.md when it exists."""
+    if program_append and program_md.exists():
+        program_md.write_text(
+            program_md.read_text(encoding="utf-8")
+            + "\n\n## Huginn-added instructions\n\n"
+            + program_append
+            + "\n",
+            encoding="utf-8",
+        )
+
+
+# ── step helpers ───────────────────────────────────────────────────
+
+
+async def _proposed_train(tool, args):
+    """Return (train_py, description, hypothesis) or a failed proposal result."""
+    if args.train_py:
+        return args.train_py, args.description or "manual edit", ""
+    proposal = await tool._propose_edit(args)
+    if not proposal.success:
+        return proposal
+    return (
+        proposal.data["train_py"],
+        proposal.data["description"],
+        proposal.data.get("hypothesis", ""),
+    )
+
+
+async def _apply_and_commit(tool, args, ws, new_train, description):
+    """Write train.py and commit it; return the commit hash or an error result."""
+    tool._write_text(ws / "train.py", new_train)
+    if not args.skip_git and tool._git_available():
+        commit = await tool._git_commit(ws, description)
+        if not commit:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="Failed to commit proposed train.py",
+            )
+        return commit
+    return "no-git"
+
+
+async def _crash_result(tool, args, ws, commit, description, hypothesis, experiment):
+    """Revert a failed run, log it, and build the failure result."""
+    # Revert failed/crashed runs.
+    memory_gb = 0.0
+    val_bpb = 0.0
+    status = "crash" if experiment.data.get("crashed") else "discard"
+    if not args.skip_git and tool._git_available():
+        await tool._git_reset(ws)
+    tool._log_result(ws, commit, val_bpb, memory_gb, status, description)
+    return ToolResult(
+        data={
+            "commit": commit,
+            "status": status,
+            "description": description,
+            "experiment": experiment.data,
+            "kept": False,
+            "hypothesis": hypothesis,
+        },
+        success=False,
+        error=experiment.error or "Experiment failed",
+    )
+
+
+async def _decide_outcome(tool, args, ws, improved, best_prior):
+    """Return (status, kept), reverting the commit for a discard."""
+    if improved or best_prior is None:
+        return "keep", True
+    if not args.skip_git and tool._git_available():
+        await tool._git_reset(ws)
+    return "discard", False
+
+
+# ── LLM proposal helpers ───────────────────────────────────────────
+
+
+def _proposal_prompt(ws, program_md, results, user_hint, train_py):
+    recent_results = json.dumps(results[-10:], indent=2) if results else "(none yet)"
+    hint_block = f"\nAdditional user hint: {user_hint}\n" if user_hint else ""
+    return (
+        f"Workspace: {ws}\n\n"
+        "--- program.md ---\n"
+        f"{program_md}\n\n"
+        "--- recent results.tsv rows ---\n"
+        f"{recent_results}\n"
+        f"{hint_block}\n\n"
+        "--- current train.py ---\n"
+        "```python\n"
+        f"{train_py}\n"
+        "```\n\n"
+        "Propose the next experimental change to train.py. "
+        "Return a JSON object exactly like:\n"
+        "{\n"
+        '  "hypothesis": "what you expect to happen",\n'
+        '  "description": "short experiment description",\n'
+        '  "train_py": "full new content of train.py as a string"\n'
+        "}\n"
+    )
+
+
+def _parse_proposal(content, raw_json):
+    """Parse the model's JSON proposal and validate the train_py payload."""
+    try:
+        data = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"LLM did not return valid JSON: {exc}\n{content[:500]}"
+        ) from exc
+
+    new_train = data.get("train_py")
+    if not isinstance(new_train, str) or not new_train.strip():
+        raise RuntimeError("LLM response missing train_py content")
+
+    return (
+        new_train,
+        data.get("description", "LLM-proposed edit"),
+        data.get("hypothesis", ""),
+    )
+
+
 class AutoresearchTool(HuginnTool):
     """Manage and drive an AutoResearch workspace.
 
@@ -275,21 +468,9 @@ class AutoresearchTool(HuginnTool):
         # network git clone that hangs the asyncio executor (pytest-timeout
         # signal can't interrupt subprocess.run).
         if not args.skip_git and (args.repo_url or not any(ws.iterdir())):
-            repo = args.repo_url or "https://github.com/karpathy/autoresearch.git"
-            git_err = self._require_git(args)
-            if git_err:
-                return git_err
-            clone = await self._run_command(
-                ["git", "clone", repo, str(ws)],
-                cwd=ws.parent,
-                timeout=120,
-            )
-            if clone["returncode"] != 0:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Failed to clone {repo}: {clone['stderr']}",
-                )
+            clone_error = await _clone_upstream(self, args, ws)
+            if clone_error:
+                return clone_error
 
         if not (ws / "train.py").exists():
             return ToolResult(
@@ -300,53 +481,17 @@ class AutoresearchTool(HuginnTool):
 
         # Ensure the directory is a git repo so we can commit/reset later.
         if not args.skip_git and self._git_available():
-            git_dir = ws / ".git"
-            if not git_dir.exists():
-                await self._run_command(["git", "init"], cwd=ws, timeout=30)
-                await self._run_command(
-                    ["git", "config", "user.email", "huginn@local"],
-                    cwd=ws,
-                    timeout=30,
-                )
-                await self._run_command(
-                    ["git", "config", "user.name", "Huginn AutoResearch"],
-                    cwd=ws,
-                    timeout=30,
-                )
-                await self._run_command(["git", "add", "."], cwd=ws, timeout=30)
-                await self._run_command(
-                    ["git", "commit", "-m", "Initial commit from Huginn"],
-                    cwd=ws,
-                    timeout=30,
-                )
+            await _ensure_git_repo(self, ws)
 
         # Create a dedicated experiment branch.
-        branch = args.branch or f"autoresearch/huginn-{datetime.now():%Y%m%d}"
-        if not args.skip_git and self._git_available():
-            await self._run_command(
-                ["git", "checkout", "-b", branch],
-                cwd=ws,
-                timeout=30,
-            )
+        branch = await _experiment_branch(self, args, ws)
 
         # Initialize the results log if missing.
-        results_tsv = ws / "results.tsv"
-        if not results_tsv.exists():
-            results_tsv.write_text(
-                "commit\tval_bpb\tmemory_gb\tstatus\tdescription\n",
-                encoding="utf-8",
-            )
+        results_tsv = _init_results_tsv(ws)
 
         # Append user-specific instructions to program.md.
         program_md = ws / "program.md"
-        if args.program_append and program_md.exists():
-            program_md.write_text(
-                program_md.read_text(encoding="utf-8")
-                + "\n\n## Huginn-added instructions\n\n"
-                + args.program_append
-                + "\n",
-                encoding="utf-8",
-            )
+        _append_program_instructions(program_md, args.program_append)
 
         return ToolResult(
             data={
@@ -517,52 +662,22 @@ class AutoresearchTool(HuginnTool):
             return git_err
 
         # 1. Obtain the proposed train.py.
-        if args.train_py:
-            new_train = args.train_py
-            description = args.description or "manual edit"
-            hypothesis = ""
-        else:
-            proposal = await self._propose_edit(args)
-            if not proposal.success:
-                return proposal
-            new_train = proposal.data["train_py"]
-            description = proposal.data["description"]
-            hypothesis = proposal.data.get("hypothesis", "")
+        proposal = await _proposed_train(self, args)
+        if isinstance(proposal, ToolResult):
+            return proposal
+        new_train, description, hypothesis = proposal
 
         # 2. Apply and commit.
-        self._write_text(ws / "train.py", new_train)
-        if not args.skip_git and self._git_available():
-            commit = await self._git_commit(ws, description)
-            if not commit:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="Failed to commit proposed train.py",
-                )
-        else:
-            commit = "no-git"
+        applied = await _apply_and_commit(self, args, ws, new_train, description)
+        if isinstance(applied, ToolResult):
+            return applied
+        commit = applied
 
         # 3. Run experiment.
         experiment = await self._run_experiment(args)
         if not experiment.success:
-            # Revert failed/crashed runs.
-            memory_gb = 0.0
-            val_bpb = 0.0
-            status = "crash" if experiment.data.get("crashed") else "discard"
-            if not args.skip_git and self._git_available():
-                await self._git_reset(ws)
-            self._log_result(ws, commit, val_bpb, memory_gb, status, description)
-            return ToolResult(
-                data={
-                    "commit": commit,
-                    "status": status,
-                    "description": description,
-                    "experiment": experiment.data,
-                    "kept": False,
-                    "hypothesis": hypothesis,
-                },
-                success=False,
-                error=experiment.error or "Experiment failed",
+            return await _crash_result(
+                self, args, ws, commit, description, hypothesis, experiment
             )
 
         metrics = experiment.data.get("metrics", {})
@@ -574,15 +689,7 @@ class AutoresearchTool(HuginnTool):
         prior_rows = self._results(args).data.get("rows", [])
         best_prior = self._best_metric(prior_rows, args.metrics_lower_is_better)
         improved = self._is_improved(val_bpb, best_prior, args.metrics_lower_is_better)
-
-        if improved or best_prior is None:
-            status = "keep"
-            kept = True
-        else:
-            status = "discard"
-            kept = False
-            if not args.skip_git and self._git_available():
-                await self._git_reset(ws)
+        status, kept = await _decide_outcome(self, args, ws, improved, best_prior)
 
         self._log_result(ws, commit, val_bpb or 0.0, memory_gb, status, description)
 
@@ -711,55 +818,16 @@ class AutoresearchTool(HuginnTool):
 
         model = get_model(config=config, temperature=0.4, max_tokens=16000)
 
-        recent_results = (
-            json.dumps(results[-10:], indent=2) if results else "(none yet)"
-        )
-        hint_block = f"\nAdditional user hint: {user_hint}\n" if user_hint else ""
-
         system = (
             "You are an autonomous ML researcher running the autoresearch loop. "
             "You may modify ONLY train.py. Do not change prepare.py, constants, "
             "or the evaluation harness. Keep changes simple and reversible. "
             "Output ONLY a JSON object with keys: hypothesis, description, train_py."
         )
-        prompt = (
-            f"Workspace: {ws}\n\n"
-            "--- program.md ---\n"
-            f"{program_md}\n\n"
-            "--- recent results.tsv rows ---\n"
-            f"{recent_results}\n"
-            f"{hint_block}\n\n"
-            "--- current train.py ---\n"
-            "```python\n"
-            f"{train_py}\n"
-            "```\n\n"
-            "Propose the next experimental change to train.py. "
-            "Return a JSON object exactly like:\n"
-            "{\n"
-            '  "hypothesis": "what you expect to happen",\n'
-            '  "description": "short experiment description",\n'
-            '  "train_py": "full new content of train.py as a string"\n'
-            "}\n"
-        )
+        prompt = _proposal_prompt(ws, program_md, results, user_hint, train_py)
 
         response = await asyncio.to_thread(
             model.invoke, [SystemMessage(system), HumanMessage(prompt)]
         )
         content = response.content if hasattr(response, "content") else str(response)
-        raw_json = self._extract_json(content)
-        try:
-            data = json.loads(raw_json)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"LLM did not return valid JSON: {exc}\n{content[:500]}"
-            ) from exc
-
-        new_train = data.get("train_py")
-        if not isinstance(new_train, str) or not new_train.strip():
-            raise RuntimeError("LLM response missing train_py content")
-
-        return (
-            new_train,
-            data.get("description", "LLM-proposed edit"),
-            data.get("hypothesis", ""),
-        )
+        return _parse_proposal(content, self._extract_json(content))

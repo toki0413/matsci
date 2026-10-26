@@ -34,13 +34,19 @@ logger = logging.getLogger(__name__)
 # 以 patch 数为视觉 token 上限的通用约定: 默认 cap 在 ~1MP 附近.
 # 超出 max_pixel_cap 的图等比降采样到 cap, 少于此的图保留原尺寸 (保细节).
 DEFAULT_MAX_PIXEL_CAP = 1_200_000  # ≈ 1.2MP
-DEFAULT_MAX_SIDE = 2048           # 最长边硬上限, 防止极端宽高比
-DEFAULT_MIN_SIDE = 32             # 最短边下限, 防止缩到不可读
+DEFAULT_MAX_SIDE = 2048  # 最长边硬上限, 防止极端宽高比
+DEFAULT_MIN_SIDE = 32  # 最短边下限, 防止缩到不可读
 
 # image_analysis_tool 支持的 action (见 tools/image_analysis/tool.py)
 _KNOWN_ACTIONS = {
-    "sem_analysis", "tem_lattice", "eds_mapping", "particle_stats",
-    "defect_detect", "phase_field", "plot_extract", "deplot_chart",
+    "sem_analysis",
+    "tem_lattice",
+    "eds_mapping",
+    "particle_stats",
+    "defect_detect",
+    "phase_field",
+    "plot_extract",
+    "deplot_chart",
 }
 
 # 文件名强信号 → 模态 (覆盖 _cv_pre_analyze 的 image_type_guess)
@@ -158,19 +164,37 @@ def detect_modality(image_path: str | Path | bytes) -> dict[str, Any]:
     name_hint_norm = re.sub(r"[\s_\-.,]+", " ", name_hint).strip()
 
     # 1. 文件名强信号
-    for pattern, modality, action in _FILENAME_SIGNALS:
-        if re.search(pattern, name_hint_norm):
-            result["modality"] = modality
-            result["action"] = action
-            result["confidence"] = "high"
-            result["reasons"].append(f"filename signal: {pattern}")
-            return result
+    if _match_filename_signal(result, name_hint_norm):
+        return result
 
     if not p.is_file():
         result["reasons"].append(f"file not found: {image_path}")
         return result
 
     # 2. 图像统计特征
+    _detect_from_stats(result, p)
+
+    # 3. 扩展名兜底
+    if ext in (".csv", ".txt"):
+        result["modality"] = "DOCUMENT"
+        result["reasons"].append("extension is tabular/text")
+    return result
+
+
+def _match_filename_signal(result: dict[str, Any], name_hint_norm: str) -> bool:
+    # 1. 文件名强信号
+    for pattern, modality, action in _FILENAME_SIGNALS:
+        if re.search(pattern, name_hint_norm):
+            result["modality"] = modality
+            result["action"] = action
+            result["confidence"] = "high"
+            result["reasons"].append(f"filename signal: {pattern}")
+            return True
+    return False
+
+
+def _detect_from_stats(result: dict[str, Any], p: Path) -> None:
+    """2. 图像统计特征 — 读取灰度/彩图并判定模态 (就地写 result)."""
     try:
         from huginn.tools.image_analysis._utils import load_gray, load_rgb
 
@@ -184,34 +208,8 @@ def detect_modality(image_path: str | Path | bytes) -> dict[str, Any]:
         except Exception:
             s = 0.0
 
-        if edge_density >= 0:
-            # 高边缘 + 低饱和 → 图表
-            if edge_density > 0.12 and s < 0.35:
-                result["modality"] = "PLOT"
-                result["action"] = "plot_extract"
-                result["confidence"] = "medium"
-                result["reasons"].append(
-                    f"low-sat({s:.2f}) + busy edges({edge_density:.3f}) -> plot"
-                )
-                return result
-            # 高边缘 + 高饱和 → 彩色显微/EDS 图
-            if edge_density > 0.12 and s >= 0.35:
-                result["modality"] = "EDS"
-                result["action"] = "eds_mapping"
-                result["confidence"] = "medium"
-                result["reasons"].append(
-                    f"high-sat({s:.2f}) + busy edges({edge_density:.3f}) -> EDS"
-                )
-                return result
-            # 低边缘 + 低对比 → 显微图 (SEM/TEM 平滑区)
-            if edge_density < 0.05 and std_i < 40:
-                result["modality"] = "SEM"
-                result["action"] = "sem_analysis"
-                result["confidence"] = "medium"
-                result["reasons"].append(
-                    f"smooth({edge_density:.3f}) + low-contrast({std_i:.0f}) -> SEM"
-                )
-                return result
+        if _apply_stat_signals(result, edge_density, s, std_i):
+            return
         result["reasons"].append(
             f"no strong signal (edge={edge_density:.3f}, sat={s:.2f})"
         )
@@ -219,11 +217,39 @@ def detect_modality(image_path: str | Path | bytes) -> dict[str, Any]:
         logger.debug("detect_modality stats failed, non-fatal", exc_info=True)
         result["reasons"].append("image stats unavailable")
 
-    # 3. 扩展名兜底
-    if ext in (".csv", ".txt"):
-        result["modality"] = "DOCUMENT"
-        result["reasons"].append("extension is tabular/text")
-    return result
+
+def _apply_stat_signals(
+    result: dict[str, Any], edge_density: float, s: float, std_i: float
+) -> bool:
+    if edge_density >= 0:
+        # 高边缘 + 低饱和 → 图表
+        if edge_density > 0.12 and s < 0.35:
+            result["modality"] = "PLOT"
+            result["action"] = "plot_extract"
+            result["confidence"] = "medium"
+            result["reasons"].append(
+                f"low-sat({s:.2f}) + busy edges({edge_density:.3f}) -> plot"
+            )
+            return True
+        # 高边缘 + 高饱和 → 彩色显微/EDS 图
+        if edge_density > 0.12 and s >= 0.35:
+            result["modality"] = "EDS"
+            result["action"] = "eds_mapping"
+            result["confidence"] = "medium"
+            result["reasons"].append(
+                f"high-sat({s:.2f}) + busy edges({edge_density:.3f}) -> EDS"
+            )
+            return True
+        # 低边缘 + 低对比 → 显微图 (SEM/TEM 平滑区)
+        if edge_density < 0.05 and std_i < 40:
+            result["modality"] = "SEM"
+            result["action"] = "sem_analysis"
+            result["confidence"] = "medium"
+            result["reasons"].append(
+                f"smooth({edge_density:.3f}) + low-contrast({std_i:.0f}) -> SEM"
+            )
+            return True
+    return False
 
 
 def _edge_density(gray: Any) -> float:

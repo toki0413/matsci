@@ -67,7 +67,9 @@ class IntentSpeculator:
         history_path: Path | str | None = None,
         max_history: int = 20,
     ) -> None:
-        self._history_path = Path(history_path) if history_path else _default_history_path()
+        self._history_path = (
+            Path(history_path) if history_path else _default_history_path()
+        )
         self._max_history = max_history
         self._lock = threading.RLock()
         # 每条: timestamp / scenario_name / matched_query / tools_used / hit
@@ -105,8 +107,8 @@ class IntentSpeculator:
         try:
             self._history_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "history": self._history[-self._max_history:],
-                "prediction_counts": self._prediction_counts[-self._max_history:],
+                "history": self._history[-self._max_history :],
+                "prediction_counts": self._prediction_counts[-self._max_history :],
             }
             self._history_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
@@ -127,28 +129,7 @@ class IntentSpeculator:
             hist = list(self._history)
 
         # ---- 历史频率加权 ----
-        # 最近 5 轮权重 0.5, 6-20 轮 0.3, 更早 0.2
-        hist_scores: dict[str, float] = {}
-        total_weight = 0.0
-        n = len(hist)
-        for i, rec in enumerate(hist):
-            # i=0 最老, i=n-1 最新; 越新权重越大
-            age = n - 1 - i
-            if age < 5:
-                w = 0.5
-            elif age < 20:
-                w = 0.3
-            else:
-                w = 0.2
-            total_weight += w
-            name = rec.get("scenario_name", "")
-            if name:
-                hist_scores[name] = hist_scores.get(name, 0.0) + w
-
-        # 归一化到 [0, 1]
-        if total_weight > 0:
-            for k in hist_scores:
-                hist_scores[k] /= total_weight
+        hist_scores = self._weighted_history_scores(hist)
 
         # ---- 关键词廉价匹配 ----
         query_match: tuple[str, float] | None = None
@@ -156,19 +137,7 @@ class IntentSpeculator:
             query_match = self._keyword_match(query)
 
         # ---- 合并分数: query 权重 0.6, 历史 0.4 ----
-        all_scores: dict[str, float] = {}
-        if query_match:
-            matched_name, qscore = query_match
-            for name, hscore in hist_scores.items():
-                if name == matched_name:
-                    all_scores[name] = 0.6 * qscore + 0.4 * hscore
-                else:
-                    all_scores[name] = 0.4 * hscore
-            # 匹配到的场景即使没历史也要加上
-            if matched_name not in all_scores:
-                all_scores[matched_name] = 0.6 * qscore
-        else:
-            all_scores = dict(hist_scores)
+        all_scores = self._merge_scores(hist_scores, query_match)
 
         # ---- 排序取 top-3, 过滤低置信度 ----
         ranked = sorted(all_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -191,10 +160,55 @@ class IntentSpeculator:
         with self._lock:
             self._prediction_counts.append(len(preds))
             if len(self._prediction_counts) > self._max_history:
-                self._prediction_counts = self._prediction_counts[-self._max_history:]
+                self._prediction_counts = self._prediction_counts[-self._max_history :]
             self._save()
 
         return preds
+
+    def _weighted_history_scores(self, hist: list[dict]) -> dict[str, float]:
+        # 最近 5 轮权重 0.5, 6-20 轮 0.3, 更早 0.2
+        hist_scores: dict[str, float] = {}
+        total_weight = 0.0
+        n = len(hist)
+        for i, rec in enumerate(hist):
+            # i=0 最老, i=n-1 最新; 越新权重越大
+            age = n - 1 - i
+            if age < 5:
+                w = 0.5
+            elif age < 20:
+                w = 0.3
+            else:
+                w = 0.2
+            total_weight += w
+            name = rec.get("scenario_name", "")
+            if name:
+                hist_scores[name] = hist_scores.get(name, 0.0) + w
+
+        # 归一化到 [0, 1]
+        if total_weight > 0:
+            for k in hist_scores:
+                hist_scores[k] /= total_weight
+        return hist_scores
+
+    @staticmethod
+    def _merge_scores(
+        hist_scores: dict[str, float],
+        query_match: tuple[str, float] | None,
+    ) -> dict[str, float]:
+        all_scores: dict[str, float] = {}
+        if query_match:
+            matched_name, qscore = query_match
+            for name, hscore in hist_scores.items():
+                if name == matched_name:
+                    all_scores[name] = 0.6 * qscore + 0.4 * hscore
+                else:
+                    all_scores[name] = 0.4 * hscore
+            # 匹配到的场景即使没历史也要加上
+            if matched_name not in all_scores:
+                all_scores[matched_name] = 0.6 * qscore
+        else:
+            all_scores = dict(hist_scores)
+        return all_scores
 
     def record(
         self,
@@ -218,7 +232,7 @@ class IntentSpeculator:
                 }
             )
             if len(self._history) > self._max_history:
-                self._history = self._history[-self._max_history:]
+                self._history = self._history[-self._max_history :]
             self._save()
 
     def prefetch(
@@ -394,7 +408,11 @@ class IntentSpeculator:
                 result = asyncio.run(tool.call(args, ctx))
 
             if hasattr(result, "data") and result.data is not None:
-                return result.data if isinstance(result.data, dict) else {"data": result.data}
+                return (
+                    result.data
+                    if isinstance(result.data, dict)
+                    else {"data": result.data}
+                )
             return None
         except Exception as exc:
             logger.debug("prefetch run %s failed: %s", tool_name, exc)
@@ -441,22 +459,15 @@ def on_turn_start(user_msg: str, cache: Any | None = None) -> dict:
     # flag 关掉时直接返回空 hint, 不预测不预热
     try:
         from huginn.feature_flags import FeatureFlags
+
         if not FeatureFlags.shared().is_enabled("speculator"):
-            return {
-                "predictions": [],
-                "prefetch_result": {"prefetched": [], "skipped": [], "errors": []},
-                "hint": "",
-            }
+            return _empty_turn_start()
     except Exception:  # 防御: 开关层异常不拦业务
         # flag 层挂了不能带挂业务, 继续走原逻辑
         logger.debug("best-effort op failed", exc_info=True)
 
     speculator = IntentSpeculator.shared()
-    try:
-        preds = speculator.predict(user_msg)
-    except Exception as exc:
-        logger.debug("speculator predict failed: %s", exc)
-        preds = []
+    preds = _safe_predict(speculator, user_msg)
 
     prefetch_result: dict = {"prefetched": [], "skipped": [], "errors": []}
     # top-1 confidence > 0.6 才预热, 避免低质量预测浪费算力
@@ -466,6 +477,32 @@ def on_turn_start(user_msg: str, cache: Any | None = None) -> dict:
         except Exception as exc:
             logger.debug("speculator prefetch failed: %s", exc)
 
+    hint = _build_turn_hint(preds, prefetch_result)
+
+    return {
+        "predictions": _prediction_payload(preds),
+        "prefetch_result": prefetch_result,
+        "hint": hint,
+    }
+
+
+def _empty_turn_start() -> dict:
+    return {
+        "predictions": [],
+        "prefetch_result": {"prefetched": [], "skipped": [], "errors": []},
+        "hint": "",
+    }
+
+
+def _safe_predict(speculator: Any, user_msg: str) -> list:
+    try:
+        return speculator.predict(user_msg)
+    except Exception as exc:
+        logger.debug("speculator predict failed: %s", exc)
+        return []
+
+
+def _build_turn_hint(preds: list, prefetch_result: dict) -> str:
     hint = ""
     if preds:
         top = preds[0]
@@ -477,17 +514,16 @@ def on_turn_start(user_msg: str, cache: Any | None = None) -> dict:
         if prefetched:
             tools = [p["tool"] for p in prefetched]
             hint += f", 已预热工具: {', '.join(tools)}"
+    return hint
 
-    return {
-        "predictions": [
-            {
-                "scenario_name": p.scenario_name,
-                "score": p.score,
-                "recommended_tools": p.recommended_tools,
-                "confidence": p.confidence,
-            }
-            for p in preds
-        ],
-        "prefetch_result": prefetch_result,
-        "hint": hint,
-    }
+
+def _prediction_payload(preds: list) -> list[dict]:
+    return [
+        {
+            "scenario_name": p.scenario_name,
+            "score": p.score,
+            "recommended_tools": p.recommended_tools,
+            "confidence": p.confidence,
+        }
+        for p in preds
+    ]

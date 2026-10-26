@@ -72,44 +72,46 @@ class EngineObserve:
         setattr(self.engine, name, value)
 
     #: EngineObserve 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
-    _OWN_ATTRS: frozenset[str] = frozenset({
-        "_compress_block",
-        "_scan_block_conflicts",
-        "_get_prompt_budget",
-        "_files_jaccard",
-        "_is_related_chain",
-        "_apply_block_patches",
-        "_trim_to_budget",
-        "_persona_system_prompt",
-        "_build_curiosity_block",
-        "_build_world_model_block",
-        "_build_world_catalog_block",
-        "_matching_domains",
-        "_build_metacog_imagery_block",
-        "_imagery_value",
-        "_pick_imagery_spec",
-        "_build_skill_context_block",
-        "_episodic_replay",
-        "_build_episodic_replay_block",
-        "_build_pmk_block",
-        "_format_pmk_fallback",
-        "_write_pmk_conflict_to_episodic",
-        "_ensure_hypo_manifold",
-        "_build_hypothesis_prompt",
-        "_get_metacog_auditor",
-        "_get_metacog_block_registry",
-        "_get_metacog_method_registry",
-        "_get_metacog_convergence_detector",
-        "_get_metacog_completion_auditor",
-        "trigger_isomorphic_anomaly_hypothesis",
-        "trigger_alignment_surprise_hypothesis",
-        "_metacog_check_effort_floor",
-        "_metacog_check_completion",
-        "_metacog_check_topology_collapse",
-        "_metacog_component_representatives",
-        "_metacog_dominant_family",
-        "_extract_lucid_prereqs",
-    })
+    _OWN_ATTRS: frozenset[str] = frozenset(
+        {
+            "_compress_block",
+            "_scan_block_conflicts",
+            "_get_prompt_budget",
+            "_files_jaccard",
+            "_is_related_chain",
+            "_apply_block_patches",
+            "_trim_to_budget",
+            "_persona_system_prompt",
+            "_build_curiosity_block",
+            "_build_world_model_block",
+            "_build_world_catalog_block",
+            "_matching_domains",
+            "_build_metacog_imagery_block",
+            "_imagery_value",
+            "_pick_imagery_spec",
+            "_build_skill_context_block",
+            "_episodic_replay",
+            "_build_episodic_replay_block",
+            "_build_pmk_block",
+            "_format_pmk_fallback",
+            "_write_pmk_conflict_to_episodic",
+            "_ensure_hypo_manifold",
+            "_build_hypothesis_prompt",
+            "_get_metacog_auditor",
+            "_get_metacog_block_registry",
+            "_get_metacog_method_registry",
+            "_get_metacog_convergence_detector",
+            "_get_metacog_completion_auditor",
+            "trigger_isomorphic_anomaly_hypothesis",
+            "trigger_alignment_surprise_hypothesis",
+            "_metacog_check_effort_floor",
+            "_metacog_check_completion",
+            "_metacog_check_topology_collapse",
+            "_metacog_component_representatives",
+            "_metacog_dominant_family",
+            "_extract_lucid_prereqs",
+        }
+    )
 
     # 上下文预算: 防止 prompt block 累积超过 token 上限.
     # 优先级: body > math > kg > visual > kb > mem > pm > hint > skill > composite > pipeline
@@ -189,6 +191,7 @@ LUCID review (mandatory after generating hypothesis):
         # ponytail: 属性名前缀不一致 (如 "band gap" vs "the band gap") 会导致漏检,
         # 但对 <10 blocks 的 prompt 场景足够; 如需精确匹配可改用 NER 提取属性名
         from huginn.autoloop.engine import _PROP_RE
+
         prop_values: dict[str, dict[str, str]] = {}
         for name, text in blocks:
             if not text:
@@ -217,6 +220,7 @@ LUCID review (mandatory after generating hypothesis):
     def _get_prompt_budget(self, phase: str | None) -> int:
         """按 phase 取 prompt budget. env 覆盖优先, dict 次之, fallback _PROMPT_BUDGET."""
         import os
+
         if phase:
             env_key = f"HUGINN_PROMPT_BUDGET_{phase.upper()}"
             env_val = os.environ.get(env_key)
@@ -240,7 +244,9 @@ LUCID review (mandatory after generating hypothesis):
             return 0.0
         return len(sa & sb) / len(union)
 
-    def _is_related_chain(self, current_files: list[str], threshold: float = 0.3) -> bool:
+    def _is_related_chain(
+        self, current_files: list[str], threshold: float = 0.3
+    ) -> bool:
         """当前任务是否延续上一轮相同文件面 (相关任务链)?
 
         P21/dsh-router-standard: 相关任务链 (同文件演化: 写→修→扩→修) 中
@@ -269,6 +275,7 @@ LUCID review (mandatory after generating hypothesis):
         apply_patches 返回签名. 升级路径: apply_patches 返回 (blocks, ids).
         """
         from huginn.harness.prompt_patch import PromptPatchStore, apply_patches
+
         # P21/dsh: 相关任务链中 prompt 引导为负资产 — 降级不应用 patch.
         # _build_hypothesis_prompt 顶部已算好 self._related_chain.
         if getattr(self, "_related_chain", False):
@@ -288,21 +295,7 @@ LUCID review (mandatory after generating hypothesis):
             return new_blocks
         try:
             store = PromptPatchStore.get_instance()
-            patches = [
-                p for p in store.list_patches(phase=phase)
-                if p.alpha / max(1, p.alpha + p.beta) >= 0.5
-            ]
-            by_block: dict[str, Any] = {}
-            for p in patches:
-                cur = by_block.get(p.block_name)
-                if cur is None or (
-                    p.alpha / max(1, p.alpha + p.beta)
-                    > cur.alpha / max(1, cur.alpha + cur.beta)
-                ):
-                    by_block[p.block_name] = p
-            applied_ids = [p.id for p in by_block.values()]
-            if applied_ids:
-                self._last_applied_patches = (phase, applied_ids)
+            _track_applied_patch_ids(self, phase, store)
         except Exception:  # 防御: 已应用补丁记录失败忽略
             logger.debug("_apply_block_patches: track applied fail", exc_info=True)
         return new_blocks
@@ -331,43 +324,20 @@ LUCID review (mandatory after generating hypothesis):
             return "".join(v for _, v in kept)
 
         # Pass 1: 截断低优先级 block 到 300 字符
-        for i in range(len(kept) - 1, -1, -1):
-            if total <= budget:
-                break
-            name, text = kept[i]
-            if name == "body":  # body 永远不压缩
-                continue
-            compressed = self._compress_block(name, text, 1)
-            total -= len(text) - len(compressed)
-            kept[i] = (name, compressed)
+        total = _compress_low_priority_blocks(self, kept, total, budget, 1)
 
         if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 2: 压缩成一行摘要
-        for i in range(len(kept) - 1, -1, -1):
-            if total <= budget:
-                break
-            name, text = kept[i]
-            if name == "body":
-                continue
-            compressed = self._compress_block(name, text, 2)
-            total -= len(text) - len(compressed)
-            kept[i] = (name, compressed)
+        total = _compress_low_priority_blocks(self, kept, total, budget, 2)
 
         if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 3: 从最低优先级开始删除
         # skill/composite 受保护 — skills 引用保留系统: 可截断可摘要, 但不可清空
-        for i in range(len(kept) - 1, -1, -1):
-            if total <= budget:
-                break
-            name, text = kept[i]
-            if name in ("body", "skill", "composite"):
-                continue
-            total -= len(text)
-            kept[i] = (name, "")
+        _drop_low_priority_blocks(kept, total, budget)
 
         return "".join(v for _, v in kept)
 
@@ -404,6 +374,7 @@ LUCID review (mandatory after generating hypothesis):
         ceiling: self_model 按 (dimension, hyp_type) 聚合, 关键词命中粗.
         """
         from huginn.feature_flags import FeatureFlags
+
         if not FeatureFlags.shared().is_enabled("curiosity_hint"):
             return ""
         _mem = getattr(self, "memory", None)
@@ -446,6 +417,7 @@ LUCID review (mandatory after generating hypothesis):
         开关统一走 FeatureFlags (默认 on), 兼容旧 env HUGINN_WORLD_MODEL.
         """
         from huginn.feature_flags import FeatureFlags
+
         if not FeatureFlags.shared().is_enabled("world_model"):
             return ""
         blocks: list[str] = []
@@ -480,7 +452,8 @@ LUCID review (mandatory after generating hypothesis):
             _lines.append(f"  - (sim={_score:.2f}) {_content}")
         blocks.append(
             "\n[WORLD MODEL] 历史相似实验结果 (懒路预测, 仅供参考, 无外推):\n"
-            + "\n".join(_lines) + "\n"
+            + "\n".join(_lines)
+            + "\n"
         )
         return "\n\n".join(blocks)
 
@@ -560,7 +533,9 @@ LUCID review (mandatory after generating hypothesis):
         try:
             from huginn.metacog import mental_imagery
         except Exception:  # 防御: 视觉模块不可用跳过想象块
-            logger.debug("metacog mental_imagery unavailable, skip imagery block", exc_info=True)
+            logger.debug(
+                "metacog mental_imagery unavailable, skip imagery block", exc_info=True
+            )
             return ""
 
         spec = self._pick_imagery_spec(context)
@@ -575,22 +550,7 @@ LUCID review (mandatory after generating hypothesis):
         if not out.get("sketch_image_bytes"):
             return ""
         _verify = out.get("verify") or {}
-        _v = {k: self._imagery_value(v) for k, v in _verify.items() if not k.startswith("error")}
-        _v_lines = "".join(
-            f"    {k}: {val}\n" for k, val in _v.items() if val is not None
-        )
-        if not _v_lines:
-            return ""
-        _verified = bool(_verify.get("verified"))
-        _status = "passed, sketch is internally consistent" if _verified else "returned a sketch (verify advisory)"
-        return (
-            "\n### Spatiotemporal Sketch (mental_imagery)\n"
-            "A synthetic spatial structure was imagined and verified "
-            "(numpy synthesis, advisory — not from the real environment):\n"
-            f"  spec: {out.get('spec', '')}\n"
-            f"  verify: {_status}\n"
-            f"{_v_lines}"
-        )
+        return _format_imagery_block(out, _verify)
 
     @staticmethod
     def _imagery_value(v: Any) -> Any:
@@ -601,6 +561,7 @@ LUCID review (mandatory after generating hypothesis):
             _t = type(v).__module__
             if _t == "numpy" or "numpy" in str(_t):
                 import numpy as np
+
                 if isinstance(v, np.generic):
                     return v.item()
                 if isinstance(v, np.ndarray):
@@ -647,6 +608,7 @@ LUCID review (mandatory after generating hypothesis):
             return ""
         try:
             from huginn.skills.evolution import SkillEvolutionLayer
+
             return SkillEvolutionLayer.shared().get_skill_context()
         except Exception:  # 防御: 技能上下文注入失败返回空
             logger.debug("skill context injection failed", exc_info=True)
@@ -665,6 +627,7 @@ LUCID review (mandatory after generating hypothesis):
                 try:
                     from huginn.metacog.episodic_index import EpisodicIndexStore
                     from huginn.metacog.episodic_replay import EpisodicReplay
+
                     run_id = getattr(self, "_run_id", None) or "default"
                     store = EpisodicIndexStore(self.workspace, str(run_id))
                     if store.build() == 0:
@@ -726,20 +689,8 @@ LUCID review (mandatory after generating hypothesis):
             from huginn.autoloop.cognitive_loop import build_pmk_state
             from huginn.runtime.task_lifecycle import _check_pmk_consistency
 
-            # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
-            persona_obj = None
-            with contextlib.suppress(Exception):
-                persona_obj = self._get_persona_manager().get("default")
-
-            last_eval = self._evals_history[-1] if self._evals_history else None
-            kb = self._get_kb()
-            since = getattr(self, "_run_start_iso", None)
-
-            pmk_state = build_pmk_state(
-                persona_obj, last_eval, kb,
-                since=since,
-                mem_mgr=getattr(self, "memory", None),
-                timeseries_ctx=self._format_timeseries_context() or None,
+            persona_obj, last_eval, kb, pmk_state = _gather_pmk_state(
+                self, build_pmk_state
             )
             if not pmk_state:
                 return ""
@@ -753,56 +704,12 @@ LUCID review (mandatory after generating hypothesis):
             cur_iter = getattr(self, "_iteration", 0)
             if cur_iter != getattr(self, "_pmk_side_effect_iter", -1):
                 if is_inconsistent:
-                    conflict_hint = f"[PMK CONFLICT] {reason[:200]}"
-                    self._speculator_hint = (
-                        (self._speculator_hint + f"\n{conflict_hint}\n").strip()
-                        if self._speculator_hint else f"{conflict_hint}\n"
-                    )
-                    logger.info("PMK conflict detected: %s", reason[:100])
-                    self._write_pmk_conflict_to_episodic(pmk_state, reason)
-                    # 桥 B: PMK 冲突 → evolution 触发. 把冲突作为一种"认知失败"
-                    # 喂给 evolution logger, 让 get_failure_patterns 能提取 PMK
-                    # 冲突模式 (≥2 次同类冲突就生成 heuristic 规则). 失败非致命,
-                    # 不破坏现有 pause 路径. ponytail: 复用 _get_evolution 懒加载.
-                    try:
-                        _evo = self._get_evolution()
-                        _evo.logger.log_tool_call(
-                            session_id=f"pmk_{cur_iter}",
-                            tool_name="pmk_conflict",
-                            tool_input={
-                                "reason": reason[:200],
-                                "pmk_state": {k: v[:100] for k, v in pmk_state.items()},
-                            },
-                            result=None,
-                            error=reason[:300],
-                        )
-                        _evo.evolve_from_failures()
-                    except Exception:  # 防御: PMK 演化桥失败忽略
-                        logger.debug(
-                            "PMK → evolution bridge failed (non-fatal)",
-                            exc_info=True,
-                        )
+                    _apply_pmk_conflict_side_effects(self, pmk_state, reason, cur_iter)
                 self._pmk_side_effect_iter = cur_iter
 
-            # 格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
-            # build_pmk_text 不读 self 实例状态, 用 __new__ 绕过 __init__ (跟
-            # selfcheck 同模式). ponytail: build_pmk_text 内部再查一次一致性
-            # (只 3 路, 不含 timeseries), 标签可能跟上面的 is_inconsistent 略有
-            # 出入 — 接受, 不重写 build_pmk_text. 升级路径: 给它加 timeseries 参数.
-            try:
-                from huginn.context_builder import ContextBuilder
-                ctx = ContextBuilder.__new__(ContextBuilder)
-                pmk_text = ctx.build_pmk_text(
-                    persona=persona_obj,
-                    last_step_evaluation=last_eval,
-                    kb=kb,
-                )
-                if not pmk_text:
-                    pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
-            except Exception:  # 防御: PMK 文本构建失败用回退
-                pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
-
-            return pmk_text
+            return _format_pmk_text(
+                self, persona_obj, last_eval, kb, pmk_state, is_inconsistent
+            )
 
         except Exception:  # 防御: PMK 块失败返回空
             logger.debug("PMK block failed (non-fatal)", exc_info=True)
@@ -841,6 +748,7 @@ LUCID review (mandatory after generating hypothesis):
             writer = getattr(self, "_episodic_writer", None)
             if writer is None:
                 from huginn.memory.episodic_shard import EpisodicShardWriter
+
                 writer = EpisodicShardWriter(
                     workspace=self.workspace,
                     task_id=str(getattr(self, "_run_id", None) or "default"),
@@ -849,7 +757,9 @@ LUCID review (mandatory after generating hypothesis):
             writer.append(iter_n, entry)
             logger.debug("PMK conflict written to episodic shard")
         except Exception:  # 防御: PMK 冲突写失败忽略
-            logger.debug("PMK conflict write to episodic failed (non-fatal)", exc_info=True)
+            logger.debug(
+                "PMK conflict write to episodic failed (non-fatal)", exc_info=True
+            )
 
     def _ensure_hypo_manifold(self, context: dict[str, Any]) -> Any:
         """E2-1: 通用假设流形懒加载 + seed, 让 core 主循环可用.
@@ -868,7 +778,9 @@ LUCID review (mandatory after generating hypothesis):
             )
 
             text_pool = " ".join(
-                str(v) for v in (context or {}).values() if isinstance(v, str | int | float)
+                str(v)
+                for v in (context or {}).values()
+                if isinstance(v, str | int | float)
             )
             targets = extract_numeric_targets(text_pool)
             manifold = HypothesisManifold()
@@ -878,12 +790,14 @@ LUCID review (mandatory after generating hypothesis):
                 ("h_null", "No signal / null baseline", 0.0, 1),
             ):
                 with contextlib.suppress(ValueError):
-                    manifold.add(Hypothesis(
-                        h_id=hid,
-                        description=desc,
-                        predictions={k: v * scale for k, v in targets.items()},
-                        n_params=n,
-                    ))
+                    manifold.add(
+                        Hypothesis(
+                            h_id=hid,
+                            description=desc,
+                            predictions={k: v * scale for k, v in targets.items()},
+                            n_params=n,
+                        )
+                    )
             self._hypo_manifold = manifold
         except Exception:  # 防御: 假设流形初始化失败置空
             logger.debug("hypo manifold init failed (non-fatal)", exc_info=True)
@@ -894,446 +808,56 @@ LUCID review (mandatory after generating hypothesis):
         # P21/dsh: 相关任务链 → 降级引导 (patch 不应用 + math_block 不注入).
         # 由 _apply_block_patches 和下方 math_block 共同消费.
         self._related_chain = self._is_related_chain(context.get("changed_files", []))
-        # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
-        # 预测只是 hint, LLM 可以无视, 不强制. 截断防止无界增长
-        # — _speculator_hint 有 30+ 处 append, 且每 run 只在启动时 reset 一次,
-        # 长程跑会累积到数 KB.
-        # 关键: 取**尾部** [-500:] 而非首部 [:500]. 所有纠偏指令
-        # (反例搜索 _trigger_counterexample_hunt / [强制重定向] 换名归约升级)
-        # 都是 append 到尾部 —— 取首部等于把"最新、最该被执行的纠偏"最先丢掉,
-        # 这正是"检测到了但不行动"的根因: 信号生成了却从没进 prompt.
-        hint_block = ""
-        if self._speculator_hint:
-            hint_block = (
-                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[-500:]}\n"
-                "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
-                "(方法族/等价性陷阱/连通分量/缺口).\n"
-            )
-        # episodic replay: 回溯最相似的成功/失败情境, 复用方法或避免同样的失败
-        replay_block = self._build_episodic_replay_block(context)
-        if replay_block:
-            hint_block = (hint_block + f"\n### Episodic Replay\n{replay_block}") if hint_block else f"\n### Episodic Replay\n{replay_block}"
-        # PMK 三路立场 + 一致性标签 (HUGINN_PMK_INJECT off 或全空时返空串, 不影响 prompt)
-        pmk_block = self._build_pmk_block(context)
-        if pmk_block:
-            hint_block = (hint_block + f"\n### PMK\n{pmk_block}") if hint_block else f"\n### PMK\n{pmk_block}"
-        # P1 Task 6: curiosity bonus — self_model 里预测不准的簇, 喂给 hypothesize
-        # 让 agent 主动 seek "哪类问题我长期搞不定", 而非等 stagnation 才 escape.
-        # toggle HUGINN_CURIOSITY_HINT 默认 off, off 时 _build_curiosity_block 返空.
-        curiosity_block = self._build_curiosity_block()
-        if curiosity_block:
-            hint_block = (hint_block + curiosity_block) if hint_block else curiosity_block
-            # 控制面观测 B7: curiosity hint 默认 off, 触发率未知 (审计列为"疑似可删").
-            #   这里只在**真的注入 prompt** 时记一条 trace, 供触发率统计; 纯观测, 不改行为.
-            #   带固定 tag 的 WARNING 进 run.log (CLI autoloop 不持久 campaign.* 事件);
-            #   事件走 campaign.control_trace, fail-open (测试替身无事件通道时静默).
-            logger.warning(
-                "control_trace name=curiosity_hint iteration=%s evidence=%s action=%s",
-                getattr(self, "_iteration", 0), "injected_into_hypothesis_prompt",
-                "advisory_hint",
-            )
-            with contextlib.suppress(Exception):
-                self._emit_campaign(
-                    "campaign.control_trace",
-                    {
-                        "name": "curiosity_hint",
-                        "iteration": getattr(self, "_iteration", 0),
-                        "evidence": "injected_into_hypothesis_prompt",
-                        "action": "advisory_hint",
-                        "advisory": "",
-                    },
-                )
-        # 三路检索共用一个 query — 从 context 提取有意义的检索词,
-        # 不用 json.dumps (JSON 语法噪声会淹没 embedding 语义锚点)
+
+        hint_block = self._build_hint_block(context)
         ctx_query = self._extract_search_query(context)
-        # 领域知识库检索: 命中 first-principles 参考块就拼进 prompt
-        kb_block = self._build_kb_text(query=ctx_query)
-        if kb_block:
-            kb_block = f"\n{kb_block}\n"
-        # 知识图谱检索: 把之前 run 发现的实体和关系拉回来, 避免
-        # 重复发现已有结论, 也让假设能建立在已有发现上
-        kg_block = self._build_kg_text(query=ctx_query)
-        if kg_block:
-            kg_block = f"\n{kg_block}\n"
-        # 长期记忆检索: 跨会话的失败教训和发现. 之前只写不读,
-        # 现在闭合 — _learn 写入的迭代记录下次能检索到.
-        mem_block = self._build_memory_text(query=ctx_query)
-        if mem_block:
-            mem_block = f"\n{mem_block}\n"
-        # C2: PM 层 trajectory_match 召回 (极限模式才开)
-        pm_block = self._build_pm_text()
-        if pm_block:
-            pm_block = f"\n{pm_block}\n"
-        # C2: metacog 信号注入 — target_chain (objective 在目标分解树的位置) +
-        # prospective (待执行前瞻意图). 跟 rcb_runner 同源, 之前 autoloop 零接.
-        metacog_block = self._build_metacog_block(include_prospective=True)
-        if metacog_block:
-            metacog_block = f"\n{metacog_block}\n"
-        # E2-1: 通用后验引导 hint — 所有 benchmark 都能用假设流形, 不只 RCB.
-        # 观测从 context 抽, 空/无字段自动不命中; manifold 失败降级, 不阻塞.
-        # MCMC 步进是 advisory, 暂不接入 core (沿用 rcb 的触发), 见路线图 E2-1.
-        try:
-            _manifold = self._ensure_hypo_manifold(context)
-            text_pool = " ".join(
-                str(v) for v in context.values() if isinstance(v, str | int | float)
-            )
-            from huginn.agent.hint_coordinator import (
-                _build_posterior_guided_hint,
-                extract_observations,
-            )
-            _obs = extract_observations(text_pool)
-            if _manifold is not None and _obs:
-                # E2-1: 在通用主循环推进 MCMC 链 (原本只在 rcb_runner 跑).
-                # 每 HUGINN_MCMC_INTERVAL 轮推进一次 mcmc_step, 首次用
-                # abductive_inference 初始化 current. 推进是 advisory only,
-                # 失败静默降级到 None (hint 走空路径, 不阻塞主循环).
-                try:
-                    _iter_n = getattr(self, "_iteration", 0)
-                    _mcmc_interval = int(
-                        os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
-                    if _iter_n % _mcmc_interval == 0:
-                        _cur = getattr(self, "_mcmc_current", None)
-                        if _cur is None or _cur not in _manifold._hyp:
-                            # 初始化: 用 posterior 最高的假设 (abductive_inference)
-                            _abd = _manifold.abductive_inference(_obs)
-                            _cur = _abd.h_id if _abd else None
-                            if _cur is None:
-                                _h_ids = list(_manifold._hyp)
-                                _cur = _h_ids[0] if _h_ids else None
-                        if _cur is not None:
-                            _prev = _cur
-                            _rng = getattr(self, "_mcmc_rng", None)
-                            # Ataraxos 式强度调度: 假设弱→高温 + 多全局跳 (探索),
-                            # 强→低温 + 少全局跳 (锁定 MAP). 关掉则回旧常量 0.3/1.0.
-                            _sched = strength_schedule_enabled()
-                            _st = hypothesis_strength(self) if _sched else 0.5
-                            _next_h, _next_logp = _manifold.mcmc_step(
-                                _obs, _cur, rng=_rng,
-                                cached_log_p_current=getattr(
-                                    self, "_mcmc_cached_log_p", None),
-                                temperature=(
-                                    strength_temperature(_st) if _sched else 1.0),
-                                global_proposal_prob=(
-                                    strength_global_proposal_prob(_st)
-                                    if _sched else 0.3),
-                                # Gramian 谱预条件: 沿假设空间高可控/高信息主轴提议,
-                                # 抑制各向同性随机游走. 数据不足自动退化, 默认开.
-                                gramian_enabled=(
-                                    os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1"),
-                                gramian_k=int(os.environ.get(
-                                    "HUGINN_MCMC_GRAMIAN_K", "1")),
-                                # R-NaD 式锚正则: 向已接受假设的 EMA 锚点漂移,
-                                # 阻尼均衡点附近绕圈. 默认开, λ 由 env 调.
-                                anchor_lambda=(
-                                    float(os.environ.get(
-                                        "HUGINN_MCMC_ANCHOR_LAMBDA", "0.1"))
-                                    if os.environ.get(
-                                        "HUGINN_MCMC_ANCHOR", "1") == "1"
-                                    else 0.0),
-                            )
-                            self._mcmc_current = _next_h
-                            self._mcmc_cached_log_p = _next_logp
-                            self._mcmc_step_count = getattr(
-                                self, "_mcmc_step_count", 0) + 1
-                            if _next_h != _prev:
-                                self._mcmc_accept_count = getattr(
-                                    self, "_mcmc_accept_count", 0) + 1
-                except Exception:  # 防御: MCMC 步进失败跳过
-                    logger.debug(
-                        "MCMC step advance skipped (non-fatal)", exc_info=True)
-                # MCMC 动态采样路径接入: 把采样链当前驻留的假设作为 hint 注入,
-                # 补充 abductive_inference (argmax) 的贪婪盲区. 无 MCMC 状态时
-                # 传 None, _build_posterior_guided_hint 内部跳过, 行为不变.
-                _mcmc_cur = getattr(self, "_mcmc_current", None)
-                _pg = _build_posterior_guided_hint(
-                    _manifold, _obs, mcmc_current=_mcmc_cur)
-                if _pg:
-                    hint_block = (
-                        hint_block + f"\n### Posterior-guided\n{_pg}"
-                        if hint_block else f"\n### Posterior-guided\n{_pg}"
-                    )
-        except Exception:  # 防御: 后验提示注入失败跳过
-            logger.debug("posterior hint injection skipped (non-fatal)", exc_info=True)
-        # H0: stable_principles 注入 (修 P3 断链 — 之前只进 chat agent system prompt,
-        # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
-        try:
-            from huginn.memory.longterm import load_stable_principles
-            _principles = load_stable_principles()[:5]
-        except Exception:  # 防御: 原则加载失败用空表
-            _principles = []
-        principles_block = (
-            "\n".join(f"- {p}" for p in _principles) if _principles else ""
+        kb_block, kg_block, mem_block, pm_block, metacog_block = (
+            self._build_knowledge_blocks(ctx_query)
         )
-        if principles_block:
-            principles_block = (
-                f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
-            )
-        # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
-        # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
-        # "point while it reasons" 原则, Mirage 效应的文本路径
-        visual_block = getattr(self, "_last_visual_context", "")
-        if visual_block:
-            visual_block = (
-                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
-            )
-        ctx_blob = json.dumps(context, ensure_ascii=False).lower()
-        from huginn.autoloop.engine import _MATH_SIGNALS
-        math_block = (
-            self._MATH_DEPTH_PROMPT_BLOCK
-            if not getattr(self, "_related_chain", False)
-            and any(s in ctx_blob for s in _MATH_SIGNALS)
-            else ""
-        )
-        # MatterChat 启发: 把上轮 execution 结果摘要注入 hypothesis prompt,
-        # 让假设建立在"上轮实际发生了什么"之上, 不只看 workspace 变化.
-        # _last_execution_result 在 _execute 里写入, 之前只 _build_plan_prompt 用.
-        exec_block = ""
-        last_exec = getattr(self, "_last_execution_result", None)
-        if last_exec and isinstance(last_exec, dict):
-            _tool = last_exec.get("_tool_name", "unknown")
-            _res = last_exec.get("result", last_exec)
-            _summary = json.dumps(_res, ensure_ascii=False, default=str)[:500]
-            exec_block = f"\n### Last Execution Result ({_tool})\n{_summary}\n"
-        # H2: frontier_ranked 注入 — Ising 能量最低 K-子集未测试假设.
-        # 之前 frontier()/frontier_ranked() 0 生产调用, Ising 排序整套死代码.
-        # 现在作为 hint 注入, LLM 可选优先测这些 (refute 过的 parent 的子假设优先,
-        # 同 sibling_group 互斥已避开). ponytail: hint 不强制, LLM 自己决定.
-        frontier_block = ""
-        try:
-            _frontier = self.hypothesis_graph.frontier_ranked(
-                top_k=3,
-                # settings 可能未初始化 (__new__ 建的空引擎), 容错取默认 0
-                phys_gain=getattr(getattr(self, "settings", None), "phys_steering_gain", 0.0),
-            )
-            if _frontier:
-                _lines = []
-                for nd in _frontier:
-                    _stmt = (nd.statement or "")[:100]
-                    _lines.append(f"- [{nd.id}] {_stmt}")
-                frontier_block = (
-                    "\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
-                    + "\n".join(_lines) + "\n"
-                    "Consider testing one of these before generating a new hypothesis.\n"
-                )
-        except Exception:  # 防御: 排序注入失败跳过
-            logger.debug("frontier_ranked injection failed", exc_info=True)
-        # P0: FAILED.md / PROVED.md durable state 注入 (chaoxu 启发).
-        # context 压缩后 agent 重读这两个文件, 不重试死路, 不重新证明已过的.
-        # ponytail: 读文件首 N 行避免膨胀, full text 留给 _extract_compact_attachments.
-        failed_block = ""
-        proved_block = ""
-        try:
-            from huginn.autoloop.hypothesis_loop import HypothesisGraph
-            _ws = str(self.workspace) if hasattr(self, "workspace") else None
-            _failed_txt = HypothesisGraph.load_failed(_ws)
-            if _failed_txt:
-                _failed_lines = _failed_txt.strip().split("\n")[:40]
-                failed_block = (
-                    "\n### Dead Routes (FAILED.md)\n"
-                    + "\n".join(_failed_lines) + "\n"
-                    "Do NOT re-attempt these unless the Reopen-if condition is met.\n"
-                )
-            _proved_txt = HypothesisGraph.load_proved(_ws)
-            if _proved_txt:
-                _proved_lines = _proved_txt.strip().split("\n")[:40]
-                proved_block = (
-                    "\n### Verified Results (PROVED.md)\n"
-                    + "\n".join(_proved_lines) + "\n"
-                    "These are already established — build on them.\n"
-                )
-        except Exception:  # 防御: 死路/已验证注入失败跳过
-            logger.debug("FAILED/PROVED injection failed", exc_info=True)
-        # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
-        # 考虑反事实假设. 基于 MToM P4 (hybrid ST+TT): 心智模型预测错误时
-        # 切到仿真理论重新建模. 结构切换在数学结构族之间, 不是随机猜.
-        imagination_block = ""
-        if self._should_imaginate():
-            imagination_block = self._IMAGINATION_PROMPT_BLOCK
-            # metacog 视觉/时空 sketch→verify 闭环: 不再只注入静态 prompt 文本,
-            # 而是真正调用 mental_imagery 跑一次"空间结构想象"并校验其可验证性,
-            # 把视觉化结果 (晶格/粒子/光谱) 喂回 prompt. 纯 numpy 实现, 无 model
-            # 依赖, 确定性可测; 任何失败静默降级为空块, 不阻塞主循环.
-            _imagery = self._build_metacog_imagery_block(context)
-            if _imagery:
-                imagination_block = imagination_block + _imagery
-        # Failure mode feedback (Dream Layer): 上轮 validate 描述的"如何崩溃"
-        # 注入 hypothesis prompt, 让 agent 从崩溃模式中找新发现.
-        # _last_failure_mode 在 _validate 里写入, 空字符串表示无上轮或未解析出.
-        fail_block = ""
-        _last_fail = getattr(self, "_last_failure_mode", "")
-        if _last_fail:
-            fail_block = f"\n### Previous Failure Mode\nIf the previous hypothesis is wrong, it would fail in this way:\n{_last_fail}\nConsider whether this failure mode points to a new hypothesis.\n"
-        # Git log: EurekAgent artifact engineering — 让 agent 看到前几轮
-        # 做了什么, 避免重复尝试已失败的方案. 只取 oneline 前 10 条.
-        git_log_block = ""
-        try:
-            import subprocess as _sp
-
-            _r = _sp.run(
-                ["git", "log", "--oneline", "-10"],
-                cwd=self.workspace,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if _r.returncode == 0 and _r.stdout.strip():
-                git_log_block = (
-                    f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
-                )
-        except Exception:  # 防御: git 日志构建失败跳过
-            logger.debug("git log block build skipped", exc_info=True)
-
-        # 分量代表制: 多条独立探索路线时, 给 LLM 看各路线的代表假设,
-        # 防止单分量靠节点数主导综合判断. 只在 >1 分量时注入, advisory.
-        # v11: 升级为 cluster_block — 优先用 cluster_by_dimension 展示维度分布,
-        # 退化为 topology_block (分量代表) 当 dimension 全空.
-        cluster_block = ""
-        try:
-            _clusters = self.hypothesis_graph.cluster_by_dimension()
-            _known_dims = {k: v for k, v in _clusters.items() if k != "unknown"}
-            if _known_dims and len(_clusters) > 1:
-                lines = []
-                for dim, nodes in list(_known_dims.items())[:5]:
-                    _stmt = nodes[0].statement[:120] if nodes else ""
-                    lines.append(f"  - {dim} ({len(nodes)} 个假设): {_stmt}")
-                cluster_block = (
-                    "\n### Cluster (advisory)\n"
-                    "当前假设按 dimension 分布:\n"
-                    + "\n".join(lines)
-                    + "\n新假设应优先补未覆盖的 dimension, 避免在已饱和维度堆叠.\n"
-                )
-            else:
-                # 退化路径: dimension 全空时用 topology_block (分量代表)
-                reps = self._metacog_component_representatives()
-                if len(reps) > 1:
-                    lines = []
-                    for rid in reps[:5]:
-                        try:
-                            stmt = self.hypothesis_graph.get(rid).statement
-                        except Exception:  # 防御: 代表假设读取失败置空
-                            logger.debug("best-effort op failed", exc_info=True)
-                            stmt = ""
-                        lines.append(f"  - {rid}: {stmt[:120]}")
-                    cluster_block = (
-                        f"\n### Topology (advisory)\n"
-                        f"当前有 {len(reps)} 条独立探索路线, 代表假设分别是:\n"
-                        + "\n".join(lines)
-                        + "\n"
-                        "综合判断时不要让某条路线靠节点数主导, 注意挑战和重定向.\n"
-                    )
-        except Exception:  # 防御: 聚类块构建失败跳过
-            logger.debug("cluster block build skipped", exc_info=True)
-
-        # 拓扑洞察注入 (B/C 路径): 把最近一次同调/拓扑审计 (_metacog_topology_audit
-        # 算出的 sheaf H¹ / simplicial Betti / Hodge verdict / persistence) 回灌 prompt.
-        # 之前 _metacog_last_topology 只算不用 — 现在让 agent 看到"这个假设涉及自洽
-        # 反馈环 (β₁>0)"或"多源证据全局不一致 (H¹≠0)", 从而生成更深的假设.
-        # advisory: 信号不阻断, 只作为结构化提示. 空/未审计时返空串.
-        topo_block = ""
-        try:
-            _topo = getattr(self, "_metacog_last_topology", None)
-            if _topo:
-                _lines = []
-                _h1 = _topo.get("h1")
-                _betti = _topo.get("betti")
-                _verdict = _topo.get("topo_verdict")
-                _persist = _topo.get("persistence") or {}
-                if _h1 is not None:
-                    _h1_note = (
-                        "多源证据存在全局不一致 (gluing obstruction). "
-                        "新假设应优先解释或消解这个不一致, 而非回避."
-                        if _h1
-                        else "多源证据全局一致 (无 gluing obstruction)."
-                    )
-                    _lines.append(f"- Sheaf H¹={_h1}: {_h1_note}")
-                if _betti:
-                    _beta0, _beta1 = _betti
-                    if _beta1:
-                        _lines.append(
-                            f"- Simplicial Betti β₁={_beta1}: 假设图存在自洽反馈环 (拓扑回路). "
-                            "考虑它是否代表一个可复现的自洽机制而非噪声."
-                        )
-                    _lines.append(f"- Simplicial Betti β₀={_beta0}: 假设空间连通分量数 (探索路线数).")
-                if _verdict:
-                    _lines.append(f"- Hodge topology verdict: {_verdict}")
-                if _persist.get("n_persistent_clusters") and _topo.get("h1") is not None:
-                    _lines.append(
-                        f"- Persistence: {_persist.get('n_persistent_clusters')} 个多尺度存活 cluster "
-                        "(假设空间是否分裂)."
-                    )
-                if _lines:
-                    topo_block = (
-                        "\n### Topology Insights (advisory, from last audit)\n"
-                        + "\n".join(_lines[:6])
-                        + "\nConsider these structural signals when generating hypotheses.\n"
-                    )
-        except Exception:  # 防御: 拓扑洞察注入失败跳过
-            logger.debug("topology insight injection skipped (non-fatal)", exc_info=True)
-
-        # 盲点注入 (blind_spot_mapper 接入主循环): 独立审计发现盲点只在旧 rcb_step2
-        # 编排层被消费, autoloop 主环零接线 → 孤岛. 这里把 self-model 里"确认失败"
-        # (rate==0 且 n≥3) 的簇当成能力盲点, 用 blind_spot_mapper 的
-        # map_blind_spots_to_hint 生成"绕过"建议, 让 agent 生成假设时主动降级/换
-        # 路线而非硬刚. advisory, not blocking. 与 [CURIOSITY] (<0.4 弱簇, 探索)
-        # 互补: 这里只标 rate==0 的确认盲点 (绕过). data source: get_self_model()
-        # 的 cluster 汇总 (persona 粒度), 非 rcb 的 per-skill SelfModel — ceiling:
-        # 盲点判定粗, workaround 表按 skill 名匹配大概率 miss → 给通用建议.
-        # 升级路径: autoloop 维护 per-skill SelfModel 喂 infer_blind_spots.
-        blind_spot_block = ""
-        try:
-            from huginn.metacog.blind_spot_mapper import (
-                BlindSpot,
-                map_blind_spots_to_hint,
-            )
-        except Exception:  # 防御: 盲点映射器不可用跳过
-            logger.debug("blind_spot_mapper unavailable, skip blind spot block", exc_info=True)
-        else:
-            _bs_mem = getattr(self, "memory", None)
-            if _bs_mem is not None and hasattr(_bs_mem, "longterm"):
-                try:
-                    _bs_sm = _bs_mem.longterm.get_self_model()
-                except Exception:  # 防御: 盲点自模型不可用置空
-                    logger.debug("blind spot block: self_model unavailable", exc_info=True)
-                    _bs_sm = {}
-                _blind: list[BlindSpot] = []
-                for _key, _v in (_bs_sm or {}).items():
-                    _rate = _v.get("rate")
-                    _succ = _v.get("success", 0)
-                    _fail = _v.get("failure", 0)
-                    _n = _succ + _fail
-                    # 确认失败 (从未成功) 且样本足够 → "blind" 档 (高优先盲点)
-                    if isinstance(_rate, int | float) and _rate == 0 and _n >= 3:
-                        _blind.append(BlindSpot(
-                            skill=str(_key),
-                            why_blind=(
-                                f"persona '{_v.get('dimension', _key)}' "
-                                f"历史成功率 0 (n={_n})"
-                            ),
-                            priority="high",
-                        ))
-                _bs_hint = map_blind_spots_to_hint(_blind)
-                if _bs_hint:
-                    blind_spot_block = (
-                        "\n### Blind Spots (advisory, from self-model)\n"
-                        "你在这些方向从未成功过, 视为高优先盲点, 生成假设时优先"
-                        "绕过/换路线, 而非硬刚:\n"
-                        + _bs_hint
-                        + "\n"
-                    )
+        failed_block, proved_block = self._build_failed_proved_blocks()
 
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         blocks = self._apply_block_patches(
             [
-                (
-                    "body",
-                    # 平台的域锚定 = 数学, 而非某个具体学科. 依据: 不论自然
-                    # 科学还是社会科学, 数学都是最基本单元 —— 任何命题先落到数学
-                    # 层, 再谈具体体系. 原先把域锚在材料科学 (composition/
-                    # temperature/defect/structure/transport + "优先写 PDE/变分/
-                    # 守恒律"), 会把非材料命题强行拽进材料语言 (见 run43: 31 条
-                    # 假设全落材料 5 维度, plan_check 连续判 misalign). 改为数学
-                    # 维度表, 让任意学科都先归约到其数学骨架.
-                    f"""You are an autonomous research agent. The base unit of every
+                ("body", self._build_body_block(context)),
+                # hint 提到 body 之后: _trim_to_budget 从列表尾部往回裁剪,
+                # 原先把 hint 放最后 → 预算紧张时首先被截断/删除, 换名归约的
+                # 强制重定向提示 (见 hypothesis_loop._metacog_audit_hypothesis)
+                # 根本到不了 LLM. 提到高优先级位, 保证纠偏信息不被裁掉.
+                ("hint", hint_block),
+                ("git_log", self._build_git_log_block()),
+                ("fail", self._build_fail_block()),
+                ("imagination", self._build_imagination_block(context)),
+                ("exec", self._build_exec_block()),
+                ("frontier", self._build_frontier_block()),
+                ("failed", failed_block),
+                ("proved", proved_block),
+                ("math", self._build_math_block(context)),
+                ("kg", kg_block),
+                ("visual", self._build_visual_block()),
+                ("kb", kb_block),
+                ("principles", self._build_principles_block()),
+                ("mem", mem_block),
+                ("pm", pm_block),
+                ("metacog", metacog_block),
+                ("cluster", self._build_cluster_block()),
+                ("topo", self._build_topo_block()),
+                ("blind_spot", self._build_blind_spot_block()),
+                ("skill", self._build_skill_context_block()),
+            ],
+            "hypothesize",
+        )
+        return self._trim_to_budget(blocks, phase="hypothesize")
+
+    def _build_body_block(self, context: dict[str, Any]) -> str:
+        # 平台的域锚定 = 数学, 而非某个具体学科. 依据: 不论自然
+        # 科学还是社会科学, 数学都是最基本单元 —— 任何命题先落到数学
+        # 层, 再谈具体体系. 原先把域锚在材料科学 (composition/
+        # temperature/defect/structure/transport + "优先写 PDE/变分/
+        # 守恒律"), 会把非材料命题强行拽进材料语言 (见 run43: 31 条
+        # 假设全落材料 5 维度, plan_check 连续判 misalign). 改为数学
+        # 维度表, 让任意学科都先归约到其数学骨架.
+        return f"""You are an autonomous research agent. The base unit of every
 discipline — natural or social science — is mathematics; ground each
 hypothesis in mathematics first, whatever the subject matter.
 
@@ -1368,36 +892,517 @@ State the mathematics explicitly — governing equations, invariants,
 variational principles, or complexity/approximation bounds — before
 proposing numerical experiments.
 
-Hypothesis:""",
-                ),
-                # hint 提到 body 之后: _trim_to_budget 从列表尾部往回裁剪,
-                # 原先把 hint 放最后 → 预算紧张时首先被截断/删除, 换名归约的
-                # 强制重定向提示 (见 hypothesis_loop._metacog_audit_hypothesis)
-                # 根本到不了 LLM. 提到高优先级位, 保证纠偏信息不被裁掉.
-                ("hint", hint_block),
-                ("git_log", git_log_block),
-                ("fail", fail_block),
-                ("imagination", imagination_block),
-                ("exec", exec_block),
-                ("frontier", frontier_block),
-                ("failed", failed_block),
-                ("proved", proved_block),
-                ("math", math_block),
-                ("kg", kg_block),
-                ("visual", visual_block),
-                ("kb", kb_block),
-                ("principles", principles_block),
-                ("mem", mem_block),
-                ("pm", pm_block),
-                ("metacog", metacog_block),
-                ("cluster", cluster_block),
-                ("topo", topo_block),
-                ("blind_spot", blind_spot_block),
-                ("skill", self._build_skill_context_block()),
-            ],
-            "hypothesize",
+Hypothesis:"""
+
+    def _build_hint_block(self, context: dict[str, Any]) -> str:
+        """speculator hint + episodic replay + PMK + curiosity + posterior-guided."""
+        # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
+        # 预测只是 hint, LLM 可以无视, 不强制. 截断防止无界增长
+        # — _speculator_hint 有 30+ 处 append, 且每 run 只在启动时 reset 一次,
+        # 长程跑会累积到数 KB.
+        # 关键: 取**尾部** [-500:] 而非首部 [:500]. 所有纠偏指令
+        # (反例搜索 _trigger_counterexample_hunt / [强制重定向] 换名归约升级)
+        # 都是 append 到尾部 —— 取首部等于把"最新、最该被执行的纠偏"最先丢掉,
+        # 这正是"检测到了但不行动"的根因: 信号生成了却从没进 prompt.
+        hint_block = ""
+        if self._speculator_hint:
+            hint_block = (
+                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[-500:]}\n"
+                "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
+                "(方法族/等价性陷阱/连通分量/缺口).\n"
+            )
+        # episodic replay: 回溯最相似的成功/失败情境, 复用方法或避免同样的失败
+        replay_block = self._build_episodic_replay_block(context)
+        if replay_block:
+            hint_block = (
+                (hint_block + f"\n### Episodic Replay\n{replay_block}")
+                if hint_block
+                else f"\n### Episodic Replay\n{replay_block}"
+            )
+        # PMK 三路立场 + 一致性标签 (HUGINN_PMK_INJECT off 或全空时返空串, 不影响 prompt)
+        pmk_block = self._build_pmk_block(context)
+        if pmk_block:
+            hint_block = (
+                (hint_block + f"\n### PMK\n{pmk_block}")
+                if hint_block
+                else f"\n### PMK\n{pmk_block}"
+            )
+        # P1 Task 6: curiosity bonus — self_model 里预测不准的簇, 喂给 hypothesize
+        # 让 agent 主动 seek "哪类问题我长期搞不定", 而非等 stagnation 才 escape.
+        # toggle HUGINN_CURIOSITY_HINT 默认 off, off 时 _build_curiosity_block 返空.
+        curiosity_block = self._build_curiosity_block()
+        if curiosity_block:
+            hint_block = (
+                (hint_block + curiosity_block) if hint_block else curiosity_block
+            )
+            self._emit_curiosity_trace()
+        _posterior = self._build_posterior_guided_block(context)
+        if _posterior:
+            hint_block = hint_block + _posterior if hint_block else _posterior
+        return hint_block
+
+    def _emit_curiosity_trace(self) -> None:
+        # 控制面观测 B7: curiosity hint 默认 off, 触发率未知 (审计列为"疑似可删").
+        #   这里只在**真的注入 prompt** 时记一条 trace, 供触发率统计; 纯观测, 不改行为.
+        #   带固定 tag 的 WARNING 进 run.log (CLI autoloop 不持久 campaign.* 事件);
+        #   事件走 campaign.control_trace, fail-open (测试替身无事件通道时静默).
+        logger.warning(
+            "control_trace name=curiosity_hint iteration=%s evidence=%s action=%s",
+            getattr(self, "_iteration", 0),
+            "injected_into_hypothesis_prompt",
+            "advisory_hint",
         )
-        return self._trim_to_budget(blocks, phase="hypothesize")
+        with contextlib.suppress(Exception):
+            self._emit_campaign(
+                "campaign.control_trace",
+                {
+                    "name": "curiosity_hint",
+                    "iteration": getattr(self, "_iteration", 0),
+                    "evidence": "injected_into_hypothesis_prompt",
+                    "action": "advisory_hint",
+                    "advisory": "",
+                },
+            )
+
+    def _build_posterior_guided_block(self, context: dict[str, Any]) -> str:
+        """E2-1: 通用后验引导 hint — 先推进 MCMC 链, 再返回注入文本 (空则不注入)."""
+        try:
+            _manifold = self._ensure_hypo_manifold(context)
+            text_pool = " ".join(
+                str(v) for v in context.values() if isinstance(v, str | int | float)
+            )
+            from huginn.agent.hint_coordinator import (
+                _build_posterior_guided_hint,
+                extract_observations,
+            )
+
+            _obs = extract_observations(text_pool)
+            if _manifold is None or not _obs:
+                return ""
+            self._advance_mcmc_chain(_manifold, _obs)
+            # MCMC 动态采样路径接入: 把采样链当前驻留的假设作为 hint 注入,
+            # 补充 abductive_inference (argmax) 的贪婪盲区. 无 MCMC 状态时
+            # 传 None, _build_posterior_guided_hint 内部跳过, 行为不变.
+            _mcmc_cur = getattr(self, "_mcmc_current", None)
+            _pg = _build_posterior_guided_hint(_manifold, _obs, mcmc_current=_mcmc_cur)
+            return f"\n### Posterior-guided\n{_pg}" if _pg else ""
+        except Exception:  # 防御: 后验提示注入失败跳过
+            logger.debug("posterior hint injection skipped (non-fatal)", exc_info=True)
+            return ""
+
+    def _advance_mcmc_chain(self, manifold: Any, obs: Any) -> None:
+        """按 HUGINN_MCMC_INTERVAL 推进 MCMC 链 (advisory, 失败静默降级)."""
+        # E2-1: 在通用主循环推进 MCMC 链 (原本只在 rcb_runner 跑).
+        # 每 HUGINN_MCMC_INTERVAL 轮推进一次 mcmc_step, 首次用
+        # abductive_inference 初始化 current. 推进是 advisory only,
+        # 失败静默降级到 None (hint 走空路径, 不阻塞主循环).
+        try:
+            _iter_n = getattr(self, "_iteration", 0)
+            _mcmc_interval = int(os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
+            if _iter_n % _mcmc_interval != 0:
+                return
+            _cur = getattr(self, "_mcmc_current", None)
+            if _cur is None or _cur not in manifold._hyp:
+                # 初始化: 用 posterior 最高的假设 (abductive_inference)
+                _abd = manifold.abductive_inference(obs)
+                _cur = _abd.h_id if _abd else None
+                if _cur is None:
+                    _h_ids = list(manifold._hyp)
+                    _cur = _h_ids[0] if _h_ids else None
+            if _cur is None:
+                return
+            _prev = _cur
+            _rng = getattr(self, "_mcmc_rng", None)
+            _next_h, _next_logp = manifold.mcmc_step(
+                obs,
+                _cur,
+                rng=_rng,
+                cached_log_p_current=getattr(self, "_mcmc_cached_log_p", None),
+                **self._mcmc_step_kwargs(),
+            )
+            self._mcmc_current = _next_h
+            self._mcmc_cached_log_p = _next_logp
+            self._mcmc_step_count = getattr(self, "_mcmc_step_count", 0) + 1
+            if _next_h != _prev:
+                self._mcmc_accept_count = getattr(self, "_mcmc_accept_count", 0) + 1
+        except Exception:  # 防御: MCMC 步进失败跳过
+            logger.debug("MCMC step advance skipped (non-fatal)", exc_info=True)
+
+    def _mcmc_step_kwargs(self) -> dict[str, Any]:
+        # Ataraxos 式强度调度: 假设弱→高温 + 多全局跳 (探索),
+        # 强→低温 + 少全局跳 (锁定 MAP). 关掉则回旧常量 0.3/1.0.
+        _sched = strength_schedule_enabled()
+        _st = hypothesis_strength(self) if _sched else 0.5
+        return {
+            "temperature": strength_temperature(_st) if _sched else 1.0,
+            "global_proposal_prob": (
+                strength_global_proposal_prob(_st) if _sched else 0.3
+            ),
+            # Gramian 谱预条件: 沿假设空间高可控/高信息主轴提议,
+            # 抑制各向同性随机游走. 数据不足自动退化, 默认开.
+            "gramian_enabled": os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1",
+            "gramian_k": int(os.environ.get("HUGINN_MCMC_GRAMIAN_K", "1")),
+            # R-NaD 式锚正则: 向已接受假设的 EMA 锚点漂移,
+            # 阻尼均衡点附近绕圈. 默认开, λ 由 env 调.
+            "anchor_lambda": (
+                float(os.environ.get("HUGINN_MCMC_ANCHOR_LAMBDA", "0.1"))
+                if os.environ.get("HUGINN_MCMC_ANCHOR", "1") == "1"
+                else 0.0
+            ),
+        }
+
+    def _build_knowledge_blocks(
+        self,
+        query: str,
+    ) -> tuple[str, str, str, str, str]:
+        """kb / kg / mem / pm / metacog 五路检索块 (各带换行包裹)."""
+        # 三路检索共用一个 query — 从 context 提取有意义的检索词,
+        # 不用 json.dumps (JSON 语法噪声会淹没 embedding 语义锚点)
+        # 领域知识库检索: 命中 first-principles 参考块就拼进 prompt
+        kb_block = self._build_kb_text(query=query)
+        if kb_block:
+            kb_block = f"\n{kb_block}\n"
+        # 知识图谱检索: 把之前 run 发现的实体和关系拉回来, 避免
+        # 重复发现已有结论, 也让假设能建立在已有发现上
+        kg_block = self._build_kg_text(query=query)
+        if kg_block:
+            kg_block = f"\n{kg_block}\n"
+        # 长期记忆检索: 跨会话的失败教训和发现. 之前只写不读,
+        # 现在闭合 — _learn 写入的迭代记录下次能检索到.
+        mem_block = self._build_memory_text(query=query)
+        if mem_block:
+            mem_block = f"\n{mem_block}\n"
+        # C2: PM 层 trajectory_match 召回 (极限模式才开)
+        pm_block = self._build_pm_text()
+        if pm_block:
+            pm_block = f"\n{pm_block}\n"
+        # C2: metacog 信号注入 — target_chain (objective 在目标分解树的位置) +
+        # prospective (待执行前瞻意图). 跟 rcb_runner 同源, 之前 autoloop 零接.
+        metacog_block = self._build_metacog_block(include_prospective=True)
+        if metacog_block:
+            metacog_block = f"\n{metacog_block}\n"
+        return kb_block, kg_block, mem_block, pm_block, metacog_block
+
+    def _build_principles_block(self) -> str:
+        # H0: stable_principles 注入 (修 P3 断链 — 之前只进 chat agent system prompt,
+        # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
+        try:
+            from huginn.memory.longterm import load_stable_principles
+
+            _principles = load_stable_principles()[:5]
+        except Exception:  # 防御: 原则加载失败用空表
+            _principles = []
+        principles_block = (
+            "\n".join(f"- {p}" for p in _principles) if _principles else ""
+        )
+        if principles_block:
+            principles_block = (
+                f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
+            )
+        return principles_block
+
+    def _build_visual_block(self) -> str:
+        # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
+        # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
+        # "point while it reasons" 原则, Mirage 效应的文本路径
+        visual_block = getattr(self, "_last_visual_context", "")
+        if visual_block:
+            visual_block = (
+                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
+            )
+        return visual_block
+
+    def _build_math_block(self, context: dict[str, Any]) -> str:
+        ctx_blob = json.dumps(context, ensure_ascii=False).lower()
+        from huginn.autoloop.engine import _MATH_SIGNALS
+
+        return (
+            self._MATH_DEPTH_PROMPT_BLOCK
+            if not getattr(self, "_related_chain", False)
+            and any(s in ctx_blob for s in _MATH_SIGNALS)
+            else ""
+        )
+
+    def _build_exec_block(self) -> str:
+        # MatterChat 启发: 把上轮 execution 结果摘要注入 hypothesis prompt,
+        # 让假设建立在"上轮实际发生了什么"之上, 不只看 workspace 变化.
+        # _last_execution_result 在 _execute 里写入, 之前只 _build_plan_prompt 用.
+        last_exec = getattr(self, "_last_execution_result", None)
+        if last_exec and isinstance(last_exec, dict):
+            _tool = last_exec.get("_tool_name", "unknown")
+            _res = last_exec.get("result", last_exec)
+            _summary = json.dumps(_res, ensure_ascii=False, default=str)[:500]
+            return f"\n### Last Execution Result ({_tool})\n{_summary}\n"
+        return ""
+
+    def _build_frontier_block(self) -> str:
+        # H2: frontier_ranked 注入 — Ising 能量最低 K-子集未测试假设.
+        # 之前 frontier()/frontier_ranked() 0 生产调用, Ising 排序整套死代码.
+        # 现在作为 hint 注入, LLM 可选优先测这些 (refute 过的 parent 的子假设优先,
+        # 同 sibling_group 互斥已避开). ponytail: hint 不强制, LLM 自己决定.
+        try:
+            _frontier = self.hypothesis_graph.frontier_ranked(
+                top_k=3,
+                # settings 可能未初始化 (__new__ 建的空引擎), 容错取默认 0
+                phys_gain=getattr(
+                    getattr(self, "settings", None), "phys_steering_gain", 0.0
+                ),
+            )
+            if not _frontier:
+                return ""
+            _lines = []
+            for nd in _frontier:
+                _stmt = (nd.statement or "")[:100]
+                _lines.append(f"- [{nd.id}] {_stmt}")
+            return (
+                "\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
+                + "\n".join(_lines)
+                + "\n"
+                "Consider testing one of these before generating a new hypothesis.\n"
+            )
+        except Exception:  # 防御: 排序注入失败跳过
+            logger.debug("frontier_ranked injection failed", exc_info=True)
+            return ""
+
+    def _build_failed_proved_blocks(self) -> tuple[str, str]:
+        # P0: FAILED.md / PROVED.md durable state 注入 (chaoxu 启发).
+        # context 压缩后 agent 重读这两个文件, 不重试死路, 不重新证明已过的.
+        # ponytail: 读文件首 N 行避免膨胀, full text 留给 _extract_compact_attachments.
+        failed_block = ""
+        proved_block = ""
+        try:
+            from huginn.autoloop.hypothesis_loop import HypothesisGraph
+
+            _ws = str(self.workspace) if hasattr(self, "workspace") else None
+            _failed_txt = HypothesisGraph.load_failed(_ws)
+            if _failed_txt:
+                _failed_lines = _failed_txt.strip().split("\n")[:40]
+                failed_block = (
+                    "\n### Dead Routes (FAILED.md)\n" + "\n".join(_failed_lines) + "\n"
+                    "Do NOT re-attempt these unless the Reopen-if condition is met.\n"
+                )
+            _proved_txt = HypothesisGraph.load_proved(_ws)
+            if _proved_txt:
+                _proved_lines = _proved_txt.strip().split("\n")[:40]
+                proved_block = (
+                    "\n### Verified Results (PROVED.md)\n"
+                    + "\n".join(_proved_lines)
+                    + "\n"
+                    "These are already established — build on them.\n"
+                )
+        except Exception:  # 防御: 死路/已验证注入失败跳过
+            logger.debug("FAILED/PROVED injection failed", exc_info=True)
+        return failed_block, proved_block
+
+    def _build_imagination_block(self, context: dict[str, Any]) -> str:
+        # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
+        # 考虑反事实假设. 基于 MToM P4 (hybrid ST+TT): 心智模型预测错误时
+        # 切到仿真理论重新建模. 结构切换在数学结构族之间, 不是随机猜.
+        if not self._should_imaginate():
+            return ""
+        imagination_block = self._IMAGINATION_PROMPT_BLOCK
+        # metacog 视觉/时空 sketch→verify 闭环: 不再只注入静态 prompt 文本,
+        # 而是真正调用 mental_imagery 跑一次"空间结构想象"并校验其可验证性,
+        # 把视觉化结果 (晶格/粒子/光谱) 喂回 prompt. 纯 numpy 实现, 无 model
+        # 依赖, 确定性可测; 任何失败静默降级为空块, 不阻塞主循环.
+        _imagery = self._build_metacog_imagery_block(context)
+        if _imagery:
+            imagination_block = imagination_block + _imagery
+        return imagination_block
+
+    def _build_fail_block(self) -> str:
+        # Failure mode feedback (Dream Layer): 上轮 validate 描述的"如何崩溃"
+        # 注入 hypothesis prompt, 让 agent 从崩溃模式中找新发现.
+        # _last_failure_mode 在 _validate 里写入, 空字符串表示无上轮或未解析出.
+        _last_fail = getattr(self, "_last_failure_mode", "")
+        if not _last_fail:
+            return ""
+        return f"\n### Previous Failure Mode\nIf the previous hypothesis is wrong, it would fail in this way:\n{_last_fail}\nConsider whether this failure mode points to a new hypothesis.\n"
+
+    def _build_git_log_block(self) -> str:
+        # Git log: EurekAgent artifact engineering — 让 agent 看到前几轮
+        # 做了什么, 避免重复尝试已失败的方案. 只取 oneline 前 10 条.
+        try:
+            import subprocess as _sp
+
+            _r = _sp.run(
+                ["git", "log", "--oneline", "-10"],
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if _r.returncode == 0 and _r.stdout.strip():
+                return f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
+        except Exception:  # 防御: git 日志构建失败跳过
+            logger.debug("git log block build skipped", exc_info=True)
+        return ""
+
+    def _build_cluster_block(self) -> str:
+        # 分量代表制: 多条独立探索路线时, 给 LLM 看各路线的代表假设,
+        # 防止单分量靠节点数主导综合判断. 只在 >1 分量时注入, advisory.
+        # v11: 升级为 cluster_block — 优先用 cluster_by_dimension 展示维度分布,
+        # 退化为 topology_block (分量代表) 当 dimension 全空.
+        try:
+            _clusters = self.hypothesis_graph.cluster_by_dimension()
+            _known_dims = {k: v for k, v in _clusters.items() if k != "unknown"}
+            if _known_dims and len(_clusters) > 1:
+                lines = []
+                for dim, nodes in list(_known_dims.items())[:5]:
+                    _stmt = nodes[0].statement[:120] if nodes else ""
+                    lines.append(f"  - {dim} ({len(nodes)} 个假设): {_stmt}")
+                return (
+                    "\n### Cluster (advisory)\n"
+                    "当前假设按 dimension 分布:\n"
+                    + "\n".join(lines)
+                    + "\n新假设应优先补未覆盖的 dimension, 避免在已饱和维度堆叠.\n"
+                )
+            return self._build_topology_representatives_block()
+        except Exception:  # 防御: 聚类块构建失败跳过
+            logger.debug("cluster block build skipped", exc_info=True)
+            return ""
+
+    def _build_topology_representatives_block(self) -> str:
+        # 退化路径: dimension 全空时用 topology_block (分量代表)
+        reps = self._metacog_component_representatives()
+        if len(reps) <= 1:
+            return ""
+        lines = []
+        for rid in reps[:5]:
+            try:
+                stmt = self.hypothesis_graph.get(rid).statement
+            except Exception:  # 防御: 代表假设读取失败置空
+                logger.debug("best-effort op failed", exc_info=True)
+                stmt = ""
+            lines.append(f"  - {rid}: {stmt[:120]}")
+        return (
+            f"\n### Topology (advisory)\n"
+            f"当前有 {len(reps)} 条独立探索路线, 代表假设分别是:\n"
+            + "\n".join(lines)
+            + "\n"
+            "综合判断时不要让某条路线靠节点数主导, 注意挑战和重定向.\n"
+        )
+
+    def _build_topo_block(self) -> str:
+        # 拓扑洞察注入 (B/C 路径): 把最近一次同调/拓扑审计 (_metacog_topology_audit
+        # 算出的 sheaf H¹ / simplicial Betti / Hodge verdict / persistence) 回灌 prompt.
+        # 之前 _metacog_last_topology 只算不用 — 现在让 agent 看到"这个假设涉及自洽
+        # 反馈环 (β₁>0)"或"多源证据全局不一致 (H¹≠0)", 从而生成更深的假设.
+        # advisory: 信号不阻断, 只作为结构化提示. 空/未审计时返空串.
+        try:
+            _topo = getattr(self, "_metacog_last_topology", None)
+            if not _topo:
+                return ""
+            _lines = self._topology_insight_lines(_topo)
+            if not _lines:
+                return ""
+            return (
+                "\n### Topology Insights (advisory, from last audit)\n"
+                + "\n".join(_lines[:6])
+                + "\nConsider these structural signals when generating hypotheses.\n"
+            )
+        except Exception:  # 防御: 拓扑洞察注入失败跳过
+            logger.debug(
+                "topology insight injection skipped (non-fatal)", exc_info=True
+            )
+            return ""
+
+    @staticmethod
+    def _topology_insight_lines(_topo: dict[str, Any]) -> list[str]:
+        _lines: list[str] = []
+        _h1 = _topo.get("h1")
+        _betti = _topo.get("betti")
+        _verdict = _topo.get("topo_verdict")
+        _persist = _topo.get("persistence") or {}
+        if _h1 is not None:
+            _h1_note = (
+                "多源证据存在全局不一致 (gluing obstruction). "
+                "新假设应优先解释或消解这个不一致, 而非回避."
+                if _h1
+                else "多源证据全局一致 (无 gluing obstruction)."
+            )
+            _lines.append(f"- Sheaf H¹={_h1}: {_h1_note}")
+        if _betti:
+            _beta0, _beta1 = _betti
+            if _beta1:
+                _lines.append(
+                    f"- Simplicial Betti β₁={_beta1}: 假设图存在自洽反馈环 (拓扑回路). "
+                    "考虑它是否代表一个可复现的自洽机制而非噪声."
+                )
+            _lines.append(
+                f"- Simplicial Betti β₀={_beta0}: 假设空间连通分量数 (探索路线数)."
+            )
+        if _verdict:
+            _lines.append(f"- Hodge topology verdict: {_verdict}")
+        if _persist.get("n_persistent_clusters") and _topo.get("h1") is not None:
+            _lines.append(
+                f"- Persistence: {_persist.get('n_persistent_clusters')} 个多尺度存活 cluster "
+                "(假设空间是否分裂)."
+            )
+        return _lines
+
+    def _build_blind_spot_block(self) -> str:
+        # 盲点注入 (blind_spot_mapper 接入主循环): 独立审计发现盲点只在旧 rcb_step2
+        # 编排层被消费, autoloop 主环零接线 → 孤岛. 这里把 self-model 里"确认失败"
+        # (rate==0 且 n≥3) 的簇当成能力盲点, 用 blind_spot_mapper 的
+        # map_blind_spots_to_hint 生成"绕过"建议, 让 agent 生成假设时主动降级/换
+        # 路线而非硬刚. advisory, not blocking. 与 [CURIOSITY] (<0.4 弱簇, 探索)
+        # 互补: 这里只标 rate==0 的确认盲点 (绕过). data source: get_self_model()
+        # 的 cluster 汇总 (persona 粒度), 非 rcb 的 per-skill SelfModel — ceiling:
+        # 盲点判定粗, workaround 表按 skill 名匹配大概率 miss → 给通用建议.
+        # 升级路径: autoloop 维护 per-skill SelfModel 喂 infer_blind_spots.
+        try:
+            from huginn.metacog.blind_spot_mapper import (
+                BlindSpot,
+                map_blind_spots_to_hint,
+            )
+        except Exception:  # 防御: 盲点映射器不可用跳过
+            logger.debug(
+                "blind_spot_mapper unavailable, skip blind spot block", exc_info=True
+            )
+            return ""
+        _bs_mem = getattr(self, "memory", None)
+        if _bs_mem is None or not hasattr(_bs_mem, "longterm"):
+            return ""
+        try:
+            _bs_sm = _bs_mem.longterm.get_self_model()
+        except Exception:  # 防御: 盲点自模型不可用置空
+            logger.debug("blind spot block: self_model unavailable", exc_info=True)
+            _bs_sm = {}
+        _blind = self._collect_confirmed_blind_spots(_bs_sm or {}, BlindSpot)
+        _bs_hint = map_blind_spots_to_hint(_blind)
+        if not _bs_hint:
+            return ""
+        return (
+            "\n### Blind Spots (advisory, from self-model)\n"
+            "你在这些方向从未成功过, 视为高优先盲点, 生成假设时优先"
+            "绕过/换路线, 而非硬刚:\n" + _bs_hint + "\n"
+        )
+
+    @staticmethod
+    def _collect_confirmed_blind_spots(
+        _bs_sm: dict[str, Any],
+        BlindSpot: Any,
+    ) -> list[Any]:
+        _blind: list[Any] = []
+        for _key, _v in _bs_sm.items():
+            _rate = _v.get("rate")
+            _succ = _v.get("success", 0)
+            _fail = _v.get("failure", 0)
+            _n = _succ + _fail
+            # 确认失败 (从未成功) 且样本足够 → "blind" 档 (高优先盲点)
+            if isinstance(_rate, int | float) and _rate == 0 and _n >= 3:
+                _blind.append(
+                    BlindSpot(
+                        skill=str(_key),
+                        why_blind=(
+                            f"persona '{_v.get('dimension', _key)}' "
+                            f"历史成功率 0 (n={_n})"
+                        ),
+                        priority="high",
+                    )
+                )
+        return _blind
 
     # ── 元认知层辅助 ────────────────────────────────────────────────
     # 懒加载 metacog 组件, 避免循环 import 和测试 mock 复杂度.
@@ -1449,7 +1454,8 @@ Hypothesis:""",
     # 调 _hypothesize 生成解释差异的新 hypothesis. ponytail: hypothesis_generator
     # 不可用 (无 model / _hypothesize 失败) 只 log warn 不 fatal.
     async def trigger_isomorphic_anomaly_hypothesis(
-        self, anomaly_pairs: list[tuple[str, str]],
+        self,
+        anomaly_pairs: list[tuple[str, str]],
     ) -> list[str]:
         """同构不同性异常 → 触发新 hypothesis 生成.
 
@@ -1465,7 +1471,9 @@ Hypothesis:""",
         for h_a, h_b in anomaly_pairs:
             logger.warning(
                 "isomorphic anomaly: structure matches but haptic differs "
-                "(%s vs %s) — triggering new hypothesis", h_a, h_b,
+                "(%s vs %s) — triggering new hypothesis",
+                h_a,
+                h_b,
             )
             ctx = {
                 "summary": (
@@ -1485,7 +1493,10 @@ Hypothesis:""",
             except Exception:  # 防御: 假设生成器不可用仅记录
                 logger.warning(
                     "hypothesis_generator unavailable for anomaly %s/%s, "
-                    "log only (non-fatal)", h_a, h_b, exc_info=True,
+                    "log only (non-fatal)",
+                    h_a,
+                    h_b,
+                    exc_info=True,
                 )
         return generated
 
@@ -1494,7 +1505,8 @@ Hypothesis:""",
     # 生成解释差异的新 hypothesis. ponytail: hypothesis_generator 不可用
     # (无 model / _hypothesize 失败) 只 log warn 不 fatal.
     async def trigger_alignment_surprise_hypothesis(
-        self, surprise_findings: list[tuple[str, float]],
+        self,
+        surprise_findings: list[tuple[str, float]],
     ) -> list[str]:
         """对齐 surprise → 触发新 hypothesis 生成.
 
@@ -1511,7 +1523,8 @@ Hypothesis:""",
             logger.warning(
                 "surprise detected: score=%.2f on %s — "
                 "structure-haptic alignment violated, triggering new hypothesis",
-                score, h_id,
+                score,
+                h_id,
             )
             ctx = {
                 "summary": (
@@ -1533,7 +1546,10 @@ Hypothesis:""",
             except Exception:  # 防御: 假设生成器不可用仅记录
                 logger.warning(
                     "hypothesis_generator unavailable for surprise %s (score=%.2f), "
-                    "log only (non-fatal)", h_id, score, exc_info=True,
+                    "log only (non-fatal)",
+                    h_id,
+                    score,
+                    exc_info=True,
                 )
         return generated
 
@@ -1570,15 +1586,8 @@ Hypothesis:""",
 
             # 从最近一次 LLM 原始输出提取 UNEXPLORED: 块
             # ponytail: 字符串切片, 不上正则. 升级路径: 结构化 schema.
-            unexplored = ""
             raw = getattr(self, "_last_raw_hypothesis", "") or ""
-            if "UNEXPLORED:" in raw:
-                unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
-                # 截到下一个大写标记或结尾, 避免把后续块都吞进来
-                for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
-                    if marker in unexplored:
-                        unexplored = unexplored.split(marker)[0].strip()
-                        break
+            unexplored = _extract_unexplored_declaration(raw)
 
             checklist = auditor.audit(
                 iteration=self._iteration,
@@ -1639,7 +1648,9 @@ Hypothesis:""",
                                 ),
                             )
                     except Exception:  # 防御: 阻塞注册失败忽略
-                        logger.debug("block_registry register skipped (non-fatal)", exc_info=True)
+                        logger.debug(
+                            "block_registry register skipped (non-fatal)", exc_info=True
+                        )
                 if self._speculator_hint:
                     self._speculator_hint = f"{self._speculator_hint}\n{hint}"
                 else:
@@ -1712,3 +1723,197 @@ Hypothesis:""",
                 val = m.group(1).split("\n")[0].strip().rstrip(".。")
                 result[key] = val[:300]  # 长度限制, 防异常输入
         return result
+
+
+# ── _apply_block_patches / _trim_to_budget 的模块级辅助 ──────────────────
+
+
+def _track_applied_patch_ids(host: Any, phase: str, store: Any) -> None:
+    """重算 by_block, 记录实际应用的 patch ids 供 _learn 更新 Beta."""
+    patches = [
+        p
+        for p in store.list_patches(phase=phase)
+        if p.alpha / max(1, p.alpha + p.beta) >= 0.5
+    ]
+    by_block: dict[str, Any] = {}
+    for p in patches:
+        cur = by_block.get(p.block_name)
+        if cur is None or (
+            p.alpha / max(1, p.alpha + p.beta)
+            > cur.alpha / max(1, cur.alpha + cur.beta)
+        ):
+            by_block[p.block_name] = p
+    applied_ids = [p.id for p in by_block.values()]
+    if applied_ids:
+        host._last_applied_patches = (phase, applied_ids)
+
+
+def _compress_low_priority_blocks(
+    host: Any,
+    kept: list[tuple[str, str]],
+    total: int,
+    budget: int,
+    level: int,
+) -> int:
+    """从最低优先级开始压缩非 body block, 返回压缩后的总长度."""
+    for i in range(len(kept) - 1, -1, -1):
+        if total <= budget:
+            break
+        name, text = kept[i]
+        if name == "body":  # body 永远不压缩
+            continue
+        compressed = EngineObserve._compress_block(name, text, level)
+        total -= len(text) - len(compressed)
+        kept[i] = (name, compressed)
+    return total
+
+
+def _drop_low_priority_blocks(
+    kept: list[tuple[str, str]], total: int, budget: int
+) -> None:
+    """从最低优先级开始清空非保护 block (原地修改 kept)."""
+    for i in range(len(kept) - 1, -1, -1):
+        if total <= budget:
+            break
+        name, text = kept[i]
+        if name in ("body", "skill", "composite"):
+            continue
+        total -= len(text)
+        kept[i] = (name, "")
+
+
+# ── _build_pmk_block 的模块级辅助 ─────────────────────────────────────────
+
+
+def _gather_pmk_state(host: Any, build_pmk_state: Any) -> tuple[Any, Any, Any, dict]:
+    """收集 persona/eval/kb, 构建 PMK state."""
+    # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
+    persona_obj = None
+    with contextlib.suppress(Exception):
+        persona_obj = host._get_persona_manager().get("default")
+
+    last_eval = host._evals_history[-1] if host._evals_history else None
+    kb = host._get_kb()
+    since = getattr(host, "_run_start_iso", None)
+
+    pmk_state = build_pmk_state(
+        persona_obj,
+        last_eval,
+        kb,
+        since=since,
+        mem_mgr=getattr(host, "memory", None),
+        timeseries_ctx=host._format_timeseries_context() or None,
+    )
+    return persona_obj, last_eval, kb, pmk_state
+
+
+def _apply_pmk_conflict_side_effects(
+    host: Any, pmk_state: dict, reason: str, cur_iter: int
+) -> None:
+    """INCONSISTENT 时追加 abductive hint + 写回 episodic shard + 触发 evolution."""
+    conflict_hint = f"[PMK CONFLICT] {reason[:200]}"
+    host._speculator_hint = (
+        (host._speculator_hint + f"\n{conflict_hint}\n").strip()
+        if host._speculator_hint
+        else f"{conflict_hint}\n"
+    )
+    logger.info("PMK conflict detected: %s", reason[:100])
+    host._write_pmk_conflict_to_episodic(pmk_state, reason)
+    # 桥 B: PMK 冲突 → evolution 触发. 把冲突作为一种"认知失败"
+    # 喂给 evolution logger, 让 get_failure_patterns 能提取 PMK
+    # 冲突模式 (≥2 次同类冲突就生成 heuristic 规则). 失败非致命,
+    # 不破坏现有 pause 路径. ponytail: 复用 _get_evolution 懒加载.
+    try:
+        _evo = host._get_evolution()
+        _evo.logger.log_tool_call(
+            session_id=f"pmk_{cur_iter}",
+            tool_name="pmk_conflict",
+            tool_input={
+                "reason": reason[:200],
+                "pmk_state": {k: v[:100] for k, v in pmk_state.items()},
+            },
+            result=None,
+            error=reason[:300],
+        )
+        _evo.evolve_from_failures()
+    except Exception:  # 防御: PMK 演化桥失败忽略
+        logger.debug(
+            "PMK → evolution bridge failed (non-fatal)",
+            exc_info=True,
+        )
+
+
+def _format_pmk_text(
+    host: Any,
+    persona_obj: Any,
+    last_eval: Any,
+    kb: Any,
+    pmk_state: dict,
+    is_inconsistent: bool,
+) -> str:
+    """格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
+
+    build_pmk_text 不读 self 实例状态, 用 __new__ 绕过 __init__ (跟
+    selfcheck 同模式). ponytail: build_pmk_text 内部再查一次一致性
+    (只 3 路, 不含 timeseries), 标签可能跟上面的 is_inconsistent 略有
+    出入 — 接受, 不重写 build_pmk_text. 升级路径: 给它加 timeseries 参数.
+    """
+    try:
+        from huginn.context_builder import ContextBuilder
+
+        ctx = ContextBuilder.__new__(ContextBuilder)
+        pmk_text = ctx.build_pmk_text(
+            persona=persona_obj,
+            last_step_evaluation=last_eval,
+            kb=kb,
+        )
+        if not pmk_text:
+            pmk_text = host._format_pmk_fallback(pmk_state, is_inconsistent)
+    except Exception:  # 防御: PMK 文本构建失败用回退
+        pmk_text = host._format_pmk_fallback(pmk_state, is_inconsistent)
+    return pmk_text
+
+
+# ── _metacog_check_completion 的模块级辅助 ────────────────────────────────
+
+
+def _extract_unexplored_declaration(raw: str) -> str:
+    """从 LLM 原始输出提取 UNEXPLORED: 块 (到下一个大写标记或结尾)."""
+    if "UNEXPLORED:" not in raw:
+        return ""
+    unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
+    # 截到下一个大写标记或结尾, 避免把后续块都吞进来
+    for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
+        if marker in unexplored:
+            unexplored = unexplored.split(marker)[0].strip()
+            break
+    return unexplored
+
+
+# ── _build_metacog_imagery_block 的模块级辅助 ─────────────────────────────
+
+
+def _format_imagery_block(out: dict, verify: dict) -> str:
+    """把 sketch→verify 结果格式化成 prompt block (无有效 verify 值返空)."""
+    _v = {
+        k: EngineObserve._imagery_value(v)
+        for k, v in verify.items()
+        if not k.startswith("error")
+    }
+    _v_lines = "".join(f"    {k}: {val}\n" for k, val in _v.items() if val is not None)
+    if not _v_lines:
+        return ""
+    _verified = bool(verify.get("verified"))
+    _status = (
+        "passed, sketch is internally consistent"
+        if _verified
+        else "returned a sketch (verify advisory)"
+    )
+    return (
+        "\n### Spatiotemporal Sketch (mental_imagery)\n"
+        "A synthetic spatial structure was imagined and verified "
+        "(numpy synthesis, advisory — not from the real environment):\n"
+        f"  spec: {out.get('spec', '')}\n"
+        f"  verify: {_status}\n"
+        f"{_v_lines}"
+    )

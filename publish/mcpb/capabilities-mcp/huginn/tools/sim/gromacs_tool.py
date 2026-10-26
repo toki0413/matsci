@@ -27,7 +27,8 @@ class GromacsToolInput(BaseModel):
     working_dir: str | None = Field(default=None)
     # md_run / energy_minimize params
     tpr_file: str | None = Field(
-        default=None, description="Path to .tpr run control file. Required for md_run/energy_minimize."
+        default=None,
+        description="Path to .tpr run control file. Required for md_run/energy_minimize.",
     )
     nsteps: int = Field(default=5000, ge=1, description="Number of simulation steps.")
     # analyze_traj params
@@ -44,6 +45,150 @@ class GromacsToolInput(BaseModel):
 
 def _gmx_available() -> bool:
     return shutil.which("gmx") is not None
+
+
+def _tpr_missing_result(input_data: GromacsToolInput) -> ToolResult:
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"TPR file not found: {input_data.tpr_file}",
+    )
+
+
+def _run_gmx_md(sandbox, tpr: Path, nsteps: int, work_dir: Path):
+    return sandbox.run(
+        [
+            "gmx",
+            "mdrun",
+            "-deffnm",
+            str(tpr.with_suffix("")),
+            "-nsteps",
+            str(nsteps),
+        ],
+        cwd=str(work_dir),
+        capture_output=True,
+        text=True,
+        timeout=3600.0,
+    )
+
+
+def _attach_physics_audit(data, action: str, input_data: GromacsToolInput) -> None:
+    # Physics audit — temperature spikes, LINCS warnings, energy drift, etc.
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit(
+            "gromacs_tool", action, data, input_data.model_dump()
+        )
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _md_run_skipped(tpr: Path) -> ToolResult:
+    return ToolResult(
+        data={
+            "action": "md_run",
+            "status": "skipped",
+            "tpr_file": str(tpr),
+            "message": "gmx not installed. Run with: gmx mdrun -deffnm " + tpr.stem,
+        },
+        success=True,
+    )
+
+
+def _md_run_data(result, input_data: GromacsToolInput, success: bool) -> dict[str, Any]:
+    return {
+        "action": "md_run",
+        "returncode": result.returncode,
+        "nsteps": input_data.nsteps,
+        "stdout": result.stdout[-2000:] if result.stdout else "",
+        "stderr": result.stderr[-2000:] if result.stderr else "",
+        "message": (
+            "MD run completed."
+            if success
+            else f"MD run failed (exit {result.returncode})."
+        ),
+    }
+
+
+def _em_skipped(tpr: Path) -> ToolResult:
+    return ToolResult(
+        data={
+            "action": "energy_minimize",
+            "status": "skipped",
+            "tpr_file": str(tpr),
+            "message": "gmx not installed.",
+        },
+        success=True,
+    )
+
+
+def _em_data(result, input_data: GromacsToolInput, success: bool) -> dict[str, Any]:
+    return {
+        "action": "energy_minimize",
+        "returncode": result.returncode,
+        "nsteps": input_data.nsteps,
+        "stdout": result.stdout[-2000:] if result.stdout else "",
+        "stderr": result.stderr[-2000:] if result.stderr else "",
+        "message": (
+            "Energy minimization completed."
+            if success
+            else f"EM failed (exit {result.returncode})."
+        ),
+    }
+
+
+def _analyze_skipped() -> ToolResult:
+    return ToolResult(
+        data={
+            "action": "analyze_traj",
+            "status": "skipped",
+            "message": "gmx not installed.",
+        },
+        success=True,
+    )
+
+
+def _traj_command(analysis_type: str, traj: Path) -> list[str] | None:
+    # gmx rms/rdf/gyrate 都需要交互式选组, 用 echo 管道自动选 Backbone
+    cmd_map = {
+        "rms": ["gmx", "rms", "-s", str(traj), "-f", str(traj), "-o", "rms.xvg"],
+        "rmsd": ["gmx", "rms", "-s", str(traj), "-f", str(traj), "-o", "rmsd.xvg"],
+        "rdf": ["gmx", "rdf", "-f", str(traj), "-o", "rdf.xvg"],
+        "gyrate": ["gmx", "gyrate", "-f", str(traj), "-o", "gyrate.xvg"],
+    }
+    return cmd_map.get(analysis_type)
+
+
+def _run_gmx_analysis(sandbox, cmd: list[str], work_dir: Path):
+    # 自动选组 0 (System/Backbone)
+    return sandbox.run(
+        cmd,
+        cwd=str(work_dir),
+        capture_output=True,
+        text=True,
+        timeout=300.0,
+        input="0\n0\n",
+    )
+
+
+def _analysis_data(
+    result, input_data: GromacsToolInput, output_file: Path, success: bool
+) -> dict[str, Any]:
+    return {
+        "action": "analyze_traj",
+        "analysis_type": input_data.analysis_type,
+        "returncode": result.returncode,
+        "output_file": str(output_file) if output_file.exists() else None,
+        "stdout": result.stdout[-2000:] if result.stdout else "",
+        "message": (
+            f"{input_data.analysis_type} analysis completed."
+            if success
+            else f"Analysis failed (exit {result.returncode})."
+        ),
+    }
 
 
 class GromacsTool(HuginnTool):
@@ -100,68 +245,25 @@ class GromacsTool(HuginnTool):
             p = work_dir / p
         return p if p.exists() else None
 
-    def _md_run(
-        self, input_data: GromacsToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _md_run(self, input_data: GromacsToolInput, work_dir: Path) -> ToolResult:
         tpr = self._resolve_file(input_data.tpr_file, work_dir)
         if tpr is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"TPR file not found: {input_data.tpr_file}",
-            )
+            return _tpr_missing_result(input_data)
 
         if not _gmx_available():
-            return ToolResult(
-                data={
-                    "action": "md_run",
-                    "status": "skipped",
-                    "tpr_file": str(tpr),
-                    "message": "gmx not installed. Run with: gmx mdrun -deffnm " + tpr.stem,
-                },
-                success=True,
-            )
+            return _md_run_skipped(tpr)
 
         try:
-            result = self.sandbox.run(
-                [
-                    "gmx", "mdrun",
-                    "-deffnm", str(tpr.with_suffix("")),
-                    "-nsteps", str(input_data.nsteps),
-                ],
-                cwd=str(work_dir),
-                capture_output=True,
-                text=True,
-                timeout=3600.0,
-            )
+            result = _run_gmx_md(self.sandbox, tpr, input_data.nsteps, work_dir)
             success = result.returncode == 0
-            data = {
-                "action": "md_run",
-                "returncode": result.returncode,
-                "nsteps": input_data.nsteps,
-                "stdout": result.stdout[-2000:] if result.stdout else "",
-                "stderr": result.stderr[-2000:] if result.stderr else "",
-                "message": (
-                    "MD run completed." if success
-                    else f"MD run failed (exit {result.returncode})."
-                ),
-            }
+            data = _md_run_data(result, input_data, success)
 
             # Pull thermo data and warnings from the GROMACS .log file
             log_path = tpr.with_suffix(".log")
             data["md_log_data"] = self._parse_md_log(log_path)
 
             # Physics audit — temperature spikes, LINCS warnings, energy drift, etc.
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "gromacs_tool", "md_run", data, input_data.model_dump()
-                )
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_physics_audit(data, "md_run", input_data)
 
             return ToolResult(
                 data=data,
@@ -182,79 +284,40 @@ class GromacsTool(HuginnTool):
     ) -> ToolResult:
         tpr = self._resolve_file(input_data.tpr_file, work_dir)
         if tpr is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"TPR file not found: {input_data.tpr_file}",
-            )
+            return _tpr_missing_result(input_data)
 
         if not _gmx_available():
-            return ToolResult(
-                data={
-                    "action": "energy_minimize",
-                    "status": "skipped",
-                    "tpr_file": str(tpr),
-                    "message": "gmx not installed.",
-                },
-                success=True,
-            )
+            return _em_skipped(tpr)
 
         try:
-            result = self.sandbox.run(
-                [
-                    "gmx", "mdrun",
-                    "-deffnm", str(tpr.with_suffix("")),
-                    "-nsteps", str(input_data.nsteps),
-                ],
-                cwd=str(work_dir),
-                capture_output=True,
-                text=True,
-                timeout=3600.0,
-            )
+            result = _run_gmx_md(self.sandbox, tpr, input_data.nsteps, work_dir)
             success = result.returncode == 0
-            data = {
-                "action": "energy_minimize",
-                "returncode": result.returncode,
-                "nsteps": input_data.nsteps,
-                "stdout": result.stdout[-2000:] if result.stdout else "",
-                "stderr": result.stderr[-2000:] if result.stderr else "",
-                "message": (
-                    "Energy minimization completed." if success
-                    else f"EM failed (exit {result.returncode})."
-                ),
-            }
+            data = _em_data(result, input_data, success)
 
             # Log parsing + physics audit (catch NaN/Inf, warnings even for EM)
             log_path = tpr.with_suffix(".log")
             data["md_log_data"] = self._parse_md_log(log_path)
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "gromacs_tool", "energy_minimize", data, input_data.model_dump()
-                )
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_physics_audit(data, "energy_minimize", input_data)
 
             return ToolResult(
                 data=data,
                 success=success,
-                error=None if success else f"gmx mdrun (EM) failed: {result.stderr[:300]}",
+                error=None
+                if success
+                else f"gmx mdrun (EM) failed: {result.stderr[:300]}",
             )
         except SandboxError as e:
             return ToolResult(
-                data=None, success=False, error=f"Energy minimization blocked by sandbox: {e}"
+                data=None,
+                success=False,
+                error=f"Energy minimization blocked by sandbox: {e}",
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
                 data=None, success=False, error="Energy minimization timed out."
             )
 
-    def _analyze_traj(
-        self, input_data: GromacsToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _analyze_traj(self, input_data: GromacsToolInput, work_dir: Path) -> ToolResult:
         traj = self._resolve_file(input_data.trajectory_file, work_dir)
         if traj is None:
             return ToolResult(
@@ -264,59 +327,32 @@ class GromacsTool(HuginnTool):
             )
 
         if not _gmx_available():
-            return ToolResult(
-                data={
-                    "action": "analyze_traj",
-                    "status": "skipped",
-                    "message": "gmx not installed.",
-                },
-                success=True,
-            )
+            return _analyze_skipped()
 
-        # gmx rms/rdf/gyrate 都需要交互式选组, 用 echo 管道自动选 Backbone
-        cmd_map = {
-            "rms": ["gmx", "rms", "-s", str(traj), "-f", str(traj), "-o", "rms.xvg"],
-            "rmsd": ["gmx", "rms", "-s", str(traj), "-f", str(traj), "-o", "rmsd.xvg"],
-            "rdf": ["gmx", "rdf", "-f", str(traj), "-o", "rdf.xvg"],
-            "gyrate": ["gmx", "gyrate", "-f", str(traj), "-o", "gyrate.xvg"],
-        }
-        cmd = cmd_map.get(input_data.analysis_type)
+        cmd = _traj_command(input_data.analysis_type, traj)
         if cmd is None:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"Unknown analysis type: {input_data.analysis_type}",
             )
 
         try:
-            # 自动选组 0 (System/Backbone)
-            result = self.sandbox.run(
-                cmd,
-                cwd=str(work_dir),
-                capture_output=True,
-                text=True,
-                timeout=300.0,
-                input="0\n0\n",
-            )
+            result = _run_gmx_analysis(self.sandbox, cmd, work_dir)
             success = result.returncode == 0
             output_file = work_dir / f"{input_data.analysis_type}.xvg"
             return ToolResult(
-                data={
-                    "action": "analyze_traj",
-                    "analysis_type": input_data.analysis_type,
-                    "returncode": result.returncode,
-                    "output_file": str(output_file) if output_file.exists() else None,
-                    "stdout": result.stdout[-2000:] if result.stdout else "",
-                    "message": (
-                        f"{input_data.analysis_type} analysis completed." if success
-                        else f"Analysis failed (exit {result.returncode})."
-                    ),
-                },
+                data=_analysis_data(result, input_data, output_file, success),
                 success=success,
-                error=None if success else f"gmx {input_data.analysis_type} failed: {result.stderr[:300]}",
+                error=None
+                if success
+                else f"gmx {input_data.analysis_type} failed: {result.stderr[:300]}",
             )
         except SandboxError as e:
             return ToolResult(
-                data=None, success=False, error=f"Trajectory analysis blocked by sandbox: {e}"
+                data=None,
+                success=False,
+                error=f"Trajectory analysis blocked by sandbox: {e}",
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -350,8 +386,9 @@ class GromacsTool(HuginnTool):
         data["shake_warnings"] = content.count("SHAKE")
         # "neighbor list" appears in routine header text too, so only count
         # lines that look like actual performance warnings
-        nl_lines = re.findall(r"neighbor list.*exceed|update.*timesteps",
-                              content, re.IGNORECASE)
+        nl_lines = re.findall(
+            r"neighbor list.*exceed|update.*timesteps", content, re.IGNORECASE
+        )
         data["neighbor_list_warnings"] = len(nl_lines)
 
         if re.search(r"\bnan\b|\binf\b", content, re.IGNORECASE):

@@ -3,6 +3,7 @@
 empirical (LJ) 是内置兜底, ml_potential 和 vasp 通过 ToolRegistry 互调,
 不硬 import, 没注册就退到 LJ.
 """
+
 from __future__ import annotations
 
 import math
@@ -30,9 +31,7 @@ async def eval_images(
     energies: list[float] = []
     forces: list[np.ndarray] = []
     for img in images:
-        e, f = await eval_single(
-            img, atomic_numbers, cell, args, context
-        )
+        e, f = await eval_single(img, atomic_numbers, cell, args, context)
         energies.append(e)
         forces.append(f)
     return energies, forces
@@ -47,17 +46,13 @@ async def eval_single(
 ) -> tuple[float, np.ndarray]:
     """单点能量 + 力评估, 按能量评估后端路由."""
     if args.energy_evaluator == "empirical":
-        return eval_lj(
-            positions, atomic_numbers, args.lj_epsilon, args.lj_sigma
-        )
+        return eval_lj(positions, atomic_numbers, args.lj_epsilon, args.lj_sigma)
     if args.energy_evaluator == "ml_potential":
         return await eval_via_ml_potential(
             positions, atomic_numbers, cell, args, context
         )
     if args.energy_evaluator == "vasp":
-        return await eval_via_vasp(
-            positions, atomic_numbers, cell, args, context
-        )
+        return await eval_via_vasp(positions, atomic_numbers, cell, args, context)
     raise ValueError(f"未知 energy_evaluator: {args.energy_evaluator}")
 
 
@@ -118,9 +113,7 @@ async def eval_via_ml_potential(
 
     if ml_tool is None:
         # ML 势没注册, 退到 LJ 并标记
-        return eval_lj(
-            positions, atomic_numbers, args.lj_epsilon, args.lj_sigma
-        )
+        return eval_lj(positions, atomic_numbers, args.lj_epsilon, args.lj_sigma)
 
     # 写临时 XYZ (ml_potential_tool 用 ASE 读, XYZ 最通用)
     tmp_dir = tempfile.mkdtemp(prefix="neb_eval_")
@@ -135,9 +128,7 @@ async def eval_via_ml_potential(
     )
     result = await ml_tool.call(ml_input, context)
     if not result.success or not result.data:
-        raise RuntimeError(
-            f"ml_potential_tool 评估失败: {result.error}"
-        )
+        raise RuntimeError(f"ml_potential_tool 评估失败: {result.error}")
 
     energy = float(result.data.get("energy", 0.0))
     forces_raw = result.data.get("forces") or []
@@ -162,35 +153,16 @@ async def eval_via_vasp(
     没传 vasp_working_dir 就报错.
     """
     if not args.vasp_working_dir:
-        raise RuntimeError(
-            "vasp 评估器需要 vasp_working_dir (含 INCAR/POTCAR/KPOINTS)"
-        )
+        raise RuntimeError("vasp 评估器需要 vasp_working_dir (含 INCAR/POTCAR/KPOINTS)")
 
-    try:
-        from huginn.tools.registry import ToolRegistry
-
-        vasp_tool = ToolRegistry.get("vasp_tool")
-    except Exception:
-        vasp_tool = None
+    vasp_tool = _resolve_vasp_tool()
 
     if vasp_tool is None:
-        return eval_lj(
-            positions, atomic_numbers, args.lj_epsilon, args.lj_sigma
-        )
+        return eval_lj(positions, atomic_numbers, args.lj_epsilon, args.lj_sigma)
 
-    import shutil
-    from pathlib import Path
-
-    src = Path(args.vasp_working_dir)
-    tmp_dir = tempfile.mkdtemp(prefix="neb_vasp_")
-    dst = Path(tmp_dir)
-    # 拷模板文件
-    for fname in ("INCAR", "POTCAR", "KPOINTS"):
-        f = src / fname
-        if f.exists():
-            shutil.copy2(f, dst / fname)
-    # 写 POSCAR
-    write_poscar(dst / "POSCAR", atomic_numbers, positions, cell)
+    tmp_dir = _prepare_vasp_workdir(
+        args.vasp_working_dir, atomic_numbers, positions, cell
+    )
 
     vasp_input = vasp_tool.input_schema(
         action="scf",
@@ -200,7 +172,44 @@ async def eval_via_vasp(
     if not result.success or not result.data:
         raise RuntimeError(f"vasp_tool.scf 评估失败: {result.error}")
 
-    data = result.data
+    return _parse_vasp_result(result.data, positions)
+
+
+def _resolve_vasp_tool():
+    """取注册的 vasp_tool, 没注册或导入失败返回 None."""
+    try:
+        from huginn.tools.registry import ToolRegistry
+
+        return ToolRegistry.get("vasp_tool")
+    except Exception:
+        return None
+
+
+def _prepare_vasp_workdir(
+    src_dir: str,
+    atomic_numbers: list[int],
+    positions: np.ndarray,
+    cell: np.ndarray | None,
+) -> str:
+    """拷模板文件到临时目录并写 POSCAR, 返回临时目录路径."""
+    import shutil
+    from pathlib import Path
+
+    src = Path(src_dir)
+    tmp_dir = tempfile.mkdtemp(prefix="neb_vasp_")
+    dst = Path(tmp_dir)
+    # 拷模板文件
+    for fname in ("INCAR", "POTCAR", "KPOINTS"):
+        f = src / fname
+        if f.exists():
+            shutil.copy2(f, dst / fname)
+    # 写 POSCAR
+    write_poscar(dst / "POSCAR", atomic_numbers, positions, cell)
+    return tmp_dir
+
+
+def _parse_vasp_result(data: dict, positions: np.ndarray) -> tuple[float, np.ndarray]:
+    """从 vasp_tool.scf 返回数据解析能量与力."""
     energy = float(data.get("energy") or 0.0)
     # 解析力 — vasp_tool 在 parsed.forces 里返回 list of {force: [...]}
     forces = np.zeros_like(positions)

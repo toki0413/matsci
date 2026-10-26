@@ -4,6 +4,7 @@ tda_tool 注册时就调它算 Betti 数, 没注册就退到内置 basin 分析.
 网格极值 (find_local_minima/saddles/extrema/count_connected_basins)
 是 basin_analysis 的零件, 也可被 pes_scan 直接用.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -32,19 +33,7 @@ async def topology_via_tda(
         return basin_analysis(pes, energies)
 
     # 把网格能量展平成 (structures, energies)
-    grid_axes = pes.get("grid_axes") or []
-    scan_coords = pes.get("scan_coords") or []
-    n_dims = pes.get("n_dims", 1)
-
-    # 构造采样点坐标 (供 tda 算 spatial threshold)
-    if grid_axes and scan_coords:
-        mesh = np.meshgrid(*[np.asarray(a) for a in grid_axes[:n_dims]], indexing="ij")
-        pts = np.stack([m.ravel() for m in mesh], axis=1)
-        # 把扫描坐标扩展成 3N 维结构空间 (其他原子位置不动, 只在 scan 坐标上动)
-        # 这里简化: 直接用扫描坐标作为 structures 输入给 tda
-        structures = pts.tolist()
-    else:
-        structures = [[float(i)] for i in range(energies.size)]
+    structures = _build_tda_structures(pes, energies)
 
     flat_energies = energies.ravel().tolist()
 
@@ -58,34 +47,53 @@ async def topology_via_tda(
         if not result.success:
             return basin_analysis(pes, energies)
 
-        data = result.data or {}
-        return ToolResult(
-            data={
-                "action": "landscape_topology",
-                "method": "tda",
-                "betti_numbers": {
-                    "betti_0": int(data.get("n_basins", 0)),
-                    "betti_1": int(data.get("n_pathways", 0)),
-                },
-                "persistence_diagram": data.get("persistence_diagram", []),
-                "n_minima": int(data.get("n_basins", 0)),
-                "n_saddles": int(data.get("n_pathways", 0)),
-                "connectivity": float(data.get("connectivity", 0.0)),
-                "energy_threshold": float(data.get("energy_threshold", 0.0)),
-                "spatial_threshold": float(data.get("spatial_threshold", 0.0)),
-                "n_structures": int(data.get("n_structures", 0)),
-                "n_edges": int(data.get("n_edges", 0)),
-            },
-            success=True,
-        )
+        return _tda_result(result.data or {})
     except Exception:
         # tda 调用挂了, 退到内置 basin 分析
         return basin_analysis(pes, energies)
 
 
-def basin_analysis(
-    pes: dict, energies: np.ndarray
-) -> ToolResult:
+def _build_tda_structures(pes: dict, energies: np.ndarray) -> list:
+    """构造采样点坐标 (供 tda 算 spatial threshold)."""
+    grid_axes = pes.get("grid_axes") or []
+    scan_coords = pes.get("scan_coords") or []
+    n_dims = pes.get("n_dims", 1)
+
+    if grid_axes and scan_coords:
+        mesh = np.meshgrid(*[np.asarray(a) for a in grid_axes[:n_dims]], indexing="ij")
+        pts = np.stack([m.ravel() for m in mesh], axis=1)
+        # 把扫描坐标扩展成 3N 维结构空间 (其他原子位置不动, 只在 scan 坐标上动)
+        # 这里简化: 直接用扫描坐标作为 structures 输入给 tda
+        structures = pts.tolist()
+    else:
+        structures = [[float(i)] for i in range(energies.size)]
+    return structures
+
+
+def _tda_result(data: dict) -> ToolResult:
+    """把 tda 返回的 data 包成 ToolResult."""
+    return ToolResult(
+        data={
+            "action": "landscape_topology",
+            "method": "tda",
+            "betti_numbers": {
+                "betti_0": int(data.get("n_basins", 0)),
+                "betti_1": int(data.get("n_pathways", 0)),
+            },
+            "persistence_diagram": data.get("persistence_diagram", []),
+            "n_minima": int(data.get("n_basins", 0)),
+            "n_saddles": int(data.get("n_pathways", 0)),
+            "connectivity": float(data.get("connectivity", 0.0)),
+            "energy_threshold": float(data.get("energy_threshold", 0.0)),
+            "spatial_threshold": float(data.get("spatial_threshold", 0.0)),
+            "n_structures": int(data.get("n_structures", 0)),
+            "n_edges": int(data.get("n_edges", 0)),
+        },
+        success=True,
+    )
+
+
+def basin_analysis(pes: dict, energies: np.ndarray) -> ToolResult:
     """简易 basin 分析: 按能量阈值分层, 数极小和鞍点.
 
     这里用网格上的局部极值 + 阈值连通性近似 Betti 数, 不依赖 scipy.
@@ -119,9 +127,7 @@ def basin_analysis(
             "persistence_diagram": [],
             "n_minima": int(len(minima_pts)),
             "n_saddles": int(n_saddles),
-            "connectivity": float(
-                n_low / max(1, flat.size)
-            ),
+            "connectivity": float(n_low / max(1, flat.size)),
             "energy_threshold": float(e_thr),
             "minima": minima_pts,
             "saddle_points": saddle_pts,
@@ -143,8 +149,8 @@ def find_local_minima(grid: np.ndarray) -> list[dict]:
                 nb = list(idx)
                 nb[ax] += off
                 if 0 <= nb[ax] < grid.shape[ax] and grid[tuple(nb)] < val:
-                        is_min = False
-                        break
+                    is_min = False
+                    break
             if not is_min:
                 break
         if is_min:
@@ -170,9 +176,7 @@ def find_local_saddles(grid: np.ndarray) -> list[dict]:
                 min_x = v < grid[i - 1, j] and v < grid[i + 1, j]
                 max_y = v > grid[i, j - 1] and v > grid[i, j + 1]
                 if (max_x and min_y) or (min_x and max_y):
-                    saddles.append(
-                        {"index": [i, j], "energy": float(v)}
-                    )
+                    saddles.append({"index": [i, j], "energy": float(v)})
     return saddles
 
 
@@ -205,30 +209,35 @@ def find_extrema(
     return minima, saddles
 
 
-def count_connected_basins(
-    grid: np.ndarray, threshold: float
-) -> int:
+def _neighbors_in_mask(cur: tuple, grid_shape: tuple, mask: np.ndarray) -> list[tuple]:
+    """返回 cur 的各轴 ±1 邻域里落在 mask 内的点."""
+    out: list[tuple] = []
+    for ax in range(len(grid_shape)):
+        for off in (-1, 1):
+            nb = list(cur)
+            nb[ax] += off
+            if 0 <= nb[ax] < grid_shape[ax] and mask[tuple(nb)]:
+                out.append(tuple(nb))
+    return out
+
+
+def count_connected_basins(grid: np.ndarray, threshold: float) -> int:
     """数低于 threshold 的网格点的连通分量数 (4/6 邻域, BFS)."""
     mask = grid <= threshold
     visited = np.zeros_like(mask, dtype=bool)
     n_comp = 0
     for start in np.ndindex(*grid.shape):
-        if mask[start] and not visited[start]:
-            # BFS
-            queue = [start]
-            visited[start] = True
-            while queue:
-                cur = queue.pop()
-                for ax in range(grid.ndim):
-                    for off in (-1, 1):
-                        nb = list(cur)
-                        nb[ax] += off
-                        if (
-                            0 <= nb[ax] < grid.shape[ax]
-                            and mask[tuple(nb)]
-                            and not visited[tuple(nb)]
-                        ):
-                            visited[tuple(nb)] = True
-                            queue.append(tuple(nb))
-            n_comp += 1
+        if not (mask[start] and not visited[start]):
+            continue
+        # BFS
+        queue = [start]
+        visited[start] = True
+        while queue:
+            cur = queue.pop()
+            for nb in _neighbors_in_mask(cur, grid.shape, mask):
+                if visited[nb]:
+                    continue
+                visited[nb] = True
+                queue.append(nb)
+        n_comp += 1
     return n_comp

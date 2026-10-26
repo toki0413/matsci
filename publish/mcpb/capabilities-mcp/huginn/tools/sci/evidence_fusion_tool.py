@@ -47,6 +47,32 @@ class MassItem(BaseModel):
     mass: float = Field(..., ge=0.0, le=1.0)
 
 
+def _collect_source_weights(
+    evidence: list[EvidenceItem],
+) -> tuple[dict[str, list[EvidenceItem]], dict[str, float]]:
+    """按来源分组 evidence, 并收集每来源的权重."""
+    by_source: dict[str, list[EvidenceItem]] = {}
+    weights: dict[str, float] = {}
+    for ev in evidence:
+        by_source.setdefault(ev.source, []).append(ev)
+        if ev.weight is not None and ev.source not in weights:
+            weights[ev.source] = ev.weight
+    # No weight supplied == fully trusted.
+    for s in by_source:
+        weights.setdefault(s, 1.0)
+    return by_source, weights
+
+
+def _conflict_recommendation(suspect: tuple[str, float]) -> str:
+    if suspect[1] < 1e-6:
+        return "No significant conflict detected — all sources are consistent."
+    return (
+        f"Source '{suspect[0]}' has the highest average pairwise conflict "
+        f"({suspect[1]}); it may be the least reliable. Consider "
+        "discounting it via weighted_combine."
+    )
+
+
 class EvidenceFusionToolInput(BaseModel):
     action: Literal[
         "combine",
@@ -269,9 +295,7 @@ class EvidenceFusionTool(HuginnTool):
         return {h: round(p, 6) for h, p in probs.items()}
 
     @staticmethod
-    def _interpret(
-        conflict: float, plaus: dict[str, dict[str, Any]]
-    ) -> str:
+    def _interpret(conflict: float, plaus: dict[str, dict[str, Any]]) -> str:
         if conflict >= 1.0 - _MASS_EPS:
             return (
                 "Total conflict (K=1): sources are mutually exclusive, so the "
@@ -350,34 +374,10 @@ class EvidenceFusionTool(HuginnTool):
                 success=False,
                 error="No hypotheses found in evidence — frame of discernment is empty.",
             )
-        by_source: dict[str, list[EvidenceItem]] = {}
-        weights: dict[str, float] = {}
-        for ev in evidence:
-            by_source.setdefault(ev.source, []).append(ev)
-            if ev.weight is not None and ev.source not in weights:
-                weights[ev.source] = ev.weight
-        # No weight supplied == fully trusted.
-        for s in by_source:
-            weights.setdefault(s, 1.0)
+        by_source, weights = _collect_source_weights(evidence)
 
         # Discount each source, then combine.
-        discounted: dict[str, dict[frozenset[str], float]] = {}
-        for s, items in by_source.items():
-            base = self._build_source_mass(items, frame)
-            w = weights[s]
-            if w >= 1.0 - _MASS_EPS:
-                discounted[s] = base
-                continue
-            new_mass: dict[frozenset[str], float] = {}
-            for k, v in base.items():
-                if k == frame:
-                    continue
-                new_mass[k] = v * w
-            # m'(Theta) = w * m(Theta) + (1 - w)
-            new_mass[frame] = (
-                new_mass.get(frame, 0.0) + base.get(frame, 0.0) * w + (1.0 - w)
-            )
-            discounted[s] = new_mass
+        discounted = self._discount_sources(by_source, weights, frame)
 
         sources = list(by_source.keys())
         combined = discounted[sources[0]]
@@ -408,6 +408,32 @@ class EvidenceFusionTool(HuginnTool):
             )
         return ToolResult(data=data, success=True)
 
+    def _discount_sources(
+        self,
+        by_source: dict[str, list[EvidenceItem]],
+        weights: dict[str, float],
+        frame: frozenset[str],
+    ) -> dict[str, dict[frozenset[str], float]]:
+        """按来源权重做折扣, 返回每个来源折扣后的 mass."""
+        discounted: dict[str, dict[frozenset[str], float]] = {}
+        for s, items in by_source.items():
+            base = self._build_source_mass(items, frame)
+            w = weights[s]
+            if w >= 1.0 - _MASS_EPS:
+                discounted[s] = base
+                continue
+            new_mass: dict[frozenset[str], float] = {}
+            for k, v in base.items():
+                if k == frame:
+                    continue
+                new_mass[k] = v * w
+            # m'(Theta) = w * m(Theta) + (1 - w)
+            new_mass[frame] = (
+                new_mass.get(frame, 0.0) + base.get(frame, 0.0) * w + (1.0 - w)
+            )
+            discounted[s] = new_mass
+        return discounted
+
     def _conflict_analysis(self, evidence: list[EvidenceItem]) -> ToolResult:
         frame = self._frame_from_evidence(evidence)
         if not frame:
@@ -420,40 +446,15 @@ class EvidenceFusionTool(HuginnTool):
         for ev in evidence:
             by_source.setdefault(ev.source, []).append(ev)
         sources = sorted(by_source.keys())
-        masses = {
-            s: self._build_source_mass(by_source[s], frame) for s in sources
-        }
+        masses = {s: self._build_source_mass(by_source[s], frame) for s in sources}
 
-        n = len(sources)
-        matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
-        worst: tuple[str | None, str | None, float] = (None, None, -1.0)
-        per_source: dict[str, list[float]] = {s: [] for s in sources}
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                _, k = self._combine_two(masses[sources[i]], masses[sources[j]])
-                matrix[i][j] = round(k, 6)
-                matrix[j][i] = round(k, 6)
-                per_source[sources[i]].append(k)
-                per_source[sources[j]].append(k)
-                if k > worst[2]:
-                    worst = (sources[i], sources[j], k)
+        matrix, worst, per_source = self._conflict_matrix(masses, sources)
 
         avg = {
-            s: round(sum(v) / len(v), 6) if v else 0.0
-            for s, v in per_source.items()
+            s: round(sum(v) / len(v), 6) if v else 0.0 for s, v in per_source.items()
         }
         suspect = max(avg.items(), key=lambda kv: kv[1])
-        if suspect[1] < 1e-6:
-            recommendation = (
-                "No significant conflict detected — all sources are consistent."
-            )
-        else:
-            recommendation = (
-                f"Source '{suspect[0]}' has the highest average pairwise conflict "
-                f"({suspect[1]}); it may be the least reliable. Consider "
-                "discounting it via weighted_combine."
-            )
+        recommendation = _conflict_recommendation(suspect)
 
         data = {
             "action": "conflict_analysis",
@@ -472,6 +473,30 @@ class EvidenceFusionTool(HuginnTool):
             "recommendation": recommendation,
         }
         return ToolResult(data=data, success=True)
+
+    def _conflict_matrix(
+        self,
+        masses: dict[str, dict[frozenset[str], float]],
+        sources: list[str],
+    ) -> tuple[
+        list[list[float]], tuple[str | None, str | None, float], dict[str, list[float]]
+    ]:
+        """两两冲突矩阵 + 最大冲突对 + 每源冲突列表."""
+        n = len(sources)
+        matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
+        worst: tuple[str | None, str | None, float] = (None, None, -1.0)
+        per_source: dict[str, list[float]] = {s: [] for s in sources}
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                _, k = self._combine_two(masses[sources[i]], masses[sources[j]])
+                matrix[i][j] = round(k, 6)
+                matrix[j][i] = round(k, 6)
+                per_source[sources[i]].append(k)
+                per_source[sources[j]].append(k)
+                if k > worst[2]:
+                    worst = (sources[i], sources[j], k)
+        return matrix, worst, per_source
 
     def _belief_plausibility(self, items: list[MassItem]) -> ToolResult:
         frame = self._frame_from_mass(items)

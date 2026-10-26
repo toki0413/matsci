@@ -55,7 +55,9 @@ def _eval_letter(answer: str):
     return evaluate
 
 
-def _format_mc(question: str, choices: list[str], labels: list[str] | None = None) -> str:
+def _format_mc(
+    question: str, choices: list[str], labels: list[str] | None = None
+) -> str:
     """格式化多选题 prompt."""
     if labels is None:
         labels = ["A", "B", "C", "D"][: len(choices)]
@@ -71,11 +73,19 @@ def _format_mc(question: str, choices: list[str], labels: list[str] | None = Non
 
 # 材料科学/物理/化学相关学科 (MMLU subject 名)
 MMLU_SCIENCE_SUBJECTS = {
-    "college_chemistry", "college_physics", "high_school_chemistry",
-    "high_school_physics", "chemistry", "physics",
-    "astronomy", "college_biology", "high_school_biology",
-    "conceptual_physics", "electrical_engineering",
-    "machine_learning", "computer_science",
+    "college_chemistry",
+    "college_physics",
+    "high_school_chemistry",
+    "high_school_physics",
+    "chemistry",
+    "physics",
+    "astronomy",
+    "college_biology",
+    "high_school_biology",
+    "conceptual_physics",
+    "electrical_engineering",
+    "machine_learning",
+    "computer_science",
 }
 
 
@@ -108,20 +118,23 @@ def load_mmlu_tasks(
         answer_letter = "ABCD"[answer_idx]
         labels = ["A", "B", "C", "D"]
         prompt = _format_mc(ex["question"], choices, labels)
-        tasks.append(BenchmarkTask(
-            id=f"mmlu-{ex['subject']}-{i}",
-            category="knowledge",
-            prompt=prompt,
-            evaluator=_eval_letter(answer_letter),
-            tags=["mmlu", "knowledge", ex["subject"]],
-            requires_api_key=True,
-            reference=f"答案: {answer_letter}. {choices[answer_idx]}",
-            timeout_seconds=60.0,
-        ))
+        tasks.append(
+            BenchmarkTask(
+                id=f"mmlu-{ex['subject']}-{i}",
+                category="knowledge",
+                prompt=prompt,
+                evaluator=_eval_letter(answer_letter),
+                tags=["mmlu", "knowledge", ex["subject"]],
+                requires_api_key=True,
+                reference=f"答案: {answer_letter}. {choices[answer_idx]}",
+                timeout_seconds=60.0,
+            )
+        )
     return tasks
 
 
 # ── SciQ adapter ─────────────────────────────────────────────────
+
 
 def load_sciq_tasks(max_tasks: int = 500, seed: int = 42) -> list[BenchmarkTask]:
     """从 SciQ test split 加载, 4 选 1."""
@@ -144,20 +157,23 @@ def load_sciq_tasks(max_tasks: int = 500, seed: int = 42) -> list[BenchmarkTask]
         answer_idx = all_opts.index(correct)
         answer_letter = "ABCD"[answer_idx]
         prompt = _format_mc(ex["question"], all_opts)
-        tasks.append(BenchmarkTask(
-            id=f"sciq-{i}",
-            category="knowledge",
-            prompt=prompt,
-            evaluator=_eval_letter(answer_letter),
-            tags=["sciq", "knowledge", "science"],
-            requires_api_key=True,
-            reference=f"答案: {answer_letter}. {correct}",
-            timeout_seconds=60.0,
-        ))
+        tasks.append(
+            BenchmarkTask(
+                id=f"sciq-{i}",
+                category="knowledge",
+                prompt=prompt,
+                evaluator=_eval_letter(answer_letter),
+                tags=["sciq", "knowledge", "science"],
+                requires_api_key=True,
+                reference=f"答案: {answer_letter}. {correct}",
+                timeout_seconds=60.0,
+            )
+        )
     return tasks
 
 
 # ── ARC adapter ──────────────────────────────────────────────────
+
 
 def load_arc_tasks(max_tasks: int = 500, seed: int = 42) -> list[BenchmarkTask]:
     """从 ARC-Challenge test split 加载."""
@@ -181,16 +197,18 @@ def load_arc_tasks(max_tasks: int = 500, seed: int = 42) -> list[BenchmarkTask]:
             continue
         answer_letter = "ABCD"[answer_idx] if answer_idx < 4 else answer_key
         prompt = _format_mc(ex["question"], choices, labels)
-        tasks.append(BenchmarkTask(
-            id=f"arc-{i}",
-            category="knowledge",
-            prompt=prompt,
-            evaluator=_eval_letter(answer_letter),
-            tags=["arc", "knowledge", "science"],
-            requires_api_key=True,
-            reference=f"答案: {answer_letter}. {choices[answer_idx]}",
-            timeout_seconds=60.0,
-        ))
+        tasks.append(
+            BenchmarkTask(
+                id=f"arc-{i}",
+                category="knowledge",
+                prompt=prompt,
+                evaluator=_eval_letter(answer_letter),
+                tags=["arc", "knowledge", "science"],
+                requires_api_key=True,
+                reference=f"答案: {answer_letter}. {choices[answer_idx]}",
+                timeout_seconds=60.0,
+            )
+        )
     return tasks
 
 
@@ -202,11 +220,27 @@ def load_arc_tasks(max_tasks: int = 500, seed: int = 42) -> list[BenchmarkTask]:
 
 # GPQA 子领域里和材料/物理/化学相关的关键词 (宽松匹配)
 GPQA_SCIENCE_KEYWORDS = (
-    "physics", "chemistry", "biology", "quantum", "electromagnet",
-    "thermodynamic", "astrophysic", "astronomy", "relativistic",
-    "mechanic", "optic", "materials", "genetic", "molecular",
-    "biochemistr", "organic", "inorganic", "electrochemistr",
-    "high-energy", "particle physics", "condensed matter",
+    "physics",
+    "chemistry",
+    "biology",
+    "quantum",
+    "electromagnet",
+    "thermodynamic",
+    "astrophysic",
+    "astronomy",
+    "relativistic",
+    "mechanic",
+    "optic",
+    "materials",
+    "genetic",
+    "molecular",
+    "biochemistr",
+    "organic",
+    "inorganic",
+    "electrochemistr",
+    "high-energy",
+    "particle physics",
+    "condensed matter",
 )
 
 
@@ -218,7 +252,8 @@ def _eval_letter_multi(answer: str, n_options: int):
     def evaluate(output: str) -> tuple[bool, str, float]:
         m = re.search(
             r"(?:answer\s*[:is]+\s*|选\s*|答案[:\s]*|^)\s*([A-Ja-j])\b",
-            output, re.IGNORECASE,
+            output,
+            re.IGNORECASE,
         )
         if m:
             got = m.group(1).upper()
@@ -232,6 +267,7 @@ def _eval_letter_multi(answer: str, n_options: int):
                 return True, f"选 {got} (正确 {answer_upper})", 1.0
             return False, f"选 {got}, 正确 {answer_upper}", 0.0
         return False, f"未找到选项字母 (正确 {answer_upper})", 0.0
+
     return evaluate
 
 
@@ -265,46 +301,63 @@ def load_gpqa_tasks(
 
     tasks: list[BenchmarkTask] = []
     for i, row in df.iterrows():
-        question = str(row.get("Question") or "")
-        correct = str(row.get("Correct Answer") or "")
-        wrongs = [
-            str(row.get("Incorrect Answer 1") or ""),
-            str(row.get("Incorrect Answer 2") or ""),
-            str(row.get("Incorrect Answer 3") or ""),
-        ]
-        if not question or question == "nan" or not correct or correct == "nan":
-            continue
-        # 打乱顺序
-        rng = random.Random(seed + i)
-        all_opts = [correct] + [w for w in wrongs if w and w != "nan"]
-        rng.shuffle(all_opts)
-        answer_idx = all_opts.index(correct)
-        answer_letter = "ABCD"[answer_idx]
-        labels = list("ABCD")[: len(all_opts)]
-        prompt = _format_mc(question, all_opts, labels)
-        sub = str(row.get("Subdomain") or "unknown")
-        tasks.append(BenchmarkTask(
-            id=f"gpqa-{sub[:20]}-{i}",
-            category="knowledge",
-            prompt=prompt,
-            evaluator=_eval_letter_multi(answer_letter, len(all_opts)),
-            tags=["gpqa", "knowledge", "phd", sub.lower().replace(" ", "_")],
-            requires_api_key=True,
-            reference=f"答案: {answer_letter}. {correct[:80]}",
-            # GPQA 难, 深度思考 + 多轮 code_tool/web_search, 给足时间
-            timeout_seconds=300.0,
-        ))
+        task = _gpqa_task_from_row(row, i, seed)
+        if task is not None:
+            tasks.append(task)
     return tasks
+
+
+def _gpqa_task_from_row(row, i: int, seed: int) -> BenchmarkTask | None:
+    question = str(row.get("Question") or "")
+    correct = str(row.get("Correct Answer") or "")
+    wrongs = [
+        str(row.get("Incorrect Answer 1") or ""),
+        str(row.get("Incorrect Answer 2") or ""),
+        str(row.get("Incorrect Answer 3") or ""),
+    ]
+    if not question or question == "nan" or not correct or correct == "nan":
+        return None
+    # 打乱顺序
+    rng = random.Random(seed + i)
+    all_opts = [correct] + [w for w in wrongs if w and w != "nan"]
+    rng.shuffle(all_opts)
+    answer_idx = all_opts.index(correct)
+    answer_letter = "ABCD"[answer_idx]
+    labels = list("ABCD")[: len(all_opts)]
+    prompt = _format_mc(question, all_opts, labels)
+    sub = str(row.get("Subdomain") or "unknown")
+    return BenchmarkTask(
+        id=f"gpqa-{sub[:20]}-{i}",
+        category="knowledge",
+        prompt=prompt,
+        evaluator=_eval_letter_multi(answer_letter, len(all_opts)),
+        tags=["gpqa", "knowledge", "phd", sub.lower().replace(" ", "_")],
+        requires_api_key=True,
+        reference=f"答案: {answer_letter}. {correct[:80]}",
+        # GPQA 难, 深度思考 + 多轮 code_tool/web_search, 给足时间
+        timeout_seconds=300.0,
+    )
 
 
 # ── CMMLU adapter (中文, ModelScope) ─────────────────────────────
 
 CMMLU_SCIENCE_SUBJECTS = {
-    "high_school_physics", "high_school_chemistry", "high_school_biology",
-    "college_physics", "college_chemistry", "college_biology",
-    "conceptual_physics", "astronomy", "electrical_engineering",
-    "machine_learning", "genetics", "virology", "nutrition",
-    "food_science", "botany", "traditional_chinese_medicine",
+    "high_school_physics",
+    "high_school_chemistry",
+    "high_school_biology",
+    "college_physics",
+    "college_chemistry",
+    "college_biology",
+    "conceptual_physics",
+    "astronomy",
+    "electrical_engineering",
+    "machine_learning",
+    "genetics",
+    "virology",
+    "nutrition",
+    "food_science",
+    "botany",
+    "traditional_chinese_medicine",
 }
 
 
@@ -318,6 +371,40 @@ def load_cmmlu_tasks(
     CMMLU 是 zip 包, 下载解压后读 test/*.csv.
     CSV 列: Question, A, B, C, D, Answer (字母)
     """
+    all_rows = _load_cmmlu_rows(subject_filter)
+
+    if len(all_rows) > max_tasks:
+        rng = random.Random(seed)
+        all_rows = rng.sample(all_rows, max_tasks)
+
+    tasks: list[BenchmarkTask] = []
+    for i, ex in enumerate(all_rows):
+        question = ex["question"]
+        opts = [ex["A"], ex["B"], ex["C"], ex["D"]]
+        opts = [o for o in opts if o and o != "nan"]
+        if len(opts) != 4 or not question or question == "nan":
+            continue
+        answer_letter = ex["answer"].upper().strip()
+        if answer_letter not in "ABCD":
+            continue
+        sub = ex["subject"]
+        prompt = _format_mc(question, opts, ["A", "B", "C", "D"])
+        tasks.append(
+            BenchmarkTask(
+                id=f"cmmlu-{sub}-{i}",
+                category="knowledge",
+                prompt=prompt,
+                evaluator=_eval_letter(answer_letter),
+                tags=["cmmlu", "knowledge", "chinese", sub],
+                requires_api_key=True,
+                reference=f"答案: {answer_letter}. {opts['ABCD'.index(answer_letter)]}",
+                timeout_seconds=120.0,
+            )
+        )
+    return tasks
+
+
+def _load_cmmlu_rows(subject_filter: set[str] | None) -> list[dict]:
     import os
     import zipfile
 
@@ -343,50 +430,30 @@ def load_cmmlu_tasks(
         except Exception:
             continue
         for _, row in df.iterrows():
-            all_rows.append({
-                "subject": sub,
-                "question": str(row.get("Question") or ""),
-                "A": str(row.get("A") or ""),
-                "B": str(row.get("B") or ""),
-                "C": str(row.get("C") or ""),
-                "D": str(row.get("D") or ""),
-                "answer": str(row.get("Answer") or ""),
-            })
-
-    if len(all_rows) > max_tasks:
-        rng = random.Random(seed)
-        all_rows = rng.sample(all_rows, max_tasks)
-
-    tasks: list[BenchmarkTask] = []
-    for i, ex in enumerate(all_rows):
-        question = ex["question"]
-        opts = [ex["A"], ex["B"], ex["C"], ex["D"]]
-        opts = [o for o in opts if o and o != "nan"]
-        if len(opts) != 4 or not question or question == "nan":
-            continue
-        answer_letter = ex["answer"].upper().strip()
-        if answer_letter not in "ABCD":
-            continue
-        sub = ex["subject"]
-        prompt = _format_mc(question, opts, ["A", "B", "C", "D"])
-        tasks.append(BenchmarkTask(
-            id=f"cmmlu-{sub}-{i}",
-            category="knowledge",
-            prompt=prompt,
-            evaluator=_eval_letter(answer_letter),
-            tags=["cmmlu", "knowledge", "chinese", sub],
-            requires_api_key=True,
-            reference=f"答案: {answer_letter}. {opts['ABCD'.index(answer_letter)]}",
-            timeout_seconds=120.0,
-        ))
-    return tasks
+            all_rows.append(
+                {
+                    "subject": sub,
+                    "question": str(row.get("Question") or ""),
+                    "A": str(row.get("A") or ""),
+                    "B": str(row.get("B") or ""),
+                    "C": str(row.get("C") or ""),
+                    "D": str(row.get("D") or ""),
+                    "answer": str(row.get("Answer") or ""),
+                }
+            )
+    return all_rows
 
 
 # ── MMLU-Pro adapter (10 选项, 更难, ModelScope) ─────────────────
 
 MMLU_PRO_SCIENCE_CATEGORIES = {
-    "physics", "chemistry", "biology", "mathematics",
-    "computer science", "engineering", "economics",
+    "physics",
+    "chemistry",
+    "biology",
+    "mathematics",
+    "computer science",
+    "engineering",
+    "economics",
 }
 
 
@@ -416,33 +483,44 @@ def load_mmlu_pro_tasks(
 
     tasks: list[BenchmarkTask] = []
     for i, row in df.iterrows():
-        question = str(row["question"]) if pd.notna(row["question"]) else ""
-        opts_raw = row["options"]
-        opts = list(opts_raw) if opts_raw is not None else []
-        if len(opts) < 4 or not question or question == "nan":
-            continue
-        answer_letter = str(row["answer"]).upper().strip() if pd.notna(row["answer"]) else ""
-        if answer_letter not in "ABCDEFGHIJ"[: len(opts)]:
-            continue
-        n = len(opts)
-        labels = list("ABCDEFGHIJ")[:n]
-        prompt = _format_mc(question, [str(o) for o in opts], labels)
-        cat = str(row["category"]) if pd.notna(row["category"]) else "unknown"
-        answer_idx = labels.index(answer_letter) if answer_letter in labels else 0
-        tasks.append(BenchmarkTask(
-            id=f"mmlupro-{cat}-{i}",
-            category="knowledge",
-            prompt=prompt,
-            evaluator=_eval_letter_multi(answer_letter, n),
-            tags=["mmlu_pro", "knowledge", "hard", cat.lower().replace(" ", "_")],
-            requires_api_key=True,
-            reference=f"答案: {answer_letter}. {str(opts[answer_idx])[:80]}",
-            timeout_seconds=90.0,
-        ))
+        task = _mmlu_pro_task_from_row(row, i)
+        if task is not None:
+            tasks.append(task)
     return tasks
 
 
+def _mmlu_pro_task_from_row(row, i: int) -> BenchmarkTask | None:
+    import pandas as pd
+
+    question = str(row["question"]) if pd.notna(row["question"]) else ""
+    opts_raw = row["options"]
+    opts = list(opts_raw) if opts_raw is not None else []
+    if len(opts) < 4 or not question or question == "nan":
+        return None
+    answer_letter = (
+        str(row["answer"]).upper().strip() if pd.notna(row["answer"]) else ""
+    )
+    if answer_letter not in "ABCDEFGHIJ"[: len(opts)]:
+        return None
+    n = len(opts)
+    labels = list("ABCDEFGHIJ")[:n]
+    prompt = _format_mc(question, [str(o) for o in opts], labels)
+    cat = str(row["category"]) if pd.notna(row["category"]) else "unknown"
+    answer_idx = labels.index(answer_letter) if answer_letter in labels else 0
+    return BenchmarkTask(
+        id=f"mmlupro-{cat}-{i}",
+        category="knowledge",
+        prompt=prompt,
+        evaluator=_eval_letter_multi(answer_letter, n),
+        tags=["mmlu_pro", "knowledge", "hard", cat.lower().replace(" ", "_")],
+        requires_api_key=True,
+        reference=f"答案: {answer_letter}. {str(opts[answer_idx])[:80]}",
+        timeout_seconds=90.0,
+    )
+
+
 # ── 统一入口 ─────────────────────────────────────────────────────
+
 
 def load_all_external(
     max_per_dataset: int = 400,
@@ -454,6 +532,7 @@ def load_all_external(
     默认每个数据集抽样 400 题. include_modelscope=True 时加 GPQA/CMMLU/MMLU-Pro.
     """
     import logging
+
     log = logging.getLogger(__name__)
     tasks: list[BenchmarkTask] = []
 
@@ -473,12 +552,12 @@ def load_all_external(
 
     # ModelScope 系 (国内直连, GPQA 免 token)
     for name, fn in [
-        ("GPQA", lambda: load_gpqa_tasks(
-            max_tasks=min(100, max_per_dataset), seed=seed)),
-        ("CMMLU", lambda: load_cmmlu_tasks(
-            max_tasks=max_per_dataset, seed=seed)),
-        ("MMLU-Pro", lambda: load_mmlu_pro_tasks(
-            max_tasks=max_per_dataset, seed=seed)),
+        (
+            "GPQA",
+            lambda: load_gpqa_tasks(max_tasks=min(100, max_per_dataset), seed=seed),
+        ),
+        ("CMMLU", lambda: load_cmmlu_tasks(max_tasks=max_per_dataset, seed=seed)),
+        ("MMLU-Pro", lambda: load_mmlu_pro_tasks(max_tasks=max_per_dataset, seed=seed)),
     ]:
         try:
             tasks.extend(fn())

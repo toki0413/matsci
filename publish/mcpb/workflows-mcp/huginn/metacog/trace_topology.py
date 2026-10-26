@@ -8,6 +8,7 @@ form (O(n^3)). ponytail: entry 数 ≤50 上限, 超过按 darwin_score 截断, 
 entry_i.attempted 跟 entry_j.evidence 语义重叠 > 0.7 时形成 1-simplex (i, j).
 β_0 = 独立假设链数, β_1 = 循环回退路径数. β_1 > 0 解锁 Step3→Step2 回退 (拓扑许可).
 """
+
 from __future__ import annotations
 
 import math
@@ -24,6 +25,7 @@ try:
         _compute_semantic_overlap as _sem_overlap,
     )
 except Exception:
+
     def _sem_overlap(a: str, b: str) -> float:
         return _local_tfidf_cosine(a, b)
 
@@ -100,6 +102,50 @@ def _truncate_by_darwin(entries: list, cap: int = 50) -> list:
     )[:cap]
 
 
+def _build_nodes(entries: list) -> list[str]:
+    """提取 node id (simplex_id 缺失用 index 兜底, 保证 vertex 唯一)."""
+    nodes: list[str] = []
+    for i, e in enumerate(entries):
+        sid = e.get("simplex_id")
+        nodes.append(sid if sid else f"node_{i}")
+    return nodes
+
+
+def _build_edges(entries: list, nodes: list[str], threshold: float = 0.7) -> list:
+    """建边: attempted_i 跟 evidence_j 重叠 > threshold → edge (i, j)."""
+    edges: list[tuple[str, str]] = []
+    for i, ei in enumerate(entries):
+        att_i = str(ei.get("attempted", "") or "")
+        if not att_i:
+            continue
+        for j, ej in enumerate(entries):
+            if i == j:
+                continue
+            ev_j = _evidence_to_str(ej)
+            if not ev_j:
+                continue
+            try:
+                overlap = _sem_overlap(att_i, ev_j)
+            except Exception:
+                overlap = 0.0
+            if overlap > threshold:
+                edges.append((nodes[i], nodes[j]))
+    return edges
+
+
+def _networkx_betti(nodes: list[str], edges: list) -> tuple[int, int]:
+    """networkx 弱连通 + cycle_basis 近似 (β_0, β_1)."""
+    import networkx as nx
+
+    G = nx.Graph()
+    G.add_nodes_from(nodes)
+    G.add_edges_from(edges)
+    # 无向图: connected_components 等价弱连通分量
+    beta_0 = nx.number_connected_components(G)
+    beta_1 = len(nx.cycle_basis(G))
+    return (beta_0, beta_1)
+
+
 def compute_betti(trace_entries: list) -> tuple[int, int]:
     """算 Meta-Trace 的 (β_0, β_1).
 
@@ -125,42 +171,11 @@ def compute_betti(trace_entries: list) -> tuple[int, int]:
         return (0, 0)
 
     entries = _truncate_by_darwin(trace_entries, cap=50)
-
-    # 提取 node id (simplex_id 缺失用 index 兜底, 保证 vertex 唯一)
-    nodes: list[str] = []
-    for i, e in enumerate(entries):
-        sid = e.get("simplex_id")
-        nodes.append(sid if sid else f"node_{i}")
-
-    # 建边: attempted_i 跟 evidence_j 重叠 > 0.7 → edge (i, j)
-    edges: list[tuple[str, str]] = []
-    threshold = 0.7
-    for i, ei in enumerate(entries):
-        att_i = str(ei.get("attempted", "") or "")
-        if not att_i:
-            continue
-        for j, ej in enumerate(entries):
-            if i == j:
-                continue
-            ev_j = _evidence_to_str(ej)
-            if not ev_j:
-                continue
-            try:
-                overlap = _sem_overlap(att_i, ev_j)
-            except Exception:
-                overlap = 0.0
-            if overlap > threshold:
-                edges.append((nodes[i], nodes[j]))
+    nodes = _build_nodes(entries)
+    edges = _build_edges(entries, nodes)
 
     try:
-        import networkx as nx
-        G = nx.Graph()
-        G.add_nodes_from(nodes)
-        G.add_edges_from(edges)
-        # 无向图: connected_components 等价弱连通分量
-        beta_0 = nx.number_connected_components(G)
-        beta_1 = len(nx.cycle_basis(G))
-        return (beta_0, beta_1)
+        return _networkx_betti(nodes, edges)
     except ImportError:
         # networkx 没装 — 并查集算 β_0, β_1 回退到 0 (保守).
         # ponytail: 上限是 β_1 保守估计, 真实环路可能漏报. 升级路径: pip install networkx.
@@ -196,10 +211,10 @@ def _beta_0_union_find(nodes: list, edges: list) -> int:
 # v14 entry 是 plain dict, v15 加 4 个新字段. 不引 dataclass — 跟 v14 形态一致,
 # 升级路径是后续 phase 统一. ponytail: dict + helper 函数够用.
 _V15_ENTRY_DEFAULTS = {
-    "hypothesis_id": None,        # 关联到 HypothesisManifold 里的一个 hypothesis
-    "log_posterior": 0.0,         # Bayesian log posterior (可负)
-    "fisher_info": 0.0,           # Fisher metric 在该 hypothesis 处的 trace (≥0)
-    "imagination_parent": None,   # 如果是 imagination 生成的新 h, 记录父 hypothesis_id
+    "hypothesis_id": None,  # 关联到 HypothesisManifold 里的一个 hypothesis
+    "log_posterior": 0.0,  # Bayesian log posterior (可负)
+    "fisher_info": 0.0,  # Fisher metric 在该 hypothesis 处的 trace (≥0)
+    "imagination_parent": None,  # 如果是 imagination 生成的新 h, 记录父 hypothesis_id
 }
 
 
@@ -245,18 +260,16 @@ def darwin_score_normalized(entry: dict) -> float:
 
 # ---------- Self-check ----------
 
-def _selfcheck() -> None:
-    """v15 schema 扩展自检.
 
-    验证: 新字段默认值 / 旧 v14 entry 自动补默认值 / darwin_score_normalized 跟
-    log_posterior 一致. 不引框架, 纯 assert.
-    """
+def _sc_defaults() -> None:
     # Test 1: 新字段默认值正确
     assert _V15_ENTRY_DEFAULTS["hypothesis_id"] is None
     assert _V15_ENTRY_DEFAULTS["log_posterior"] == 0.0
     assert _V15_ENTRY_DEFAULTS["fisher_info"] == 0.0
     assert _V15_ENTRY_DEFAULTS["imagination_parent"] is None
 
+
+def _sc_upgrade_v14() -> dict:
     # Test 2: 旧 v14 entry (没新字段) 自动补默认值, 旧字段保留
     v14_entry = {
         "simplex_id": "s1",
@@ -277,7 +290,10 @@ def _selfcheck() -> None:
     assert v14_entry["cochain_type"] == "gradient"
     assert v14_entry["supported_ratio"] == 0.8
     assert v14_entry["simplex_id"] == "s1"
+    return v14_entry
 
+
+def _sc_upgrade_v15() -> dict:
     # Test 3: 新 v15 entry (有 log_posterior, 没 darwin_score) 自动补 darwin_score
     v15_entry = {
         "simplex_id": "s2",
@@ -295,7 +311,10 @@ def _selfcheck() -> None:
     )
     # imagination_parent 缺失, 自动补 None
     assert v15_entry["imagination_parent"] is None
+    return v15_entry
 
+
+def _sc_darwin() -> None:
     # Test 4: darwin_score_normalized 跟 log_posterior 一致
     assert darwin_score_normalized({"log_posterior": 0.0}) == 1.0
     assert abs(darwin_score_normalized({"log_posterior": -1.0}) - math.exp(-1.0)) < 1e-9
@@ -303,12 +322,17 @@ def _selfcheck() -> None:
     # 缺 log_posterior 默认 0.0 → exp(0) = 1.0 (跟 _V15_ENTRY_DEFAULTS 一致)
     assert darwin_score_normalized({}) == 1.0
 
+
+def _sc_edge() -> dict:
     # Test 5: -inf log_posterior 边界 — upgrade_entry 应给出 darwin_score=0.0
     edge = {"simplex_id": "s3", "log_posterior": float("-inf")}
     upgrade_entry(edge)
     assert edge["darwin_score"] == 0.0, "exp(-inf) should be 0.0"
     assert edge["hypothesis_id"] is None
+    return edge
 
+
+def _sc_parent_child() -> None:
     # Test 6: imagination_parent 链 — 父 entry 跟子 entry 的关联
     parent_entry = {
         "simplex_id": "s4",
@@ -326,24 +350,58 @@ def _selfcheck() -> None:
     assert child_entry["imagination_parent"] == "h_newton"
     assert parent_entry["imagination_parent"] is None  # 父不是 imagination 生成的
 
+
+def _sc_v15_betti() -> tuple[int, int]:
     # Test 7: compute_betti 在 v15 entry 上仍能工作 (字段不冲突)
     entries = [
-        {"simplex_id": "n1", "attempted": "test a", "evidence": "see a",
-         "hypothesis_id": "h1", "log_posterior": -0.1, "fisher_info": 0.1},
-        {"simplex_id": "n2", "attempted": "test b", "evidence": "see b",
-         "hypothesis_id": "h2", "log_posterior": -0.2, "fisher_info": 0.2},
+        {
+            "simplex_id": "n1",
+            "attempted": "test a",
+            "evidence": "see a",
+            "hypothesis_id": "h1",
+            "log_posterior": -0.1,
+            "fisher_info": 0.1,
+        },
+        {
+            "simplex_id": "n2",
+            "attempted": "test b",
+            "evidence": "see b",
+            "hypothesis_id": "h2",
+            "log_posterior": -0.2,
+            "fisher_info": 0.2,
+        },
     ]
     for e in entries:
         upgrade_entry(e)
     b0, b1 = compute_betti(entries)
     assert b0 >= 1, f"β_0 should be ≥1, got {b0}"
+    return b0, b1
+
+
+def _selfcheck() -> None:
+    """v15 schema 扩展自检.
+
+    验证: 新字段默认值 / 旧 v14 entry 自动补默认值 / darwin_score_normalized 跟
+    log_posterior 一致. 不引框架, 纯 assert.
+    """
+    _sc_defaults()
+    v14_entry = _sc_upgrade_v14()
+    v15_entry = _sc_upgrade_v15()
+    _sc_darwin()
+    edge = _sc_edge()
+    _sc_parent_child()
+    b0, b1 = _sc_v15_betti()
 
     print("✓ trace_topology v15 schema self-check passed")
-    print(f"  v14 entry upgraded: hypothesis_id={v14_entry['hypothesis_id']}, "
-          f"log_posterior={v14_entry['log_posterior']}, "
-          f"darwin_score preserved={v14_entry['darwin_score']}")
-    print(f"  v15 entry: log_posterior={v15_entry['log_posterior']}, "
-          f"darwin_score=exp(log_posterior)={v15_entry['darwin_score']:.4f}")
+    print(
+        f"  v14 entry upgraded: hypothesis_id={v14_entry['hypothesis_id']}, "
+        f"log_posterior={v14_entry['log_posterior']}, "
+        f"darwin_score preserved={v14_entry['darwin_score']}"
+    )
+    print(
+        f"  v15 entry: log_posterior={v15_entry['log_posterior']}, "
+        f"darwin_score=exp(log_posterior)={v15_entry['darwin_score']:.4f}"
+    )
     print(f"  darwin_score_normalized(-inf) = {darwin_score_normalized(edge)}")
     print(f"  compute_betti on v15 entries: β_0={b0}, β_1={b1}")
 

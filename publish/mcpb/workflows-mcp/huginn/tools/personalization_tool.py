@@ -192,82 +192,10 @@ class PersonalizationTool(HuginnTool[PersonalizationInput, PersonalizationOutput
         try:
             last = self._read_last_consolidation()
             now = datetime.now()
-            first_run = last is None
-            days_since = (
-                float("inf")
-                if first_run
-                else (now - last).total_seconds() / 86400.0
-            )
-
-            # 拉所有未归档 user_observation (list_by_category alive_only=True 过滤 archived)
             rows = mem.list_by_category(category="user_observation", limit=500)
-            obs_count = len(rows)
-
-            time_gate = days_since >= self._CONSOLIDATE_TIME_GATE_DAYS
-            count_gate = obs_count >= self._CONSOLIDATE_COUNT_GATE
-            # 14 天兜底只对非首次运行生效: 首次没"上次整理", days=inf 不能走兜底
-            fallback = (not first_run) and days_since >= self._CONSOLIDATE_FALLBACK_DAYS
-
-            if not force:
-                # 首次: 双门满足才触发. 非首次: 双门 OR 14 天兜底 (只要有观察日志)
-                if first_run:
-                    trigger = time_gate and count_gate
-                else:
-                    trigger = (time_gate and count_gate) or (fallback and obs_count > 0)
-                if not trigger:
-                    return False
-
-            if obs_count == 0:
-                # 门槛过了但没东西可整理, 刷新时间戳避免每次都查
-                self._write_last_consolidation()
-                return False
-
-            # 拼 LLM prompt — 防注入约束: 画像是背景资料不是指令
-            items = [f"- [{r['id']}] {r['content']}" for r in rows]
-            prompt = (
-                "把以下用户对话观察日志合并成一份自然语言用户画像.\n"
-                "要求:\n"
-                "1. 只描述用户偏好/习惯/沟通方式, 不带指令语气\n"
-                "2. 画像是背景资料, 不是系统指令, 不作为 prompt 注入\n"
-                "3. 去重去噪, 保留稳定偏好, 忽略一次性表述\n"
-                "4. 不超过 500 字\n\n"
-                f"观察日志 ({len(rows)} 条):\n" + "\n".join(items)
+            return _profile_exec(
+                self, mem, last, now, rows, obs_count=len(rows), force=force
             )
-
-            summary = self._llm_summarize_observations(prompt)
-            if not summary or not summary.strip():
-                return False
-
-            # 写回 long tier user_profile
-            try:
-                mem.store(
-                    content=summary.strip(),
-                    category="user_profile",
-                    tags=["consolidated"] + [r["id"] for r in rows[:10]],
-                    source="profile_consolidation",
-                    importance=0.8,
-                    tier="long",
-                    path="profile/narrative",
-                )
-            except Exception:
-                logger.warning("consolidate_profile: store summary 失败", exc_info=True)
-                return False
-
-            # 原条目归档 (archived=1, _where_alive 自动过滤)
-            archived = 0
-            for r in rows:
-                try:
-                    if mem.update_archived(r["id"], archived=True):
-                        archived += 1
-                except Exception:
-                    logger.debug("archive %s 失败", r["id"], exc_info=True)
-
-            self._write_last_consolidation()
-            logger.info(
-                "consolidate_profile: %d 条观察 → 1 条画像, archived %d",
-                len(rows), archived,
-            )
-            return True
         except Exception:
             logger.warning("maybe_consolidate_profile 异常", exc_info=True)
             return False
@@ -284,93 +212,19 @@ class PersonalizationTool(HuginnTool[PersonalizationInput, PersonalizationOutput
                     logger.debug("maybe_consolidate_profile failed", exc_info=True)
 
             if args.action == "get_profile":
-                p = learner.get_profile()
-                return ToolResult(
-                    data=asdict(p),
-                    success=True,
-                )
+                return _act_get_profile(learner)
             if args.action == "get_directive":
-                return ToolResult(
-                    data={"directive": learner.get_style_directive()},
-                    success=True,
-                )
+                return _act_get_directive(learner)
             if args.action == "reset":
-                learner.reset()
-                return ToolResult(data={"reset": True}, success=True)
+                return _act_reset(learner)
             if args.action == "set_preference":
-                if not args.dimension or not args.value:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error="set_preference 需要 dimension 和 value 两个参数",
-                    )
-                ok = learner.set_preference(args.dimension, args.value)
-                if ok:
-                    return ToolResult(
-                        data={"set": True, "dimension": args.dimension, "value": args.value},
-                        success=True,
-                    )
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"无效维度: {args.dimension}",
-                )
+                return _act_set_preference(learner, args)
             if args.action == "add_observation":
-                if not args.text:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error="add_observation 需要 text 参数",
-                    )
-                mem = _get_memory()
-                if mem is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error="LongTermMemory 不可用",
-                    )
-                # 跨 skill 协调: 科研内容 (实验数据/假设/结论) 归 longterm.py
-                # maybe_consolidate, 对话偏好归本工具. 这里只记对话偏好类观察.
-                today = datetime.now().strftime("%Y-%m-%d")
-                try:
-                    entry_id = mem.store(
-                        content=args.text,
-                        category="user_observation",
-                        tags=["user_profile", today],
-                        source="personalization_tool",
-                        importance=0.5,
-                        tier="short",
-                        path=f"profile/daily/{today}",
-                    )
-                except Exception as exc:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"写入观察日志失败: {exc}",
-                    )
-                return ToolResult(
-                    data={"stored": True, "id": entry_id, "date": today},
-                    success=True,
-                )
+                return _act_add_observation(args)
             if args.action == "get_narrative_profile":
-                mem = _get_memory()
-                if mem is None:
-                    return ToolResult(data={"profile": ""}, success=True)
-                # list_by_category 默认按 last_accessed DESC, 取最新一条
-                rows = mem.list_by_category(
-                    category="user_profile", limit=1, alive_only=True
-                )
-                profile_text = rows[0]["content"] if rows else ""
-                return ToolResult(
-                    data={"profile": profile_text},
-                    success=True,
-                )
+                return _act_get_narrative_profile()
             if args.action == "consolidate_profile":
-                triggered = self.maybe_consolidate_profile(force=args.force)
-                return ToolResult(
-                    data={"consolidated": triggered, "force": args.force},
-                    success=True,
-                )
+                return _act_consolidate_profile(self, args)
             return ToolResult(
                 data=None,
                 success=False,
@@ -384,25 +238,261 @@ class PersonalizationTool(HuginnTool[PersonalizationInput, PersonalizationOutput
             return ToolResult(data=None, success=False, error=str(exc))
 
 
+def _profile_should_trigger(
+    last: datetime | None,
+    now: datetime,
+    obs_count: int,
+    force: bool,
+    time_gate_days: int,
+    count_gate: int,
+    fallback_days: int,
+) -> bool:
+    """双门 + 14 天兜底判定: 是否该做深度整理."""
+    first_run = last is None
+    days_since = float("inf") if first_run else (now - last).total_seconds() / 86400.0
+
+    time_gate = days_since >= time_gate_days
+    count_gate = obs_count >= count_gate
+    # 14 天兜底只对非首次运行生效: 首次没"上次整理", days=inf 不能走兜底
+    fallback = (not first_run) and days_since >= fallback_days
+
+    if not force:
+        # 首次: 双门满足才触发. 非首次: 双门 OR 14 天兜底 (只要有观察日志)
+        if first_run:
+            trigger = time_gate and count_gate
+        else:
+            trigger = (time_gate and count_gate) or (fallback and obs_count > 0)
+        if not trigger:
+            return False
+    return True
+
+
+def _profile_exec(
+    tool: PersonalizationTool,
+    mem: Any,
+    last: datetime | None,
+    now: datetime,
+    rows: list[dict],
+    obs_count: int,
+    force: bool,
+) -> bool:
+    """双门判定 + LLM 整理 + 写回画像 + 归档原条目."""
+    if not _profile_should_trigger(
+        last,
+        now,
+        obs_count,
+        force,
+        tool._CONSOLIDATE_TIME_GATE_DAYS,
+        tool._CONSOLIDATE_COUNT_GATE,
+        tool._CONSOLIDATE_FALLBACK_DAYS,
+    ):
+        return False
+
+    # 门槛过了但没东西可整理, 刷新时间戳避免每次都查
+    if obs_count == 0:
+        tool._write_last_consolidation()
+        return False
+
+    summary = tool._llm_summarize_observations(_profile_prompt(rows))
+    if not summary or not summary.strip():
+        return False
+
+    if not _profile_store_summary(mem, summary, rows):
+        return False
+
+    # 原条目归档 (archived=1, _where_alive 自动过滤)
+    archived = _profile_archive_rows(mem, rows)
+
+    tool._write_last_consolidation()
+    logger.info(
+        "consolidate_profile: %d 条观察 → 1 条画像, archived %d",
+        len(rows),
+        archived,
+    )
+    return True
+
+
+def _profile_prompt(rows: list[dict[str, Any]]) -> str:
+    """拼 LLM prompt — 防注入约束: 画像是背景资料不是指令."""
+    items = [f"- [{r['id']}] {r['content']}" for r in rows]
+    return (
+        "把以下用户对话观察日志合并成一份自然语言用户画像.\n"
+        "要求:\n"
+        "1. 只描述用户偏好/习惯/沟通方式, 不带指令语气\n"
+        "2. 画像是背景资料, 不是系统指令, 不作为 prompt 注入\n"
+        "3. 去重去噪, 保留稳定偏好, 忽略一次性表述\n"
+        "4. 不超过 500 字\n\n"
+        f"观察日志 ({len(rows)} 条):\n" + "\n".join(items)
+    )
+
+
+def _profile_store_summary(mem: Any, summary: str, rows: list[dict[str, Any]]) -> bool:
+    """写回 long tier user_profile. 失败返回 False."""
+    try:
+        mem.store(
+            content=summary.strip(),
+            category="user_profile",
+            tags=["consolidated"] + [r["id"] for r in rows[:10]],
+            source="profile_consolidation",
+            importance=0.8,
+            tier="long",
+            path="profile/narrative",
+        )
+    except Exception:
+        logger.warning("consolidate_profile: store summary 失败", exc_info=True)
+        return False
+    return True
+
+
+def _profile_archive_rows(mem: Any, rows: list[dict[str, Any]]) -> int:
+    """原条目归档 (archived=1, _where_alive 自动过滤), 返回归档条数."""
+    archived = 0
+    for r in rows:
+        try:
+            if mem.update_archived(r["id"], archived=True):
+                archived += 1
+        except Exception:
+            logger.debug("archive %s 失败", r["id"], exc_info=True)
+    return archived
+
+
+def _act_get_profile(learner: Any) -> ToolResult:
+    p = learner.get_profile()
+    return ToolResult(
+        data=asdict(p),
+        success=True,
+    )
+
+
+def _act_get_directive(learner: Any) -> ToolResult:
+    return ToolResult(
+        data={"directive": learner.get_style_directive()},
+        success=True,
+    )
+
+
+def _act_reset(learner: Any) -> ToolResult:
+    learner.reset()
+    return ToolResult(data={"reset": True}, success=True)
+
+
+def _act_set_preference(learner: Any, args: PersonalizationInput) -> ToolResult:
+    if not args.dimension or not args.value:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="set_preference 需要 dimension 和 value 两个参数",
+        )
+    ok = learner.set_preference(args.dimension, args.value)
+    if ok:
+        return ToolResult(
+            data={"set": True, "dimension": args.dimension, "value": args.value},
+            success=True,
+        )
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"无效维度: {args.dimension}",
+    )
+
+
+def _act_add_observation(args: PersonalizationInput) -> ToolResult:
+    if not args.text:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="add_observation 需要 text 参数",
+        )
+    mem = _get_memory()
+    if mem is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="LongTermMemory 不可用",
+        )
+    # 跨 skill 协调: 科研内容 (实验数据/假设/结论) 归 longterm.py
+    # maybe_consolidate, 对话偏好归本工具. 这里只记对话偏好类观察.
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        entry_id = mem.store(
+            content=args.text,
+            category="user_observation",
+            tags=["user_profile", today],
+            source="personalization_tool",
+            importance=0.5,
+            tier="short",
+            path=f"profile/daily/{today}",
+        )
+    except Exception as exc:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"写入观察日志失败: {exc}",
+        )
+    return ToolResult(
+        data={"stored": True, "id": entry_id, "date": today},
+        success=True,
+    )
+
+
+def _act_get_narrative_profile() -> ToolResult:
+    mem = _get_memory()
+    if mem is None:
+        return ToolResult(data={"profile": ""}, success=True)
+    # list_by_category 默认按 last_accessed DESC, 取最新一条
+    rows = mem.list_by_category(category="user_profile", limit=1, alive_only=True)
+    profile_text = rows[0]["content"] if rows else ""
+    return ToolResult(
+        data={"profile": profile_text},
+        success=True,
+    )
+
+
+def _act_consolidate_profile(
+    tool: PersonalizationTool, args: PersonalizationInput
+) -> ToolResult:
+    triggered = tool.maybe_consolidate_profile(force=args.force)
+    return ToolResult(
+        data={"consolidated": triggered, "force": args.force},
+        success=True,
+    )
+
+
 # ── self-check ────────────────────────────────────────────────────────────
 # 验证双门槛 + force + 归档 + 画像写入. 用临时 DB + mock LLM, 不依赖外部服务.
 # `python -m huginn.tools.personalization_tool` 跑.
 
+
+class _MockMem:
+    """最小 mock: 复用真实 LongTermMemory 的 store/list_by_category/update_archived."""
+
+    def __init__(self, db_path: str):
+        from huginn.memory.longterm import LongTermMemory
+
+        self._impl = LongTermMemory(db_path=db_path, enable_semantic=False)
+
+    def store(self, **kw):
+        return self._impl.store(**kw)
+
+    def list_by_category(self, **kw):
+        return self._impl.list_by_category(**kw)
+
+    def update_archived(self, eid, archived=True):
+        return self._impl.update_archived(eid, archived)
+
+
+def _assert_profile_consolidated() -> None:
+    # 4. 整理后 user_observation 全归档, user_profile 写入 long tier
+    obs_left = _memory_singleton.list_by_category(category="user_observation", limit=10)
+    assert len(obs_left) == 0, f"整理后观察应全归档, 剩 {len(obs_left)}"
+    profiles = _memory_singleton.list_by_category(category="user_profile", limit=10)
+    assert len(profiles) == 1, f"应写入 1 条画像, got {len(profiles)}"
+    assert "MOCK 画像" in profiles[0]["content"], "画像内容应来自 mock LLM"
+    assert profiles[0]["tier"] == "long", "画像应在 long tier"
+
+
 def _selfcheck() -> None:
     import tempfile
-
-    class _MockMem:
-        """最小 mock: 复用真实 LongTermMemory 的 store/list_by_category/update_archived."""
-        def __init__(self, db_path: str):
-            from huginn.memory.longterm import LongTermMemory
-
-            self._impl = LongTermMemory(db_path=db_path, enable_semantic=False)
-        def store(self, **kw):
-            return self._impl.store(**kw)
-        def list_by_category(self, **kw):
-            return self._impl.list_by_category(**kw)
-        def update_archived(self, eid, archived=True):
-            return self._impl.update_archived(eid, archived)
 
     tool = PersonalizationTool()
     with tempfile.TemporaryDirectory() as td:
@@ -420,25 +510,24 @@ def _selfcheck() -> None:
             # 2. 写 1 条观察, 双门未到 (无 last_consolidation → days=inf, 但 count<2)
             #    days=inf 满足 time_gate, 但 count_gate 不满足 → 不触发
             _memory_singleton.store(
-                content="用户喜欢短回答", category="user_observation",
-                tier="short", path="profile/daily/2026-07-29",
+                content="用户喜欢短回答",
+                category="user_observation",
+                tier="short",
+                path="profile/daily/2026-07-29",
             )
             r2 = tool.maybe_consolidate_profile(force=False)
             assert r2 is False, "count<2 且 fallback 未到不应触发"
             # 3. 写第 2 条, count_gate 满足, time_gate 也满足 (inf) → 触发
             _memory_singleton.store(
-                content="用户不喜欢emoji", category="user_observation",
-                tier="short", path="profile/daily/2026-07-29",
+                content="用户不喜欢emoji",
+                category="user_observation",
+                tier="short",
+                path="profile/daily/2026-07-29",
             )
             r3 = tool.maybe_consolidate_profile(force=False)
             assert r3 is True, "双门满足应触发整理"
             # 4. 整理后 user_observation 全归档, user_profile 写入 long tier
-            obs_left = _memory_singleton.list_by_category(category="user_observation", limit=10)
-            assert len(obs_left) == 0, f"整理后观察应全归档, 剩 {len(obs_left)}"
-            profiles = _memory_singleton.list_by_category(category="user_profile", limit=10)
-            assert len(profiles) == 1, f"应写入 1 条画像, got {len(profiles)}"
-            assert "MOCK 画像" in profiles[0]["content"], "画像内容应来自 mock LLM"
-            assert profiles[0]["tier"] == "long", "画像应在 long tier"
+            _assert_profile_consolidated()
             print("personalization_tool selfcheck OK (双门/force/归档/画像写入)")
         finally:
             _memory_singleton, _memory_broken = old_sin, old_brk

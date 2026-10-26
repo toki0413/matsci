@@ -47,6 +47,153 @@ class DatabaseToolInput(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
 
 
+def _mp_search_url(
+    args: DatabaseToolInput, base: str, params: dict[str, Any]
+) -> tuple[str | None, ToolResult | None]:
+    if not args.formula:
+        return None, ToolResult(
+            data=None, success=False, error="formula is required for search"
+        )
+    if args.formula.lower().startswith("mp-"):
+        params["material_ids"] = args.formula
+    else:
+        params["formula"] = args.formula
+    fields = args.properties or [
+        "material_id",
+        "formula_pretty",
+        "energy_per_atom",
+        "band_gap",
+        "symmetry",
+    ]
+    params["fields"] = ",".join(fields)
+    return f"{base}/materials/summary/?{urlencode(params, doseq=True)}", None
+
+
+def _mp_properties_url(
+    args: DatabaseToolInput, base: str, params: dict[str, Any]
+) -> tuple[str | None, ToolResult | None]:
+    mid = args.material_id or args.formula
+    if not mid:
+        return None, ToolResult(
+            data=None, success=False, error="material_id or formula required"
+        )
+    fields = args.properties or [
+        "material_id",
+        "energy_per_atom",
+        "band_gap",
+        "formation_energy_per_atom",
+        "bulk_modulus",
+    ]
+    params["fields"] = ",".join(fields)
+    if mid.lower().startswith("mp-"):
+        params["material_ids"] = mid
+    else:
+        params["formula"] = mid
+    return f"{base}/materials/summary/?{urlencode(params, doseq=True)}", None
+
+
+def _mp_build_url(
+    args: DatabaseToolInput, base: str, params: dict[str, Any]
+) -> tuple[str | None, ToolResult | None]:
+    if args.query_type == "search":
+        return _mp_search_url(args, base, params)
+    elif args.query_type == "get_structure":
+        if not args.material_id:
+            return None, ToolResult(
+                data=None, success=False, error="material_id required"
+            )
+        params["fields"] = "structure,material_id,formula_pretty"
+        return f"{base}/materials/core/{args.material_id}?{urlencode(params)}", None
+    elif args.query_type == "get_properties":
+        return _mp_properties_url(args, base, params)
+    return None, ToolResult(
+        data=None, success=False, error=f"Unknown query_type: {args.query_type}"
+    )
+
+
+def _mp_collect_records(data: dict[str, Any]) -> list[dict[str, Any]]:
+    records = []
+    for item in data.get("data", []):
+        records.append(
+            {
+                "material_id": item.get("material_id"),
+                "formula": item.get("formula_pretty"),
+                "energy_per_atom": item.get("energy_per_atom"),
+                "band_gap": item.get("band_gap"),
+                "spacegroup": (item.get("symmetry") or {}).get("symbol"),
+            }
+        )
+    return records
+
+
+def _oqmd_search_url(
+    args: DatabaseToolInput, base: str, params: dict[str, Any]
+) -> tuple[str | None, ToolResult | None]:
+    if not args.formula:
+        return None, ToolResult(
+            data=None, success=False, error="formula is required for search"
+        )
+    params["composition"] = args.formula
+    fields = args.properties or ["name", "entry_id", "band_gap", "delta_e"]
+    params["fields"] = ",".join(fields)
+    return f"{base}/entry?{urlencode(params, doseq=True)}", None
+
+
+def _oqmd_properties_url(
+    args: DatabaseToolInput, base: str, params: dict[str, Any]
+) -> tuple[str | None, ToolResult | None]:
+    mid = args.material_id or args.formula
+    if not mid:
+        return None, ToolResult(
+            data=None, success=False, error="material_id or formula required"
+        )
+    if "=" in mid or "<" in mid or ">" in mid:
+        params["filter"] = mid
+    else:
+        params["composition"] = mid
+    fields = args.properties or ["name", "entry_id", "band_gap", "delta_e"]
+    params["fields"] = ",".join(fields)
+    return f"{base}/entry?{urlencode(params, doseq=True)}", None
+
+
+def _oqmd_build_url(
+    args: DatabaseToolInput, base: str, params: dict[str, Any]
+) -> tuple[str | None, ToolResult | None]:
+    if args.query_type == "search":
+        return _oqmd_search_url(args, base, params)
+    elif args.query_type == "get_structure":
+        if not args.material_id:
+            return None, ToolResult(
+                data=None, success=False, error="material_id (entry_id) required"
+            )
+        return (
+            f"{base}/entry/{args.material_id}?fields=structure,name,entry_id,band_gap,delta_e",
+            None,
+        )
+    elif args.query_type == "get_properties":
+        return _oqmd_properties_url(args, base, params)
+    return None, ToolResult(
+        data=None, success=False, error=f"Unknown query_type: {args.query_type}"
+    )
+
+
+def _oqmd_collect_records(data: dict[str, Any]) -> list[dict[str, Any]]:
+    records = []
+    items = data.get("data", [])
+    if isinstance(items, dict):
+        items = [items]
+    for item in items:
+        records.append(
+            {
+                "entry_id": item.get("entry_id"),
+                "formula": item.get("name"),
+                "band_gap": item.get("band_gap"),
+                "formation_energy": item.get("delta_e"),
+            }
+        )
+    return records
+
+
 class DatabaseTool(HuginnTool):
     """Query materials databases for structures and properties.
 
@@ -56,7 +203,9 @@ class DatabaseTool(HuginnTool):
 
     name = "database_tool"
     category = "core"
-    profile = ToolProfile(phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS}))
+    profile = ToolProfile(
+        phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS})
+    )
     description = "Search materials databases (Materials Project, AFLOW, NOMAD, OQMD) for structures, properties, and literature data"
     input_schema = DatabaseToolInput
 
@@ -118,68 +267,21 @@ class DatabaseTool(HuginnTool):
         base = "https://api.materialsproject.org"
         params: dict[str, Any] = {"API_KEY": api_key, "limit": args.limit}
 
-        if args.query_type == "search":
-            if not args.formula:
-                return ToolResult(
-                    data=None, success=False, error="formula is required for search"
-                )
-            if args.formula.lower().startswith("mp-"):
-                params["material_ids"] = args.formula
-            else:
-                params["formula"] = args.formula
-            fields = args.properties or [
-                "material_id", "formula_pretty", "energy_per_atom",
-                "band_gap", "symmetry",
-            ]
-            params["fields"] = ",".join(fields)
-            url = f"{base}/materials/summary/?{urlencode(params, doseq=True)}"
-
-        elif args.query_type == "get_structure":
-            if not args.material_id:
-                return ToolResult(
-                    data=None, success=False, error="material_id required"
-                )
-            params["fields"] = "structure,material_id,formula_pretty"
-            url = f"{base}/materials/core/{args.material_id}?{urlencode(params)}"
-
-        elif args.query_type == "get_properties":
-            mid = args.material_id or args.formula
-            if not mid:
-                return ToolResult(
-                    data=None, success=False, error="material_id or formula required"
-                )
-            fields = args.properties or [
-                "material_id", "energy_per_atom", "band_gap",
-                "formation_energy_per_atom", "bulk_modulus",
-            ]
-            params["fields"] = ",".join(fields)
-            if mid.lower().startswith("mp-"):
-                params["material_ids"] = mid
-            else:
-                params["formula"] = mid
-            url = f"{base}/materials/summary/?{urlencode(params, doseq=True)}"
-        else:
-            return ToolResult(data=None, success=False, error=f"Unknown query_type: {args.query_type}")
+        url, error = _mp_build_url(args, base, params)
+        if error is not None:
+            return error
 
         async with aiohttp.ClientSession() as session, session.get(url) as resp:
             if resp.status != 200:
                 text = await resp.text()
                 return ToolResult(
-                    data=None, success=False,
+                    data=None,
+                    success=False,
                     error=f"MP API error {resp.status}: {text[:200]}",
                 )
             data = await resp.json()
 
-        records = []
-        for item in data.get("data", []):
-            records.append({
-                "material_id": item.get("material_id"),
-                "formula": item.get("formula_pretty"),
-                "energy_per_atom": item.get("energy_per_atom"),
-                "band_gap": item.get("band_gap"),
-                "spacegroup": (item.get("symmetry") or {}).get("symbol"),
-            })
-
+        records = _mp_collect_records(data)
         return ToolResult(
             data={
                 "database": "materials_project",
@@ -207,60 +309,24 @@ class DatabaseTool(HuginnTool):
         headers = {"X-API-KEY": api_key}
         params: dict[str, Any] = {"limit": args.limit}
 
-        if args.query_type == "search":
-            if not args.formula:
+        url, error = _oqmd_build_url(args, base, params)
+        if error is not None:
+            return error
+
+        async with (
+            aiohttp.ClientSession(headers=headers) as session,
+            session.get(url) as resp,
+        ):
+            if resp.status != 200:
+                text = await resp.text()
                 return ToolResult(
-                    data=None, success=False, error="formula is required for search"
+                    data=None,
+                    success=False,
+                    error=f"OQMD API error {resp.status}: {text[:200]}",
                 )
-            params["composition"] = args.formula
-            fields = args.properties or ["name", "entry_id", "band_gap", "delta_e"]
-            params["fields"] = ",".join(fields)
-            url = f"{base}/entry?{urlencode(params, doseq=True)}"
+            data = await resp.json()
 
-        elif args.query_type == "get_structure":
-            if not args.material_id:
-                return ToolResult(
-                    data=None, success=False, error="material_id (entry_id) required"
-                )
-            url = f"{base}/entry/{args.material_id}?fields=structure,name,entry_id,band_gap,delta_e"
-
-        elif args.query_type == "get_properties":
-            mid = args.material_id or args.formula
-            if not mid:
-                return ToolResult(
-                    data=None, success=False, error="material_id or formula required"
-                )
-            if "=" in mid or "<" in mid or ">" in mid:
-                params["filter"] = mid
-            else:
-                params["composition"] = mid
-            fields = args.properties or ["name", "entry_id", "band_gap", "delta_e"]
-            params["fields"] = ",".join(fields)
-            url = f"{base}/entry?{urlencode(params, doseq=True)}"
-        else:
-            return ToolResult(data=None, success=False, error=f"Unknown query_type: {args.query_type}")
-
-        async with aiohttp.ClientSession(headers=headers) as session, session.get(url) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    return ToolResult(
-                        data=None, success=False,
-                        error=f"OQMD API error {resp.status}: {text[:200]}",
-                    )
-                data = await resp.json()
-
-        records = []
-        items = data.get("data", [])
-        if isinstance(items, dict):
-            items = [items]
-        for item in items:
-            records.append({
-                "entry_id": item.get("entry_id"),
-                "formula": item.get("name"),
-                "band_gap": item.get("band_gap"),
-                "formation_energy": item.get("delta_e"),
-            })
-
+        records = _oqmd_collect_records(data)
         return ToolResult(
             data={
                 "database": "oqmd",
@@ -279,10 +345,13 @@ class DatabaseTool(HuginnTool):
         target = args.formula or args.material_id
         if not target:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="formula or material_id required for AFLOW",
             )
-        action = "aflow_structure" if args.query_type == "get_structure" else "aflow_query"
+        action = (
+            "aflow_structure" if args.query_type == "get_structure" else "aflow_query"
+        )
         mdb_args = MaterialsDatabaseInput(
             action=action,
             query=target,
@@ -303,7 +372,8 @@ class DatabaseTool(HuginnTool):
         target = args.formula or args.material_id
         if not target:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="formula or material_id required for NOMAD",
             )
         mdb_args = MaterialsDatabaseInput(
@@ -327,7 +397,8 @@ class DatabaseTool(HuginnTool):
         """Compare properties across databases for the same material."""
         if not args.formula and not args.material_id:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="formula or material_id required for compare",
             )
 
@@ -381,11 +452,13 @@ class DatabaseTool(HuginnTool):
             "reason": reason,
         }
         if args.query_type == "search":
-            mock_data["results"] = [{
-                "material_id": f"{args.database.upper()}-MOCK",
-                "formula": args.formula,
-                "spacegroup": "Fm-3m",
-            }]
+            mock_data["results"] = [
+                {
+                    "material_id": f"{args.database.upper()}-MOCK",
+                    "formula": args.formula,
+                    "spacegroup": "Fm-3m",
+                }
+            ]
         elif args.query_type == "get_structure":
             mock_data["lattice"] = {"a": 4.2, "b": 4.2, "c": 4.2}
         elif args.query_type == "get_properties":

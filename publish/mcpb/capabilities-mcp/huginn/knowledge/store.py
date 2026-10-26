@@ -69,13 +69,145 @@ def _resolve_embedding_dim(fallback: int = _EMBED_DIM_DEFAULT) -> int:
     """
     try:
         from sentence_transformers import SentenceTransformer
+
         model = SentenceTransformer(EMBED_MODEL)
         dim = int(getattr(model, "get_sentence_embedding_dimension", lambda: 0)() or 0)
         if dim > 0:
             return dim
     except Exception:
-        logger.debug("embedding dim resolution failed, fallback %d", fallback, exc_info=True)
+        logger.debug(
+            "embedding dim resolution failed, fallback %d", fallback, exc_info=True
+        )
     return fallback
+
+
+def _embed_model_cached() -> bool:
+    """模型已在 HF 本地缓存则置离线标志并返回 True (避免无网时白撞 HEAD)."""
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    repo_dir = os.path.join(cache_dir, f"models--{EMBED_MODEL.replace('/', '--')}")
+    if not os.path.isdir(repo_dir):
+        return False
+    # 已在缓存: 让 huggingface_hub 离线读取, 不再联网做 HEAD 检查 —— 否则
+    # 无网/被墙时它也会先撞一次 huggingface.co 再退, 白白卡住用户的提问.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    return True
+
+
+class _ProgressTqdm:
+    """Tqdm 兼容壳: 接住 snapshot_download 的 update(), 按字节累计发 progress.
+
+    huggingface_hub 会把 total/desc/disable 透传进来, 并在进度循环里直接读
+    self.total / self.n / self.format_dict; 缺任一项都会抛 AttributeError 让整次
+    下载失败. 新版本还会把 tqdm_class 当 context manager 用, 故补上 with 协议.
+    """
+
+    def __init__(self, *args, **kwargs):
+        raw_total = kwargs.get("total")
+        if raw_total is None and args:
+            raw_total = args[0]
+        self.total = raw_total or 0
+        self.n = 0
+        self.desc = kwargs.get("desc", "")
+        self.disable = kwargs.get("disable", False)
+        self.unit = kwargs.get("unit", "it")
+        # format_dict 是 hf 进度包装算 n/total/rate 的入口, 缺它同样抛 AttributeError.
+        self._start = time.monotonic()
+        # 节流: 只在累计前进 ≥2% 时发一次 progress, 免得每字节都刷事件.
+        self._last_pct = 0.0
+
+    @property
+    def format_dict(self) -> dict[str, Any]:
+        elapsed = max(time.monotonic() - self._start, 1e-9)
+        return {
+            "n": self.n,
+            "total": self.total,
+            "elapsed": elapsed,
+            "ncols": 0,
+            "nrows": 0,
+            "desc": self.desc,
+            "unit": self.unit,
+            "rate": self.n / elapsed if isinstance(self.n, int | float) else None,
+            "postfix": "",
+            "remaining": 0,
+            "bar_format": None,
+        }
+
+    def reset(self, *args, **kwargs):
+        self.n = 0
+        if kwargs.get("total") is not None:
+            self.total = kwargs["total"]
+
+    # 新版本 huggingface_hub 把 tqdm_class 当 context manager 用
+    # (HfApi._walk 用 `with tqdm_class(...)`), 补上协议以免拖垮启动.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    # hf_hub 各版本会调用这些 no-op 方法, 无脑接住避免再有 AttributeError.
+    def set_description(self, *args, **kwargs): ...
+
+    def set_postfix(self, *args, **kwargs): ...
+
+    def set_postfix_str(self, *args, **kwargs): ...
+
+    def refresh(self, *args, **kwargs): ...
+
+    def clear(self, *args, **kwargs): ...
+
+    def close(self, *args, **kwargs): ...
+
+    def update(self, n=1):
+        self.n += n
+        pct = self.n / (self.total or 1) * 100
+        if pct - self._last_pct >= 2 or pct >= 99:
+            self._last_pct = pct
+            from huginn.events.integration import publish_event_sync
+
+            publish_event_sync(
+                "embedding.download.progress",
+                {"repo_id": EMBED_MODEL, "percent": round(min(pct, 99), 1)},
+            )
+
+
+def _make_progress_factory(total: int) -> Any:
+    """给 snapshot_download 造一个 tqdm_class: 缺 total 时用仓库总字节兜底."""
+
+    def _make(*args: Any, **kwargs: Any) -> _ProgressTqdm:
+        kwargs.setdefault("total", total)
+        return _ProgressTqdm(*args, **kwargs)
+
+    return _make
+
+
+def _embed_snapshot_with_retries(
+    snapshot_download: Any, tqdm_class: Any
+) -> Exception | None:
+    """指数退避重试 snapshot_download; 成功返 None, 全部失败返最后一个异常."""
+    last_err: Exception | None = None
+    for attempt in range(1, _EMBED_DOWNLOAD_RETRIES + 2):
+        try:
+            snapshot_download(
+                EMBED_MODEL,
+                endpoint=HF_ENDPOINT,
+                tqdm_class=tqdm_class,  # type: ignore[arg-type]
+            )
+            return None
+        except Exception as e:  # noqa: BLE001 - 下载失败要逐个尝试重试
+            last_err = e
+            if attempt > _EMBED_DOWNLOAD_RETRIES:
+                continue
+            wait = 2 ** (attempt - 1)  # 1s, 2s, 4s 指数退避
+            logger.warning(
+                "embedding download attempt %d failed (%s), retry in %ss",
+                attempt,
+                e,
+                wait,
+            )
+            time.sleep(wait)
+    return last_err
 
 
 def _download_embedding_with_progress() -> None:
@@ -85,135 +217,42 @@ def _download_embedding_with_progress() -> None:
     用户要能感知: 发 start/progress/done/error 事件给前端横幅; 失败走指数退避自动重试,
     仍失败不抛异常, 由调用方降级到 onnx/确定性向量兜底, 避免提问因下载失败卡死.
     """
-    if _EmbeddingModel._st is not None:
+    if _EmbeddingModel._st is not None or _embed_model_cached():
         return
-    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
-    if os.path.isdir(os.path.join(cache_dir, f"models--{EMBED_MODEL.replace('/', '--')}")):
-        # 已在缓存: 让 huggingface_hub 离线读取, 不再联网做 HEAD 检查 —— 否则
-        # 无网/被墙时它也会先撞一次 huggingface.co 再退, 白白卡住用户的提问.
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-        return  # 已缓存, 无需联网
     from huginn.events.integration import publish_event_sync
 
-    # 节流对象: 只在累计前进 ≥2% 时发一次 progress, 免得每字节都刷事件.
-    throttle: dict[str, Any] = {"last": 0.0}
     try:
         from huggingface_hub import HfApi, snapshot_download
 
         # 先拿仓库文件清单 + 总字节 (files_metadata=True 才带 size), 用于算真实百分比.
-        files = HfApi(endpoint=HF_ENDPOINT).model_info(EMBED_MODEL, files_metadata=True).siblings
+        files = (
+            HfApi(endpoint=HF_ENDPOINT)
+            .model_info(EMBED_MODEL, files_metadata=True)
+            .siblings
+        )
         total = max(1, sum(f.size or 0 for f in files))
-        done_bytes = [0]
-
-        class _ProgressTqdm:
-            """Tqdm 兼容壳: 接住 snapshot_download 的 update(), 按字节累计发 progress."""
-            def __init__(self, *args, **kwargs):
-                # huggingface_hub 会把 total/desc/disable 透传进来, 并在进度循环里
-                # 直接读 self.total / self.n; 缺属性会抛
-                # AttributeError: '_ProgressTqdm' object has no attribute 'total',
-                # 让整次下载失败. 如实挂上这些字段.
-                raw_total = kwargs.get("total")
-                if raw_total is None and args:
-                    raw_total = args[0]
-                self.total = raw_total or 0
-                self.n = 0
-                self.desc = kwargs.get("desc", "")
-                self.disable = kwargs.get("disable", False)
-                self.unit = kwargs.get("unit", "it")
-                # huggingface_hub 的进度包装会读 format_dict 计算 n/total/rate,
-                # 缺它同样抛 AttributeError: '_ProgressTqdm' object has no attribute
-                # 'format_dict', 让下载在每次进度回调处报错. 如实提供字段.
-                self._start = time.monotonic()
-
-            @property
-            def format_dict(self) -> dict[str, Any]:
-                elapsed = max(time.monotonic() - self._start, 1e-9)
-                return {
-                    "n": self.n,
-                    "total": self.total,
-                    "elapsed": elapsed,
-                    "ncols": 0,
-                    "nrows": 0,
-                    "desc": self.desc,
-                    "unit": self.unit,
-                    "rate": self.n / elapsed if isinstance(self.n, int | float) else None,
-                    "postfix": "",
-                    "remaining": 0,
-                    "bar_format": None,
-                }
-
-            def reset(self, *args, **kwargs):
-                self.n = 0
-                if kwargs.get("total") is not None:
-                    self.total = kwargs["total"]
-
-            # 新版本 huggingface_hub 把 tqdm_class 当 context manager 用
-            # (HfApi._walk 用 `with tqdm_class(...)`), 补上协议以免 "_ProgressTqdm
-            # object does not support the context manager protocol" 拖垮启动.
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            # hf_hub 各版本会调用这些 no-op 方法, 无脑接住避免再有 AttributeError.
-            def set_description(self, *args, **kwargs):
-                ...
-
-            def set_postfix(self, *args, **kwargs):
-                ...
-
-            def set_postfix_str(self, *args, **kwargs):
-                ...
-
-            def refresh(self, *args, **kwargs):
-                ...
-
-            def clear(self, *args, **kwargs):
-                ...
-
-            def close(self, *args, **kwargs):
-                ...
-
-            def update(self, n=1):
-                done_bytes[0] += n
-                pct = done_bytes[0] / total * 100
-                if pct - throttle["last"] >= 2 or pct >= 99:
-                    throttle["last"] = pct
-                    publish_event_sync(
-                        "embedding.download.progress",
-                        {"repo_id": EMBED_MODEL, "percent": round(min(pct, 99), 1)},
-                    )
-
         publish_event_sync("embedding.download.start", {"repo_id": EMBED_MODEL})
-        last_err: Exception | None = None
-        for attempt in range(1, _EMBED_DOWNLOAD_RETRIES + 2):
-            try:
-                snapshot_download(
-                    EMBED_MODEL, endpoint=HF_ENDPOINT,
-                    tqdm_class=_ProgressTqdm,  # type: ignore[arg-type]
-                )
-                break
-            except Exception as e:  # noqa: BLE001 - 下载失败要逐个尝试重试
-                last_err = e
-                if attempt > _EMBED_DOWNLOAD_RETRIES:
-                    continue
-                wait = 2 ** (attempt - 1)  # 1s, 2s, 4s 指数退避
-                logger.warning("embedding download attempt %d failed (%s), retry in %ss", attempt, e, wait)
-                time.sleep(wait)
-        if last_err and attempt > _EMBED_DOWNLOAD_RETRIES:
+        last_err = _embed_snapshot_with_retries(
+            snapshot_download, _make_progress_factory(total)
+        )
+        if last_err is not None:
             publish_event_sync(
                 "embedding.download.error",
                 {"repo_id": EMBED_MODEL, "error": str(last_err)},
             )
-            logger.warning("embedding download failed after %d attempts: %s", attempt, last_err)
+            logger.warning(
+                "embedding download failed after %d attempts: %s",
+                _EMBED_DOWNLOAD_RETRIES + 1,
+                last_err,
+            )
             return
         publish_event_sync("embedding.download.done", {"repo_id": EMBED_MODEL})
     except Exception as e:
         # 连文件清单都拿不到 (比如镜像也不通), 让用户知道但 KB 不能卡死 -> error + 调用方降级.
         logger.warning("embedding download failed: %s", e)
-        publish_event_sync("embedding.download.error", {"repo_id": EMBED_MODEL, "error": str(e)})
+        publish_event_sync(
+            "embedding.download.error", {"repo_id": EMBED_MODEL, "error": str(e)}
+        )
 
 
 def _deterministic_vectors(texts: list[str], dim: int | None = None) -> np.ndarray:
@@ -229,9 +268,9 @@ def _deterministic_vectors(texts: list[str], dim: int | None = None) -> np.ndarr
     vecs = []
     for t in texts:
         h = hashlib.sha256(t.encode("utf-8")).digest()
-        raw = np.frombuffer(
-            (h * (dim // 8 + 1))[:dim], dtype=np.uint8
-        ).astype(np.float32)
+        raw = np.frombuffer((h * (dim // 8 + 1))[:dim], dtype=np.uint8).astype(
+            np.float32
+        )
         v = (raw / 127.5) - 1.0
         norm = np.linalg.norm(v)
         if norm > 0:
@@ -278,61 +317,78 @@ class _EmbeddingModel:
             _EmbeddingModel._initialized = True
 
     def encode(self, texts: list[str], cache_key: str | None = None) -> np.ndarray:
-        if cache_key:
-            cached = _EmbeddingModel._embedding_cache.get(cache_key)
-            if cached is not None:
-                # 共享缓存存 list[list[float]], 命中时还原为 ndarray.
-                import numpy as np
-                return np.asarray(cached, dtype=np.float32)
-
+        cached = _EmbeddingModel._cache_lookup(cache_key)
+        if cached is not None:
+            return cached
         # 之前 ST 权重加载失败 或 ONNX 已超时降级: 不进 onnx 也不进
         # sentence_transformers, 直接给确定性向量, 保证 KB 种子流程不被卡死.
         if _EmbeddingModel._st_failed or _EmbeddingModel._onnx_degraded:
             return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
-
-
-        # 优先用 EMBED_MODEL (sentence-transformers): 与重灌后的存量向量同语义空间.
-        # chroma 自带 onnx (英文 all-MiniLM) 仅作回退 —— 否则查询向量与存量向量
-        # 维度一样但模型不同、语义空间错位, 检索命中率反而变差.
-        if _EmbeddingModel._st is None:
-            _download_embedding_with_progress()
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError as e:
-                raise RuntimeError(
-                    "Embedding requires sentence-transformers or chromadb's default embedder. "
-                    "Install: pip install sentence-transformers"
-                ) from e
-            try:
-                _EmbeddingModel._st = SentenceTransformer(EMBED_MODEL)
-            except Exception as e:
-                # 下载/加载失败(权重拉不下来或模型损坏): _download_embedding_with_progress
-                # 已发 error 事件给前端, 这里留 _st=None 好让下方降级路径兜底,
-                # 不把这个异常抛给用户的提问, 而是用 onnx/确定性向量继续.
-                if not _EmbeddingModel._use_chroma:
-                    from huginn.events.integration import publish_event_sync
-                    publish_event_sync("embedding.download.error", {
-                        "repo_id": EMBED_MODEL, "error": str(e),
-                    })
-                logger.warning(
-                    "sentence-transformers load failed (%s); degrade to fallback vectors", e
-                )
-                _EmbeddingModel._st = None
-                # 下载/加载彻底失败一次就永久降级, 别再为后续 batch 重试联网.
-                _EmbeddingModel._st_failed = True
-        try:
-            # 与 rebuild_kb 重灌时保持一致, 输出单位向量; 否则 l2 距离被模长主导, 命中差.
-            result = _EmbeddingModel._st.encode(texts, normalize_embeddings=True)
-        except Exception:
-            # ST 不可用/挂起时回退 chroma onnx, 再不行给确定性向量兜底.
-            if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
-                result = self._encode_onnx_guarded(texts)
-            else:
-                result = _deterministic_vectors(texts, dim=_resolve_embedding_dim())
-
+        _EmbeddingModel._ensure_st_loaded()
+        result = self._encode_with_fallback(texts)
         if cache_key:
             _EmbeddingModel._embedding_cache.set(cache_key, result.tolist())
         return result
+
+    @staticmethod
+    def _cache_lookup(cache_key: str | None) -> np.ndarray | None:
+        """共享缓存命中则还原为 ndarray (缓存里存的是 list[list[float]])."""
+        if not cache_key:
+            return None
+        cached = _EmbeddingModel._embedding_cache.get(cache_key)
+        if cached is None:
+            return None
+        import numpy as np
+
+        return np.asarray(cached, dtype=np.float32)
+
+    @classmethod
+    def _ensure_st_loaded(cls) -> None:
+        """首次使用时加载 sentence-transformers; 失败置 _st_failed 永久降级.
+
+        优先用 EMBED_MODEL (sentence-transformers): 与重灌后的存量向量同语义空间.
+        chroma 自带 onnx (英文 all-MiniLM) 仅作回退 —— 否则查询向量与存量向量
+        维度一样但模型不同、语义空间错位, 检索命中率反而变差.
+        """
+        if cls._st is not None:
+            return
+        _download_embedding_with_progress()
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise RuntimeError(
+                "Embedding requires sentence-transformers or chromadb's default embedder. "
+                "Install: pip install sentence-transformers"
+            ) from e
+        try:
+            cls._st = SentenceTransformer(EMBED_MODEL)
+        except Exception as e:
+            # 下载/加载失败(权重拉不下来或模型损坏): _download_embedding_with_progress
+            # 已发 error 事件给前端, 这里留 _st=None 好让下方降级路径兜底,
+            # 不把这个异常抛给用户的提问, 而是用 onnx/确定性向量继续.
+            if not cls._use_chroma:
+                from huginn.events.integration import publish_event_sync
+
+                publish_event_sync(
+                    "embedding.download.error",
+                    {"repo_id": EMBED_MODEL, "error": str(e)},
+                )
+            logger.warning(
+                "sentence-transformers load failed (%s); degrade to fallback vectors", e
+            )
+            cls._st = None
+            # 下载/加载彻底失败一次就永久降级, 别再为后续 batch 重试联网.
+            cls._st_failed = True
+
+    def _encode_with_fallback(self, texts: list[str]) -> np.ndarray:
+        try:
+            # 与 rebuild_kb 重灌时保持一致, 输出单位向量; 否则 l2 距离被模长主导, 命中差.
+            return _EmbeddingModel._st.encode(texts, normalize_embeddings=True)
+        except Exception:
+            # ST 不可用/挂起时回退 chroma onnx, 再不行给确定性向量兜底.
+            if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
+                return self._encode_onnx_guarded(texts)
+            return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
 
     @staticmethod
     def _encode_onnx_guarded(texts: list[str]) -> np.ndarray:
@@ -377,7 +433,7 @@ class _EmbeddingModel:
 # Sparck Jones 经验值. 单进程内存索引, KB < 100K chunks 性能可接受.
 # 中文分词: 有 jieba 用 jieba (材料术语更准), 否则按字切 + 同时保留 ASCII 词.
 
-_BM25_TOKEN_RE = re.compile(r'[A-Za-z0-9_]+|[\u4e00-\u9fff]')
+_BM25_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 
 # BM25 中文分词依赖 jieba. 懒加载逻辑收敛到 huginn/utils/jieba_utils.get_jieba.
 
@@ -448,8 +504,9 @@ class _BM25Index:
         self._avgdl = (sum(doc_len) / len(doc_len)) if doc_len else 0.0
         self._built = True
 
-    def search(self, query: str, top_k: int = 10,
-               domain: str | None = None) -> list[tuple[str, float]]:
+    def search(
+        self, query: str, top_k: int = 10, domain: str | None = None
+    ) -> list[tuple[str, float]]:
         """返回 [(chunk_id, score), ...] 按分数降序. 没命中返回 [].
 
         P2#2 domain 分片: domain 非 None 时只对同 domain 的 chunk 计分 (跳过
@@ -480,8 +537,12 @@ class _BM25Index:
                 if domain is not None and self._doc_domains[doc_idx] != domain:
                     continue
                 dl = self._doc_len[doc_idx]
-                denom = self._k1 * (1 - self._b + self._b * dl / (self._avgdl or 1.0)) + tf
-                scores[doc_idx] = scores.get(doc_idx, 0.0) + idf * (self._k1 + 1) * tf / denom * qf
+                denom = (
+                    self._k1 * (1 - self._b + self._b * dl / (self._avgdl or 1.0)) + tf
+                )
+                scores[doc_idx] = (
+                    scores.get(doc_idx, 0.0) + idf * (self._k1 + 1) * tf / denom * qf
+                )
 
         if not scores:
             return []
@@ -496,9 +557,11 @@ class _BM25Index:
 # ponytail: python-docx 和 openpyxl 已装, 直接用. LaTeX 零依赖 regex strip.
 # 三者都 graceful: 库缺失或解析失败退回 UTF-8, 上层 _extract_text 再兜底.
 
+
 def _extract_docx(content: bytes) -> str:
     """从 .docx 提取段落文本, 含表格."""
     import io
+
     try:
         import docx
     except ImportError:
@@ -516,6 +579,7 @@ def _extract_docx(content: bytes) -> str:
 def _extract_xlsx(content: bytes) -> str:
     """从 .xlsx 提取所有 sheet 的单元格, tab 分隔列, 换行分隔行."""
     import io
+
     try:
         import openpyxl
     except ImportError:
@@ -535,21 +599,20 @@ def _extract_latex(content: bytes) -> str:
     """剥离 LaTeX 命令, 保留正文. 零依赖 regex."""
     text = content.decode("utf-8", errors="ignore")
     # 行注释 (% 开头, 但不是 \%)
-    text = re.sub(r'(?<!\\)%.*', '', text)
+    text = re.sub(r"(?<!\\)%.*", "", text)
     # \begin{env} / \end{env} 标记
-    text = re.sub(r'\\(begin|end)\{[^}]*\}', '', text)
+    text = re.sub(r"\\(begin|end)\{[^}]*\}", "", text)
     # \command[opt]{arg} → arg (保留内容, 去掉命令名和可选参数)
-    text = re.sub(r'\\[a-zA-Z]+\*?(?:\[[^\]]*\])?\{([^}]*)\}', r'\1', text)
+    text = re.sub(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?\{([^}]*)\}", r"\1", text)
     # 独立命令 \command → 空 (如 \centering \hline \newpage)
-    text = re.sub(r'\\[a-zA-Z]+\*?', '', text)
+    text = re.sub(r"\\[a-zA-Z]+\*?", "", text)
     # 数学环境 $...$ $$...$$ 保留内容
-    text = text.replace('$$', '').replace('$', '')
+    text = text.replace("$$", "").replace("$", "")
     # 残留花括号
-    text = text.replace('{', '').replace('}', '')
+    text = text.replace("{", "").replace("}", "")
     # 多余空行压成一段
-    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
-
 
 
 def _extract_text(filename: str, content: bytes) -> str:
@@ -617,21 +680,57 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     # 合金
     "合金": ["合金", "alloy", "superalloy", "金属间化合物", "intermetallic"],
     "高温合金": ["高温合金", "superalloy", "nickel-based", "镍基", "蠕变"],
-    "轻合金": ["轻合金", "magnesium alloy", "镁合金", "titanium alloy", "钛合金", "铝合金", "aluminum alloy"],
+    "轻合金": [
+        "轻合金",
+        "magnesium alloy",
+        "镁合金",
+        "titanium alloy",
+        "钛合金",
+        "铝合金",
+        "aluminum alloy",
+    ],
     "高熵合金": ["高熵合金", "high-entropy", "HEA", "multi-principal"],
     # 半导体
-    "半导体": ["半导体", "semiconductor", "带隙", "band gap", "载流子", "carrier", "doping", "掺杂"],
+    "半导体": [
+        "半导体",
+        "semiconductor",
+        "带隙",
+        "band gap",
+        "载流子",
+        "carrier",
+        "doping",
+        "掺杂",
+    ],
     "宽禁带半导体": ["宽禁带", "wide bandgap", "GaN", "SiC", "ZnO", "wide-gap"],
     "热电半导体": ["热电", "thermoelectric", "Seebeck", "塞贝克", "ZT"],
     "有机半导体": ["有机半导体", "organic semiconductor", "OFET", "OPV", "导电聚合物"],
     # 催化
-    "催化": ["催化", "catalys", "催化活性", "活性位点", "active site", "吸附能", "adsorption"],
+    "催化": [
+        "催化",
+        "catalys",
+        "催化活性",
+        "活性位点",
+        "active site",
+        "吸附能",
+        "adsorption",
+    ],
     "电催化": ["电催化", "electrocatalys", "ORR", "OER", "HER", "析氢", "析氧"],
     "光催化": ["光催化", "photocatalys", "光降解", "光分解水"],
     "热催化": ["热催化", "thermocatalys", "费托", "Fischer-Tropsch", "甲烷化"],
     # 能源材料
     "能源材料": ["能源材料", "energy storage", "电池", "battery", "capacitor", "储能"],
-    "电池材料": ["电池", "battery", "正极", "cathode", "负极", "anode", "电解质", "electrolyte", "锂离子", "Li-ion"],
+    "电池材料": [
+        "电池",
+        "battery",
+        "正极",
+        "cathode",
+        "负极",
+        "anode",
+        "电解质",
+        "electrolyte",
+        "锂离子",
+        "Li-ion",
+    ],
     "储氢材料": ["储氢", "hydrogen storage", "metal hydride", "金属氢化物"],
     "超级电容器": ["超级电容", "supercapacitor", "双电层电容", "EDLC"],
     # 生物材料
@@ -641,17 +740,99 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "生物活性涂层": ["生物活性涂层", "bioactive coating", "表面改性", "生物涂层"],
     # 机械工程 — 域级关键词要覆盖各子领域常见词, 否则只提子领域不提"机械工程"的文本打不上域标签
     "机械工程": [
-        "机械工程", "mechanical engineering", "机械设计", "mechanical design",
-        "应力分析", "stress analysis", "制造工艺", "粉末冶金", "powder metallurgy",
-        "塑性加工", "增材制造", "additive manufacturing", "热处理", "heat treatment",
-        "疲劳", "fatigue", "轧制", "rolling", "烧结", "sintering", "锻造", "forging",
-        "淬火", "quenching", "3D打印", "3D printing", "磨损", "wear",
+        "机械工程",
+        "mechanical engineering",
+        "机械设计",
+        "mechanical design",
+        "应力分析",
+        "stress analysis",
+        "制造工艺",
+        "粉末冶金",
+        "powder metallurgy",
+        "塑性加工",
+        "增材制造",
+        "additive manufacturing",
+        "热处理",
+        "heat treatment",
+        "疲劳",
+        "fatigue",
+        "轧制",
+        "rolling",
+        "烧结",
+        "sintering",
+        "锻造",
+        "forging",
+        "淬火",
+        "quenching",
+        "3D打印",
+        "3D printing",
+        "磨损",
+        "wear",
     ],
-    "粉末冶金": ["粉末冶金", "powder metallurgy", "压制", "die compaction", "烧结", "sintering", "HIP", "热等静压", "CIP", "冷等静压"],
-    "塑性加工": ["塑性加工", "rolling", "轧制", "extrusion", "挤压", "forging", "锻造", "drawing", "拉拔", "板料", "sheet metal"],
-    "增材制造": ["增材制造", "additive manufacturing", "3D printing", "3D打印", "SLM", "选择性激光熔化", "SLS", "选择性激光烧结", "FDM", "熔融沉积", "送粉", "scan path", "扫描路径"],
-    "热处理": ["热处理", "heat treatment", "退火", "annealing", "淬火", "quenching", "回火", "tempering", "炉", "furnace"],
-    "机械设计": ["应力分析", "stress analysis", "疲劳", "fatigue", "断裂", "fracture", "磨损", "wear", "摩擦学", "tribology"],
+    "粉末冶金": [
+        "粉末冶金",
+        "powder metallurgy",
+        "压制",
+        "die compaction",
+        "烧结",
+        "sintering",
+        "HIP",
+        "热等静压",
+        "CIP",
+        "冷等静压",
+    ],
+    "塑性加工": [
+        "塑性加工",
+        "rolling",
+        "轧制",
+        "extrusion",
+        "挤压",
+        "forging",
+        "锻造",
+        "drawing",
+        "拉拔",
+        "板料",
+        "sheet metal",
+    ],
+    "增材制造": [
+        "增材制造",
+        "additive manufacturing",
+        "3D printing",
+        "3D打印",
+        "SLM",
+        "选择性激光熔化",
+        "SLS",
+        "选择性激光烧结",
+        "FDM",
+        "熔融沉积",
+        "送粉",
+        "scan path",
+        "扫描路径",
+    ],
+    "热处理": [
+        "热处理",
+        "heat treatment",
+        "退火",
+        "annealing",
+        "淬火",
+        "quenching",
+        "回火",
+        "tempering",
+        "炉",
+        "furnace",
+    ],
+    "机械设计": [
+        "应力分析",
+        "stress analysis",
+        "疲劳",
+        "fatigue",
+        "断裂",
+        "fracture",
+        "磨损",
+        "wear",
+        "摩擦学",
+        "tribology",
+    ],
 }
 
 
@@ -683,11 +864,11 @@ def auto_tag(text: str) -> dict[str, Any]:
 # ── 章节感知分块 ──────────────────────────────────────────────────────
 # Markdown 按 ## / ### 分块, PDF 按章节标记分块, 纯文本退回固定长度
 
-_MD_HEADING_RE = re.compile(r'^(#{2,3})\s+(.+)$', re.MULTILINE)
+_MD_HEADING_RE = re.compile(r"^(#{2,3})\s+(.+)$", re.MULTILINE)
 # PDF 章节常见模式: "Chapter 1", "第3章", "1. Introduction", "2.1 Methods"
 _PDF_CHAPTER_RE = re.compile(
-    r'^(?:Chapter\s+\d+|第[一二三四五六七八九十百\d]+章'
-    r'|\d{1,2}\.\s+[A-Z]\w+|\d{1,2}\.\d{1,2}\s+\w+)',
+    r"^(?:Chapter\s+\d+|第[一二三四五六七八九十百\d]+章"
+    r"|\d{1,2}\.\s+[A-Z]\w+|\d{1,2}\.\d{1,2}\s+\w+)",
     re.MULTILINE,
 )
 
@@ -715,6 +896,27 @@ def _section_aware_chunk(
     ]
 
 
+def _fixed_chunks(text: str) -> list[tuple[str, dict[str, Any]]]:
+    """固定长度分块 (无章节结构时的兜底)."""
+    return [
+        (c, {"section": "", "chunk_type": "fixed"})
+        for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+    ]
+
+
+def _md_content_chunks(
+    content: str, section_str: str, level: int
+) -> list[tuple[str, dict[str, Any]]]:
+    """把一节正文按 CHUNK_SIZE 切块 (仅超长才切), 统一挂 section 元数据."""
+    meta = {"section": section_str, "chunk_type": "section", "heading_level": level}
+    if len(content) > CHUNK_SIZE:
+        return [
+            (sub, dict(meta))
+            for sub in chunk_text(content, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+        ]
+    return [(content, meta)]
+
+
 def _chunk_markdown_sections(
     text: str,
 ) -> list[tuple[str, dict[str, Any]]]:
@@ -723,10 +925,7 @@ def _chunk_markdown_sections(
 
     if not headings:
         # 没有标题结构, 退回固定长度
-        return [
-            (c, {"section": "", "chunk_type": "fixed"})
-            for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
-        ]
+        return _fixed_chunks(text)
 
     chunks: list[tuple[str, dict[str, Any]]] = []
 
@@ -754,26 +953,9 @@ def _chunk_markdown_sections(
         if not content:
             continue
 
-        section_str = " > ".join(section_path)
+        chunks.extend(_md_content_chunks(content, " > ".join(section_path), level))
 
-        if len(content) > CHUNK_SIZE:
-            for sub in chunk_text(content, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-                chunks.append((sub, {
-                    "section": section_str,
-                    "chunk_type": "section",
-                    "heading_level": level,
-                }))
-        else:
-            chunks.append((content, {
-                "section": section_str,
-                "chunk_type": "section",
-                "heading_level": level,
-            }))
-
-    if not chunks:
-        return [(c, {"section": "", "chunk_type": "fixed"})
-                for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)]
-    return chunks
+    return chunks or _fixed_chunks(text)
 
 
 def _chunk_pdf_sections(
@@ -783,10 +965,7 @@ def _chunk_pdf_sections(
     matches = list(_PDF_CHAPTER_RE.finditer(text))
 
     if not matches:
-        return [
-            (c, {"section": "", "chunk_type": "fixed"})
-            for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
-        ]
+        return _fixed_chunks(text)
 
     chunks: list[tuple[str, dict[str, Any]]] = []
 
@@ -801,26 +980,21 @@ def _chunk_pdf_sections(
         start = match.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         content = text[start:end].strip()
+        if content:
+            chunks.extend(_pdf_content_chunks(content, title))
 
-        if not content:
-            continue
+    return chunks or _fixed_chunks(text)
 
-        if len(content) > CHUNK_SIZE:
-            for sub in chunk_text(content, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-                chunks.append((sub, {
-                    "section": title,
-                    "chunk_type": "section",
-                }))
-        else:
-            chunks.append((content, {
-                "section": title,
-                "chunk_type": "section",
-            }))
 
-    if not chunks:
-        return [(c, {"section": "", "chunk_type": "fixed"})
-                for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)]
-    return chunks
+def _pdf_content_chunks(content: str, title: str) -> list[tuple[str, dict[str, Any]]]:
+    """把一章正文按 CHUNK_SIZE 切块 (超长才切), section 用章节标题."""
+    meta = {"section": title, "chunk_type": "section"}
+    if len(content) > CHUNK_SIZE:
+        return [
+            (sub, dict(meta))
+            for sub in chunk_text(content, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
+        ]
+    return [(content, meta)]
 
 
 def _classify_doc_source(doc_id: str, meta: dict[str, Any]) -> str:
@@ -836,9 +1010,120 @@ def _classify_doc_source(doc_id: str, meta: dict[str, Any]) -> str:
     # 蒸馏条目标记为 distilled_ 前缀 (见 knowledge_distiller._save)
     if "distill" in st or "heuristic" in st or fname.startswith("distilled_"):
         return "distill"
-    if fname.startswith("autoloop_iter_") or fname.startswith("auto_") or st == "auto_sediment":
+    if (
+        fname.startswith("autoloop_iter_")
+        or fname.startswith("auto_")
+        or st == "auto_sediment"
+    ):
         return "auto"
     return "upload"
+
+
+def _rrf_pick(
+    fused: dict[str, dict[str, Any]],
+    rrf_scores: dict[str, float],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """按 RRF 分数取 top_k, 并给每条合成 distance (分数越高 distance 越小)."""
+    max_score = max(rrf_scores.values())
+    sorted_ids = sorted(rrf_scores.keys(), key=lambda cid: -rrf_scores[cid])
+    result: list[dict[str, Any]] = []
+    for cid in sorted_ids[:top_k]:
+        c = fused.get(cid)
+        if c is None:
+            continue
+        # 合成 distance: RRF 分数越高 → distance 越小, 下游排序一致
+        c["distance"] = 1.0 - (rrf_scores[cid] / max_score) if max_score > 0 else 0.5
+        result.append(c)
+    return result
+
+
+def _build_chunk_metas(
+    sectioned: list[tuple[str, dict[str, Any]]],
+    *,
+    doc_id: str,
+    filename: str,
+    tags: dict[str, Any],
+    extra: dict[str, Any] | None,
+    chunk_last: bool,
+) -> list[dict[str, Any]]:
+    """构造每个 chunk 的 metadata: 基础字段 + section + domain + 透传 extra.
+
+    ``chunk_last`` 控制 chunk 序号的写入时机: add_document 在基础字段里先写,
+    add_text 则在 extra 之后写 (extra 可能自带 chunk 键) — 保持两者原语义.
+    """
+    domain_tags = tags["domain_tags"]
+    sub_tags = tags["sub_domain_tags"]
+    domain_str = json.dumps(domain_tags, ensure_ascii=False) if domain_tags else ""
+    sub_domain_str = json.dumps(sub_tags, ensure_ascii=False) if sub_tags else ""
+    primary_domain = domain_tags[0] if domain_tags else "未分类"
+
+    metadatas: list[dict[str, Any]] = []
+    for i, (_chunk, section_meta) in enumerate(sectioned):
+        meta: dict[str, Any] = {
+            "doc_id": doc_id,
+            "filename": filename,
+            "created_at": datetime.now().isoformat(),
+        }
+        if not chunk_last:
+            meta["chunk"] = i
+        meta.update(section_meta)
+        meta["domain"] = primary_domain
+        if domain_str:
+            meta["domain_tags"] = domain_str
+        if sub_domain_str:
+            meta["sub_domain_tags"] = sub_domain_str
+        if extra:
+            for k, v in extra.items():
+                if isinstance(v, list | dict):
+                    meta[k] = json.dumps(v, ensure_ascii=False)
+                else:
+                    meta[k] = str(v) if v is not None else ""
+        if chunk_last:
+            meta["chunk"] = i
+        metadatas.append(meta)
+    return metadatas
+
+
+def _merge_activated(
+    chunks: list[dict[str, Any]],
+    activated: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """去重合并激活结果, 总数不超过 limit (多给 2 条关联结果)."""
+    if not activated:
+        return chunks
+    seen_ids = {c["chunk_id"] for c in chunks}
+    for c in activated:
+        if c["chunk_id"] not in seen_ids:
+            chunks.append(c)
+            seen_ids.add(c["chunk_id"])
+            if len(chunks) >= limit:
+                break
+    return chunks
+
+
+def _meta_tags(meta: dict[str, Any]) -> set[str]:
+    """解析 metadata 里的 domain_tags (JSON string 或 list) 为 tag 集合."""
+    raw = meta.get("domain_tags", "[]")
+    if isinstance(raw, list):
+        return set(raw)
+    if isinstance(raw, str):
+        try:
+            tags = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
+            return set()
+        return set(tags) if isinstance(tags, list) else set()
+    return set()
+
+
+def _collect_tags(chunks: list[dict[str, Any]]) -> set[str]:
+    """收集首轮结果的所有 domain_tags."""
+    all_tags: set[str] = set()
+    for c in chunks:
+        all_tags |= _meta_tags(c.get("metadata", {}))
+    return all_tags
 
 
 class KnowledgeBase:
@@ -849,16 +1134,7 @@ class KnowledgeBase:
         self.root.mkdir(parents=True, exist_ok=True)
         self.docs_dir = self.root / "docs"
         self.docs_dir.mkdir(exist_ok=True)
-
-        try:
-            import chromadb
-        except ImportError as e:
-            raise RuntimeError(
-                "Knowledge base requires chromadb. Install: pip install chromadb"
-            ) from e
-
-        self.client = chromadb.PersistentClient(path=str(self.root / "chroma"))
-        self.collection = self.client.get_or_create_collection("huginn_kb")
+        self.client, self.collection = self._open_chroma()
         self._model: Any | None = None
         self._query_cache: TimedLRUCache[list[dict[str, Any]]] = TimedLRUCache(
             max_size=256, ttl=60.0
@@ -866,7 +1142,30 @@ class KnowledgeBase:
         # 检索命中计数: 用于智能 KB 淘汰评分 (频率维度)
         self._hit_counts: dict[str, int] = {}
         # 语义缓存: gptcache 可选, 没装就退回上面的 TimedLRUCache
-        self._semantic_cache: Any | None = None
+        self._semantic_cache = self._init_semantic_cache()
+        # Feedback tracker for confidence-based reranking (lazy init)
+        self._feedback_tracker = self._init_feedback_tracker()
+        # BM25 索引 (lazy): 和向量检索做 RRF 混合, 提高材料术语 / 精确匹配命中率.
+        # _bm25_dirty=True 表示首次查询或写入后需要从 ChromaDB 全量重建.
+        self._bm25: _BM25Index | None = None
+        self._bm25_dirty: bool = True
+        # 项目知识图谱 (lazy): GraphRAG 关系扩展用. 首次检索用到时才探测
+        # project_kg.json, 没有就缓存 None/False 避免反复探测.
+        self._kg: Any | None = None
+
+    def _open_chroma(self) -> tuple[Any, Any]:
+        """打开 (或创建) 持久化 chroma client 与其 collection."""
+        try:
+            import chromadb
+        except ImportError as e:
+            raise RuntimeError(
+                "Knowledge base requires chromadb. Install: pip install chromadb"
+            ) from e
+        client = chromadb.PersistentClient(path=str(self.root / "chroma"))
+        return client, client.get_or_create_collection("huginn_kb")
+
+    def _init_semantic_cache(self) -> Any | None:
+        """初始化 gptcache 语义缓存; 没装或初始化失败时优雅降级为 None."""
         try:
             from gptcache import Cache
             from gptcache.embedding import Onnx
@@ -880,8 +1179,8 @@ class KnowledgeBase:
                 data_dir=str(self.root / "semantic_cache"),
                 vector_params={"dimension": onnx.dimension},
             )
-            self._semantic_cache = Cache()
-            self._semantic_cache.init(
+            cache = Cache()
+            cache.init(
                 pre_embedding_func=get_prompt,
                 data_manager=data_manager,
                 # max_distance=0.4 对应 cosine similarity 约 0.92
@@ -889,26 +1188,21 @@ class KnowledgeBase:
                 similarity_evaluation=SearchDistanceEvaluation(max_distance=0.4),
                 embedding_func=onnx.to_embeddings,
             )
+            return cache
         except Exception:
             # gptcache 没装或初始化失败 (模型下载/faiss 缺失等), 优雅降级
-            self._semantic_cache = None
+            return None
 
-        # Feedback tracker for confidence-based reranking (lazy init)
-        self._feedback_tracker: Any | None = None
+    @staticmethod
+    def _init_feedback_tracker() -> Any | None:
+        """初始化检索反馈跟踪器 (lazy 依赖); 失败返回 None."""
         try:
             from huginn.rag.feedback import RetrievalFeedbackTracker
-            self._feedback_tracker = RetrievalFeedbackTracker()
+
+            return RetrievalFeedbackTracker()
         except Exception:
             logger.debug("feedback tracker init failed", exc_info=True)
-
-        # BM25 索引 (lazy): 和向量检索做 RRF 混合, 提高材料术语 / 精确匹配命中率.
-        # _bm25_dirty=True 表示首次查询或写入后需要从 ChromaDB 全量重建.
-        self._bm25: _BM25Index | None = None
-        self._bm25_dirty: bool = True
-
-        # 项目知识图谱 (lazy): GraphRAG 关系扩展用. 首次检索用到时才探测
-        # project_kg.json, 没有就缓存 None/False 避免反复探测.
-        self._kg: Any | None = None
+            return None
 
     @property
     def model(self) -> _EmbeddingModel:
@@ -970,8 +1264,7 @@ class KnowledgeBase:
         for rank, c in enumerate(vector_chunks):
             cid = c["chunk_id"]
             rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (K + rank)
-            if cid not in fused:
-                fused[cid] = c
+            fused.setdefault(cid, c)
 
         bm25_only_ids: list[str] = []
         for rank, (cid, _score) in enumerate(bm25_hits):
@@ -979,34 +1272,29 @@ class KnowledgeBase:
             if cid not in fused:
                 bm25_only_ids.append(cid)
 
-        # BM25-only chunks 没在向量结果里, 从 ChromaDB 拉回 text/metadata
-        if bm25_only_ids:
-            try:
-                data = self.collection.get(ids=bm25_only_ids, include=["documents", "metadatas"])
-                for i, cid in enumerate(data.get("ids") or []):
-                    fused[cid] = {
-                        "chunk_id": cid,
-                        "text": data["documents"][i],
-                        "metadata": data["metadatas"][i],
-                        "distance": 1.0,  # 占位, 下面用 RRF 分数覆盖
-                    }
-            except Exception:
-                logger.debug("BM25-only chunk fetch failed", exc_info=True)
+        fused.update(self._fetch_bm25_only(bm25_only_ids))
 
         if not rrf_scores:
             return vector_chunks
-        max_score = max(rrf_scores.values())
-        sorted_ids = sorted(rrf_scores.keys(), key=lambda cid: -rrf_scores[cid])
-        result: list[dict[str, Any]] = []
-        for cid in sorted_ids[:top_k]:
-            c = fused.get(cid)
-            if c is None:
-                continue
-            # 合成 distance: RRF 分数越高 → distance 越小, 下游排序一致
-            c["distance"] = 1.0 - (rrf_scores[cid] / max_score) if max_score > 0 else 0.5
-            result.append(c)
-        return result
+        return _rrf_pick(fused, rrf_scores, top_k)
 
+    def _fetch_bm25_only(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """BM25-only chunks 没在向量结果里, 从 ChromaDB 拉回 text/metadata."""
+        if not ids:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        try:
+            data = self.collection.get(ids=ids, include=["documents", "metadatas"])
+            for i, cid in enumerate(data.get("ids") or []):
+                out[cid] = {
+                    "chunk_id": cid,
+                    "text": data["documents"][i],
+                    "metadata": data["metadatas"][i],
+                    "distance": 1.0,  # 占位, 下面用 RRF 分数覆盖
+                }
+        except Exception:
+            logger.debug("BM25-only chunk fetch failed", exc_info=True)
+        return out
 
     def add_document(
         self,
@@ -1035,42 +1323,15 @@ class KnowledgeBase:
 
         # 全文做一次关键词匹配, 给文档打领域标签
         tags = auto_tag(text)
-        domain_str = json.dumps(tags["domain_tags"], ensure_ascii=False) if tags["domain_tags"] else ""
-        sub_domain_str = json.dumps(tags["sub_domain_tags"], ensure_ascii=False) if tags["sub_domain_tags"] else ""
-        # primary domain 存成简单字符串, 方便 ChromaDB where 过滤
-        primary_domain = tags["domain_tags"][0] if tags["domain_tags"] else "未分类"
-
-        chunk_hash = hashlib.sha256("".join(chunks).encode()).hexdigest()
-        embeddings = self.model.encode(chunks, cache_key=chunk_hash).tolist()
-        ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
-
-        metadatas = []
-        for i, (_chunk, section_meta) in enumerate(sectioned):
-            meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "chunk": i, "created_at": datetime.now().isoformat()}
-            meta.update(section_meta)
-            meta["domain"] = primary_domain
-            if domain_str:
-                meta["domain_tags"] = domain_str
-            if sub_domain_str:
-                meta["sub_domain_tags"] = sub_domain_str
-            # 上层传入的结构化元数据 (如 structure_info), 覆盖到每个 chunk
-            if extra_metadata:
-                for k, v in extra_metadata.items():
-                    if isinstance(v, list | dict):
-                        meta[k] = json.dumps(v, ensure_ascii=False)
-                    else:
-                        meta[k] = str(v) if v is not None else ""
-            metadatas.append(meta)
-
-        self.collection.add(
-            ids=ids,
-            documents=chunks,
-            embeddings=embeddings,
-            metadatas=metadatas,
+        metadatas = _build_chunk_metas(
+            sectioned,
+            doc_id=doc_id,
+            filename=filename,
+            tags=tags,
+            extra=extra_metadata,
+            chunk_last=False,
         )
-        self._query_cache.clear()
-        self._flush_semantic_cache()
-        self._bm25_dirty = True  # BM25 索引需要重建
+        self._add_chunks(doc_id, chunks, metadatas)
 
         safe_name = f"{doc_id}_{Path(filename).name}"
         doc_path = self.docs_dir / safe_name
@@ -1083,6 +1344,23 @@ class KnowledgeBase:
             "domain_tags": tags["domain_tags"],
             "sub_domain_tags": tags["sub_domain_tags"],
         }
+
+    def _add_chunks(
+        self, doc_id: str, chunks: list[str], metadatas: list[dict[str, Any]]
+    ) -> None:
+        """编码并写入 chunks, 随后失效查询缓存/语义缓存/BM25 索引."""
+        chunk_hash = hashlib.sha256("".join(chunks).encode()).hexdigest()
+        embeddings = self.model.encode(chunks, cache_key=chunk_hash).tolist()
+        ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+        self.collection.add(
+            ids=ids,
+            documents=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+        self._query_cache.clear()
+        self._flush_semantic_cache()
+        self._bm25_dirty = True  # BM25 索引需要重建
 
     def add_text(
         self,
@@ -1110,44 +1388,15 @@ class KnowledgeBase:
 
         # 自动打领域标签, 调用方 metadata 里有 domain 就用调用方的
         tags = auto_tag(text)
-        domain_str = json.dumps(tags["domain_tags"], ensure_ascii=False) if tags["domain_tags"] else ""
-        sub_domain_str = json.dumps(tags["sub_domain_tags"], ensure_ascii=False) if tags["sub_domain_tags"] else ""
-        primary_domain = tags["domain_tags"][0] if tags["domain_tags"] else "未分类"
-
-        chunk_hash = hashlib.sha256("".join(chunks).encode()).hexdigest()
-        embeddings = self.model.encode(chunks, cache_key=chunk_hash).tolist()
-        ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
-
-        metadatas = []
-        for i, (_chunk, section_meta) in enumerate(sectioned):
-            meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "created_at": datetime.now().isoformat()}
-            meta.update(section_meta)
-            meta["domain"] = primary_domain
-            if domain_str:
-                meta["domain_tags"] = domain_str
-            if sub_domain_str:
-                meta["sub_domain_tags"] = sub_domain_str
-
-            # 调用方传入的 metadata 覆盖自动生成的 (domain 除外, 让调用方也能指定)
-            if metadata:
-                for k, v in metadata.items():
-                    if isinstance(v, list | dict):
-                        meta[k] = json.dumps(v, ensure_ascii=False)
-                    else:
-                        meta[k] = str(v) if v is not None else ""
-
-            meta["chunk"] = i
-            metadatas.append(meta)
-
-        self.collection.add(
-            ids=ids,
-            documents=chunks,
-            embeddings=embeddings,
-            metadatas=metadatas,
+        metadatas = _build_chunk_metas(
+            sectioned,
+            doc_id=doc_id,
+            filename=filename,
+            tags=tags,
+            extra=metadata,
+            chunk_last=True,
         )
-        self._query_cache.clear()
-        self._flush_semantic_cache()
-        self._bm25_dirty = True  # BM25 索引需要重建
+        self._add_chunks(doc_id, chunks, metadatas)
 
         return {
             "doc_id": doc_id,
@@ -1195,11 +1444,19 @@ class KnowledgeBase:
         chunk 编号存在 metadata.chunk 里, 聚合后按它排序, 前端才能按原文档
         顺序阅读而不只是看到乱序的检索命中.
         """
-        data = self.collection.get(where={"doc_id": doc_id}, include=["documents", "metadatas"])
+        data = self.collection.get(
+            where={"doc_id": doc_id}, include=["documents", "metadatas"]
+        )
         rows: list[dict[str, Any]] = []
         for text, meta in zip(data.get("documents") or [], data.get("metadatas") or []):
             meta = meta or {}
-            rows.append({"chunk": int(meta.get("chunk", 0) or 0), "text": text, "metadata": meta})
+            rows.append(
+                {
+                    "chunk": int(meta.get("chunk", 0) or 0),
+                    "text": text,
+                    "metadata": meta,
+                }
+            )
         rows.sort(key=lambda r: r["chunk"])
         return rows
 
@@ -1236,42 +1493,56 @@ class KnowledgeBase:
             if len(all_docs) <= max_docs:
                 return 0
 
-            deleted = 0
+            all_docs, deleted = self._trim_autoloop_iters(all_docs, prefix)
 
-            # 1. autoloop 迭代文档: 保留最近 50 轮
-            auto_docs = [d for d in all_docs if d.get("filename", "").startswith(prefix)]
-            if len(auto_docs) > 50:
-                auto_docs.sort(key=lambda d: d.get("filename", ""))
-                for d in auto_docs[:-50]:
-                    if self.delete_document(d["doc_id"]):
-                        deleted += 1
-                all_docs = [d for d in all_docs if not d.get("filename", "").startswith(prefix) or d in auto_docs[-50:]]
-
-            # 2. 总文档数仍超上限: 按信息价值评分淘汰
+            # 总文档数仍超上限: 按信息价值评分淘汰
             excess = len(all_docs) - deleted - max_docs
             if excess <= 0:
                 if deleted:
                     logger.info("KB cleanup: removed %d old iterations", deleted)
                 return deleted
 
-            # 为每个文档计算信息价值评分
-            scored = []
-            for d in all_docs:
-                score = self._score_document_value(d)
-                scored.append((score, d))
-
-            # 按评分升序, 淘汰最低分的
-            scored.sort(key=lambda x: x[0])
-            for _score, d in scored[:excess]:
-                if self.delete_document(d["doc_id"]):
-                    deleted += 1
+            deleted += self._evict_low_value(all_docs, excess)
 
             if deleted:
-                logger.info("KB cleanup: removed %d low-value documents (max=%d)", deleted, max_docs)
+                logger.info(
+                    "KB cleanup: removed %d low-value documents (max=%d)",
+                    deleted,
+                    max_docs,
+                )
             return deleted
         except Exception as exc:
             logger.warning("KB cleanup failed: %s", exc)
             return 0
+
+    def _trim_autoloop_iters(
+        self, all_docs: list[dict[str, Any]], prefix: str
+    ) -> tuple[list[dict[str, Any]], int]:
+        """autoloop 迭代文档只保留最近 50 轮; 返回 (过滤后列表, 删除数)."""
+        auto_docs = [d for d in all_docs if d.get("filename", "").startswith(prefix)]
+        if len(auto_docs) <= 50:
+            return all_docs, 0
+        auto_docs.sort(key=lambda d: d.get("filename", ""))
+        deleted = 0
+        for d in auto_docs[:-50]:
+            if self.delete_document(d["doc_id"]):
+                deleted += 1
+        remaining = [
+            d
+            for d in all_docs
+            if not d.get("filename", "").startswith(prefix) or d in auto_docs[-50:]
+        ]
+        return remaining, deleted
+
+    def _evict_low_value(self, all_docs: list[dict[str, Any]], excess: int) -> int:
+        """按信息价值评分升序, 淘汰最低分的 excess 个文档; 返回删除数."""
+        scored = [(self._score_document_value(d), d) for d in all_docs]
+        scored.sort(key=lambda x: x[0])
+        deleted = 0
+        for _score, d in scored[:excess]:
+            if self.delete_document(d["doc_id"]):
+                deleted += 1
+        return deleted
 
     def _score_document_value(self, doc: dict[str, Any]) -> float:
         """计算文档的信息价值评分 — Generative Agents 加权模型.
@@ -1316,8 +1587,12 @@ class KnowledgeBase:
         return score
 
     def query_with_dedup(
-        self, text: str, top_k: int = 5, domain: str | None = None,
-        similarity_threshold: float = 0.85, since: str | None = None,
+        self,
+        text: str,
+        top_k: int = 5,
+        domain: str | None = None,
+        similarity_threshold: float = 0.85,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """带去重的检索: 相似度 > threshold 的 chunk 只保留第一个.
         解决分块重叠导致的近似重复段落问题.
@@ -1330,7 +1605,8 @@ class KnowledgeBase:
         # 简单文本 Jaccard 相似度去重
         def keywords(t: str) -> set[str]:
             import re
-            words = re.findall(r'[a-zA-Z_]\w{2,}', t.lower())
+
+            words = re.findall(r"[a-zA-Z_]\w{2,}", t.lower())
             return set(words[:50])  # 只看前 50 词, 够快
 
         kept: list[dict] = []
@@ -1353,7 +1629,10 @@ class KnowledgeBase:
         return kept
 
     def query(
-        self, text: str, top_k: int = 5, domain: str | None = None,
+        self,
+        text: str,
+        top_k: int = 5,
+        domain: str | None = None,
         since: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve top-k relevant chunks for a query.
@@ -1366,36 +1645,123 @@ class KnowledgeBase:
             return []
 
         # 语义缓存优先: 相近的 query 直接复用历史结果 (不过滤 domain/since 的时候才走)
-        if domain is None and since is None and self._semantic_cache is not None:
-            try:
-                hit = self._semantic_cache.get(prompt=text.strip())
-                if hit is not None:
-                    return hit
-            except Exception:
-                logger.debug("get failed", exc_info=True)  # 缓存查询出错不影响正常流程
+        if domain is None and since is None:
+            hit = self._semantic_cache_lookup(text)
+            if hit is not None:
+                return hit
 
         cache_key = (text.strip(), top_k, domain, since)
         cached = self._query_cache.get(cache_key)
         if cached is not None:
             return cached
 
+        chunks = self._vector_candidates(text, top_k, domain, since)
+        # 融合后或 BM25 未命中: 截断回 top_k, 保持下游激活 / reranking 行为不变
+        chunks = self._bm25_fuse(chunks, text, top_k, domain)[:top_k]
+        chunks = self._activate_neighbours(chunks, text, top_k)
+
+        self._query_cache.set(cache_key, chunks)
+        chunks = self._rerank_chunks(chunks)
+
+        # 回写语义缓存, 下次相似 query 能命中
+        self._semantic_cache_store(text, chunks)
+        self._record_hits(chunks)
+
+        return chunks
+
+    def _bm25_fuse(
+        self,
+        chunks: list[dict[str, Any]],
+        text: str,
+        top_k: int,
+        domain: str | None,
+    ) -> list[dict[str, Any]]:
+        """BM25 混合检索: RRF 融合向量 + 关键词检索, 提高材料术语 / 精确匹配命中率.
+
+        P2#2: BM25 按 domain 分片 — 有 domain 过滤时也走混合 (只对同域共片计分),
+        不再退回纯向量, 保留材料术语精确匹配能力.
+        """
+        self._ensure_bm25_index()
+        if self._bm25 is not None and self._bm25._docs:
+            try:
+                bm25_hits = self._bm25.search(text, top_k=top_k * 2, domain=domain)
+                if bm25_hits:
+                    return self._rrf_fuse(chunks, bm25_hits, top_k)
+            except Exception:
+                logger.debug("BM25 hybrid retrieval failed", exc_info=True)
+        return chunks
+
+    def _activate_neighbours(
+        self, chunks: list[dict[str, Any]], text: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """候选不足时做递归激活 + KG 关系扩展, 各补一轮关联块 (最多 top_k+2)."""
+        # 递归激活: 从首轮结果的 domain_tags 提取标签, 再查一轮关联 chunks.
+        # SillyTavern World Info 的递归激活模式 — chunk A 的内容触发 chunk B.
+        if chunks and len(chunks) < top_k + 3:
+            chunks = _merge_activated(
+                chunks, self._recursive_activate(chunks, text, top_k), top_k + 2
+            )
+        # KG 关系扩展 (GraphRAG): 候选仍不足时, 用项目知识图谱的实体词
+        # 补跨文档关联块. WeKnora 的"图谱查询 → 关系扩展 → 增强检索"启发 —
+        # 语义没命中的材料/方法实体, 图谱里可能连着别的文档块.
+        if chunks and len(chunks) < top_k + 3:
+            chunks = _merge_activated(
+                chunks, self._kg_relation_activate(chunks, text, top_k), top_k + 2
+            )
+        return chunks
+
+    def _record_hits(self, chunks: list[dict[str, Any]]) -> None:
+        """记录检索命中: 用于智能 KB 淘汰评分."""
+        for c in chunks:
+            did = c.get("metadata", {}).get("doc_id", "")
+            if did:
+                self._hit_counts[did] = self._hit_counts.get(did, 0) + 1
+
+    def _semantic_cache_lookup(self, text: str) -> list[dict[str, Any]] | None:
+        """语义缓存查询 (best-effort): 未启用或出错都返回 None."""
+        if self._semantic_cache is None:
+            return None
+        try:
+            return self._semantic_cache.get(prompt=text.strip())
+        except Exception:
+            logger.debug("get failed", exc_info=True)  # 缓存查询出错不影响正常流程
+            return None
+
+    def _semantic_cache_store(self, text: str, chunks: list[dict[str, Any]]) -> None:
+        """回写语义缓存 (best-effort), 未启用或出错均静默跳过."""
+        if self._semantic_cache is None:
+            return
+        try:
+            self._semantic_cache.put(prompt=text.strip(), data=chunks)
+        except Exception:
+            logger.debug("put failed", exc_info=True)
+
+    def _vector_candidates(
+        self,
+        text: str,
+        top_k: int,
+        domain: str | None,
+        since: str | None,
+    ) -> list[dict[str, Any]]:
+        """向量检索: domain/since 走 ChromaDB where 过滤, 候选扩到 2x top_k."""
         embedding = self.model.encode([text]).tolist()
         # P1: since 过滤走 ChromaDB $and where_filter, 跟 domain 同路径.
         # ponytail: 不在 Python 层 post-filter — 会破坏 n_results 候选池大小.
-        _conds: list[dict[str, Any]] = []
+        conds: list[dict[str, Any]] = []
         if domain:
-            _conds.append({"domain": domain})
+            conds.append({"domain": domain})
         if since:
-            _conds.append({"created_at": {"$gte": since}})
-        where_filter = {"$and": _conds} if len(_conds) > 1 else (_conds[0] if _conds else None)
-        # 向量候选扩到 2x top_k, 给 RRF 融合留重叠空间; 最终在下面截断回 top_k
+            conds.append({"created_at": {"$gte": since}})
+        where_filter = (
+            {"$and": conds} if len(conds) > 1 else (conds[0] if conds else None)
+        )
         results = self.collection.query(
             query_embeddings=embedding,
             n_results=min(top_k * 2, max(1, self.collection.count())),
             where=where_filter,
             include=["documents", "metadatas", "distances"],
         )
-        chunks = []
+        chunks: list[dict[str, Any]] = []
         for i, doc_id in enumerate(results.get("ids", [[]])[0]):
             chunks.append(
                 {
@@ -1405,57 +1771,15 @@ class KnowledgeBase:
                     "distance": results["distances"][0][i],
                 }
             )
+        return chunks
 
-        # BM25 混合检索: RRF 融合向量 + 关键词检索, 提高材料术语 / 精确匹配命中率.
-        # P2#2: BM25 按 domain 分片 — 有 domain 过滤时也走混合 (只对同域共片计分),
-        # 不再退回纯向量, 保留材料术语精确匹配能力.
-        self._ensure_bm25_index()
-        if self._bm25 is not None and self._bm25._docs:
-            try:
-                bm25_hits = self._bm25.search(text, top_k=top_k * 2, domain=domain)
-                if bm25_hits:
-                    chunks = self._rrf_fuse(chunks, bm25_hits, top_k)
-            except Exception:
-                logger.debug("BM25 hybrid retrieval failed", exc_info=True)
-
-        # 融合后或 BM25 未命中: 截断回 top_k, 保持下游递归激活 / reranking 行为不变
-        chunks = chunks[:top_k]
-
-        # 递归激活: 从首轮结果的 domain_tags 提取标签, 再查一轮关联 chunks.
-        # SillyTavern World Info 的递归激活模式 — chunk A 的内容触发 chunk B.
-        # 这里用 metadata 里的 domain_tags 做二次检索, 补充语义没命中但同域的块.
-        if chunks and len(chunks) < top_k + 3:
-            activated = self._recursive_activate(chunks, text, top_k)
-            if activated:
-                # 去重后合并, 不超过 top_k + 2 (多给 2 条关联结果)
-                seen_ids = {c["chunk_id"] for c in chunks}
-                for c in activated:
-                    if c["chunk_id"] not in seen_ids:
-                        chunks.append(c)
-                        seen_ids.add(c["chunk_id"])
-                        if len(chunks) >= top_k + 2:
-                            break
-
-        # KG 关系扩展 (GraphRAG): 候选仍不足时, 用项目知识图谱的实体词
-        # 补跨文档关联块. WeKnora 的"图谱查询 → 关系扩展 → 增强检索"启发 —
-        # 语义没命中的材料/方法实体, 图谱里可能连着别的文档块.
-        if chunks and len(chunks) < top_k + 3:
-            kg_activated = self._kg_relation_activate(chunks, text, top_k)
-            if kg_activated:
-                seen_ids = {c["chunk_id"] for c in chunks}
-                for c in kg_activated:
-                    if c["chunk_id"] not in seen_ids:
-                        chunks.append(c)
-                        seen_ids.add(c["chunk_id"])
-                        if len(chunks) >= top_k + 2:
-                            break
-
-        self._query_cache.set(cache_key, chunks)
-
+    def _rerank_chunks(self, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """反馈重排 (best-effort) + Feynman 优先 + importance 加权排序."""
         # Apply feedback-based reranking if tracker is available
         if self._feedback_tracker is not None:
             with contextlib.suppress(Exception):
-                chunks = self._feedback_tracker.adjust_search_results(chunks)  # reranking is best-effort
+                # reranking is best-effort
+                chunks = self._feedback_tracker.adjust_search_results(chunks)  # noqa: E501
 
         # Feynman note 优先 + importance 加权 reranking
         # Generative Agents: relevance(=1-distance) × importance(hit_count)
@@ -1464,29 +1788,21 @@ class KnowledgeBase:
         _hits = getattr(self, "_hit_counts", {})
         chunks.sort(
             key=lambda c: (
-                0 if (c.get("metadata", {}).get("filename", "").startswith("feynman_")
-                      and float(c.get("metadata", {}).get("confidence", "0") or 0) > 0.5) else 1,
+                0
+                if (
+                    c.get("metadata", {}).get("filename", "").startswith("feynman_")
+                    and float(c.get("metadata", {}).get("confidence", "0") or 0) > 0.5
+                )
+                else 1,
                 # distance 越小越好 (更相似), hit_count 越大越好 (更常用)
                 # 合并为: distance - 0.1 * log(1 + hit_count)
-                c.get("distance", 1.0) - 0.1 * __import__("math").log1p(
+                c.get("distance", 1.0)
+                - 0.1
+                * __import__("math").log1p(
                     _hits.get(c.get("metadata", {}).get("doc_id", ""), 0)
                 ),
             )
         )
-
-        # 回写语义缓存, 下次相似 query 能命中
-        if self._semantic_cache is not None:
-            try:
-                self._semantic_cache.put(prompt=text.strip(), data=chunks)
-            except Exception:
-                logger.debug("put failed", exc_info=True)
-
-        # 记录检索命中: 用于智能 KB 淘汰评分
-        for c in chunks:
-            did = c.get("metadata", {}).get("doc_id", "")
-            if did:
-                self._hit_counts[did] = self._hit_counts.get(did, 0) + 1
-
         return chunks
 
     def _recursive_activate(
@@ -1499,20 +1815,7 @@ class KnowledgeBase:
         同标签的块, 排除已命中的.
         """
         # 收集首轮结果的所有 domain_tags
-        all_tags: set[str] = set()
-        for c in chunks:
-            meta = c.get("metadata", {})
-            raw_tags = meta.get("domain_tags", "[]")
-            if isinstance(raw_tags, str):
-                try:
-                    import json
-                    tags = json.loads(raw_tags)
-                    if isinstance(tags, list):
-                        all_tags.update(tags)
-                except (json.JSONDecodeError, TypeError):
-                    logger.debug("best-effort op failed", exc_info=True)
-            elif isinstance(raw_tags, list):
-                all_tags.update(raw_tags)
+        all_tags = _collect_tags(chunks)
 
         if not all_tags:
             return []
@@ -1522,14 +1825,8 @@ class KnowledgeBase:
         # 所以改用纯语义查询 + 结果过滤的方式, 不依赖 where 子句.
         # ponytail: O(n) scan over 2x candidates, ok for <10K chunks;
         # switch to ChromaDB where-filter if KB grows past 50K.
-        try:
-            embedding = self.model.encode([original_query]).tolist()
-            results = self.collection.query(
-                query_embeddings=embedding,
-                n_results=min(top_k * 2, max(1, self.collection.count())),
-                include=["documents", "metadatas", "distances"],
-            )
-        except Exception:
+        results = self._requery(original_query, top_k)
+        if results is None:
             return []
 
         seen_ids = {c["chunk_id"] for c in chunks}
@@ -1538,20 +1835,8 @@ class KnowledgeBase:
             if doc_id in seen_ids:
                 continue
             meta = results["metadatas"][0][i]
-            raw_tags = meta.get("domain_tags", "[]")
-            chunk_tags: set[str] = set()
-            if isinstance(raw_tags, str):
-                try:
-                    import json
-                    t = json.loads(raw_tags)
-                    if isinstance(t, list):
-                        chunk_tags.update(t)
-                except (json.JSONDecodeError, TypeError):
-                    logger.debug("best-effort op failed", exc_info=True)
-            elif isinstance(raw_tags, list):
-                chunk_tags.update(raw_tags)
             # 有交集就算命中
-            if chunk_tags & all_tags:
+            if _meta_tags(meta) & all_tags:
                 activated.append(
                     {
                         "chunk_id": doc_id,
@@ -1563,6 +1848,18 @@ class KnowledgeBase:
                 if len(activated) >= 2:
                     break
         return activated
+
+    def _requery(self, query: str, top_k: int) -> dict[str, Any] | None:
+        """按查询文本再做一次语义检索; 检索失败返回 None."""
+        try:
+            embedding = self.model.encode([query]).tolist()
+            return self.collection.query(
+                query_embeddings=embedding,
+                n_results=min(top_k * 2, max(1, self.collection.count())),
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception:
+            return None
 
     def _get_kg(self) -> Any | None:
         """懒加载项目知识图谱. 兼容两种路径约定 (engine: workspace 根 /
@@ -1610,14 +1907,8 @@ class KnowledgeBase:
             return []
         # 实体词连接成补充查询, 语义检索相关 chunks
         seed_query = " ".join(seed_terms[:8])
-        try:
-            embedding = self.model.encode([seed_query]).tolist()
-            results = self.collection.query(
-                query_embeddings=embedding,
-                n_results=min(top_k * 2, max(1, self.collection.count())),
-                include=["documents", "metadatas", "distances"],
-            )
-        except Exception:
+        results = self._requery(seed_query, top_k)
+        if results is None:
             return []
         seen_ids = {c["chunk_id"] for c in chunks}
         activated: list[dict[str, Any]] = []
@@ -1660,8 +1951,7 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
 
     # 只灌真正的种子文档, 排除目录自身的 README.md (否则 README 也被当种子入库).
     seed_files = sorted(
-        p for p in SEED_DIR.glob("*.md")
-        if p.name.lower() != "readme.md"
+        p for p in SEED_DIR.glob("*.md") if p.name.lower() != "readme.md"
     )
     # 预置 bulk 知识: pre-chunked JSONL (如 sobko_chunks.jsonl)
     bulk_files = sorted(SEED_DIR.glob("*_chunks.jsonl"))
@@ -1677,9 +1967,20 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
             kb.delete_document(doc_id)
         existing_seed_ids = set()
 
-    added = skipped = failed = 0
+    added1, skipped1, failed1 = _seed_markdown_seeds(kb, seed_files, existing_seed_ids)
+    added2, skipped2, failed2 = _seed_bulk_files(kb, bulk_files, existing_seed_ids)
+    return {
+        "added": added1 + added2,
+        "skipped": skipped1 + skipped2,
+        "failed": failed1 + failed2,
+    }
 
-    # 1) 传统 markdown 种子文档 (二次分块)
+
+def _seed_markdown_seeds(
+    kb: KnowledgeBase, seed_files: list[Path], existing_seed_ids: set[str]
+) -> tuple[int, int, int]:
+    """灌入传统 markdown 种子文档; 返回 (added, skipped, failed)."""
+    added = skipped = failed = 0
     for path in seed_files:
         content = path.read_bytes()
         digest = hashlib.sha256(content).hexdigest()
@@ -1687,45 +1988,21 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
         if doc_id in existing_seed_ids:
             skipped += 1
             continue
-
         try:
-            text = _extract_text(path.name, content)
-            sectioned = _section_aware_chunk(text, path.name)
-            chunks = [c for c, _ in sectioned]
-            if not chunks:
+            if _seed_markdown_file(kb, path, doc_id):
+                added += 1
+            else:
                 skipped += 1
-                continue
-
-            tags = auto_tag(text)
-            primary_domain = tags["domain_tags"][0] if tags["domain_tags"] else "未分类"
-            domain_str = json.dumps(tags["domain_tags"], ensure_ascii=False) if tags["domain_tags"] else ""
-
-            embeddings = kb.model.encode(chunks, cache_key=digest).tolist()
-            ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
-            metadatas = []
-            for i, (_chunk, section_meta) in enumerate(sectioned):
-                meta: dict[str, Any] = {
-                    "doc_id": doc_id,
-                    "filename": path.name,
-                    "chunk": i,
-                    "seed": True,
-                }
-                meta.update(section_meta)
-                meta["domain"] = primary_domain
-                if domain_str:
-                    meta["domain_tags"] = domain_str
-                metadatas.append(meta)
-            kb.collection.add(
-                ids=ids,
-                documents=chunks,
-                embeddings=embeddings,
-                metadatas=metadatas,
-            )
-            added += 1
         except Exception:
             failed += 1
+    return added, skipped, failed
 
-    # 2) bulk 预置知识 (JSONL): 整文件一个 doc_id, 每行已是独立 chunk
+
+def _seed_bulk_files(
+    kb: KnowledgeBase, bulk_files: list[Path], existing_seed_ids: set[str]
+) -> tuple[int, int, int]:
+    """灌入 bulk JSONL 预置知识 (整文件一个 doc_id); 返回 (added, skipped, failed)."""
+    added = skipped = failed = 0
     for path in bulk_files:
         content = path.read_bytes()
         digest = hashlib.sha256(content).hexdigest()
@@ -1739,8 +2016,49 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
         except Exception:
             logger.warning("seed bulk ingest failed: %s", path.name, exc_info=True)
             failed += 1
+    return added, skipped, failed
 
-    return {"added": added, "skipped": skipped, "failed": failed}
+
+def _seed_markdown_file(kb: KnowledgeBase, path: Path, doc_id: str) -> bool:
+    """分块并写入一个 markdown 种子文件; 无可用 chunk 时返回 False (记 skip)."""
+    content = path.read_bytes()
+    text = _extract_text(path.name, content)
+    sectioned = _section_aware_chunk(text, path.name)
+    chunks = [c for c, _ in sectioned]
+    if not chunks:
+        return False
+
+    tags = auto_tag(text)
+    primary_domain = tags["domain_tags"][0] if tags["domain_tags"] else "未分类"
+    domain_str = (
+        json.dumps(tags["domain_tags"], ensure_ascii=False)
+        if tags["domain_tags"]
+        else ""
+    )
+
+    digest = doc_id[len("seed:") :] if doc_id.startswith("seed:") else doc_id
+    embeddings = kb.model.encode(chunks, cache_key=digest).tolist()
+    ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+    metadatas = []
+    for i, (_chunk, section_meta) in enumerate(sectioned):
+        meta: dict[str, Any] = {
+            "doc_id": doc_id,
+            "filename": path.name,
+            "chunk": i,
+            "seed": True,
+        }
+        meta.update(section_meta)
+        meta["domain"] = primary_domain
+        if domain_str:
+            meta["domain_tags"] = domain_str
+        metadatas.append(meta)
+    kb.collection.add(
+        ids=ids,
+        documents=chunks,
+        embeddings=embeddings,
+        metadatas=metadatas,
+    )
+    return True
 
 
 def _seed_bulk_chunks(kb: KnowledgeBase, path: Path, doc_id: str) -> None:
@@ -1777,30 +2095,46 @@ def _seed_bulk_chunks(kb: KnowledgeBase, path: Path, doc_id: str) -> None:
                 continue
             docs.append(text)
             ids.append(f"{doc_id}_{n}")
-            meta: dict[str, Any] = {
-                "doc_id": doc_id,
-                "filename": path.name,
-                "chunk": n,
-                "seed": True,
-                "created_at": created_at,
-            }
-            # 直接透传数据自带的元数据字段 (字符串原样, 列表走 JSON 序列化)
-            for key in ("title", "source", "source_type", "authority_level",
-                        "domain", "canonical_url", "canonical_path", "chunk_id", "pre_chunked"):
-                v = row.get(key)
-                if v is not None:
-                    meta[key] = str(v) if not isinstance(v, str) else v
-            for key in ("software_tags", "method_tags", "topic_tags"):
-                v = row.get(key)
-                if v:
-                    meta[key] = json.dumps(v, ensure_ascii=False)
-            metas.append(meta)
+            metas.append(_bulk_row_meta(path.name, doc_id, n, created_at, row))
             n += 1
             if len(docs) >= BATCH:
                 _flush()
 
     _flush()
     kb._bm25_dirty = True
+
+
+def _bulk_row_meta(
+    filename: str, doc_id: str, n: int, created_at: str, row: dict[str, Any]
+) -> dict[str, Any]:
+    """构造 bulk JSONL 单行的 metadata (透传数据自带的 title/tags/url 等)."""
+    meta: dict[str, Any] = {
+        "doc_id": doc_id,
+        "filename": filename,
+        "chunk": n,
+        "seed": True,
+        "created_at": created_at,
+    }
+    # 直接透传数据自带的元数据字段 (字符串原样, 列表走 JSON 序列化)
+    for key in (
+        "title",
+        "source",
+        "source_type",
+        "authority_level",
+        "domain",
+        "canonical_url",
+        "canonical_path",
+        "chunk_id",
+        "pre_chunked",
+    ):
+        v = row.get(key)
+        if v is not None:
+            meta[key] = str(v) if not isinstance(v, str) else v
+    for key in ("software_tags", "method_tags", "topic_tags"):
+        v = row.get(key)
+        if v:
+            meta[key] = json.dumps(v, ensure_ascii=False)
+    return meta
 
 
 # G39: 单例 + workspace 是矛盾的 — 同一进程跑多 workspace 时, 第一个 workspace

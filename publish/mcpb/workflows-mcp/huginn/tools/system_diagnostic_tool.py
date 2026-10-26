@@ -40,6 +40,72 @@ class SystemDiagnosticInput(BaseModel):
     )
 
 
+def _diagnose_result(monitor) -> ToolResult:
+    """diagnose action: 有异常给根因, 没异常给 healthy."""
+    events = monitor.diagnose()
+    if not events:
+        return ToolResult(
+            data={
+                "status": "healthy",
+                "message": "No resource anomalies detected.",
+                "metrics": monitor.snapshot().to_dict(),
+            },
+            success=True,
+        )
+    return ToolResult(
+        data={
+            "status": "anomaly",
+            "anomaly_count": len(events),
+            "anomalies": [ev.to_dict() for ev in events],
+            "metrics": monitor.snapshot().to_dict(),
+        },
+        success=True,
+    )
+
+
+def _recent_anomalies_result(monitor) -> ToolResult:
+    """recent_anomalies action."""
+    events = monitor.recent_anomalies(limit=20)
+    return ToolResult(
+        data={
+            "count": len(events),
+            "anomalies": [ev.to_dict() for ev in events],
+        },
+        success=True,
+    )
+
+
+def _top_processes_result(monitor, input_data) -> ToolResult:
+    """top_processes action."""
+    procs = monitor.top_processes(n=input_data.top_n, by=input_data.by)
+    return ToolResult(
+        data={
+            "by": input_data.by,
+            "count": len(procs),
+            "processes": procs,
+        },
+        success=True,
+    )
+
+
+def _capability_runtime_result() -> ToolResult:
+    """capability_runtime action."""
+    from huginn.capabilities.runtime_probe import (
+        build_report,
+        probe_runtime,
+        summary_line,
+    )
+
+    report = build_report(probe_runtime())
+    return ToolResult(
+        data={
+            "summary": summary_line(report),
+            "degraded": [r.to_dict() for r in report.degraded()],
+        },
+        success=True,
+    )
+
+
 class SystemDiagnosticTool(HuginnTool):
     """查看系统资源健康状态，诊断 CPU/内存/磁盘负载异常。"""
 
@@ -83,62 +149,16 @@ class SystemDiagnosticTool(HuginnTool):
             return ToolResult(data=metrics.to_dict(), success=True)
 
         if input_data.action == "diagnose":
-            events = monitor.diagnose()
-            if not events:
-                return ToolResult(
-                    data={
-                        "status": "healthy",
-                        "message": "No resource anomalies detected.",
-                        "metrics": monitor.snapshot().to_dict(),
-                    },
-                    success=True,
-                )
-            return ToolResult(
-                data={
-                    "status": "anomaly",
-                    "anomaly_count": len(events),
-                    "anomalies": [ev.to_dict() for ev in events],
-                    "metrics": monitor.snapshot().to_dict(),
-                },
-                success=True,
-            )
+            return _diagnose_result(monitor)
 
         if input_data.action == "recent_anomalies":
-            events = monitor.recent_anomalies(limit=20)
-            return ToolResult(
-                data={
-                    "count": len(events),
-                    "anomalies": [ev.to_dict() for ev in events],
-                },
-                success=True,
-            )
+            return _recent_anomalies_result(monitor)
 
         if input_data.action == "top_processes":
-            procs = monitor.top_processes(n=input_data.top_n, by=input_data.by)
-            return ToolResult(
-                data={
-                    "by": input_data.by,
-                    "count": len(procs),
-                    "processes": procs,
-                },
-                success=True,
-            )
+            return _top_processes_result(monitor, input_data)
 
         if input_data.action == "capability_runtime":
-            from huginn.capabilities.runtime_probe import (
-                build_report,
-                probe_runtime,
-                summary_line,
-            )
-
-            report = build_report(probe_runtime())
-            return ToolResult(
-                data={
-                    "summary": summary_line(report),
-                    "degraded": [r.to_dict() for r in report.degraded()],
-                },
-                success=True,
-            )
+            return _capability_runtime_result()
 
         return ToolResult(
             data=None,

@@ -43,8 +43,8 @@
 
 | 开关 | 已注册 | 默认 | 消费点 |
 |---|---|---|---|
-| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:3763 |
-| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:3764 |
+| `anti_hacking_reward` | True | `False` | huginn/autoloop/engine_reflect.py:3767 |
+| `intent_scope_reward` | True | `False` | huginn/autoloop/engine_reflect.py:3768 |
 
 ## 工作流面: 执行 mode 分发 vs planner 提示面
 
@@ -347,7 +347,7 @@
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
 | `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4084`, `huginn/autoloop/cognitive_loop.py:4120` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1823`, `huginn/autoloop/engine_observe.py:956`, `huginn/autoloop/engine_reflect.py:2395` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1823`, `huginn/autoloop/engine_observe.py:956`, `huginn/autoloop/engine_reflect.py:2399` | — |
 | `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3863` | `huginn/events/audit_log.py:586` |
 | `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3884` | `huginn/events/audit_log.py:586` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:606`, `huginn/events/unified_bus.py:346` | — |

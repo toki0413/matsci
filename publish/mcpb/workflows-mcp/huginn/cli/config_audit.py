@@ -19,6 +19,7 @@
       循环变量, 正则抓不到 → 会显示 reads=0. 这类**不是**死配置, 判死前先核对
       ``huginn/feature_flags.py`` 的别名表.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,12 +43,8 @@ _ENV_GET = re.compile(
 _ENV_SETDEFAULT = re.compile(
     r'os\.environ\.setdefault\(\s*["\'](HUGINN_[A-Z0-9_]+)["\']\s*,\s*(["\']?[^"\')]*["\']?)'
 )
-_ENV_SETITEM = re.compile(
-    r'os\.environ\[["\'](HUGINN_[A-Z0-9_]+)["\']\]\s*='
-)
-_ENV_POP = re.compile(
-    r'os\.environ\.pop\(\s*["\'](HUGINN_[A-Z0-9_]+)["\']'
-)
+_ENV_SETITEM = re.compile(r'os\.environ\[["\'](HUGINN_[A-Z0-9_]+)["\']\]\s*=')
+_ENV_POP = re.compile(r'os\.environ\.pop\(\s*["\'](HUGINN_[A-Z0-9_]+)["\']')
 # 经辅助函数间接读: `_env_int("HUGINN_X", 2)` / `_env_float("HUGINN_X")` 这类包装把
 # 变量名藏进字符串参数, 上面几条 os.environ.* 正则抓不到. 名字里带 env 的调用单列
 # 一条兜住 (env_int / _env_bool / read_env_str ...).
@@ -233,7 +230,7 @@ _REG_COMPACTION = re.compile(
 _REG_MEMORY = re.compile(
     r'register_memory_maintenance_policy\(\s*["\']([a-z0-9_]+)["\']\s*,?\s*[^)]*?(?:priority\s*=\s*(\d+))?'
 )
-_EVENT_DECO = re.compile(r'@filter\.(on_[a-z_]+)')
+_EVENT_DECO = re.compile(r"@filter\.(on_[a-z_]+)")
 
 # 内置 prompt 段规范优先级 (来自 plugins/prompt_segments._PRIORITY), 当注册点未
 # 显式传 priority 时用于标注"内置默认".
@@ -247,6 +244,7 @@ def _load_prompt_priorities() -> dict[str, int]:
         return _PROMPT_PRIORITIES
     try:
         from huginn.plugins.prompt_segments import _PRIORITY
+
         _PROMPT_PRIORITIES.update(_PRIORITY)
     except Exception:
         pass  # noqa: BLE001 - 插件可选, 缺失时保持默认 prompt 优先级
@@ -275,6 +273,34 @@ def _scan_registrations(root: Path, pattern: re.Pattern) -> list[dict]:
     return rows
 
 
+def _scan_event_hooks(root: Path) -> list[dict]:
+    """扫描 @filter.on_xxx 装饰器, 记录事件名 + 跟随的 handler 函数名 + 位置."""
+    hooks: list[dict] = []
+    for py in root.rglob("*.py"):
+        if "__pycache__" in str(py) or py.resolve() == _SELF:
+            continue
+        try:
+            lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for i, line in enumerate(lines):
+            for m in _EVENT_DECO.finditer(line):
+                handler = ""
+                if i + 1 < len(lines):
+                    nxt = lines[i + 1].strip()
+                    hm = re.match(r"(async\s+def|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)", nxt)
+                    if hm:
+                        handler = hm.group(2)
+                hooks.append(
+                    {
+                        "name": m.group(1),
+                        "handler": handler,
+                        "loc": f"{py.relative_to(root).as_posix()}:{i + 1}",
+                    }
+                )
+    return hooks
+
+
 def build_plugins_contract(root: Path | None = None) -> dict[str, list[dict]]:
     """构建插件契约: 两形态注册面 inventory."""
     root = root or _ROOT
@@ -289,34 +315,30 @@ def build_plugins_contract(root: Path | None = None) -> dict[str, list[dict]]:
     memory = _scan_registrations(root, _REG_MEMORY)
 
     # 事件钩子: 每个 @filter.on_xxx 装饰器, 记录其跟随的 handler 函数名 (下一行).
-    hooks: list[dict] = []
-    for py in root.rglob("*.py"):
-        if "__pycache__" in str(py) or py.resolve() == _SELF:
-            continue
-        try:
-            lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for i, line in enumerate(lines):
-            for m in _EVENT_DECO.finditer(line):
-                handler = ""
-                if i + 1 < len(lines):
-                    nxt = lines[i + 1].strip()
-                    hm = re.match(r'(async\s+def|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)', nxt)
-                    if hm:
-                        handler = hm.group(2)
-                hooks.append(
-                    {
-                        "name": m.group(1),
-                        "handler": handler,
-                        "loc": f"{py.relative_to(root).as_posix()}:{i + 1}",
-                    }
-                )
+    hooks = _scan_event_hooks(root)
 
     return {
-        "prompt_segments": sorted(prompt, key=lambda r: (r["priority"] if r["priority"] is not None else 10**9, r["name"])),
-        "compaction_policies": sorted(compaction, key=lambda r: (r["priority"] if r["priority"] is not None else 0, r["name"])),
-        "memory_policies": sorted(memory, key=lambda r: (r["priority"] if r["priority"] is not None else 0, r["name"])),
+        "prompt_segments": sorted(
+            prompt,
+            key=lambda r: (
+                r["priority"] if r["priority"] is not None else 10**9,
+                r["name"],
+            ),
+        ),
+        "compaction_policies": sorted(
+            compaction,
+            key=lambda r: (
+                r["priority"] if r["priority"] is not None else 0,
+                r["name"],
+            ),
+        ),
+        "memory_policies": sorted(
+            memory,
+            key=lambda r: (
+                r["priority"] if r["priority"] is not None else 0,
+                r["name"],
+            ),
+        ),
         "event_hooks": sorted(hooks, key=lambda r: (r["name"], r["loc"])),
         "defaults": _policy_defaults(),
     }
@@ -350,7 +372,9 @@ def _policy_defaults() -> dict:
     return out
 
 
-def _fmt_section(title: str, rows: list[dict], headers: tuple[str, ...], keys: tuple[str, ...]) -> list[str]:
+def _fmt_section(
+    title: str, rows: list[dict], headers: tuple[str, ...], keys: tuple[str, ...]
+) -> list[str]:
     lines: list[str] = []
     lines.append(f"### {title}")
     lines.append("")
@@ -407,6 +431,13 @@ def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
         ("name", "handler", "loc"),
     )
     # 内置默认策略 (无第三方接入时的生效值). 字段名短:
+    lines += _render_plugin_defaults(contract)
+    return "\n".join(lines)
+
+
+def _render_plugin_defaults(contract: dict[str, list[dict]]) -> list[str]:
+    """渲染内置默认策略值 (无第三方接入时生效)."""
+    lines: list[str] = []
     d = contract.get("defaults", {})
     if isinstance(d, dict) and "error" not in d:
         comp = d.get("compaction", {})
@@ -426,7 +457,7 @@ def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
     elif isinstance(d, dict) and "error" in d:
         lines.append("> 注: 内置默认策略值读取失败 (依赖缺失): " + str(d["error"]))
         lines.append("")
-    return "\n".join(lines)
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +467,7 @@ def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
 # 工具契约讲"agent 实际可调的服务". 用 register_core_tools(None) 枚举 (安全、快,
 # 无重型依赖), 字段来自 HuginnTool 声明 (name/description/category/destructive/
 # read_only/cost_tier). 是 agent 能力面的可解释性基线.
+
 
 def build_tools_contract() -> list[dict]:
     """实例化核心工具并向 ToolRegistry 登记, 快照其声明元数据.
@@ -461,7 +493,9 @@ def build_tools_contract() -> list[dict]:
                     "destructive": t.destructive,
                     "read_only": t.read_only,
                     "cost_tier": t.cost_tier,
-                    "description": (t.description or "").strip().replace("\n", " ")[:80],
+                    "description": (t.description or "")
+                    .strip()
+                    .replace("\n", " ")[:80],
                 }
             )
         return rows
@@ -504,8 +538,8 @@ def render_tools_markdown(rows: list[dict]) -> str:
 #   - UnifiedBus.publish_* 方法: 语义化的事件发射契约 (统一入口, 扇出到 4 套系统)
 # 派发点 = 代码里引用 EventType.<MEMBER> 的位置, 提示每个事件在哪被发出.
 
-_EVENT_REF = re.compile(r'EventType\.([A-Z][A-Z0-9_]+)')
-_EVENT_PUBLISH = re.compile(r'async\s+def\s+(publish_[a-z_]+)\(')
+_EVENT_REF = re.compile(r"EventType\.([A-Z][A-Z0-9_]+)")
+_EVENT_PUBLISH = re.compile(r"async\s+def\s+(publish_[a-z_]+)\(")
 
 
 def _event_groups() -> dict[str, str]:
@@ -524,7 +558,7 @@ def _event_groups() -> dict[str, str]:
             continue
         if stripped.startswith("# "):
             current = stripped[2:].strip()
-        m = re.match(r'^\s*([A-Z][A-Z0-9_]+)\s*=\s*auto\(\)', stripped)
+        m = re.match(r"^\s*([A-Z][A-Z0-9_]+)\s*=\s*auto\(\)", stripped)
         if m:
             groups[m.group(1)] = current
     return groups
@@ -545,7 +579,9 @@ def build_events_contract(root: Path | None = None) -> dict:
         except OSError:
             continue
         for m in _EVENT_REF.finditer(text):
-            refs[m.group(1)].append(f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}")
+            refs[m.group(1)].append(
+                f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}"
+            )
 
     members: list[dict] = []
     for m in EventType:
@@ -555,7 +591,8 @@ def build_events_contract(root: Path | None = None) -> dict:
             {
                 "name": name,
                 "group": groups.get(name, ""),
-                "dispatch": ", ".join(locs[:3]) + (f" +{len(locs)-3} 处" if len(locs) > 3 else ""),
+                "dispatch": ", ".join(locs[:3])
+                + (f" +{len(locs) - 3} 处" if len(locs) > 3 else ""),
             }
         )
 
@@ -607,6 +644,7 @@ def render_events_markdown(contract: dict) -> str:
 # 模型路由面的契约: ModelRouter 的 task→tag 偏好映射 + 可选 task 全集 +
 # HUGINN_MODEL_* 的 from_env 装配约定. 回答"某个 task 会优先落到哪些模型".
 
+
 def build_routes_contract() -> dict:
     """读取 ModelRouter 的 task→tag 映射与 task 全集."""
     from huginn.models.router import ModelRouter, TaskT
@@ -636,7 +674,10 @@ def render_routes_markdown(contract: dict) -> str:
     for task, tags in contract["task_tags"].items():
         lines.append(f"| `{task}` | {', '.join(tags)} |")
     lines.append("")
-    lines.append(f"可选 task 全集 ({len(contract['tasks'])}): " + ", ".join(f"`{t}`" for t in contract["tasks"]))
+    lines.append(
+        f"可选 task 全集 ({len(contract['tasks'])}): "
+        + ", ".join(f"`{t}`" for t in contract["tasks"])
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -647,14 +688,12 @@ def render_routes_markdown(contract: dict) -> str:
 # ToolResult.error_kind 的分类契约. 回答"工具失败如何分类 / 谁在哪里做映射".
 # 枚举来自 core_types.py::ErrorKind; 分类点 = 代码里产出 ErrorKind.<MEMBER> 的位置.
 
-_ERROR_KIND_REF = re.compile(r'ErrorKind\.([A-Z][A-Z0-9_]+)')
+_ERROR_KIND_REF = re.compile(r"ErrorKind\.([A-Z][A-Z0-9_]+)")
 _ERROR_KIND_DOC = re.compile(r'^\s*([A-Z][A-Z0-9_]+)\s*=\s*"[A-Za-z_]+"\s*#\s*(.+)$')
 
 
-def build_errors_contract(root: Path | None = None) -> dict:
-    """构建错误语义契约: ErrorKind 枚举 + 各分类点."""
-    root = root or _ROOT
-    # 枚举语义: 从 core_types.py 的 ErrorKind 类内注释行提取 (name → 说明), 避免硬编码漂移.
+def _load_error_kind_docs(root: Path) -> dict[str, str]:
+    """枚举语义: 从 core_types.py 的 ErrorKind 类内注释行提取 (name → 说明), 避免硬编码漂移."""
     docs: dict[str, str] = {}
     doc_fn = root / "core_types.py"
     if doc_fn.exists():
@@ -667,13 +706,26 @@ def build_errors_contract(root: Path | None = None) -> dict:
             if "class ErrorKind" in ln:
                 in_class = True
                 continue
-            if in_class and ln.strip() and not ln.startswith((" ", "\t")) and "=" not in ln:
+            if (
+                in_class
+                and ln.strip()
+                and not ln.startswith((" ", "\t"))
+                and "=" not in ln
+            ):
                 break
             if not in_class:
                 continue
             m = _ERROR_KIND_DOC.match(ln)
             if m:
                 docs[m.group(1)] = m.group(2).strip()
+    return docs
+
+
+def build_errors_contract(root: Path | None = None) -> dict:
+    """构建错误语义契约: ErrorKind 枚举 + 各分类点."""
+    root = root or _ROOT
+    # 枚举语义: 从 core_types.py 的 ErrorKind 类内注释行提取 (name → 说明), 避免硬编码漂移.
+    docs = _load_error_kind_docs(root)
 
     # 分类点: ErrorKind.<MEMBER> 引用位置
     refs: dict[str, list[str]] = defaultdict(list)
@@ -685,7 +737,9 @@ def build_errors_contract(root: Path | None = None) -> dict:
         except OSError:
             continue
         for m in _ERROR_KIND_REF.finditer(text):
-            refs[m.group(1)].append(f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}")
+            refs[m.group(1)].append(
+                f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}"
+            )
 
     members: list[dict] = []
     for name, doc in docs.items():
@@ -694,7 +748,8 @@ def build_errors_contract(root: Path | None = None) -> dict:
             {
                 "name": name,
                 "doc": doc,
-                "points": ", ".join(locs[:3]) + (f" +{len(locs)-3} 处" if len(locs) > 3 else ""),
+                "points": ", ".join(locs[:3])
+                + (f" +{len(locs) - 3} 处" if len(locs) > 3 else ""),
             }
         )
     return {"members": members}
@@ -844,7 +899,10 @@ def render_modes_markdown(contract: dict) -> str:
         ("name", "short", "budget", "head"),
     )
     lines.append("")
-    lines.append("G51 结构关系补充覆盖 phase: " + (", ".join(f"`{g}`" for g in contract["g51"]) or "—"))
+    lines.append(
+        "G51 结构关系补充覆盖 phase: "
+        + (", ".join(f"`{g}`" for g in contract["g51"]) or "—")
+    )
     lines.append("")
     if contract.get("import_failed"):
         lines.append("> 注: phases.py 导入失败, phase 表为空 (依赖缺失)。")
@@ -1002,32 +1060,9 @@ def build_permission_contract(root: Path | None = None) -> dict:
         DEFAULT_PERMISSION_RULES,
     )
 
-    modes = [
-        {
-            "mode": m.value,
-            "semantics": {
-                PermissionMode.AUTO: "只读/安全工具直接放行",
-                PermissionMode.ASK: "潜在昂贵/破坏工具需确认",
-                PermissionMode.DENY: "显式拦截, 不可执行",
-                PermissionMode.PLAN: "只读模式, 所有写工具强制 ASK",
-            }.get(m, ""),
-        }
-        for m in PermissionMode
-    ]
+    modes = _permission_mode_rows(PermissionMode)
 
-    risks = [
-        {
-            "level": r.value,
-            "semantics": {
-                "none": "纯只读/查询, 直接放行",
-                "low": "本地只读/可逆变更, 默认放行",
-                "medium": "外部 IO/网络/非破坏状态变更, 默认需确认",
-                "high": "破坏性/危险, 必须确认",
-                "critical": "不可逆/系统级/极高成本, 强制拦截或最高级确认",
-            }.get(r.value, ""),
-        }
-        for r in RiskLevel
-    ]
+    risks = _permission_risk_rows(RiskLevel)
 
     # PermissionConfig 的细粒度声明维度 (dataclass 字段, 排除默认派生的 rules).
     cfg_fields = [
@@ -1054,6 +1089,39 @@ def build_permission_contract(root: Path | None = None) -> dict:
             {"path": p, "mode": m.value} for p, m in _DEFAULT_SANDBOX_PATH_RULES
         ],
     }
+
+
+def _permission_mode_rows(mode_enum: type) -> list[dict]:
+    """构建权限模式行 (模式 + 语义说明)."""
+    return [
+        {
+            "mode": m.value,
+            "semantics": {
+                mode_enum.AUTO: "只读/安全工具直接放行",
+                mode_enum.ASK: "潜在昂贵/破坏工具需确认",
+                mode_enum.DENY: "显式拦截, 不可执行",
+                mode_enum.PLAN: "只读模式, 所有写工具强制 ASK",
+            }.get(m, ""),
+        }
+        for m in mode_enum
+    ]
+
+
+def _permission_risk_rows(risk_level: type) -> list[dict]:
+    """构建风险等级行 (等级 + 语义说明)."""
+    return [
+        {
+            "level": r.value,
+            "semantics": {
+                "none": "纯只读/查询, 直接放行",
+                "low": "本地只读/可逆变更, 默认放行",
+                "medium": "外部 IO/网络/非破坏状态变更, 默认需确认",
+                "high": "破坏性/危险, 必须确认",
+                "critical": "不可逆/系统级/极高成本, 强制拦截或最高级确认",
+            }.get(r.value, ""),
+        }
+        for r in risk_level
+    ]
 
 
 def render_permission_markdown(contract: dict) -> str:
@@ -1089,6 +1157,18 @@ def render_permission_markdown(contract: dict) -> str:
         ("配置字段",),
         ("f",),
     )
+    lines += _render_permission_rules(contract)
+    lines.append(
+        "运行时配置: `PermissionConfig` 字段由前端设置面板 / `HUGINN_PERM_*` 环境变量注入; "
+        "`path_rules` 支持 \\(tool, glob, mode\\) 工具×路径矩阵。"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_permission_rules(contract: dict) -> list[str]:
+    """渲染工具默认规则 / 危险命令模式 / 沙箱硬底线路径."""
+    lines: list[str] = []
     lines.append("### 工具默认规则")
     lines.append("")
     lines.append("| 工具 | 模式 |")
@@ -1108,12 +1188,7 @@ def render_permission_markdown(contract: dict) -> str:
     for p in contract["sandbox_floor"]:
         lines.append(f"| `{p['path']}` | `{p['mode']}` |")
     lines.append("")
-    lines.append(
-        "运行时配置: `PermissionConfig` 字段由前端设置面板 / `HUGINN_PERM_*` 环境变量注入; "
-        "`path_rules` 支持 \\(tool, glob, mode\\) 工具×路径矩阵。"
-    )
-    lines.append("")
-    return "\n".join(lines)
+    return lines
 
 
 # 契约模式注册表: flag 名 → (builder, renderer, 默认输出文件名).
@@ -1142,9 +1217,16 @@ CONTRACT_MODES: dict[str, tuple[object, object, str]] = {
 ENV_CONTRACT_NAME = "env-contract.md"
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """构建 CLI 参数解析器."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", help="输出 JSON inventory")
+    _add_contract_mode_flags(parser)
+    _add_io_flags(parser)
+    return parser
+
+
+def _add_contract_mode_flags(parser: argparse.ArgumentParser) -> None:
+    """登记 --flags/--plugins/... 等契约模式开关."""
     parser.add_argument(
         "--flags",
         action="store_true",
@@ -1190,13 +1272,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="输出权限契约 (PermissionMode + RiskLevel 五档 + PermissionConfig 细粒度面)",
     )
+
+
+def _add_io_flags(parser: argparse.ArgumentParser) -> None:
+    """登记 --json / --out 输出开关."""
+    parser.add_argument("--json", action="store_true", help="输出 JSON inventory")
     parser.add_argument(
         "--out",
         type=str,
         default="",
         help="写 markdown 契约到指定文件 (否则打印到 stdout)",
     )
-    args = parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_arg_parser().parse_args(argv)
 
     # 契约模式分派: 每个 --xxx 对应一个 (builder, renderer, 文件名).
     modes = CONTRACT_MODES

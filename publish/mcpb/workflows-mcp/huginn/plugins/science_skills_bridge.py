@@ -81,9 +81,9 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 class SkillMetadata:
     """Parsed metadata from a single skill directory."""
 
-    name: str                       # kebab-case from frontmatter
-    description: str                # from frontmatter
-    directory: Path                 # absolute path to skill dir
+    name: str  # kebab-case from frontmatter
+    description: str  # from frontmatter
+    directory: Path  # absolute path to skill dir
     scripts: list[Path] = field(default_factory=list)
     primary_script: Path | None = None
 
@@ -127,6 +127,7 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
+
 
 class ScienceSkillsLoader:
     """Discover and load metadata from science-skills ``skills/`` directory."""
@@ -189,6 +190,7 @@ class ScienceSkillsLoader:
 # Input model
 # ---------------------------------------------------------------------------
 
+
 class ScienceSkillInput(BaseModel):
     """Generic input for any science-skills bridge tool."""
 
@@ -217,6 +219,7 @@ class ScienceSkillInput(BaseModel):
 # ---------------------------------------------------------------------------
 # Tool implementation
 # ---------------------------------------------------------------------------
+
 
 class ScienceSkillTool(HuginnTool):
     """A single science-skills skill exposed as a HuginnTool.
@@ -278,114 +281,130 @@ class ScienceSkillTool(HuginnTool):
 
         return cmd
 
-    async def call(
-        self, args: ScienceSkillInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: ScienceSkillInput, context: ToolContext) -> ToolResult:
         """Execute the skill's CLI script via ``uv run``."""
 
         # Locate uv
         uv_exe = shutil.which("uv")
         if uv_exe is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    "uv package manager not found. Install it from "
-                    "https://astral.sh/uv or run: "
-                    "curl -LsSf https://astral.sh/uv/install.sh | sh"
-                ),
-            )
+            return _uv_missing_result()
 
         # Prepare output path
         # Use TemporaryDirectory for auto-cleanup when no explicit output_file
-        _tmp_cleanup = None
-        if args.output_file:
-            output_path = Path(args.output_file)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            _tmp_dir = tempfile.TemporaryDirectory(prefix="science_skill_")
-            _tmp_cleanup = _tmp_dir
-            output_path = Path(_tmp_dir.name) / "output.json"
+        output_path, _tmp_cleanup = _prepare_output_path(args)
 
         # Build command
         try:
             cmd = self._build_command(args, output_path, uv_exe)
         except RuntimeError as exc:
-            if _tmp_cleanup:
-                _tmp_cleanup.cleanup()
-            return ToolResult(data=None, success=False, error=str(exc))
+            return _fail_result(_tmp_cleanup, str(exc))
 
         # Execute via subprocess (in executor to avoid blocking)
         cwd = str(self._skills_root.parent)  # science-skills root for relative imports
         timeout = 120  # 2 minutes per query
 
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: _run_subprocess(cmd, cwd, timeout),
-            )
+            result = await _run_async_subprocess(cmd, cwd, timeout)
         except TimeoutError:
-            if _tmp_cleanup:
-                _tmp_cleanup.cleanup()
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Skill '{self._meta.name}' timed out after {timeout}s",
+            return _fail_result(
+                _tmp_cleanup, f"Skill '{self._meta.name}' timed out after {timeout}s"
             )
         except Exception as exc:
-            if _tmp_cleanup:
-                _tmp_cleanup.cleanup()
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Execution error: {exc}",
-            )
+            return _fail_result(_tmp_cleanup, f"Execution error: {exc}")
 
         if result["returncode"] != 0:
             stderr = result.get("stderr", "")
-            if _tmp_cleanup:
-                _tmp_cleanup.cleanup()
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Script failed (rc={result['returncode']}): {stderr[:1000]}",
+            return _fail_result(
+                _tmp_cleanup,
+                f"Script failed (rc={result['returncode']}): {stderr[:1000]}",
             )
 
         # Read output file before temp directory is cleaned up
-        output_data: Any = None
-        output_file_str: str | None = None
-        if output_path.exists():
-            output_file_str = str(output_path)
-            try:
-                text = output_path.read_text(encoding="utf-8")
-                try:
-                    output_data = json.loads(text)
-                except json.JSONDecodeError:
-                    output_data = text
-            except OSError as exc:
-                output_data = f"Could not read output: {exc}"
-        elif result.get("stdout"):
-            output_data = result["stdout"]
+        output_data, output_file_str = _read_skill_output(output_path, result)
 
         # Clean up temp directory if we created one
         if _tmp_cleanup:
             _tmp_cleanup.cleanup()
 
-        return ToolResult(
-            data={
-                "skill": self._meta.name,
-                "action": args.action,
-                "output_file": output_file_str,
-                "result": output_data,
-            },
-            success=True,
-        )
+        return _success_result(self, args, output_file_str, output_data)
 
 
-def _run_subprocess(
+def _success_result(
+    tool: ScienceSkillTool,
+    args: ScienceSkillInput,
+    output_file_str: str | None,
+    output_data: Any,
+) -> ToolResult:
+    return ToolResult(
+        data={
+            "skill": tool._meta.name,
+            "action": args.action,
+            "output_file": output_file_str,
+            "result": output_data,
+        },
+        success=True,
+    )
+
+
+def _uv_missing_result() -> ToolResult:
+    return ToolResult(
+        data=None,
+        success=False,
+        error=(
+            "uv package manager not found. Install it from "
+            "https://astral.sh/uv or run: "
+            "curl -LsSf https://astral.sh/uv/install.sh | sh"
+        ),
+    )
+
+
+def _prepare_output_path(args: ScienceSkillInput):
+    _tmp_cleanup = None
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        _tmp_dir = tempfile.TemporaryDirectory(prefix="science_skill_")
+        _tmp_cleanup = _tmp_dir
+        output_path = Path(_tmp_dir.name) / "output.json"
+    return output_path, _tmp_cleanup
+
+
+def _fail_result(tmp_cleanup, error: str) -> ToolResult:
+    if tmp_cleanup:
+        tmp_cleanup.cleanup()
+    return ToolResult(data=None, success=False, error=error)
+
+
+async def _run_async_subprocess(
     cmd: list[str], cwd: str, timeout: int
 ) -> dict[str, Any]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: _run_subprocess(cmd, cwd, timeout),
+    )
+
+
+def _read_skill_output(output_path: Path, result: dict[str, Any]):
+    output_data: Any = None
+    output_file_str: str | None = None
+    if output_path.exists():
+        output_file_str = str(output_path)
+        try:
+            text = output_path.read_text(encoding="utf-8")
+            try:
+                output_data = json.loads(text)
+            except json.JSONDecodeError:
+                output_data = text
+        except OSError as exc:
+            output_data = f"Could not read output: {exc}"
+    elif result.get("stdout"):
+        output_data = result["stdout"]
+    return output_data, output_file_str
+
+
+def _run_subprocess(cmd: list[str], cwd: str, timeout: int) -> dict[str, Any]:
     """Synchronous subprocess runner (called from executor)."""
     import subprocess
 
@@ -453,6 +472,14 @@ def register_science_skills() -> list[str]:
 
     # 用 skill_loader 注册带 paths 字段的条件技能, 后续工具调用时
     # activate_conditional_skills 会按文件路径自动激活匹配的技能
+    _register_conditional_skills(loader)
+
+    _registered = True
+    logger.info("Registered %d science-skills tools: %s", len(registered), registered)
+    return registered
+
+
+def _register_conditional_skills(loader: ScienceSkillsLoader) -> None:
     try:
         skills_dir = loader.skills_dir
         if skills_dir:
@@ -463,6 +490,7 @@ def register_science_skills() -> list[str]:
             # 固化当前生效技能的版本, 供事后回放"这次任务用了哪些技能的哪个版本"
             try:
                 from huginn.provenance.registry import ProvenanceRegistry
+
                 ProvenanceRegistry.shared().snapshot_skills(
                     {s["name"]: s.get("version", "0.0.0") for s in all_parsed}
                 )
@@ -470,10 +498,6 @@ def register_science_skills() -> list[str]:
                 logger.debug("技能版本快照失败(非致命): %s", exc)
     except Exception as exc:
         logger.debug("条件技能注册失败(非致命): %s", exc)
-
-    _registered = True
-    logger.info("Registered %d science-skills tools: %s", len(registered), registered)
-    return registered
 
 
 def get_science_skills_info() -> list[dict[str, Any]]:

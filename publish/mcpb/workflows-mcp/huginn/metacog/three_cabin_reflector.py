@@ -55,6 +55,129 @@ def _build_meta_trace_entry(
     return {"iteration": step_id, "attempted": attempted, "found": found}
 
 
+def _load_cabin_deps() -> tuple[Any, Any, Any, Any] | None:
+    """导入三舱依赖. 失败返 None (调用方 fallback)."""
+    try:
+        from huginn.metacog.reflector import format_reflector_text, reflect
+        from huginn.metacog.step_evaluator import (
+            evaluate_step,
+            should_continue,
+        )
+    except Exception:
+        logger.debug("three_cabin imports failed", exc_info=True)
+        return None
+    return format_reflector_text, reflect, evaluate_step, should_continue
+
+
+def _run_cabin1(cog: dict[str, Any], step_id: int) -> dict[str, Any] | None:
+    """舱 1: Step — 拼 meta_trace_entry. 失败返 None."""
+    try:
+        return _build_meta_trace_entry(cog, step_id)
+    except Exception:
+        logger.debug("cabin 1 (Step) failed", exc_info=True)
+        return None
+
+
+def _run_cabin2(
+    evaluate_step: Any,
+    mte: dict[str, Any],
+    evals_history: list,
+    audit_log_path: Path,
+    memory: Any,
+    kb: Any,
+    persona: Any,
+    model: Any,
+) -> Any:
+    """舱 2: Evaluate — 真 StepEvaluation, 自动从 audit_log 算 tool_call_health."""
+    step_eval = evaluate_step(
+        meta_trace_entry=mte,
+        target_chains=[],
+        verification_signals=None,
+        memory=memory,
+        kb=kb,
+        persona=persona,
+        model=model,
+        audit_log_path=audit_log_path,
+    )
+    evals_history.append(step_eval)
+    return step_eval
+
+
+def _run_cabin3(
+    deps: tuple[Any, Any, Any],
+    evals_history: list,
+    step_eval: Any,
+    audit_log_path: Path,
+) -> str:
+    """舱 3: Reflect — should_continue 抓 Reflector 信号, reflect 产 hint."""
+    should_continue, reflect, format_reflector_text = deps
+    hint_text = ""
+    _cont, _reason = should_continue(evals_history, window=3)
+    if not _cont and "Reflector" in _reason:
+        _actions = reflect(
+            step_eval.tool_call_health,
+            last_step_evaluations=evals_history[-3:],
+            audit_log_path=audit_log_path,
+        )
+        hint_text = format_reflector_text(_actions)
+    if not _cont and not hint_text and _reason:
+        # 其他 should_continue=False 信号也透传, 不只 Reflector
+        hint_text = f"[StepEval] {_reason}"
+    return hint_text
+
+
+def _execute_cabins(
+    deps: tuple[Any, Any, Any, Any],
+    cog: dict[str, Any],
+    evals_history: list,
+    step_id: int,
+    workspace: Path,
+    model: Any | None,
+    persona: Any | None,
+    kb: Any | None,
+    memory: Any | None,
+) -> tuple[Any, str]:
+    """跑三舱流程: Step → Evaluate → Reflect."""
+    format_reflector_text, reflect, evaluate_step, should_continue = deps
+
+    audit_log_path = workspace / HUGINN_DIR_NAME / "audit.jsonl"
+
+    # 舱 1: Step
+    mte = _run_cabin1(cog, step_id)
+    if mte is None:
+        return (None, "")
+
+    # 舱 2: Evaluate — 真 StepEvaluation, 自动从 audit_log 算 tool_call_health
+    try:
+        step_eval = _run_cabin2(
+            evaluate_step,
+            mte,
+            evals_history,
+            audit_log_path,
+            memory,
+            kb,
+            persona,
+            model,
+        )
+    except Exception:
+        logger.debug("cabin 2 (Evaluate) failed", exc_info=True)
+        return (None, "")
+
+    # 舱 3: Reflect — should_continue 抓 Reflector 信号, reflect 产 hint
+    hint_text = ""
+    try:
+        hint_text = _run_cabin3(
+            (should_continue, reflect, format_reflector_text),
+            evals_history,
+            step_eval,
+            audit_log_path,
+        )
+    except Exception:
+        logger.debug("cabin 3 (Reflect) failed", exc_info=True)
+
+    return (step_eval, hint_text)
+
+
 def run_three_cabin(
     cog: dict[str, Any],
     evals_history: list,
@@ -70,60 +193,12 @@ def run_three_cabin(
     step_eval 已 append 到 evals_history, 调用方别再 append.
     reflector_hint_text 非空时, 调用方注入到 _speculator_hint.
     """
-    try:
-        from huginn.metacog.reflector import format_reflector_text, reflect
-        from huginn.metacog.step_evaluator import (
-            evaluate_step,
-            should_continue,
-        )
-    except Exception:
-        logger.debug("three_cabin imports failed", exc_info=True)
+    deps = _load_cabin_deps()
+    if deps is None:
         return (None, "")
-
-    audit_log_path = workspace / HUGINN_DIR_NAME / "audit.jsonl"
-
-    # 舱 1: Step
-    try:
-        mte = _build_meta_trace_entry(cog, step_id)
-    except Exception:
-        logger.debug("cabin 1 (Step) failed", exc_info=True)
-        return (None, "")
-
-    # 舱 2: Evaluate — 真 StepEvaluation, 自动从 audit_log 算 tool_call_health
-    try:
-        step_eval = evaluate_step(
-            meta_trace_entry=mte,
-            target_chains=[],
-            verification_signals=None,
-            memory=memory,
-            kb=kb,
-            persona=persona,
-            model=model,
-            audit_log_path=audit_log_path,
-        )
-        evals_history.append(step_eval)
-    except Exception:
-        logger.debug("cabin 2 (Evaluate) failed", exc_info=True)
-        return (None, "")
-
-    # 舱 3: Reflect — should_continue 抓 Reflector 信号, reflect 产 hint
-    hint_text = ""
-    try:
-        _cont, _reason = should_continue(evals_history, window=3)
-        if not _cont and "Reflector" in _reason:
-            _actions = reflect(
-                step_eval.tool_call_health,
-                last_step_evaluations=evals_history[-3:],
-                audit_log_path=audit_log_path,
-            )
-            hint_text = format_reflector_text(_actions)
-        if not _cont and not hint_text and _reason:
-            # 其他 should_continue=False 信号也透传, 不只 Reflector
-            hint_text = f"[StepEval] {_reason}"
-    except Exception:
-        logger.debug("cabin 3 (Reflect) failed", exc_info=True)
-
-    return (step_eval, hint_text)
+    return _execute_cabins(
+        deps, cog, evals_history, step_id, workspace, model, persona, kb, memory
+    )
 
 
 # === 自检 ===
@@ -152,7 +227,10 @@ if __name__ == "__main__":
         ws = Path(td)
         evals = []
         step_eval, hint = run_three_cabin(
-            cog=cog, evals_history=evals, step_id=1, workspace=ws,
+            cog=cog,
+            evals_history=evals,
+            step_id=1,
+            workspace=ws,
         )
         # 没 target_chains / verification_signals / model → on_track="unsure"
         assert step_eval is not None, "step_eval should not be None"
@@ -171,7 +249,10 @@ if __name__ == "__main__":
         evals = []
         for i in range(3):
             se, _ = run_three_cabin(
-                cog=cog, evals_history=evals, step_id=i, workspace=ws,
+                cog=cog,
+                evals_history=evals,
+                step_id=i,
+                workspace=ws,
             )
             assert se is not None
         # 3 步 on_track="unsure" 不触发 should_continue=False
@@ -183,7 +264,10 @@ if __name__ == "__main__":
         ws = Path(td)
         evals = []
         se, _ = run_three_cabin(
-            cog=cog, evals_history=evals, step_id=0, workspace=ws,
+            cog=cog,
+            evals_history=evals,
+            step_id=0,
+            workspace=ws,
         )
         # 真 StepEvaluation 有 is_on_track 方法, SimpleNamespace 没有
         assert hasattr(se, "is_on_track"), "should be real StepEvaluation"

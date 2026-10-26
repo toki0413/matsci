@@ -74,8 +74,13 @@ NET_MIN_ABI = 4
 FS_MASK_ABI1 = LL_FS_EXECUTE | LL_FS_WRITE_FILE | LL_FS_READ_FILE | LL_FS_READ_DIR
 FS_MASK_ABI2 = (
     FS_MASK_ABI1
-    | LL_FS_MAKE_CHAR | LL_FS_MAKE_DIR | LL_FS_MAKE_REG | LL_FS_MAKE_SOCK
-    | LL_FS_MAKE_FIFO | LL_FS_MAKE_BLOCK | LL_FS_MAKE_SYM
+    | LL_FS_MAKE_CHAR
+    | LL_FS_MAKE_DIR
+    | LL_FS_MAKE_REG
+    | LL_FS_MAKE_SOCK
+    | LL_FS_MAKE_FIFO
+    | LL_FS_MAKE_BLOCK
+    | LL_FS_MAKE_SYM
 )
 FS_MASK_ABI3 = FS_MASK_ABI2 | LL_FS_REFER | LL_FS_TRUNCATE
 FS_MASK_ABI4 = FS_MASK_ABI3 | LL_FS_IOCTL_DEV
@@ -186,12 +191,39 @@ def _add_path_rule(ruleset_fd: int, path: str, access: int, abi: int) -> None:
     assert nums is not None
     parent_fd = os.open(path.encode(), os.O_PATH | os.O_CLOEXEC)
     try:
-        attr = _PathBeneath(allowed_access=access & fs_mask_for_abi(abi), parent_fd=parent_fd)
-        ret = libc.syscall(nums[1], ruleset_fd, LANDLOCK_RULE_PATH_BENEATH, ctypes.byref(attr), 0)
+        attr = _PathBeneath(
+            allowed_access=access & fs_mask_for_abi(abi), parent_fd=parent_fd
+        )
+        ret = libc.syscall(
+            nums[1], ruleset_fd, LANDLOCK_RULE_PATH_BENEATH, ctypes.byref(attr), 0
+        )
         if ret != 0:
             raise OSError(ctypes.get_errno(), f"landlock_add_rule failed for {path}")
     finally:
         os.close(parent_fd)
+
+
+def _create_ruleset(
+    handled_fs: int,
+    handled_net: int,
+    nums: tuple[int, int, int],
+    libc: Any,
+) -> int:
+    """按 ABI 能力选 struct 布局并创建 ruleset fd."""
+    # ABI >= 4 kernels expect the larger ruleset struct; older kernels reject a
+    # struct bigger than they know (E2BIG), so only pass the net variant when
+    # the net mask is actually handled.
+    attr: _RulesetAttr | _RulesetAttrNet
+    if handled_net:
+        attr = _RulesetAttrNet(
+            handled_access_fs=handled_fs, handled_access_net=handled_net
+        )
+    else:
+        attr = _RulesetAttr(handled_access_fs=handled_fs)
+    ruleset_fd = int(libc.syscall(nums[0], ctypes.byref(attr), ctypes.sizeof(attr), 0))
+    if ruleset_fd < 0:
+        raise OSError(ctypes.get_errno(), "landlock_create_ruleset failed")
+    return ruleset_fd
 
 
 def restrict(
@@ -225,19 +257,7 @@ def restrict(
             "nothing to confine (no path rules; network isolation needs ABI >= 4)"
         )
 
-    # ABI >= 4 kernels expect the larger ruleset struct; older kernels reject a
-    # struct bigger than they know (E2BIG), so only pass the net variant when
-    # the net mask is actually handled.
-    attr: _RulesetAttr | _RulesetAttrNet
-    if handled_net:
-        attr = _RulesetAttrNet(
-            handled_access_fs=handled_fs, handled_access_net=handled_net
-        )
-    else:
-        attr = _RulesetAttr(handled_access_fs=handled_fs)
-    ruleset_fd = int(libc.syscall(nums[0], ctypes.byref(attr), ctypes.sizeof(attr), 0))
-    if ruleset_fd < 0:
-        raise OSError(ctypes.get_errno(), "landlock_create_ruleset failed")
+    ruleset_fd = _create_ruleset(handled_fs, handled_net, nums, libc)
 
     try:
         if handled_fs:
@@ -272,7 +292,20 @@ def _apply_rlimits(rlimits: dict[int, tuple[int, int]]) -> None:
         try:
             resource.setrlimit(res, limits)
         except (ValueError, OSError):
-            logger.debug("setrlimit(%s, %s) failed (non-fatal)", res, limits, exc_info=True)
+            logger.debug(
+                "setrlimit(%s, %s) failed (non-fatal)", res, limits, exc_info=True
+            )
+
+
+def _rlimit_only_preexec(
+    rlimits: dict[int, tuple[int, int]] | None,
+) -> Callable[[], None]:
+    """只应用 rlimits 的 preexec 可调用对象."""
+
+    def _rlimit_only() -> None:
+        _apply_rlimits(rlimits or {})
+
+    return _rlimit_only
 
 
 def make_preexec_fn(
@@ -314,10 +347,7 @@ def make_preexec_fn(
         if not has_rl:
             return None
 
-        def _rlimit_only() -> None:
-            _apply_rlimits(rlimits or {})
-
-        return _rlimit_only
+        return _rlimit_only_preexec(rlimits)
 
     def _confine() -> None:
         if has_rl:
@@ -331,8 +361,15 @@ def make_preexec_fn(
 def _selfcheck() -> None:
     print("Running landlock selfcheck...")
     # Masks grow monotonically with ABI.
-    assert fs_mask_for_abi(4) >= fs_mask_for_abi(3) >= fs_mask_for_abi(2) >= fs_mask_for_abi(1)
-    assert fs_mask_for_abi(1) == (LL_FS_EXECUTE | LL_FS_WRITE_FILE | LL_FS_READ_FILE | LL_FS_READ_DIR)
+    assert (
+        fs_mask_for_abi(4)
+        >= fs_mask_for_abi(3)
+        >= fs_mask_for_abi(2)
+        >= fs_mask_for_abi(1)
+    )
+    assert fs_mask_for_abi(1) == (
+        LL_FS_EXECUTE | LL_FS_WRITE_FILE | LL_FS_READ_FILE | LL_FS_READ_DIR
+    )
     assert READ_SIDE & LL_FS_WRITE_FILE == 0, "read side must not allow writes"
     print("  [OK] mask hierarchy + read-side isolation")
     # Network masks are independent of the FS masks.

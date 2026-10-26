@@ -105,10 +105,18 @@ class UnitToolInput(BaseModel):
         default=None,
         description="Arithmetic operation for unit_arithmetic.",
     )
-    value1: float | None = Field(default=None, description="First value for unit_arithmetic")
-    unit1: str = Field(default="", description="Unit of first value for unit_arithmetic")
-    value2: float | None = Field(default=None, description="Second value for unit_arithmetic")
-    unit2: str = Field(default="", description="Unit of second value for unit_arithmetic")
+    value1: float | None = Field(
+        default=None, description="First value for unit_arithmetic"
+    )
+    unit1: str = Field(
+        default="", description="Unit of first value for unit_arithmetic"
+    )
+    value2: float | None = Field(
+        default=None, description="Second value for unit_arithmetic"
+    )
+    unit2: str = Field(
+        default="", description="Unit of second value for unit_arithmetic"
+    )
     # Fields for natural_units
     from_system: str | None = Field(
         default=None,
@@ -140,6 +148,154 @@ _DIM_LABEL_TO_DIMENSION: dict[str, tuple[str, ...]] = {
     "area": ("L",),
     "velocity": ("L", "T"),
 }
+
+
+def _convert_result(input_data: UnitToolInput, Q) -> ToolResult:
+    """Convert a value between units and shape the response."""
+    quantity = Q(input_data.value, input_data.from_unit)
+    converted = convert(quantity, input_data.to_unit)
+    return ToolResult(
+        data={
+            "value": input_data.value,
+            "from_unit": input_data.from_unit,
+            "to_unit": input_data.to_unit,
+            "result": (
+                float(converted.magnitude)
+                if hasattr(converted, "magnitude")
+                else converted.magnitude
+            ),
+            "formatted": format_quantity(converted),
+        },
+        success=True,
+    )
+
+
+def _to_si_result(input_data: UnitToolInput, Q) -> ToolResult:
+    """Normalize a value to SI and shape the response."""
+    quantity = Q(input_data.value, input_data.from_unit)
+    si_value = to_si(quantity)
+    return ToolResult(
+        data={
+            "value": input_data.value,
+            "from_unit": input_data.from_unit,
+            "si_value": si_value,
+        },
+        success=True,
+    )
+
+
+def _check_dimension_result(input_data: UnitToolInput, dim_matches) -> ToolResult:
+    """Resolve a unit's dimension signature and compare it to the request."""
+    from huginn.research.external_validator import resolve_unit_dimension
+
+    # 契约层单轨: 解析 from_unit 的量纲签名, 与期望维度字符串比对.
+    sig = resolve_unit_dimension(input_data.from_unit)
+    if sig is None:
+        return ToolResult(
+            data={
+                "value": input_data.value,
+                "from_unit": input_data.from_unit,
+                "dimension": input_data.dimension,
+                "is_valid": False,
+                "note": f"unit '{input_data.from_unit}' 契约 registry 无法解析(量纲未知)",
+            },
+            success=True,
+        )
+    is_valid = input_data.dimension is not None and dim_matches(
+        sig, input_data.dimension
+    )
+    return ToolResult(
+        data={
+            "value": input_data.value,
+            "from_unit": input_data.from_unit,
+            "dimension": input_data.dimension,
+            "is_valid": is_valid,
+            "dimension_signature": sig,
+        },
+        success=True,
+    )
+
+
+def _list_units_result() -> ToolResult:
+    """List the available unit presets."""
+    from huginn.utils.units import DFT_UNITS, MD_UNITS, SI_UNITS
+
+    return ToolResult(
+        data={
+            "pint_available": is_pint_available(),
+            "presets": {
+                "dft": DFT_UNITS,
+                "md": MD_UNITS,
+                "si": SI_UNITS,
+            },
+        },
+        success=True,
+    )
+
+
+def _apply_unit_operation(q1, q2, operation: str):
+    """Apply the requested arithmetic operation, or None if unknown."""
+    if operation == "add":
+        return q1 + q2
+    if operation == "subtract":
+        return q1 - q2
+    if operation == "multiply":
+        return q1 * q2
+    if operation == "divide":
+        return q1 / q2
+    return None
+
+
+def _arithmetic_result(result) -> ToolResult:
+    """Shape the unit arithmetic response for pint / fallback quantities."""
+    if is_pint_available():
+        result_value = float(result.magnitude)
+        result_unit = str(result.units)
+        result_dim = str(result.dimensionality)
+    else:
+        # Fallback quantity — only add/subtract carry full info
+        result_value = float(result.magnitude)
+        result_unit = result.unit
+        result_dim = result.dimensionality
+
+    return ToolResult(
+        data={
+            "result_value": result_value,
+            "result_unit": result_unit,
+            "result_dimension": result_dim,
+        },
+        success=True,
+    )
+
+
+def _unknown_system_result(table, system: str, role: str) -> ToolResult:
+    """Build the error for an unknown natural-unit system."""
+    systems = ", ".join(sorted(table.keys()))
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"Unknown {role} system '{system}'. Supported: {systems}",
+    )
+
+
+def _natural_units_result(
+    value: float, from_entry, to_entry, from_system: str, to_system: str, quantity: str
+) -> ToolResult:
+    """Convert through SI and shape the natural-units response."""
+    # Convert through SI: value * from_factor -> SI -> / to_factor
+    si_value = value * float(from_entry["factor"])
+    result_value = si_value / float(to_entry["factor"])
+
+    return ToolResult(
+        data={
+            "value": result_value,
+            "unit": to_entry["unit"],
+            "from_system": from_system,
+            "to_system": to_system,
+            "quantity": quantity,
+        },
+        success=True,
+    )
 
 
 class UnitTool(HuginnTool):
@@ -200,8 +356,7 @@ class UnitTool(HuginnTool):
         ):
             return ValidationResult(
                 result=False,
-                message="natural_units requires from_system, to_system, "
-                "and quantity.",
+                message="natural_units requires from_system, to_system, and quantity.",
             )
         return ValidationResult(result=True)
 
@@ -214,89 +369,18 @@ class UnitTool(HuginnTool):
 
         try:
             if input_data.action == "convert":
-                quantity = Q(input_data.value, input_data.from_unit)
-                converted = convert(quantity, input_data.to_unit)
-                return ToolResult(
-                    data={
-                        "value": input_data.value,
-                        "from_unit": input_data.from_unit,
-                        "to_unit": input_data.to_unit,
-                        "result": (
-                            float(converted.magnitude)
-                            if hasattr(converted, "magnitude")
-                            else converted.magnitude
-                        ),
-                        "formatted": format_quantity(converted),
-                    },
-                    success=True,
-                )
-
+                return _convert_result(input_data, Q)
             elif input_data.action == "to_si":
-                quantity = Q(input_data.value, input_data.from_unit)
-                si_value = to_si(quantity)
-                return ToolResult(
-                    data={
-                        "value": input_data.value,
-                        "from_unit": input_data.from_unit,
-                        "si_value": si_value,
-                    },
-                    success=True,
-                )
-
+                return _to_si_result(input_data, Q)
             elif input_data.action == "check_dimension":
-                from huginn.research.external_validator import (
-                    resolve_unit_dimension,
-                )
-
-                # 契约层单轨: 解析 from_unit 的量纲签名, 与期望维度字符串比对.
-                sig = resolve_unit_dimension(input_data.from_unit)
-                if sig is None:
-                    return ToolResult(
-                        data={
-                            "value": input_data.value,
-                            "from_unit": input_data.from_unit,
-                            "dimension": input_data.dimension,
-                            "is_valid": False,
-                            "note": f"unit '{input_data.from_unit}' 契约 registry 无法解析(量纲未知)",
-                        },
-                        success=True,
-                    )
-                is_valid = (
-                    input_data.dimension is not None
-                    and self._dim_matches(sig, input_data.dimension)
-                )
-                return ToolResult(
-                    data={
-                        "value": input_data.value,
-                        "from_unit": input_data.from_unit,
-                        "dimension": input_data.dimension,
-                        "is_valid": is_valid,
-                        "dimension_signature": sig,
-                    },
-                    success=True,
-                )
-
+                return _check_dimension_result(input_data, self._dim_matches)
             elif input_data.action == "list_units":
-                from huginn.utils.units import DFT_UNITS, MD_UNITS, SI_UNITS
-
-                return ToolResult(
-                    data={
-                        "pint_available": is_pint_available(),
-                        "presets": {
-                            "dft": DFT_UNITS,
-                            "md": MD_UNITS,
-                            "si": SI_UNITS,
-                        },
-                    },
-                    success=True,
-                )
-
+                return _list_units_result()
             elif input_data.action == "infer_dimension":
                 return self._infer_dimension(
                     input_data.expression or "",
                     input_data.variables or {},
                 )
-
             elif input_data.action == "unit_arithmetic":
                 return self._unit_arithmetic(
                     input_data.operation or "add",
@@ -305,7 +389,6 @@ class UnitTool(HuginnTool):
                     input_data.value2 if input_data.value2 is not None else 0.0,
                     input_data.unit2,
                 )
-
             elif input_data.action == "natural_units":
                 return self._natural_units(
                     input_data.value,
@@ -367,10 +450,13 @@ class UnitTool(HuginnTool):
             check_expression_dimensions,
         )
 
-        sym_units = {var: _to_symbol(str(unit)) for var, unit in (variables or {}).items()}
+        sym_units = {
+            var: _to_symbol(str(unit)) for var, unit in (variables or {}).items()
+        }
         if not sym_units:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="infer_dimension requires at least one variable with unit.",
             )
         try:
@@ -378,13 +464,15 @@ class UnitTool(HuginnTool):
             out = check_expression_dimensions(expression, sym_units, expected_unit="1")
         except Exception as e:  # noqa: BLE001
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"Dimension inference failed: {e}",
             )
         if out.get("error") and out.get("inferred") is None:
             # 解析/量纲引擎不可用 → 如实报不可用(诚实边界), 不硬判.
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=out["error"],
             )
         return ToolResult(
@@ -415,39 +503,15 @@ class UnitTool(HuginnTool):
             q1 = Q(value1, unit1)
             q2 = Q(value2, unit2)
 
-            if operation == "add":
-                result = q1 + q2
-            elif operation == "subtract":
-                result = q1 - q2
-            elif operation == "multiply":
-                result = q1 * q2
-            elif operation == "divide":
-                result = q1 / q2
-            else:
+            result = _apply_unit_operation(q1, q2, operation)
+            if result is None:
                 return ToolResult(
                     data=None,
                     success=False,
                     error=f"Unknown operation: {operation}",
                 )
 
-            if is_pint_available():
-                result_value = float(result.magnitude)
-                result_unit = str(result.units)
-                result_dim = str(result.dimensionality)
-            else:
-                # Fallback quantity — only add/subtract carry full info
-                result_value = float(result.magnitude)
-                result_unit = result.unit
-                result_dim = result.dimensionality
-
-            return ToolResult(
-                data={
-                    "result_value": result_value,
-                    "result_unit": result_unit,
-                    "result_dimension": result_dim,
-                },
-                success=True,
-            )
+            return _arithmetic_result(result)
         except Exception as e:
             if type(e).__name__ == "DimensionalityError":
                 return ToolResult(
@@ -489,38 +553,15 @@ class UnitTool(HuginnTool):
 
             table = _NATURAL_UNIT_TABLE[quantity]
             if from_system not in table:
-                systems = ", ".join(sorted(table.keys()))
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Unknown source system '{from_system}'. "
-                    f"Supported: {systems}",
-                )
+                return _unknown_system_result(table, from_system, "source")
             if to_system not in table:
-                systems = ", ".join(sorted(table.keys()))
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Unknown target system '{to_system}'. "
-                    f"Supported: {systems}",
-                )
+                return _unknown_system_result(table, to_system, "target")
 
             from_entry = table[from_system]
             to_entry = table[to_system]
 
-            # Convert through SI: value * from_factor -> SI -> / to_factor
-            si_value = value * float(from_entry["factor"])
-            result_value = si_value / float(to_entry["factor"])
-
-            return ToolResult(
-                data={
-                    "value": result_value,
-                    "unit": to_entry["unit"],
-                    "from_system": from_system,
-                    "to_system": to_system,
-                    "quantity": quantity,
-                },
-                success=True,
+            return _natural_units_result(
+                value, from_entry, to_entry, from_system, to_system, quantity
             )
         except Exception as e:
             return ToolResult(

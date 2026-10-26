@@ -114,13 +114,176 @@ def web_search_health_check(timeout: float = 8.0) -> tuple[bool, str]:
     if _web_search_disabled():
         return False, "web_search disabled by HUGINN_DISABLE_WEB_SEARCH"
     try:
-        url = "http://export.arxiv.org/api/query?search_query=all:test&max_results=1"
-        req = urllib.request.Request(url, headers={"User-Agent": "huginn-healthcheck/1.0"})
+        url = "https://export.arxiv.org/api/query?search_query=all:test&max_results=1"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "huginn-healthcheck/1.0"}
+        )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             _ = resp.read(512)  # 只读前 512 字节, 够确认连通
         return True, "arxiv API reachable"
     except Exception as exc:
         return False, f"arxiv API unreachable: {exc}"
+
+
+def _circuit_broken_result() -> ToolResult:
+    """熔断时的固定返回, 带 search_unavailable 显式信号."""
+    return ToolResult(
+        data={
+            "error": "web_search circuit broken (连续失败过多)",
+            "hint": "搜索不可用, 请用 code_tool / materials_database_tool / 已有知识回答.",
+            "results": [],
+            # P1-C4: 显式不可用信号, agent 据此切换策略而非死循环重试
+            "search_unavailable": True,
+        },
+        success=False,
+        error="web_search circuit broken",
+    )
+
+
+def _query_required_result() -> ToolResult:
+    """search 缺少 query 时的返回."""
+    return ToolResult(
+        data={"error": "query is required", "results": []},
+        success=False,
+        error="query is required",
+    )
+
+
+def _search_disabled_result(query: str) -> ToolResult:
+    """离线 / CI 环境的 search 短路返回."""
+    return ToolResult(
+        data={
+            "query": query,
+            "results": [],
+            "error": "web_search disabled",
+            "hint": _SEARCH_DISABLED_HINT,
+            "search_engine": "disabled",
+        },
+        success=False,
+        error=_SEARCH_DISABLED_HINT,
+    )
+
+
+def _coerce_max_results(args: dict) -> int:
+    """解析 max_results, 非法值回落到 5."""
+    try:
+        return int(args.get("max_results", 5) or 5)
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return 5
+
+
+def _arxiv_api_url(query: str, max_results: int) -> str:
+    """拼 arxiv API URL.
+
+    https 而非 http: 在带 HTTP(S)_PROXY 的环境里, 明文 http 走代理
+    会握手失败 (ws7 实测 SSL: UNEXPECTED_EOF / 502), 同一 URL 换 https
+    urllib 直接 200. arxiv 官方也早已只推 https.
+    """
+    return (
+        f"https://export.arxiv.org/api/query?"
+        f"search_query=all:{urllib.parse.quote(query)}"
+        f"&max_results={max_results}"
+    )
+
+
+def _parse_arxiv_entries(xml_data: str) -> list[dict[str, Any]]:
+    """解析 arxiv Atom feed, 摘要超 300 字符截断."""
+    # xml 是 stdlib, 导入永不会失败, 无需 try 包裹
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_data)
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    results: list[dict[str, Any]] = []
+    for entry in root.findall("atom:entry", ns):
+        title_el = entry.find("atom:title", ns)
+        summary_el = entry.find("atom:summary", ns)
+        id_el = entry.find("atom:id", ns)
+        title = (
+            (title_el.text or "").strip().replace("\n", " ")
+            if title_el is not None
+            else ""
+        )
+        summary = (
+            (summary_el.text or "").strip().replace("\n", " ")
+            if summary_el is not None
+            else ""
+        )
+        arxiv_id = (id_el.text or "").strip() if id_el is not None else ""
+        if len(summary) > 300:
+            summary = summary[:297] + "..."
+        results.append(
+            {
+                "title": title,
+                "url": arxiv_id,
+                "snippet": summary,
+            }
+        )
+    return results
+
+
+def _fetch_url_required_result() -> ToolResult:
+    """fetch 缺少 url 时的返回."""
+    return ToolResult(
+        data={"error": "url is required for fetch", "chunks": []},
+        success=False,
+        error="url is required for fetch",
+    )
+
+
+def _fetch_disabled_result(url: str) -> ToolResult:
+    """离线 / CI 环境的 fetch 短路返回."""
+    return ToolResult(
+        data={
+            "url": url,
+            "chunks": [],
+            "error": "web_search disabled",
+            "hint": _SEARCH_DISABLED_HINT,
+        },
+        success=False,
+        error=_SEARCH_DISABLED_HINT,
+    )
+
+
+def _fetch_ssrf_blocked_result(url: str, reason: str) -> ToolResult:
+    """SSRF 防护拦截时的返回."""
+    return ToolResult(
+        data={"url": url, "chunks": [], "error": f"blocked: {reason}"},
+        success=False,
+        error=f"fetch blocked (SSRF guard): {reason}",
+    )
+
+
+def _download_html(url: str) -> str:
+    """GET 页面并解码为文本; 超过 2MB 截断, charset 从 Content-Type 读."""
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; HuginnAgent/1.0)",
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
+        raw = resp.read()
+        # 大页面截断, 避免内存爆掉
+        if len(raw) > 2_000_000:
+            raw = raw[:2_000_000]
+        charset = "utf-8"
+        ctype = resp.headers.get("Content-Type", "")
+        m = re.search(r"charset=([\w-]+)", ctype, re.IGNORECASE)
+        if m:
+            charset = m.group(1)
+        return raw.decode(charset, errors="ignore")
+
+
+def _add_fetch_chunks(data: dict[str, Any], chunks: list[str], compact: bool) -> None:
+    """按 compact 开关填充 indexed / chunks 字段."""
+    if compact:
+        # 索引化: [0] 文本块...
+        data["indexed"] = "\n".join(f"[{i}] {c}" for i, c in enumerate(chunks))
+        data["chunks"] = [{"index": i, "preview": c[:80]} for i, c in enumerate(chunks)]
+    else:
+        data["chunks"] = [{"index": i, "text": c} for i, c in enumerate(chunks)]
 
 
 class WebSearchInput(BaseModel):
@@ -168,7 +331,12 @@ class WebSearchTool(HuginnTool):
 
     # 降级链顺序 (BS1 起): 有 key/URL 才激活. arxiv 偏学术, DDG/fallback 通用.
     _BACKEND_ORDER = (
-        "tavily", "bing", "brave", "searxng", "arxiv", "ddgs",
+        "tavily",
+        "bing",
+        "brave",
+        "searxng",
+        "arxiv",
+        "ddgs",
     )
 
     @property
@@ -198,17 +366,7 @@ class WebSearchTool(HuginnTool):
 
         # 熔断检查: 连续失败太多直接拒绝
         if self._circuit_broken:
-            return ToolResult(
-                data={
-                    "error": "web_search circuit broken (连续失败过多)",
-                    "hint": "搜索不可用, 请用 code_tool / materials_database_tool / 已有知识回答.",
-                    "results": [],
-                    # P1-C4: 显式不可用信号, agent 据此切换策略而非死循环重试
-                    "search_unavailable": True,
-                },
-                success=False,
-                error="web_search circuit broken",
-            )
+            return _circuit_broken_result()
 
         if action == "fetch":
             return self._fetch(args)
@@ -216,29 +374,11 @@ class WebSearchTool(HuginnTool):
         # ── search ──
         query = (args.get("query") or "").strip()
         if not query:
-            return ToolResult(
-                data={"error": "query is required", "results": []},
-                success=False,
-                error="query is required",
-            )
+            return _query_required_result()
         # 离线 / CI 环境: 直接返回, 不走任何后端, 避免兜底 timeout 累计
         if _web_search_disabled():
-            return ToolResult(
-                data={
-                    "query": query,
-                    "results": [],
-                    "error": "web_search disabled",
-                    "hint": _SEARCH_DISABLED_HINT,
-                    "search_engine": "disabled",
-                },
-                success=False,
-                error=_SEARCH_DISABLED_HINT,
-            )
-        try:
-            max_results = int(args.get("max_results", 5) or 5)
-        except (TypeError, ValueError):
-            logger.debug("best-effort op failed", exc_info=True)
-            max_results = 5
+            return _search_disabled_result(query)
+        max_results = _coerce_max_results(args)
 
         # 按健康分遍历降级链: 每路可选后端依赖 key/URL 激活, 非激活或过热直接跳过.
         # 任一成功立即返回并重置全局健康分; 全部失败走 urllib 兜底.
@@ -317,7 +457,8 @@ class WebSearchTool(HuginnTool):
             cls._backend_cooldown.add(name)
             logger.warning(
                 "web_search backend '%s' 连续失败达 %d 次, 会话内 cooldown 跳过",
-                name, cls._backend_health[name],
+                name,
+                cls._backend_health[name],
             )
 
     @classmethod
@@ -330,9 +471,7 @@ class WebSearchTool(HuginnTool):
 
     # ── Tavily ───────────────────────────────────────────────────────
 
-    def _search_tavily(
-        self, query: str, max_results: int
-    ) -> ToolResult | None:
+    def _search_tavily(self, query: str, max_results: int) -> ToolResult | None:
         try:
             from tavily import TavilyClient
         except ImportError:
@@ -365,9 +504,7 @@ class WebSearchTool(HuginnTool):
 
     # ── Bing Web Search API (需 HUGINN_BING_API_KEY) ──────────────
 
-    def _search_bing(
-        self, query: str, max_results: int
-    ) -> ToolResult | None:
+    def _search_bing(self, query: str, max_results: int) -> ToolResult | None:
         """Bing Web Search v7: 走 REST 接口, 依赖 key.
 
         key: HUGINN_BING_API_KEY; 可选端点 HUGINN_BING_ENDPOINT
@@ -411,9 +548,7 @@ class WebSearchTool(HuginnTool):
 
     # ── Brave Search API (需 HUGINN_BRAVE_API_KEY) ────────────────
 
-    def _search_brave(
-        self, query: str, max_results: int
-    ) -> ToolResult | None:
+    def _search_brave(self, query: str, max_results: int) -> ToolResult | None:
         """Brave Search Web API: 免费 key + 干净 JSON, 隐私友好."""
         key = os.environ.get("HUGINN_BRAVE_API_KEY")
         if not key:
@@ -449,9 +584,7 @@ class WebSearchTool(HuginnTool):
 
     # ── SearXNG 自托管 (需 HUGINN_SEARXNG_URL) ───────────────────
 
-    def _search_searxng(
-        self, query: str, max_results: int
-    ) -> ToolResult | None:
+    def _search_searxng(self, query: str, max_results: int) -> ToolResult | None:
         """SearXNG 元搜索: 自托管实例, 聚合多个上游, 无 key.
 
         实例需开启 JSON 输出 (format=json). 返回 results[] 的 title/url/content.
@@ -461,9 +594,7 @@ class WebSearchTool(HuginnTool):
         if not searxng_url:
             return None
         try:
-            url = (
-                f"{searxng_url}/search?q={urllib.parse.quote(query)}&format=json"
-            )
+            url = f"{searxng_url}/search?q={urllib.parse.quote(query)}&format=json"
             req = urllib.request.Request(
                 url,
                 headers={"User-Agent": "HuginnAgent/1.0"},
@@ -490,47 +621,21 @@ class WebSearchTool(HuginnTool):
 
     # ── arxiv API ────────────────────────────────────────────────────
 
-    def _search_arxiv(
-        self, query: str, max_results: int
-    ) -> ToolResult | None:
+    def _search_arxiv(self, query: str, max_results: int) -> ToolResult | None:
         """arxiv API 搜索, 返回 None 表示无结果/失败, 降级到下一个后端.
 
         arxiv API 稳定免费, 无需 key, 对论文/物理/材料 query 尤其有效.
         对非学术 query (如"铜的电导率") 通常返回空, 自然降级到 DDG.
         """
-        # xml 是 stdlib, 导入永不会失败, 无需 try 包裹
-        import xml.etree.ElementTree as ET
-
         try:
-            api_url = (
-                f"http://export.arxiv.org/api/query?"
-                f"search_query=all:{urllib.parse.quote(query)}"
-                f"&max_results={max_results}"
-            )
             req = urllib.request.Request(
-                api_url,
+                _arxiv_api_url(query, max_results),
                 headers={"User-Agent": "HuginnAgent/1.0"},
             )
             with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
                 xml_data = resp.read().decode("utf-8", errors="ignore")
 
-            root = ET.fromstring(xml_data)
-            ns = {"atom": "http://www.w3.org/2005/Atom"}
-            results: list[dict[str, Any]] = []
-            for entry in root.findall("atom:entry", ns):
-                title_el = entry.find("atom:title", ns)
-                summary_el = entry.find("atom:summary", ns)
-                id_el = entry.find("atom:id", ns)
-                title = (title_el.text or "").strip().replace("\n", " ") if title_el is not None else ""
-                summary = (summary_el.text or "").strip().replace("\n", " ") if summary_el is not None else ""
-                arxiv_id = (id_el.text or "").strip() if id_el is not None else ""
-                if len(summary) > 300:
-                    summary = summary[:297] + "..."
-                results.append({
-                    "title": title,
-                    "url": arxiv_id,
-                    "snippet": summary,
-                })
+            results = _parse_arxiv_entries(xml_data)
             if not results:
                 return None
             return ToolResult(
@@ -547,9 +652,7 @@ class WebSearchTool(HuginnTool):
 
     # ── duckduckgo_search ───────────────────────────────────────────
 
-    def _search_ddgs(
-        self, query: str, max_results: int
-    ) -> ToolResult | None:
+    def _search_ddgs(self, query: str, max_results: int) -> ToolResult | None:
         # duckduckgo_search 已重命名为 ddgs, 两个都试一下
         DDGS = None
         try:
@@ -587,16 +690,12 @@ class WebSearchTool(HuginnTool):
 
     # ── urllib 兜底（直接抓 DDG HTML）──────────────────────────────
 
-    def _search_fallback(
-        self, query: str, max_results: int
-    ) -> ToolResult:
+    def _search_fallback(self, query: str, max_results: int) -> ToolResult:
         try:
             url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
             req = urllib.request.Request(
                 url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; HuginnAgent/1.0)"
-                },
+                headers={"User-Agent": "Mozilla/5.0 (compatible; HuginnAgent/1.0)"},
             )
             with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
                 html = resp.read().decode("utf-8", errors="ignore")
@@ -697,51 +796,28 @@ class WebSearchTool(HuginnTool):
         """下载一个 URL 的正文, 去标签后切成索引化文本块返回."""
         url = (args.get("url") or "").strip()
         if not url:
-            return ToolResult(
-                data={"error": "url is required for fetch", "chunks": []},
-                success=False,
-                error="url is required for fetch",
-            )
+            return _fetch_url_required_result()
         if _web_search_disabled():
-            return ToolResult(
-                data={"url": url, "chunks": [], "error": "web_search disabled",
-                      "hint": _SEARCH_DISABLED_HINT},
-                success=False, error=_SEARCH_DISABLED_HINT,
-            )
+            return _fetch_disabled_result(url)
 
         blocked, reason = _is_ssrf_blocked(url)
         if blocked:
             logger.warning("fetch blocked by SSRF guard: %s (%s)", url, reason)
-            return ToolResult(
-                data={"url": url, "chunks": [], "error": f"blocked: {reason}"},
-                success=False, error=f"fetch blocked (SSRF guard): {reason}",
-            )
+            return _fetch_ssrf_blocked_result(url, reason)
 
         try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; HuginnAgent/1.0)",
-                    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
-                raw = resp.read()
-            # 大页面截断, 避免内存爆掉
-            if len(raw) > 2_000_000:
-                raw = raw[:2_000_000]
-            charset = "utf-8"
-            ctype = resp.headers.get("Content-Type", "")
-            m = re.search(r"charset=([\w-]+)", ctype, re.IGNORECASE)
-            if m:
-                charset = m.group(1)
-            html = raw.decode(charset, errors="ignore")
+            html = _download_html(url)
         except Exception as exc:
             logger.warning("fetch %s 失败: %s", url, exc)
             return ToolResult(
-                data={"url": url, "chunks": [], "error": str(exc),
-                      "hint": _SEARCH_FAIL_HINT},
-                success=False, error=f"fetch failed: {exc}",
+                data={
+                    "url": url,
+                    "chunks": [],
+                    "error": str(exc),
+                    "hint": _SEARCH_FAIL_HINT,
+                },
+                success=False,
+                error=f"fetch failed: {exc}",
             )
 
         text = self._html_to_text(html)
@@ -752,31 +828,41 @@ class WebSearchTool(HuginnTool):
             "n_chunks": len(chunks),
             "title": self._extract_title(html),
         }
-        if compact:
-            # 索引化: [0] 文本块...
-            data["indexed"] = "\n".join(f"[{i}] {c}" for i, c in enumerate(chunks))
-            data["chunks"] = [{"index": i, "preview": c[:80]} for i, c in enumerate(chunks)]
-        else:
-            data["chunks"] = [{"index": i, "text": c} for i, c in enumerate(chunks)]
+        _add_fetch_chunks(data, chunks, compact)
         return ToolResult(data=data, success=True)
 
     @staticmethod
     def _html_to_text(html: str) -> str:
         """去导航/页脚噪音 + 剥标签 + 解码实体, 拿到可读正文. 不做完整 DOM 解析, 够 LLM 读就行."""
         # 先抠 <script>/<style>/<noscript> 整块扔掉, 否则 JS 会污染正文
-        html = re.sub(r"<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(
+            r"<(script|style|noscript)\b[^>]*>.*?</\1>",
+            " ",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
         # 再抠导航/页脚/侧栏等噪音容器 (P1-6): 不承载正文, 还常把"下一页/相关链接"
         # 之类灌进正文, 去标签前整块扔掉
-        html = re.sub(r"<(nav|header|footer|aside)\b[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(
+            r"<(nav|header|footer|aside)\b[^>]*>.*?</\1>",
+            " ",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
         # 块级标签换行
         html = re.sub(r"</(p|div|li|h[1-6]|tr|br)\s*>", "\n", html, flags=re.IGNORECASE)
         html = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
         # 去剩余标签
         text = re.sub(r"<[^>]+>", "", html)
         # 解码常见 HTML 实体
-        text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
-                    .replace("&lt;", "<").replace("&gt;", ">")
-                    .replace("&quot;", '"').replace("&#39;", "'"))
+        text = (
+            text.replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", '"')
+            .replace("&#39;", "'")
+        )
         # 压缩空白
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n\s*\n+", "\n\n", text)
@@ -807,7 +893,9 @@ class WebSearchTool(HuginnTool):
         cur = ""
         for para in paragraphs:
             # 段内按句子软拼
-            sentences = [s.strip() for s in re.split(r"(?<=[。.!?])\s+", para) if s.strip()]
+            sentences = [
+                s.strip() for s in re.split(r"(?<=[。.!?])\s+", para) if s.strip()
+            ]
             if not sentences:
                 sentences = [para]
             for s in sentences:
@@ -831,6 +919,113 @@ class WebSearchTool(HuginnTool):
         return chunks
 
 
+def _c4_check_health_disabled() -> None:
+    """C4.1: health_check 函数签名 + 离线模式."""
+    import os as _os
+
+    _os.environ["HUGINN_DISABLE_WEB_SEARCH"] = "1"
+    ok, msg = web_search_health_check(timeout=1.0)
+    assert ok is False, f"disabled mode should return False, got {ok}"
+    assert "disabled" in msg.lower(), f"msg should mention disabled, got: {msg}"
+    print(f"[CHECK C4.1] health_check disabled mode OK: {msg}")
+    _os.environ.pop("HUGINN_DISABLE_WEB_SEARCH", None)
+
+
+def _c4_check_circuit_flag() -> None:
+    """C4.2: 熔断时 search_unavailable flag."""
+    tool = WebSearchTool()
+    # 强制熔断状态
+    WebSearchTool._circuit_broken = True
+    result = tool.execute({"action": "search", "query": "test"}, None)  # type: ignore[arg-type]
+    assert result.success is False, "circuit broken should fail"
+    assert result.data.get("search_unavailable") is True, (
+        "circuit broken should set search_unavailable=True"
+    )
+    print("[CHECK C4.2] circuit broken sets search_unavailable=True OK")
+    # 复位
+    WebSearchTool._circuit_broken = False
+    WebSearchTool._consecutive_failures = 0
+
+
+def _c4_check_backend_chain() -> None:
+    """C4.3: 多源降级链 7 个 _search_* 方法都存在."""
+    for name in (
+        "_search_tavily",
+        "_search_bing",
+        "_search_brave",
+        "_search_searxng",
+        "_search_arxiv",
+        "_search_ddgs",
+        "_search_fallback",
+    ):
+        assert hasattr(WebSearchTool, name), f"missing {name} — 降级链断"
+    print("[CHECK C4.3] 7-backend degradation chain exists OK")
+
+
+def _c4_check_backend_gating() -> None:
+    """C4.4: 按后端健康分路由 — 未配置 key 的后端应被 _backend_active 判为不可用."""
+    import os as _os2
+
+    for _k in (
+        "TAVILY_API_KEY",
+        "HUGINN_BING_API_KEY",
+        "HUGINN_BRAVE_API_KEY",
+        "HUGINN_SEARXNG_URL",
+    ):
+        _os2.environ.pop(_k, None)
+    assert WebSearchTool._backend_active("bing") is False, (
+        "bing should be inactive without key"
+    )
+    assert WebSearchTool._backend_active("brave") is False, (
+        "brave should be inactive without key"
+    )
+    assert WebSearchTool._backend_active("searxng") is False, (
+        "searxng should be inactive without URL"
+    )
+    assert WebSearchTool._backend_active("arxiv") is True, (
+        "arxiv should be active by default"
+    )
+    assert WebSearchTool._backend_active("ddgs") is True, (
+        "ddgs should be active by default"
+    )
+    print("[CHECK C4.4] per-backend active-gating OK")
+
+
+def _c4_check_backend_cooldown() -> None:
+    """C4.5: cooldown — 后端连续失败达阈值后 _ordered_active_backends 跳过它."""
+    import os as _os2
+
+    _os2.environ["TAVILY_API_KEY"] = "test"
+    WebSearchTool._backend_health = {}
+    WebSearchTool._backend_cooldown = set()
+    WebSearchTool._mark_backend_failure("tavily")
+    WebSearchTool._mark_backend_failure("tavily")
+    WebSearchTool._mark_backend_failure("tavily")
+    assert "tavily" in WebSearchTool._backend_cooldown, (
+        "tavily should be in cooldown after 3 fails"
+    )
+    assert "tavily" not in WebSearchTool._ordered_active_backends(), (
+        "cooldown backend should be skipped"
+    )
+    WebSearchTool._on_success()
+    assert WebSearchTool._backend_cooldown == set(), "success should reset cooldown"
+    print("[CHECK C4.5] health-based cooldown + reset OK")
+    _os2.environ.pop("TAVILY_API_KEY", None)
+
+
+def _c4_check_ddgs_dual_import() -> None:
+    """C4.6: ddgs 兼容 — ddgs + duckduckgo_search 双导入路径."""
+    # 不真导入 (可能没装), 只验 _search_ddgs 里有双 try
+    import inspect
+
+    src = inspect.getsource(WebSearchTool._search_ddgs)
+    assert "from ddgs import DDGS" in src, "ddgs import path missing"
+    assert "from duckduckgo_search import DDGS" in src, (
+        "duckduckgo_search fallback missing"
+    )
+    print("[CHECK C4.6] ddgs/duckduckgo_search dual import path OK")
+
+
 def _c4_self_check() -> int:
     """C4 self-check: 验证检索健康检查 + search_unavailable flag + 多源降级链.
 
@@ -842,70 +1037,12 @@ def _c4_self_check() -> int:
     ponytail: 不真发网络请求 (CI 不稳定), 只验函数签名 + 离线模式 + 熔断 flag.
       ceiling: 不验真实网络连通性, 那是 integration test 的活.
     """
-    import os as _os
-
-    # 1. health_check 函数签名 + 离线模式
-    _os.environ["HUGINN_DISABLE_WEB_SEARCH"] = "1"
-    ok, msg = web_search_health_check(timeout=1.0)
-    assert ok is False, f"disabled mode should return False, got {ok}"
-    assert "disabled" in msg.lower(), f"msg should mention disabled, got: {msg}"
-    print(f"[CHECK C4.1] health_check disabled mode OK: {msg}")
-    _os.environ.pop("HUGINN_DISABLE_WEB_SEARCH", None)
-
-    # 2. 熔断时 search_unavailable flag
-    tool = WebSearchTool()
-    # 强制熔断状态
-    WebSearchTool._circuit_broken = True
-    result = tool.execute({"action": "search", "query": "test"}, None)  # type: ignore[arg-type]
-    assert result.success is False, "circuit broken should fail"
-    assert result.data.get("search_unavailable") is True, \
-        "circuit broken should set search_unavailable=True"
-    print("[CHECK C4.2] circuit broken sets search_unavailable=True OK")
-    # 复位
-    WebSearchTool._circuit_broken = False
-    WebSearchTool._consecutive_failures = 0
-
-    # 3. 多源降级链: 7 个 _search_* 方法都存在
-    for name in (
-        "_search_tavily", "_search_bing", "_search_brave", "_search_searxng",
-        "_search_arxiv", "_search_ddgs", "_search_fallback",
-    ):
-        assert hasattr(WebSearchTool, name), f"missing {name} — 降级链断"
-    print("[CHECK C4.3] 7-backend degradation chain exists OK")
-
-    # 4. 按后端健康分路由: 未配置 key 的后端应被 _backend_active 判为不可用
-    import os as _os2
-    for _k in ("TAVILY_API_KEY", "HUGINN_BING_API_KEY",
-               "HUGINN_BRAVE_API_KEY", "HUGINN_SEARXNG_URL"):
-        _os2.environ.pop(_k, None)
-    assert WebSearchTool._backend_active("bing") is False, "bing should be inactive without key"
-    assert WebSearchTool._backend_active("brave") is False, "brave should be inactive without key"
-    assert WebSearchTool._backend_active("searxng") is False, "searxng should be inactive without URL"
-    assert WebSearchTool._backend_active("arxiv") is True, "arxiv should be active by default"
-    assert WebSearchTool._backend_active("ddgs") is True, "ddgs should be active by default"
-    print("[CHECK C4.4] per-backend active-gating OK")
-
-    # 5. cooldown: 后端连续失败达阈值后, _ordered_active_backends 跳过它
-    _os2.environ["TAVILY_API_KEY"] = "test"
-    WebSearchTool._backend_health = {}
-    WebSearchTool._backend_cooldown = set()
-    WebSearchTool._mark_backend_failure("tavily")
-    WebSearchTool._mark_backend_failure("tavily")
-    WebSearchTool._mark_backend_failure("tavily")
-    assert "tavily" in WebSearchTool._backend_cooldown, "tavily should be in cooldown after 3 fails"
-    assert "tavily" not in WebSearchTool._ordered_active_backends(), "cooldown backend should be skipped"
-    WebSearchTool._on_success()
-    assert WebSearchTool._backend_cooldown == set(), "success should reset cooldown"
-    print("[CHECK C4.5] health-based cooldown + reset OK")
-    _os2.environ.pop("TAVILY_API_KEY", None)
-
-    # 6. ddgs 兼容: ddgs + duckduckgo_search 双导入路径 (C4 迁移)
-    # 不真导入 (可能没装), 只验 _search_ddgs 里有双 try
-    import inspect
-    src = inspect.getsource(WebSearchTool._search_ddgs)
-    assert "from ddgs import DDGS" in src, "ddgs import path missing"
-    assert "from duckduckgo_search import DDGS" in src, "duckduckgo_search fallback missing"
-    print("[CHECK C4.6] ddgs/duckduckgo_search dual import path OK")
+    _c4_check_health_disabled()
+    _c4_check_circuit_flag()
+    _c4_check_backend_chain()
+    _c4_check_backend_gating()
+    _c4_check_backend_cooldown()
+    _c4_check_ddgs_dual_import()
 
     print("[CHECK C4] ALL ASSERTS PASSED")
     return 0
@@ -913,5 +1050,6 @@ def _c4_self_check() -> int:
 
 if __name__ == "__main__":
     import sys
+
     if "--self-check-c4" in sys.argv:
         sys.exit(_c4_self_check())

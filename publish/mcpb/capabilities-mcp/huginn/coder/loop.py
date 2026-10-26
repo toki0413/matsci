@@ -31,6 +31,34 @@ def _clean_args(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in raw.items() if v is not None}
 
 
+def _finalize_response(
+    response: AIMessage,
+    messages: list[BaseMessage],
+    done_marker: str,
+) -> dict[str, Any]:
+    """Extract the final answer from a response without tool calls."""
+    content = response.content or ""
+    if isinstance(content, list):
+        content = "\n".join(str(c) for c in content)
+
+    if done_marker in content:
+        final = content.split(done_marker, 1)[0].strip()
+        return {"final_answer": final, "messages": messages}
+
+    # No tool calls and no done marker: treat response as final.
+    return {"final_answer": content, "messages": messages}
+
+
+def _limit_result(messages: list[BaseMessage]) -> dict[str, Any]:
+    """Result returned when the iteration limit is hit."""
+    final_msg = messages[-1]
+    final_text = final_msg.content if isinstance(final_msg.content, str) else ""
+    return {
+        "final_answer": f"Coder reached the maximum iteration limit.\n{final_text}",
+        "messages": messages,
+    }
+
+
 class CoderRunner:
     """Run an autonomous coding session.
 
@@ -163,21 +191,7 @@ class CoderRunner:
                     messages.append(ToolMessage(**tool_result))
                 continue
 
-            content = response.content or ""
-            if isinstance(content, list):
-                content = "\n".join(str(c) for c in content)
-
-            if coder_cfg.done_marker in content:
-                final = content.split(coder_cfg.done_marker, 1)[0].strip()
-                return {"final_answer": final, "messages": messages}
-
-            # No tool calls and no done marker: treat response as final.
-            return {"final_answer": content, "messages": messages}
+            return _finalize_response(response, messages, coder_cfg.done_marker)
 
         # Hit iteration limit.
-        final_msg = messages[-1]
-        final_text = final_msg.content if isinstance(final_msg.content, str) else ""
-        return {
-            "final_answer": f"Coder reached the maximum iteration limit.\n{final_text}",
-            "messages": messages,
-        }
+        return _limit_result(messages)

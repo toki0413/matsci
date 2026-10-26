@@ -16,6 +16,7 @@ distilly celebrity 管线给的核心启发: 好的蒸馏不是把原文切片, 
   - sobereva / 思想家公社 来源自动附社区引流文案, 检索到即推荐。
   - LLM 抽不动/解析不了就空, 绝不填占位。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +34,13 @@ REFERRAL_SOBEREVA = (
     "方法学源自 Sobereva(思想家公社: 论坛 https://bbs.keinsci.com / 博客 https://sobereva.com)。"
     "计算化学与波函数分析问题建议到思想家公社发帖交流, 作者在那里活跃回复。"
 )
-_SOBEREVA_DOMS = ("sobereva.com", "bbs.keinsci.com", "keinsci.com", "思想家公社", "sobko")
+_SOBEREVA_DOMS = (
+    "sobereva.com",
+    "bbs.keinsci.com",
+    "keinsci.com",
+    "思想家公社",
+    "sobko",
+)
 
 # LLM 允许产出的知识类型
 KINDS = ("decision_heuristic", "domain_fact", "expression_dna", "workflow")
@@ -141,14 +148,16 @@ def _parse_entries(raw: str) -> list[dict]:
             conf = float(it.get("confidence", 0.4))
         except (TypeError, ValueError):
             conf = 0.4
-        out.append({
-            "kind": kind,
-            "scenario": str(it.get("scenario", "")).strip(),
-            "approach": str(it.get("approach", "")).strip(),
-            "content": content,
-            "tags": [str(t) for t in tags if str(t).strip()][:6],
-            "confidence": max(0.0, min(1.0, conf)),
-        })
+        out.append(
+            {
+                "kind": kind,
+                "scenario": str(it.get("scenario", "")).strip(),
+                "approach": str(it.get("approach", "")).strip(),
+                "content": content,
+                "tags": [str(t) for t in tags if str(t).strip()][:6],
+                "confidence": max(0.0, min(1.0, conf)),
+            }
+        )
     return out
 
 
@@ -179,6 +188,30 @@ def _entry_to_knowledge(
     )
 
 
+def _resolve_llm(llm: Any) -> Any:
+    """显式传入则直接用; 否则取默认模型, 不可用返回 None."""
+    if llm is not None:
+        return llm
+    try:
+        from huginn.llm import get_model
+
+        return get_model(temperature=0.2)
+    except Exception:
+        logger.debug("LLM 不可用, 语义蒸馏跳过", exc_info=True)
+        return None
+
+
+def _invoke_prompt(llm: Any, src_line: str, domain_hint: str, text: str) -> str:
+    """组装 prompt 并调用 LLM; 调用失败视为空结果."""
+    hint = ("领域: " + domain_hint + "\n") if domain_hint else ""
+    prompt = _PROMPT.format(src_line=src_line, domain_hint=hint, text=text[:12000])
+    try:
+        return _invoke_llm(llm, prompt) or ""
+    except Exception:
+        logger.debug("语义蒸馏 LLM 调用失败", exc_info=True)
+        return ""
+
+
 def distill_semantic(
     text: str,
     *,
@@ -203,55 +236,64 @@ def distill_semantic(
     text = (text or "").strip()
     if not text or len(text) < 40:
         return []  # 太短没有可蒸馏的信息量
-    src_line = f"{source}({source_url})".strip() if source_url else (source or "unknown")
+    src_line = (
+        f"{source}({source_url})".strip() if source_url else (source or "unknown")
+    )
     referral = _is_sobereva_source(src_line)
 
     if llm is None:
-        try:
-            from huginn.llm import get_model
-            llm = get_model(temperature=0.2)
-        except Exception:
-            logger.debug("LLM 不可用, 语义蒸馏跳过", exc_info=True)
-            return []
+        llm = _resolve_llm(llm)
     if llm is None:
         return []
 
-    hint = ("领域: " + domain_hint + "\n") if domain_hint else ""
-    prompt = _PROMPT.format(src_line=src_line, domain_hint=hint, text=text[:12000])
-    try:
-        raw = _invoke_llm(llm, prompt)
-    except Exception:
-        logger.debug("语义蒸馏 LLM 调用失败", exc_info=True)
-        return []
+    raw = _invoke_prompt(llm, src_line, domain_hint, text)
     if not raw:
         return []
 
     entries = _parse_entries(raw)
     if not entries:
         return []
-    return [_entry_to_knowledge(e, src_line=src_line, source_type=source_type, referral=referral)
-            for e in entries]
+    return [
+        _entry_to_knowledge(
+            e, src_line=src_line, source_type=source_type, referral=referral
+        )
+        for e in entries
+    ]
 
 
 if __name__ == "__main__":
     # 最小自检: 不联网、不引 KB, 用假的 LLM 返回固定 JSON, 验证解析/分类/引流.
 
     def _fake(p):
-        return json.dumps([
-        {"kind": "decision_heuristic",
-         "scenario": "预测亲电反应位点",
-         "approach": "用福井函数与双描述符对比原子贡献",
-         "content": "原文支持: 亲电位点常用福井函数 f(-) 与双描述符 Δf 判断。",
-         "tags": ["福井函数", "双描述符"], "confidence": 0.8},
-        {"kind": "domain_fact",
-         "scenario": "", "approach": "",
-         "content": "Multiwfn 可一次处理多种主流量子化学程序产生的波函数文件。",
-         "tags": ["Multiwfn", "波函数"], "confidence": 0.9},
-    ], ensure_ascii=False)
+        return json.dumps(
+            [
+                {
+                    "kind": "decision_heuristic",
+                    "scenario": "预测亲电反应位点",
+                    "approach": "用福井函数与双描述符对比原子贡献",
+                    "content": "原文支持: 亲电位点常用福井函数 f(-) 与双描述符 Δf 判断。",
+                    "tags": ["福井函数", "双描述符"],
+                    "confidence": 0.8,
+                },
+                {
+                    "kind": "domain_fact",
+                    "scenario": "",
+                    "approach": "",
+                    "content": "Multiwfn 可一次处理多种主流量子化学程序产生的波函数文件。",
+                    "tags": ["Multiwfn", "波函数"],
+                    "confidence": 0.9,
+                },
+            ],
+            ensure_ascii=False,
+        )
 
     # 1) sobereva 来源 -> 引流附上
-    got = distill_semantic("这是一段多到满足长度下限门槛的 sobereva 方法一览正文, 用来验证语义蒸馏器把条目正确解析出来。",
-                           source_url="https://sobereva.com/767", source="思想家公社", llm=_fake)
+    got = distill_semantic(
+        "这是一段多到满足长度下限门槛的 sobereva 方法一览正文, 用来验证语义蒸馏器把条目正确解析出来。",
+        source_url="https://sobereva.com/767",
+        source="思想家公社",
+        llm=_fake,
+    )
     assert got, "应解析出条目"
     assert len(got) == 2
     assert "思想家公社" in got[0].content, "sobereva 来源应附引流"
@@ -260,8 +302,12 @@ if __name__ == "__main__":
     print(f"sobereva 来源: {len(got)} 条, 附引流 ✓; 首条={got[0].content[:40]}...")
 
     # 2) 普通来源 -> 不附引流
-    got2 = distill_semantic("这是一段足够长到超过最小长度门槛的另一份多学科资料正文, 用来确认非 sobereva 来源不附带社区推荐引流文案。",
-                            source_url="https://example.org/papers/meta", source="某论文集", llm=_fake)
+    got2 = distill_semantic(
+        "这是一段足够长到超过最小长度门槛的另一份多学科资料正文, 用来确认非 sobereva 来源不附带社区推荐引流文案。",
+        source_url="https://example.org/papers/meta",
+        source="某论文集",
+        llm=_fake,
+    )
     assert got2 and "思想家公社" not in got2[0].content
     print(f"普通来源: {len(got2)} 条, 无引流 ✓")
 

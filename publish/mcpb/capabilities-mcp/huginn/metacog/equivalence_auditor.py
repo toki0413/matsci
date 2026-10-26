@@ -107,6 +107,31 @@ _TRAP_PATTERNS: list[dict[str, Any]] = [
 ]
 
 
+def _non_self_statements(cand, graph_statements):
+    # 排除自身 + 同一假设的截断/超集 (SELECTED 行 vs 节点全文): 与自身比较必然
+    # "等价", 若不排除会把每一条新假设都误判成换名.
+    others: list[str] = []
+    for stmt in graph_statements or []:
+        s = (stmt or "").strip()
+        if not s or s == cand or cand in s or s in cand:
+            continue
+        others.append(s)
+    return others
+
+
+def _find_literal_equivalent(auditor, cand, others):
+    for s in others:
+        if auditor._is_equivalent(cand, s):
+            return EquivalenceVerdict(
+                verdict="equivalent_renaming",
+                reduction_target=f"graph:{s[:80]}",
+                trap_category="graph_duplicate",
+                evidence=[f"与假设图已有节点等价: {s[:120]}"],
+                missing_mechanism="需提出与图中已有假设实质不同的新机制, 不是换名重提",
+            )
+    return None
+
+
 class EquivalenceAuditor:
     """等价性审计 agent.
 
@@ -157,10 +182,17 @@ class EquivalenceAuditor:
                     candidate_finding, original_problem, reduction_chain
                 )
                 # LLM 判 equivalent_renaming 优先 (更敏感)
-                if llm_verdict.is_equivalent_renaming and not rule_verdict.is_equivalent_renaming:
+                if (
+                    llm_verdict.is_equivalent_renaming
+                    and not rule_verdict.is_equivalent_renaming
+                ):
                     return llm_verdict
                 # 否则规则优先 (确定性高)
-                return rule_verdict if rule_verdict.verdict != "undetermined" else llm_verdict
+                return (
+                    rule_verdict
+                    if rule_verdict.verdict != "undetermined"
+                    else llm_verdict
+                )
             except Exception:
                 logger.debug("LLM audit failed, falling back to rules", exc_info=True)
 
@@ -186,27 +218,16 @@ class EquivalenceAuditor:
         """
         cand = (candidate_hypothesis or "").strip()
         if not cand:
-            return EquivalenceVerdict(verdict="undetermined", missing_mechanism="空假设")
+            return EquivalenceVerdict(
+                verdict="undetermined", missing_mechanism="空假设"
+            )
 
-        # 排除自身 + 同一假设的截断/超集 (SELECTED 行 vs 节点全文): 与自身比较必然
-        # "等价", 若不排除会把每一条新假设都误判成换名.
-        others: list[str] = []
-        for stmt in graph_statements or []:
-            s = (stmt or "").strip()
-            if not s or s == cand or cand in s or s in cand:
-                continue
-            others.append(s)
+        others = _non_self_statements(cand, graph_statements)
 
         # 字面等价 (确定性, 先跑)
-        for s in others:
-            if self._is_equivalent(cand, s):
-                return EquivalenceVerdict(
-                    verdict="equivalent_renaming",
-                    reduction_target=f"graph:{s[:80]}",
-                    trap_category="graph_duplicate",
-                    evidence=[f"与假设图已有节点等价: {s[:120]}"],
-                    missing_mechanism="需提出与图中已有假设实质不同的新机制, 不是换名重提",
-                )
+        literal = _find_literal_equivalent(self, cand, others)
+        if literal is not None:
+            return literal
 
         # LLM 语义增强: difflib 抓不住同义改写, 交给 LLM 对**图节点**判 (非对 objective).
         if others and self._model is not None and self._is_real_model():
@@ -215,7 +236,9 @@ class EquivalenceAuditor:
                 if llm_verdict.is_equivalent_renaming:
                     return llm_verdict
             except Exception:
-                logger.debug("LLM graph audit failed, keeping undetermined", exc_info=True)
+                logger.debug(
+                    "LLM graph audit failed, keeping undetermined", exc_info=True
+                )
 
         return EquivalenceVerdict(
             verdict="undetermined",
@@ -229,6 +252,7 @@ class EquivalenceAuditor:
         升级路径: 接 embedding cosine, 阈值 0.92.
         """
         import difflib
+
         return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio() > 0.8
 
     def _rule_based_audit(
@@ -243,7 +267,9 @@ class EquivalenceAuditor:
         red_lower = (reduction or "").lower()
 
         for pattern in _TRAP_PATTERNS:
-            cand_hit = any(m.lower() in cand_lower for m in pattern["candidate_markers"])
+            cand_hit = any(
+                m.lower() in cand_lower for m in pattern["candidate_markers"]
+            )
             red_hit = any(m.lower() in red_lower for m in pattern["reduction_markers"])
 
             if cand_hit and red_hit:
@@ -253,8 +279,7 @@ class EquivalenceAuditor:
                     trap_category=pattern["category"],
                     evidence=[pattern["description"]],
                     missing_mechanism=(
-                        f"需要为 {pattern['target']} 提供真正新的机制, "
-                        "而不是归约到它"
+                        f"需要为 {pattern['target']} 提供真正新的机制, 而不是归约到它"
                     ),
                 )
 
@@ -285,18 +310,20 @@ class EquivalenceAuditor:
             f"候选发现: {candidate}\n"
             f"归约链: {reduction or '(无)'}\n\n"
             "判断这个候选发现是否为'换名归约'——把问题换了个名字但没真正推进.\n"
-            "输出 JSON: {\"verdict\": \"advances|equivalent_renaming|undetermined\", "
-            "\"reduction_target\": \"若换名归约, 等价于什么\", "
-            "\"missing_mechanism\": \"若 advances, 还缺什么\", "
-            "\"evidence\": [\"具体引理/方程/反例\"]}\n"
+            '输出 JSON: {"verdict": "advances|equivalent_renaming|undetermined", '
+            '"reduction_target": "若换名归约, 等价于什么", '
+            '"missing_mechanism": "若 advances, 还缺什么", '
+            '"evidence": ["具体引理/方程/反例"]}\n'
             "拒绝状态报告和模糊乐观, 只要具体证据."
         )
         messages = [
-            SystemMessage(content=(
-                "你是等价性审计员. 检查候选发现是否真的推进了问题, "
-                "还是把问题换了个名字. 材料科学常见陷阱: "
-                "性质归约 / 表述换名 / 伪相关 / 基准循环 / 维度隐藏."
-            )),
+            SystemMessage(
+                content=(
+                    "你是等价性审计员. 检查候选发现是否真的推进了问题, "
+                    "还是把问题换了个名字. 材料科学常见陷阱: "
+                    "性质归约 / 表述换名 / 伪相关 / 基准循环 / 维度隐藏."
+                )
+            ),
             HumanMessage(content=prompt),
         ]
         resp = self._model.invoke(messages)
@@ -323,7 +350,9 @@ class EquivalenceAuditor:
                 trap_category=str(data.get("trap_category", "")),
             )
         except (json.JSONDecodeError, TypeError, AttributeError):
-            return EquivalenceVerdict(verdict="undetermined", missing_mechanism="LLM 解析失败")
+            return EquivalenceVerdict(
+                verdict="undetermined", missing_mechanism="LLM 解析失败"
+            )
 
     def _llm_audit_against_graph(
         self, candidate: str, existing: list[str]
@@ -357,15 +386,17 @@ class EquivalenceAuditor:
             f"新假设: {candidate}\n\n"
             "新假设是否只是上述某条已有假设的**换名重提** (同一机制/同一可区分预测的"
             "改述)? 换了数学维度或术语, 但机制与预测实质不同 → 不是换名.\n"
-            "输出 JSON: {\"verdict\": \"equivalent_renaming|undetermined\", "
-            "\"reduction_target\": \"若换名, 重复了哪条\", "
-            "\"evidence\": [\"为何是同一机制\"]}"
+            '输出 JSON: {"verdict": "equivalent_renaming|undetermined", '
+            '"reduction_target": "若换名, 重复了哪条", '
+            '"evidence": ["为何是同一机制"]}'
         )
         messages = [
-            SystemMessage(content=(
-                "你是假设层冗余审计员. 只判'新假设是否等价于已有假设', "
-                "不判它是否解决了原问题. 术语不同但机制/预测不同 → 不算冗余."
-            )),
+            SystemMessage(
+                content=(
+                    "你是假设层冗余审计员. 只判'新假设是否等价于已有假设', "
+                    "不判它是否解决了原问题. 术语不同但机制/预测不同 → 不算冗余."
+                )
+            ),
             HumanMessage(content=prompt),
         ]
         resp = self._model.invoke(messages)
@@ -403,19 +434,24 @@ class EquivalenceAuditor:
             return EquivalenceVerdict(
                 verdict="advances",
                 missing_mechanism=f"拓扑结构不同: {reason}",
-                evidence=[f"候选 β₁={sig_cand.beta1_approx}, 原 β₁={sig_orig.beta1_approx}"],
+                evidence=[
+                    f"候选 β₁={sig_cand.beta1_approx}, 原 β₁={sig_orig.beta1_approx}"
+                ],
                 trap_category="topological_distinction",
             )
         return EquivalenceVerdict(
             verdict="equivalent_renaming",
             reduction_target="same_topology",
-            evidence=[f"拓扑签名相同 (β₁={sig_cand.beta1_approx}, 度熵≈{sig_cand.degree_entropy:.2f})"],
+            evidence=[
+                f"拓扑签名相同 (β₁={sig_cand.beta1_approx}, 度熵≈{sig_cand.degree_entropy:.2f})"
+            ],
             trap_category="topological_equivalence",
             missing_mechanism="拓扑签名相同, 可能是换名归约, 需更深判断",
         )
 
 
 # ── 自检 ─────────────────────────────────────────────────────────
+
 
 def _selfcheck() -> None:
     auditor = EquivalenceAuditor()
@@ -451,6 +487,12 @@ def _selfcheck() -> None:
     v4 = auditor.audit("", "", "")
     assert v4.verdict == "undetermined"
 
+    _check_graph(auditor)
+
+    print("equivalence_auditor selfcheck OK")
+
+
+def _check_graph(auditor) -> None:
     # 5. 图基审计: 机制不同 (代数秩 vs 流形维数) → **不判换名** (有效探索不被误杀)
     v5 = auditor.audit_hypothesis_against_graph(
         candidate_hypothesis="刚性由约束矩阵的代数秩决定 (秩亏 ⇒ 软模数发散)",
@@ -463,10 +505,10 @@ def _selfcheck() -> None:
         candidate_hypothesis="刚性由平均配位数越过临界值 z_c=4 决定",
         graph_statements=["刚性由平均配位数越过临界值 z_c=6 决定"],
     )
-    assert v6.is_equivalent_renaming, f"真换名应判 equivalent_renaming, got {v6.verdict}"
+    assert v6.is_equivalent_renaming, (
+        f"真换名应判 equivalent_renaming, got {v6.verdict}"
+    )
     assert v6.trap_category == "graph_duplicate"
-
-    print("equivalence_auditor selfcheck OK")
 
 
 if __name__ == "__main__":

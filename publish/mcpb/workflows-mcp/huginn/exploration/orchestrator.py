@@ -57,13 +57,10 @@ class ExplorationOrchestrator:
         self._should_stop = False
 
     async def explore(
-        self,
-        objective: str,
-        initial_branches: list[dict[str, Any]],
+        self, objective: str, initial_branches: list[dict[str, Any]],
         objectives_config: dict[str, str] | None = None,
         constraints: list[str] | None = None,
-        max_iterations: int = 40,
-        min_iterations: int = 8,
+        max_iterations: int = 40, min_iterations: int = 8,
         budget: dict[str, float] | None = None,
     ) -> ExplorationResult:
         """Run a complete exploration.
@@ -78,33 +75,9 @@ class ExplorationOrchestrator:
                 在跑满此轮数之前一律不生效，避免策略在第一二次迭代就过早收敛而研究太浅。
             budget: Optional budget dict (e.g., {"max_cpu_hours": 100}).
         """
-        space = ExplorationSpace(
-            id=f"exp_{uuid.uuid4().hex[:8]}",
-            name=objective[:50],
-            objective=objective,
-            constraints=constraints or [],
-            objectives_config=objectives_config or {},
+        space = await self._explore_init_space(
+            objective, initial_branches, objectives_config, constraints
         )
-
-        # Create initial branches
-        for init in initial_branches:
-            await self.lifecycle.create_branch(
-                space=space,
-                name=init["name"],
-                hypothesis=init["hypothesis"],
-                decisions=[
-                    Decision(
-                        id=f"dec_{i}",
-                        description=d.get("description", f"decision_{i}"),
-                        decision_type=d.get("type", "categorical"),
-                        chosen_option=d.get("chosen"),
-                        available_options=d.get("options", []),
-                        rationale=d.get("rationale", ""),
-                    )
-                    for i, d in enumerate(init.get("decisions", []))
-                ],
-            )
-
         iteration = 0
         convergence_reason = "max_iterations reached"
 
@@ -112,94 +85,174 @@ class ExplorationOrchestrator:
             iteration += 1
 
             # 1. Execute all pending branches (up to max_parallel)
-            pending = [
-                bid
-                for bid, b in space.branches.items()
-                if b.status == BranchStatus.PENDING
-            ]
-            if pending:
-                batch = pending[: self.max_parallel]
-                await asyncio.gather(
-                    *[self.lifecycle.execute_branch(space, bid) for bid in batch]
-                )
+            await self._explore_execute_pending(space)
 
             # 2. Evaluate strategy
             actions = self.strategy.evaluate(space)
 
             # 3. Apply actions (早停门: 未跑满 min_iterations 前, terminate 不生效)
-            terminate = False
-            for action in actions:
-                if action.action_type == "terminate":
-                    if iteration >= min_iterations:
-                        terminate = True
-                        # 优先"全部分支 resolved 且无新 action"的早停语义: 单分支/清空
-                        # 收敛时, Pareto 策略的 terminate("Pareto front converged") 会盖掉
-                        # 更精确的 resolved 原因 —— 这里按信息量最大者定 reason.
-                        _unresolved_now = [
-                            b for b in space.branches.values()
-                            if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
-                        ]
-                        _has_new_actions = any(
-                            a.action_type in {"expand", "refine"} for a in actions
-                        )
-                        if not _unresolved_now and not _has_new_actions:
-                            convergence_reason = (
-                                "All branches resolved with no new actions"
-                            )
-                        else:
-                            convergence_reason = action.reason
-                    break
-                elif action.action_type == "prune" and action.target_branch:
-                    await self.lifecycle.prune_branch(
-                        space, action.target_branch, action.reason, cascade=True
-                    )
-                elif action.action_type == "expand" and action.new_branches:
-                    for nb in action.new_branches:
-                        await self.lifecycle.create_branch(
-                            space=space,
-                            name=nb.get("name", "unnamed"),
-                            hypothesis=nb.get("hypothesis", "No hypothesis"),
-                            parent=action.target_branch,
-                            metadata=self._branch_meta(nb),
-                        )
-                elif action.action_type == "refine" and action.new_branches:
-                    for nb in action.new_branches:
-                        await self.lifecycle.create_branch(
-                            space=space,
-                            name=nb.get("name", "refinement"),
-                            hypothesis=nb.get("hypothesis", "Refinement"),
-                            parent=action.target_branch,
-                            metadata=self._branch_meta(nb),
-                        )
-
+            terminate, reason = await self._explore_apply_actions(
+                space, actions, iteration, min_iterations
+            )
+            if reason is not None:
+                convergence_reason = reason
             if terminate:
                 break
 
             # 4. Check if all branches are resolved (防早停: 未跑满 min_iterations 前不收敛)
-            unresolved = [
-                b
-                for b in space.branches.values()
-                if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
-            ]
-            if iteration >= min_iterations and not unresolved and not any(
-                a.action_type in {"expand", "refine"} for a in actions
-            ):
+            if self._explore_all_resolved(space, actions, iteration, min_iterations):
                 convergence_reason = "All branches resolved with no new actions"
                 break
 
-        # Finalize
-        front = space.update_pareto_front()
-        best = None
-        if front:
-            best_branch = space.branches[front[0]]
-            best = {
-                "id": best_branch.id,
-                "name": best_branch.name,
-                "hypothesis": best_branch.hypothesis,
-                "objectives": best_branch.objectives,
-                "results": best_branch.results,
-            }
+        return self._explore_finalize(space, convergence_reason)
 
+    async def _explore_init_space(
+        self,
+        objective: str,
+        initial_branches: list[dict[str, Any]],
+        objectives_config: dict[str, str] | None,
+        constraints: list[str] | None,
+    ) -> ExplorationSpace:
+        """建 ExplorationSpace 并按 initial_branches 造初始分支."""
+        space = ExplorationSpace(
+            id=f"exp_{uuid.uuid4().hex[:8]}",
+            name=objective[:50],
+            objective=objective,
+            constraints=constraints or [],
+            objectives_config=objectives_config or {},
+        )
+        for init in initial_branches:
+            await self.lifecycle.create_branch(
+                space=space,
+                name=init["name"],
+                hypothesis=init["hypothesis"],
+                decisions=self._explore_decisions(init),
+            )
+        return space
+
+    @staticmethod
+    def _explore_decisions(init: dict[str, Any]) -> list[Decision]:
+        """把 initial_branches[i]["decisions"] 转成 Decision 列表."""
+        return [
+            Decision(
+                id=f"dec_{i}",
+                description=d.get("description", f"decision_{i}"),
+                decision_type=d.get("type", "categorical"),
+                chosen_option=d.get("chosen"),
+                available_options=d.get("options", []),
+                rationale=d.get("rationale", ""),
+            )
+            for i, d in enumerate(init.get("decisions", []))
+        ]
+
+    async def _explore_execute_pending(self, space: ExplorationSpace) -> None:
+        """执行至多 max_parallel 个 PENDING 分支 (无 pending 直接返回)."""
+        pending = [
+            bid
+            for bid, b in space.branches.items()
+            if b.status == BranchStatus.PENDING
+        ]
+        if not pending:
+            return
+        batch = pending[: self.max_parallel]
+        await asyncio.gather(
+            *[self.lifecycle.execute_branch(space, bid) for bid in batch]
+        )
+
+    async def _explore_apply_actions(
+        self,
+        space: ExplorationSpace,
+        actions: list[Any],
+        iteration: int,
+        min_iterations: int,
+    ) -> tuple[bool, str | None]:
+        """应用策略动作; 返回 (terminate, convergence_reason)."""
+        for action in actions:
+            if action.action_type == "terminate":
+                if iteration >= min_iterations:
+                    return True, self._explore_terminate_reason(space, actions, action)
+                return False, None
+            elif action.action_type == "prune" and action.target_branch:
+                await self.lifecycle.prune_branch(
+                    space, action.target_branch, action.reason, cascade=True
+                )
+            elif action.action_type == "expand" and action.new_branches:
+                await self._explore_spawn(space, action, "unnamed", "No hypothesis")
+            elif action.action_type == "refine" and action.new_branches:
+                await self._explore_spawn(space, action, "refinement", "Refinement")
+        return False, None
+
+    async def _explore_spawn(
+        self, space: ExplorationSpace, action: Any,
+        default_name: str, default_hypothesis: str,
+    ) -> None:
+        """按 action.new_branches 造子分支 (expand / refine 共用)."""
+        for nb in action.new_branches:
+            await self.lifecycle.create_branch(
+                space=space,
+                name=nb.get("name", default_name),
+                hypothesis=nb.get("hypothesis", default_hypothesis),
+                parent=action.target_branch,
+                metadata=self._branch_meta(nb),
+            )
+
+    @staticmethod
+    def _explore_terminate_reason(
+        space: ExplorationSpace, actions: list[Any], action: Any,
+    ) -> str:
+        """优先"全部分支 resolved 且无新 action"的早停语义.
+
+        单分支/清空收敛时, Pareto 策略的 terminate("Pareto front converged")
+        会盖掉更精确的 resolved 原因 —— 这里按信息量最大者定 reason.
+        """
+        unresolved_now = [
+            b for b in space.branches.values()
+            if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
+        ]
+        has_new_actions = any(
+            a.action_type in {"expand", "refine"} for a in actions
+        )
+        if not unresolved_now and not has_new_actions:
+            return "All branches resolved with no new actions"
+        return action.reason
+
+    @staticmethod
+    def _explore_all_resolved(
+        space: ExplorationSpace, actions: list[Any],
+        iteration: int, min_iterations: int,
+    ) -> bool:
+        """跑满 min_iterations 且无未解分支/新动作时返回 True."""
+        if iteration < min_iterations:
+            return False
+        unresolved = [
+            b for b in space.branches.values()
+            if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
+        ]
+        if unresolved:
+            return False
+        return not any(a.action_type in {"expand", "refine"} for a in actions)
+
+    @staticmethod
+    def _explore_best(
+        front: list[str], space: ExplorationSpace,
+    ) -> dict[str, Any] | None:
+        """Pareto front 首个分支的摘要; front 为空返回 None."""
+        if not front:
+            return None
+        best_branch = space.branches[front[0]]
+        return {
+            "id": best_branch.id,
+            "name": best_branch.name,
+            "hypothesis": best_branch.hypothesis,
+            "objectives": best_branch.objectives,
+            "results": best_branch.results,
+        }
+
+    def _explore_finalize(
+        self, space: ExplorationSpace, convergence_reason: str,
+    ) -> ExplorationResult:
+        """更新 Pareto front 并打包 ExplorationResult."""
+        front = space.update_pareto_front()
         return ExplorationResult(
             space=space,
             pareto_front=[
@@ -210,7 +263,7 @@ class ExplorationOrchestrator:
                 }
                 for bid in front
             ],
-            best_branch=best,
+            best_branch=self._explore_best(front, space),
             n_branches_explored=len(
                 [
                     b

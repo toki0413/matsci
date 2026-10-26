@@ -21,8 +21,13 @@ logger = logging.getLogger(__name__)
 
 class VisualizeToolInput(BaseModel):
     action: Literal[
-        "benchmark", "evolution", "exploration",
-        "band_structure", "dos", "phonon", "structure_3d",
+        "benchmark",
+        "evolution",
+        "exploration",
+        "band_structure",
+        "dos",
+        "phonon",
+        "structure_3d",
     ] = Field(..., description="Which report type to visualize")
     report_path: str | None = Field(
         default=None, description="Path to a JSON report file"
@@ -48,9 +53,7 @@ class VisualizeToolInput(BaseModel):
         default=None,
         description="dos: {total: [floats], orbital_s: [floats], ...}",
     )
-    energy: list[float] | None = Field(
-        default=None, description="dos: 能量轴 (eV)"
-    )
+    energy: list[float] | None = Field(default=None, description="dos: 能量轴 (eV)")
     branches: list[dict[str, Any]] | None = Field(
         default=None,
         description="phonon: 每个 branch 含 qpoints + frequencies",
@@ -80,98 +83,10 @@ class VisualizeTool(HuginnTool):
         from huginn import visualize
 
         # materials actions: 不走 report 路径, 直接用专用字段
-        materials_plotters = {
-            "band_structure": lambda: visualize.plot_band_structure(
-                args.bands_data or [], args.kpath or [], args.fermi, args.output_path
-            ),
-            "dos": lambda: visualize.plot_dos(
-                args.dos_data or {}, args.energy, args.fermi, args.output_path
-            ),
-            "phonon": lambda: visualize.plot_phonon_dispersion(
-                args.branches or [], args.kpath, args.output_path
-            ),
-            "structure_3d": lambda: visualize.plot_structure_3d(
-                args.structure or {}, args.output_path
-            ),
-        }
+        materials_plotters = _materials_plotters(visualize, args)
         if args.action in materials_plotters:
-            try:
-                output = materials_plotters[args.action]()
-            except Exception as exc:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Visualization failed: {exc}",
-                )
-            path = Path(output) if output is not None else Path(args.output_path)
-            # figure_ir 接入: 生成结构化元数据让 agent 精确引用图表结构
-            # ponytail: 只给 materials actions (数值数据明确), report-based 留 v8
-            ir_meta = self._build_figure_ir(args)
-            gate = self._run_gate(
-                path, expected=self._figure_ir_numeric(ir_meta), context=context
-            )
-            self._track_figure_artifact(context, path)
-            return ToolResult(
-                data={
-                    "output_path": str(path),
-                    "exists": path.exists(),
-                    "figure_ir": ir_meta,
-                    "visual_gate": gate,
-                },
-                success=path.exists(),
-            )
-
-        # report-based 路径 (benchmark/evolution/exploration)
-        try:
-            report = self._load_report(args)
-        except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Failed to load report: {exc}",
-            )
-
-        plotters = {
-            "benchmark": visualize.plot_benchmark_report,
-            "evolution": visualize.plot_evolution_report,
-            "exploration": visualize.plot_exploration_result,
-        }
-        plotter = plotters.get(args.action)
-        if plotter is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown visualization action: {args.action}",
-            )
-
-        try:
-            output = plotter(
-                report,
-                output_path=args.output_path,
-                plot_type=args.plot_type,
-            )
-        except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Visualization failed: {exc}",
-            )
-
-        path = Path(output) if output is not None else Path(args.output_path)
-        # v8: figure_ir 接 report-based 路径 — 从 report dict 提取通用字段生成 IR
-        # 不同 action 的 report 结构异构, 但都有 scores/metrics/timeline 类字段
-        ir_meta = self._build_report_figure_ir(args.action, report)
-        gate = self._run_gate(path, expected=self._figure_ir_numeric(ir_meta), context=context)
-        self._track_figure_artifact(context, path)
-        return ToolResult(
-            data={
-                "output_path": str(path),
-                "exists": path.exists(),
-                "figure_ir": ir_meta,
-                "visual_gate": gate,
-            },
-            success=path.exists(),
-        )
+            return _materials_call(self, args, context, materials_plotters)
+        return _report_call(self, args, context, visualize)
 
     @staticmethod
     def _track_figure_artifact(context: ToolContext, path: Path) -> None:
@@ -189,7 +104,9 @@ class VisualizeTool(HuginnTool):
         )
 
     def _run_gate(
-        self, path: Path, expected: dict[str, Any] | None = None,
+        self,
+        path: Path,
+        expected: dict[str, Any] | None = None,
         context: ToolContext | None = None,
     ) -> dict[str, Any]:
         """批次 C 后半: 图生成后自动跑渲染门禁 (QA + 一致性 + 判定).
@@ -255,28 +172,15 @@ class VisualizeTool(HuginnTool):
         """
         try:
             from huginn.vision import figure_ir
-            chart_type_map = {
-                "band_structure": "line", "dos": "line",
-                "phonon": "line", "structure_3d": "scatter",
-            }
-            ct = chart_type_map.get(args.action, "line")
-            x_label = {"band_structure": "k-path", "dos": "Energy (eV)",
-                       "phonon": "q-path"}.get(args.action, "")
-            y_label = {"band_structure": "Energy (eV)", "dos": "DOS",
-                       "phonon": "Frequency (THz)"}.get(args.action, "")
-            series = []
-            if args.action == "band_structure" and args.bands_data:
-                series = [{"label": f"band_{i}", "data": []}
-                          for i in range(len(args.bands_data))]
-            elif args.action == "dos" and args.dos_data:
-                series = [{"label": k, "data": []}
-                          for k in args.dos_data]
-            elif args.action == "phonon" and args.branches:
-                series = [{"label": f"branch_{i}", "data": []}
-                          for i in range(len(args.branches))]
+
+            ct, x_label, y_label, series = _figure_ir_spec(args)
             ir = figure_ir.to_ir(
-                data={}, chart_type=ct, title=args.action,
-                x_label=x_label, y_label=y_label, series=series,
+                data={},
+                chart_type=ct,
+                title=args.action,
+                x_label=x_label,
+                y_label=y_label,
+                series=series,
             )
             return figure_ir.ir_to_structured(ir)
         except Exception as exc:
@@ -294,65 +198,25 @@ class VisualizeTool(HuginnTool):
         """
         try:
             from huginn.vision import figure_ir
-            chart_type = "bar"
-            x_label, y_label = "", ""
-            series: list[dict[str, Any]] = []
-            if action == "benchmark":
-                chart_type = "bar"
-                x_label = "Method"
-                y_label = "Score"
-                scores = report.get("scores") or report.get("metrics") or {}
-                if isinstance(scores, dict):
-                    series = [{"label": k, "data": [float(v)]}
-                              for k, v in list(scores.items())[:10]
-                              if isinstance(v, int | float)]
-                elif isinstance(scores, list):
-                    series = [{"label": f"item_{i}", "data": [float(v)]}
-                              for i, v in enumerate(scores[:10])
-                              if isinstance(v, int | float)]
-                # B5: 预定义 key 没找到 → 递归扫描
-                if not series:
-                    found = self._scan_numeric_fields(report, max_items=10)
-                    if found:
-                        series = [{"label": k, "data": [v]} for k, v in found]
-            elif action == "evolution":
-                chart_type = "line"
-                x_label = "Generation"
-                y_label = "Fitness"
-                timeline = report.get("timeline") or report.get("generations") or []
-                if isinstance(timeline, list):
-                    fitness_vals = self._extract_timeline_values(timeline)
-                    if fitness_vals:
-                        series = [{"label": "best_fitness", "data": fitness_vals}]
-                # B5: timeline 没找到 → 递归找 list of numbers
-                if not series:
-                    found_list = self._scan_numeric_list(report, max_items=50)
-                    if found_list:
-                        series = [{"label": "values", "data": found_list}]
-            elif action == "exploration":
-                chart_type = "scatter"
-                x_label = "Parameter 1"
-                y_label = "Objective"
-                candidates = report.get("candidates") or report.get("results") or []
-                if isinstance(candidates, list):
-                    pts = self._extract_candidate_values(candidates)
-                    if pts:
-                        series = [{"label": "candidates", "data": pts}]
-                # B5: candidates 没找到 → 递归找 list of numbers
-                if not series:
-                    found_list = self._scan_numeric_list(report, max_items=50)
-                    if found_list:
-                        series = [{"label": "values", "data": found_list}]
+
+            chart_type, x_label, y_label, series = _report_series(action, report, self)
             ir = figure_ir.to_ir(
-                data={}, chart_type=chart_type, title=action,
-                x_label=x_label, y_label=y_label, series=series,
+                data={},
+                chart_type=chart_type,
+                title=action,
+                x_label=x_label,
+                y_label=y_label,
+                series=series,
             )
             return figure_ir.ir_to_structured(ir)
         except Exception as exc:
             return {"error": f"report figure_ir build failed: {exc}"}
 
     def _scan_numeric_fields(
-        self, d: dict[str, Any], max_items: int = 10, prefix: str = "",
+        self,
+        d: dict[str, Any],
+        max_items: int = 10,
+        prefix: str = "",
         _depth: int = 0,
     ) -> list[tuple[str, float]]:
         """B5: 递归扫描 dict 找数值字段. 返回 [(label, value), ...].
@@ -370,9 +234,14 @@ class VisualizeTool(HuginnTool):
             if isinstance(v, int | float) and not isinstance(v, bool):
                 found.append((label, float(v)))
             elif isinstance(v, dict):
-                found.extend(self._scan_numeric_fields(
-                    v, max_items - len(found), label, _depth + 1,
-                ))
+                found.extend(
+                    self._scan_numeric_fields(
+                        v,
+                        max_items - len(found),
+                        label,
+                        _depth + 1,
+                    )
+                )
         return found
 
     def _scan_numeric_list(self, d: Any, max_items: int = 50) -> list[float]:
@@ -387,8 +256,11 @@ class VisualizeTool(HuginnTool):
             if depth > 5 or len(best) >= max_items:
                 return
             if isinstance(d, list):
-                nums = [float(x) for x in d
-                        if isinstance(x, int | float) and not isinstance(x, bool)]
+                nums = [
+                    float(x)
+                    for x in d
+                    if isinstance(x, int | float) and not isinstance(x, bool)
+                ]
                 if len(nums) > len(best):
                     best = nums[:max_items]
                 for item in d:
@@ -427,3 +299,227 @@ class VisualizeTool(HuginnTool):
             elif isinstance(c, int | float):
                 pts.append(float(c))
         return pts
+
+
+def _materials_plotters(visualize, args: VisualizeToolInput) -> dict[str, Any]:
+    """materials actions 的惰性 plotter 表 (不触网/不建图直到被调用)."""
+    return {
+        "band_structure": lambda: visualize.plot_band_structure(
+            args.bands_data or [], args.kpath or [], args.fermi, args.output_path
+        ),
+        "dos": lambda: visualize.plot_dos(
+            args.dos_data or {}, args.energy, args.fermi, args.output_path
+        ),
+        "phonon": lambda: visualize.plot_phonon_dispersion(
+            args.branches or [], args.kpath, args.output_path
+        ),
+        "structure_3d": lambda: visualize.plot_structure_3d(
+            args.structure or {}, args.output_path
+        ),
+    }
+
+
+def _report_plotters(visualize) -> dict[str, Any]:
+    """report-based actions 的 plotter 表."""
+    return {
+        "benchmark": visualize.plot_benchmark_report,
+        "evolution": visualize.plot_evolution_report,
+        "exploration": visualize.plot_exploration_result,
+    }
+
+
+def _figure_result(
+    path: Path, ir_meta: dict[str, Any], gate: dict[str, Any]
+) -> ToolResult:
+    """统一的图产出返回结构 (exists 与 success 同源)."""
+    return ToolResult(
+        data={
+            "output_path": str(path),
+            "exists": path.exists(),
+            "figure_ir": ir_meta,
+            "visual_gate": gate,
+        },
+        success=path.exists(),
+    )
+
+
+def _report_series(action: str, report: dict[str, Any], tool) -> tuple:
+    """按 action 分派 report 序列提取, 返回 (chart_type, x_label, y_label, series)."""
+    if action == "benchmark":
+        return _benchmark_ir_series(report, tool._scan_numeric_fields)
+    if action == "evolution":
+        return _evolution_ir_series(
+            report, tool._extract_timeline_values, tool._scan_numeric_list
+        )
+    if action == "exploration":
+        return _exploration_ir_series(
+            report, tool._extract_candidate_values, tool._scan_numeric_list
+        )
+    return "bar", "", "", []
+
+
+def _benchmark_ir_series(report: dict[str, Any], scan_numeric_fields) -> tuple:
+    """benchmark report → bar 图 series (B5 递归扫描兜底)."""
+    x_label = "Method"
+    y_label = "Score"
+    series: list[dict[str, Any]] = []
+    scores = report.get("scores") or report.get("metrics") or {}
+    if isinstance(scores, dict):
+        series = [
+            {"label": k, "data": [float(v)]}
+            for k, v in list(scores.items())[:10]
+            if isinstance(v, int | float)
+        ]
+    elif isinstance(scores, list):
+        series = [
+            {"label": f"item_{i}", "data": [float(v)]}
+            for i, v in enumerate(scores[:10])
+            if isinstance(v, int | float)
+        ]
+    # B5: 预定义 key 没找到 → 递归扫描
+    if not series:
+        found = scan_numeric_fields(report, max_items=10)
+        if found:
+            series = [{"label": k, "data": [v]} for k, v in found]
+    return "bar", x_label, y_label, series
+
+
+def _evolution_ir_series(
+    report: dict[str, Any], extract_timeline_values, scan_numeric_list
+) -> tuple:
+    """evolution report → line 图 series (B5 递归扫描兜底)."""
+    x_label = "Generation"
+    y_label = "Fitness"
+    series: list[dict[str, Any]] = []
+    timeline = report.get("timeline") or report.get("generations") or []
+    if isinstance(timeline, list):
+        fitness_vals = extract_timeline_values(timeline)
+        if fitness_vals:
+            series = [{"label": "best_fitness", "data": fitness_vals}]
+    # B5: timeline 没找到 → 递归找 list of numbers
+    if not series:
+        found_list = scan_numeric_list(report, max_items=50)
+        if found_list:
+            series = [{"label": "values", "data": found_list}]
+    return "line", x_label, y_label, series
+
+
+def _exploration_ir_series(
+    report: dict[str, Any], extract_candidate_values, scan_numeric_list
+) -> tuple:
+    """exploration report → scatter 图 series (B5 递归扫描兜底)."""
+    x_label = "Parameter 1"
+    y_label = "Objective"
+    series: list[dict[str, Any]] = []
+    candidates = report.get("candidates") or report.get("results") or []
+    if isinstance(candidates, list):
+        pts = extract_candidate_values(candidates)
+        if pts:
+            series = [{"label": "candidates", "data": pts}]
+    # B5: candidates 没找到 → 递归找 list of numbers
+    if not series:
+        found_list = scan_numeric_list(report, max_items=50)
+        if found_list:
+            series = [{"label": "values", "data": found_list}]
+    return "scatter", x_label, y_label, series
+
+
+def _materials_call(
+    tool, args: VisualizeToolInput, context: ToolContext, plotters
+) -> ToolResult:
+    """materials action: 专用字段出图 + figure_ir + 渲染门禁."""
+    try:
+        output = plotters[args.action]()
+    except Exception as exc:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Visualization failed: {exc}",
+        )
+    path = Path(output) if output is not None else Path(args.output_path)
+    # figure_ir 接入: 生成结构化元数据让 agent 精确引用图表结构
+    # ponytail: 只给 materials actions (数值数据明确), report-based 留 v8
+    ir_meta = tool._build_figure_ir(args)
+    gate = tool._run_gate(
+        path, expected=tool._figure_ir_numeric(ir_meta), context=context
+    )
+    tool._track_figure_artifact(context, path)
+    return _figure_result(path, ir_meta, gate)
+
+
+def _report_call(
+    tool, args: VisualizeToolInput, context: ToolContext, visualize
+) -> ToolResult:
+    """report-based 路径 (benchmark/evolution/exploration)."""
+    try:
+        report = tool._load_report(args)
+    except Exception as exc:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Failed to load report: {exc}",
+        )
+
+    plotter = _report_plotters(visualize).get(args.action)
+    if plotter is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Unknown visualization action: {args.action}",
+        )
+
+    try:
+        output = plotter(
+            report,
+            output_path=args.output_path,
+            plot_type=args.plot_type,
+        )
+    except Exception as exc:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Visualization failed: {exc}",
+        )
+
+    path = Path(output) if output is not None else Path(args.output_path)
+    # v8: figure_ir 接 report-based 路径 — 从 report dict 提取通用字段生成 IR
+    # 不同 action 的 report 结构异构, 但都有 scores/metrics/timeline 类字段
+    ir_meta = tool._build_report_figure_ir(args.action, report)
+    gate = tool._run_gate(
+        path, expected=tool._figure_ir_numeric(ir_meta), context=context
+    )
+    tool._track_figure_artifact(context, path)
+    return _figure_result(path, ir_meta, gate)
+
+
+def _figure_ir_spec(args: VisualizeToolInput) -> tuple:
+    """materials action → (chart_type, x_label, y_label, series 骨架)."""
+    chart_type_map = {
+        "band_structure": "line",
+        "dos": "line",
+        "phonon": "line",
+        "structure_3d": "scatter",
+    }
+    ct = chart_type_map.get(args.action, "line")
+    x_label = {
+        "band_structure": "k-path",
+        "dos": "Energy (eV)",
+        "phonon": "q-path",
+    }.get(args.action, "")
+    y_label = {
+        "band_structure": "Energy (eV)",
+        "dos": "DOS",
+        "phonon": "Frequency (THz)",
+    }.get(args.action, "")
+    series = []
+    if args.action == "band_structure" and args.bands_data:
+        series = [
+            {"label": f"band_{i}", "data": []} for i in range(len(args.bands_data))
+        ]
+    elif args.action == "dos" and args.dos_data:
+        series = [{"label": k, "data": []} for k in args.dos_data]
+    elif args.action == "phonon" and args.branches:
+        series = [
+            {"label": f"branch_{i}", "data": []} for i in range(len(args.branches))
+        ]
+    return ct, x_label, y_label, series

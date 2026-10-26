@@ -46,7 +46,11 @@ def _is_configured(cfg: HuginnConfig) -> bool:
         for m in cfg.models:
             if m.provider == "ollama":
                 return True
-            if m.enabled and (m.api_key or _PROVIDER_KEY_ENV.get(m.provider) and os.environ.get(_PROVIDER_KEY_ENV[m.provider])):
+            if m.enabled and (
+                m.api_key
+                or _PROVIDER_KEY_ENV.get(m.provider)
+                and os.environ.get(_PROVIDER_KEY_ENV[m.provider])
+            ):
                 return True
     return cfg.provider != "default" and bool(cfg.resolved_api_key)
 
@@ -75,6 +79,56 @@ async def health_live() -> dict[str, Any]:
 # ── Readiness ──────────────────────────────────────────────────────
 
 
+def _check_sqlite() -> dict[str, Any]:
+    # -- SQLite -------------------------------------------------------
+    try:
+        from huginn.research_log import get_research_log
+
+        log = get_research_log()
+        with log._lock:
+            log._conn.execute("SELECT 1").fetchone()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.warning("/ready sqlite check failed", exc_info=True)
+        return {"status": "fail", "error": str(e)[:200]}
+
+
+def _check_llm_provider() -> dict[str, Any]:
+    # -- LLM provider ------------------------------------------------
+    try:
+        cfg = get_config()
+        if _is_configured(cfg):
+            return {"status": "ok", "provider": cfg.provider}
+        return {"status": "fail", "error": "No provider configured"}
+    except Exception as e:
+        logger.warning("/ready llm check failed", exc_info=True)
+        return {"status": "fail", "error": str(e)[:200]}
+
+
+def _check_mcp_servers() -> dict[str, Any]:
+    # -- MCP servers --------------------------------------------------
+    try:
+        mgr = get_context().mcp_manager
+        if mgr is None:
+            return {"status": "ok", "note": "not configured"}
+        status = mgr.get_server_status()
+        if not status:
+            return {"status": "ok", "note": "no servers"}
+        elif all(s.get("connected") for s in status.values()):
+            return {"status": "ok", "servers": len(status)}
+        else:
+            disconnected = [
+                name for name, s in status.items() if not s.get("connected")
+            ]
+            return {
+                "status": "fail",
+                "error": f"Servers not connected: {', '.join(disconnected)}",
+            }
+    except Exception as e:
+        logger.warning("/ready mcp check failed", exc_info=True)
+        return {"status": "fail", "error": str(e)[:200]}
+
+
 @router.get("/health/ready")
 @router.get("/ready")
 async def health_ready(response: Response) -> dict[str, Any]:
@@ -90,51 +144,9 @@ async def health_ready(response: Response) -> dict[str, Any]:
     """
     checks: dict[str, dict[str, Any]] = {}
 
-    # -- SQLite -------------------------------------------------------
-    try:
-        from huginn.research_log import get_research_log
-
-        log = get_research_log()
-        with log._lock:
-            log._conn.execute("SELECT 1").fetchone()
-        checks["sqlite"] = {"status": "ok"}
-    except Exception as e:
-        logger.warning("/ready sqlite check failed", exc_info=True)
-        checks["sqlite"] = {"status": "fail", "error": str(e)[:200]}
-
-    # -- LLM provider ------------------------------------------------
-    try:
-        cfg = get_config()
-        if _is_configured(cfg):
-            checks["llm"] = {"status": "ok", "provider": cfg.provider}
-        else:
-            checks["llm"] = {"status": "fail", "error": "No provider configured"}
-    except Exception as e:
-        logger.warning("/ready llm check failed", exc_info=True)
-        checks["llm"] = {"status": "fail", "error": str(e)[:200]}
-
-    # -- MCP servers --------------------------------------------------
-    try:
-        mgr = get_context().mcp_manager
-        if mgr is None:
-            checks["mcp"] = {"status": "ok", "note": "not configured"}
-        else:
-            status = mgr.get_server_status()
-            if not status:
-                checks["mcp"] = {"status": "ok", "note": "no servers"}
-            elif all(s.get("connected") for s in status.values()):
-                checks["mcp"] = {"status": "ok", "servers": len(status)}
-            else:
-                disconnected = [
-                    name for name, s in status.items() if not s.get("connected")
-                ]
-                checks["mcp"] = {
-                    "status": "fail",
-                    "error": f"Servers not connected: {', '.join(disconnected)}",
-                }
-    except Exception as e:
-        logger.warning("/ready mcp check failed", exc_info=True)
-        checks["mcp"] = {"status": "fail", "error": str(e)[:200]}
+    checks["sqlite"] = _check_sqlite()
+    checks["llm"] = _check_llm_provider()
+    checks["mcp"] = _check_mcp_servers()
 
     all_ok = all(c["status"] == "ok" for c in checks.values())
     if not all_ok:
@@ -175,57 +187,78 @@ async def health() -> dict[str, Any]:
     return result
 
 
-@router.get("/health/guidance")
-async def health_guidance() -> dict[str, Any]:
-    """Detect available providers and return configuration recommendations."""
-    available_providers: list[dict[str, Any]] = []
-    keyless_providers: list[dict[str, Any]] = []
-
+def _detect_key_providers() -> list[dict[str, Any]]:
+    available: list[dict[str, Any]] = []
     for provider, env_var in _PROVIDER_KEY_ENV.items():
         if os.environ.get(env_var):
-            available_providers.append({
-                "provider": provider,
-                "env_var": env_var,
-                "key_detected": True,
-            })
+            available.append(
+                {
+                    "provider": provider,
+                    "env_var": env_var,
+                    "key_detected": True,
+                }
+            )
+    return available
 
-    ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-    ollama_ok = await _check_ollama_available(ollama_host)
-    if ollama_ok:
-        keyless_providers.append({
-            "provider": "ollama",
-            "host": ollama_host,
-            "available": True,
-        })
-    else:
-        keyless_providers.append({
-            "provider": "ollama",
-            "host": ollama_host,
-            "available": False,
-        })
 
-    current = get_config()
-    recommendation: dict[str, Any] = {}
+def _build_recommendation(
+    available_providers: list[dict[str, Any]],
+    ollama_ok: bool,
+    ollama_host: str,
+    current: HuginnConfig,
+) -> dict[str, Any]:
     if not _is_configured(current):
         if available_providers:
             top = available_providers[0]
-            recommendation = {
+            return {
                 "action": "set_provider",
                 "provider": top["provider"],
                 "reason": f"API key detected in {top['env_var']}",
             }
         elif ollama_ok:
-            recommendation = {
+            return {
                 "action": "set_provider",
                 "provider": "ollama",
                 "reason": f"Ollama is running at {ollama_host}",
             }
         else:
-            recommendation = {
+            return {
                 "action": "manual_setup",
                 "reason": "No API keys detected and Ollama is not available",
                 "suggestion": "Set an API key via the config page or start Ollama locally",
             }
+    return {}
+
+
+@router.get("/health/guidance")
+async def health_guidance() -> dict[str, Any]:
+    """Detect available providers and return configuration recommendations."""
+    available_providers = _detect_key_providers()
+    keyless_providers: list[dict[str, Any]] = []
+
+    ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    ollama_ok = await _check_ollama_available(ollama_host)
+    if ollama_ok:
+        keyless_providers.append(
+            {
+                "provider": "ollama",
+                "host": ollama_host,
+                "available": True,
+            }
+        )
+    else:
+        keyless_providers.append(
+            {
+                "provider": "ollama",
+                "host": ollama_host,
+                "available": False,
+            }
+        )
+
+    current = get_config()
+    recommendation = _build_recommendation(
+        available_providers, ollama_ok, ollama_host, current
+    )
 
     return {
         "configured": _is_configured(current),
@@ -233,7 +266,10 @@ async def health_guidance() -> dict[str, Any]:
         "available_providers": available_providers,
         "keyless_providers": keyless_providers,
         "recommendation": recommendation,
-        "supported_providers": sorted(set(_PROVIDER_KEY_ENV.keys()) | {"ollama", "vllm", "local", "openai-compatible"}),
+        "supported_providers": sorted(
+            set(_PROVIDER_KEY_ENV.keys())
+            | {"ollama", "vllm", "local", "openai-compatible"}
+        ),
     }
 
 

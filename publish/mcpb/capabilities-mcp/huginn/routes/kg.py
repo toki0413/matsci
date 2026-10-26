@@ -33,6 +33,7 @@ def _get_kg():
         # autoloop 没跑时, context.kg 可能没初始化, 尝试从 workspace 加载
         try:
             from huginn.kg.graph import ProjectKnowledgeGraph
+
             cfg = get_context().config
             kg = ProjectKnowledgeGraph(root=cfg.workspace)
         except Exception:
@@ -53,9 +54,43 @@ async def kg_stats() -> dict[str, Any]:
         return {"available": False, "error": str(e)}
 
 
+def _serialize_kg_nodes(g) -> list[dict[str, Any]]:
+    nodes = []
+    for nid, data in g.nodes(data=True):
+        nodes.append(
+            {
+                "id": nid,
+                "label": data.get("label", nid),
+                "type": data.get("type", "Unknown"),
+                "confidence": data.get("confidence", 0.5),
+                "mentions": data.get("mentions", 1),
+                "source": data.get("source", ""),
+                "created_at": data.get("created_at", ""),
+            }
+        )
+    return nodes
+
+
+def _serialize_kg_edges(g) -> list[dict[str, Any]]:
+    edges = []
+    for src, dst, data in g.edges(data=True):
+        edges.append(
+            {
+                "source": src,
+                "target": dst,
+                "relation": data.get("relation", "RELATED_TO"),
+                "confidence": data.get("confidence", 0.5),
+                "mentions": data.get("mentions", 1),
+            }
+        )
+    return edges
+
+
 @router.get("/kg/graph")
 async def kg_graph(
-    max_nodes: int = Query(200, ge=1, le=2000, description="最多返回的节点数, 防止图太大"),
+    max_nodes: int = Query(
+        200, ge=1, le=2000, description="最多返回的节点数, 防止图太大"
+    ),
 ) -> dict[str, Any]:
     """返回完整图数据 (nodes + edges), 供前端渲染力导向图.
 
@@ -68,31 +103,14 @@ async def kg_graph(
         g = kg._graph
         # 截断: 按度排序只取 top-N
         if g.number_of_nodes() > max_nodes:
-            nodes_by_degree = sorted(g.degree(), key=lambda x: x[1], reverse=True)[:max_nodes]
+            nodes_by_degree = sorted(g.degree(), key=lambda x: x[1], reverse=True)[
+                :max_nodes
+            ]
             keep = {n for n, _ in nodes_by_degree}
             g = g.subgraph(keep).copy()
 
-        nodes = []
-        for nid, data in g.nodes(data=True):
-            nodes.append({
-                "id": nid,
-                "label": data.get("label", nid),
-                "type": data.get("type", "Unknown"),
-                "confidence": data.get("confidence", 0.5),
-                "mentions": data.get("mentions", 1),
-                "source": data.get("source", ""),
-                "created_at": data.get("created_at", ""),
-            })
-
-        edges = []
-        for src, dst, data in g.edges(data=True):
-            edges.append({
-                "source": src,
-                "target": dst,
-                "relation": data.get("relation", "RELATED_TO"),
-                "confidence": data.get("confidence", 0.5),
-                "mentions": data.get("mentions", 1),
-            })
+        nodes = _serialize_kg_nodes(g)
+        edges = _serialize_kg_edges(g)
 
         return {
             "available": True,
@@ -136,6 +154,7 @@ async def kg_search(
         return {"available": False, "nodes": []}
     try:
         from huginn.kg.query import GraphQuery
+
         gq = GraphQuery(kg._graph)
         nodes = gq.find_nodes(q, top_k=top_k)
         return {"available": True, "query": q, "nodes": nodes}

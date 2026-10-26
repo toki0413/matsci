@@ -12,12 +12,15 @@
   - ``dict``       : 精简逃生口 `{"tool": schema, "handle": fn}` → 强制规范形状后原样挂载.
 输出: ``(schemas, handlers)``, schemas 均为规范形状, 供 `client.chat.completions.create(tools=...)` 使用.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
 
 
-def canonical_tool_shape(name: str, description: str, parameters: dict | None = None) -> dict:
+def canonical_tool_shape(
+    name: str, description: str, parameters: dict | None = None
+) -> dict:
     """规范工具 schema 形状 —— 与 ToolRegistry.get_all_schemas() 输出一致.
 
     单一形状定义: 任何研究管线工具面都必须落成这个形状, 避免各载体私自变体。
@@ -27,16 +30,18 @@ def canonical_tool_shape(name: str, description: str, parameters: dict | None = 
         "function": {
             "name": name,
             "description": description or "",
-            "parameters": parameters if isinstance(parameters, dict)
+            "parameters": parameters
+            if isinstance(parameters, dict)
             else {"type": "object", "properties": {}, "additionalProperties": False},
         },
     }
 
 
 def _try_registry() -> bool:
-    """ToolRegistry 是否可导入(重栈未必在轻量环境). 不可用则仅支持 dict 逃生口. """
+    """ToolRegistry 是否可导入(重栈未必在轻量环境). 不可用则仅支持 dict 逃生口."""
     try:
         import huginn.tools.registry as _r  # noqa: F401
+
         return True
     except Exception:  # noqa: BLE001 — ToolRegistry 不可用(轻量环境)则仅支持 dict 逃生口
         return False
@@ -44,6 +49,7 @@ def _try_registry() -> bool:
 
 def _registry_tool_schema(name: str) -> dict:
     from huginn.tools.registry import ToolRegistry
+
     for s in ToolRegistry.get_all_schemas():
         if s.get("function", {}).get("name") == name:
             return s
@@ -59,12 +65,17 @@ def _registry_call(name: str) -> Callable[[dict], str]:
             return f'{{"error": "unknown tool {name}"}}'
         res = tool.call(**a)
         return res if isinstance(res, str) else str(res)
+
     return _call
 
 
-def governed_handler(name: str, inner: Callable[[dict], str],
-                     *, authorize: Callable[[dict], tuple[bool, str]] | None = None,
-                     audit: Callable[[dict], None] | None = None) -> Callable[[dict], str]:
+def governed_handler(
+    name: str,
+    inner: Callable[[dict], str],
+    *,
+    authorize: Callable[[dict], tuple[bool, str]] | None = None,
+    audit: Callable[[dict], None] | None = None,
+) -> Callable[[dict], str]:
     """给单个工具调用包一层**可选治理门禁**: 调用前可否执行, 调用后记审计.
 
     这是研究管线侧的执行治理**薄控制点** —— 对齐系统级 `governance.can_execute` 的语义,
@@ -79,6 +90,7 @@ def governed_handler(name: str, inner: Callable[[dict], str],
     诚实红线: 门禁是**可选注入** —— 注入才生效, 不注入回到"任何工具直接 call"的现状。
     这显式要求治理由调用方注入, 而非假装"工具面自带治理"。
     """
+
     def _wrapped(a: dict) -> str:
         ctx = {"tool": name, "args": a}
         if authorize is not None:
@@ -103,10 +115,13 @@ def governed_handler(name: str, inner: Callable[[dict], str],
         if audit is not None:
             audit(ctx)
         return res
+
     return _wrapped
 
 
-def resolve_diagnostic_tools(items, *, manage: dict | None = None) -> tuple[list[dict], dict[str, Callable[[dict], str]]]:
+def resolve_diagnostic_tools(
+    items, *, manage: dict | None = None
+) -> tuple[list[dict], dict[str, Callable[[dict], str]]]:
     """把研究管线诊断工具面归一到规范形状.
 
     `items`: None / list[str] / list[dict{"tool","handle"}] / 二者混排。
@@ -126,18 +141,26 @@ def resolve_diagnostic_tools(items, *, manage: dict | None = None) -> tuple[list
         if isinstance(it, str):  # ToolRegistry 工具名
             schemas.append(_registry_tool_schema(it))
             raw = _registry_call(it)
-            handlers[it] = governed_handler(it, raw, authorize=authorize, audit=audit) \
-                if wrapped else raw
+            handlers[it] = (
+                governed_handler(it, raw, authorize=authorize, audit=audit)
+                if wrapped
+                else raw
+            )
             continue
         t = it.get("tool", {})
         fn = t.get("function", {})
         name = fn.get("name")
         if not name:
             raise ValueError("诊断工具 dict 缺少 'tool.function.name'")
-        schemas.append(canonical_tool_shape(name, fn.get("description", ""), fn.get("parameters")))
+        schemas.append(
+            canonical_tool_shape(name, fn.get("description", ""), fn.get("parameters"))
+        )
         raw = it["handle"]
-        handlers[name] = governed_handler(name, raw, authorize=authorize, audit=audit) \
-            if wrapped else raw
+        handlers[name] = (
+            governed_handler(name, raw, authorize=authorize, audit=audit)
+            if wrapped
+            else raw
+        )
     # 若环境无 ToolRegistry 且只有 dict 逃生口, 也正常解析(registry_ok 只是旁路说明)
     return schemas, handlers
 
@@ -166,8 +189,14 @@ def register_diagnostic_tools(diagnostic_tools) -> list[str]:
         read_only = True
         active = True
 
-        def __init__(self, *, name: str, description: str,
-                     parameters_schema: dict, handle: Callable) -> None:
+        def __init__(
+            self,
+            *,
+            name: str,
+            description: str,
+            parameters_schema: dict,
+            handle: Callable,
+        ) -> None:
             self.name = name
             self.description = description or "域诊断科学计算工具 (runtime-mount)"
             self._parameters_schema = parameters_schema
@@ -186,20 +215,27 @@ def register_diagnostic_tools(diagnostic_tools) -> list[str]:
                 res = self._handle(dict(args or {}))
                 return ToolResult(success=True, data=res, metadata={})
             except Exception as exc:  # noqa: BLE001 — 工具边界收敛, 不上抛
-                return ToolResult(success=False, error=f"{type(exc).__name__}: {exc}",
-                                  metadata={})
+                return ToolResult(
+                    success=False, error=f"{type(exc).__name__}: {exc}", metadata={}
+                )
 
+    return _register_dict_handles(_DictHandleTool, diagnostic_tools, ToolRegistry)
+
+
+def _register_dict_handles(tool_cls: type, diagnostic_tools, registry_cls) -> list[str]:
     names: list[str] = []
     for it in diagnostic_tools or []:
         fn = it["tool"].get("function", {})
         name = fn.get("name")
         if not name:
             continue
-        ToolRegistry.register(_DictHandleTool(
-            name=name,
-            description=fn.get("description", ""),
-            parameters_schema=fn.get("parameters"),
-            handle=it["handle"],
-        ))
+        registry_cls.register(
+            tool_cls(
+                name=name,
+                description=fn.get("description", ""),
+                parameters_schema=fn.get("parameters"),
+                handle=it["handle"],
+            )
+        )
         names.append(name)
     return names

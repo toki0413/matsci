@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -37,53 +37,56 @@ EV_TO_KCAL = 23.0605
 
 class FEPInput(BaseModel):
     action: Literal["ti", "fep", "bar", "jarzynski", "lambda_schedule"] = Field(
-        ..., description="Free energy method: TI (thermodynamic integration), "
+        ...,
+        description="Free energy method: TI (thermodynamic integration), "
         "FEP (Zwanzig), BAR (Bennett), Jarzynski (non-equilibrium), "
-        "lambda_schedule (generate λ windows)"
+        "lambda_schedule (generate λ windows)",
     )
 
     # Energy data: per-λ-window energy samples
     # For TI: list of (lambda, dU/dlambda samples)
     lambda_values: list[float] = Field(
-        default_factory=list,
-        description="λ window centers"
+        default_factory=list, description="λ window centers"
     )
     dU_dlambda: list[list[float]] | None = Field(  # noqa: N815
         default=None,
-        description="TI: ∂U/∂λ samples per window. dU_dlambda[i] = samples at λ[i]"
+        description="TI: ∂U/∂λ samples per window. dU_dlambda[i] = samples at λ[i]",
     )
 
     # For FEP/BAR: energy differences
     delta_U: list[list[float]] | None = Field(  # noqa: N815
         default=None,
-        description="FEP: ΔU = U_B − U_A samples evaluated at each λ window"
+        description="FEP: ΔU = U_B − U_A samples evaluated at each λ window",
     )
     delta_U_reverse: list[list[float]] | None = Field(  # noqa: N815
-        default=None,
-        description="BAR reverse: ΔU = U_A − U_B samples from λ+1 window"
+        default=None, description="BAR reverse: ΔU = U_A − U_B samples from λ+1 window"
     )
 
     # For Jarzynski: non-equilibrium work values
     work_values: list[float] | None = Field(
         default=None,
-        description="Jarzynski: non-equilibrium work W samples from fast switching"
+        description="Jarzynski: non-equilibrium work W samples from fast switching",
     )
 
     # Thermodynamic params
     temperature: float = Field(default=298.15, gt=0, description="Temperature (K)")
-    n_lambda: int = Field(default=11, ge=2, le=101, description="Number of λ windows for schedule")
+    n_lambda: int = Field(
+        default=11, ge=2, le=101, description="Number of λ windows for schedule"
+    )
     lambda_spacing: Literal["uniform", "nonlinear"] = Field(
         default="uniform",
-        description="uniform: Δλ=1/n; nonlinear: denser near endpoints where ∂U/∂λ varies most"
+        description="uniform: Δλ=1/n; nonlinear: denser near endpoints where ∂U/∂λ varies most",
     )
 
     # Error estimation
-    n_bootstrap: int = Field(default=200, ge=0, le=1000, description="Bootstrap samples for error bar")
+    n_bootstrap: int = Field(
+        default=200, ge=0, le=1000, description="Bootstrap samples for error bar"
+    )
 
     # Domain context
     domain: Literal["materials", "drug_design"] = Field(
         default="materials",
-        description="materials: output in eV; drug_design: output in kcal/mol"
+        description="materials: output in eV; drug_design: output in kcal/mol",
     )
 
 
@@ -116,7 +119,9 @@ class FEPTool(HuginnTool):
                 return self._bar(args)
             if args.action == "jarzynski":
                 return self._jarzynski(args)
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
 
@@ -133,93 +138,48 @@ class FEPTool(HuginnTool):
             lambdas[0] = 0.0
             lambdas[-1] = 1.0
 
-        return ToolResult(data={
-            "action": "lambda_schedule",
-            "lambdas": lambdas.tolist(),
-            "n_windows": n,
-            "spacing": args.lambda_spacing,
-            "message": f"Generated {n} λ windows.",
-        })
+        return ToolResult(
+            data={
+                "action": "lambda_schedule",
+                "lambdas": lambdas.tolist(),
+                "n_windows": n,
+                "spacing": args.lambda_spacing,
+                "message": f"Generated {n} λ windows.",
+            }
+        )
 
     # ── Thermodynamic Integration ───────────────────────────
 
     def _thermodynamic_integration(self, args: FEPInput) -> ToolResult:
         if not args.lambda_values or not args.dU_dlambda:
-            return ToolResult(data=None, success=False, error="lambda_values and dU_dlambda required")
+            return ToolResult(
+                data=None, success=False, error="lambda_values and dU_dlambda required"
+            )
 
         lambdas = np.array(args.lambda_values)
         # Compute mean ⟨∂U/∂λ⟩ at each window
         means = np.array([np.mean(samples) for samples in args.dU_dlambda])
-        stds = np.array([np.std(samples, ddof=1) if len(samples) > 1 else 0.0
-                         for samples in args.dU_dlambda])
+        stds = np.array(
+            [
+                np.std(samples, ddof=1) if len(samples) > 1 else 0.0
+                for samples in args.dU_dlambda
+            ]
+        )
 
         # Trapezoidal integration: ΔF = ∫₀¹ ⟨∂U/∂λ⟩ dλ
         delta_F = np.trapezoid(means, lambdas)
 
-        # Error estimate: propagate per-window variance through trapezoidal rule
-        # Var(ΔF) ≈ Σᵢ wᵢ² Var(⟨∂U/∂λ⟩ᵢ)  where wᵢ are trapezoidal weights
-        n_per_window = np.array([len(s) for s in args.dU_dlambda])
-        sem_per_window = stds / np.sqrt(np.maximum(n_per_window, 1))
-        # Trapezoidal weights
-        weights = np.ones(len(lambdas))
-        weights[0] = 0.5
-        weights[-1] = 0.5
-        dlam = np.diff(lambdas)
-        # Approx: weight each point by average of adjacent intervals
-        var_F = np.zeros(len(lambdas))
-        for i in range(len(lambdas)):
-            w = 0.0
-            if i > 0:
-                w += 0.5 * dlam[i - 1]
-            if i < len(lambdas) - 1:
-                w += 0.5 * dlam[i]
-            var_F[i] = w ** 2 * sem_per_window[i] ** 2
-        err_F = math.sqrt(np.sum(var_F))
+        err_F = _ti_error_estimate(args.dU_dlambda, stds, lambdas)
 
         # Bootstrap for cross-check
-        bs_estimate = None
-        if args.n_bootstrap > 0:
-            bs_samples = []
-            for _ in range(args.n_bootstrap):
-                bs_means = np.array([
-                    np.mean(np.random.choice(s, size=len(s), replace=True))
-                    for s in args.dU_dlambda
-                ])
-                bs_samples.append(np.trapezoid(bs_means, lambdas))
-            bs_estimate = {
-                "mean": float(np.mean(bs_samples)),
-                "std": float(np.std(bs_samples, ddof=1)),
-                "ci_lower": float(np.percentile(bs_samples, 2.5)),
-                "ci_upper": float(np.percentile(bs_samples, 97.5)),
-            }
+        bs_estimate = _ti_bootstrap(args, lambdas)
 
         # Physics: check curvature for hysteresis sign
         # If ΔF is dominated by endpoint contributions, the transformation is steep
         curvature = np.diff(means, n=2) if len(means) > 2 else np.array([0.0])
 
-        data = {
-            "action": "ti",
-            "method": "Thermodynamic Integration",
-            "delta_F_eV": round(float(delta_F), 6),
-            "error_eV": round(float(err_F), 6),
-            "lambda_values": lambdas.tolist(),
-            "dU_dlambda_means": means.tolist(),
-            "dU_dlambda_stds": stds.tolist(),
-            "n_windows": len(lambdas),
-            "temperature_K": args.temperature,
-            "domain": args.domain,
-            "bootstrap": bs_estimate,
-            "curvature_max": round(float(np.max(np.abs(curvature))), 6) if len(curvature) else 0.0,
-        }
-
-        # Convert units for drug design
-        if args.domain == "drug_design":
-            data["delta_F_kcal_mol"] = round(float(delta_F) * EV_TO_KCAL, 4)
-            data["error_kcal_mol"] = round(float(err_F) * EV_TO_KCAL, 4)
-
-        data["message"] = (
-            f"ΔF = {data['delta_F_eV']:.4f} eV ± {data['error_eV']:.4f} eV"
-            + (f" ({data['delta_F_kcal_mol']:.2f} kcal/mol)" if args.domain == "drug_design" else "")
+        data = _ti_payload(
+            args, delta_F, err_F, lambdas, means, stds, curvature, bs_estimate
         )
 
         return ToolResult(data=data)
@@ -228,52 +188,26 @@ class FEPTool(HuginnTool):
 
     def _fep_zwanzig(self, args: FEPInput) -> ToolResult:
         if not args.delta_U:
-            return ToolResult(data=None, success=False, error="delta_U required (per-window ΔU samples)")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="delta_U required (per-window ΔU samples)",
+            )
 
         beta = 1.0 / (KB_EV * args.temperature)
-        np.array(args.lambda_values) if args.lambda_values else np.arange(len(args.delta_U))
+        np.array(args.lambda_values) if args.lambda_values else np.arange(
+            len(args.delta_U)
+        )
 
         # Per-window ΔF: ΔF_i = −kT ln⟨exp(−βΔU)⟩
         window_dFs = []
         for du_samples in args.delta_U:
-            du = np.array(du_samples)
-            # Zwanzig: ΔF = −kT ln⟨exp(−βΔU)⟩
-            arg = np.exp(-beta * du)
-            # Guard against overflow/underflow
-            if np.any(np.isinf(arg)) or np.any(np.isnan(arg)):
-                # Use max-shift trick: ΔF = −kT [max(−βΔU) + ln⟨exp(−βΔU − max)⟩]
-                shift = np.max(-beta * du)
-                dF = -(1.0 / beta) * (shift + math.log(np.mean(np.exp(-beta * du - shift))))
-            else:
-                dF = -(1.0 / beta) * math.log(np.mean(arg))
-            window_dFs.append(dF)
+            window_dFs.append(_zwanzig_window_delta_f(du_samples, beta))
 
         total_dF = float(np.sum(window_dFs))
 
         # Bootstrap error
-        bs = None
-        if args.n_bootstrap > 0:
-            bs_totals = []
-            for _ in range(args.n_bootstrap):
-                bs_dFs = []
-                for du_samples in args.delta_U:
-                    du = np.array(du_samples)
-                    idx = np.random.choice(len(du), size=len(du), replace=True)
-                    du_bs = du[idx]
-                    arg = np.exp(-beta * du_bs)
-                    if np.any(np.isinf(arg)):
-                        shift = np.max(-beta * du_bs)
-                        dF = -(1.0 / beta) * (shift + math.log(np.mean(np.exp(-beta * du_bs - shift))))
-                    else:
-                        dF = -(1.0 / beta) * math.log(np.mean(arg))
-                    bs_dFs.append(dF)
-                bs_totals.append(np.sum(bs_dFs))
-            bs = {
-                "mean": float(np.mean(bs_totals)),
-                "std": float(np.std(bs_totals, ddof=1)),
-                "ci_lower": float(np.percentile(bs_totals, 2.5)),
-                "ci_upper": float(np.percentile(bs_totals, 97.5)),
-            }
+        bs = _zwanzig_bootstrap(args, beta)
 
         data = {
             "action": "fep",
@@ -296,8 +230,11 @@ class FEPTool(HuginnTool):
 
     def _bar(self, args: FEPInput) -> ToolResult:
         if not args.delta_U or not args.delta_U_reverse:
-            return ToolResult(data=None, success=False,
-                              error="delta_U (forward) and delta_U_reverse required for BAR")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="delta_U (forward) and delta_U_reverse required for BAR",
+            )
 
         beta = 1.0 / (KB_EV * args.temperature)
         # BAR per window pair: ΔF = −kT ln(⟨f(βΔU)⟩_A / ⟨f(−βΔU)⟩_B)
@@ -347,30 +284,14 @@ class FEPTool(HuginnTool):
         if np.any(np.isinf(arg)) or np.any(np.isnan(arg)):
             # Use max-shift trick
             shift = np.max(-beta * W)
-            delta_F = -(1.0 / beta) * (shift + math.log(np.mean(np.exp(-beta * W - shift))))
+            delta_F = -(1.0 / beta) * (
+                shift + math.log(np.mean(np.exp(-beta * W - shift)))
+            )
         else:
             delta_F = -(1.0 / beta) * math.log(np.mean(arg))
 
         # Bootstrap error
-        bs = None
-        if args.n_bootstrap > 0:
-            bs_samples = []
-            for _ in range(args.n_bootstrap):
-                idx = np.random.choice(len(W), size=len(W), replace=True)
-                W_bs = W[idx]
-                arg_bs = np.exp(-beta * W_bs)
-                if np.any(np.isinf(arg_bs)):
-                    shift = np.max(-beta * W_bs)
-                    dF = -(1.0 / beta) * (shift + math.log(np.mean(np.exp(-beta * W_bs - shift))))
-                else:
-                    dF = -(1.0 / beta) * math.log(np.mean(arg_bs))
-                bs_samples.append(dF)
-            bs = {
-                "mean": float(np.mean(bs_samples)),
-                "std": float(np.std(bs_samples, ddof=1)),
-                "ci_lower": float(np.percentile(bs_samples, 2.5)),
-                "ci_upper": float(np.percentile(bs_samples, 97.5)),
-            }
+        bs = _jarzynski_bootstrap(args, beta, W)
 
         # Second-law check: ⟨W⟩ ≥ ΔF (Jarzynski inequality)
         mean_W = float(np.mean(W))
@@ -393,3 +314,165 @@ class FEPTool(HuginnTool):
             data["delta_F_kcal_mol"] = round(float(delta_F) * EV_TO_KCAL, 4)
 
         return ToolResult(data=data)
+
+
+# ── module-level helpers ─────────────────────────────────────
+
+
+def _ti_payload(
+    args: FEPInput,
+    delta_F: float,
+    err_F: float,
+    lambdas: np.ndarray,
+    means: np.ndarray,
+    stds: np.ndarray,
+    curvature: np.ndarray,
+    bs_estimate: dict[str, float] | None,
+) -> dict[str, Any]:
+    """Assemble the TI result dictionary, incl. drug-design unit conversion."""
+    data = {
+        "action": "ti",
+        "method": "Thermodynamic Integration",
+        "delta_F_eV": round(float(delta_F), 6),
+        "error_eV": round(float(err_F), 6),
+        "lambda_values": lambdas.tolist(),
+        "dU_dlambda_means": means.tolist(),
+        "dU_dlambda_stds": stds.tolist(),
+        "n_windows": len(lambdas),
+        "temperature_K": args.temperature,
+        "domain": args.domain,
+        "bootstrap": bs_estimate,
+        "curvature_max": round(float(np.max(np.abs(curvature))), 6)
+        if len(curvature)
+        else 0.0,
+    }
+
+    # Convert units for drug design
+    if args.domain == "drug_design":
+        data["delta_F_kcal_mol"] = round(float(delta_F) * EV_TO_KCAL, 4)
+        data["error_kcal_mol"] = round(float(err_F) * EV_TO_KCAL, 4)
+
+    data["message"] = (
+        f"ΔF = {data['delta_F_eV']:.4f} eV ± {data['error_eV']:.4f} eV"
+        + (
+            f" ({data['delta_F_kcal_mol']:.2f} kcal/mol)"
+            if args.domain == "drug_design"
+            else ""
+        )
+    )
+    return data
+
+
+def _ti_error_estimate(
+    dU_dlambda: list[list[float]], stds: np.ndarray, lambdas: np.ndarray
+) -> float:
+    """Propagate per-window variance through the trapezoidal rule."""
+    # Error estimate: propagate per-window variance through trapezoidal rule
+    # Var(ΔF) ≈ Σᵢ wᵢ² Var(⟨∂U/∂λ⟩ᵢ)  where wᵢ are trapezoidal weights
+    n_per_window = np.array([len(s) for s in dU_dlambda])
+    sem_per_window = stds / np.sqrt(np.maximum(n_per_window, 1))
+    # Trapezoidal weights
+    weights = np.ones(len(lambdas))
+    weights[0] = 0.5
+    weights[-1] = 0.5
+    dlam = np.diff(lambdas)
+    # Approx: weight each point by average of adjacent intervals
+    var_F = np.zeros(len(lambdas))
+    for i in range(len(lambdas)):
+        w = 0.0
+        if i > 0:
+            w += 0.5 * dlam[i - 1]
+        if i < len(lambdas) - 1:
+            w += 0.5 * dlam[i]
+        var_F[i] = w**2 * sem_per_window[i] ** 2
+    return math.sqrt(np.sum(var_F))
+
+
+def _ti_bootstrap(args: FEPInput, lambdas: np.ndarray) -> dict[str, float] | None:
+    """Bootstrap cross-check of the integrated ΔF (global np.random state)."""
+    if args.n_bootstrap <= 0:
+        return None
+    bs_samples = []
+    for _ in range(args.n_bootstrap):
+        bs_means = np.array(
+            [
+                np.mean(np.random.choice(s, size=len(s), replace=True))
+                for s in args.dU_dlambda
+            ]
+        )
+        bs_samples.append(np.trapezoid(bs_means, lambdas))
+    return {
+        "mean": float(np.mean(bs_samples)),
+        "std": float(np.std(bs_samples, ddof=1)),
+        "ci_lower": float(np.percentile(bs_samples, 2.5)),
+        "ci_upper": float(np.percentile(bs_samples, 97.5)),
+    }
+
+
+def _zwanzig_window_delta_f(du_samples: list[float], beta: float) -> float:
+    """Zwanzig ΔF for one λ window, with NaN/Inf overflow guard."""
+    du = np.array(du_samples)
+    # Zwanzig: ΔF = −kT ln⟨exp(−βΔU)⟩
+    arg = np.exp(-beta * du)
+    # Guard against overflow/underflow
+    if np.any(np.isinf(arg)) or np.any(np.isnan(arg)):
+        # Use max-shift trick: ΔF = −kT [max(−βΔU) + ln⟨exp(−βΔU − max)⟩]
+        shift = np.max(-beta * du)
+        return -(1.0 / beta) * (shift + math.log(np.mean(np.exp(-beta * du - shift))))
+    return -(1.0 / beta) * math.log(np.mean(arg))
+
+
+def _zwanzig_bootstrap(args: FEPInput, beta: float) -> dict[str, float] | None:
+    """Bootstrap over per-window ΔU samples (global np.random state)."""
+    if args.n_bootstrap <= 0:
+        return None
+    bs_totals = []
+    for _ in range(args.n_bootstrap):
+        bs_dFs = []
+        for du_samples in args.delta_U:
+            du = np.array(du_samples)
+            idx = np.random.choice(len(du), size=len(du), replace=True)
+            du_bs = du[idx]
+            arg = np.exp(-beta * du_bs)
+            if np.any(np.isinf(arg)):
+                shift = np.max(-beta * du_bs)
+                dF = -(1.0 / beta) * (
+                    shift + math.log(np.mean(np.exp(-beta * du_bs - shift)))
+                )
+            else:
+                dF = -(1.0 / beta) * math.log(np.mean(arg))
+            bs_dFs.append(dF)
+        bs_totals.append(np.sum(bs_dFs))
+    return {
+        "mean": float(np.mean(bs_totals)),
+        "std": float(np.std(bs_totals, ddof=1)),
+        "ci_lower": float(np.percentile(bs_totals, 2.5)),
+        "ci_upper": float(np.percentile(bs_totals, 97.5)),
+    }
+
+
+def _jarzynski_bootstrap(
+    args: FEPInput, beta: float, W: np.ndarray
+) -> dict[str, float] | None:
+    """Bootstrap the Jarzynski estimate (global np.random state)."""
+    if args.n_bootstrap <= 0:
+        return None
+    bs_samples = []
+    for _ in range(args.n_bootstrap):
+        idx = np.random.choice(len(W), size=len(W), replace=True)
+        W_bs = W[idx]
+        arg_bs = np.exp(-beta * W_bs)
+        if np.any(np.isinf(arg_bs)):
+            shift = np.max(-beta * W_bs)
+            dF = -(1.0 / beta) * (
+                shift + math.log(np.mean(np.exp(-beta * W_bs - shift)))
+            )
+        else:
+            dF = -(1.0 / beta) * math.log(np.mean(arg_bs))
+        bs_samples.append(dF)
+    return {
+        "mean": float(np.mean(bs_samples)),
+        "std": float(np.std(bs_samples, ddof=1)),
+        "ci_lower": float(np.percentile(bs_samples, 2.5)),
+        "ci_upper": float(np.percentile(bs_samples, 97.5)),
+    }

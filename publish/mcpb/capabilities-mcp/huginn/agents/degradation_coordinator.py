@@ -25,6 +25,32 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _resolve_degradation_context(context: dict[str, Any] | None) -> Any:
+    """构造 ToolContext — 复用主调用的 context，没有就建一个最小的."""
+    from huginn.core_types import ToolContext
+
+    if isinstance(context, ToolContext):
+        return context
+    if isinstance(context, dict):
+        return ToolContext(
+            session_id=context.get("session_id", "degradation"),
+            workspace=context.get("workspace", "."),
+        )
+    return ToolContext(session_id="degradation", workspace=".")
+
+
+def _normalize_tool_result(result: Any) -> dict[str, Any] | None:
+    """ToolResult → dict."""
+    if hasattr(result, "to_dict"):
+        d = result.to_dict()
+        if result.success:
+            return d.get("data", d) if isinstance(d.get("data"), dict) else d
+        return None  # 工具执行失败
+    if isinstance(result, dict):
+        return result
+    return {"result": result}
+
+
 def _try_fallback(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -50,32 +76,12 @@ def _try_fallback(
             logger.debug("degradation: fallback %s also blocked", tool_name)
             return None
 
-        # 构造 ToolContext — 复用主调用的 context，没有就建一个最小的
-        from huginn.core_types import ToolContext
-
-        if isinstance(context, ToolContext):
-            ctx = context
-        elif isinstance(context, dict):
-            ctx = ToolContext(
-                session_id=context.get("session_id", "degradation"),
-                workspace=context.get("workspace", "."),
-            )
-        else:
-            ctx = ToolContext(session_id="degradation", workspace=".")
+        ctx = _resolve_degradation_context(context)
 
         # tool.call() 是 async，用 _run_sync 桥接
         result = _run_sync(tool.call, tool_input, ctx)
 
-        # ToolResult → dict
-        if hasattr(result, "to_dict"):
-            d = result.to_dict()
-            if result.success:
-                return d.get("data", d) if isinstance(d.get("data"), dict) else d
-            else:
-                return None  # 工具执行失败
-        if isinstance(result, dict):
-            return result
-        return {"result": result}
+        return _normalize_tool_result(result)
     except Exception as e:
         logger.debug("degradation: fallback %s failed: %s", tool_name, e)
         return None
@@ -160,25 +166,39 @@ def try_with_degradation(
         )
         result = _try_fallback(fallback_name, tool_input, context)
         if result is not None and "error" not in result:
-            # 降级成功 — 标记结果质量
-            result["_degraded"] = True
-            result["_degraded_from"] = primary_tool
-            result["_degraded_to"] = fallback_name
-            # 取替代工具的 quality_tier
-            fallback_tool = ToolRegistry.get(fallback_name)
-            if fallback_tool and fallback_tool.profile:
-                result["_quality_tier"] = fallback_tool.profile.quality_tier or "unknown"
-            else:
-                result["_quality_tier"] = "unknown"
-            logger.info(
-                "degradation: %s → %s succeeded (quality=%s)",
-                primary_tool,
-                fallback_name,
-                result["_quality_tier"],
-            )
-            return result
+            return _mark_degraded(result, primary_tool, fallback_name)
 
-    # 全部替代也熔断/失败 — 返回结构化报告
+    return _degradation_exhausted_report(primary_tool, tried, quality_tier)
+
+
+def _mark_degraded(
+    result: dict[str, Any], primary_tool: str, fallback_name: str
+) -> dict[str, Any]:
+    """降级成功 — 标记结果质量."""
+    from huginn.tools.registry import ToolRegistry
+
+    result["_degraded"] = True
+    result["_degraded_from"] = primary_tool
+    result["_degraded_to"] = fallback_name
+    # 取替代工具的 quality_tier
+    fallback_tool = ToolRegistry.get(fallback_name)
+    if fallback_tool and fallback_tool.profile:
+        result["_quality_tier"] = fallback_tool.profile.quality_tier or "unknown"
+    else:
+        result["_quality_tier"] = "unknown"
+    logger.info(
+        "degradation: %s → %s succeeded (quality=%s)",
+        primary_tool,
+        fallback_name,
+        result["_quality_tier"],
+    )
+    return result
+
+
+def _degradation_exhausted_report(
+    primary_tool: str, tried: list[str], quality_tier: str
+) -> dict[str, Any]:
+    """全部替代也熔断/失败 — 返回结构化报告."""
     return {
         "error": "all_tools_blocked",
         "primary": primary_tool,

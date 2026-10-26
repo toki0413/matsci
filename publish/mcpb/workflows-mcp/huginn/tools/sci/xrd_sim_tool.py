@@ -21,10 +21,12 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 
 class XrdSimToolInput(BaseModel):
     action: Literal[
-        "simulate_xrd", "parse_pattern", "compare_patterns", "index_peaks", "inverse_design"
-    ] = Field(
-        ..., description="XRD action to perform."
-    )
+        "simulate_xrd",
+        "parse_pattern",
+        "compare_patterns",
+        "index_peaks",
+        "inverse_design",
+    ] = Field(..., description="XRD action to perform.")
     file_path: str | None = Field(
         default=None,
         description="Path to structure file (simulate_xrd, index_peaks) or XRD data CSV (parse_pattern).",
@@ -65,6 +67,244 @@ class XrdSimToolInput(BaseModel):
     )
 
 
+def _pattern_peaks(pattern) -> list[dict]:
+    """把 pymatgen 衍射图转成峰值字典列表."""
+    peaks = []
+    for i in range(len(pattern.x)):
+        hkl_list = []
+        if hasattr(pattern, "hkls") and i < len(pattern.hkls):
+            for hkl_dict in pattern.hkls[i]:
+                hkl_list.append(hkl_dict.get("hkl", []))
+        peaks.append(
+            {
+                "two_theta": round(float(pattern.x[i]), 4),
+                "intensity": round(float(pattern.y[i]), 2),
+                "hkls": hkl_list,
+            }
+        )
+    return peaks
+
+
+def _prepare_targets(targets: list, allowed: list) -> tuple[int, list, list]:
+    """截取目标峰与对应允许反射, 返回 (峰数, 目标 2θ, hkl 列表)."""
+    n = min(len(targets), len(allowed))
+    return n, [float(t) for t in targets[:n]], allowed[:n]
+
+
+def _two_param_data(
+    system_name: str,
+    crystal_class: str,
+    ac: tuple[float, float],
+    fit: tuple[float, float],
+    sim_peaks: list,
+    tgt: list,
+    wl: float,
+    n: int,
+    converged: bool,
+) -> dict:
+    """组装四方/六方逆设计的结果字典."""
+    a_opt, c_opt = ac
+    rmse, sse = fit
+    return {
+        "lattice_system": system_name,
+        "lattice_a": round(a_opt, 6),
+        "lattice_c": round(c_opt, 6),
+        "lattice_parameters": _two_param_lattice_params(a_opt, c_opt, crystal_class),
+        "match_error": round(rmse, 6),
+        "sse": round(sse, 6),
+        "simulated_peaks": sim_peaks,
+        "target_peaks": tgt,
+        "wavelength": wl,
+        "n_peaks": n,
+        "converged": converged,
+    }
+
+
+def _best_sim_match(obs_tt: float, sim_positions: list, tol: float):
+    """返回 tol 内最接近 obs_tt 的模拟 2θ 及其距离; 无匹配时返回 (None, tol)."""
+    best_match = None
+    best_dist = tol
+    for sp in sim_positions:
+        dist = abs(obs_tt - sp)
+        if dist < best_dist:
+            best_dist = dist
+            best_match = sp
+    return best_match, best_dist
+
+
+def _sim_hkl_lookup(pattern) -> dict:
+    """构建 2θ -> hkl 列表的查找表."""
+    sim_lookup = {}
+    for i in range(len(pattern.x)):
+        tt = round(float(pattern.x[i]), 4)
+        hkls = []
+        if hasattr(pattern, "hkls") and i < len(pattern.hkls):
+            for hkl_dict in pattern.hkls[i]:
+                hkls.append(hkl_dict.get("hkl", []))
+        sim_lookup[tt] = hkls
+    return sim_lookup
+
+
+def _indexed_peak(
+    obs_tt: float, sim_lookup: dict, sim_positions: list, tol: float
+) -> dict:
+    """单个观测峰的指标化结果; 无匹配时 hkl 为 None."""
+    best_match, best_dist = _best_sim_match(obs_tt, sim_positions, tol)
+    if best_match is not None:
+        return {
+            "two_theta": obs_tt,
+            "hkl": sim_lookup[best_match],
+            "simulated_2theta": best_match,
+            "delta": round(best_dist, 4),
+        }
+    return {
+        "two_theta": obs_tt,
+        "hkl": None,
+        "simulated_2theta": None,
+        "delta": None,
+    }
+
+
+def _match_patterns(
+    exp_positions: list, sim_peaks: list, sim_positions: list, tol: float
+) -> tuple[list, list, list]:
+    """逐个实验峰匹配最近模拟峰, 返回 (匹配表, 未匹配实验峰, 未匹配模拟峰)."""
+    matched = []
+    unmatched_exp = []
+    for ep in exp_positions:
+        best_match, best_dist = _best_sim_match(ep, sim_positions, tol)
+        if best_match is not None:
+            hkl = next(
+                (p["hkls"] for p in sim_peaks if p["two_theta"] == best_match),
+                [],
+            )
+            matched.append(
+                {
+                    "experimental": ep,
+                    "simulated": best_match,
+                    "delta": round(best_dist, 4),
+                    "hkls": hkl,
+                }
+            )
+        else:
+            unmatched_exp.append(ep)
+    matched_sim = {m["simulated"] for m in matched}
+    unmatched_sim = [sp for sp in sim_positions if sp not in matched_sim]
+    return matched, unmatched_exp, unmatched_sim
+
+
+def _cubic_two_theta(wl: float, a: float, s: float) -> float:
+    # a 太小会让 λ/(2d) ≥ 1, arcsin 无定义, 夹到边界外给个大角度惩罚.
+    arg = wl * s / (2.0 * a)
+    if arg >= 1.0:
+        return 180.0
+    return math.degrees(2.0 * math.asin(arg))
+
+
+def _cubic_objective(wl: float, inv_sq: list, tgt: list):
+    def objective(x):
+        a = float(x[0])
+        if a <= 0.0:
+            return 1e6
+        return sum((_cubic_two_theta(wl, a, s) - t) ** 2 for s, t in zip(inv_sq, tgt))
+
+    return objective
+
+
+def _cubic_sim_peaks(
+    a_opt: float, allowed: list, inv_sq: list, tgt: list, wl: float
+) -> tuple[list, float]:
+    """立方晶系: 生成模拟峰表与 sse."""
+    sim_peaks = []
+    sse = 0.0
+    for (h, k, l), s, t in zip(allowed, inv_sq, tgt):  # noqa: E741
+        tt = _cubic_two_theta(wl, a_opt, s)
+        sse += (tt - t) ** 2
+        sim_peaks.append(
+            {
+                "hkl": [h, k, l],
+                "two_theta": round(tt, 4),
+                "target_two_theta": round(t, 4),
+                "delta": round(tt - t, 4),
+            }
+        )
+    return sim_peaks, sse
+
+
+def _two_param_d_spacing(a: float, c: float, hkl: tuple, crystal_class: str) -> float:
+    h, k, l = hkl  # noqa: E741
+    if crystal_class == "tetragonal":
+        inv_d2 = (h * h + k * k) / (a * a) + (l * l) / (c * c)
+    else:  # hexagonal
+        inv_d2 = 4.0 * (h * h + h * k + k * k) / (3.0 * a * a) + (l * l) / (c * c)
+    return 1.0 / math.sqrt(inv_d2) if inv_d2 > 0 else 1e6
+
+
+def _two_param_two_theta(
+    a: float, c: float, hkl: tuple, wl: float, crystal_class: str
+) -> float:
+    d = _two_param_d_spacing(a, c, hkl, crystal_class)
+    arg = wl / (2.0 * d)
+    if arg >= 1.0:
+        return 180.0
+    return math.degrees(2.0 * math.asin(arg))
+
+
+def _two_param_objective(wl: float, crystal_class: str, hkls: list, tgt: list):
+    def objective(x):
+        a, c = float(x[0]), float(x[1])
+        if a <= 0.0 or c <= 0.0:
+            return 1e6
+        return sum(
+            (_two_param_two_theta(a, c, hkl, wl, crystal_class) - t) ** 2
+            for hkl, t in zip(hkls, tgt)
+        )
+
+    return objective
+
+
+def _initial_ac_guess(lattice_guess: list | None) -> tuple[float, float]:
+    """默认初始猜测 (4.0, 6.0); 用户 guess 中 >0 的分量覆盖默认值."""
+    a0, c0 = 4.0, 6.0
+    if lattice_guess and len(lattice_guess) >= 2:
+        if lattice_guess[0] > 0:
+            a0 = float(lattice_guess[0])
+        if lattice_guess[1] > 0:
+            c0 = float(lattice_guess[1])
+    return a0, c0
+
+
+def _two_param_sim_peaks(
+    a_opt: float,
+    c_opt: float,
+    hkls: list,
+    tgt: list,
+    wl: float,
+    crystal_class: str,
+) -> tuple[list, float]:
+    """四方/六方晶系: 生成模拟峰表与 sse."""
+    sim_peaks = []
+    sse = 0.0
+    for hkl, t in zip(hkls, tgt):
+        tt = _two_param_two_theta(a_opt, c_opt, hkl, wl, crystal_class)
+        sse += (tt - t) ** 2
+        sim_peaks.append(
+            {
+                "hkl": list(hkl),
+                "two_theta": round(tt, 4),
+                "target_two_theta": round(t, 4),
+                "delta": round(tt - t, 4),
+            }
+        )
+    return sim_peaks, sse
+
+
+def _two_param_lattice_params(a_opt: float, c_opt: float, crystal_class: str) -> list:
+    if crystal_class == "tetragonal":
+        return [round(a_opt, 6)] * 2 + [round(c_opt, 6)] + [90.0, 90.0, 90.0]
+    return [round(a_opt, 6)] * 2 + [round(c_opt, 6)] + [90.0, 90.0, 120.0]
+
+
 class XrdSimTool(HuginnTool):
     """Simulate powder XRD patterns from crystal structures and compare with experiments."""
 
@@ -88,7 +328,11 @@ class XrdSimTool(HuginnTool):
     async def validate_input(
         self, args: XrdSimToolInput, context: ToolContext | None = None
     ) -> ValidationResult:
-        if args.action == "simulate_xrd" and not args.file_path and not args.structure_str:
+        if (
+            args.action == "simulate_xrd"
+            and not args.file_path
+            and not args.structure_str
+        ):
             return ValidationResult(
                 result=False,
                 message="simulate_xrd requires file_path or structure_str.",
@@ -98,21 +342,25 @@ class XrdSimTool(HuginnTool):
                 result=False,
                 message="parse_pattern requires file_path (CSV data file).",
             )
-        if args.action == "compare_patterns" and (not args.simulated_peaks or (not args.experimental_file and not args.peaks)):
-                return ValidationResult(
-                    result=False,
-                    message="compare_patterns requires simulated_peaks and (experimental_file or peaks).",
-                )
-        if args.action == "index_peaks" and (not args.peaks or (not args.file_path and not args.structure_str)):
-                return ValidationResult(
-                    result=False,
-                    message="index_peaks requires peaks and (file_path or structure_str).",
-                )
+        if args.action == "compare_patterns" and (
+            not args.simulated_peaks or (not args.experimental_file and not args.peaks)
+        ):
+            return ValidationResult(
+                result=False,
+                message="compare_patterns requires simulated_peaks and (experimental_file or peaks).",
+            )
+        if args.action == "index_peaks" and (
+            not args.peaks or (not args.file_path and not args.structure_str)
+        ):
+            return ValidationResult(
+                result=False,
+                message="index_peaks requires peaks and (file_path or structure_str).",
+            )
         if args.action == "inverse_design" and not args.target_peaks:
-                return ValidationResult(
-                    result=False,
-                    message="inverse_design requires target_peaks (list of target 2θ peak positions).",
-                )
+            return ValidationResult(
+                result=False,
+                message="inverse_design requires target_peaks (list of target 2θ peak positions).",
+            )
         return ValidationResult(result=True)
 
     async def call(
@@ -130,22 +378,34 @@ class XrdSimTool(HuginnTool):
             return self._index_peaks(input_data, context)
         elif input_data.action == "inverse_design":
             return self._inverse_design(input_data, context)
-        return ToolResult(data=None, success=False, error=f"Unknown action: {input_data.action}")
+        return ToolResult(
+            data=None, success=False, error=f"Unknown action: {input_data.action}"
+        )
 
-    def _check_path(self, file_path: str | None, context: ToolContext | None) -> ToolResult | None:
+    def _check_path(
+        self, file_path: str | None, context: ToolContext | None
+    ) -> ToolResult | None:
         """拒绝 workspace 外的路径，和 file_read_tool 保持一致的围栏逻辑。"""
         if file_path is None:
             return ToolResult(
-                data=None, success=False, error="file_path is required.",
+                data=None,
+                success=False,
+                error="file_path is required.",
             )
         allow_unrestricted = os.environ.get(
             "HUGINN_ALLOW_UNRESTRICTED_READ", ""
         ).lower() in ("1", "true", "yes")
         if allow_unrestricted:
             return None
-        work_dir = Path(context.workspace) if context and context.workspace else Path.cwd()
+        work_dir = (
+            Path(context.workspace) if context and context.workspace else Path.cwd()
+        )
         work_dir_resolved = work_dir.resolve()
-        target = (work_dir / file_path).resolve() if not Path(file_path).is_absolute() else Path(file_path).resolve()
+        target = (
+            (work_dir / file_path).resolve()
+            if not Path(file_path).is_absolute()
+            else Path(file_path).resolve()
+        )
         try:
             target.relative_to(work_dir_resolved)
         except ValueError:
@@ -160,7 +420,9 @@ class XrdSimTool(HuginnTool):
             )
         return None
 
-    def _load_structure(self, input_data: XrdSimToolInput, context: ToolContext | None = None):
+    def _load_structure(
+        self, input_data: XrdSimToolInput, context: ToolContext | None = None
+    ):
         """Load pymatgen Structure from file or string."""
         try:
             from pymatgen.core import Structure
@@ -173,6 +435,7 @@ class XrdSimTool(HuginnTool):
         try:
             if input_data.structure_str:
                 from io import StringIO
+
                 return Structure.from_file(StringIO(input_data.structure_str)), None
             blocked = self._check_path(input_data.file_path, context)
             if blocked is not None:
@@ -185,7 +448,9 @@ class XrdSimTool(HuginnTool):
                 error=f"Failed to load structure: {e}",
             )
 
-    def _simulate_xrd(self, input_data: XrdSimToolInput, context: ToolContext | None = None) -> ToolResult:
+    def _simulate_xrd(
+        self, input_data: XrdSimToolInput, context: ToolContext | None = None
+    ) -> ToolResult:
         try:
             from pymatgen.analysis.diffraction.xrd import XRDCalculator
         except ImportError:
@@ -212,17 +477,7 @@ class XrdSimTool(HuginnTool):
                 error=f"XRDCalculator failed: {e}",
             )
 
-        peaks = []
-        for i in range(len(pattern.x)):
-            hkl_list = []
-            if hasattr(pattern, "hkls") and i < len(pattern.hkls):
-                for hkl_dict in pattern.hkls[i]:
-                    hkl_list.append(hkl_dict.get("hkl", []))
-            peaks.append({
-                "two_theta": round(float(pattern.x[i]), 4),
-                "intensity": round(float(pattern.y[i]), 2),
-                "hkls": hkl_list,
-            })
+        peaks = _pattern_peaks(pattern)
 
         return ToolResult(
             data={
@@ -234,7 +489,49 @@ class XrdSimTool(HuginnTool):
             success=True,
         )
 
-    def _parse_pattern(self, input_data: XrdSimToolInput, context: ToolContext | None = None) -> ToolResult:
+    def _load_pattern_data(
+        self, input_data: XrdSimToolInput, context: ToolContext | None
+    ) -> tuple[np.ndarray | None, ToolResult | None]:
+        """读取并校验 XRD CSV 数据, 返回 (二维数组, 错误结果)."""
+        blocked = self._check_path(input_data.file_path, context)
+        if blocked is not None:
+            return None, blocked
+
+        try:
+            data = np.loadtxt(input_data.file_path, delimiter=",", comments="#")
+        except Exception as e:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to parse XRD data file: {e}",
+            )
+
+        if data.size == 0:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error="XRD data file is empty or contains only comments.",
+            )
+        if data.ndim == 1:
+            # 1D 只允许单行两列的情况，多行单列无法和两列区分
+            if data.shape[0] != 2:
+                return None, ToolResult(
+                    data=None,
+                    success=False,
+                    error="XRD data file must have at least 2 columns (two_theta, intensity).",
+                )
+            data = data.reshape(1, 2)
+        if data.shape[1] < 2:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error="XRD data file must have at least 2 columns (two_theta, intensity).",
+            )
+        return data, None
+
+    def _parse_pattern(
+        self, input_data: XrdSimToolInput, context: ToolContext | None = None
+    ) -> ToolResult:
         try:
             from scipy.signal import find_peaks
         except ImportError:
@@ -244,37 +541,10 @@ class XrdSimTool(HuginnTool):
                 error="scipy is required for peak detection. Install with: pip install scipy",
             )
 
-        blocked = self._check_path(input_data.file_path, context)
-        if blocked is not None:
-            return blocked
+        data, err = self._load_pattern_data(input_data, context)
+        if err is not None:
+            return err
 
-        try:
-            data = np.loadtxt(input_data.file_path, delimiter=",", comments="#")
-        except Exception as e:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Failed to parse XRD data file: {e}",
-            )
-
-        if data.size == 0:
-            return ToolResult(
-                data=None, success=False,
-                error="XRD data file is empty or contains only comments.",
-            )
-        if data.ndim == 1:
-            # 1D 只允许单行两列的情况，多行单列无法和两列区分
-            if data.shape[0] != 2:
-                return ToolResult(
-                    data=None, success=False,
-                    error="XRD data file must have at least 2 columns (two_theta, intensity).",
-                )
-            data = data.reshape(1, 2)
-        if data.shape[1] < 2:
-            return ToolResult(
-                data=None, success=False,
-                error="XRD data file must have at least 2 columns (two_theta, intensity).",
-            )
         two_theta = data[:, 0]
         intensity = data[:, 1]
 
@@ -293,6 +563,21 @@ class XrdSimTool(HuginnTool):
             success=True,
         )
 
+    def _experimental_positions(
+        self, input_data: XrdSimToolInput, context: ToolContext | None
+    ) -> tuple[list | None, ToolResult | None]:
+        """取实验峰位: 有数据文件时解析, 否则用传入的 peaks."""
+        if input_data.experimental_file:
+            # _parse_pattern reads file_path, so point it at the experimental file
+            exp_input = input_data.model_copy(
+                update={"file_path": input_data.experimental_file}
+            )
+            exp_result = self._parse_pattern(exp_input, context)
+            if not exp_result.success:
+                return None, exp_result
+            return exp_result.data["peaks"], None
+        return list(input_data.peaks or []), None
+
     def _compare_patterns(
         self, input_data: XrdSimToolInput, context: ToolContext | None = None
     ) -> ToolResult:
@@ -300,42 +585,14 @@ class XrdSimTool(HuginnTool):
         sim_positions = [p["two_theta"] for p in sim_peaks]
 
         # Get experimental peak positions
-        if input_data.experimental_file:
-            # _parse_pattern reads file_path, so point it at the experimental file
-            exp_input = input_data.model_copy(update={"file_path": input_data.experimental_file})
-            exp_result = self._parse_pattern(exp_input, context)
-            if not exp_result.success:
-                return exp_result
-            exp_positions = exp_result.data["peaks"]
-        else:
-            exp_positions = list(input_data.peaks or [])
+        exp_positions, err = self._experimental_positions(input_data, context)
+        if err is not None:
+            return err
 
         tol = input_data.tolerance
-        matched = []
-        unmatched_exp = []
-        for ep in exp_positions:
-            best_match = None
-            best_dist = tol
-            for sp in sim_positions:
-                dist = abs(ep - sp)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_match = sp
-            if best_match is not None:
-                hkl = next(
-                    (p["hkls"] for p in sim_peaks if p["two_theta"] == best_match),
-                    [],
-                )
-                matched.append({
-                    "experimental": ep,
-                    "simulated": best_match,
-                    "delta": round(best_dist, 4),
-                    "hkls": hkl,
-                })
-            else:
-                unmatched_exp.append(ep)
-
-        unmatched_sim = [sp for sp in sim_positions if sp not in {m["simulated"] for m in matched}]
+        matched, unmatched_exp, unmatched_sim = _match_patterns(
+            exp_positions, sim_peaks, sim_positions, tol
+        )
 
         # Simple Rwp-like figure of merit (lower = better match)
         n_matched = len(matched)
@@ -355,7 +612,27 @@ class XrdSimTool(HuginnTool):
             success=True,
         )
 
-    def _index_peaks(self, input_data: XrdSimToolInput, context: ToolContext | None = None) -> ToolResult:
+    def _calc_pattern(
+        self, struct, input_data: XrdSimToolInput, calculator_cls
+    ) -> tuple[Any, ToolResult | None]:
+        """生成 pymatgen 衍射图, 失败时返回错误结果."""
+        try:
+            calc = calculator_cls(wavelength=input_data.wavelength)
+            pattern = calc.get_pattern(
+                struct,
+                two_theta_range=(input_data.two_theta_min, input_data.two_theta_max),
+            )
+        except Exception as e:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error=f"XRDCalculator failed: {e}",
+            )
+        return pattern, None
+
+    def _index_peaks(
+        self, input_data: XrdSimToolInput, context: ToolContext | None = None
+    ) -> ToolResult:
         """Assign Miller indices to observed peaks by matching against simulated pattern."""
         try:
             from pymatgen.analysis.diffraction.xrd import XRDCalculator
@@ -370,56 +647,19 @@ class XrdSimTool(HuginnTool):
         if err is not None:
             return err
 
-        try:
-            calc = XRDCalculator(wavelength=input_data.wavelength)
-            pattern = calc.get_pattern(
-                struct,
-                two_theta_range=(input_data.two_theta_min, input_data.two_theta_max),
-            )
-        except Exception as e:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"XRDCalculator failed: {e}",
-            )
+        pattern, err = self._calc_pattern(struct, input_data, XRDCalculator)
+        if err is not None:
+            return err
 
         # Build lookup: 2θ -> hkl list
-        sim_lookup = {}
-        for i in range(len(pattern.x)):
-            tt = round(float(pattern.x[i]), 4)
-            hkls = []
-            if hasattr(pattern, "hkls") and i < len(pattern.hkls):
-                for hkl_dict in pattern.hkls[i]:
-                    hkls.append(hkl_dict.get("hkl", []))
-            sim_lookup[tt] = hkls
-
+        sim_lookup = _sim_hkl_lookup(pattern)
         sim_positions = sorted(sim_lookup.keys())
         observed = input_data.peaks or []
         tol = input_data.tolerance
 
-        indexed = []
-        for obs_tt in observed:
-            best_match = None
-            best_dist = tol
-            for sp in sim_positions:
-                dist = abs(obs_tt - sp)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_match = sp
-            if best_match is not None:
-                indexed.append({
-                    "two_theta": obs_tt,
-                    "hkl": sim_lookup[best_match],
-                    "simulated_2theta": best_match,
-                    "delta": round(best_dist, 4),
-                })
-            else:
-                indexed.append({
-                    "two_theta": obs_tt,
-                    "hkl": None,
-                    "simulated_2theta": None,
-                    "delta": None,
-                })
+        indexed = [
+            _indexed_peak(obs_tt, sim_lookup, sim_positions, tol) for obs_tt in observed
+        ]
 
         return ToolResult(
             data={
@@ -468,31 +708,36 @@ class XrdSimTool(HuginnTool):
         system = getattr(input_data, "lattice_system", "cubic").lower()
         if system == "tetragonal":
             allowed = self._TETRAGONAL_HKLS
-            return self._inverse_design_2param(wl, targets, allowed, system, "tetragonal",
-                                                input_data.lattice_params_guess)
+            return self._inverse_design_2param(
+                wl,
+                targets,
+                allowed,
+                system,
+                "tetragonal",
+                input_data.lattice_params_guess,
+            )
         elif system in ("hexagonal", "hex"):
             allowed = self._HEXAGONAL_HKLS
-            return self._inverse_design_2param(wl, targets, allowed, system, "hexagonal",
-                                                input_data.lattice_params_guess)
+            return self._inverse_design_2param(
+                wl,
+                targets,
+                allowed,
+                system,
+                "hexagonal",
+                input_data.lattice_params_guess,
+            )
         else:
             # 立方 (默认)
-            allowed = self._CUBIC_HKLS
+            return self._inverse_design_cubic(input_data, targets, wl, minimize)
+
+    def _inverse_design_cubic(
+        self, input_data: XrdSimToolInput, targets: list, wl: float, minimize: Any
+    ) -> ToolResult:
+        """立方晶系逆设计: 单参数 a 优化."""
+        allowed = self._CUBIC_HKLS
         n = min(len(targets), len(allowed))
         inv_sq = [math.sqrt(h * h + k * k + l * l) for h, k, l in allowed[:n]]  # noqa: E741
         tgt = [float(t) for t in targets[:n]]
-
-        def two_theta(a: float, s: float) -> float:
-            # a 太小会让 λ/(2d) ≥ 1, arcsin 无定义, 夹到边界外给个大角度惩罚.
-            arg = wl * s / (2.0 * a)
-            if arg >= 1.0:
-                return 180.0
-            return math.degrees(2.0 * math.asin(arg))
-
-        def objective(x):
-            a = float(x[0])
-            if a <= 0.0:
-                return 1e6
-            return sum((two_theta(a, s) - t) ** 2 for s, t in zip(inv_sq, tgt))
 
         # 初始猜测: 用户给的 lattice_params_guess[0], 否则用 5.0Å (常见金属区间).
         a0 = 5.0
@@ -500,24 +745,14 @@ class XrdSimTool(HuginnTool):
             a0 = float(input_data.lattice_params_guess[0])
 
         res = minimize(
-            objective,
+            _cubic_objective(wl, inv_sq, tgt),
             [a0],
             method="Nelder-Mead",
             options={"xatol": 1e-5, "fatol": 1e-10, "maxiter": 5000},
         )
         a_opt = float(res.x[0])
 
-        sim_peaks = []
-        sse = 0.0
-        for (h, k, l), s, t in zip(allowed[:n], inv_sq, tgt):  # noqa: E741
-            tt = two_theta(a_opt, s)
-            sse += (tt - t) ** 2
-            sim_peaks.append({
-                "hkl": [h, k, l],
-                "two_theta": round(tt, 4),
-                "target_two_theta": round(t, 4),
-                "delta": round(tt - t, 4),
-            })
+        sim_peaks, sse = _cubic_sim_peaks(a_opt, allowed[:n], inv_sq, tgt, wl)
         rmse = math.sqrt(sse / n) if n else 0.0
 
         return ToolResult(
@@ -537,83 +772,47 @@ class XrdSimTool(HuginnTool):
         )
 
     def _inverse_design_2param(
-        self, wl: float, targets: list, allowed: list, system_name: str,
-        crystal_class: str, lattice_guess: list | None,
+        self,
+        wl: float,
+        targets: list,
+        allowed: list,
+        system_name: str,
+        crystal_class: str,
+        lattice_guess: list | None,
     ) -> ToolResult:
         """四方/六方晶系逆设计: (a, c) 两参数优化.
         四方: 1/d² = (h²+k²)/a² + l²/c²
         六方: 1/d² = 4(h²+hk+k²)/(3a²) + l²/c²
         """
         from scipy.optimize import minimize
-        n = min(len(targets), len(allowed))
-        tgt = [float(t) for t in targets[:n]]
-        hkls = allowed[:n]
 
-        a0, c0 = 4.0, 6.0  # 默认初始猜测
-        if lattice_guess and len(lattice_guess) >= 2:
-            if lattice_guess[0] > 0:
-                a0 = float(lattice_guess[0])
-            if lattice_guess[1] > 0:
-                c0 = float(lattice_guess[1])
-
-        def d_spacing(a: float, c: float, hkl: tuple) -> float:
-            h, k, l = hkl  # noqa: E741
-            if crystal_class == "tetragonal":
-                inv_d2 = (h*h + k*k) / (a*a) + (l*l) / (c*c)
-            else:  # hexagonal
-                inv_d2 = 4.0 * (h*h + h*k + k*k) / (3.0 * a*a) + (l*l) / (c*c)
-            return 1.0 / math.sqrt(inv_d2) if inv_d2 > 0 else 1e6
-
-        def two_theta(a: float, c: float, hkl: tuple) -> float:
-            d = d_spacing(a, c, hkl)
-            arg = wl / (2.0 * d)
-            if arg >= 1.0:
-                return 180.0
-            return math.degrees(2.0 * math.asin(arg))
-
-        def objective(x):
-            a, c = float(x[0]), float(x[1])
-            if a <= 0.0 or c <= 0.0:
-                return 1e6
-            return sum((two_theta(a, c, hkl) - t) ** 2 for hkl, t in zip(hkls, tgt))
+        n, tgt, hkls = _prepare_targets(targets, allowed)
+        a0, c0 = _initial_ac_guess(lattice_guess)  # 默认初始猜测
 
         res = minimize(
-            objective, [a0, c0], method="Nelder-Mead",
+            _two_param_objective(wl, crystal_class, hkls, tgt),
+            [a0, c0],
+            method="Nelder-Mead",
             options={"xatol": 1e-5, "fatol": 1e-10, "maxiter": 8000},
         )
         a_opt, c_opt = float(res.x[0]), float(res.x[1])
 
-        sim_peaks = []
-        sse = 0.0
-        for hkl, t in zip(hkls, tgt):
-            tt = two_theta(a_opt, c_opt, hkl)
-            sse += (tt - t) ** 2
-            sim_peaks.append({
-                "hkl": list(hkl),
-                "two_theta": round(tt, 4),
-                "target_two_theta": round(t, 4),
-                "delta": round(tt - t, 4),
-            })
+        sim_peaks, sse = _two_param_sim_peaks(
+            a_opt, c_opt, hkls, tgt, wl, crystal_class
+        )
         rmse = math.sqrt(sse / n) if n else 0.0
 
-        if crystal_class == "tetragonal":
-            lattice_params = [round(a_opt, 6)] * 2 + [round(c_opt, 6)] + [90.0, 90.0, 90.0]
-        else:
-            lattice_params = [round(a_opt, 6)] * 2 + [round(c_opt, 6)] + [90.0, 90.0, 120.0]
-
         return ToolResult(
-            data={
-                "lattice_system": system_name,
-                "lattice_a": round(a_opt, 6),
-                "lattice_c": round(c_opt, 6),
-                "lattice_parameters": lattice_params,
-                "match_error": round(rmse, 6),
-                "sse": round(sse, 6),
-                "simulated_peaks": sim_peaks,
-                "target_peaks": tgt,
-                "wavelength": wl,
-                "n_peaks": n,
-                "converged": bool(res.success),
-            },
+            data=_two_param_data(
+                system_name,
+                crystal_class,
+                (a_opt, c_opt),
+                (rmse, sse),
+                sim_peaks,
+                tgt,
+                wl,
+                n,
+                bool(res.success),
+            ),
             success=True,
         )

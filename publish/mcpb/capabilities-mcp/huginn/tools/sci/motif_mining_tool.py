@@ -40,12 +40,8 @@ class MotifMiningInput(BaseModel):
     ] = Field(...)
 
     # Structure input
-    positions: list[list[float]] = Field(
-        ..., description="Atomic positions (N×3)"
-    )
-    species: list[str] = Field(
-        ..., description="Element symbols for each atom"
-    )
+    positions: list[list[float]] = Field(..., description="Atomic positions (N×3)")
+    species: list[str] = Field(..., description="Element symbols for each atom")
     lattice: list[list[float]] | None = Field(
         default=None, description="3×3 lattice vectors (for periodic structures)"
     )
@@ -57,18 +53,20 @@ class MotifMiningInput(BaseModel):
     )
 
     # Coordination
-    coordination_type: Literal["tetrahedron", "octahedron", "trigonal_prism",
-                                "square_planar", "auto"] = Field(
-        default="auto", description="Expected coordination geometry"
+    coordination_type: Literal[
+        "tetrahedron", "octahedron", "trigonal_prism", "square_planar", "auto"
+    ] = Field(default="auto", description="Expected coordination geometry")
+    tolerance: float = Field(
+        default=0.3, ge=0, le=1, description="Shape tolerance for polyhedra matching"
     )
-    tolerance: float = Field(default=0.3, ge=0, le=1, description="Shape tolerance for polyhedra matching")
 
     # Ring analysis
     max_ring_size: int = Field(default=8, ge=3, le=20)
 
     # Graph matching
     query_graph: dict | None = Field(
-        default=None, description="Query motif: {nodes: [{id, species, coord}], edges: [{src, dst, type}]}"
+        default=None,
+        description="Query motif: {nodes: [{id, species, coord}], edges: [{src, dst, type}]}",
     )
 
     # Frequency analysis
@@ -79,6 +77,138 @@ class MotifMiningInput(BaseModel):
     # Motif similarity
     reference_motif: dict | None = Field(default=None)
     candidate_motifs: list[dict] | None = Field(default=None)
+
+
+def _polyhedron_entry(pos, species, neighbors, i, args) -> dict | None:
+    """构建单个原子的配位多面体条目; 无邻居时返回 None."""
+    nb = neighbors[i]
+    cn = len(nb)
+    if cn == 0:
+        return None
+
+    nb_pos = pos[nb] - pos[i]
+    if args.lattice:
+        # Minimum image
+        inv_lat = np.linalg.inv(np.array(args.lattice))
+        frac = nb_pos @ inv_lat
+        frac = frac - np.round(frac)
+        nb_pos = frac @ np.array(args.lattice)
+
+    # Classify shape
+    shape = MotifMiningTool._classify_polyhedron(nb_pos, cn, args.tolerance)
+
+    # Compute OPA (order parameter): measure of shape regularity
+    opa = MotifMiningTool._compute_opa(nb_pos, shape)
+
+    return {
+        "atom_index": i,
+        "species": species[i],
+        "coordination_number": cn,
+        "neighbors": nb,
+        "neighbor_species": [species[j] for j in nb],
+        "polyhedron_type": shape,
+        "order_parameter": round(float(opa), 4),
+        "regular": opa > 0.7,
+    }
+
+
+def _shape_counts(polyhedra: list[dict]) -> dict[str, int]:
+    shape_counts: dict[str, int] = {}
+    for p in polyhedra:
+        shape_counts[p["polyhedron_type"]] = (
+            shape_counts.get(p["polyhedron_type"], 0) + 1
+        )
+    return shape_counts
+
+
+def _find_subgraph_embeddings(
+    q_ids, q_species, q_adj, species, neighbors
+) -> list[dict]:
+    """VF2 风格子图同构, 返回所有嵌入映射."""
+    n_query = len(q_ids)
+    matches: list[dict] = []
+
+    def try_match(q_idx: int, mapping: dict, used: set):
+        if q_idx == n_query:
+            matches.append(dict(mapping))
+            return
+        q_id = q_ids[q_idx]
+        q_sp = q_species[q_idx]
+
+        for i in range(len(species)):
+            if i in used:
+                continue
+            if q_sp and species[i] != q_sp:
+                continue
+            # Check connectivity with already-mapped nodes
+            ok = True
+            for q_other in q_adj[q_id]:
+                if q_other in mapping and i not in neighbors[mapping[q_other]]:
+                    ok = False
+                    break
+            if ok:
+                mapping[q_id] = i
+                used.add(i)
+                try_match(q_idx + 1, mapping, used)
+                del mapping[q_id]
+                used.remove(i)
+
+    try_match(0, {}, set())
+    return matches
+
+
+def _find_rings(n: int, adj: dict, max_ring_size: int) -> set:
+    """DFS 枚举所有长度不超过 max_ring_size 的环."""
+    rings: set = set()
+
+    def dfs(start: int, current: int, path: list[int], visited: set):
+        if len(path) > max_ring_size:
+            return
+        for nb in adj[current]:
+            if nb == start and len(path) >= 3:
+                rings.add(frozenset(path))
+            elif nb not in visited and nb > start:  # avoid duplicates
+                dfs(start, nb, path + [nb], visited | {nb})
+
+    for i in range(n):
+        dfs(i, i, [i], {i})
+    return rings
+
+
+def _ring_records(rings: set, species) -> list[dict]:
+    ring_data = []
+    for ring in rings:
+        atoms = sorted(ring)
+        ring_species = [species[a] for a in atoms]
+        ring_data.append(
+            {
+                "atoms": atoms,
+                "size": len(atoms),
+                "species": ring_species,
+                "formula": "-".join(ring_species),
+            }
+        )
+    return ring_data
+
+
+def _compare_motif(i: int, cand: dict, ref_desc: dict) -> dict:
+    """单个候选 motif 与参考 motif 的相似度记录."""
+    cand_desc = MotifMiningTool._graph_descriptors(cand.get("graph", {}))
+    sim = MotifMiningTool._cosine_sim(
+        ref_desc["degree_histogram"], cand_desc["degree_histogram"]
+    )
+    ged = abs(ref_desc["n_nodes"] - cand_desc["n_nodes"]) + abs(
+        ref_desc["n_edges"] - cand_desc["n_edges"]
+    )
+    return {
+        "index": i,
+        "name": cand.get("name", f"motif_{i}"),
+        "cosine_similarity": round(float(sim), 4),
+        "graph_edit_distance": ged,
+        "n_nodes": cand_desc["n_nodes"],
+        "n_edges": cand_desc["n_edges"],
+        "same_species_set": ref_desc["species_set"] == cand_desc["species_set"],
+    }
 
 
 class MotifMiningTool(HuginnTool):
@@ -98,7 +228,9 @@ class MotifMiningTool(HuginnTool):
     )
     input_schema = MotifMiningInput
 
-    async def _execute(self, args: MotifMiningInput, context: ToolContext) -> ToolResult:
+    async def _execute(
+        self, args: MotifMiningInput, context: ToolContext
+    ) -> ToolResult:
         try:
             if args.action == "coordination_polyhedra":
                 return self._coordination_polyhedra(args)
@@ -112,7 +244,9 @@ class MotifMiningTool(HuginnTool):
                 return self._frequency_analysis(args)
             if args.action == "motif_similarity":
                 return self._motif_similarity(args)
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
 
@@ -129,50 +263,24 @@ class MotifMiningTool(HuginnTool):
 
         polyhedra = []
         for i in range(n):
-            nb = neighbors[i]
-            cn = len(nb)
-            if cn == 0:
-                continue
-
-            nb_pos = pos[nb] - pos[i]
-            if args.lattice:
-                # Minimum image
-                inv_lat = np.linalg.inv(np.array(args.lattice))
-                frac = nb_pos @ inv_lat
-                frac = frac - np.round(frac)
-                nb_pos = frac @ np.array(args.lattice)
-
-            # Classify shape
-            shape = self._classify_polyhedron(nb_pos, cn, args.tolerance)
-
-            # Compute OPA (order parameter): measure of shape regularity
-            opa = self._compute_opa(nb_pos, shape)
-
-            polyhedra.append({
-                "atom_index": i,
-                "species": species[i],
-                "coordination_number": cn,
-                "neighbors": nb,
-                "neighbor_species": [species[j] for j in nb],
-                "polyhedron_type": shape,
-                "order_parameter": round(float(opa), 4),
-                "regular": opa > 0.7,
-            })
+            entry = _polyhedron_entry(pos, species, neighbors, i, args)
+            if entry is not None:
+                polyhedra.append(entry)
 
         # Statistics
-        shape_counts: dict[str, int] = {}
-        for p in polyhedra:
-            shape_counts[p["polyhedron_type"]] = shape_counts.get(p["polyhedron_type"], 0) + 1
+        shape_counts = _shape_counts(polyhedra)
 
-        return ToolResult(data={
-            "action": "coordination_polyhedra",
-            "n_atoms": n,
-            "n_classified": len(polyhedra),
-            "polyhedra": polyhedra,
-            "shape_distribution": shape_counts,
-            "message": f"Classified {len(polyhedra)} coordination environments. "
-                       f"Most common: {max(shape_counts, key=shape_counts.get)}.",
-        })
+        return ToolResult(
+            data={
+                "action": "coordination_polyhedra",
+                "n_atoms": n,
+                "n_classified": len(polyhedra),
+                "polyhedra": polyhedra,
+                "shape_distribution": shape_counts,
+                "message": f"Classified {len(polyhedra)} coordination environments. "
+                f"Most common: {max(shape_counts, key=shape_counts.get)}.",
+            }
+        )
 
     # ── Bond motif search ───────────────────────────────────
 
@@ -188,7 +296,7 @@ class MotifMiningTool(HuginnTool):
         for i in range(len(species)):
             nb = neighbors[i]
             for j_idx, j in enumerate(nb):
-                for k in nb[j_idx + 1:]:
+                for k in nb[j_idx + 1 :]:
                     # Bond angle at i: j-i-k
                     v1 = pos[j] - pos[i]
                     v2 = pos[k] - pos[i]
@@ -200,26 +308,32 @@ class MotifMiningTool(HuginnTool):
                     )
                     angle = math.degrees(math.acos(np.clip(cos_angle, -1, 1)))
 
-                    motif_type = self._classify_angle(angle, species[j], species[i], species[k])
+                    motif_type = self._classify_angle(
+                        angle, species[j], species[i], species[k]
+                    )
                     if motif_type:
-                        motifs.append({
-                            "type": motif_type,
-                            "atoms": [j, i, k],
-                            "species": [species[j], species[i], species[k]],
-                            "angle_deg": round(angle, 2),
-                        })
+                        motifs.append(
+                            {
+                                "type": motif_type,
+                                "atoms": [j, i, k],
+                                "species": [species[j], species[i], species[k]],
+                                "angle_deg": round(angle, 2),
+                            }
+                        )
 
         motif_types: dict[str, int] = {}
         for m in motifs:
             motif_types[m["type"]] = motif_types.get(m["type"], 0) + 1
 
-        return ToolResult(data={
-            "action": "bond_motif_search",
-            "n_motifs": len(motifs),
-            "motifs": motifs[:200],  # cap
-            "motif_distribution": motif_types,
-            "message": f"Found {len(motifs)} bond motifs. Types: {motif_types}.",
-        })
+        return ToolResult(
+            data={
+                "action": "bond_motif_search",
+                "n_motifs": len(motifs),
+                "motifs": motifs[:200],  # cap
+                "motif_distribution": motif_types,
+                "message": f"Found {len(motifs)} bond motifs. Types: {motif_types}.",
+            }
+        )
 
     # ── Ring analysis ───────────────────────────────────────
 
@@ -231,46 +345,24 @@ class MotifMiningTool(HuginnTool):
 
         # Build adjacency for DFS-based ring search
         adj = {i: set(neighbors[i]) for i in range(len(species))}
-        rings = set()  # store as frozenset of sorted atom indices
-
-        def dfs(start: int, current: int, path: list[int], visited: set):
-            if len(path) > args.max_ring_size:
-                return
-            for nb in adj[current]:
-                if nb == start and len(path) >= 3:
-                    ring = frozenset(path)
-                    rings.add(ring)
-                elif nb not in visited and nb > start:  # avoid duplicates
-                    dfs(start, nb, path + [nb], visited | {nb})
-
-        for i in range(len(species)):
-            dfs(i, i, [i], {i})
+        rings = _find_rings(len(species), adj, args.max_ring_size)
 
         # Classify rings
-        ring_data = []
-        for ring in rings:
-            atoms = sorted(ring)
-            ring_size = len(atoms)
-            ring_species = [species[a] for a in atoms]
-            formula = "-".join(ring_species)
-            ring_data.append({
-                "atoms": atoms,
-                "size": ring_size,
-                "species": ring_species,
-                "formula": formula,
-            })
+        ring_data = _ring_records(rings, species)
 
         size_dist: dict[int, int] = {}
         for r in ring_data:
             size_dist[r["size"]] = size_dist.get(r["size"], 0) + 1
 
-        return ToolResult(data={
-            "action": "ring_analysis",
-            "n_rings": len(ring_data),
-            "rings": ring_data[:200],
-            "size_distribution": {str(k): v for k, v in sorted(size_dist.items())},
-            "message": f"Found {len(ring_data)} rings. Size distribution: {size_dist}.",
-        })
+        return ToolResult(
+            data={
+                "action": "ring_analysis",
+                "n_rings": len(ring_data),
+                "rings": ring_data[:200],
+                "size_distribution": {str(k): v for k, v in sorted(size_dist.items())},
+                "message": f"Found {len(ring_data)} rings. Size distribution: {size_dist}.",
+            }
+        )
 
     # ── Graph matching ──────────────────────────────────────
 
@@ -300,41 +392,18 @@ class MotifMiningTool(HuginnTool):
         q_ids = [n["id"] for n in q_nodes]
         n_query = len(q_ids)
 
-        def try_match(q_idx: int, mapping: dict, used: set):
-            if q_idx == n_query:
-                matches.append(dict(mapping))
-                return
-            q_id = q_ids[q_idx]
-            q_sp = q_species[q_idx]
+        matches = _find_subgraph_embeddings(q_ids, q_species, q_adj, species, neighbors)
 
-            for i in range(len(species)):
-                if i in used:
-                    continue
-                if q_sp and species[i] != q_sp:
-                    continue
-                # Check connectivity with already-mapped nodes
-                ok = True
-                for q_other in q_adj[q_id]:
-                    if q_other in mapping and i not in neighbors[mapping[q_other]]:
-                        ok = False
-                        break
-                if ok:
-                    mapping[q_id] = i
-                    used.add(i)
-                    try_match(q_idx + 1, mapping, used)
-                    del mapping[q_id]
-                    used.remove(i)
-
-        try_match(0, {}, set())
-
-        return ToolResult(data={
-            "action": "graph_match",
-            "n_matches": len(matches),
-            "matches": matches[:100],  # cap
-            "query_nodes": n_query,
-            "query_edges": len(q_edges),
-            "message": f"Found {len(matches)} subgraph embeddings.",
-        })
+        return ToolResult(
+            data={
+                "action": "graph_match",
+                "n_matches": len(matches),
+                "matches": matches[:100],  # cap
+                "query_nodes": n_query,
+                "query_edges": len(q_edges),
+                "message": f"Found {len(matches)} subgraph embeddings.",
+            }
+        )
 
     # ── Frequency analysis ──────────────────────────────────
 
@@ -364,21 +433,27 @@ class MotifMiningTool(HuginnTool):
             for i in range(len(species)):
                 if q_species[0] and species[i] != q_species[0]:
                     continue
-                if self._has_motif_at(i, q_species, q_adj, neighbors, species, set(), 0, [i]):
+                if self._has_motif_at(
+                    i, q_species, q_adj, neighbors, species, set(), 0, [i]
+                ):
                     count += 1
 
-            results.append({
-                "name": motif.get("name", "unnamed"),
-                "count": count,
-                "frequency": round(count / max(len(species), 1), 4),
-            })
+            results.append(
+                {
+                    "name": motif.get("name", "unnamed"),
+                    "count": count,
+                    "frequency": round(count / max(len(species), 1), 4),
+                }
+            )
 
-        return ToolResult(data={
-            "action": "frequency_analysis",
-            "motif_counts": results,
-            "n_atoms": len(species),
-            "message": f"Counted {len(results)} motif types. Total occurrences: {sum(r['count'] for r in results)}.",
-        })
+        return ToolResult(
+            data={
+                "action": "frequency_analysis",
+                "motif_counts": results,
+                "n_atoms": len(species),
+                "message": f"Counted {len(results)} motif types. Total occurrences: {sum(r['count'] for r in results)}.",
+            }
+        )
 
     # ── Motif similarity ────────────────────────────────────
 
@@ -386,7 +461,11 @@ class MotifMiningTool(HuginnTool):
         """Compare candidate motifs to a reference using graph edit distance
         and topological descriptors."""
         if not args.reference_motif or not args.candidate_motifs:
-            return ToolResult(data=None, success=False, error="reference_motif and candidate_motifs required")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="reference_motif and candidate_motifs required",
+            )
 
         ref = args.reference_motif
         ref_graph = ref.get("graph", {})
@@ -394,37 +473,19 @@ class MotifMiningTool(HuginnTool):
 
         results = []
         for i, cand in enumerate(args.candidate_motifs):
-            cand_graph = cand.get("graph", {})
-            cand_desc = self._graph_descriptors(cand_graph)
-
-            # Simple descriptor-based similarity
-            # Use cosine similarity on degree histogram
-            sim = self._cosine_sim(ref_desc["degree_histogram"],
-                                    cand_desc["degree_histogram"])
-
-            # Graph edit distance estimate (node count difference + edge difference)
-            ged = abs(ref_desc["n_nodes"] - cand_desc["n_nodes"]) + \
-                  abs(ref_desc["n_edges"] - cand_desc["n_edges"])
-
-            results.append({
-                "index": i,
-                "name": cand.get("name", f"motif_{i}"),
-                "cosine_similarity": round(float(sim), 4),
-                "graph_edit_distance": ged,
-                "n_nodes": cand_desc["n_nodes"],
-                "n_edges": cand_desc["n_edges"],
-                "same_species_set": ref_desc["species_set"] == cand_desc["species_set"],
-            })
+            results.append(_compare_motif(i, cand, ref_desc))
 
         results.sort(key=lambda x: x["cosine_similarity"], reverse=True)
 
-        return ToolResult(data={
-            "action": "motif_similarity",
-            "reference_name": ref.get("name", "reference"),
-            "candidates": results,
-            "message": f"Compared {len(results)} candidates to reference. "
-                       f"Most similar: {results[0]['name']} (sim={results[0]['cosine_similarity']:.3f}).",
-        })
+        return ToolResult(
+            data={
+                "action": "motif_similarity",
+                "reference_name": ref.get("name", "reference"),
+                "candidates": results,
+                "message": f"Compared {len(results)} candidates to reference. "
+                f"Most similar: {results[0]['name']} (sim={results[0]['cosine_similarity']:.3f}).",
+            }
+        )
 
     # ── Helpers ─────────────────────────────────────────────
 
@@ -541,8 +602,7 @@ class MotifMiningTool(HuginnTool):
             if best_j >= 0 and best_cos < -0.5:
                 matched += 1
                 used.add(i)
-                used.add(best_j
-                        )
+                used.add(best_j)
         return matched / 3.0  # 3 pairs for octahedron
 
     @staticmethod
@@ -566,7 +626,9 @@ class MotifMiningTool(HuginnTool):
         return None
 
     @staticmethod
-    def _has_motif_at(start, q_species, q_adj, neighbors, species, visited, depth, path):
+    def _has_motif_at(
+        start, q_species, q_adj, neighbors, species, visited, depth, path
+    ):
         if depth == len(q_species):
             return True
         current = path[-1]
@@ -576,8 +638,14 @@ class MotifMiningTool(HuginnTool):
             if q_species[depth] and species[nb] != q_species[depth]:
                 continue
             if MotifMiningTool._has_motif_at(
-                start, q_species, q_adj, neighbors, species,
-                visited | {nb}, depth + 1, path + [nb]
+                start,
+                q_species,
+                q_adj,
+                neighbors,
+                species,
+                visited | {nb},
+                depth + 1,
+                path + [nb],
             ):
                 return True
         return False

@@ -16,19 +16,10 @@ from skfem.models.elasticity import linear_elasticity, plane_stress
 from huginn.core_types import ToolResult
 
 
-def buckling(args: Any) -> ToolResult:
-    """2D 线弹性特征值屈曲. 简化几何刚度: 单位预应力分布."""
-    mesh_result = args._mesh_result if hasattr(args, "_mesh_result") else None
-    if mesh_result is None:
-        from .mesh import mesh_from_geometry
-        mesh_result = mesh_from_geometry(args)
-        if not mesh_result.success:
-            return mesh_result
-
-    m = mesh_result.data["mesh"]
-    boundary_facets = mesh_result.data["boundary_facets"]
-
-    material = args.material
+def _assemble_buckling_system(
+    m: Any, material: dict[str, float]
+) -> tuple[Any, Any, Any]:
+    """组装刚度矩阵 K 和简化几何刚度 K_G."""
     E = material["E"]
     nu = material["nu"]
     material.get("rho", 7850.0)
@@ -49,21 +40,84 @@ def buckling(args: Any) -> ToolResult:
     # K_G ≈ alpha * diag(K) — alpha 是单位载荷下的几何刚度尺度
     # 特征值 λ = alpha * diag(K) / K → 与 K 同量纲
     from scipy.sparse import diags
+
     KG = diags(K_diag * 1e-6, 0, format="csr")  # 缩放系数 1e-6
+    return basis, K, KG
+
+
+def _solve_buckling_eigsh(
+    KG_red: Any, K_red: Any, n_modes: int
+) -> tuple[Any, ToolResult | None]:
+    """解 K_G φ = λ K φ; 返回 (eigvals, 错误结果或 None)."""
+    try:
+        # 解 K_G φ = λ K φ (用 eigsh, 注意符号)
+        # eigsh(A, k, M=B) 解 A φ = λ B φ
+        eigvals, _eigvecs = eigsh(
+            KG_red,
+            k=n_modes,
+            M=K_red,
+            sigma=0.0,
+            which="LM",
+            mode="normal",
+        )
+    except Exception as exc:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error=f"buckling eigsh failed: {exc}",
+        )
+    return eigvals, None
+
+
+def _buckling_result(
+    eigvals: Any, m: Any, basis: Any, K_red: Any, material: dict[str, float]
+) -> ToolResult:
+    """排序/过滤特征值并组装返回数据."""
+    sort_idx = np.argsort(eigvals)
+    eigvals = eigvals[sort_idx]
+
+    valid_mask = np.isfinite(eigvals) & (eigvals > 0)
+    crit_factors = eigvals[valid_mask]
+
+    return ToolResult(
+        data={
+            "critical_load_factors": crit_factors.tolist(),
+            "first_critical_factor": float(crit_factors[0])
+            if len(crit_factors)
+            else None,
+            "n_modes_returned": len(crit_factors),
+            "n_nodes": m.p.shape[1],
+            "n_dofs": basis.N,
+            "n_free_dofs": K_red.shape[0],
+            "material": material,
+            "note": "simplified geometric stiffness (diagonal approximation) — for production use, implement stress-based K_G",
+        },
+        success=True,
+    )
+
+
+def buckling(args: Any) -> ToolResult:
+    """2D 线弹性特征值屈曲. 简化几何刚度: 单位预应力分布."""
+    mesh_result = args._mesh_result if hasattr(args, "_mesh_result") else None
+    if mesh_result is None:
+        from .mesh import mesh_from_geometry
+
+        mesh_result = mesh_from_geometry(args)
+        if not mesh_result.success:
+            return mesh_result
+
+    m = mesh_result.data["mesh"]
+    boundary_facets = mesh_result.data["boundary_facets"]
+
+    material = args.material
+    basis, K, KG = _assemble_buckling_system(m, material)
 
     # 边界条件
-    bcs = args.boundary_conditions
-    fixed_dofs = []
-    for bc in bcs:
-        region = bc.get("region", "left")
-        region_facets = boundary_facets.get(region, [])
-        if len(region_facets):
-            region_nodes = np.unique(m.facets[:, region_facets])
-            for node in region_nodes:
-                for dof_idx in bc.get("dofs", [0, 1]):
-                    fixed_dofs.append(basis.nodal_dofs[dof_idx][node])
+    from .mesh import _collect_fixed_dofs
 
-    fixed_dofs = np.array(fixed_dofs, dtype=int) if fixed_dofs else np.array([], dtype=int)
+    fixed_dofs = _collect_fixed_dofs(
+        args.boundary_conditions, boundary_facets, m, basis
+    )
     free_dofs = np.setdiff1d(np.arange(basis.N), fixed_dofs)
 
     K_red = K.tocsr()[free_dofs][:, free_dofs]
@@ -77,40 +131,7 @@ def buckling(args: Any) -> ToolResult:
             error="not enough free DOFs for buckling analysis",
         )
 
-    try:
-        # 解 K_G φ = λ K φ (用 eigsh, 注意符号)
-        # eigsh(A, k, M=B) 解 A φ = λ B φ
-        eigvals, eigvecs = eigsh(
-            KG_red,
-            k=n_modes,
-            M=K_red,
-            sigma=0.0,
-            which="LM",
-            mode="normal",
-        )
-    except Exception as exc:
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"buckling eigsh failed: {exc}",
-        )
-
-    sort_idx = np.argsort(eigvals)
-    eigvals = eigvals[sort_idx]
-
-    valid_mask = np.isfinite(eigvals) & (eigvals > 0)
-    crit_factors = eigvals[valid_mask]
-
-    return ToolResult(
-        data={
-            "critical_load_factors": crit_factors.tolist(),
-            "first_critical_factor": float(crit_factors[0]) if len(crit_factors) else None,
-            "n_modes_returned": len(crit_factors),
-            "n_nodes": m.p.shape[1],
-            "n_dofs": basis.N,
-            "n_free_dofs": K_red.shape[0],
-            "material": material,
-            "note": "simplified geometric stiffness (diagonal approximation) — for production use, implement stress-based K_G",
-        },
-        success=True,
-    )
+    eigvals, err = _solve_buckling_eigsh(KG_red, K_red, n_modes)
+    if err is not None:
+        return err
+    return _buckling_result(eigvals, m, basis, K_red, material)

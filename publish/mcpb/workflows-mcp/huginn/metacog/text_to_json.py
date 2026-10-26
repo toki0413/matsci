@@ -39,6 +39,15 @@ def strip_fence(text: str) -> str:
     return blocks[-1] if blocks else text
 
 
+def _try_parse_object(cand: str) -> dict | None:
+    """解析一个候选 JSON 串, 失败或非 dict 返回 None (不抛)."""
+    try:
+        obj = json.loads(cand)
+    except Exception:  # noqa: BLE001 — 单个坏对象跳过
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 def find_json_objects(text: str) -> list[dict]:
     """扫描文本, 返回**所有**平衡 {...} 的已解析 dict(按出现顺序).
 
@@ -54,16 +63,13 @@ def find_json_objects(text: str) -> list[dict]:
                 start = i
             depth += 1
         elif ch == "}":
-            if depth > 0:
-                depth -= 1
-                if depth == 0 and start >= 0:
-                    cand = text[start:i + 1]
-                    try:
-                        obj = json.loads(cand)
-                        if isinstance(obj, dict):
-                            out.append(obj)
-                    except Exception:  # noqa: BLE001 — 单个坏对象跳过
-                        pass
+            if depth == 0:
+                continue
+            depth -= 1
+            if depth == 0 and start >= 0:
+                obj = _try_parse_object(text[start:i + 1])
+                if obj is not None:
+                    out.append(obj)
     return out
 
 

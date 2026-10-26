@@ -30,6 +30,7 @@ Pearl L3 反事实 P(Y_x | X=x', Y=y'):
   - Bayesian posterior over noise (MCMC)
   - 反事实渲染成图像 (visualize cf prediction as plot)
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── 核心算法: Monte Carlo abduction + 反事实预测 ────────────
+
 
 def _simulate_with_noise(
     scm: VisualSCM,
@@ -123,8 +125,15 @@ def _abduct_noise(
 
 def _stats(samples: list[float]) -> dict[str, Any]:
     if not samples:
-        return {"mean": 0.0, "std": 0.0, "p5": 0.0, "p50": 0.0,
-                "p95": 0.0, "min": 0.0, "max": 0.0}
+        return {
+            "mean": 0.0,
+            "std": 0.0,
+            "p5": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+        }
     s_sorted = sorted(samples)
     n = len(s_sorted)
     return {
@@ -136,6 +145,178 @@ def _stats(samples: list[float]) -> dict[str, Any]:
         "min": s_sorted[0],
         "max": s_sorted[-1],
     }
+
+
+def _validate_render_args(
+    scm: VisualSCM,
+    evidence: dict[str, float],
+    intervention: dict[str, float],
+    targets: list[str],
+) -> dict[str, Any] | None:
+    # 校验
+    missing_t = [t for t in targets if t not in scm.nodes]
+    if missing_t:
+        return {
+            "error": f"targets 不在 SCM: {missing_t}",
+            "scm_nodes": list(scm.nodes.keys()),
+        }
+    bad_interv = [k for k in intervention if k not in scm.nodes]
+    if bad_interv:
+        return {"error": f"intervention 节点不在 SCM: {bad_interv}"}
+    bad_ev = [k for k in evidence if k not in scm.nodes]
+    if bad_ev:
+        return {"error": f"evidence 节点不在 SCM: {bad_ev}"}
+    overlap = set(evidence) & set(intervention)
+    if overlap:
+        return {
+            "error": f"evidence 和 intervention 重叠: {overlap}. "
+            "evidence 放观测 feature, intervention 改条件."
+        }
+    return None
+
+
+def _collect_samples(
+    scm: VisualSCM,
+    base_conditions: dict[str, float],
+    intervention: dict[str, float],
+    targets: list[str],
+    abducted: list[dict[str, float]],
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    # 2. Action + Prediction: do(intervention) 用 abducted noise
+    cf_samples: dict[str, list[float]] = {t: [] for t in targets}
+    factual_samples: dict[str, list[float]] = {t: [] for t in targets}
+    for noise in abducted:
+        sim_cf = _simulate_with_noise(scm, base_conditions, intervention, noise)
+        for t in targets:
+            cf_samples[t].append(sim_cf.get(t, 0.0))
+        sim_fact = _simulate_with_noise(scm, base_conditions, {}, noise)
+        for t in targets:
+            factual_samples[t].append(sim_fact.get(t, 0.0))
+    return cf_samples, factual_samples
+
+
+def _build_lift(result: dict[str, Any], targets: list[str]) -> dict[str, Any]:
+    lift: dict[str, Any] = {}
+    for t in targets:
+        m_cf = result["targets"][t]["mean"]
+        m_fact = result["factual"][t]["mean"]
+        # 阈值 1e-30: diffusion D 可小到 1e-20, 不能用 1e-12 (会把 D 当 0)
+        rel = (m_cf - m_fact) / m_fact if abs(m_fact) > 1e-30 else 0.0
+        lift[t] = {
+            "mean_lift": m_cf - m_fact,
+            "relative_lift": rel,
+            "significant": abs(rel) > 0.05,
+        }
+    return lift
+
+
+def _unconfirmed_warning(scm: VisualSCM) -> str:
+    source_str = {
+        "template": "KB 模板",
+        "llm_draft": "LLM 草稿",
+        "fitted": "数据拟合",
+        "visual_chain_fit": "视觉因果链拟合",
+    }.get(scm.source, scm.source)
+    return (
+        f"SCM '{scm.name}' 未确认 (source={source_str}). "
+        "反事实预测仅供参考, 建议用户审核 SCM 结构后再用于决策."
+    )
+
+
+def _abduction_failed_report(
+    evidence: dict[str, float],
+    base_conditions: dict[str, float],
+    max_attempts: int,
+) -> dict[str, Any]:
+    return {
+        "error": "abduction 失败: 无 noise 样本匹配 evidence "
+        "(可能 evidence 不可达, 或 tolerance 太小)",
+        "evidence": evidence,
+        "base_conditions": base_conditions,
+        "n_attempts": max_attempts,
+    }
+
+
+def _render_result(
+    scm: VisualSCM,
+    evidence: dict[str, float],
+    intervention: dict[str, float],
+    base_conditions: dict[str, float],
+    targets: list[str],
+    cf_samples: dict[str, list[float]],
+    factual_samples: dict[str, list[float]],
+    abducted: list[dict[str, float]],
+    tolerance: float,
+) -> dict[str, Any]:
+    # 3. 统计 + lift
+    result: dict[str, Any] = {
+        "targets": {t: _stats(cf_samples[t]) for t in targets},
+        "factual": {t: _stats(factual_samples[t]) for t in targets},
+        "evidence": evidence,
+        "intervention": intervention,
+        "base_conditions": base_conditions,
+        "scm_name": scm.name,
+        "scm_confirmed": scm.confirmed,
+        "scm_source": scm.source,
+        "scm_notes": scm.notes,
+        "n_abducted": len(abducted),
+        "tolerance": tolerance,
+        "warning": None,
+    }
+
+    result["lift"] = _build_lift(result, targets)
+
+    if not scm.confirmed:
+        result["warning"] = _unconfirmed_warning(scm)
+
+    return result
+
+
+def _render_counterfactual(
+    scm: VisualSCM,
+    evidence: dict[str, float],
+    intervention: dict[str, float],
+    targets: list[str],
+    base_conditions: dict[str, float] | None,
+    n_samples: int,
+    tolerance: float,
+    max_attempts_multiplier: int,
+) -> dict[str, Any]:
+    base_conditions = base_conditions or {}
+
+    err = _validate_render_args(scm, evidence, intervention, targets)
+    if err is not None:
+        return err
+
+    # 1. Abduction
+    abducted = _abduct_noise(
+        scm,
+        evidence,
+        base_conditions,
+        n_samples,
+        tolerance,
+        max_attempts=n_samples * max_attempts_multiplier,
+    )
+    if not abducted:
+        return _abduction_failed_report(
+            evidence, base_conditions, n_samples * max_attempts_multiplier
+        )
+
+    cf_samples, factual_samples = _collect_samples(
+        scm, base_conditions, intervention, targets, abducted
+    )
+
+    return _render_result(
+        scm,
+        evidence,
+        intervention,
+        base_conditions,
+        targets,
+        cf_samples,
+        factual_samples,
+        abducted,
+        tolerance,
+    )
 
 
 def counterfactual_render(
@@ -174,94 +355,20 @@ def counterfactual_render(
           "warning": str | None,
         }
     """
-    base_conditions = base_conditions or {}
-
-    # 校验
-    missing_t = [t for t in targets if t not in scm.nodes]
-    if missing_t:
-        return {"error": f"targets 不在 SCM: {missing_t}",
-                "scm_nodes": list(scm.nodes.keys())}
-    bad_interv = [k for k in intervention if k not in scm.nodes]
-    if bad_interv:
-        return {"error": f"intervention 节点不在 SCM: {bad_interv}"}
-    bad_ev = [k for k in evidence if k not in scm.nodes]
-    if bad_ev:
-        return {"error": f"evidence 节点不在 SCM: {bad_ev}"}
-    overlap = set(evidence) & set(intervention)
-    if overlap:
-        return {"error": f"evidence 和 intervention 重叠: {overlap}. "
-                          "evidence 放观测 feature, intervention 改条件."}
-
-    # 1. Abduction
-    abducted = _abduct_noise(
-        scm, evidence, base_conditions, n_samples, tolerance,
-        max_attempts=n_samples * max_attempts_multiplier,
+    return _render_counterfactual(
+        scm,
+        evidence,
+        intervention,
+        targets,
+        base_conditions,
+        n_samples,
+        tolerance,
+        max_attempts_multiplier,
     )
-    if not abducted:
-        return {
-            "error": "abduction 失败: 无 noise 样本匹配 evidence "
-                     "(可能 evidence 不可达, 或 tolerance 太小)",
-            "evidence": evidence,
-            "base_conditions": base_conditions,
-            "n_attempts": n_samples * max_attempts_multiplier,
-        }
-
-    # 2. Action + Prediction: do(intervention) 用 abducted noise
-    cf_samples: dict[str, list[float]] = {t: [] for t in targets}
-    factual_samples: dict[str, list[float]] = {t: [] for t in targets}
-    for noise in abducted:
-        sim_cf = _simulate_with_noise(scm, base_conditions, intervention, noise)
-        for t in targets:
-            cf_samples[t].append(sim_cf.get(t, 0.0))
-        sim_fact = _simulate_with_noise(scm, base_conditions, {}, noise)
-        for t in targets:
-            factual_samples[t].append(sim_fact.get(t, 0.0))
-
-    # 3. 统计 + lift
-    result: dict[str, Any] = {
-        "targets": {t: _stats(cf_samples[t]) for t in targets},
-        "factual": {t: _stats(factual_samples[t]) for t in targets},
-        "evidence": evidence,
-        "intervention": intervention,
-        "base_conditions": base_conditions,
-        "scm_name": scm.name,
-        "scm_confirmed": scm.confirmed,
-        "scm_source": scm.source,
-        "scm_notes": scm.notes,
-        "n_abducted": len(abducted),
-        "tolerance": tolerance,
-        "warning": None,
-    }
-
-    lift: dict[str, Any] = {}
-    for t in targets:
-        m_cf = result["targets"][t]["mean"]
-        m_fact = result["factual"][t]["mean"]
-        # 阈值 1e-30: diffusion D 可小到 1e-20, 不能用 1e-12 (会把 D 当 0)
-        rel = (m_cf - m_fact) / m_fact if abs(m_fact) > 1e-30 else 0.0
-        lift[t] = {
-            "mean_lift": m_cf - m_fact,
-            "relative_lift": rel,
-            "significant": abs(rel) > 0.05,
-        }
-    result["lift"] = lift
-
-    if not scm.confirmed:
-        source_str = {
-            "template": "KB 模板",
-            "llm_draft": "LLM 草稿",
-            "fitted": "数据拟合",
-            "visual_chain_fit": "视觉因果链拟合",
-        }.get(scm.source, scm.source)
-        result["warning"] = (
-            f"SCM '{scm.name}' 未确认 (source={source_str}). "
-            "反事实预测仅供参考, 建议用户审核 SCM 结构后再用于决策."
-        )
-
-    return result
 
 
 # ── HuginnTool 包装 ──────────────────────────────────────────
+
 
 class CounterfactualRenderInput(BaseModel):
     scm_name: str = Field(
@@ -311,7 +418,8 @@ class CounterfactualRenderTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
         input_data = (
-            args if isinstance(args, CounterfactualRenderInput)
+            args
+            if isinstance(args, CounterfactualRenderInput)
             else CounterfactualRenderInput(**args)
         )
         if input_data.scm_name not in list_templates():
@@ -329,18 +437,18 @@ class CounterfactualRenderTool(HuginnTool):
             return ValidationResult(result=False, message="n_samples 至少 10")
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         input_data = (
-            args if isinstance(args, CounterfactualRenderInput)
+            args
+            if isinstance(args, CounterfactualRenderInput)
             else CounterfactualRenderInput(**args)
         )
         try:
             scm = get_template(input_data.scm_name)
             if scm is None:
                 return ToolResult(
-                    data=None, success=False,
+                    data=None,
+                    success=False,
                     error=f"SCM 模板 '{input_data.scm_name}' 不存在",
                 )
             result = counterfactual_render(
@@ -354,7 +462,8 @@ class CounterfactualRenderTool(HuginnTool):
             )
             success = "error" not in result
             return ToolResult(
-                data=result, success=success,
+                data=result,
+                success=success,
                 error=None if success else result.get("error"),
             )
         except Exception as exc:
@@ -364,10 +473,10 @@ class CounterfactualRenderTool(HuginnTool):
 
 # ── self-check ───────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """12 项 assert 验证 counterfactual_render 核心行为."""
-    import math as _math
+
+def _sc_imports() -> tuple[Any, Any, Any]:
     import random as _rng
+
     _rng.seed(42)
 
     from huginn.causal.predict_intervention import _simulate_once
@@ -376,6 +485,12 @@ def _selfcheck() -> None:
         _template_sintering,
     )
 
+    return _simulate_once, _template_diffusion, _template_sintering
+
+
+def _sc_diffusion_forward(
+    _simulate_once: Any, _template_diffusion: Any
+) -> tuple[Any, dict]:
     # 1. diffusion 反事实: factual T=800, do(T=1000) → D 升几个数量级
     scm_d = _template_diffusion()
     base_sim = _simulate_once(scm_d, intervention={}, base_conditions={"T": 800})
@@ -401,12 +516,17 @@ def _selfcheck() -> None:
     assert cf_mean > factual_mean * 10, (
         f"counterfactual 应远大于 factual: cf={cf_mean}, factual={factual_mean}"
     )
+    return scm_d, r
 
+
+def _sc_lift(r: dict) -> None:
     # 2. lift 字段正确
     assert "D" in r["lift"]
     assert r["lift"]["D"]["relative_lift"] > 1.0
     assert r["lift"]["D"]["significant"] is True
 
+
+def _sc_reverse(scm_d: Any, _simulate_once: Any) -> None:
     # 3. 逆向反事实: factual T=1000, do(T=800) → D 降
     base_sim2 = _simulate_once(scm_d, intervention={}, base_conditions={"T": 1000})
     D_obs2 = base_sim2["D"]
@@ -422,11 +542,17 @@ def _selfcheck() -> None:
     assert "error" not in r2
     assert r2["targets"]["D"]["mean"] < r2["factual"]["D"]["mean"]
 
+
+def _sc_unreachable_evidence(scm_d: Any) -> None:
     # 4. evidence 不可达 → abduction 返空, counterfactual_render 返 error
     # T=800 时 D ≈ 1.6e-14, evidence D=1e-5 物理不可能匹配
     abducted_bad = _abduct_noise(
-        scm_d, evidence={"D": 1e-5}, base_conditions={"T": 800},
-        n_samples=20, tolerance=0.10, max_attempts=200,
+        scm_d,
+        evidence={"D": 1e-5},
+        base_conditions={"T": 800},
+        n_samples=20,
+        tolerance=0.10,
+        max_attempts=200,
     )
     assert len(abducted_bad) == 0, "不可达 evidence 不应有匹配样本"
     r3 = counterfactual_render(
@@ -442,16 +568,20 @@ def _selfcheck() -> None:
     assert "error" in r3, f"不可达 evidence 应返 error: {r3}"
     assert "abduction" in r3["error"]
 
+
+def _sc_overlap(scm_d: Any) -> None:
     # 5. evidence 和 intervention 重叠 → 报错
     r4 = counterfactual_render(
         scm_d,
-        evidence={"T": 800},     # T 是条件, 不该放 evidence
+        evidence={"T": 800},  # T 是条件, 不该放 evidence
         intervention={"T": 1000},
         targets=["D"],
         base_conditions={"T": 800},
     )
     assert "error" in r4
 
+
+def _sc_unconfirmed(_template_diffusion: Any, _simulate_once: Any) -> None:
     # 6. SCM confirmed=False → 警告
     scm_unconf = _template_diffusion()
     scm_unconf.confirmed = False
@@ -469,23 +599,38 @@ def _selfcheck() -> None:
     assert r6["warning"] is not None
     assert "未确认" in r6["warning"]
 
+
+def _sc_sintering_fit() -> Any:
+    import math as _math
+
     # 7. 端到端 Phase 2+3: fit_scm_from_observations → counterfactual_render
     # 用 sintering 真实参数 Ea=100, A0=1e8, r0=30 生成数据 (Phase 2 测试已验证)
     R_const = 8.314e-3
     obs: list[Observation] = []
     for T in [1200, 1400, 1500, 1600, 1700, 1800, 1900, 2000]:
         for t in [1.0, 4.0]:
-            r_true = (30.0**3 + 1e8 * _math.exp(-100.0 / (R_const * T)) * t) ** (1.0/3.0)
-            obs.append(Observation(
-                conditions={"T": float(T), "t": t},
-                features={"particle_size": r_true},
-            ))
+            r_true = (30.0**3 + 1e8 * _math.exp(-100.0 / (R_const * T)) * t) ** (
+                1.0 / 3.0
+            )
+            obs.append(
+                Observation(
+                    conditions={"T": float(T), "t": t},
+                    features={"particle_size": r_true},
+                )
+            )
     fitted_scm, _ = fit_scm_from_observations(obs, "sintering")
     assert fitted_scm.confirmed is False
     assert fitted_scm.source == "visual_chain_fit"
+    return fitted_scm
+
+
+def _sc_end_to_end(_simulate_once: Any, _template_sintering: Any) -> None:
+    fitted_scm = _sc_sintering_fit()
 
     # 8. 用 fitted_scm 做反事实: T=1500, t=2 → do(T=1800)
-    base_sim7 = _simulate_once(fitted_scm, intervention={}, base_conditions={"T": 1500, "t": 2})
+    base_sim7 = _simulate_once(
+        fitted_scm, intervention={}, base_conditions={"T": 1500, "t": 2}
+    )
     ps_obs = base_sim7["particle_size"]
     r7 = counterfactual_render(
         fitted_scm,
@@ -501,7 +646,9 @@ def _selfcheck() -> None:
     # factual 应匹配 evidence
     assert abs(r7["factual"]["particle_size"]["mean"] - ps_obs) / ps_obs < 0.30
     # counterfactual (T=1800) 应 > factual (T=1500)
-    assert r7["targets"]["particle_size"]["mean"] > r7["factual"]["particle_size"]["mean"], (
+    assert (
+        r7["targets"]["particle_size"]["mean"] > r7["factual"]["particle_size"]["mean"]
+    ), (
         f"counterfactual 应大于 factual: cf={r7['targets']['particle_size']['mean']}, "
         f"fact={r7['factual']['particle_size']['mean']}"
     )
@@ -510,63 +657,80 @@ def _selfcheck() -> None:
     assert r7["warning"] is not None
     assert "视觉因果链拟合" in r7["warning"]
 
-    # 10. Tool validate_input 拒绝空 evidence/intervention/targets + 未知 SCM
+
+def _sc_validate_case(tool: Any, loop: Any, case: dict[str, Any]) -> bool:
+    return loop.run_until_complete(tool.validate_input(case)).result
+
+
+def _sc_case(
+    scm_name: str,
+    evidence: dict[str, float],
+    intervention: dict[str, float],
+    targets: list[str],
+) -> dict[str, Any]:
+    return {
+        "scm_name": scm_name,
+        "evidence": evidence,
+        "intervention": intervention,
+        "targets": targets,
+    }
+
+
+def _sc_tool_validate() -> None:
     import asyncio
+
     tool = CounterfactualRenderTool()
     loop = asyncio.new_event_loop()
+    cases = [
+        (_sc_case("diffusion", {}, {"T": 1000}, ["D"]), False),
+        (_sc_case("diffusion", {"D": 1}, {}, ["D"]), False),
+        (_sc_case("diffusion", {"D": 1}, {"T": 1000}, []), False),
+        (_sc_case("nonexistent", {"D": 1}, {"T": 1000}, ["D"]), False),
+        (_sc_case("diffusion", {"D": 1}, {"T": 1000}, ["D"]), True),
+    ]
     try:
-        r = loop.run_until_complete(tool.validate_input(
-            {"scm_name": "diffusion", "evidence": {},
-             "intervention": {"T": 1000}, "targets": ["D"]}
-        ))
-        assert r.result is False
-        r = loop.run_until_complete(tool.validate_input(
-            {"scm_name": "diffusion", "evidence": {"D": 1},
-             "intervention": {}, "targets": ["D"]}
-        ))
-        assert r.result is False
-        r = loop.run_until_complete(tool.validate_input(
-            {"scm_name": "diffusion", "evidence": {"D": 1},
-             "intervention": {"T": 1000}, "targets": []}
-        ))
-        assert r.result is False
-        r = loop.run_until_complete(tool.validate_input(
-            {"scm_name": "nonexistent", "evidence": {"D": 1},
-             "intervention": {"T": 1000}, "targets": ["D"]}
-        ))
-        assert r.result is False
-        r = loop.run_until_complete(tool.validate_input(
-            {"scm_name": "diffusion", "evidence": {"D": 1},
-             "intervention": {"T": 1000}, "targets": ["D"]}
-        ))
-        assert r.result is True
+        for case, expected in cases:
+            r = _sc_validate_case(tool, loop, case)
+            assert r is expected
     finally:
         loop.close()
 
-    # 11. Tool call 成功
+
+def _sc_tool_call(_simulate_once: Any, _template_diffusion: Any) -> None:
+    import asyncio
+
     tool2 = CounterfactualRenderTool()
     loop2 = asyncio.new_event_loop()
     try:
         from huginn.core_types import ToolContext
+
         ctx = ToolContext(session_id="selfcheck", workspace=".")
         # 用 diffusion 模板, evidence 用模型生成保证可达
-        base_sim_t = _simulate_once(_template_diffusion(), intervention={}, base_conditions={"T": 800})
-        r = loop2.run_until_complete(tool2.call(
-            {"scm_name": "diffusion",
-             "evidence": {"D": base_sim_t["D"]},
-             "intervention": {"T": 1000},
-             "targets": ["D"],
-             "base_conditions": {"T": 800},
-             "n_samples": 50,
-             "tolerance": 0.30},
-            ctx,
-        ))
+        base_sim_t = _simulate_once(
+            _template_diffusion(), intervention={}, base_conditions={"T": 800}
+        )
+        r = loop2.run_until_complete(
+            tool2.call(
+                {
+                    "scm_name": "diffusion",
+                    "evidence": {"D": base_sim_t["D"]},
+                    "intervention": {"T": 1000},
+                    "targets": ["D"],
+                    "base_conditions": {"T": 800},
+                    "n_samples": 50,
+                    "tolerance": 0.30,
+                },
+                ctx,
+            )
+        )
         assert r.success, f"Tool call 失败: {r.error}"
         assert "targets" in r.data
         assert r.data["scm_name"] == "diffusion"
     finally:
         loop2.close()
 
+
+def _sc_simulate_consistency(_template_sintering: Any) -> None:
     # 12. _simulate_with_noise 一致性: 同 noise + 同 base 应得同结果
     scm_t = _template_sintering()
     noise_sample = {n: scm_t.noise[n]() for n in scm_t.noise}
@@ -577,6 +741,20 @@ def _selfcheck() -> None:
     sim_c = _simulate_with_noise(scm_t, {"T": 1500, "t": 2}, {"T": 1800}, noise_sample)
     assert sim_c["T"] == 1800.0
 
+
+def _selfcheck() -> None:
+    """12 项 assert 验证 counterfactual_render 核心行为."""
+    _simulate_once, _template_diffusion, _template_sintering = _sc_imports()
+    scm_d, r = _sc_diffusion_forward(_simulate_once, _template_diffusion)
+    _sc_lift(r)
+    _sc_reverse(scm_d, _simulate_once)
+    _sc_unreachable_evidence(scm_d)
+    _sc_overlap(scm_d)
+    _sc_unconfirmed(_template_diffusion, _simulate_once)
+    _sc_end_to_end(_simulate_once, _template_sintering)
+    _sc_tool_validate()
+    _sc_tool_call(_simulate_once, _template_diffusion)
+    _sc_simulate_consistency(_template_sintering)
     print("all self-checks passed")
 
 

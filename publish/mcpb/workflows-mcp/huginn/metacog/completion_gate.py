@@ -47,6 +47,59 @@ class GateContext:
     objective: str = ""
 
 
+def _check_criteria(goal, validation):
+    try:
+        from huginn.autoloop.goal_scheduler import GoalScheduler
+
+        return GoalScheduler.check_completion(goal, validation)
+    except Exception:
+        logger.debug("审1 Criteria failed", exc_info=True)
+        return False
+
+
+def _judge_goal(goal, validation, llm):
+    try:
+        from huginn.evaluation.goal_judge import GoalJudge
+
+        _judge = GoalJudge(llm=llm)
+        _final_text = str(
+            (validation or {}).get("summary")
+            or (validation or {}).get("result_data")
+            or ""
+        )
+        _gj = _judge.judge(
+            getattr(goal, "objective", "") or "",
+            None,
+            _final_text,
+        )
+    except Exception:
+        logger.debug("审3 GoalJudge failed", exc_info=True)
+        return None, True
+    return _gj, False
+
+
+def _advisory_pass(category_on_pass):
+    return GateDecision(
+        status="pass",
+        category=category_on_pass,
+        should_stop=True,
+        should_complete_goal=True,
+    )
+
+
+def _extract_unexplored(ctx):
+    # 从 raw hypothesis 提 UNEXPLORED: 块
+    unexplored = ""
+    raw = ctx.last_raw_hypothesis or ""
+    if "UNEXPLORED:" in raw:
+        unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
+        for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
+            if marker in unexplored:
+                unexplored = unexplored.split(marker)[0].strip()
+                break
+    return unexplored
+
+
 class CompletionGate:
     """三审放行门 — 编排 Criteria + Metacog + GoalJudge.
 
@@ -76,13 +129,7 @@ class CompletionGate:
             return GateDecision(status="pass", category="no_goal")
 
         # 审1: Criteria (规则) — GoalScheduler.check_completion
-        criteria_hit = False
-        try:
-            from huginn.autoloop.goal_scheduler import GoalScheduler
-            criteria_hit = GoalScheduler.check_completion(goal, validation)
-        except Exception:
-            logger.debug("审1 Criteria failed", exc_info=True)
-            criteria_hit = False
+        criteria_hit = _check_criteria(goal, validation)
 
         # 审3 时机: criteria 命中 → 必跑; miss → 每 N 轮 + 末轮
         is_judge_round = (
@@ -100,21 +147,8 @@ class CompletionGate:
             return GateDecision(status="pass", category="no_criteria")
 
         # 审3: GoalJudge (LLM/规则)
-        try:
-            from huginn.evaluation.goal_judge import GoalJudge
-            _judge = GoalJudge(llm=self._goal_judge_llm)
-            _final_text = str(
-                (validation or {}).get("summary")
-                or (validation or {}).get("result_data")
-                or ""
-            )
-            _gj = _judge.judge(
-                getattr(goal, "objective", "") or "",
-                None,
-                _final_text,
-            )
-        except Exception:
-            logger.debug("审3 GoalJudge failed", exc_info=True)
+        _gj, failed = _judge_goal(goal, validation, self._goal_judge_llm)
+        if failed:
             return GateDecision(status="pass", category="goal_judge_failed")
 
         if _gj.get("achieved"):
@@ -144,22 +178,9 @@ class CompletionGate:
         try:
             if self._auditor_factory is None:
                 # 无 factory — 默认放行, 留升级路径
-                return GateDecision(
-                    status="pass",
-                    category=category_on_pass,
-                    should_stop=True,
-                    should_complete_goal=True,
-                )
+                return _advisory_pass(category_on_pass)
             auditor = self._auditor_factory()
-            # 从 raw hypothesis 提 UNEXPLORED: 块
-            unexplored = ""
-            raw = ctx.last_raw_hypothesis or ""
-            if "UNEXPLORED:" in raw:
-                unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
-                for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
-                    if marker in unexplored:
-                        unexplored = unexplored.split(marker)[0].strip()
-                        break
+            unexplored = _extract_unexplored(ctx)
             checklist = auditor.audit(
                 iteration=ctx.iteration,
                 families_explored=ctx.families_explored,
@@ -170,12 +191,7 @@ class CompletionGate:
                 unexplored_declaration=unexplored,
             )
             if checklist.is_complete:
-                return GateDecision(
-                    status="pass",
-                    category=category_on_pass,
-                    should_stop=True,
-                    should_complete_goal=True,
-                )
+                return _advisory_pass(category_on_pass)
             return GateDecision(
                 status="block",
                 reason=checklist.block_reason(),
@@ -183,12 +199,7 @@ class CompletionGate:
             )
         except Exception:
             logger.debug("审2 Metacog failed, advisory pass", exc_info=True)
-            return GateDecision(
-                status="pass",
-                category=category_on_pass,
-                should_stop=True,
-                should_complete_goal=True,
-            )
+            return _advisory_pass(category_on_pass)
 
 
 # === 自检 ===
@@ -205,40 +216,76 @@ if __name__ == "__main__":
 
     # 1) goal=None → pass, no_goal
     gate = CompletionGate()
-    d = gate.review(None, {}, GateContext(iteration=1, max_iterations=10, families_explored=1, live_components=1))
+    d = gate.review(
+        None,
+        {},
+        GateContext(
+            iteration=1, max_iterations=10, families_explored=1, live_components=1
+        ),
+    )
     assert d.status == "pass" and d.category == "no_goal"
     assert not d.should_stop and not d.should_complete_goal
 
     # 2) criteria 命中 + 无 auditor_factory → pass + complete + stop
     g = _Goal(success_criteria=["X"])
     val = {"summary": "X achieved"}
-    d = gate.review(g, val, GateContext(iteration=5, max_iterations=10, families_explored=2, live_components=2))
+    d = gate.review(
+        g,
+        val,
+        GateContext(
+            iteration=5, max_iterations=10, families_explored=2, live_components=2
+        ),
+    )
     assert d.status == "pass", f"criteria hit → pass, got {d.status}"
     assert d.category == "criteria_match"
     assert d.should_complete_goal and d.should_stop
 
     # 3) criteria miss + 非 judge 轮 → pass, no_criteria
     g2 = _Goal(success_criteria=["Z"])  # Z 不在 val 里
-    d = gate.review(g2, val, GateContext(iteration=1, max_iterations=10, families_explored=1, live_components=1))
+    d = gate.review(
+        g2,
+        val,
+        GateContext(
+            iteration=1, max_iterations=10, families_explored=1, live_components=1
+        ),
+    )
     assert d.status == "pass" and d.category == "no_criteria"
     assert not d.should_stop
 
     # 4) criteria miss + 末轮 (iteration >= max-1) → GoalJudge 规则版
     #    final_text 不含 objective 关键词 → gaps_hint 或 not_achieved
     d = gate.review(
-        g2, {"summary": "unrelated output"},
-        GateContext(iteration=9, max_iterations=10, families_explored=1, live_components=1, objective="predict Z"),
+        g2,
+        {"summary": "unrelated output"},
+        GateContext(
+            iteration=9,
+            max_iterations=10,
+            families_explored=1,
+            live_components=1,
+            objective="predict Z",
+        ),
     )
-    assert d.category in ("goal_judge_gaps", "goal_judge_not_achieved"), f"末轮 judge → gaps/not_achieved, got {d.category}"
+    assert d.category in ("goal_judge_gaps", "goal_judge_not_achieved"), (
+        f"末轮 judge → gaps/not_achieved, got {d.category}"
+    )
     assert not d.should_stop, "not achieved 不应停机"
 
     # 5) criteria miss + 每 3 轮 (iteration % 3 == 2) → GoalJudge 触发
     d = gate.review(
-        g2, {"summary": "unrelated"},
-        GateContext(iteration=2, max_iterations=10, families_explored=1, live_components=1, objective="predict Z"),
+        g2,
+        {"summary": "unrelated"},
+        GateContext(
+            iteration=2,
+            max_iterations=10,
+            families_explored=1,
+            live_components=1,
+            objective="predict Z",
+        ),
     )
     # iteration=2, judge_every_n=3 → 2 % 3 == 2 → is_judge_round
-    assert d.category in ("goal_judge_gaps", "goal_judge_not_achieved"), f"每3轮 judge, got {d.category}"
+    assert d.category in ("goal_judge_gaps", "goal_judge_not_achieved"), (
+        f"每3轮 judge, got {d.category}"
+    )
 
     # 6) GoalJudge achieved + 无 auditor_factory → pass + complete + stop
     # success_criteria=["QQQ"] 不命中, 但 GoalJudge 规则版 achieved:
@@ -246,25 +293,40 @@ if __name__ == "__main__":
     long_text = "predict ZZZ with detailed analysis and computation results here"
     g4 = _Goal(success_criteria=["QQQ"], objective="predict ZZZ")
     d = gate.review(
-        g4, {"summary": long_text},
-        GateContext(iteration=9, max_iterations=10, families_explored=1, live_components=1, objective="predict ZZZ"),
+        g4,
+        {"summary": long_text},
+        GateContext(
+            iteration=9,
+            max_iterations=10,
+            families_explored=1,
+            live_components=1,
+            objective="predict ZZZ",
+        ),
     )
-    assert d.category == "goal_judge_achieved", f"achieved + 无 auditor → pass+complete, got {d.category}"
+    assert d.category == "goal_judge_achieved", (
+        f"achieved + 无 auditor → pass+complete, got {d.category}"
+    )
     assert d.should_complete_goal and d.should_stop
 
     # 7) 有 auditor_factory + is_complete=False → block
     @_dc
     class _Checklist:
         is_complete: bool = False
+
         def block_reason(self) -> str:
             return "effort low"
+
     class _MockAuditor:
         def audit(self, **kw):
             return _Checklist(is_complete=False)
+
     gate2 = CompletionGate(auditor_factory=lambda: _MockAuditor())
     d = gate2.review(
-        _Goal(success_criteria=["X"]), {"summary": "X done"},
-        GateContext(iteration=5, max_iterations=10, families_explored=1, live_components=1),
+        _Goal(success_criteria=["X"]),
+        {"summary": "X done"},
+        GateContext(
+            iteration=5, max_iterations=10, families_explored=1, live_components=1
+        ),
     )
     assert d.status == "block" and d.category == "metacog_block"
     assert "effort low" in d.reason
@@ -274,10 +336,14 @@ if __name__ == "__main__":
     class _MockAuditor2:
         def audit(self, **kw):
             return _Checklist(is_complete=True)
+
     gate3 = CompletionGate(auditor_factory=lambda: _MockAuditor2())
     d = gate3.review(
-        _Goal(success_criteria=["X"]), {"summary": "X done"},
-        GateContext(iteration=5, max_iterations=10, families_explored=2, live_components=2),
+        _Goal(success_criteria=["X"]),
+        {"summary": "X done"},
+        GateContext(
+            iteration=5, max_iterations=10, families_explored=2, live_components=2
+        ),
     )
     assert d.status == "pass" and d.category == "criteria_match"
     assert d.should_complete_goal and d.should_stop

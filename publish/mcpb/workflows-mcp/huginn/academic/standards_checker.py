@@ -20,11 +20,11 @@ from huginn.academic.journal_db import (
 class CheckResult:
     """单次检查的结果."""
 
-    check_name: str           # 检查项名称
-    passed: bool              # 是否通过
-    message: str              # 结果描述
-    suggestion: str = ""      # 修改建议
-    severity: str = "error"   # error | warning | info
+    check_name: str  # 检查项名称
+    passed: bool  # 是否通过
+    message: str  # 结果描述
+    suggestion: str = ""  # 修改建议
+    severity: str = "error"  # error | warning | info
     details: dict = field(default_factory=dict)  # 结构化补充数据, 不破坏旧调用
 
 
@@ -60,6 +60,34 @@ def _expand_citation_range(start: str, end: str | None) -> list[int]:
     return list(range(s, e + 1))
 
 
+def _citation_report(
+    unmatched: list[int], unused: list[int], n_cited: int, n_refs: int
+) -> tuple[str, str, str]:
+    """构造正文引用匹配检查的 message / suggestion / severity."""
+    parts = [f"正文引用 {n_cited} 个编号, 参考文献 {n_refs} 条"]
+    if unmatched:
+        parts.append(f"未匹配引用 {unmatched}")
+    if unused:
+        parts.append(f"未被引用 {unused}")
+
+    suggestion = ""
+    if unmatched:
+        suggestion += (
+            f"补 references 至 {max(unmatched)} 条或修正正文引用 {unmatched}; "
+        )
+    if unused:
+        suggestion += f"在正文补引 {unused} 或删除多余 references"
+    suggestion = suggestion.rstrip("; ")
+
+    if unmatched:
+        severity = "error"
+    elif unused:
+        severity = "warning"
+    else:
+        severity = "info"
+    return "; ".join(parts), suggestion, severity
+
+
 def check_citation_reference_match(body: str, references: list[str]) -> CheckResult:
     """检查正文引用标记 [1] [2-3] 与参考文献列表的匹配度.
 
@@ -80,30 +108,14 @@ def check_citation_reference_match(body: str, references: list[str]) -> CheckRes
     unused = sorted(ref_set - cited)
 
     passed = not unmatched and not unused
-    parts = [f"正文引用 {len(cited)} 个编号, 参考文献 {len(references)} 条"]
-    if unmatched:
-        parts.append(f"未匹配引用 {unmatched}")
-    if unused:
-        parts.append(f"未被引用 {unused}")
-
-    suggestion = ""
-    if unmatched:
-        suggestion += f"补 references 至 {max(unmatched)} 条或修正正文引用 {unmatched}; "
-    if unused:
-        suggestion += f"在正文补引 {unused} 或删除多余 references"
-    suggestion = suggestion.rstrip("; ")
-
-    if unmatched:
-        severity = "error"
-    elif unused:
-        severity = "warning"
-    else:
-        severity = "info"
+    message, suggestion, severity = _citation_report(
+        unmatched, unused, len(cited), len(references)
+    )
 
     return CheckResult(
         check_name="citation_reference_match",
         passed=passed,
-        message="; ".join(parts),
+        message=message,
         suggestion=suggestion,
         severity=severity,
         details={
@@ -113,6 +125,111 @@ def check_citation_reference_match(body: str, references: list[str]) -> CheckRes
             "total_references": len(references),
         },
     )
+
+
+def _reference_format_issues(ref: str) -> list[str]:
+    """检查单条参考文献的 GB/T 7714 核心要素, 返回问题列表."""
+    ref_issues: list[str] = []
+
+    # 1. 文献类型标识
+    if not StandardsChecker._GBT7714_TYPE_RE.search(ref):
+        ref_issues.append("缺少文献类型标识(如[J]/[M]/[C])")
+
+    # 2. 年份
+    if not StandardsChecker._YEAR_RE.search(ref):
+        ref_issues.append("缺少出版年份")
+
+    # 3. 基本结构: 至少包含一个句号或逗号分隔的多段信息
+    # ponytail: 不做完整 AST 解析, 只验证有足够的分隔信息段
+    parts = [p.strip() for p in re.split(r"[.．]", ref) if p.strip()]
+    if len(parts) < 2:
+        ref_issues.append("结构不完整(应含作者. 题名. 出处等)")
+
+    return ref_issues
+
+
+def _reference_format_result(references: list[str], issues: list[str]) -> CheckResult:
+    """由参考文献格式问题列表构造检查结果."""
+    if not issues:
+        return CheckResult(
+            "reference_format",
+            True,
+            f"GB/T 7714 格式检查通过 ({len(references)} 条)",
+            severity="info",
+            details={"checked": len(references), "issues": []},
+        )
+
+    severity = "warning"
+    return CheckResult(
+        "reference_format",
+        False,
+        f"GB/T 7714 格式问题 ({len(issues)}/{len(references)} 条): "
+        + "; ".join(issues[:5])
+        + ("..." if len(issues) > 5 else ""),
+        "按 GB/T 7714 补充文献类型标识和年份",
+        severity=severity,
+        details={"checked": len(references), "issues": issues},
+    )
+
+
+def _auto_checklist_metrics(spec: JournalSpec) -> list[str]:
+    """按字数/数量类字段生成检查清单条目."""
+    items: list[str] = []
+    if spec.title_max_chars:
+        items.append(f"标题不超过 {spec.title_max_chars} 字符")
+    if spec.abstract_max_words:
+        items.append(f"摘要不超过 {spec.abstract_max_words} 词")
+    if spec.body_max_words:
+        items.append(f"正文不超过 {spec.body_max_words} 词")
+    if spec.methods_max_words:
+        items.append(f"Methods 不超过 {spec.methods_max_words} 词")
+    if spec.display_items_max:
+        items.append(f"图表不超过 {spec.display_items_max} 个")
+    if spec.figures_max:
+        items.append(f"图不超过 {spec.figures_max} 个")
+    if spec.references_max:
+        items.append(f"参考文献不超过 {spec.references_max} 条")
+    if spec.keywords_max:
+        items.append(f"关键词不超过 {spec.keywords_max} 个")
+    return items
+
+
+def _auto_checklist_requirements(spec: JournalSpec) -> list[str]:
+    """按声明/排版类字段生成检查清单条目."""
+    items: list[str] = []
+    if spec.requires_toc_graphic:
+        items.append(f"提供TOC图形{f' ({spec.toc_size})' if spec.toc_size else ''}")
+    if spec.requires_graphical_abstract:
+        items.append("提供图文摘要")
+    if spec.requires_bilingual:
+        items.append("中英文标题/摘要/关键词齐全")
+    if spec.requires_data_availability:
+        items.append("提供数据可用性声明")
+    if spec.requires_code_availability:
+        items.append("提供代码可用性声明")
+    if spec.requires_orcid:
+        items.append("全部作者提供ORCID")
+    if spec.requires_reporting_summary:
+        items.append("提供报告摘要 (Reporting Summary)")
+    if spec.requires_revtex:
+        items.append("使用REVTeX模板排版")
+    if spec.requires_copyright_agreement:
+        items.append("签署版权转让协议")
+    if spec.requires_classification_number:
+        items.append("标注中图分类号")
+    if spec.requires_unit_proof:
+        items.append("附单位证明信")
+    if spec.requires_originality:
+        items.append("签署原创性声明")
+    if spec.requires_ai_declaration:
+        items.append("签署AI使用声明")
+    if spec.requires_ccdc:
+        items.append("晶体数据提交CCDC")
+    if spec.requires_all_authors:
+        items.append("列出全部作者信息")
+    if spec.new_compound_characterization:
+        items.append("新化合物表征: " + "/".join(spec.new_compound_characterization))
+    return items
 
 
 class StandardsChecker:
@@ -137,7 +254,8 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                "title", False,
+                "title",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称拼写正确",
             )
@@ -146,23 +264,29 @@ class StandardsChecker:
         if spec.language.startswith("zh"):
             limit = spec.title_zh_max_chars or spec.title_max_chars
             if limit is None:
-                return CheckResult("title", True, "该期刊未定义标题长度限制", severity="info")
+                return CheckResult(
+                    "title", True, "该期刊未定义标题长度限制", severity="info"
+                )
             actual = _count_chinese_chars(title)
             label = "中文字符"
         else:
             limit = spec.title_max_chars
             if limit is None:
-                return CheckResult("title", True, "该期刊未定义标题长度限制", severity="info")
+                return CheckResult(
+                    "title", True, "该期刊未定义标题长度限制", severity="info"
+                )
             actual = _count_chars(title)
             label = "字符"
 
         if actual <= limit:
             return CheckResult(
-                "title", True,
+                "title",
+                True,
                 f"标题长度 {actual} {label}, 上限 {limit}",
             )
         return CheckResult(
-            "title", False,
+            "title",
+            False,
             f"标题超长: {actual} {label}, 上限 {limit}",
             f"删减 {actual - limit} {label}",
         )
@@ -174,7 +298,8 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                "abstract", False,
+                "abstract",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称",
             )
@@ -182,23 +307,29 @@ class StandardsChecker:
         if lang == "zh":
             limit = spec.abstract_zh_max_chars or spec.abstract_max_chars
             if limit is None:
-                return CheckResult("abstract", True, "该期刊未定义中文摘要限制", severity="info")
+                return CheckResult(
+                    "abstract", True, "该期刊未定义中文摘要限制", severity="info"
+                )
             actual = _count_chinese_chars(abstract)
             unit = "字符"
         else:
             limit = spec.abstract_en_max_words or spec.abstract_max_words
             if limit is None:
-                return CheckResult("abstract", True, "该期刊未定义英文摘要限制", severity="info")
+                return CheckResult(
+                    "abstract", True, "该期刊未定义英文摘要限制", severity="info"
+                )
             actual = _count_words(abstract)
             unit = "词"
 
         if actual <= limit:
             return CheckResult(
-                "abstract", True,
+                "abstract",
+                True,
                 f"摘要长度 {actual} {unit}, 上限 {limit}",
             )
         return CheckResult(
-            "abstract", False,
+            "abstract",
+            False,
             f"摘要超长: {actual} {unit}, 上限 {limit}",
             f"精简至 {limit} {unit}以内",
         )
@@ -210,7 +341,8 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                f"word_count:{section}", False,
+                f"word_count:{section}",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称",
             )
@@ -219,7 +351,8 @@ class StandardsChecker:
 
         if limit is None:
             return CheckResult(
-                f"word_count:{section}", True,
+                f"word_count:{section}",
+                True,
                 "该期刊未定义此部分的字数限制",
                 severity="info",
             )
@@ -227,11 +360,13 @@ class StandardsChecker:
         actual = _count_words(text)
         if actual <= limit:
             return CheckResult(
-                f"word_count:{section}", True,
+                f"word_count:{section}",
+                True,
                 f"{section} 字数 {actual}, 上限 {limit}",
             )
         return CheckResult(
-            f"word_count:{section}", False,
+            f"word_count:{section}",
+            False,
             f"{section} 超字: {actual} 词, 上限 {limit}",
             f"删减 {actual - limit} 词",
         )
@@ -241,7 +376,8 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                "references", False,
+                "references",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称",
             )
@@ -263,12 +399,14 @@ class StandardsChecker:
                 limits.append(f"下限 {spec.references_min}")
             range_str = ", ".join(limits) if limits else "无数量限制"
             return CheckResult(
-                "references", True,
+                "references",
+                True,
                 f"参考文献 {count} 条 ({range_str})",
             )
 
         return CheckResult(
-            "references", False,
+            "references",
+            False,
             "; ".join(issues),
             "增减参考文献至规定范围内",
         )
@@ -278,7 +416,8 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                "figures", False,
+                "figures",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称",
             )
@@ -286,18 +425,21 @@ class StandardsChecker:
         limit = spec.figures_max or spec.display_items_max
         if limit is None:
             return CheckResult(
-                "figures", True,
+                "figures",
+                True,
                 "该期刊未定义图表数量限制",
                 severity="info",
             )
 
         if figure_count <= limit:
             return CheckResult(
-                "figures", True,
+                "figures",
+                True,
                 f"图表 {figure_count} 个, 上限 {limit}",
             )
         return CheckResult(
-            "figures", False,
+            "figures",
+            False,
             f"图表过多: {figure_count} 个, 上限 {limit}",
             f"删减至 {limit} 个以内",
         )
@@ -307,14 +449,16 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                "keywords", False,
+                "keywords",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称",
             )
 
         if spec.keywords_max is None:
             return CheckResult(
-                "keywords", True,
+                "keywords",
+                True,
                 "该期刊未定义关键词数量限制",
                 severity="info",
             )
@@ -322,11 +466,13 @@ class StandardsChecker:
         count = len(keywords)
         if count <= spec.keywords_max:
             return CheckResult(
-                "keywords", True,
+                "keywords",
+                True,
                 f"关键词 {count} 个, 上限 {spec.keywords_max}",
             )
         return CheckResult(
-            "keywords", False,
+            "keywords",
+            False,
             f"关键词过多: {count} 个, 上限 {spec.keywords_max}",
             f"删减至 {spec.keywords_max} 个",
         )
@@ -334,9 +480,7 @@ class StandardsChecker:
     # ── GB/T 7714 引用格式审查 ────────────────────────────────
 
     # 文献类型标识: [J] [M] [C] [D] [R] [S] [P] [EB/OL] [N] [DB/OL]
-    _GBT7714_TYPE_RE = re.compile(
-        r"\[(?:J|M|C|D|R|S|P|N|DB/OL|EB/OL|CP/OL|Z)\]"
-    )
+    _GBT7714_TYPE_RE = re.compile(r"\[(?:J|M|C|D|R|S|P|N|DB/OL|EB/OL|CP/OL|Z)\]")
     # 年份: 4位数字, 1900-2099
     _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
@@ -355,7 +499,8 @@ class StandardsChecker:
         spec = get_journal(journal)
         if spec is None:
             return CheckResult(
-                "reference_format", False,
+                "reference_format",
+                False,
                 f"未找到期刊 '{journal}'",
                 "请确认期刊名称",
             )
@@ -363,55 +508,23 @@ class StandardsChecker:
         # 非中文期刊不强制 GB/T 7714, 降级提示
         if not spec.language.startswith("zh"):
             return CheckResult(
-                "reference_format", True,
+                "reference_format",
+                True,
                 "非中文期刊, GB/T 7714 检查已跳过",
                 severity="info",
             )
 
         issues: list[str] = []
         for i, ref in enumerate(references, 1):
-            ref_issues: list[str] = []
-
-            # 1. 文献类型标识
-            if not self._GBT7714_TYPE_RE.search(ref):
-                ref_issues.append("缺少文献类型标识(如[J]/[M]/[C])")
-
-            # 2. 年份
-            if not self._YEAR_RE.search(ref):
-                ref_issues.append("缺少出版年份")
-
-            # 3. 基本结构: 至少包含一个句号或逗号分隔的多段信息
-            # ponytail: 不做完整 AST 解析, 只验证有足够的分隔信息段
-            parts = [p.strip() for p in re.split(r"[.．]", ref) if p.strip()]
-            if len(parts) < 2:
-                ref_issues.append("结构不完整(应含作者. 题名. 出处等)")
-
+            ref_issues = _reference_format_issues(ref)
             if ref_issues:
                 issues.append(f"[{i}] {'; '.join(ref_issues)}")
 
-        if not issues:
-            return CheckResult(
-                "reference_format", True,
-                f"GB/T 7714 格式检查通过 ({len(references)} 条)",
-                severity="info",
-                details={"checked": len(references), "issues": []},
-            )
-
-        severity = "warning"
-        return CheckResult(
-            "reference_format", False,
-            f"GB/T 7714 格式问题 ({len(issues)}/{len(references)} 条): "
-            + "; ".join(issues[:5]) + ("..." if len(issues) > 5 else ""),
-            "按 GB/T 7714 补充文献类型标识和年份",
-            severity=severity,
-            details={"checked": len(references), "issues": issues},
-        )
+        return _reference_format_result(references, issues)
 
     # ── 综合检查 ──────────────────────────────────────────────
 
-    def check_compliance(
-        self, manuscript: dict, journal: str
-    ) -> list[CheckResult]:
+    def check_compliance(self, manuscript: dict, journal: str) -> list[CheckResult]:
         """综合检查稿件各部分, 返回所有检查结果.
 
         manuscript 支持的 key:
@@ -421,52 +534,57 @@ class StandardsChecker:
         results: list[CheckResult] = []
         spec = get_journal(journal)
         if spec is None:
-            results.append(CheckResult(
-                "compliance", False,
-                f"未找到期刊 '{journal}'",
-                "请确认期刊名称",
-            ))
+            results.append(
+                CheckResult(
+                    "compliance",
+                    False,
+                    f"未找到期刊 '{journal}'",
+                    "请确认期刊名称",
+                )
+            )
             return results
+
+        results.extend(
+            StandardsChecker._check_manuscript_sections(self, manuscript, journal)
+        )
+
+        # 声明类要求检查
+        results.extend(self._check_declarations(manuscript, spec))
+
+        return results
+
+    def _check_manuscript_sections(
+        self, manuscript: dict, journal: str
+    ) -> list[CheckResult]:
+        """逐项检查稿件各部分 (标题/摘要/字数/参考文献/图表/关键词)."""
+        results: list[CheckResult] = []
 
         if "title" in manuscript and manuscript["title"]:
             results.append(self.check_title(manuscript["title"], journal))
 
         if "abstract" in manuscript and manuscript["abstract"]:
             lang = manuscript.get("abstract_lang", "en")
-            results.append(self.check_abstract(
-                manuscript["abstract"], journal, lang
-            ))
+            results.append(self.check_abstract(manuscript["abstract"], journal, lang))
 
         if "body" in manuscript and manuscript["body"]:
-            results.append(self.check_word_count(
-                manuscript["body"], journal, "body"
-            ))
+            results.append(self.check_word_count(manuscript["body"], journal, "body"))
 
         if "methods" in manuscript and manuscript["methods"]:
-            results.append(self.check_word_count(
-                manuscript["methods"], journal, "methods"
-            ))
+            results.append(
+                self.check_word_count(manuscript["methods"], journal, "methods")
+            )
 
         if "references" in manuscript and manuscript["references"] is not None:
-            results.append(self.check_references(
-                manuscript["references"], journal
-            ))
-            results.append(self.check_reference_format(
-                manuscript["references"], journal
-            ))
+            results.append(self.check_references(manuscript["references"], journal))
+            results.append(
+                self.check_reference_format(manuscript["references"], journal)
+            )
 
         if "figure_count" in manuscript and manuscript["figure_count"] is not None:
-            results.append(self.check_figures(
-                manuscript["figure_count"], journal
-            ))
+            results.append(self.check_figures(manuscript["figure_count"], journal))
 
         if "keywords" in manuscript and manuscript["keywords"]:
-            results.append(self.check_keywords(
-                manuscript["keywords"], journal
-            ))
-
-        # 声明类要求检查
-        results.extend(self._check_declarations(manuscript, spec))
+            results.append(self.check_keywords(manuscript["keywords"], journal))
 
         return results
 
@@ -481,7 +599,11 @@ class StandardsChecker:
             (spec.requires_orcid, "orcid", "ORCID"),
             (spec.requires_bilingual, "bilingual", "中英文双语内容"),
             (spec.requires_copyright_agreement, "copyright_agreement", "版权协议"),
-            (spec.requires_classification_number, "classification_number", "中图分类号"),
+            (
+                spec.requires_classification_number,
+                "classification_number",
+                "中图分类号",
+            ),
             (spec.requires_unit_proof, "unit_proof", "单位证明信"),
             (spec.requires_originality, "originality", "原创性声明"),
             (spec.requires_ai_declaration, "ai_declaration", "AI使用声明"),
@@ -492,18 +614,24 @@ class StandardsChecker:
             if not required:
                 continue
             if not manuscript.get(key):
-                results.append(CheckResult(
-                    key, False,
-                    f"缺少{label}",
-                    f"请补充{label}",
-                    severity="warning",
-                ))
+                results.append(
+                    CheckResult(
+                        key,
+                        False,
+                        f"缺少{label}",
+                        f"请补充{label}",
+                        severity="warning",
+                    )
+                )
             else:
-                results.append(CheckResult(
-                    key, True,
-                    f"已提供{label}",
-                    severity="info",
-                ))
+                results.append(
+                    CheckResult(
+                        key,
+                        True,
+                        f"已提供{label}",
+                        severity="info",
+                    )
+                )
         return results
 
     # ── 参考文献格式化 ────────────────────────────────────────
@@ -755,56 +883,8 @@ class StandardsChecker:
     def _auto_checklist(self, spec: JournalSpec) -> list[str]:
         """根据 JournalSpec 字段自动生成基础检查清单."""
         items: list[str] = []
-        if spec.title_max_chars:
-            items.append(f"标题不超过 {spec.title_max_chars} 字符")
-        if spec.abstract_max_words:
-            items.append(f"摘要不超过 {spec.abstract_max_words} 词")
-        if spec.body_max_words:
-            items.append(f"正文不超过 {spec.body_max_words} 词")
-        if spec.methods_max_words:
-            items.append(f"Methods 不超过 {spec.methods_max_words} 词")
-        if spec.display_items_max:
-            items.append(f"图表不超过 {spec.display_items_max} 个")
-        if spec.figures_max:
-            items.append(f"图不超过 {spec.figures_max} 个")
-        if spec.references_max:
-            items.append(f"参考文献不超过 {spec.references_max} 条")
-        if spec.keywords_max:
-            items.append(f"关键词不超过 {spec.keywords_max} 个")
-        if spec.requires_toc_graphic:
-            items.append(f"提供TOC图形{f' ({spec.toc_size})' if spec.toc_size else ''}")
-        if spec.requires_graphical_abstract:
-            items.append("提供图文摘要")
-        if spec.requires_bilingual:
-            items.append("中英文标题/摘要/关键词齐全")
-        if spec.requires_data_availability:
-            items.append("提供数据可用性声明")
-        if spec.requires_code_availability:
-            items.append("提供代码可用性声明")
-        if spec.requires_orcid:
-            items.append("全部作者提供ORCID")
-        if spec.requires_reporting_summary:
-            items.append("提供报告摘要 (Reporting Summary)")
-        if spec.requires_revtex:
-            items.append("使用REVTeX模板排版")
-        if spec.requires_copyright_agreement:
-            items.append("签署版权转让协议")
-        if spec.requires_classification_number:
-            items.append("标注中图分类号")
-        if spec.requires_unit_proof:
-            items.append("附单位证明信")
-        if spec.requires_originality:
-            items.append("签署原创性声明")
-        if spec.requires_ai_declaration:
-            items.append("签署AI使用声明")
-        if spec.requires_ccdc:
-            items.append("晶体数据提交CCDC")
-        if spec.requires_all_authors:
-            items.append("列出全部作者信息")
-        if spec.new_compound_characterization:
-            items.append(
-                "新化合物表征: " + "/".join(spec.new_compound_characterization)
-            )
+        items.extend(_auto_checklist_metrics(spec))
+        items.extend(_auto_checklist_requirements(spec))
         return items
 
 
@@ -821,4 +901,3 @@ if __name__ == "__main__":
     ok = check_citation_reference_match("见[1]和[2-2]", ["a", "b"])
     assert ok.passed and ok.details["total_citations"] == 2, ok.details
     print("self-check ok")
-

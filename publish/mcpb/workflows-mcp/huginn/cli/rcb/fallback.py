@@ -4,6 +4,7 @@
 agent 没写 report.md 时强制写, 仍不写就自动生成;
 images/ 没图时从 outputs/ 数据生成 fallback figures.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -24,6 +25,7 @@ def build_retry_budget(extra_budget: int | None) -> Any:
     if not extra_budget or extra_budget <= 0:
         return None
     from huginn.phases import BudgetSpec as _BS  # noqa: N814
+
     return _BS(
         max_calls=extra_budget,
         recursion_limit=max(250, extra_budget * 5),
@@ -58,33 +60,49 @@ async def step2_5_report_fallback(
             "Minimum: # Title, ## Methodology, ## Results (images/*.png), ## Discussion.\n"
             "Be HONEST. A short honest report beats no report. Write it NOW.",
             "step2.5",
-            tid=_step25_tid
+            tid=_step25_tid,
         )
     if not report_path.exists():
-        print("[fallback: auto-generating minimal report.md]", flush=True)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        # 方案 B: images/ 没图就用 outputs/ 数据生成 fallback figures.
-        _imgs_dir = ws / "report" / "images"
-        _imgs_dir.mkdir(parents=True, exist_ok=True)
-        _existing_imgs = list(_imgs_dir.glob("*.png")) if _imgs_dir.exists() else []
-        if not _existing_imgs:
-            _n_gen = generate_fallback_figures(ws, _imgs_dir)
-            if _n_gen > 0:
-                print(f"[fallback: generated {_n_gen} figures from outputs/]", flush=True)
-        _metrics_parts = []
-        for _p in (ws / "outputs").glob("*.json"):
-            with contextlib.suppress(Exception):
-                _metrics_parts.append(f"### {_p.name}\n```json\n{_p.read_text(encoding='utf-8')}\n```")
-        _metrics = "\n".join(_metrics_parts) or "None"
-        _imgs = "\n".join(f"![{p.name}](images/{p.name})" for p in _imgs_dir.glob("*.png")) or "None"
-        _code_dir = ws / "code"
-        _code = "\n".join(f"- `{p.name}`" for p in _code_dir.glob("*.py")) or "None" if _code_dir.exists() else "None"
-        report_path.write_text(
-            f"# Research Report (Auto-generated Fallback)\n\n"
-            f"## Methodology\nAgent did not write report.md; auto-generated from artifacts.\n\n"
-            f"### Code\n{_code}\n\n### Metrics\n{_metrics}\n\n## Results\n{_imgs}\n",
-            encoding="utf-8"
-        )
+        _write_fallback_report(ws, report_path)
+
+
+def _write_fallback_report(ws: Path, report_path: Path) -> None:
+    print("[fallback: auto-generating minimal report.md]", flush=True)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    # 方案 B: images/ 没图就用 outputs/ 数据生成 fallback figures.
+    _imgs_dir = ws / "report" / "images"
+    _imgs_dir.mkdir(parents=True, exist_ok=True)
+    _existing_imgs = list(_imgs_dir.glob("*.png")) if _imgs_dir.exists() else []
+    if not _existing_imgs:
+        _n_gen = generate_fallback_figures(ws, _imgs_dir)
+        if _n_gen > 0:
+            print(f"[fallback: generated {_n_gen} figures from outputs/]", flush=True)
+    _metrics_parts = []
+    for _p in (ws / "outputs").glob("*.json"):
+        with contextlib.suppress(Exception):
+            _metrics_parts.append(
+                f"### {_p.name}\n```json\n{_p.read_text(encoding='utf-8')}\n```"
+            )
+    _metrics = "\n".join(_metrics_parts) or "None"
+    _imgs = (
+        "\n".join(f"![{p.name}](images/{p.name})" for p in _imgs_dir.glob("*.png"))
+        or "None"
+    )
+    _code_dir = ws / "code"
+    _code = (
+        "\n".join(f"- `{p.name}`" for p in _code_dir.glob("*.py")) or "None"
+        if _code_dir.exists()
+        else "None"
+    )
+    report_path.write_text(
+        f"# Research Report (Auto-generated Fallback)\n\n"
+        f"## Methodology\nAgent did not write report.md; auto-generated from artifacts.\n\n"
+        f"### Code\n{_code}\n\n### Metrics\n{_metrics}\n\n## Results\n{_imgs}\n",
+        encoding="utf-8",
+    )
+
+
+_MAX_FALLBACK_FIGURES = 4
 
 
 def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
@@ -99,12 +117,34 @@ def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
     """
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        logger.debug("matplotlib not available, fallback figures skipped", exc_info=True)
+        logger.debug(
+            "matplotlib not available, fallback figures skipped", exc_info=True
+        )
         return 0
-    # 字体统一 Arial 20pt+ 加粗 (用户规则)
+    _setup_figure_style(plt)
+
+    outputs_dir = ws / "outputs"
+    if not outputs_dir.exists():
+        return 0
+
+    n_gen = _render_json_figures(outputs_dir, imgs_dir, plt, _MAX_FALLBACK_FIGURES)
+    if n_gen < _MAX_FALLBACK_FIGURES:
+        n_gen += _render_npy_figures(
+            outputs_dir, imgs_dir, plt, _MAX_FALLBACK_FIGURES - n_gen
+        )
+    if n_gen < _MAX_FALLBACK_FIGURES:
+        n_gen += _render_csv_figures(
+            outputs_dir, imgs_dir, plt, _MAX_FALLBACK_FIGURES - n_gen
+        )
+    return n_gen
+
+
+def _setup_figure_style(plt: Any) -> None:
+    """字体统一 Arial 20pt+ 加粗 (用户规则)."""
     try:
         plt.rcParams["font.family"] = "Arial"
         plt.rcParams["font.size"] = 20
@@ -112,158 +152,229 @@ def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
     except Exception:
         logger.debug("matplotlib rcParams setup skipped", exc_info=True)
 
-    n_gen = 0
-    outputs_dir = ws / "outputs"
-    if not outputs_dir.exists():
-        return 0
 
-    # .json metrics → bar chart
+def _numeric_fields(d: Any) -> dict[str, float]:
+    """只取数值字段, 跳过非数值 / bool."""
+    if not isinstance(d, dict) or not d:
+        return {}
+    return {
+        k: float(v)
+        for k, v in d.items()
+        if isinstance(v, int | float) and not isinstance(v, bool)
+    }
+
+
+def _bar_chart(plt: Any, numeric: dict[str, float], title: str, out_path: Path) -> None:
+    """Render the first 15 numeric fields as a bar chart."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(list(numeric.keys())[:15], list(numeric.values())[:15])
+    ax.set_title(title, fontsize=22, fontweight="bold")
+    ax.set_ylabel("Value", fontsize=20, fontweight="bold")
+    plt.xticks(rotation=30, ha="right")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _histogram(plt: Any, arr: Any, stem: str, out_path: Path) -> None:
+    """Render a 1-D array as a 30-bin histogram."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(arr, bins=30)
+    ax.set_title(f"Distribution: {stem}", fontsize=22, fontweight="bold")
+    ax.set_xlabel("Value", fontsize=20, fontweight="bold")
+    ax.set_ylabel("Count", fontsize=20, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _scatter_2d(plt: Any, arr: Any, stem: str, out_path: Path) -> None:
+    """Render the first two columns of a 2-D array as a scatter."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(arr[:, 0], arr[:, 1], s=20, alpha=0.6)
+    ax.set_title(f"Scatter: {stem}", fontsize=22, fontweight="bold")
+    ax.set_xlabel("col 0", fontsize=20, fontweight="bold")
+    ax.set_ylabel("col 1", fontsize=20, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _scatter_xy(
+    plt: Any,
+    xs: list[float],
+    ys: list[float],
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    out_path: Path,
+) -> None:
+    """Render two numeric columns as a scatter."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(xs, ys, s=15, alpha=0.5)
+    ax.set_title(title, fontsize=22, fontweight="bold")
+    ax.set_xlabel(xlabel, fontsize=20, fontweight="bold")
+    ax.set_ylabel(ylabel, fontsize=20, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _render_json_figures(
+    outputs_dir: Path, imgs_dir: Path, plt: Any, budget: int
+) -> int:
+    """`.json` metrics → bar chart. 返回生成数量."""
+    n_gen = 0
     for jp in outputs_dir.glob("*.json"):
         try:
             d = json.loads(jp.read_text(encoding="utf-8"))
-            if not isinstance(d, dict) or not d:
-                continue
-            # 只取数值字段, 跳过非数值
-            numeric = {k: float(v) for k, v in d.items()
-                       if isinstance(v, int | float) and not isinstance(v, bool)}
+            numeric = _numeric_fields(d)
             if not numeric:
                 continue
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.bar(list(numeric.keys())[:15], list(numeric.values())[:15])
-            ax.set_title(f"Metrics: {jp.stem}", fontsize=22, fontweight="bold")
-            ax.set_ylabel("Value", fontsize=20, fontweight="bold")
-            plt.xticks(rotation=30, ha="right")
-            plt.tight_layout()
-            fp = imgs_dir / f"fallback_{jp.stem}_metrics.png"
-            plt.savefig(fp, dpi=120, bbox_inches="tight")
-            plt.close(fig)
+            _bar_chart(
+                plt,
+                numeric,
+                f"Metrics: {jp.stem}",
+                imgs_dir / f"fallback_{jp.stem}_metrics.png",
+            )
             n_gen += 1
-            if n_gen >= 4:
+            if n_gen >= budget:
                 return n_gen
         except Exception:
             logger.debug("fallback json figure skipped", exc_info=True)
             continue
+    return n_gen
 
-    # .npy → histogram (1D) / scatter (2D) / bar chart (0-dim dict)
+
+def _render_npy_array(plt: Any, arr: Any, np_p: Path, imgs_dir: Path) -> bool:
+    """Render one loaded array; returns True when a figure was written."""
+    # 0-dim object array 通常是 dict (np.save(scalar_dict)) —
+    # 当 metrics bar chart 处理. ponytail: 不区分 dict / scalar,
+    # 是 dict 就画, 不是就 skip.
+    if arr.ndim == 0 and arr.dtype == object:
+        numeric = _numeric_fields(arr.item())
+        if not numeric:
+            return False
+        _bar_chart(
+            plt,
+            numeric,
+            f"Metrics: {np_p.stem}",
+            imgs_dir / f"fallback_{np_p.stem}_metrics.png",
+        )
+        return True
+    if arr.dtype == object:
+        return False
+    if arr.ndim == 1:
+        _histogram(plt, arr, np_p.stem, imgs_dir / f"fallback_{np_p.stem}_hist.png")
+        return True
+    if arr.ndim == 2 and arr.shape[1] >= 2:
+        _scatter_2d(plt, arr, np_p.stem, imgs_dir / f"fallback_{np_p.stem}_scatter.png")
+        return True
+    return False
+
+
+def _render_npy_figures(
+    outputs_dir: Path, imgs_dir: Path, plt: Any, budget: int
+) -> int:
+    """`.npy` → histogram (1D) / scatter (2D) / bar chart (0-dim dict)."""
     try:
         import numpy as np
-        for np_p in outputs_dir.glob("*.npy"):
-            try:
-                arr = np.load(np_p, allow_pickle=True)
-                if arr.size == 0:
-                    continue
-                # 0-dim object array 通常是 dict (np.save(scalar_dict)) —
-                # 当 metrics bar chart 处理. ponytail: 不区分 dict / scalar,
-                # 是 dict 就画, 不是就 skip.
-                if arr.ndim == 0 and arr.dtype == object:
-                    obj = arr.item()
-                    if not isinstance(obj, dict):
-                        continue
-                    numeric = {k: float(v) for k, v in obj.items()
-                               if isinstance(v, int | float) and not isinstance(v, bool)}
-                    if not numeric:
-                        continue
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    ax.bar(list(numeric.keys())[:15], list(numeric.values())[:15])
-                    ax.set_title(f"Metrics: {np_p.stem}", fontsize=22, fontweight="bold")
-                    ax.set_ylabel("Value", fontsize=20, fontweight="bold")
-                    plt.xticks(rotation=30, ha="right")
-                    plt.tight_layout()
-                    fp = imgs_dir / f"fallback_{np_p.stem}_metrics.png"
-                    plt.savefig(fp, dpi=120, bbox_inches="tight")
-                    plt.close(fig)
-                    n_gen += 1
-                elif arr.dtype == object:
-                    continue
-                elif arr.ndim == 1:
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    ax.hist(arr, bins=30)
-                    ax.set_title(f"Distribution: {np_p.stem}", fontsize=22, fontweight="bold")
-                    ax.set_xlabel("Value", fontsize=20, fontweight="bold")
-                    ax.set_ylabel("Count", fontsize=20, fontweight="bold")
-                    plt.tight_layout()
-                    fp = imgs_dir / f"fallback_{np_p.stem}_hist.png"
-                    plt.savefig(fp, dpi=120, bbox_inches="tight")
-                    plt.close(fig)
-                    n_gen += 1
-                elif arr.ndim == 2 and arr.shape[1] >= 2:
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    ax.scatter(arr[:, 0], arr[:, 1], s=20, alpha=0.6)
-                    ax.set_title(f"Scatter: {np_p.stem}", fontsize=22, fontweight="bold")
-                    ax.set_xlabel("col 0", fontsize=20, fontweight="bold")
-                    ax.set_ylabel("col 1", fontsize=20, fontweight="bold")
-                    plt.tight_layout()
-                    fp = imgs_dir / f"fallback_{np_p.stem}_scatter.png"
-                    plt.savefig(fp, dpi=120, bbox_inches="tight")
-                    plt.close(fig)
-                    n_gen += 1
-                if n_gen >= 4:
-                    return n_gen
-            except Exception:
-                logger.debug("fallback npy figure skipped", exc_info=True)
-                continue
     except ImportError:
         logger.debug("numpy not available, npy figures skipped", exc_info=True)
+        return 0
+    n_gen = 0
+    for np_p in outputs_dir.glob("*.npy"):
+        try:
+            arr = np.load(np_p, allow_pickle=True)
+            if arr.size == 0:
+                continue
+            if _render_npy_array(plt, arr, np_p, imgs_dir):
+                n_gen += 1
+            if n_gen >= budget:
+                return n_gen
+        except Exception:
+            logger.debug("fallback npy figure skipped", exc_info=True)
+            continue
+    return n_gen
 
-    # .csv → line plot (找第一对都是数值的列, 跳过 SMILES 等文本列)
+
+def _columns_are_numeric(rows: list[list[str]], xi: int, yi: int) -> bool:
+    """True when the first 20 data rows parse as float in both columns."""
+    checked = 0
+    for r in rows[1:20]:
+        if len(r) <= yi:
+            continue
+        checked += 1
+        try:
+            float(r[xi])
+            float(r[yi])
+        except (ValueError, TypeError):
+            return False
+    return checked > 0
+
+
+def _find_numeric_pair(header: list[str], rows: list[list[str]]) -> tuple[int, int]:
+    """找第一对都是数值的列对 (col_x, col_y).
+
+    ponytail: O(cols^2 * rows) 但 cols/rows 都小, 零开销. 升级: pandas 自动 dtype 推断.
+    """
+    for xi in range(min(len(header), 8)):
+        for yi in range(xi + 1, min(len(header), 8)):
+            if _columns_are_numeric(rows, xi, yi):
+                return xi, yi
+    return -1, -1
+
+
+def _collect_numeric_columns(
+    rows: list[list[str]], xi: int, yi: int
+) -> tuple[list[float], list[float]]:
+    """Collect the two numeric columns, skipping rows that fail to parse."""
+    xs: list[float] = []
+    ys: list[float] = []
+    for r in rows[1:]:
+        if len(r) <= yi:
+            continue
+        try:
+            xs.append(float(r[xi]))
+            ys.append(float(r[yi]))
+        except (ValueError, TypeError):
+            continue
+    return xs, ys
+
+
+def _render_csv_figures(
+    outputs_dir: Path, imgs_dir: Path, plt: Any, budget: int
+) -> int:
+    """`.csv` → line plot (找第一对都是数值的列, 跳过 SMILES 等文本列)."""
     import csv
+
+    n_gen = 0
     for cp in outputs_dir.glob("*.csv"):
         try:
             with cp.open(encoding="utf-8") as f:
-                reader = csv.reader(f)
-                rows = list(reader)
+                rows = list(csv.reader(f))
             if len(rows) < 2:
                 continue
             header = rows[0]
-            # 找第一对都是数值的列对 (col_x, col_y). ponytail: O(cols^2 * rows)
-            # 但 cols/rows 都小, 零开销. 升级: pandas 自动 dtype 推断.
-            _x_idx = _y_idx = -1
-            for _xi in range(min(len(header), 8)):
-                for _yi in range(_xi + 1, min(len(header), 8)):
-                    _ok = 0
-                    _total_check = 0
-                    for r in rows[1:20]:
-                        if len(r) <= _yi:
-                            continue
-                        _total_check += 1
-                        try:
-                            float(r[_xi])
-                            float(r[_yi])
-                            _ok += 1
-                        except (ValueError, TypeError):
-                            pass
-                    if _total_check > 0 and _ok == _total_check:
-                        _x_idx, _y_idx = _xi, _yi
-                        break
-                if _x_idx >= 0:
-                    break
-            if _x_idx < 0:
+            x_idx, y_idx = _find_numeric_pair(header, rows)
+            if x_idx < 0:
                 continue
-            xs, ys = [], []
-            for r in rows[1:]:
-                if len(r) <= _y_idx:
-                    continue
-                try:
-                    xs.append(float(r[_x_idx]))
-                    ys.append(float(r[_y_idx]))
-                except (ValueError, TypeError):
-                    continue
+            xs, ys = _collect_numeric_columns(rows, x_idx, y_idx)
             if len(xs) < 2:
                 continue
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.scatter(xs, ys, s=15, alpha=0.5)
-            ax.set_title(f"Scatter: {cp.stem}", fontsize=22, fontweight="bold")
-            ax.set_xlabel(header[_x_idx] if _x_idx < len(header) else f"col {_x_idx}", fontsize=20, fontweight="bold")
-            ax.set_ylabel(header[_y_idx] if _y_idx < len(header) else f"col {_y_idx}", fontsize=20, fontweight="bold")
-            plt.tight_layout()
-            fp = imgs_dir / f"fallback_{cp.stem}_scatter.png"
-            plt.savefig(fp, dpi=120, bbox_inches="tight")
-            plt.close(fig)
+            _scatter_xy(
+                plt,
+                xs,
+                ys,
+                f"Scatter: {cp.stem}",
+                header[x_idx] if x_idx < len(header) else f"col {x_idx}",
+                header[y_idx] if y_idx < len(header) else f"col {y_idx}",
+                imgs_dir / f"fallback_{cp.stem}_scatter.png",
+            )
             n_gen += 1
-            if n_gen >= 4:
+            if n_gen >= budget:
                 return n_gen
         except Exception:
             logger.debug("fallback csv figure skipped", exc_info=True)
             continue
-
     return n_gen

@@ -209,7 +209,9 @@ async def confirm_plan(plan_id: str) -> dict[str, Any]:
 
 
 @router.post("/team/v2/plans/{plan_id}/reject")
-async def reject_plan(plan_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def reject_plan(
+    plan_id: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """拒绝 draft 计划, 标记为 abandoned. 可带 reason."""
     try:
         store = get_plan_store()
@@ -224,7 +226,9 @@ async def reject_plan(plan_id: str, params: dict[str, Any] | None = None) -> dic
 
 
 @router.post("/team/v2/plans/{plan_id}/execute")
-async def execute_plan(plan_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def execute_plan(
+    plan_id: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """执行已确认的计划. 走 Orchestrator.execute(plan_id).
 
     执行完成后返回最终 plan 状态 + result 摘要.
@@ -251,7 +255,11 @@ async def execute_plan(plan_id: str, params: dict[str, Any] | None = None) -> di
         # 执行可能抛错 (plan 不存在 / 状态不对), 顺带返回当前 plan 状态
         try:
             plan = get_plan_store().get_plan(plan_id)
-            return {"success": False, "error": str(e), "plan": plan.to_dict() if plan else None}
+            return {
+                "success": False,
+                "error": str(e),
+                "plan": plan.to_dict() if plan else None,
+            }
         except Exception:
             return {"success": False, "error": str(e)}
 
@@ -270,6 +278,61 @@ async def delete_plan(plan_id: str) -> dict[str, Any]:
 
 
 # ── 老接口: Orchestrator (保留向后兼容) ─────────────────────────
+
+
+def _resolve_fusion_roles(
+    panel_roles_raw: Any, synthesizer_role_raw: Any
+) -> tuple[Any, Any]:
+    """解析 panel / synthesizer 角色参数 (非法值回落到默认)."""
+    from huginn.agents.team import TeamRole
+
+    panel_roles = None
+    if panel_roles_raw and isinstance(panel_roles_raw, list):
+        with contextlib.suppress(ValueError):
+            panel_roles = [TeamRole(r) for r in panel_roles_raw]
+
+    try:
+        synthesizer_role = TeamRole(synthesizer_role_raw)
+    except ValueError:
+        synthesizer_role = TeamRole.CRITIC
+    return panel_roles, synthesizer_role
+
+
+async def _run_fusion_query(
+    query: str,
+    thread_id: Any,
+    panel_roles: Any,
+    synthesizer_role: Any,
+    max_panel: int,
+    rounds: int,
+    publish: Any,
+) -> dict[str, Any]:
+    """建队 → 并行问答 → 发布进度, 返回 fusion 的原始结果."""
+    team = _build_model_team()
+    publish(
+        PetMood.WORKING,
+        f"Fusion 启动: {len(team.members)} 个成员, panel ≤ {max_panel}, {rounds} 轮",
+    )
+
+    ctx: dict[str, Any] = {}
+    if thread_id:
+        ctx["thread_id"] = thread_id
+
+    result = await team.fusion_query(
+        query,
+        ctx,
+        panel_roles=panel_roles,
+        synthesizer_role=synthesizer_role,
+        max_panel=max_panel,
+        rounds=rounds,
+    )
+
+    panel_count = len(result.get("panel_responses", []))
+    publish(
+        PetMood.SUCCESS if result.get("final_answer") else PetMood.ERROR,
+        f"Fusion 完成 · {panel_count} 个 panel 回答已合成",
+    )
+    return result
 
 
 @router.post("/team/v2/fusion")
@@ -306,44 +369,18 @@ async def team_v2_fusion(params: dict[str, Any]) -> dict[str, Any]:
             bus.publish(mood=mood, message=msg, details=details or {})
 
     try:
-        from huginn.agents.team import TeamRole
-
-        # 解析角色参数
-        panel_roles = None
-        if panel_roles_raw and isinstance(panel_roles_raw, list):
-            with contextlib.suppress(ValueError):
-                panel_roles = [TeamRole(r) for r in panel_roles_raw]
-
-        try:
-            synthesizer_role = TeamRole(synthesizer_role_raw)
-        except ValueError:
-            synthesizer_role = TeamRole.CRITIC
-
-        team = _build_model_team()
-        _publish(
-            PetMood.WORKING,
-            f"Fusion 启动: {len(team.members)} 个成员, panel ≤ {max_panel}, {rounds} 轮",
+        panel_roles, synthesizer_role = _resolve_fusion_roles(
+            panel_roles_raw, synthesizer_role_raw
         )
-
-        ctx: dict[str, Any] = {}
-        if thread_id:
-            ctx["thread_id"] = thread_id
-
-        result = await team.fusion_query(
+        result = await _run_fusion_query(
             query,
-            ctx,
-            panel_roles=panel_roles,
-            synthesizer_role=synthesizer_role,
-            max_panel=max_panel,
-            rounds=rounds,
+            thread_id,
+            panel_roles,
+            synthesizer_role,
+            max_panel,
+            rounds,
+            _publish,
         )
-
-        panel_count = len(result.get("panel_responses", []))
-        _publish(
-            PetMood.SUCCESS if result.get("final_answer") else PetMood.ERROR,
-            f"Fusion 完成 · {panel_count} 个 panel 回答已合成",
-        )
-
         return {"success": True, **result}
     except Exception as e:
         _publish(PetMood.ERROR, f"Fusion 执行失败: {e}")
@@ -413,7 +450,9 @@ async def team_run(params: dict[str, Any]) -> dict[str, Any]:
         mood = (
             PetMood.WORKING
             if task.status == "running"
-            else PetMood.SUCCESS if task.status == "done" else PetMood.ERROR
+            else PetMood.SUCCESS
+            if task.status == "done"
+            else PetMood.ERROR
         )
         get_pet_bus().publish(
             mood=mood,

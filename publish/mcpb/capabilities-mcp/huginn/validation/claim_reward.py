@@ -21,6 +21,7 @@
   - `claim_grounding.verify_claims` 负责溯源判定（本模块直接复用其 verdict/数值分类）。
   - 折叠点：可把本模块输出并进现有 `reconcile_r_phys(base, world_reward)` 的 reward 侧。
 """
+
 from __future__ import annotations
 
 import importlib
@@ -41,11 +42,13 @@ def _load_verify_claims():
         return _verify_claims
     try:
         from huginn.validation import claim_grounding as _cg
+
         _verify_claims = _cg.verify_claims
     except Exception:  # noqa: BLE001 — 包重依赖未装/初始化失败, 回退兜底
         # 兜底: 直接按文件加载 claim_grounding (纯标准库, 不触发包 __init__)。
         try:
             import pathlib
+
             _root = pathlib.Path(__file__).resolve().parent
             _spec = importlib.util.spec_from_file_location(
                 "claim_grounding_embed", _root / "claim_grounding.py"
@@ -62,6 +65,7 @@ def _fallback_verify_claims(text, trace, **_: Any) -> dict[str, Any]:
     """纯数值兜底: 报告数值能否近似匹配轨迹里任一数值. 仅在真实 claim_grounding
     import 失败时启用, 语义对齐(1/2位容差 + 小整数)以保持可证伪."""
     import re
+
     _tok = re.findall(r"[-+]?\d+\.\d+|[-+]?\d+", text or "")
     _ev = re.findall(r"[-+]?\d+\.\d+|[-+]?\d+", "\n".join(trace or []))
     ev_set = {round(float(x), 2) for x in _ev}
@@ -74,9 +78,14 @@ def _fallback_verify_claims(text, trace, **_: Any) -> dict[str, Any]:
         got = any(abs(round(v, 2) - e) <= 0.03 for e in ev_set)
         (matched if got else un).append(v)
     ok = not un
-    return {"matched": matched, "derived": [], "unsubstantiated": un,
-            "verdict": "pass" if ok else "needs_grounding",
-            "note": "fallback grounding"}
+    return {
+        "matched": matched,
+        "derived": [],
+        "unsubstantiated": un,
+        "verdict": "pass" if ok else "needs_grounding",
+        "note": "fallback grounding",
+    }
+
 
 # 数字贴近度的分母保护 (避免 y=0 除零); 与 Code-as-World 的 ε 同哲学.
 _EPS = 1e-9
@@ -156,32 +165,49 @@ def grounding_source_reward(
         "unsubstantiated": u,
     }
     # 契约融合层 (可选): 判定与溯源正交 —— 有效域违反即使溯源到轨迹也不算数.
+    _fuse_scientific_contract(out, score, n, objectives, quantities)
+    return out
+
+
+def _fuse_scientific_contract(
+    out: dict[str, Any],
+    score: float,
+    n: int,
+    objectives: dict | None,
+    quantities: dict | None,
+) -> None:
     if objectives is not None and quantities is not None:
         from huginn.research.external_validator import validate_scientific_contract
+
         valid, gaps = validate_scientific_contract(objectives, quantities)
         viol = [g for g in gaps if "违反" in g]
         cov = [g for g in gaps if "未声明" in g]
         # 三档: 无违反无 gap=1(oK); 仅 coverage gap=0.5(有效域未知, 不硬判但不全信);
         # 有违反=0(数值局限, 硬判不过)。
-        contract_score = 1.0 if (valid and not viol and not cov) else \
-                         (0.5 if (not viol and cov) else 0.0)
-        contract_verdict = "ok" if (valid and not viol and not cov) else \
-                           ("partial" if (not viol and cov) else "needs_grounding")
+        contract_score = (
+            1.0
+            if (valid and not viol and not cov)
+            else (0.5 if (not viol and cov) else 0.0)
+        )
+        contract_verdict = (
+            "ok"
+            if (valid and not viol and not cov)
+            else ("partial" if (not viol and cov) else "needs_grounding")
+        )
         trusted = (score >= 1.0 - 1e-9 or n == 0) and contract_verdict == "ok"
         out["contract_score"] = contract_score
         out["contract_verdict"] = contract_verdict
         out["domain_violations"] = viol
         out["coverage_gaps"] = cov
-        out["trusted"] = trusted   # 判官结论: 溯源 AND 契约(ok) 都过才算可信
+        out["trusted"] = trusted  # 判官结论: 溯源 AND 契约(ok) 都过才算可信
         if contract_verdict != "ok":
-            out["verdict"] = contract_verdict   # 合并判官: 契约不过/不全即不过
+            out["verdict"] = contract_verdict  # 合并判官: 契约不过/不全即不过
     else:
         out["contract_score"] = None
         out["contract_verdict"] = None
         out["domain_violations"] = []
         out["coverage_gaps"] = []
-        out["trusted"] = (score >= 1.0 - 1e-9 or n == 0)
-    return out
+        out["trusted"] = score >= 1.0 - 1e-9 or n == 0
 
 
 def grounded_accuracy_reward(
@@ -203,13 +229,21 @@ def grounded_accuracy_reward(
 
     Returns: {"reward", "grounding", "detail": {pred, truth, near, grounded, ok}[]}
     """
-    g = grounding_source_reward(
-        final_text, tool_trace, allow_derived=allow_derived
-    )
+    g = grounding_source_reward(final_text, tool_trace, allow_derived=allow_derived)
     if not values:
         return {"reward": g["grounding_score"], "grounding": g["verdict"], "detail": []}
 
     # 用 verify_claims 的数值分类, 保证只对"真实主张"计价 (忽略轮次编号/小节号).
+    claims = _grounded_claim_map(final_text, tool_trace, allow_derived)
+    detail, accuracy = _score_grounded_claims(claims, values, mode, grounding_weight)
+    # 最终奖励: 溯源系数与贴合精度各占一半 — 既不能靠刷溯源骗分, 也不能背数字逃过溯源.
+    reward = 0.5 * g["grounding_score"] + 0.5 * accuracy
+    return {"reward": reward, "grounding": g["verdict"], "detail": detail}
+
+
+def _grounded_claim_map(
+    final_text: str, tool_trace: list[str], allow_derived: bool
+) -> dict[float, bool]:
     # 注意: verify 返回的 matched/derived/unsubstantiated 已 round(3), 不能直接当键;
     # 用 extract_numeric_claims 的原始数值对账 values(它是主张数值->真值映射),
     # 再用 rounded 集合判断该主张是否溯源落地。
@@ -220,7 +254,9 @@ def grounded_accuracy_reward(
     )
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
-    res = _load_verify_claims()(final_text, tool_trace or [], allow_derived=allow_derived)
+    res = _load_verify_claims()(
+        final_text, tool_trace or [], allow_derived=allow_derived
+    )
     raw_claims = _mod.extract_numeric_claims(final_text)
     rounded_matched = set(res["matched"]) or set()
     rounded_ok = set(res["matched"]) | set(res["derived"])
@@ -229,6 +265,15 @@ def grounded_accuracy_reward(
         rc = round(c, 3)
         grounded = rc in rounded_ok or c in rounded_matched
         claims.setdefault(c, grounded)
+    return claims
+
+
+def _score_grounded_claims(
+    claims: dict[float, bool],
+    values: dict[float, float],
+    mode: str,
+    grounding_weight: float,
+) -> tuple[list[dict[str, Any]], float]:
     detail: list[dict[str, Any]] = []
     acc = 0.0
     n = 0
@@ -242,13 +287,16 @@ def grounded_accuracy_reward(
         acc += near * weight
         n += 1
         detail.append(
-            {"pred": c, "truth": truth, "near": round(near, 4),
-             "grounded": grounded, "ok": grounded}
+            {
+                "pred": c,
+                "truth": truth,
+                "near": round(near, 4),
+                "grounded": grounded,
+                "ok": grounded,
+            }
         )
     accuracy = (acc / n) if n else 0.0
-    # 最终奖励: 溯源系数与贴合精度各占一半 — 既不能靠刷溯源骗分, 也不能背数字逃过溯源.
-    reward = 0.5 * g["grounding_score"] + 0.5 * accuracy
-    return {"reward": reward, "grounding": g["verdict"], "detail": detail}
+    return detail, accuracy
 
 
 # ──────────────────── Anti-Hacking 三件套 ────────────────────
@@ -268,7 +316,9 @@ def strict_scope_reward(full_reward: float, authorized_ratio: float) -> float:
     return 0.0
 
 
-def efficiency_discount(reward: float, solved_at_turn: int, *, alpha: float = 0.3) -> float:
+def efficiency_discount(
+    reward: float, solved_at_turn: int, *, alpha: float = 0.3
+) -> float:
     """② 效率折扣：首次全对越早越好.
 
     把 reward 按"第一次全部正确所在的轮次"打折, 促进 agent 尽早收敛而非绕圈:
@@ -293,7 +343,11 @@ def idle_turn_penalty(reward: float, extra_turns: int, *, beta: float = 0.1) -> 
     """
     if extra_turns is None or extra_turns <= 0:
         return reward
-    return max(0.0, reward - beta * (extra_turns if isinstance(extra_turns, int) else int(extra_turns)))
+    return max(
+        0.0,
+        reward
+        - beta * (extra_turns if isinstance(extra_turns, int) else int(extra_turns)),
+    )
 
 
 def anti_hacking_reward(

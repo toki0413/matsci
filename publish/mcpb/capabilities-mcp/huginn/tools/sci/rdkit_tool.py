@@ -57,10 +57,125 @@ class RDKitInput(BaseModel):
         default="morgan", description="Fingerprint type"
     )
     radius: int = Field(default=2, ge=1, le=4, description="Morgan fingerprint radius")
-    n_bits: int = Field(default=2048, ge=128, le=8192, description="Fingerprint bit count")
-    n_conformers: int = Field(default=1, ge=1, le=50, description="Number of 3D conformers")
-    optimize: bool = Field(default=True, description="MMFF94 force-field optimization for conformers")
-    image_size: tuple[int, int] = Field(default=(500, 500), description="2D draw image size")
+    n_bits: int = Field(
+        default=2048, ge=128, le=8192, description="Fingerprint bit count"
+    )
+    n_conformers: int = Field(
+        default=1, ge=1, le=50, description="Number of 3D conformers"
+    )
+    optimize: bool = Field(
+        default=True, description="MMFF94 force-field optimization for conformers"
+    )
+    image_size: tuple[int, int] = Field(
+        default=(500, 500), description="2D draw image size"
+    )
+
+
+def _resolve_mol_target(
+    path_str: str | None,
+) -> tuple[Path | None, str | None, ToolResult | None]:
+    """校验 mol_file 路径并解析格式; 失败时返回 (None, None, 错误)."""
+    if not path_str:
+        return (
+            None,
+            None,
+            ToolResult(data=None, success=False, error="mol_file is required"),
+        )
+    path = Path(path_str)
+    if not path.is_file():
+        return (
+            None,
+            None,
+            ToolResult(
+                data=None,
+                success=False,
+                error=f"Structure file not found: {path_str}",
+            ),
+        )
+
+    suffix = path.suffix.lower()
+    # .mdl 与 .ent 分别是 MOL / PDB 的常见别名
+    if suffix in (".mol", ".mdl"):
+        return path, "mol", None
+    if suffix == ".sdf":
+        return path, "sdf", None
+    if suffix in (".pdb", ".ent"):
+        return path, "pdb", None
+    return (
+        None,
+        None,
+        ToolResult(
+            data=None,
+            success=False,
+            error=(
+                f"Unsupported structure file format: {suffix or '(no suffix)'} "
+                f"({path_str}). Supported: .mol/.mdl, .sdf, .pdb/.ent"
+            ),
+        ),
+    )
+
+
+def _parse_mol_records(
+    Chem, path: Path, fmt: str, path_str: str
+) -> tuple[list[dict], list[dict], ToolResult | None]:
+    """按格式逐条解析结构文件; 返回 (molecules, errors, 错误)."""
+    molecules: list[dict] = []
+    errors: list[dict] = []
+    try:
+        if fmt == "sdf":
+            # SDMolSupplier 按文件名惰性读, 逐记录解析
+            supplier = Chem.SDMolSupplier(str(path))
+            for i, mol in enumerate(supplier):
+                if mol is None:
+                    errors.append(
+                        {
+                            "record_index": i,
+                            "error": "MolFromMolBlock returned None (malformed record)",
+                        }
+                    )
+                    continue
+                molecules.append(RDKitTool._mol_info(mol, record_index=i))
+        else:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            mol = (
+                Chem.MolFromMolBlock(text, removeHs=False)
+                if fmt == "mol"
+                else Chem.MolFromPDBBlock(text)
+            )
+            if mol is None:
+                raise ValueError(f"RDKit parser returned None for {fmt} block")
+            molecules.append(RDKitTool._mol_info(mol, record_index=0))
+    except OSError as exc:
+        return (
+            [],
+            [],
+            ToolResult(
+                data=None, success=False, error=f"Cannot read {path_str}: {exc}"
+            ),
+        )
+    except Exception as exc:
+        return (
+            [],
+            [],
+            ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to parse {fmt} file {path_str}: {exc}",
+            ),
+        )
+    return molecules, errors, None
+
+
+def _similarity_interpretation(sim: float) -> str:
+    return (
+        "highly similar"
+        if sim > 0.85
+        else "moderately similar"
+        if sim > 0.6
+        else "weakly similar"
+        if sim > 0.3
+        else "dissimilar"
+    )
 
 
 class RDKitTool(HuginnTool):
@@ -104,7 +219,9 @@ class RDKitTool(HuginnTool):
                 return self._conformers(args)
             if args.action == "smiles_to_sdf":
                 return self._smiles_to_sdf(args)
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         except ImportError as exc:
             return ToolResult(
                 data=None,
@@ -141,7 +258,9 @@ class RDKitTool(HuginnTool):
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            return ToolResult(data=None, success=False, error=f"Invalid SMILES: {smiles}")
+            return ToolResult(
+                data=None, success=False, error=f"Invalid SMILES: {smiles}"
+            )
 
         info = {
             "smiles": smiles,
@@ -167,72 +286,13 @@ class RDKitTool(HuginnTool):
         from rdkit import Chem
 
         path_str = args.mol_file
-        if not path_str:
-            return ToolResult(
-                data=None, success=False, error="mol_file is required"
-            )
-        path = Path(path_str)
-        if not path.is_file():
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Structure file not found: {path_str}",
-            )
+        path, fmt, err = _resolve_mol_target(path_str)
+        if err is not None:
+            return err
 
-        suffix = path.suffix.lower()
-        # .mdl 与 .ent 分别是 MOL / PDB 的常见别名
-        if suffix in (".mol", ".mdl"):
-            fmt = "mol"
-        elif suffix == ".sdf":
-            fmt = "sdf"
-        elif suffix in (".pdb", ".ent"):
-            fmt = "pdb"
-        else:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"Unsupported structure file format: {suffix or '(no suffix)'} "
-                    f"({path_str}). Supported: .mol/.mdl, .sdf, .pdb/.ent"
-                ),
-            )
-
-        molecules: list[dict] = []
-        errors: list[dict] = []
-        try:
-            if fmt == "sdf":
-                # SDMolSupplier 按文件名惰性读, 逐记录解析
-                supplier = Chem.SDMolSupplier(str(path))
-                for i, mol in enumerate(supplier):
-                    if mol is None:
-                        errors.append(
-                            {
-                                "record_index": i,
-                                "error": "MolFromMolBlock returned None (malformed record)",
-                            }
-                        )
-                        continue
-                    molecules.append(self._mol_info(mol, record_index=i))
-            else:
-                text = path.read_text(encoding="utf-8", errors="replace")
-                mol = (
-                    Chem.MolFromMolBlock(text, removeHs=False)
-                    if fmt == "mol"
-                    else Chem.MolFromPDBBlock(text)
-                )
-                if mol is None:
-                    raise ValueError(f"RDKit parser returned None for {fmt} block")
-                molecules.append(self._mol_info(mol, record_index=0))
-        except OSError as exc:
-            return ToolResult(
-                data=None, success=False, error=f"Cannot read {path_str}: {exc}"
-            )
-        except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Failed to parse {fmt} file {path_str}: {exc}",
-            )
+        molecules, errors, err = _parse_mol_records(Chem, path, fmt, path_str)
+        if err is not None:
+            return err
 
         if not molecules:
             return ToolResult(
@@ -282,7 +342,9 @@ class RDKitTool(HuginnTool):
 
         smiles_list = args.smiles_list or ([args.smiles] if args.smiles else [])
         if not smiles_list:
-            return ToolResult(data=None, success=False, error="Provide smiles or smiles_list")
+            return ToolResult(
+                data=None, success=False, error="Provide smiles or smiles_list"
+            )
 
         results = []
         for smi in smiles_list:
@@ -291,27 +353,33 @@ class RDKitTool(HuginnTool):
                 results.append({"smiles": smi, "error": "invalid SMILES"})
                 continue
 
-            results.append({
-                "smiles": smi,
-                "canonical_smiles": Chem.MolToSmiles(mol),
-                "molecular_weight": round(Descriptors.MolWt(mol), 2),
-                "logp": round(Crippen.MolLogP(mol), 2),
-                "tpsa": round(rdMolDescriptors.CalcTPSA(mol), 2),
-                "h_bond_donors": Lipinski.NumHDonors(mol),
-                "h_bond_acceptors": Lipinski.NumHAcceptors(mol),
-                "rotatable_bonds": Lipinski.NumRotatableBonds(mol),
-                "num_rings": rdMolDescriptors.CalcNumRings(mol),
-                "num_aromatic_rings": rdMolDescriptors.CalcNumAromaticRings(mol),
-                "num_heavy_atoms": mol.GetNumHeavyAtoms(),
-                "fraction_csp3": round(rdMolDescriptors.CalcFractionCSP3(mol), 3),
-                "num_valence_electrons": rdMolDescriptors.CalcNumValenceElectrons(mol),
-                "lipinski_violations": sum([
-                    Descriptors.MolWt(mol) > 500,
-                    Crippen.MolLogP(mol) > 5,
-                    Lipinski.NumHDonors(mol) > 5,
-                    Lipinski.NumHAcceptors(mol) > 10,
-                ]),
-            })
+            results.append(
+                {
+                    "smiles": smi,
+                    "canonical_smiles": Chem.MolToSmiles(mol),
+                    "molecular_weight": round(Descriptors.MolWt(mol), 2),
+                    "logp": round(Crippen.MolLogP(mol), 2),
+                    "tpsa": round(rdMolDescriptors.CalcTPSA(mol), 2),
+                    "h_bond_donors": Lipinski.NumHDonors(mol),
+                    "h_bond_acceptors": Lipinski.NumHAcceptors(mol),
+                    "rotatable_bonds": Lipinski.NumRotatableBonds(mol),
+                    "num_rings": rdMolDescriptors.CalcNumRings(mol),
+                    "num_aromatic_rings": rdMolDescriptors.CalcNumAromaticRings(mol),
+                    "num_heavy_atoms": mol.GetNumHeavyAtoms(),
+                    "fraction_csp3": round(rdMolDescriptors.CalcFractionCSP3(mol), 3),
+                    "num_valence_electrons": rdMolDescriptors.CalcNumValenceElectrons(
+                        mol
+                    ),
+                    "lipinski_violations": sum(
+                        [
+                            Descriptors.MolWt(mol) > 500,
+                            Crippen.MolLogP(mol) > 5,
+                            Lipinski.NumHDonors(mol) > 5,
+                            Lipinski.NumHAcceptors(mol) > 10,
+                        ]
+                    ),
+                }
+            )
 
         return ToolResult(data={"molecules": results, "count": len(results)})
 
@@ -324,23 +392,30 @@ class RDKitTool(HuginnTool):
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            return ToolResult(data=None, success=False, error=f"Invalid SMILES: {smiles}")
+            return ToolResult(
+                data=None, success=False, error=f"Invalid SMILES: {smiles}"
+            )
 
-        fp, n_bits = self._compute_fingerprint(mol, args.fingerprint_type, args.radius, args.n_bits)
+        fp, n_bits = self._compute_fingerprint(
+            mol, args.fingerprint_type, args.radius, args.n_bits
+        )
 
         # Return as bit-vector string for compactness; callers can convert back
         from rdkit.DataStructs import ConvertToExplicitBitVect
-        bv = ConvertToExplicitBitVect(fp) if hasattr(fp, 'GetNumBits') else fp
+
+        bv = ConvertToExplicitBitVect(fp) if hasattr(fp, "GetNumBits") else fp
         on_bits = list(bv.GetOnBits())
 
-        return ToolResult(data={
-            "smiles": smiles,
-            "fingerprint_type": args.fingerprint_type,
-            "n_bits": n_bits,
-            "n_on_bits": len(on_bits),
-            "density": round(len(on_bits) / n_bits, 4),
-            "on_bits": on_bits[:200],  # cap for large fingerprints
-        })
+        return ToolResult(
+            data={
+                "smiles": smiles,
+                "fingerprint_type": args.fingerprint_type,
+                "n_bits": n_bits,
+                "n_on_bits": len(on_bits),
+                "density": round(len(on_bits) / n_bits, 4),
+                "on_bits": on_bits[:200],  # cap for large fingerprints
+            }
+        )
 
     def _similarity(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
@@ -349,55 +424,71 @@ class RDKitTool(HuginnTool):
         ref = args.reference_smiles
         query = args.query_smiles
         if not ref or not query:
-            return ToolResult(data=None, success=False, error="reference_smiles and query_smiles required")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="reference_smiles and query_smiles required",
+            )
 
         mol_ref = Chem.MolFromSmiles(ref)
         mol_q = Chem.MolFromSmiles(query)
         if mol_ref is None or mol_q is None:
-            return ToolResult(data=None, success=False, error="Invalid SMILES in reference or query")
+            return ToolResult(
+                data=None, success=False, error="Invalid SMILES in reference or query"
+            )
 
-        fp_ref, n_bits = self._compute_fingerprint(mol_ref, args.fingerprint_type, args.radius, args.n_bits)
-        fp_q, _ = self._compute_fingerprint(mol_q, args.fingerprint_type, args.radius, args.n_bits)
+        fp_ref, n_bits = self._compute_fingerprint(
+            mol_ref, args.fingerprint_type, args.radius, args.n_bits
+        )
+        fp_q, _ = self._compute_fingerprint(
+            mol_q, args.fingerprint_type, args.radius, args.n_bits
+        )
 
         sim = TanimotoSimilarity(fp_ref, fp_q)
         # Dice coefficient as secondary metric
         from rdkit.DataStructs import DiceSimilarity
+
         dice = DiceSimilarity(fp_ref, fp_q)
 
-        return ToolResult(data={
-            "reference_smiles": ref,
-            "query_smiles": query,
-            "fingerprint_type": args.fingerprint_type,
-            "tanimoto": round(sim, 4),
-            "dice": round(dice, 4),
-            "interpretation": (
-                "highly similar" if sim > 0.85
-                else "moderately similar" if sim > 0.6
-                else "weakly similar" if sim > 0.3
-                else "dissimilar"
-            ),
-        })
+        return ToolResult(
+            data={
+                "reference_smiles": ref,
+                "query_smiles": query,
+                "fingerprint_type": args.fingerprint_type,
+                "tanimoto": round(sim, 4),
+                "dice": round(dice, 4),
+                "interpretation": _similarity_interpretation(sim),
+            }
+        )
 
     def _substructure(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
 
         sub = args.substructure
         if not sub:
-            return ToolResult(data=None, success=False, error="substructure SMILES is required")
+            return ToolResult(
+                data=None, success=False, error="substructure SMILES is required"
+            )
 
         patt = Chem.MolFromSmiles(sub)
         if patt is None:
-            return ToolResult(data=None, success=False, error=f"Invalid substructure: {sub}")
+            return ToolResult(
+                data=None, success=False, error=f"Invalid substructure: {sub}"
+            )
 
         targets = args.smiles_list or ([args.smiles] if args.smiles else [])
         if not targets:
-            return ToolResult(data=None, success=False, error="Provide smiles or smiles_list")
+            return ToolResult(
+                data=None, success=False, error="Provide smiles or smiles_list"
+            )
 
         matches = []
         for smi in targets:
             mol = Chem.MolFromSmiles(smi)
             if mol is None:
-                matches.append({"smiles": smi, "match": False, "error": "invalid SMILES"})
+                matches.append(
+                    {"smiles": smi, "match": False, "error": "invalid SMILES"}
+                )
                 continue
             has = mol.HasSubstructMatch(patt)
             entry = {"smiles": smi, "match": has}
@@ -406,12 +497,14 @@ class RDKitTool(HuginnTool):
             matches.append(entry)
 
         n_hits = sum(1 for m in matches if m.get("match"))
-        return ToolResult(data={
-            "substructure": sub,
-            "results": matches,
-            "n_total": len(matches),
-            "n_hits": n_hits,
-        })
+        return ToolResult(
+            data={
+                "substructure": sub,
+                "results": matches,
+                "n_total": len(matches),
+                "n_hits": n_hits,
+            }
+        )
 
     def _draw(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
@@ -423,7 +516,9 @@ class RDKitTool(HuginnTool):
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            return ToolResult(data=None, success=False, error=f"Invalid SMILES: {smiles}")
+            return ToolResult(
+                data=None, success=False, error=f"Invalid SMILES: {smiles}"
+            )
 
         w, h = args.image_size
         png = Draw.MolDraw2DCairo(w, h)
@@ -435,12 +530,14 @@ class RDKitTool(HuginnTool):
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(img_bytes)
 
-        return ToolResult(data={
-            "smiles": smiles,
-            "image_file": str(out),
-            "image_base64": base64.b64encode(img_bytes).decode()[:500] + "...",
-            "size": [w, h],
-        })
+        return ToolResult(
+            data={
+                "smiles": smiles,
+                "image_file": str(out),
+                "image_base64": base64.b64encode(img_bytes).decode()[:500] + "...",
+                "size": [w, h],
+            }
+        )
 
     def _conformers(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
@@ -452,12 +549,16 @@ class RDKitTool(HuginnTool):
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            return ToolResult(data=None, success=False, error=f"Invalid SMILES: {smiles}")
+            return ToolResult(
+                data=None, success=False, error=f"Invalid SMILES: {smiles}"
+            )
 
         mol = Chem.AddHs(mol)
         params = AllChem.ETKDGv3()
         params.randomSeed = 42
-        conf_ids = AllChem.EmbedMultipleConfs(mol, numConfs=args.n_conformers, params=params)
+        conf_ids = AllChem.EmbedMultipleConfs(
+            mol, numConfs=args.n_conformers, params=params
+        )
 
         if args.optimize:
             for cid in conf_ids:
@@ -477,20 +578,24 @@ class RDKitTool(HuginnTool):
                 rmsd = rdMolAlign.AlignMol(mol, mol, prbCid=cid, refCid=conf_ids[0])
                 rmsds.append(round(rmsd, 3))
 
-        return ToolResult(data={
-            "smiles": smiles,
-            "n_conformers": len(conf_ids),
-            "sdf_file": str(out),
-            "optimized": args.optimize,
-            "rmsd_to_first": rmsds,
-        })
+        return ToolResult(
+            data={
+                "smiles": smiles,
+                "n_conformers": len(conf_ids),
+                "sdf_file": str(out),
+                "optimized": args.optimize,
+                "rmsd_to_first": rmsds,
+            }
+        )
 
     def _smiles_to_sdf(self, args: RDKitInput) -> ToolResult:
         from rdkit import Chem
 
         smiles_list = args.smiles_list or ([args.smiles] if args.smiles else [])
         if not smiles_list:
-            return ToolResult(data=None, success=False, error="Provide smiles or smiles_list")
+            return ToolResult(
+                data=None, success=False, error="Provide smiles or smiles_list"
+            )
 
         out = Path(args.output_file) if args.output_file else Path("molecules.sdf")
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -508,12 +613,14 @@ class RDKitTool(HuginnTool):
             n_written += 1
         writer.close()
 
-        return ToolResult(data={
-            "sdf_file": str(out),
-            "n_written": n_written,
-            "n_errors": len(errors),
-            "errors": errors,
-        })
+        return ToolResult(
+            data={
+                "sdf_file": str(out),
+                "n_written": n_written,
+                "n_errors": len(errors),
+                "errors": errors,
+            }
+        )
 
     @staticmethod
     def _compute_fingerprint(mol, fp_type: str, radius: int, n_bits: int):
@@ -521,15 +628,19 @@ class RDKitTool(HuginnTool):
         from rdkit.Chem import AllChem, MACCSkeys
 
         if fp_type == "morgan":
-            return AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits), n_bits
+            return AllChem.GetMorganFingerprintAsBitVect(
+                mol, radius, nBits=n_bits
+            ), n_bits
         if fp_type == "maccs":
             return MACCSkeys.GenMACCSKeys(mol), 167
         if fp_type == "atom_pair":
             from rdkit.Chem import rdFingerprintGenerator
+
             gen = rdFingerprintGenerator.GetAtomPairGenerator(fpSize=n_bits)
             return gen.GetFingerprint(mol), n_bits
         if fp_type == "topological":
             from rdkit.Chem import rdFingerprintGenerator
+
             gen = rdFingerprintGenerator.GetRDKitGenerator(fpSize=n_bits)
             return gen.GetFingerprint(mol), n_bits
         raise ValueError(f"Unknown fingerprint type: {fp_type}")

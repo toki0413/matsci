@@ -195,6 +195,149 @@ def pick_imagination_seed(
 
 # ---------- Self-check ----------
 
+def _bs_case_setup(sm):
+    """Case 1-3: infer_blind_spots 非空 + blind→high + uncertain→medium."""
+    bs_list = infer_blind_spots(sm)
+    assert len(bs_list) >= 2, f"case1: expected >=2, got {len(bs_list)}"
+    skills = {b.skill for b in bs_list}
+    # memory_limit (blind) + lammps (uncertain) + rdkit (uncertain)
+    assert "memory_limit" in skills, f"case1: blind missing: {skills}"
+    print(f"[CHECK] case1 infer_blind_spots OK ({len(bs_list)} spots: {skills})")
+
+    # Case 2: blind 档 → high priority
+    high_bs = [b for b in bs_list if b.priority == "high"]
+    assert len(high_bs) >= 1, "case2: no high priority"
+    for b in high_bs:
+        assert b.skill in (
+            "memory_limit", "pytorch_training", "pkg_install",
+            "exec_timeout", "disk_space", "permission_denied",
+        ), f"case2: unexpected high skill: {b.skill}"
+    print(f"[CHECK] case2 blind -> high priority OK ({len(high_bs)} high)")
+
+    # Case 3: uncertain 档 → medium priority
+    medium_bs = [b for b in bs_list if b.priority == "medium"]
+    assert len(medium_bs) >= 1, "case3: no medium priority"
+    for b in medium_bs:
+        assert b.skill in (
+            "rdkit", "lammps", "vasp", "gaussian", "qe", "openmm",
+            "pytorch_training", "tensorflow_training", "dl_training",
+        ), f"case3: unexpected medium skill: {b.skill}"
+    print(f"[CHECK] case3 uncertain -> medium priority OK ({len(medium_bs)} medium)")
+    return bs_list, high_bs
+
+
+def _bs_case_hints(bs_list, high_bs) -> None:
+    """Case 4-6: hint 非空 / high 含"高优先级" / workaround 在 hint 中."""
+    # Case 4: map_blind_spot_to_hint 非空 + 含 marker + skill
+    hint = map_blind_spot_to_hint(bs_list[0])
+    assert hint, "case4: hint empty"
+    assert "[blind_spot_hint]" in hint, f"case4: missing marker:\n{hint}"
+    assert bs_list[0].skill in hint, "case4: skill missing in hint"
+    print(f"[CHECK] case4 hint non-empty: {hint[:80]}...")
+
+    # Case 5: high priority hint 含 "高优先级"
+    high_hint = map_blind_spot_to_hint(high_bs[0])
+    assert "高优先级" in high_hint, f"case5: missing high marker:\n{high_hint}"
+    print("[CHECK] case5 high priority hint OK")
+
+    # Case 6: workaround 在 hint 中 (memory_limit 有默认 workaround)
+    bs_mem = next((b for b in bs_list if b.skill == "memory_limit"), None)
+    assert bs_mem is not None, "case6: memory_limit blind spot missing"
+    assert bs_mem.possible_workaround, "case6: workaround empty"
+    hint_w = map_blind_spot_to_hint(bs_mem)
+    assert bs_mem.possible_workaround in hint_w, \
+        f"case6: workaround missing in hint:\n{hint_w}"
+    print("[CHECK] case6 workaround in hint OK")
+
+
+def _bs_case_combined(bs_list) -> None:
+    """Case 7-8: 多条合并 + max_n 限制."""
+    # Case 7: map_blind_spots_to_hint 多条合并
+    combined = map_blind_spots_to_hint(bs_list, max_n=5)
+    assert combined, "case7: combined empty"
+    assert combined.count("[blind_spot_hint]") >= 2, \
+        f"case7: combined should have >=2 hints:\n{combined}"
+    # high 应排在前面
+    first_high_idx = combined.find("高优先级")
+    first_marker_idx = combined.find("[blind_spot_hint]")
+    assert first_high_idx > first_marker_idx, \
+        "case7: high should be in first hint block"
+    print(f"[CHECK] case7 combined hints OK ({combined.count('[blind_spot_hint]')} spots)")
+
+    # Case 8: max_n 限制
+    limited = map_blind_spots_to_hint(bs_list, max_n=1)
+    assert limited.count("[blind_spot_hint]") <= 1, \
+        f"case8: max_n=1 should limit to 1 hint:\n{limited}"
+    print("[CHECK] case8 max_n limit OK")
+
+
+def _bs_case_degradation() -> None:
+    """Case 9: 失败降级 — self_model=None / blind_spot=None / 空 list."""
+    assert infer_blind_spots(None) == [], "case9: None should return []"
+    assert map_blind_spot_to_hint(None) == "", "case9: None blind_spot should return ''"
+    assert map_blind_spots_to_hint([]) == "", "case9: empty list should return ''"
+    assert map_blind_spots_to_hint(None) == "", "case9: None list should return ''"
+    # 损坏的 blind_spot 不抛
+    assert map_blind_spot_to_hint(BlindSpot(skill="", why_blind="")) == "", \
+        "case9: empty skill should return ''"
+    print("[CHECK] case9 failure degradation OK (None/empty/bad input)")
+
+
+def _bs_case_dataclass() -> None:
+    """Case 10: BlindSpot dataclass 序列化."""
+    bs_obj = BlindSpot(
+        skill="vasp",
+        why_blind="no VASP license",
+        possible_workaround="use QE or open-source DFT",
+        priority="high",
+    )
+    d = bs_obj.to_dict()
+    assert d["skill"] == "vasp"
+    assert d["priority"] == "high"
+    assert d["possible_workaround"] == "use QE or open-source DFT"
+    print("[CHECK] case10 BlindSpot dataclass OK")
+
+
+def _bs_case_seed(bs_list) -> None:
+    """Case 11: pick_imagination_seed — 选 high priority 第一个."""
+    seed = pick_imagination_seed(bs_list)
+    assert seed is not None, "case11: seed should not be None with high bs"
+    assert seed.priority == "high", "case11: seed should be high"
+    # 没 high 时返回 None
+    only_medium = [b for b in bs_list if b.priority == "medium"]
+    seed_none = pick_imagination_seed(only_medium)
+    assert seed_none is None, "case11: medium only should return None"
+    # 空列表 / None 返回 None
+    assert pick_imagination_seed(None) is None
+    assert pick_imagination_seed([]) is None
+    print(f"[CHECK] case11 pick_imagination_seed OK (seed={seed.skill})")
+
+
+def _bs_case_cross_task(td_path, SelfModel) -> None:
+    """Case 12: 跨 task 累积的 blind 也是 high (priority 来自 tier)."""
+    # 写一个 cross-task 文件包含 blind skill, 加载后 infer 应仍 priority=high
+    cross_path = td_path / "cross_acc" / "sm_cross.json"
+    cross_path.parent.mkdir(parents=True, exist_ok=True)
+    cross_path.write_text(
+        '{"skills": [{"skill": "pkg_install", "tier": "blind", '
+        '"reason": "cross-task history: cannot install", '
+        '"success_count": 0, "failure_count": 5}], '
+        '"last_updated": 0.0}',
+        encoding="utf-8",
+    )
+    sm_cross = SelfModel(
+        task_local_path=td_path / "ws_cross" / "sm.json",
+        cross_task_path=cross_path,
+        model=None,
+    )
+    bs_cross = infer_blind_spots(sm_cross)
+    pkg_bs = next((b for b in bs_cross if b.skill == "pkg_install"), None)
+    assert pkg_bs is not None, "case12: pkg_install not loaded from cross-task"
+    assert pkg_bs.priority == "high", \
+        f"case12: cross-task blind should be high: {pkg_bs.priority}"
+    print("[CHECK] case12 cross-task blind -> high priority OK")
+
+
 def _selfcheck() -> None:
     """Assert-based demo: infer_blind_spots + map_blind_spot_to_hint + 失败降级."""
     import tempfile
@@ -223,131 +366,13 @@ def _selfcheck() -> None:
             "error_message": "rdkit parse error",
         })  # rdkit -> uncertain
 
-        # Case 1: infer_blind_spots 返回非空
-        bs_list = infer_blind_spots(sm)
-        assert len(bs_list) >= 2, f"case1: expected >=2, got {len(bs_list)}"
-        skills = {b.skill for b in bs_list}
-        # memory_limit (blind) + lammps (uncertain) + rdkit (uncertain)
-        assert "memory_limit" in skills, f"case1: blind missing: {skills}"
-        print(f"[CHECK] case1 infer_blind_spots OK ({len(bs_list)} spots: {skills})")
-
-        # Case 2: blind 档 → high priority
-        high_bs = [b for b in bs_list if b.priority == "high"]
-        assert len(high_bs) >= 1, "case2: no high priority"
-        for b in high_bs:
-            assert b.skill in (
-                "memory_limit", "pytorch_training", "pkg_install",
-                "exec_timeout", "disk_space", "permission_denied",
-            ), f"case2: unexpected high skill: {b.skill}"
-        print(f"[CHECK] case2 blind -> high priority OK ({len(high_bs)} high)")
-
-        # Case 3: uncertain 档 → medium priority
-        medium_bs = [b for b in bs_list if b.priority == "medium"]
-        assert len(medium_bs) >= 1, "case3: no medium priority"
-        for b in medium_bs:
-            assert b.skill in (
-                "rdkit", "lammps", "vasp", "gaussian", "qe", "openmm",
-                "pytorch_training", "tensorflow_training", "dl_training",
-            ), f"case3: unexpected medium skill: {b.skill}"
-        print(f"[CHECK] case3 uncertain -> medium priority OK ({len(medium_bs)} medium)")
-
-        # Case 4: map_blind_spot_to_hint 非空 + 含 marker + skill
-        hint = map_blind_spot_to_hint(bs_list[0])
-        assert hint, "case4: hint empty"
-        assert "[blind_spot_hint]" in hint, f"case4: missing marker:\n{hint}"
-        assert bs_list[0].skill in hint, "case4: skill missing in hint"
-        print(f"[CHECK] case4 hint non-empty: {hint[:80]}...")
-
-        # Case 5: high priority hint 含 "高优先级"
-        high_hint = map_blind_spot_to_hint(high_bs[0])
-        assert "高优先级" in high_hint, f"case5: missing high marker:\n{high_hint}"
-        print("[CHECK] case5 high priority hint OK")
-
-        # Case 6: workaround 在 hint 中 (memory_limit 有默认 workaround)
-        bs_mem = next((b for b in bs_list if b.skill == "memory_limit"), None)
-        assert bs_mem is not None, "case6: memory_limit blind spot missing"
-        assert bs_mem.possible_workaround, "case6: workaround empty"
-        hint_w = map_blind_spot_to_hint(bs_mem)
-        assert bs_mem.possible_workaround in hint_w, \
-            f"case6: workaround missing in hint:\n{hint_w}"
-        print("[CHECK] case6 workaround in hint OK")
-
-        # Case 7: map_blind_spots_to_hint 多条合并
-        combined = map_blind_spots_to_hint(bs_list, max_n=5)
-        assert combined, "case7: combined empty"
-        assert combined.count("[blind_spot_hint]") >= 2, \
-            f"case7: combined should have >=2 hints:\n{combined}"
-        # high 应排在前面
-        first_high_idx = combined.find("高优先级")
-        first_marker_idx = combined.find("[blind_spot_hint]")
-        assert first_high_idx > first_marker_idx, \
-            "case7: high should be in first hint block"
-        print(f"[CHECK] case7 combined hints OK ({combined.count('[blind_spot_hint]')} spots)")
-
-        # Case 8: max_n 限制
-        limited = map_blind_spots_to_hint(bs_list, max_n=1)
-        assert limited.count("[blind_spot_hint]") <= 1, \
-            f"case8: max_n=1 should limit to 1 hint:\n{limited}"
-        print("[CHECK] case8 max_n limit OK")
-
-        # Case 9: 失败降级 — self_model=None / blind_spot=None / 空 list
-        assert infer_blind_spots(None) == [], "case9: None should return []"
-        assert map_blind_spot_to_hint(None) == "", "case9: None blind_spot should return ''"
-        assert map_blind_spots_to_hint([]) == "", "case9: empty list should return ''"
-        assert map_blind_spots_to_hint(None) == "", "case9: None list should return ''"
-        # 损坏的 blind_spot 不抛
-        assert map_blind_spot_to_hint(BlindSpot(skill="", why_blind="")) == "", \
-            "case9: empty skill should return ''"
-        print("[CHECK] case9 failure degradation OK (None/empty/bad input)")
-
-        # Case 10: BlindSpot dataclass 序列化
-        bs_obj = BlindSpot(
-            skill="vasp",
-            why_blind="no VASP license",
-            possible_workaround="use QE or open-source DFT",
-            priority="high",
-        )
-        d = bs_obj.to_dict()
-        assert d["skill"] == "vasp"
-        assert d["priority"] == "high"
-        assert d["possible_workaround"] == "use QE or open-source DFT"
-        print("[CHECK] case10 BlindSpot dataclass OK")
-
-        # Case 11: pick_imagination_seed — 选 high priority 第一个
-        seed = pick_imagination_seed(bs_list)
-        assert seed is not None, "case11: seed should not be None with high bs"
-        assert seed.priority == "high", "case11: seed should be high"
-        # 没 high 时返回 None
-        only_medium = [b for b in bs_list if b.priority == "medium"]
-        seed_none = pick_imagination_seed(only_medium)
-        assert seed_none is None, "case11: medium only should return None"
-        # 空列表 / None 返回 None
-        assert pick_imagination_seed(None) is None
-        assert pick_imagination_seed([]) is None
-        print(f"[CHECK] case11 pick_imagination_seed OK (seed={seed.skill})")
-
-        # Case 12: 跨 task 累积的 blind 也是 high (priority 来自 tier, 不分本地/跨task)
-        # 写一个 cross-task 文件包含 blind skill, 加载后 infer 应仍 priority=high
-        cross_path = td_path / "cross_acc" / "sm_cross.json"
-        cross_path.parent.mkdir(parents=True, exist_ok=True)
-        cross_path.write_text(
-            '{"skills": [{"skill": "pkg_install", "tier": "blind", '
-            '"reason": "cross-task history: cannot install", '
-            '"success_count": 0, "failure_count": 5}], '
-            '"last_updated": 0.0}',
-            encoding="utf-8",
-        )
-        sm_cross = SelfModel(
-            task_local_path=td_path / "ws_cross" / "sm.json",
-            cross_task_path=cross_path,
-            model=None,
-        )
-        bs_cross = infer_blind_spots(sm_cross)
-        pkg_bs = next((b for b in bs_cross if b.skill == "pkg_install"), None)
-        assert pkg_bs is not None, "case12: pkg_install not loaded from cross-task"
-        assert pkg_bs.priority == "high", \
-            f"case12: cross-task blind should be high: {pkg_bs.priority}"
-        print("[CHECK] case12 cross-task blind -> high priority OK")
+        bs_list, high_bs = _bs_case_setup(sm)
+        _bs_case_hints(bs_list, high_bs)
+        _bs_case_combined(bs_list)
+        _bs_case_degradation()
+        _bs_case_dataclass()
+        _bs_case_seed(bs_list)
+        _bs_case_cross_task(td_path, SelfModel)
 
     print("OK blind_spot_mapper self-check passed (12 cases)")
 

@@ -25,6 +25,7 @@ import os
 import random
 import sys
 import time
+from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -92,121 +93,128 @@ def _ask(model, hint: str) -> bool | None:
         return None
 
 
-def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
-    """Gap 1: 三组对比 (纯文本 / 自然语言+结构 / 纯结构 JSON)."""
-    cases = build_test_cases()
-    rnd = random.Random(seed)
-    sample = rnd.sample(cases, min(n_samples, len(cases)))
-
+def _gap1_banner(n: int) -> None:
+    """打印实验头: 分组说明 + 样本数."""
     print("=" * 80)
-    print(f"Gap 1 测试: 结构对象直传 vs 文本中转 (deepseek, n={len(sample)})")
+    print(f"Gap 1 测试: 结构对象直传 vs 文本中转 (deepseek, n={n})")
     print("=" * 80)
     print("A 组: 纯文本 (只 description)")
     print("B 组: 自然语言+结构 (hint_coordinator 风格)")
     print("C 组: 纯结构 JSON (无自然语言包装, 模拟对象直传)")
     print()
 
+
+def _gap1_probe_model() -> Any | None:
+    """连一次 deepseek 做存活探测; 失败返 None (整轮跳过)."""
     try:
         model = _make_model()
         from langchain_core.messages import HumanMessage
         model.invoke([HumanMessage(content="hi")])
         print("deepseek 连接 OK\n")
+        return model
     except Exception as e:
         print(f"deepseek 连接失败: {e}")
         return None
 
-    # 三组统计
-    stats = {k: {"correct":0,"tp":0,"fp":0,"fn":0,"tn":0,"fail":0} for k in ["A","B","C"]}
-    disagreements_bc = 0  # B vs C 不一致 (结构传递方式的影响)
 
+def _gap1_ask_group(model, c: TestCase, hint_builder, stats: dict, grp: str) -> bool:
+    """跑单个分组; 解析失败计入 fail 并按 False 参与混淆矩阵."""
+    pred = _ask(model, hint_builder(c))
+    if pred is None:
+        stats[grp]["fail"] += 1
+        pred = False
+    time.sleep(0.3)
+    return pred
+
+
+def _gap1_score(stats: dict, grp: str, pred: bool, actual: bool) -> None:
+    """累计单样本的 correct / tp / fp / fn / tn."""
+    s = stats[grp]
+    if pred == actual:
+        s["correct"] += 1
+    if pred and actual:
+        s["tp"] += 1
+    elif pred and not actual:
+        s["fp"] += 1
+    elif not pred and actual:
+        s["fn"] += 1
+    else:
+        s["tn"] += 1
+
+
+def _gap1_run_samples(model, sample: list, stats: dict) -> int:
+    """逐样本跑 A/B/C 三组, 返回 B vs C 的判断不一致数."""
+    disagreements_bc = 0
     for i, c in enumerate(sample):
         actual = c.human_label
-        # A 组
-        pred_a = _ask(model, _build_text_hint(c))
-        if pred_a is None:
-            stats["A"]["fail"] += 1
-            pred_a = False
-        time.sleep(0.3)
-        # B 组
-        pred_b = _ask(model, _build_geom_hint(c))
-        if pred_b is None:
-            stats["B"]["fail"] += 1
-            pred_b = False
-        time.sleep(0.3)
-        # C 组
-        pred_c = _ask(model, _build_pure_struct_hint(c))
-        if pred_c is None:
-            stats["C"]["fail"] += 1
-            pred_c = False
-        time.sleep(0.3)
+        pred_a = _gap1_ask_group(model, c, _build_text_hint, stats, "A")
+        pred_b = _gap1_ask_group(model, c, _build_geom_hint, stats, "B")
+        pred_c = _gap1_ask_group(model, c, _build_pure_struct_hint, stats, "C")
 
-        for grp, pred in [("A",pred_a),("B",pred_b),("C",pred_c)]:
-            s = stats[grp]
-            if pred == actual:
-                s["correct"] += 1
-            if pred and actual:
-                s["tp"] += 1
-            elif pred and not actual:
-                s["fp"] += 1
-            elif not pred and actual:
-                s["fn"] += 1
-            else:
-                s["tn"] += 1
+        for grp, pred in [("A", pred_a), ("B", pred_b), ("C", pred_c)]:
+            _gap1_score(stats, grp, pred, actual)
 
         if pred_b != pred_c:
             disagreements_bc += 1
 
-        if (i+1) % 10 == 0:
-            n = i+1
+        if (i + 1) % 10 == 0:
+            n = i + 1
             print(f"  进度: {n}/{len(sample)}  "
                   f"A={stats['A']['correct']/n:.3f}  "
                   f"B={stats['B']['correct']/n:.3f}  "
                   f"C={stats['C']['correct']/n:.3f}")
+    return disagreements_bc
 
-    n = len(sample)
+
+def _wilson(p: float, nn: int, z: float = 1.96) -> tuple[float, float]:
+    """二项比例的 Wilson 95% 置信区间."""
+    from math import sqrt
+
+    if nn == 0:
+        return (0, 0)
+    denom = 1 + z * z / nn
+    center = (p + z * z / (2 * nn)) / denom
+    spread = z * sqrt(p * (1 - p) / nn + z * z / (4 * nn * nn)) / denom
+    return (max(0, center - spread), min(1, center + spread))
+
+
+def _gap1_report(stats: dict, n: int) -> None:
+    """算 acc/p/r/f1 并打印对比表 + 各组 F1 的 Wilson CI."""
     print()
     print("=" * 80)
     print("结果")
     print("=" * 80)
     print(f"{'指标':<20} {'A(纯文本)':>14} {'B(自然+结构)':>14} {'C(纯结构JSON)':>16}")
     print("-" * 66)
-    for grp, _label in [("A","纯文本"),("B","自然+结构"),("C","纯结构JSON")]:
+    for grp, _label in [("A", "纯文本"), ("B", "自然+结构"), ("C", "纯结构JSON")]:
         s = stats[grp]
-        s["acc"] = s["correct"]/n
-        s["p"] = s["tp"]/(s["tp"]+s["fp"]) if (s["tp"]+s["fp"]) else 0
-        s["r"] = s["tp"]/(s["tp"]+s["fn"]) if (s["tp"]+s["fn"]) else 0
-        s["f1"] = 2*s["p"]*s["r"]/(s["p"]+s["r"]) if (s["p"]+s["r"]) else 0
+        s["acc"] = s["correct"] / n
+        s["p"] = s["tp"] / (s["tp"] + s["fp"]) if (s["tp"] + s["fp"]) else 0
+        s["r"] = s["tp"] / (s["tp"] + s["fn"]) if (s["tp"] + s["fn"]) else 0
+        s["f1"] = (
+            2 * s["p"] * s["r"] / (s["p"] + s["r"]) if (s["p"] + s["r"]) else 0
+        )
 
-    print(f"{'准确率':<20} {stats['A']['acc']:>14.3f} {stats['B']['acc']:>14.3f} {stats['C']['acc']:>16.3f}")
-    print(f"{'F1':<20} {stats['A']['f1']:>14.3f} {stats['B']['f1']:>14.3f} {stats['C']['f1']:>16.3f}")
-    print(f"{'Precision':<20} {stats['A']['p']:>14.3f} {stats['B']['p']:>14.3f} {stats['C']['p']:>16.3f}")
-    print(f"{'Recall':<20} {stats['A']['r']:>14.3f} {stats['B']['r']:>14.3f} {stats['C']['r']:>16.3f}")
-    print(f"{'TP':<20} {stats['A']['tp']:>14} {stats['B']['tp']:>14} {stats['C']['tp']:>16}")
-    print(f"{'FP':<20} {stats['A']['fp']:>14} {stats['B']['fp']:>14} {stats['C']['fp']:>16}")
-    print(f"{'FN':<20} {stats['A']['fn']:>14} {stats['B']['fn']:>14} {stats['C']['fn']:>16}")
-    print(f"{'TN':<20} {stats['A']['tn']:>14} {stats['B']['tn']:>14} {stats['C']['tn']:>16}")
-    print(f"{'解析失败':<20} {stats['A']['fail']:>14} {stats['B']['fail']:>14} {stats['C']['fail']:>16}")
+    for metric, key in [
+        ("准确率", "acc"), ("F1", "f1"), ("Precision", "p"), ("Recall", "r"),
+    ]:
+        print(f"{metric:<20} {stats['A'][key]:>14.3f} {stats['B'][key]:>14.3f} "
+              f"{stats['C'][key]:>16.3f}")
+    for metric, key in [
+        ("TP", "tp"), ("FP", "fp"), ("FN", "fn"), ("TN", "tn"), ("解析失败", "fail"),
+    ]:
+        print(f"{metric:<20} {stats['A'][key]:>14} {stats['B'][key]:>14} "
+              f"{stats['C'][key]:>16}")
     print()
 
-    # B vs C 是 Gap 1 核心 (同样结构信息, 不同传递方式)
-    print(f"B vs C 不一致 (结构传递方式的影响): {disagreements_bc}/{n} ({disagreements_bc/n:.1%})")
-    print()
-
-    # Wilson CI
-    from math import sqrt
-    def wilson(p, nn, z=1.96):
-        if nn == 0:
-            return (0, 0)
-        denom = 1 + z*z/nn
-        center = (p + z*z/(2*nn)) / denom
-        spread = z * sqrt(p*(1-p)/nn + z*z/(4*nn*nn)) / denom
-        return (max(0,center-spread), min(1,center+spread))
-    for grp in ["A","B","C"]:
-        lo, hi = wilson(stats[grp]["f1"], n)
+    for grp in ["A", "B", "C"]:
+        lo, hi = _wilson(stats[grp]["f1"], n)
         print(f"  {grp} 组 F1 Wilson 95% CI: [{lo:.3f}, {hi:.3f}]")
     print()
 
-    # 结论
+
+def _gap1_conclude(stats: dict, n: int, disagreements_bc: int) -> None:
+    """打印 ΔF1 + CI 重叠判断 + 最终结论."""
     print("=" * 80)
     print("Gap 1 结论")
     print("=" * 80)
@@ -217,8 +225,8 @@ def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
     print()
 
     # B vs C CI 重叠判断
-    b_lo, b_hi = wilson(stats["B"]["f1"], n)
-    c_lo, c_hi = wilson(stats["C"]["f1"], n)
+    b_lo, b_hi = _wilson(stats["B"]["f1"], n)
+    c_lo, c_hi = _wilson(stats["C"]["f1"], n)
     bc_overlap = not (c_lo > b_hi or b_lo > c_hi)
 
     if not bc_overlap and delta_bc > 0.05:
@@ -238,6 +246,30 @@ def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
         print("  → hint_coordinator 的几何 hint 是负优化, 应简化回纯文本 hint")
         print("  → 这是几何通信方向的终止信号")
 
+
+def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
+    """Gap 1: 三组对比 (纯文本 / 自然语言+结构 / 纯结构 JSON)."""
+    cases = build_test_cases()
+    rnd = random.Random(seed)
+    sample = rnd.sample(cases, min(n_samples, len(cases)))
+    _gap1_banner(len(sample))
+
+    model = _gap1_probe_model()
+    if model is None:
+        return None
+
+    # 三组统计
+    stats = {k: {"correct": 0, "tp": 0, "fp": 0, "fn": 0, "tn": 0, "fail": 0}
+             for k in ["A", "B", "C"]}
+
+    disagreements_bc = _gap1_run_samples(model, sample, stats)
+
+    n = len(sample)
+    _gap1_report(stats, n)
+    print(f"B vs C 不一致 (结构传递方式的影响): "
+          f"{disagreements_bc}/{n} ({disagreements_bc/n:.1%})")
+    print()
+    _gap1_conclude(stats, n, disagreements_bc)
     return stats
 
 

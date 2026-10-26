@@ -22,9 +22,54 @@ def _cleanup(root: Path) -> None:
     # 这台机器上 AV 扫刚写的文件会让 shutil.rmtree 单步卡几十秒,
     # 同步删会让自检看着像卡死. 放 daemon 线程后台删, 不阻塞断言结果.
     threading.Thread(
-        target=shutil.rmtree, args=(root,), kwargs={"ignore_errors": True},
+        target=shutil.rmtree,
+        args=(root,),
+        kwargs={"ignore_errors": True},
         daemon=True,
     ).start()
+
+
+def _prepare_workspace(root: Path) -> Path:
+    ws = root / "ws"
+    ws.mkdir()
+    (ws / "POSCAR").write_text("Cu\n 1.0\n", encoding="utf-8")
+    (ws / "data.dat").write_text("old\n", encoding="utf-8")
+    (ws / "skip.txt").write_text("not watched\n", encoding="utf-8")
+    return ws
+
+
+def _check_history(mgr: SnapshotManager, sid: str) -> None:
+    hist = mgr.get_history(tool_name="vasp_tool")
+    assert len(hist) == 1 and hist[0].step_id == sid
+    assert len(hist[0].patches) == 3
+
+
+def _check_layer(mgr: SnapshotManager, ws: Path) -> str:
+    lid = mgr.create_layer(ws, label="selfcheck")
+    assert lid.startswith("L")
+    (ws / "POSCAR").write_text("Cu\n 9.9\n", encoding="utf-8")
+    (ws / "layer_new.txt").write_text("x\n", encoding="utf-8")
+    (ws / "skip.txt").unlink()
+    assert {p.change_type for p in mgr.layer_diff(lid)} == {
+        "modified",
+        "created",
+        "deleted",
+    }
+    mgr.discard_layer(lid)
+    assert (ws / "POSCAR").read_text(
+        encoding="utf-8"
+    ) == "Cu\n 2.0\n"  # 上次 unrevert 后的状态
+    assert not (ws / "layer_new.txt").exists()
+    assert (ws / "skip.txt").exists()
+    assert mgr.list_layers()[0].layer_id == lid
+    return lid
+
+
+def _mutate_workspace(ws: Path) -> None:
+    # 模拟工具执行: 改一个 / 删一个 / 建一个
+    (ws / "POSCAR").write_text("Cu\n 2.0\n", encoding="utf-8")  # modified
+    (ws / "data.dat").unlink()  # deleted
+    (ws / "new.cif").write_text("data_new\n", encoding="utf-8")  # created
 
 
 def _run() -> None:
@@ -33,22 +78,18 @@ def _run() -> None:
         # 用独立 root 建一个非单例 manager, 不污染全局 ~/.huginn
         mgr = SnapshotManager(root=root)
 
-        ws = root / "ws"
-        ws.mkdir()
-        (ws / "POSCAR").write_text("Cu\n 1.0\n", encoding="utf-8")
-        (ws / "data.dat").write_text("old\n", encoding="utf-8")
-        (ws / "skip.txt").write_text("not watched\n", encoding="utf-8")
+        ws = _prepare_workspace(root)
 
         # track: 拍执行前状态
         sid = mgr.track("vasp_tool", ws)
         snap = mgr._load(sid)
-        assert snap is not None and len(snap.files) == 2, snap  # POSCAR + data.dat, 不含 skip.txt
+        assert snap is not None and len(snap.files) == 2, (
+            snap
+        )  # POSCAR + data.dat, 不含 skip.txt
         assert "POSCAR" in snap.files and "data.dat" in snap.files
 
         # 模拟工具执行: 改一个 / 删一个 / 建一个
-        (ws / "POSCAR").write_text("Cu\n 2.0\n", encoding="utf-8")  # modified
-        (ws / "data.dat").unlink()                                  # deleted
-        (ws / "new.cif").write_text("data_new\n", encoding="utf-8") # created
+        _mutate_workspace(ws)
 
         patches = mgr.patch(sid, ws)
         kinds = sorted(p.change_type for p in patches)
@@ -72,22 +113,10 @@ def _run() -> None:
         assert not mgr._is_reverted(sid)
 
         # history
-        hist = mgr.get_history(tool_name="vasp_tool")
-        assert len(hist) == 1 and hist[0].step_id == sid
-        assert len(hist[0].patches) == 3
+        _check_history(mgr, sid)
 
         # 整层快照: 拍整棵树 → 改 → 整层丢弃回建层时状态
-        lid = mgr.create_layer(ws, label="selfcheck")
-        assert lid.startswith("L")
-        (ws / "POSCAR").write_text("Cu\n 9.9\n", encoding="utf-8")
-        (ws / "layer_new.txt").write_text("x\n", encoding="utf-8")
-        (ws / "skip.txt").unlink()
-        assert {p.change_type for p in mgr.layer_diff(lid)} == {"modified", "created", "deleted"}
-        mgr.discard_layer(lid)
-        assert (ws / "POSCAR").read_text(encoding="utf-8") == "Cu\n 2.0\n"  # 上次 unrevert 后的状态
-        assert not (ws / "layer_new.txt").exists()
-        assert (ws / "skip.txt").exists()
-        assert mgr.list_layers()[0].layer_id == lid
+        lid = _check_layer(mgr, ws)
 
         print("snapshot selfcheck OK:", sid, lid, flush=True)
     finally:

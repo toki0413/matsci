@@ -59,12 +59,15 @@ __all__ = [
 class FallbackTriggeredError(Exception):
     """529 连续触发时抛出, 信号上层切到更便宜的模型."""
 
-    def __init__(self, message: str = "529 overloaded, fallback to cheaper model") -> None:
+    def __init__(
+        self, message: str = "529 overloaded, fallback to cheaper model"
+    ) -> None:
         super().__init__(message)
         self.reason = "529_overloaded"
 
 
 # ---- 异常属性探测 -----------------------------------------------------------
+
 
 def _get_status_code(exc: BaseException) -> int | None:
     """尽量从各种 SDK 异常里挖出 HTTP status code.
@@ -86,6 +89,18 @@ def _get_status_code(exc: BaseException) -> int | None:
         return None
 
 
+def _retry_after_from_headers(headers: Any) -> Any | None:
+    """从 headers 里取 retry-after, 兼容大小写与纯 dict 两种形态."""
+    # httpx / requests / aiohttp 的 headers 大小写不敏感, 但兜底一下
+    try:
+        return headers.get("retry-after") or headers.get("Retry-After")
+    except AttributeError:
+        for k, v in headers.items():
+            if k.lower() == "retry-after":
+                return v
+    return None
+
+
 def _get_retry_after(exc: BaseException) -> float | None:
     """从异常或 response header 里挖 retry-after (秒).
 
@@ -95,15 +110,7 @@ def _get_retry_after(exc: BaseException) -> float | None:
     if raw is None:
         resp = getattr(exc, "response", None)
         if resp is not None:
-            headers = getattr(resp, "headers", None) or {}
-            # httpx / requests / aiohttp 的 headers 大小写不敏感, 但兜底一下
-            try:
-                raw = headers.get("retry-after") or headers.get("Retry-After")
-            except AttributeError:
-                for k, v in headers.items():
-                    if k.lower() == "retry-after":
-                        raw = v
-                        break
+            raw = _retry_after_from_headers(getattr(resp, "headers", None) or {})
     if raw is None:
         return None
     try:
@@ -174,8 +181,15 @@ def parse_context_overflow(error: BaseException) -> int | None:
 # (观测到的: HTTP 400 + code=-20048 + "请求过于频繁"). 只按 status_code 判会把
 # 这类**瞬时**错误误判成不可重试的坏请求 → autoloop 直接空转 (run74 实测).
 _RATE_LIMIT_KEYWORDS = (
-    "rate limit", "ratelimit", "rate_limit", "too many requests",
-    "too frequent", "requests are too frequent", "请求过于频繁", "速率限制", "限流",
+    "rate limit",
+    "ratelimit",
+    "rate_limit",
+    "too many requests",
+    "too frequent",
+    "requests are too frequent",
+    "请求过于频繁",
+    "速率限制",
+    "限流",
 )
 # 已知用非 429 状态码表达限流的 provider 错误码.
 _RATE_LIMIT_CODES = ("-20048",)
@@ -215,8 +229,7 @@ def _is_transient_network(exc: BaseException) -> bool:
         return True
     name = type(exc).__name__.lower()
     return any(
-        kw in name
-        for kw in ("timeout", "connection", "network", "reset", "brokenpipe")
+        kw in name for kw in ("timeout", "connection", "network", "reset", "brokenpipe")
     )
 
 
@@ -251,6 +264,7 @@ def _is_auth_error(exc: BaseException) -> bool:
 
 # ---- 退避计算 ---------------------------------------------------------------
 
+
 def _exponential_backoff(
     attempt: int, base: float = INITIAL_BACKOFF, cap: float = MAX_BACKOFF
 ) -> float:
@@ -271,6 +285,173 @@ async def _sleep_with_log(seconds: float, reason: str, attempt: int) -> None:
 
 
 # ---- 分级重试 ---------------------------------------------------------------
+
+
+async def _refresh_auth_token(exc: BaseException) -> bool:
+    """401 时尝试刷新 token, 返回是否成功."""
+    try:
+        # 延迟导入避免循环依赖
+        from huginn.security.auth import handle_401_error
+
+        return await handle_401_error(str(getattr(exc, "response", "") or ""))
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return False
+
+
+async def _handle_retry_error(
+    exc: BaseException,
+    source: str,
+    attempt: int,
+    max_attempts: int,
+    consecutive_529: int,
+    max_tokens_adjuster: Callable[[int], int] | None,
+) -> tuple[str, int]:
+    """按错误类型处理一次失败.
+
+    返回 ``("continue", streak)`` 表示已等待可再试, ``("break", streak)``
+    表示次数用尽该退出. 不可重试的错误 / 529 风暴直接抛.
+    """
+    # 429 限流: 按 retry-after 等待, 没有就走指数退避
+    if _is_rate_limit(exc):
+        return await _handle_rate_limit(exc, source, attempt, max_attempts)
+
+    # 529 过载: 连续 N 次后切模型
+    if _is_overloaded(exc):
+        return await _handle_overloaded(
+            exc, source, attempt, max_attempts, consecutive_529
+        )
+
+    # 上下文溢出: 收缩 max_tokens 再试
+    if _is_context_overflow(exc):
+        return await _handle_context_overflow(
+            exc, source, attempt, max_attempts, max_tokens_adjuster
+        )
+
+    # 普通 5xx / 网络错误: 指数退避 + 抖动
+    if _is_transient_network(exc):
+        return await _handle_transient(exc, source, attempt, max_attempts)
+
+    # 401 认证错误: 尝试刷新 token, 成功则重试
+    # 用 auth 模块的 handle_401_error 做去重, 同一 token 的并发 401 只触发一次刷新
+    if _is_auth_error(exc):
+        return await _handle_auth_error(exc, source, attempt, max_attempts)
+
+    # 其它异常不重试, 直接抛
+    logger.error("[%s] non-retryable error: %r", source, exc)
+    raise exc
+
+
+async def _handle_rate_limit(
+    exc: BaseException, source: str, attempt: int, max_attempts: int
+) -> tuple[str, int]:
+    wait = _get_retry_after(exc)
+    if wait is None:
+        wait = _jitter(_exponential_backoff(attempt))
+    else:
+        # 服务端给的 retry-after 我们尊重, 只加一点点抖动
+        wait = _jitter(wait, jitter_ratio=0.1)
+    logger.warning(
+        "[%s] 429 rate limit, retry in %.2fs (attempt %d/%d)",
+        source,
+        wait,
+        attempt,
+        max_attempts,
+    )
+    if attempt >= max_attempts:
+        return "break", 0
+    await _sleep_with_log(wait, "rate_limit", attempt)
+    return "continue", 0
+
+
+async def _handle_overloaded(
+    exc: BaseException,
+    source: str,
+    attempt: int,
+    max_attempts: int,
+    consecutive_529: int,
+) -> tuple[str, int]:
+    streak = consecutive_529 + 1
+    if streak >= MAX_529_RETRIES:
+        logger.error(
+            "[%s] 529 overloaded %d times in a row, triggering fallback",
+            source,
+            streak,
+        )
+        raise FallbackTriggeredError(f"529 overloaded {streak} times in a row") from exc
+    wait = _jitter(_exponential_backoff(streak))
+    logger.warning(
+        "[%s] 529 overloaded, retry in %.2fs (streak=%d, attempt %d/%d)",
+        source,
+        wait,
+        streak,
+        attempt,
+        max_attempts,
+    )
+    if attempt >= max_attempts:
+        return "break", streak
+    await _sleep_with_log(wait, "overloaded", attempt)
+    return "continue", streak
+
+
+async def _handle_context_overflow(
+    exc: BaseException,
+    source: str,
+    attempt: int,
+    max_attempts: int,
+    max_tokens_adjuster: Callable[[int], int] | None,
+) -> tuple[str, int]:
+    suggested = parse_context_overflow(exc) or MIN_MAX_TOKENS
+    logger.warning(
+        "[%s] context overflow, shrink max_tokens to %d (attempt %d/%d)",
+        source,
+        suggested,
+        attempt,
+        max_attempts,
+    )
+    if max_tokens_adjuster is not None:
+        max_tokens_adjuster(suggested)
+    if attempt >= max_attempts:
+        return "break", 0
+    # 改了参数大概率能成, 不用退避太久
+    await _sleep_with_log(_jitter(0.5), "context_overflow", attempt)
+    return "continue", 0
+
+
+async def _handle_transient(
+    exc: BaseException, source: str, attempt: int, max_attempts: int
+) -> tuple[str, int]:
+    wait = _jitter(_exponential_backoff(attempt))
+    logger.warning(
+        "[%s] transient error (%s), retry in %.2fs (attempt %d/%d)",
+        source,
+        type(exc).__name__,
+        wait,
+        attempt,
+        max_attempts,
+    )
+    if attempt >= max_attempts:
+        return "break", 0
+    await _sleep_with_log(wait, "transient", attempt)
+    return "continue", 0
+
+
+async def _handle_auth_error(
+    exc: BaseException, source: str, attempt: int, max_attempts: int
+) -> tuple[str, int]:
+    refreshed = await _refresh_auth_token(exc)
+    if refreshed and attempt < max_attempts:
+        logger.info(
+            "[%s] 401 auth refreshed, retrying (attempt %d/%d)",
+            source,
+            attempt,
+            max_attempts,
+        )
+        return "continue", 0
+    # 刷新失败或不支持刷新, 直接抛
+    logger.error("[%s] 401 auth error, not retryable: %r", source, exc)
+    raise exc
+
 
 async def with_retry(
     coro_factory: Callable[[], Awaitable[T]],
@@ -305,108 +486,23 @@ async def with_retry(
             return await coro_factory()
         except Exception as exc:  # noqa: BLE001 - 重试逻辑就是要吞所有错误再判断
             last_error = exc
-
-            # 429 限流: 按 retry-after 等待, 没有就走指数退避
-            if _is_rate_limit(exc):
-                consecutive_529 = 0
-                wait = _get_retry_after(exc)
-                if wait is None:
-                    wait = _jitter(_exponential_backoff(attempt))
-                else:
-                    # 服务端给的 retry-after 我们尊重, 只加一点点抖动
-                    wait = _jitter(wait, jitter_ratio=0.1)
-                logger.warning(
-                    "[%s] 429 rate limit, retry in %.2fs (attempt %d/%d)",
-                    source, wait, attempt, max_attempts,
-                )
-                if attempt >= max_attempts:
-                    break
-                await _sleep_with_log(wait, "rate_limit", attempt)
-                continue
-
-            # 529 过载: 连续 N 次后切模型
-            if _is_overloaded(exc):
-                consecutive_529 += 1
-                if consecutive_529 >= MAX_529_RETRIES:
-                    logger.error(
-                        "[%s] 529 overloaded %d times in a row, triggering fallback",
-                        source, consecutive_529,
-                    )
-                    raise FallbackTriggeredError(
-                        f"529 overloaded {consecutive_529} times in a row"
-                    ) from exc
-                wait = _jitter(_exponential_backoff(consecutive_529))
-                logger.warning(
-                    "[%s] 529 overloaded, retry in %.2fs (streak=%d, attempt %d/%d)",
-                    source, wait, consecutive_529, attempt, max_attempts,
-                )
-                if attempt >= max_attempts:
-                    break
-                await _sleep_with_log(wait, "overloaded", attempt)
-                continue
-
-            # 上下文溢出: 收缩 max_tokens 再试
-            if _is_context_overflow(exc):
-                consecutive_529 = 0
-                suggested = parse_context_overflow(exc) or MIN_MAX_TOKENS
-                logger.warning(
-                    "[%s] context overflow, shrink max_tokens to %d (attempt %d/%d)",
-                    source, suggested, attempt, max_attempts,
-                )
-                if max_tokens_adjuster is not None:
-                    max_tokens_adjuster(suggested)
-                if attempt >= max_attempts:
-                    break
-                # 改了参数大概率能成, 不用退避太久
-                await _sleep_with_log(_jitter(0.5), "context_overflow", attempt)
-                continue
-
-            # 普通 5xx / 网络错误: 指数退避 + 抖动
-            if _is_transient_network(exc):
-                consecutive_529 = 0
-                wait = _jitter(_exponential_backoff(attempt))
-                logger.warning(
-                    "[%s] transient error (%s), retry in %.2fs (attempt %d/%d)",
-                    source, type(exc).__name__, wait, attempt, max_attempts,
-                )
-                if attempt >= max_attempts:
-                    break
-                await _sleep_with_log(wait, "transient", attempt)
-                continue
-
-            # 401 认证错误: 尝试刷新 token, 成功则重试
-            # 用 auth 模块的 handle_401_error 做去重, 同一 token 的并发
-            # 401 只触发一次刷新
-            if _is_auth_error(exc):
-                try:
-                    # 延迟导入避免循环依赖
-                    from huginn.security.auth import handle_401_error
-
-                    refreshed = await handle_401_error(
-                        str(getattr(exc, "response", "") or "")
-                    )
-                except Exception:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    refreshed = False
-                if refreshed and attempt < max_attempts:
-                    logger.info(
-                        "[%s] 401 auth refreshed, retrying (attempt %d/%d)",
-                        source, attempt, max_attempts,
-                    )
-                    continue
-                # 刷新失败或不支持刷新, 直接抛
-                logger.error("[%s] 401 auth error, not retryable: %r", source, exc)
-                raise
-
-            # 其它异常不重试, 直接抛
-            logger.error("[%s] non-retryable error: %r", source, exc)
-            raise
+            action, consecutive_529 = await _handle_retry_error(
+                exc,
+                source,
+                attempt,
+                max_attempts,
+                consecutive_529,
+                max_tokens_adjuster,
+            )
+            if action == "break":
+                break
 
     assert last_error is not None
     raise last_error
 
 
 # ---- 模型降级 ---------------------------------------------------------------
+
 
 async def call_with_fallback(
     prompt: Any,  # noqa: ANN401 - prompt 类型由 llm_call_fn 决定, 透传即可
@@ -437,7 +533,8 @@ async def call_with_fallback(
     except FallbackTriggeredError:
         logger.warning(
             "primary model %s overloaded, falling back to %s",
-            primary_model, fallback_model,
+            primary_model,
+            fallback_model,
         )
 
     async def _fallback_call() -> T:
@@ -448,6 +545,7 @@ async def call_with_fallback(
 
 
 # ---- 无人值守长时重试 -------------------------------------------------------
+
 
 async def persistent_retry(
     coro_factory: Callable[[], Awaitable[T]],
@@ -481,36 +579,12 @@ async def persistent_retry(
             return await coro_factory()
         except FallbackTriggeredError:
             # 无人值守没有 fallback 上层, 退避后继续试
-            wait = _jitter(_exponential_backoff(min(attempt, 8)))
-            logger.warning(
-                "[batch] overloaded (fallback signal swallowed), retry in %.2fs",
-                wait,
-            )
-            await asyncio.sleep(min(wait, max(0.0, deadline - time.monotonic())))
+            await _batch_overload_backoff(attempt, deadline)
             continue
         except Exception as exc:  # noqa: BLE001
-            if not (
-                _is_rate_limit(exc)
-                or _is_overloaded(exc)
-                or _is_transient_network(exc)
-                or _is_context_overflow(exc)
-            ):
-                # 不可重试, 立即抛
-                raise
-
-            if _is_rate_limit(exc):
-                wait = _get_retry_after(exc) or _exponential_backoff(min(attempt, 8))
-            else:
-                wait = _exponential_backoff(min(attempt, 8))
-            wait = _jitter(wait)
-
-            now = time.monotonic()
-            if now - last_heartbeat >= heartbeat_interval:
-                logger.info(
-                    "[batch] still retrying, attempt=%d, next wait=%.2fs, %.2fh left",
-                    attempt, wait, (deadline - now) / 3600.0,
-                )
-                last_heartbeat = now
+            wait, last_heartbeat = _batch_retry_wait(
+                exc, attempt, deadline, last_heartbeat, heartbeat_interval
+            )
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -520,3 +594,46 @@ async def persistent_retry(
     raise TimeoutError(
         f"persistent_retry exceeded {max_hours}h after {attempt} attempts"
     )
+
+
+async def _batch_overload_backoff(attempt: int, deadline: float) -> None:
+    wait = _jitter(_exponential_backoff(min(attempt, 8)))
+    logger.warning(
+        "[batch] overloaded (fallback signal swallowed), retry in %.2fs",
+        wait,
+    )
+    await asyncio.sleep(min(wait, max(0.0, deadline - time.monotonic())))
+
+
+def _batch_retry_wait(
+    exc: BaseException,
+    attempt: int,
+    deadline: float,
+    last_heartbeat: float,
+    heartbeat_interval: float,
+) -> tuple[float, float]:
+    if not (
+        _is_rate_limit(exc)
+        or _is_overloaded(exc)
+        or _is_transient_network(exc)
+        or _is_context_overflow(exc)
+    ):
+        # 不可重试, 立即抛
+        raise exc
+
+    if _is_rate_limit(exc):
+        wait = _get_retry_after(exc) or _exponential_backoff(min(attempt, 8))
+    else:
+        wait = _exponential_backoff(min(attempt, 8))
+    wait = _jitter(wait)
+
+    now = time.monotonic()
+    if now - last_heartbeat >= heartbeat_interval:
+        logger.info(
+            "[batch] still retrying, attempt=%d, next wait=%.2fs, %.2fh left",
+            attempt,
+            wait,
+            (deadline - now) / 3600.0,
+        )
+        last_heartbeat = now
+    return wait, last_heartbeat

@@ -55,6 +55,15 @@ def get_executor(
         )
 
     if allow_local_bash():
+        if config is None:
+            # 无显式 config 时按 run workspace 建作用域: 空 allowed_work_dirs 会
+            # 让 strict_work_dir 静默失效 ("path scoping inactive"), 命令可以
+            # 在任意 cwd 落地 (ws9 实测).
+            from huginn.utils.common import default_workspace_dir
+
+            config = SandboxConfig(
+                allowed_work_dirs={default_workspace_dir().resolve()}
+            )
         return SandboxExecutor(config)
 
     raise SandboxError(
@@ -92,55 +101,67 @@ def build_executor(
     - ``container``: 容器 ``ContainerExecutor``.
     - ``any``: 按环境自动选 (走 ``get_executor``).
     """
-    hint = sandbox_hint
-    if hint is None and tool_metadata is not None:
-        hint = getattr(tool_metadata, "sandbox_hint", "any")
-    if hint in (None, "any"):
-        # is_destructive 工具默认 paranoid (B2: 破坏性工具强制隔离)
-        if (
-            tool_metadata is not None
-            and getattr(tool_metadata, "is_destructive", False)
-        ):
-            hint = "paranoid"
-        else:
-            hint = "any"
+    hint = _resolve_sandbox_hint(tool_metadata, sandbox_hint)
 
     if hint == "host":
         return SandboxExecutor(config)
 
     if hint == "container":
-        runtime, image = container_runtime_config()
-        if not runtime or runtime == "none" or not image:
-            raise SandboxError(
-                "Tool requires container execution but HUGINN_CONTAINER_RUNTIME "
-                "and HUGINN_CONTAINER_IMAGE are not configured."
-            )
-        if shutil.which(runtime) is None:
-            raise SandboxError(
-                f"Container runtime '{runtime}' not found in PATH."
-            )
-        return ContainerExecutor(
-            runtime=runtime, image=image, sandbox_config=config
-        )
+        return _build_container_executor(config)
 
     if hint == "paranoid":
-        runtime, image = container_runtime_config()
-        if not runtime or runtime == "none" or not image:
-            raise SandboxError(
-                "Tool requires paranoid (container) isolation but no container "
-                "runtime is configured. Refusing to run in a weaker sandbox."
-            )
-        if shutil.which(runtime) is None:
-            raise SandboxError(
-                f"Paranoid isolation requires container runtime '{runtime}' "
-                "but it is not installed. Refusing to run in a weaker sandbox."
-            )
-        return ContainerExecutor(
-            runtime=runtime,
-            image=image,
-            sandbox_config=config,
-            security_config=_paranoid_security_config(),
-        )
+        return _build_paranoid_executor(config)
 
     # hint == "any" (含未匹配): 环境自动选择.
     return get_executor(config)
+
+
+def _resolve_sandbox_hint(tool_metadata: Any, sandbox_hint: str | None) -> str:
+    hint = sandbox_hint
+    if hint is None and tool_metadata is not None:
+        hint = getattr(tool_metadata, "sandbox_hint", "any")
+    if hint in (None, "any"):
+        # is_destructive 工具默认 paranoid (B2: 破坏性工具强制隔离)
+        if tool_metadata is not None and getattr(
+            tool_metadata, "is_destructive", False
+        ):
+            hint = "paranoid"
+        else:
+            hint = "any"
+    return hint
+
+
+def _build_container_executor(
+    config: SandboxConfig | None,
+) -> ContainerExecutor:
+    runtime, image = container_runtime_config()
+    if not runtime or runtime == "none" or not image:
+        raise SandboxError(
+            "Tool requires container execution but HUGINN_CONTAINER_RUNTIME "
+            "and HUGINN_CONTAINER_IMAGE are not configured."
+        )
+    if shutil.which(runtime) is None:
+        raise SandboxError(f"Container runtime '{runtime}' not found in PATH.")
+    return ContainerExecutor(runtime=runtime, image=image, sandbox_config=config)
+
+
+def _build_paranoid_executor(
+    config: SandboxConfig | None,
+) -> ContainerExecutor:
+    runtime, image = container_runtime_config()
+    if not runtime or runtime == "none" or not image:
+        raise SandboxError(
+            "Tool requires paranoid (container) isolation but no container "
+            "runtime is configured. Refusing to run in a weaker sandbox."
+        )
+    if shutil.which(runtime) is None:
+        raise SandboxError(
+            f"Paranoid isolation requires container runtime '{runtime}' "
+            "but it is not installed. Refusing to run in a weaker sandbox."
+        )
+    return ContainerExecutor(
+        runtime=runtime,
+        image=image,
+        sandbox_config=config,
+        security_config=_paranoid_security_config(),
+    )

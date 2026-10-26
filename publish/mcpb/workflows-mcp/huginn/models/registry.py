@@ -276,9 +276,9 @@ class ModelCaps:
     #   - "hybrid":  稀疏+线性混合, 但物理可用仍受 KV/显存约束 (如 MiniCPM-SALA) → 适中
     #   - "quadratic":纯全注意力 (旧 GPT/经典 Softmax) — 默认, 维持既往 60% 早压
     # 未知模型回落 quadratic (fail-closed: 宁可早压不可爆窗).
-    long_context_cost_mode: Literal[
-        "linear", "constant", "hybrid", "quadratic"
-    ] = "quadratic"
+    long_context_cost_mode: Literal["linear", "constant", "hybrid", "quadratic"] = (
+        "quadratic"
+    )
     # 该成本模式下 harness 主动压缩的触发阈值 (context 使用百分比, 0-100).
     # None = 用全局默认 (quadratic→60 / linear|hybrid→由表). 保留可调性, 避免魔法数.
     compact_threshold_pct: int | None = None
@@ -292,270 +292,456 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # Sonnet 5: "最强 agentic Sonnet", 200K, agent 编程 63.2%
     # Claude 全注意力 (quadratic): 窗口大但长序列按 O(N²) 计 → 维持 60% 早压.
     "claude-sonnet-5": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "claude-opus-4-8": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "claude-sonnet-4-20250514": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=200_000,
     ),
     "claude-sonnet-4-6": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=200_000,
     ),
     "claude-3-5-sonnet-20241022": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=200_000,
     ),
     "claude-3-5-sonnet": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=200_000,
     ),
     "claude-3-opus": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=200_000,
     ),
     "claude-3-haiku": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=200_000,
     ),
     # ── OpenAI ─────────────────────────────────────────────────
     # GPT-5.6 (Sol/Terra/Luna, 2026-07): 1.5M context, native agent
     # OpenAI 全注意力 (quadratic), 大窗但成本 O(N²) → 60% 早压.
     "gpt-5.6": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_500_000,
     ),
     "gpt-5.2": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "gpt-5": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "gpt-4o": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "gpt-4o-mini": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "gpt-4-turbo": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "gpt-4": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=32_000,
     ),
     "gpt-3.5-turbo": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=16_000,
     ),
     # o 系列推理模型 — 当前 API 版本均支持图像输入 + function calling + 流式
     "o1": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=200_000,
     ),
     "o3": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=200_000,
     ),
     "o1-mini": ModelCaps(
-        vision=False, tools=False, reasoning=True, streaming=False,
+        vision=False,
+        tools=False,
+        reasoning=True,
+        streaming=False,
         context_window=128_000,
     ),
     "o3-mini": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=False,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=False,
         context_window=200_000,
     ),
     # ── DeepSeek ───────────────────────────────────────────────
     # V4-Pro: MoE 1.6T/49B active, 1M context, multimodal
     # DeepSeek 注意力含稀疏(观察 DSA 演进), 但主流智能体走 V4-Flash → 保守 quadratic.
     "deepseek-v4-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "deepseek-v4-flash": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     # V4-Flash-Vision-Exp: 在 flash 基础上额外接受图像输入 (实验版)
     "deepseek-v4-flash-vision-exp": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     "deepseek-chat": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "deepseek-coder": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "deepseek-reasoner": ModelCaps(
-        vision=False, tools=False, reasoning=True, streaming=True,
+        vision=False,
+        tools=False,
+        reasoning=True,
+        streaming=True,
         context_window=64_000,
     ),
     # ── Google Gemini ──────────────────────────────────────────
     # Gemini 3.0 Pro (2025-11): 2M context, 强多模态 (全注意力 quadratic)
     "gemini-3.0-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=2_000_000,
     ),
     "gemini-3.0-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=1_000_000,
     ),
     "gemini-2.5-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "gemini-2.0-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=1_000_000,
     ),
     "gemini-1.5-pro": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=1_000_000,
     ),
     "gemini-1.5-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=1_000_000,
     ),
     # ── Qwen / 通义 (DashScope) ───────────────────────────────
     "qwen-max": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=32_000,
     ),
     # qwen3-max 仍为纯文本; 原生多模态从 qwen3.5-plus 起
     "qwen3-max": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     "qwen3.5-plus": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=262_144,
     ),
     "qwen3.6-max-preview": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=262_144,
     ),
     "qwen3.6-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=262_144,
     ),
     # qwen-long 专为超长文设计 (全注意力 long context), 窗口大 → 阈值可略降.
     "qwen-long": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=1_000_000,
     ),
     "qwen2.5:14b": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=32_000,
     ),
     # ── Moonshot / Kimi ───────────────────────────────────────
     # KDa 线性注意力 + 周期 Gated MLA: 长序列算力近线性, 固定状态 → 可晚压.
     # K3 (2.8T/104B active, 1M ctx) 见下.
     "moonshot-v1-8k": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=8_192,
     ),
     "moonshot-v1-32k": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=32_768,
     ),
     "moonshot-v1-128k": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=131_072,
     ),
     "kimi-k2.5": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
-        context_window=262_144, long_context_cost_mode="linear",
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=262_144,
+        long_context_cost_mode="linear",
         compact_threshold_pct=75,
     ),
     "kimi-k2.6": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
-        context_window=262_144, long_context_cost_mode="linear",
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=262_144,
+        long_context_cost_mode="linear",
         compact_threshold_pct=75,
     ),
     "kimi-k2.7": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
-        context_window=262_144, long_context_cost_mode="linear",
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=262_144,
+        long_context_cost_mode="linear",
         compact_threshold_pct=75,
     ),
     "kimi-k3": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
-        context_window=1_048_576, long_context_cost_mode="linear",
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=1_048_576,
+        long_context_cost_mode="linear",
         compact_threshold_pct=85,
     ),
     "kimi-k2-thinking": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
-        context_window=262_144, long_context_cost_mode="linear",
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=262_144,
+        long_context_cost_mode="linear",
         compact_threshold_pct=75,
     ),
     "kimi-k2-turbo-preview": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
-        context_window=262_144, long_context_cost_mode="linear",
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
+        context_window=262_144,
+        long_context_cost_mode="linear",
         compact_threshold_pct=75,
     ),
     # ── GLM (智谱) ────────────────────────────────────────────
     # GLM-4/5/4.7 文本系原生无视觉; 智谱视觉走独立 GLM-4.xV / GLM-5V 模型
     "glm-4": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "glm-4-flash": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "glm-4.7": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=128_000,
     ),
     "glm-4.7-flash": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "glm-5": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=200_000,
     ),
     "glm-5.1": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=200_000,
     ),
     "glm-5.2": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=262_144,
     ),
     # ── MiniMax ───────────────────────────────────────────────
     "MiniMax-M2.7": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=1_000_000,
     ),
     "MiniMax-M2.7-highspeed": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=200_000,
     ),
     "MiniMax-M2.5": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=200_000,
     ),
     "MiniMax-M2": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=192_000,
     ),
     # ── 讯飞星火 X2.5 端侧 (词元星火 2026-09) — 围绕智能体/代码/指令遵循优化
     # 4B 为主入口; 是否原生长链推理未知, 保守 reasoning=False (fail-closed).
     "spark-x2.5-4b": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=32_000,
     ),
     # ── 本地多模态模型 (Ollama / vLLM / LM Studio) ────────────
@@ -579,14 +765,22 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # SALA 稀疏(25%)×线性(75%)混合: 线性层固定状态 + HyPE 解耦 → 长序列算力近线性.
     # 物理可用仍受端侧 KV/显存约束 → hybrid (适中阈值而非最晚).
     "minicpm-sala": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
-        context_window=262_144, long_context_cost_mode="hybrid",
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=262_144,
+        long_context_cost_mode="hybrid",
         compact_threshold_pct=75,
     ),
     # MiniCPM5: SFT→RL→OPD 蒸馏, 4K/8K 原生短窗 (端侧桌面), 走默认 60% 即可.
     "minicpm5": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
-        context_window=8192, long_context_cost_mode="quadratic",
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
+        context_window=8192,
+        long_context_cost_mode="quadratic",
     ),
     # ── 书生 InternLM (上海AI实验室) ──────────────────────────
     # Intern-S2-Preview (35B-A3B 科学多模态推理模型, 256K 上下文): 深度思考 +
@@ -594,36 +788,60 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # (无独立 reasoning_content), 拖后最终答案; 强推理任务建议走 harness 的
     # dedicated reasoning 逻辑或在 ingest 时剥离首段思考.
     "intern-s2-preview": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=262_144,
     ),
     "intern-s1-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=262_144,
     ),
     "intern-s1": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=262_144,
     ),
     "intern-s1-mini": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     # intern-latest: 书生 ChatAPI 通用最新模型, 支持 tool calling
     "intern-latest": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=131_072,
     ),
     "internlm3": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     "internlm3.5": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     "internlm2.5": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=131_072,
     ),
     "phi3.5-vision": ModelCaps(
@@ -632,32 +850,53 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "pixtral": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     # ── 本地文本模型 ──────────────────────────────────────────
     "qwen2.5": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "qwen2": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=32_000,
     ),
     # Qwen 3.8 是原生多模态基座 (2026-08 发布, 支持视觉理解)
     "qwen3.8": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True,
+        vision=True,
+        tools=True,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     "llama3.1": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=128_000,
     ),
     "llama3": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=8_192,
     ),
     "deepseek-r1": ModelCaps(
-        vision=False, tools=False, reasoning=True, streaming=True,
+        vision=False,
+        tools=False,
+        reasoning=True,
+        streaming=True,
         context_window=131_072,
     ),
     "deepseek-v3": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True,
+        vision=False,
+        tools=True,
+        reasoning=False,
+        streaming=True,
         context_window=131_072,
     ),
 }
@@ -1081,6 +1320,300 @@ def _with_usage_cb(kwargs: dict, cb: Any = None) -> dict:
     return kwargs
 
 
+_MISSING: Any = object()
+
+
+def _mk_common_kwargs(
+    model: str,
+    api_key: str | None,
+    temperature: float,
+    base_url: Any = _MISSING,
+) -> dict[str, Any]:
+    """Build shared kwargs; ``base_url`` is omitted unless explicitly passed."""
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "temperature": temperature,
+    }
+    if base_url is not _MISSING:
+        kwargs["base_url"] = base_url
+    return kwargs
+
+
+def _mk_add_max_tokens(kwargs: dict[str, Any], max_tokens: int | None) -> None:
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+
+def _mk_require_model_name(provider: str, model_name: str | None) -> str:
+    if not model_name:
+        raise ValueError(
+            f"Provider '{provider}' requires an explicit model name. "
+            "Use --model / HUGINN_MODEL to set it."
+        )
+    return model_name
+
+
+def _apply_speculative_kwargs(kwargs: dict[str, Any]) -> None:
+    """Speculative decoding — vLLM only, passed through OpenAI extra_body.
+
+    create_langchain_model has no cfg handle, so we read the same env vars
+    that HuginnConfig.from_env uses (see config.py).
+    """
+    if os.environ.get("HUGINN_SPECULATIVE_ENABLED", "").lower() != "true":
+        return
+    extra_body = kwargs.get("extra_body") or {}
+    extra_body["speculative_model"] = (
+        os.environ.get("HUGINN_SPECULATIVE_MODEL", "") or "auto"
+    )
+    extra_body["num_speculative_tokens"] = int(
+        os.environ.get("HUGINN_SPECULATIVE_DRAFT_TOKENS", "5")
+    )
+    kwargs["extra_body"] = extra_body
+
+
+def _mk_anthropic_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_anthropic import ChatAnthropic
+    except ImportError as err:
+        raise ImportError("pip install langchain-anthropic") from err
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
+    kwargs = _mk_common_kwargs(model, key, temperature)
+    # A2: 5 项 2026 beta header. 不含互斥的 agent-memory/managed-agents.
+    kwargs["default_headers"] = {
+        "anthropic-beta": ",".join(_ANTHROPIC_BETA_2026),
+    }
+    # A4: 服务端 context management — clear_tool_results 让 Anthropic
+    # 自动 compaction, 与 huginn 客户端 compact_messages 的 tool_result_ttl 协同.
+    # 该字段需配合 beta header context-management-2025-06-27 才生效.
+    kwargs["context_management"] = {
+        "tools": [{"type": "context_tool", "name": "clear_tool_results_20250818"}]
+    }
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatAnthropic(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_openai_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    key = api_key or os.environ.get("OPENAI_API_KEY")
+    if not key and not _is_local_url(base_url):
+        raise ValueError("OPENAI_API_KEY not set (required for non-local endpoints)")
+    kwargs = _mk_common_kwargs(model, key or "not-needed", temperature, base_url)
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    if provider == "vllm":
+        _apply_speculative_kwargs(kwargs)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_ollama_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError as err:
+        raise ImportError("pip install langchain-ollama") from err
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "base_url": base_url or "http://localhost:11434",
+        "temperature": temperature,
+    }
+    # 长思考: qwen3.8 这类推理模型的推理链会长, 而 Ollama 默认 num_ctx=2048
+    # 会把长推理/长输入直接截断, 输出也有上限. 本地模型尤其要放开, 否则
+    # enable 了 thinking 也白搭. 两个参数都走 env 可调, 服务端 Modfile 可兜底.
+    kwargs.setdefault("num_ctx", int(os.environ.get("OLLAMA_NUM_CTX", "16384")))
+    kwargs.setdefault("num_predict", int(os.environ.get("OLLAMA_NUM_PREDICT", "-1")))
+    # 调用方显式给了 max_tokens 才当作输出上限; 默认 -1(不截断)留给长思考.
+    if max_tokens is not None:
+        kwargs["num_predict"] = int(max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    if thinking and thinking != "off":
+        # 本地 OpenAI 兼容约定: 用 extra_body 开推理. 对 Ollama 推理模型
+        # 是提示, 不是强开关; 真正的硬约束在 num_ctx/num_predict.
+        kwargs["extra_body"] = {"enable_thinking": True}
+    return ChatOllama(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_deepseek_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    key = pick_api_key("deepseek", api_key)
+    if not key:
+        raise ValueError("DEEPSEEK_API_KEY not set")
+    kwargs = _mk_common_kwargs(
+        model, key, temperature, base_url or "https://api.deepseek.com"
+    )
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_google_genai_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as err:
+        raise ImportError("pip install langchain-google-genai") from err
+    key = api_key or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        raise ValueError("GOOGLE_API_KEY not set")
+    kwargs = _mk_common_kwargs(model, key, temperature)
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatGoogleGenerativeAI(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_openrouter_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise ValueError("OPENROUTER_API_KEY not set")
+    kwargs = _mk_common_kwargs(
+        model, key, temperature, base_url or "https://openrouter.ai/api/v1"
+    )
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_domestic_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    return _create_openai_compatible(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
+        thinking=thinking,
+        max_tokens=max_tokens,
+    )
+
+
+def _mk_local_preset_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    preset = _LOCAL_PRESETS[provider]
+    kwargs = {
+        "model": model,
+        "api_key": api_key or "not-needed",
+        "base_url": base_url or preset["base_url"],
+        "temperature": temperature,
+        "request_timeout": _llm_request_timeout(),
+    }
+    return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, usage_cb))
+
+
+def _mk_nvidia_model(
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+    usage_cb: Any,
+) -> Any:
+    try:
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+    except ImportError as err:
+        raise ImportError("pip install langchain-nvidia-ai-endpoints") from err
+    key = api_key or os.environ.get("NVIDIA_API_KEY")
+    kwargs = _mk_common_kwargs(model, key, temperature)
+    _mk_add_max_tokens(kwargs, max_tokens)
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatNVIDIA(**_with_usage_cb(kwargs, usage_cb))
+
+
+_LANGCHAIN_MODEL_BUILDERS: dict[str, Any] = {
+    "anthropic": _mk_anthropic_model,
+    "openai": _mk_openai_model,
+    "vllm": _mk_openai_model,
+    "local": _mk_openai_model,
+    "ollama": _mk_ollama_model,
+    "deepseek": _mk_deepseek_model,
+    "google-genai": _mk_google_genai_model,
+    "openrouter": _mk_openrouter_model,
+    "nvidia": _mk_nvidia_model,
+}
+
+
 def create_langchain_model(
     provider: ProviderT,
     model_name: str | None = None,
@@ -1095,208 +1628,36 @@ def create_langchain_model(
 
     # UsageCallback: 挂在每个 model 上, on_llm_end 自动抽 token usage 计费.
     # 一处注入覆盖所有 call site (graph/CodeAct/reflection), 比手动调 track_llm_usage 可靠.
-    _usage_cb = _get_usage_cb()
+    usage_cb = _get_usage_cb()
 
     # openai-compatible requires explicit model + base_url.
     if provider == "openai-compatible":
-        if not model_name:
-            raise ValueError(
-                "Provider 'openai-compatible' requires an explicit model name. "
-                "Use --model / HUGINN_MODEL to set it."
-            )
-        return _create_openai_compatible(
-            provider=provider,
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=temperature,
-            thinking=thinking,
-            max_tokens=max_tokens,
+        model = _mk_require_model_name(provider, model_name)
+    else:
+        model = _mk_require_model_name(
+            provider, model_name or _PROVIDER_DEFAULTS.get(provider)
         )
 
-    model = model_name or _PROVIDER_DEFAULTS.get(provider)
-    if model is None:
+    builder = _LANGCHAIN_MODEL_BUILDERS.get(provider)
+    if builder is None and provider in _DOMESTIC_OPENAI_COMPATIBLE:
+        builder = _mk_domestic_model
+    if builder is None and provider in _LOCAL_PRESETS:
+        builder = _mk_local_preset_model
+    if builder is None:
         raise ValueError(
-            f"Provider '{provider}' requires an explicit model name. "
-            "Use --model / HUGINN_MODEL to set it."
+            f"Unsupported provider: {provider}. "
+            f"Supported: {', '.join(_PROVIDER_DEFAULTS)}"
         )
 
-    if provider == "anthropic":
-        try:
-            from langchain_anthropic import ChatAnthropic
-        except ImportError as err:
-            raise ImportError("pip install langchain-anthropic") from err
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "api_key": key,
-            "temperature": temperature,
-            # A2: 5 项 2026 beta header. 不含互斥的 agent-memory/managed-agents.
-            "default_headers": {
-                "anthropic-beta": ",".join(_ANTHROPIC_BETA_2026),
-            },
-            # A4: 服务端 context management — clear_tool_results 让 Anthropic
-            # 自动 compaction, 与 huginn 客户端 compact_messages 的 tool_result_ttl 协同.
-            # 该字段需配合 beta header context-management-2025-06-27 才生效.
-            "context_management": {
-                "tools": [
-                    {"type": "context_tool", "name": "clear_tool_results_20250818"}
-                ]
-            },
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatAnthropic(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider in ("openai", "vllm", "local"):
-        key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not key and not _is_local_url(base_url):
-            raise ValueError(
-                "OPENAI_API_KEY not set (required for non-local endpoints)"
-            )
-        kwargs = {
-            "model": model,
-            "api_key": key or "not-needed",
-            "temperature": temperature,
-            "base_url": base_url,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        # Speculative decoding — vLLM only, passed through OpenAI extra_body.
-        # create_langchain_model has no cfg handle, so we read the same env
-        # vars that HuginnConfig.from_env uses (see config.py).
-        if (
-            provider == "vllm"
-            and os.environ.get("HUGINN_SPECULATIVE_ENABLED", "").lower() == "true"
-        ):
-            extra_body = kwargs.get("extra_body") or {}
-            extra_body["speculative_model"] = (
-                os.environ.get("HUGINN_SPECULATIVE_MODEL", "") or "auto"
-            )
-            extra_body["num_speculative_tokens"] = int(
-                os.environ.get("HUGINN_SPECULATIVE_DRAFT_TOKENS", "5")
-            )
-            kwargs["extra_body"] = extra_body
-        kwargs["request_timeout"] = _llm_request_timeout()
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider == "ollama":
-        try:
-            from langchain_ollama import ChatOllama
-        except ImportError as err:
-            raise ImportError("pip install langchain-ollama") from err
-        _ollama_kwargs = {
-            "model": model,
-            "base_url": base_url or "http://localhost:11434",
-            "temperature": temperature,
-        }
-        # 长思考: qwen3.8 这类推理模型的推理链会长, 而 Ollama 默认 num_ctx=2048
-        # 会把长推理/长输入直接截断, 输出也有上限. 本地模型尤其要放开, 否则
-        # enable 了 thinking 也白搭. 两个参数都走 env 可调, 服务端 Modfile 可兜底.
-        _ollama_kwargs.setdefault(
-            "num_ctx", int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
-        )
-        _ollama_kwargs.setdefault(
-            "num_predict", int(os.environ.get("OLLAMA_NUM_PREDICT", "-1"))
-        )
-        # 调用方显式给了 max_tokens 才当作输出上限; 默认 -1(不截断)留给长思考.
-        if max_tokens is not None:
-            _ollama_kwargs["num_predict"] = int(max_tokens)
-        _ollama_kwargs["request_timeout"] = _llm_request_timeout()
-        if thinking and thinking != "off":
-            # 本地 OpenAI 兼容约定: 用 extra_body 开推理. 对 Ollama 推理模型
-            # 是提示, 不是强开关; 真正的硬约束在 num_ctx/num_predict.
-            _ollama_kwargs["extra_body"] = {"enable_thinking": True}
-        return ChatOllama(**_with_usage_cb(_ollama_kwargs, _usage_cb))
-
-    if provider == "deepseek":
-        key = pick_api_key("deepseek", api_key)
-        if not key:
-            raise ValueError("DEEPSEEK_API_KEY not set")
-        kwargs = {
-            "model": model,
-            "api_key": key,
-            "base_url": base_url or "https://api.deepseek.com",
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        kwargs["request_timeout"] = _llm_request_timeout()
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider == "google-genai":
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError as err:
-            raise ImportError("pip install langchain-google-genai") from err
-        key = api_key or os.environ.get("GOOGLE_API_KEY")
-        if not key:
-            raise ValueError("GOOGLE_API_KEY not set")
-        kwargs = {"model": model, "api_key": key, "temperature": temperature}
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatGoogleGenerativeAI(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider == "openrouter":
-        key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        if not key:
-            raise ValueError("OPENROUTER_API_KEY not set")
-        kwargs = {
-            "model": model,
-            "api_key": key,
-            "base_url": base_url or "https://openrouter.ai/api/v1",
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        kwargs["request_timeout"] = _llm_request_timeout()
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(kwargs, _usage_cb))
-
-    if provider in _DOMESTIC_OPENAI_COMPATIBLE:
-        return _create_openai_compatible(
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=temperature,
-            thinking=thinking,
-            max_tokens=max_tokens,
-        )
-
-    if provider in _LOCAL_PRESETS:
-        preset = _LOCAL_PRESETS[provider]
-        resolved_base_url = base_url or preset["base_url"]
-        _lmstudio_kwargs = {
-            "model": model,
-            "api_key": api_key or "not-needed",
-            "base_url": resolved_base_url,
-            "temperature": temperature,
-            "request_timeout": _llm_request_timeout(),
-        }
-        return _normalizing_chat_openai_cls()(**_with_usage_cb(_lmstudio_kwargs, _usage_cb))
-
-    if provider == "nvidia":
-        try:
-            from langchain_nvidia_ai_endpoints import ChatNVIDIA
-        except ImportError as err:
-            raise ImportError("pip install langchain-nvidia-ai-endpoints") from err
-        key = api_key or os.environ.get("NVIDIA_API_KEY")
-        kwargs = {"model": model, "api_key": key, "temperature": temperature}
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatNVIDIA(**_with_usage_cb(kwargs, _usage_cb))
-
-    raise ValueError(
-        f"Unsupported provider: {provider}. "
-        f"Supported: {', '.join(_PROVIDER_DEFAULTS)}"
+    return builder(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
+        thinking=thinking,
+        max_tokens=max_tokens,
+        usage_cb=usage_cb,
     )
 
 
@@ -1319,6 +1680,22 @@ def list_providers() -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
     # Cloud providers with dedicated handling
+    entries.extend(_cloud_provider_entries())
+
+    # Domestic OpenAI-compatible providers
+    entries.extend(_domestic_provider_entries())
+
+    # Local LLM presets
+    entries.extend(_local_provider_entries())
+
+    # Generic OpenAI-compatible (user provides everything)
+    entries.append(_generic_provider_entry())
+
+    return entries
+
+
+def _cloud_provider_entries() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     cloud_meta: list[tuple[str, str, str | None, str | None, str]] = [
         (
             "anthropic",
@@ -1356,8 +1733,11 @@ def list_providers() -> list[dict[str, Any]]:
                 "needs_key": True,
             }
         )
+    return entries
 
-    # Domestic OpenAI-compatible providers
+
+def _domestic_provider_entries() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     for pid, cfg in _DOMESTIC_OPENAI_COMPATIBLE.items():
         if pid == "openai-compatible":
             continue
@@ -1386,8 +1766,11 @@ def list_providers() -> list[dict[str, Any]]:
                 "needs_key": True,
             }
         )
+    return entries
 
-    # Local LLM presets
+
+def _local_provider_entries() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     entries.append(
         {
             "id": "ollama",
@@ -1427,21 +1810,19 @@ def list_providers() -> list[dict[str, Any]]:
                 "needs_key": False,
             }
         )
-
-    # Generic OpenAI-compatible (user provides everything)
-    entries.append(
-        {
-            "id": "openai-compatible",
-            "label": "自定义 (OpenAI 兼容)",
-            "base_url": None,
-            "default_model": None,
-            "env_var": "OPENAI_API_KEY",
-            "local": False,
-            "needs_key": True,
-        }
-    )
-
     return entries
+
+
+def _generic_provider_entry() -> dict[str, Any]:
+    return {
+        "id": "openai-compatible",
+        "label": "自定义 (OpenAI 兼容)",
+        "base_url": None,
+        "default_model": None,
+        "env_var": "OPENAI_API_KEY",
+        "local": False,
+        "needs_key": True,
+    }
 
 
 def get_provider_info(provider: str) -> dict[str, Any] | None:
@@ -1556,21 +1937,7 @@ class ModelRegistry:
         resolved_key = resolve_provider_key(cfg.provider, cfg.api_key)
         # Fallback: if no key in config but credential_id is set, use CredentialStore
         if not resolved_key and cfg.credential_id:
-            try:
-                from huginn.security.credential_store import get_credential_store
-
-                cred_info = get_credential_store().to_llm_info(cfg.credential_id)
-                if cred_info:
-                    resolved_key = cred_info.get("api_key")
-                    # Credential may also override empty fields
-                    if not cfg.model and cred_info.get("model"):
-                        cfg = replace(cfg, model=cred_info["model"])
-                    if not cfg.base_url and cred_info.get("base_url"):
-                        cfg = replace(cfg, base_url=cred_info["base_url"])
-            except Exception:
-                logger.debug(
-                    "get failed", exc_info=True
-                )  # CredentialStore not available, fall through
+            resolved_key, cfg = ModelRegistry._credential_fallback(cfg)
 
         instance = create_langchain_model(
             provider=cfg.provider,  # type: ignore[arg-type]
@@ -1586,6 +1953,27 @@ class ModelRegistry:
         while len(self._cache) > self._cache_max:
             self._cache.popitem(last=False)
         return instance
+
+    @staticmethod
+    def _credential_fallback(cfg: ModelConfig) -> tuple[Any, ModelConfig]:
+        """Resolve the API key (and empty fields) from the credential store."""
+        resolved_key = None
+        try:
+            from huginn.security.credential_store import get_credential_store
+
+            cred_info = get_credential_store().to_llm_info(cfg.credential_id)
+            if cred_info:
+                resolved_key = cred_info.get("api_key")
+                # Credential may also override empty fields
+                if not cfg.model and cred_info.get("model"):
+                    cfg = replace(cfg, model=cred_info["model"])
+                if not cfg.base_url and cred_info.get("base_url"):
+                    cfg = replace(cfg, base_url=cred_info["base_url"])
+        except Exception:
+            logger.debug(
+                "get failed", exc_info=True
+            )  # CredentialStore not available, fall through
+        return resolved_key, cfg
 
     def resolve(
         self,

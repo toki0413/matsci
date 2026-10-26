@@ -236,60 +236,16 @@ def remote_watch(
     store = _job_store(ctx)
     executor = _maybe_executor(ctx)
 
-    def _build_table() -> Table:
-        jobs = store.list_jobs()[:limit]
-        table = Table(title="Remote Jobs (live)")
-        table.add_column("Local ID", style="cyan")
-        table.add_column("Scheduler ID", style="magenta")
-        table.add_column("Status")
-        table.add_column("Queue", style="dim")
-        table.add_column("Submitted")
-        table.add_column("Command", style="dim")
-
-        if not jobs:
-            table.add_row("-", "-", "[dim]no jobs[/dim]", "-", "-", "-")
-            return table
-
-        for job in jobs:
-            submitted = datetime.fromtimestamp(job.submitted_at).strftime(
-                "%Y-%m-%d %H:%M"
-            )
-            cmd = " ".join(job.command)
-            if len(cmd) > 50:
-                cmd = cmd[:47] + "..."
-            status_style = {
-                "PENDING": "yellow",
-                "RUNNING": "blue",
-                "COMPLETED": "green",
-                "FAILED": "red",
-                "CANCELLED": "dim",
-            }.get(job.status, "white")
-            table.add_row(
-                job.local_id,
-                job.scheduler_id,
-                f"[{status_style}]{job.status}[/{status_style}]",
-                job.queue or "-",
-                submitted,
-                cmd,
-            )
-        return table
-
-    def _refresh_active() -> None:
-        if executor is None:
-            return
-        for job in store.list_jobs()[:limit]:
-            if job.status not in ("COMPLETED", "FAILED", "CANCELLED"):
-                with contextlib.suppress(Exception):
-                    executor.refresh_job(job.local_id)
-
     ctx.console.print(
         f"[dim]Watching remote jobs every {interval}s (Ctrl+C to stop)[/dim]"
     )
     try:
-        with Live(_build_table(), refresh_per_second=1, console=ctx.console) as live:
+        with Live(
+            _build_jobs_table(store, limit), refresh_per_second=1, console=ctx.console
+        ) as live:
             while True:
-                _refresh_active()
-                live.update(_build_table())
+                _refresh_active_jobs(store, executor, limit)
+                live.update(_build_jobs_table(store, limit))
                 if exit_on_done:
                     jobs = store.list_jobs()[:limit]
                     if jobs and all(
@@ -299,6 +255,52 @@ def remote_watch(
                 time.sleep(interval)
     except KeyboardInterrupt:
         ctx.console.print("[dim]Stopped watching.[/dim]")
+
+
+def _build_jobs_table(store, limit: int) -> Table:
+    jobs = store.list_jobs()[:limit]
+    table = Table(title="Remote Jobs (live)")
+    table.add_column("Local ID", style="cyan")
+    table.add_column("Scheduler ID", style="magenta")
+    table.add_column("Status")
+    table.add_column("Queue", style="dim")
+    table.add_column("Submitted")
+    table.add_column("Command", style="dim")
+
+    if not jobs:
+        table.add_row("-", "-", "[dim]no jobs[/dim]", "-", "-", "-")
+        return table
+
+    for job in jobs:
+        submitted = datetime.fromtimestamp(job.submitted_at).strftime("%Y-%m-%d %H:%M")
+        cmd = " ".join(job.command)
+        if len(cmd) > 50:
+            cmd = cmd[:47] + "..."
+        status_style = {
+            "PENDING": "yellow",
+            "RUNNING": "blue",
+            "COMPLETED": "green",
+            "FAILED": "red",
+            "CANCELLED": "dim",
+        }.get(job.status, "white")
+        table.add_row(
+            job.local_id,
+            job.scheduler_id,
+            f"[{status_style}]{job.status}[/{status_style}]",
+            job.queue or "-",
+            submitted,
+            cmd,
+        )
+    return table
+
+
+def _refresh_active_jobs(store, executor, limit: int) -> None:
+    if executor is None:
+        return
+    for job in store.list_jobs()[:limit]:
+        if job.status not in ("COMPLETED", "FAILED", "CANCELLED"):
+            with contextlib.suppress(Exception):
+                executor.refresh_job(job.local_id)
 
 
 @remote.command("export")
@@ -325,25 +327,7 @@ def remote_export(ctx: CliContext, fmt: str, output: click.File, limit: int) -> 
     if limit > 0:
         jobs = jobs[:limit]
 
-    rows = [
-        {
-            "local_id": j.local_id,
-            "scheduler_id": j.scheduler_id,
-            "status": j.status,
-            "exit_code": j.exit_code,
-            "queue": j.queue,
-            "cwd": j.cwd,
-            "command": " ".join(j.command),
-            "submitted_at": datetime.fromtimestamp(j.submitted_at).isoformat(),
-            "completed_at": (
-                datetime.fromtimestamp(j.completed_at).isoformat()
-                if j.completed_at
-                else None
-            ),
-            "message": j.message,
-        }
-        for j in jobs
-    ]
+    rows = _job_rows(jobs)
 
     if fmt == "json":
         import json
@@ -370,6 +354,28 @@ def remote_export(ctx: CliContext, fmt: str, output: click.File, limit: int) -> 
         )
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _job_rows(jobs) -> list[dict]:
+    return [
+        {
+            "local_id": j.local_id,
+            "scheduler_id": j.scheduler_id,
+            "status": j.status,
+            "exit_code": j.exit_code,
+            "queue": j.queue,
+            "cwd": j.cwd,
+            "command": " ".join(j.command),
+            "submitted_at": datetime.fromtimestamp(j.submitted_at).isoformat(),
+            "completed_at": (
+                datetime.fromtimestamp(j.completed_at).isoformat()
+                if j.completed_at
+                else None
+            ),
+            "message": j.message,
+        }
+        for j in jobs
+    ]
 
 
 @remote.command("sync")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import sys
@@ -223,6 +224,22 @@ def _make_tool_kwargs(resolved_config, executor):
     return _tool_kwargs
 
 
+def _inject_rag_kb(cls: type, kwargs: dict[str, Any]) -> None:
+    """RAGTool 若支持 kb 参数, 就把 server_context 的 KB 共用给它."""
+    import inspect
+
+    if "kb" not in inspect.signature(cls.__init__).parameters:
+        return
+    try:
+        from huginn import server_context as _sc
+
+        _ctx = _sc._server_context
+        if _ctx is not None and _ctx.kb is not None:
+            kwargs["kb"] = _ctx.kb
+    except Exception:
+        logger.debug("tool kwargs failed", exc_info=True)
+
+
 def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
     """Import and register a list of (module, class) tuples."""
     import importlib
@@ -238,18 +255,7 @@ def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
 
             # RAGTool shares the KB collection if available
             if class_name == "RAGTool":
-                import inspect
-
-                sig = inspect.signature(cls.__init__)
-                if "kb" in sig.parameters:
-                    try:
-                        from huginn import server_context as _sc
-
-                        _ctx = _sc._server_context
-                        if _ctx is not None and _ctx.kb is not None:
-                            kwargs["kb"] = _ctx.kb
-                    except Exception:
-                        logger.debug("tool kwargs failed", exc_info=True)
+                _inject_rag_kb(cls, kwargs)
 
             ToolRegistry.register(cls(**kwargs))
             registered.append(class_name)
@@ -312,6 +318,29 @@ def validate_tool_specs() -> list[str]:
     return resolved
 
 
+def _record_import(node: ast.AST, deps: set[str], internal_targets: list[str]) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            top = alias.name.split(".")[0]
+            if top.startswith("huginn"):
+                internal_targets.append(alias.name)
+            else:
+                deps.add(top)
+    elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+        top = node.module.split(".")[0]
+        if top.startswith("huginn"):
+            internal_targets.append(node.module)
+        else:
+            deps.add(top)
+
+
+def _walk_imports(node: ast.AST, deps: set[str], internal_targets: list[str]) -> None:
+    """Collect imports nested inside a function/class body (lazy deps)."""
+    for child in ast.iter_child_nodes(node):
+        _record_import(child, deps, internal_targets)
+        _walk_imports(child, deps, internal_targets)
+
+
 def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     """Collect the set of third-party packages a module depends on.
 
@@ -329,7 +358,6 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     Returns raw top-level names (stdlib / huginn / third-party); the caller
     filters out stdlib and huginn-internal.
     """
-    import ast
     import importlib.util
     import tokenize
 
@@ -343,33 +371,12 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     internal_targets: list[str] = []
     has_logic = False
 
-    def _collect(node: ast.AST) -> None:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top = alias.name.split(".")[0]
-                if top.startswith("huginn"):
-                    internal_targets.append(alias.name)
-                else:
-                    deps.add(top)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            top = node.module.split(".")[0]
-            if top.startswith("huginn"):
-                internal_targets.append(node.module)
-            else:
-                deps.add(top)
-
-    def _walk_body(node: ast.AST) -> None:
-        """Collect imports nested inside a function/class body (lazy deps)."""
-        for child in ast.iter_child_nodes(node):
-            _collect(child)
-            _walk_body(child)
-
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             has_logic = True
-            _walk_body(node)
+            _walk_imports(node, deps, internal_targets)
         else:
-            _collect(node)
+            _record_import(node, deps, internal_targets)
 
     # Only follow re-export targets for pure shims (no logic). This surfaces a
     # shim's real deps without letting a tool inherit a broad facade's params.
@@ -381,6 +388,42 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
             deps |= _collect_top_level_imports(spec.origin, _depth + 1)
 
     return deps
+
+
+def _demote_unavailable_tool(
+    module_name: str, class_name: str, missing: list[str]
+) -> bool:
+    """把依赖缺失的工具标成 runtime unavailable (从 LLM 可见面摘除).
+
+    注册 ≠ 可用: 模块能 import (重依赖被 try/except 包住) 但类里没有真实能力.
+    LLM 仍会看到它并尝试调用, 每次必然失败 (run 实测 31 个这类工具, 占可用面
+    一半). 这里用实例级 ``is_available()`` 覆盖实现运行时摘除 —— 不动注册表
+    (``ToolRegistry.get()`` 直接调用仍然可用), 只让 ``get_all_schemas()`` 把它
+    过滤掉, 模型就不会再浪费轮次去点一个死工具.
+
+    返回是否成功摘除 (工具未注册/无法赋值时 False, 调用方据此决定日志措辞).
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    target = None
+    for name in ToolRegistry.list_tools():
+        candidate = ToolRegistry.get(name)
+        if candidate is None:
+            continue
+        if (
+            type(candidate).__name__ == class_name
+            or type(candidate).__module__ == module_name
+        ):
+            target = candidate
+            break
+    if target is None:
+        return False
+    try:
+        target.is_available = lambda: False  # type: ignore[method-assign]
+        target._unavailable_reason = f"missing deps: {', '.join(missing)}"
+    except Exception:  # 防御: 摘除失败退回仅告警, 不阻断注册
+        return False
+    return True
 
 
 def probe_tool_dependencies(
@@ -425,10 +468,12 @@ def probe_tool_dependencies(
                 missing.append(dep)
         if missing:
             report[module_name] = missing
+            demoted = _demote_unavailable_tool(module_name, _class_name, missing)
             logger.warning(
-                "Tool %s registered but its deps are missing — capability degraded: %s",
+                "Tool %s registered but its deps are missing — capability degraded: %s%s",
                 module_name,
                 ", ".join(missing),
+                " (已从 LLM 可见工具面摘除)" if demoted else " (摘除失败, 仍在可见面)",
             )
     return report
 
@@ -458,6 +503,41 @@ def register_core_tools(config: Any | None = None) -> list[str]:
     return ToolRegistry.list_tools()
 
 
+def _register_science_skills_bridge(registered: list[str]) -> None:
+    # Science-skills bridge
+    try:
+        from huginn.plugins.science_skills_bridge import register_science_skills
+
+        science_names = register_science_skills()
+        registered.extend(science_names)
+        logger.info(f"Registered {len(science_names)} science-skills bridge tools")
+    except Exception as exc:
+        logger.warning(f"Science-skills bridge registration failed: {exc}")
+
+
+def _probe_optional_dependencies(pending: list[tuple[str, str]]) -> None:
+    # Static probe of optional tools' third-party deps — warn loudly when a
+    # tool registers with a name but its backing libraries are absent, so
+    # capability degradation isn't silent.
+    try:
+        probe_tool_dependencies(pending)
+    except Exception as exc:
+        logger.warning(f"Tool dependency probe failed: {exc}")
+
+
+def _start_system_health_monitor() -> None:
+    # Start system health monitor if enabled
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        if FeatureFlags.shared().is_enabled("system_health_monitor"):
+            from huginn.diagnostics.system_health import SystemHealthMonitor
+
+            SystemHealthMonitor.shared().start()
+    except Exception as exc:
+        logger.warning(f"System health monitor failed to start: {exc}")
+
+
 def register_optional_tools(config: Any | None = None) -> list[str]:
     """Register optional simulation/science tools (slow, heavy imports).
 
@@ -480,36 +560,13 @@ def register_optional_tools(config: Any | None = None) -> list[str]:
             f"Skipped {len(skipped)} optional tools (missing deps): {', '.join(skipped[:5])}"
         )
 
-    # Science-skills bridge
-    try:
-        from huginn.plugins.science_skills_bridge import register_science_skills
-
-        science_names = register_science_skills()
-        registered.extend(science_names)
-        logger.info(f"Registered {len(science_names)} science-skills bridge tools")
-    except Exception as exc:
-        logger.warning(f"Science-skills bridge registration failed: {exc}")
+    _register_science_skills_bridge(registered)
 
     _rebuild_dispatch_tables()
 
-    # Static probe of optional tools' third-party deps — warn loudly when a
-    # tool registers with a name but its backing libraries are absent, so
-    # capability degradation isn't silent.
-    try:
-        probe_tool_dependencies(pending)
-    except Exception as exc:
-        logger.warning(f"Tool dependency probe failed: {exc}")
+    _probe_optional_dependencies(pending)
 
-    # Start system health monitor if enabled
-    try:
-        from huginn.feature_flags import FeatureFlags
-
-        if FeatureFlags.shared().is_enabled("system_health_monitor"):
-            from huginn.diagnostics.system_health import SystemHealthMonitor
-
-            SystemHealthMonitor.shared().start()
-    except Exception as exc:
-        logger.warning(f"System health monitor failed to start: {exc}")
+    _start_system_health_monitor()
 
     logger.info(
         f"[tools] registered {len(registered)} optional tools (total: {len(ToolRegistry.list_tools())})"

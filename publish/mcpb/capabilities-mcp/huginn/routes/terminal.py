@@ -26,72 +26,43 @@ logger = logging.getLogger(__name__)
 
 @router.websocket("/ws/terminal")
 async def terminal_websocket(websocket: WebSocket):
-    """交互式 SSH 终端 WebSocket。
+    """交互式 SSH 终端 WebSocket.
 
-    连接参数走 query string (浏览器 WebSocket 没法发 body):
-        ?credential_id=<id>          必填, 从凭据库取 SSH 连接信息
-        &cols=80&rows=24             可选, 初始终端尺寸
-        &command=bash                可选, 默认用 login shell
-
-    客户端 -> 服务端的消息:
-        {"type": "input", "data": "..."}      往 shell 喂字符
-        {"type": "resize", "cols": n, "rows": n}  改终端大小
-        {"type": "signal", "name": "SIGINT"}  发信号 (Ctrl-C 等)
-
-    服务端 -> 客户端的消息:
-        {"type": "output", "data": "..."}      shell 的 stdout/stderr
-        {"type": "closed", "exit_code": n}     shell 结束
-        {"type": "error", "error": "..."}     出错
+    query: credential_id (必填), cols/rows (默认 80/24), command (默认 login shell).
+    客户端 -> 服务端: {"type":"input","data":...} / {"type":"resize","cols":n,"rows":n} /
+    {"type":"signal","name":"SIGINT"}
+    服务端 -> 客户端: {"type":"output","data":...} / {"type":"closed","exit_code":n} /
+    {"type":"error","error":...}
     """
     # WebSocket 不走 router 级依赖, 走统一的 ws_auth_and_track
-    from huginn.middleware.ws_governance import (
-        WSMessageRateLimiter,
-        get_tracker,
-        ws_auth_and_track,
-    )
+    from huginn.middleware.ws_governance import get_tracker, ws_auth_and_track
 
     identity = await ws_auth_and_track(websocket)
     if identity is None:
         return
+    tracker = get_tracker()
 
-    # 从 query 取连接参数
-    credential_id = websocket.query_params.get("credential_id")
-    if not credential_id:
-        await websocket.send_json({"type": "error", "error": "缺少 credential_id 参数"})
-        await websocket.close()
-        get_tracker().release(identity)
+    params = await _tw_resolve_params(websocket, tracker, identity)
+    if params is None:
         return
-
-    cols = int(websocket.query_params.get("cols", "80"))
-    rows = int(websocket.query_params.get("rows", "24"))
-    command = websocket.query_params.get("command") or ""
-
-    # 从凭据库取 SSH 配置
-    from huginn.routes.hpc import _resolve_hpc_config
-
-    cfg, err = _resolve_hpc_config({"credential_id": credential_id})
-    if err or cfg is None:
-        await websocket.send_json({"type": "error", "error": err or "无法解析 SSH 配置"})
-        await websocket.close()
-        get_tracker().release(identity)
-        return
-
-    if not cfg.host or not cfg.username:
-        await websocket.send_json({"type": "error", "error": "host 和 username 不能为空"})
-        await websocket.close()
-        get_tracker().release(identity)
-        return
+    cols, rows, command, cfg = params
 
     # 用 paramiko 建一条带 PTY 的交互式 shell
     # invoke_shell 是阻塞读写的, 放线程里跑, 用队列桥接
-    try:
-        channel = await asyncio.to_thread(_open_shell, cfg, cols, rows, command)
-    except Exception as exc:
-        logger.warning("终端连接失败 (%s): %s", cfg.host, exc)
-        await websocket.send_json({"type": "error", "error": f"SSH 连接失败: {exc}"})
-        await websocket.close()
-        get_tracker().release(identity)
+    channel = await _tw_open_channel(
+        websocket, tracker, identity, cfg, cols, rows, command
+    )
+    if channel is None:
         return
+    await _tw_stream(websocket, tracker, identity, cfg, channel, cols, rows)
+
+
+async def _tw_stream(
+    websocket: WebSocket, tracker: Any, identity: Any, cfg: Any,
+    channel: Any, cols: int, rows: int,
+) -> None:
+    """announce ready → 起读线程 → 双向 relay → 收尾."""
+    from huginn.middleware.ws_governance import WSMessageRateLimiter
 
     await websocket.send_json({
         "type": "ready",
@@ -107,89 +78,157 @@ async def terminal_websocket(websocket: WebSocket):
     closed = {"flag": False}
     rate_limiter = WSMessageRateLimiter()
 
-    async def _pump_input():
-        """从 WebSocket 读输入, 喂给 SSH channel。"""
-        while True:
-            msg = await websocket.receive_text()
-            if not rate_limiter.check():
-                await websocket.send_json({"type": "error", "error": "消息频率过高, 请放慢"})
-                continue
-            try:
-                import json
-                data = json.loads(msg)
-            except (json.JSONDecodeError, TypeError):
-                # 纯文本就直接当输入发
-                await asyncio.to_thread(channel.sendall, msg.encode("utf-8", "ignore"))
-                continue
-
-            mtype = data.get("type")
-            if mtype == "input":
-                payload = data.get("data", "")
-                await asyncio.to_thread(channel.sendall, payload.encode("utf-8", "ignore"))
-            elif mtype == "resize":
-                new_cols = int(data.get("cols", cols))
-                new_rows = int(data.get("rows", rows))
-                await asyncio.to_thread(
-                    _safe_resize, channel, new_cols, new_rows
-                )
-            elif mtype == "signal":
-                _send_signal(channel, data.get("name", ""))
-
-    def _read_output():
-        """在线程里读 channel 输出, 塞进队列。"""
-        try:
-            while not closed["flag"]:
-                # recv 是阻塞的, 拿到一块就推
-                data = channel.recv(4096)
-                if not data:
-                    break
-                asyncio.run_coroutine_threadsafe(
-                    output_queue.put(("output", data.decode("utf-8", "ignore"))),
-                    loop,
-                )
-            # channel 关了, 取退出码
-            exit_code = channel.recv_exit_status() if not closed["flag"] else None
-            asyncio.run_coroutine_threadsafe(
-                output_queue.put(("closed", exit_code)), loop
-            )
-        except (OSError, EOFError):
-            logger.debug("best-effort op failed", exc_info=True)
-        except Exception as exc:
-            asyncio.run_coroutine_threadsafe(
-                output_queue.put(("error", str(exc))), loop
-            )
-
-    reader_thread = threading.Thread(target=_read_output, daemon=True)
+    reader_thread = threading.Thread(
+        target=_tw_read_output, args=(channel, output_queue, loop, closed), daemon=True
+    )
     reader_thread.start()
 
     try:
         # 两个任务: 一个读 WS 输入, 一个从队列推输出到 WS
-        input_task = asyncio.create_task(_pump_input())
-        output_task = asyncio.create_task(_drain_output(websocket, output_queue))
-
-        # 任一任务结束就收尾
-        done, pending = await asyncio.wait(
-            {input_task, output_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        for t in pending:
-            t.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await t
+        await _tw_relay(websocket, channel, output_queue, cols, rows, rate_limiter)
     except WebSocketDisconnect:
         logger.debug("best-effort op failed", exc_info=True)
     except Exception as exc:
         logger.error("终端会话异常: %s", exc, exc_info=True)
     finally:
-        closed["flag"] = True
+        await _tw_close(websocket, channel, closed, tracker, identity)
+
+
+async def _tw_fail(websocket: WebSocket, tracker: Any, identity: Any, error: str) -> None:
+    """发错误 → 关连接 → 释放跟踪名额."""
+    await websocket.send_json({"type": "error", "error": error})
+    await websocket.close()
+    tracker.release(identity)
+
+
+async def _tw_resolve_params(
+    websocket: WebSocket, tracker: Any, identity: Any,
+) -> tuple[int, int, str, Any] | None:
+    """解析 query 参数并从凭据库取 SSH 配置; 出错时回错误并返回 None."""
+    credential_id = websocket.query_params.get("credential_id")
+    if not credential_id:
+        await _tw_fail(websocket, tracker, identity, "缺少 credential_id 参数")
+        return None
+
+    cols = int(websocket.query_params.get("cols", "80"))
+    rows = int(websocket.query_params.get("rows", "24"))
+    command = websocket.query_params.get("command") or ""
+
+    from huginn.routes.hpc import _resolve_hpc_config
+
+    cfg, err = _resolve_hpc_config({"credential_id": credential_id})
+    if err or cfg is None:
+        await _tw_fail(websocket, tracker, identity, err or "无法解析 SSH 配置")
+        return None
+    if not cfg.host or not cfg.username:
+        await _tw_fail(websocket, tracker, identity, "host 和 username 不能为空")
+        return None
+    return cols, rows, command, cfg
+
+
+async def _tw_open_channel(
+    websocket: WebSocket, tracker: Any, identity: Any, cfg: Any,
+    cols: int, rows: int, command: str,
+) -> Any:
+    """开交互式 shell channel; 连接失败时回错误并返回 None."""
+    try:
+        return await asyncio.to_thread(_open_shell, cfg, cols, rows, command)
+    except Exception as exc:
+        logger.warning("终端连接失败 (%s): %s", cfg.host, exc)
+        await _tw_fail(websocket, tracker, identity, f"SSH 连接失败: {exc}")
+        return None
+
+
+async def _tw_relay(
+    websocket: WebSocket, channel: Any, output_queue: asyncio.Queue,
+    cols: int, rows: int, rate_limiter: Any,
+) -> None:
+    """跑输入/输出两个任务, 任一结束就取消另一个."""
+    input_task = asyncio.create_task(
+        _tw_pump_input(websocket, channel, cols, rows, rate_limiter)
+    )
+    output_task = asyncio.create_task(_drain_output(websocket, output_queue))
+    _done, pending = await asyncio.wait(
+        {input_task, output_task}, return_when=asyncio.FIRST_COMPLETED
+    )
+    for t in pending:
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await t
+
+
+async def _tw_pump_input(
+    websocket: WebSocket, channel: Any, cols: int, rows: int, rate_limiter: Any,
+) -> None:
+    """从 WebSocket 读输入, 喂给 SSH channel."""
+    while True:
+        msg = await websocket.receive_text()
+        if not rate_limiter.check():
+            await websocket.send_json({"type": "error", "error": "消息频率过高, 请放慢"})
+            continue
         try:
-            channel.close()
-        except Exception:
-            logger.debug("channel.close 收尾失败", exc_info=True)
-        try:
-            await websocket.close()
-        except Exception:
-            logger.debug("websocket.close 收尾失败", exc_info=True)
-        get_tracker().release(identity)
+            import json
+            data = json.loads(msg)
+        except (json.JSONDecodeError, TypeError):
+            # 纯文本就直接当输入发
+            await asyncio.to_thread(channel.sendall, msg.encode("utf-8", "ignore"))
+            continue
+        await _tw_handle_message(channel, data, cols, rows)
+
+
+async def _tw_handle_message(channel: Any, data: dict, cols: int, rows: int) -> None:
+    """按消息类型分派: input / resize / signal."""
+    mtype = data.get("type")
+    if mtype == "input":
+        payload = data.get("data", "")
+        await asyncio.to_thread(channel.sendall, payload.encode("utf-8", "ignore"))
+    elif mtype == "resize":
+        new_cols = int(data.get("cols", cols))
+        new_rows = int(data.get("rows", rows))
+        await asyncio.to_thread(_safe_resize, channel, new_cols, new_rows)
+    elif mtype == "signal":
+        _send_signal(channel, data.get("name", ""))
+
+
+def _tw_read_output(channel: Any, output_queue: asyncio.Queue, loop: Any, closed: dict) -> None:
+    """在线程里读 channel 输出, 塞进队列."""
+    try:
+        while not closed["flag"]:
+            # recv 是阻塞的, 拿到一块就推
+            data = channel.recv(4096)
+            if not data:
+                break
+            asyncio.run_coroutine_threadsafe(
+                output_queue.put(("output", data.decode("utf-8", "ignore"))),
+                loop,
+            )
+        # channel 关了, 取退出码
+        exit_code = channel.recv_exit_status() if not closed["flag"] else None
+        asyncio.run_coroutine_threadsafe(
+            output_queue.put(("closed", exit_code)), loop
+        )
+    except (OSError, EOFError):
+        logger.debug("best-effort op failed", exc_info=True)
+    except Exception as exc:
+        asyncio.run_coroutine_threadsafe(
+            output_queue.put(("error", str(exc))), loop
+        )
+
+
+async def _tw_close(
+    websocket: WebSocket, channel: Any, closed: dict, tracker: Any, identity: Any,
+) -> None:
+    """收尾: 标记关闭 → 关 channel → 关 WS → 释放跟踪名额."""
+    closed["flag"] = True
+    try:
+        channel.close()
+    except Exception:
+        logger.debug("channel.close 收尾失败", exc_info=True)
+    try:
+        await websocket.close()
+    except Exception:
+        logger.debug("websocket.close 收尾失败", exc_info=True)
+    tracker.release(identity)
 
 
 # ── 内部工具函数 ─────────────────────────────────────────────────

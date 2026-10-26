@@ -41,9 +41,15 @@ from huginn.utils.runtime import get_runtime_home
 logger = logging.getLogger(__name__)
 
 # 订阅的事件类型 —— 只记 agent 行为事件, 不记 session/pipeline 等
-_TRANSCRIPT_EVENT_TYPES = frozenset({
-    TOOL_CALL, TOOL_RESULT, TOOL_ERROR, TOOL_BLOCKED, STEP_RETRY,
-})
+_TRANSCRIPT_EVENT_TYPES = frozenset(
+    {
+        TOOL_CALL,
+        TOOL_RESULT,
+        TOOL_ERROR,
+        TOOL_BLOCKED,
+        STEP_RETRY,
+    }
+)
 
 
 class TranscriptStore:
@@ -201,6 +207,80 @@ if __name__ == "__main__":
     import tempfile
     import time
 
+    async def _publish_fixture_events(bus) -> None:
+        # 模拟 agent 事件序列
+        await bus.publish(
+            AgentEvent(
+                type=TOOL_CALL,
+                timestamp=time.time(),
+                data={"tool": "vasp_tool", "args": {"system": "Si"}},
+                thread_id="t1",
+                source="test",
+            )
+        )
+        await bus.publish(
+            AgentEvent(
+                type=TOOL_RESULT,
+                timestamp=time.time(),
+                data={"tool": "vasp_tool", "success": True, "bandgap": 1.1},
+                thread_id="t1",
+                source="test",
+            )
+        )
+        await bus.publish(
+            AgentEvent(
+                type=STEP_RETRY,
+                timestamp=time.time(),
+                data={"attempt": 2, "max_attempts": 3, "error_type": "RateLimitError"},
+                thread_id="t1",
+                source="agent.streaming",
+            )
+        )
+        await bus.publish(
+            AgentEvent(
+                type=TOOL_CALL,
+                timestamp=time.time(),
+                data={"tool": "lmp_tool", "args": {}},
+                thread_id="t2",
+                source="test",
+            )
+        )
+
+        # 给回调一点时间执行 (publish 是 async, 回调可能 future)
+        await asyncio.sleep(0.1)
+
+    def _verify_transcripts(store) -> None:
+        # 验证 t1 转录
+        entries = store.load_transcript("t1")
+        assert len(entries) == 3, f"expected 3, got {len(entries)}"
+        assert entries[0]["type"] == TOOL_CALL
+        assert entries[1]["type"] == TOOL_RESULT
+        assert entries[2]["type"] == STEP_RETRY
+        assert entries[0]["data"]["tool"] == "vasp_tool"
+        assert entries[1]["data"]["bandgap"] == 1.1
+
+        # 验证 t2 转录独立
+        entries_t2 = store.load_transcript("t2")
+        assert len(entries_t2) == 1
+        assert entries_t2[0]["data"]["tool"] == "lmp_tool"
+
+        # 验证 list_threads
+        threads = store.list_threads()
+        assert set(threads) == {"t1", "t2"}, f"got {threads}"
+
+        # 验证 summary
+        s = store.summary("t1")
+        assert s["total_events"] == 3
+        assert s["type_counts"][TOOL_CALL] == 1
+        assert s["type_counts"][TOOL_RESULT] == 1
+        assert s["type_counts"][STEP_RETRY] == 1
+
+        # 验证不存在的 thread
+        assert store.load_transcript("nonexistent") == []
+        assert store.summary("nonexistent")["total_events"] == 0
+
+        store.stop()
+
     async def main():
         with tempfile.TemporaryDirectory() as td:
             store = TranscriptStore(base_dir=td)
@@ -208,61 +288,8 @@ if __name__ == "__main__":
 
             bus = EventBus.shared()
 
-            # 模拟 agent 事件序列
-            await bus.publish(AgentEvent(
-                type=TOOL_CALL, timestamp=time.time(),
-                data={"tool": "vasp_tool", "args": {"system": "Si"}},
-                thread_id="t1", source="test",
-            ))
-            await bus.publish(AgentEvent(
-                type=TOOL_RESULT, timestamp=time.time(),
-                data={"tool": "vasp_tool", "success": True, "bandgap": 1.1},
-                thread_id="t1", source="test",
-            ))
-            await bus.publish(AgentEvent(
-                type=STEP_RETRY, timestamp=time.time(),
-                data={"attempt": 2, "max_attempts": 3, "error_type": "RateLimitError"},
-                thread_id="t1", source="agent.streaming",
-            ))
-            await bus.publish(AgentEvent(
-                type=TOOL_CALL, timestamp=time.time(),
-                data={"tool": "lmp_tool", "args": {}},
-                thread_id="t2", source="test",
-            ))
-
-            # 给回调一点时间执行 (publish 是 async, 回调可能 future)
-            await asyncio.sleep(0.1)
-
-            # 验证 t1 转录
-            entries = store.load_transcript("t1")
-            assert len(entries) == 3, f"expected 3, got {len(entries)}"
-            assert entries[0]["type"] == TOOL_CALL
-            assert entries[1]["type"] == TOOL_RESULT
-            assert entries[2]["type"] == STEP_RETRY
-            assert entries[0]["data"]["tool"] == "vasp_tool"
-            assert entries[1]["data"]["bandgap"] == 1.1
-
-            # 验证 t2 转录独立
-            entries_t2 = store.load_transcript("t2")
-            assert len(entries_t2) == 1
-            assert entries_t2[0]["data"]["tool"] == "lmp_tool"
-
-            # 验证 list_threads
-            threads = store.list_threads()
-            assert set(threads) == {"t1", "t2"}, f"got {threads}"
-
-            # 验证 summary
-            s = store.summary("t1")
-            assert s["total_events"] == 3
-            assert s["type_counts"][TOOL_CALL] == 1
-            assert s["type_counts"][TOOL_RESULT] == 1
-            assert s["type_counts"][STEP_RETRY] == 1
-
-            # 验证不存在的 thread
-            assert store.load_transcript("nonexistent") == []
-            assert store.summary("nonexistent")["total_events"] == 0
-
-            store.stop()
+            await _publish_fixture_events(bus)
+            _verify_transcripts(store)
 
         print("TranscriptStore self-checks passed.")
 

@@ -21,37 +21,7 @@ from text_unicode import clean_text  # noqa: E402
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("path", nargs="?", default="-", help="Input text file, or - for stdin")
-    p.add_argument("-o", "--output", help="Output path (default: stdout or *.cleaned.*)")
-    p.add_argument("--nfkc", action="store_true", help="Apply Unicode NFKC after scrub")
-    p.add_argument(
-        "--aggressive-homoglyphs",
-        action="store_true",
-        help="Map Cyrillic/fullwidth Latin confusables to ASCII Latin",
-    )
-    p.add_argument(
-        "--no-normalize-spaces",
-        action="store_true",
-        help="Do not rewrite exotic spaces to U+0020",
-    )
-    p.add_argument(
-        "--strip-emoji-glue",
-        action="store_true",
-        help="Paranoid: strip all load-bearing invisibles too (emoji glue, script joiners, flag tags, same-script fillers/selectors, orthographic Cf)",
-    )
-    p.add_argument("--stats", action="store_true", help="Print stats JSON to stderr")
-    p.add_argument(
-        "--force-text",
-        action="store_true",
-        help="Clean even when the input looks like a binary container "
-        "(this rewrites the bytes and will corrupt the file)",
-    )
-    p.add_argument(
-        "--in-place",
-        action="store_true",
-        help="Overwrite input file (creates .bak backup)",
-    )
+    p = _build_parser()
     args = p.parse_args()
 
     text = read_text_input(args.path, allow_binary=args.force_text)
@@ -84,6 +54,45 @@ def main() -> int:
             f"len {stats['input_length']}->{stats['output_length']}"
         )
     return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "path", nargs="?", default="-", help="Input text file, or - for stdin"
+    )
+    p.add_argument(
+        "-o", "--output", help="Output path (default: stdout or *.cleaned.*)"
+    )
+    p.add_argument("--nfkc", action="store_true", help="Apply Unicode NFKC after scrub")
+    p.add_argument(
+        "--aggressive-homoglyphs",
+        action="store_true",
+        help="Map Cyrillic/fullwidth Latin confusables to ASCII Latin",
+    )
+    p.add_argument(
+        "--no-normalize-spaces",
+        action="store_true",
+        help="Do not rewrite exotic spaces to U+0020",
+    )
+    p.add_argument(
+        "--strip-emoji-glue",
+        action="store_true",
+        help="Paranoid: strip all load-bearing invisibles too (emoji glue, script joiners, flag tags, same-script fillers/selectors, orthographic Cf)",
+    )
+    p.add_argument("--stats", action="store_true", help="Print stats JSON to stderr")
+    p.add_argument(
+        "--force-text",
+        action="store_true",
+        help="Clean even when the input looks like a binary container "
+        "(this rewrites the bytes and will corrupt the file)",
+    )
+    p.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Overwrite input file (creates .bak backup)",
+    )
+    return p
 
 
 if __name__ == "__main__":

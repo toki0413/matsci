@@ -256,7 +256,7 @@ class GPTool(HuginnTool):
                 "sigma_n": args.sigma_n,
                 "kernel": args.kernel,
                 "backend": "sklearn" if self._sklearn_available else "numpy",
-                "message": f"GP fitted on {len(X)} points using { 'sklearn' if self._sklearn_available else 'numpy' } backend.",
+                "message": f"GP fitted on {len(X)} points using {'sklearn' if self._sklearn_available else 'numpy'} backend.",
             },
             success=True,
         )
@@ -381,14 +381,7 @@ class GPTool(HuginnTool):
             )
 
         kernel = args.kernel
-        log_theta = np.array(
-            [
-                np.log(args.sigma_f),
-                np.log(args.length_scale),
-                np.log(args.sigma_n),
-            ],
-            dtype=float,
-        )
+        log_theta = GPTool._log_theta(args)
         h = 1e-5
         eps = 1e-6
         trajectory: list[dict[str, Any]] = []
@@ -396,59 +389,104 @@ class GPTool(HuginnTool):
         grad_norm = float("inf")
 
         for step in range(args.n_steps):
-            log_marg, log_p = self._log_marginal_and_loo(log_theta, X, y, kernel)
-            grad = np.zeros(3)
-            # Each column holds the per-sample score for one parameter.
-            scores = np.zeros((len(y), 3))
-            for i in range(3):
-                tp = log_theta.copy()
-                tm = log_theta.copy()
-                tp[i] += h
-                tm[i] -= h
-                mp, lp = self._log_marginal_and_loo(tp, X, y, kernel)
-                mm, lm = self._log_marginal_and_loo(tm, X, y, kernel)
-                grad[i] = (mp - mm) / (2.0 * h)
-                scores[:, i] = (lp - lm) / (2.0 * h)
-
-            # Empirical Fisher: outer product of per-sample scores, regularized
-            # before inversion for numerical stability.
-            fisher = (scores.T @ scores) / len(y) + eps * np.eye(3)
-            nat_grad = np.linalg.solve(fisher, grad)
+            log_marg, nat_grad, grad_norm = self._natural_gradient_step(
+                log_theta, X, y, kernel, h, eps
+            )
             log_theta = log_theta + args.lr * nat_grad
-            grad_norm = float(np.linalg.norm(grad))
             trajectory.append(
-                {
-                    "step": step,
-                    "log_likelihood": float(log_marg),
-                    "grad_norm": grad_norm,
-                    "natural_grad_norm": float(np.linalg.norm(nat_grad)),
-                    "sigma_f": float(np.exp(log_theta[0])),
-                    "length_scale": float(np.exp(log_theta[1])),
-                    "sigma_n": float(np.exp(log_theta[2])),
-                }
+                GPTool._ng_trajectory_entry(
+                    step, log_marg, grad_norm, nat_grad, log_theta
+                )
             )
             if grad_norm < 1e-6:
                 converged = True
                 break
 
         return ToolResult(
-            data={
-                "optimized_sigma_f": float(np.exp(log_theta[0])),
-                "optimized_length_scale": float(np.exp(log_theta[1])),
-                "optimized_sigma_n": float(np.exp(log_theta[2])),
-                "log_likelihood_trajectory": trajectory,
-                "converged": converged,
-                "n_steps_run": len(trajectory),
-                "final_grad_norm": grad_norm,
-                "method": "natural_gradient_descent",
-                "message": (
-                    f"Natural gradient optimization finished after "
-                    f"{len(trajectory)} steps. Final log-likelihood: "
-                    f"{trajectory[-1]['log_likelihood']:.6f}."
-                ),
-            },
+            data=GPTool._ng_result_data(log_theta, trajectory, converged, grad_norm),
             success=True,
         )
+
+    @staticmethod
+    def _log_theta(args: GPToolInput) -> np.ndarray:
+        return np.array(
+            [
+                np.log(args.sigma_f),
+                np.log(args.length_scale),
+                np.log(args.sigma_n),
+            ],
+            dtype=float,
+        )
+
+    def _natural_gradient_step(
+        self,
+        log_theta: np.ndarray,
+        X: np.ndarray,
+        y: np.ndarray,
+        kernel: str,
+        h: float,
+        eps: float,
+    ) -> tuple[float, np.ndarray, float]:
+        log_marg, log_p = self._log_marginal_and_loo(log_theta, X, y, kernel)
+        grad = np.zeros(3)
+        # Each column holds the per-sample score for one parameter.
+        scores = np.zeros((len(y), 3))
+        for i in range(3):
+            tp = log_theta.copy()
+            tm = log_theta.copy()
+            tp[i] += h
+            tm[i] -= h
+            mp, lp = self._log_marginal_and_loo(tp, X, y, kernel)
+            mm, lm = self._log_marginal_and_loo(tm, X, y, kernel)
+            grad[i] = (mp - mm) / (2.0 * h)
+            scores[:, i] = (lp - lm) / (2.0 * h)
+
+        # Empirical Fisher: outer product of per-sample scores, regularized
+        # before inversion for numerical stability.
+        fisher = (scores.T @ scores) / len(y) + eps * np.eye(3)
+        nat_grad = np.linalg.solve(fisher, grad)
+        return log_marg, nat_grad, float(np.linalg.norm(grad))
+
+    @staticmethod
+    def _ng_trajectory_entry(
+        step: int,
+        log_marg: float,
+        grad_norm: float,
+        nat_grad: np.ndarray,
+        log_theta: np.ndarray,
+    ) -> dict[str, Any]:
+        return {
+            "step": step,
+            "log_likelihood": float(log_marg),
+            "grad_norm": grad_norm,
+            "natural_grad_norm": float(np.linalg.norm(nat_grad)),
+            "sigma_f": float(np.exp(log_theta[0])),
+            "length_scale": float(np.exp(log_theta[1])),
+            "sigma_n": float(np.exp(log_theta[2])),
+        }
+
+    @staticmethod
+    def _ng_result_data(
+        log_theta: np.ndarray,
+        trajectory: list[dict[str, Any]],
+        converged: bool,
+        grad_norm: float,
+    ) -> dict[str, Any]:
+        return {
+            "optimized_sigma_f": float(np.exp(log_theta[0])),
+            "optimized_length_scale": float(np.exp(log_theta[1])),
+            "optimized_sigma_n": float(np.exp(log_theta[2])),
+            "log_likelihood_trajectory": trajectory,
+            "converged": converged,
+            "n_steps_run": len(trajectory),
+            "final_grad_norm": grad_norm,
+            "method": "natural_gradient_descent",
+            "message": (
+                f"Natural gradient optimization finished after "
+                f"{len(trajectory)} steps. Final log-likelihood: "
+                f"{trajectory[-1]['log_likelihood']:.6f}."
+            ),
+        }
 
     def _fisher_information(self, args: GPToolInput) -> ToolResult:
         """Fisher information of GP hyperparameters over candidate points.
@@ -482,31 +520,63 @@ class GPTool(HuginnTool):
             dtype=float,
         )
 
-        def predict(theta: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-            gp = NumPyGP(
-                float(np.exp(theta[1])),
-                float(np.exp(theta[0])),
-                float(np.exp(theta[2])),
-                kernel,
-            )
-            gp.fit(X_train, y_train)
-            mu, std = gp.predict(X_cand)
-            return mu, np.maximum(std**2, 1e-12)
-
-        mu0, var0 = predict(log_theta)
+        _, var0 = GPTool._fisher_predict(log_theta, X_train, y_train, X_cand, kernel)
         # Sensitivity of the posterior mean to each hyperparameter (central diff).
-        h = 1e-5
+        dmu = GPTool._fisher_sensitivity(log_theta, X_train, y_train, X_cand, kernel)
+
+        n_cand = len(X_cand)
+        fisher_total, per_cand = GPTool._fisher_accumulate(dmu, var0, n_cand)
+        d_opt, a_opt, e_opt = GPTool._fisher_optima(fisher_total)
+
+        return ToolResult(
+            data=GPTool._fisher_result_data(
+                fisher_total, d_opt, a_opt, e_opt, per_cand, n_cand
+            ),
+            success=True,
+        )
+
+    @staticmethod
+    def _fisher_predict(
+        theta: np.ndarray,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_cand: np.ndarray,
+        kernel: str,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        gp = NumPyGP(
+            float(np.exp(theta[1])),
+            float(np.exp(theta[0])),
+            float(np.exp(theta[2])),
+            kernel,
+        )
+        gp.fit(X_train, y_train)
+        mu, std = gp.predict(X_cand)
+        return mu, np.maximum(std**2, 1e-12)
+
+    @staticmethod
+    def _fisher_sensitivity(
+        log_theta: np.ndarray,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_cand: np.ndarray,
+        kernel: str,
+        h: float = 1e-5,
+    ) -> np.ndarray:
         dmu = np.zeros((len(X_cand), 3))
         for i in range(3):
             tp = log_theta.copy()
             tm = log_theta.copy()
             tp[i] += h
             tm[i] -= h
-            mu_p, _ = predict(tp)
-            mu_m, _ = predict(tm)
+            mu_p, _ = GPTool._fisher_predict(tp, X_train, y_train, X_cand, kernel)
+            mu_m, _ = GPTool._fisher_predict(tm, X_train, y_train, X_cand, kernel)
             dmu[:, i] = (mu_p - mu_m) / (2.0 * h)
+        return dmu
 
-        n_cand = len(X_cand)
+    @staticmethod
+    def _fisher_accumulate(
+        dmu: np.ndarray, var0: np.ndarray, n_cand: int
+    ) -> tuple[np.ndarray, list[float]]:
         fisher_total = np.zeros((3, 3))
         per_cand: list[float] = []
         for k in range(n_cand):
@@ -514,12 +584,15 @@ class GPTool(HuginnTool):
             fk = (g @ g.T) / var0[k]
             fisher_total += fk
             try:
-                per_cand.append(
-                    float(np.log(np.linalg.det(fk + 1e-12 * np.eye(3))))
-                )
+                per_cand.append(float(np.log(np.linalg.det(fk + 1e-12 * np.eye(3)))))
             except np.linalg.LinAlgError:
                 per_cand.append(float("nan"))
+        return fisher_total, per_cand
 
+    @staticmethod
+    def _fisher_optima(
+        fisher_total: np.ndarray,
+    ) -> tuple[float, float, float]:
         fisher_reg = fisher_total + 1e-10 * np.eye(3)
         try:
             d_opt = float(np.log(np.linalg.det(fisher_reg)))
@@ -533,22 +606,29 @@ class GPTool(HuginnTool):
             e_opt = float(np.linalg.eigvalsh(fisher_reg)[0])
         except np.linalg.LinAlgError:
             e_opt = float("nan")
+        return d_opt, a_opt, e_opt
 
-        return ToolResult(
-            data={
-                "fisher_matrix": fisher_total.tolist(),
-                "d_optimal": d_opt,
-                "a_optimal": a_opt,
-                "e_optimal": e_opt,
-                "per_candidate_contribution": per_cand,
-                "n_candidates": n_cand,
-                "message": (
-                    f"Fisher information computed over {n_cand} candidates. "
-                    f"D-opt={d_opt:.4f}, A-opt={a_opt:.4f}, E-opt={e_opt:.4f}."
-                ),
-            },
-            success=True,
-        )
+    @staticmethod
+    def _fisher_result_data(
+        fisher_total: np.ndarray,
+        d_opt: float,
+        a_opt: float,
+        e_opt: float,
+        per_cand: list[float],
+        n_cand: int,
+    ) -> dict[str, Any]:
+        return {
+            "fisher_matrix": fisher_total.tolist(),
+            "d_optimal": d_opt,
+            "a_optimal": a_opt,
+            "e_optimal": e_opt,
+            "per_candidate_contribution": per_cand,
+            "n_candidates": n_cand,
+            "message": (
+                f"Fisher information computed over {n_cand} candidates. "
+                f"D-opt={d_opt:.4f}, A-opt={a_opt:.4f}, E-opt={e_opt:.4f}."
+            ),
+        }
 
     def _kl_divergence(self, args: GPToolInput) -> ToolResult:
         """KL divergence between two GP posteriors fit to y1 and y2.
@@ -578,34 +658,52 @@ class GPTool(HuginnTool):
 
         X_test = np.asarray(args.X_new, dtype=float) if args.X_new else X
 
+        mu1, std1, mu2, std2 = self._kl_posteriors(args, X, y1, y2, X_test)
+        var1 = np.maximum(std1**2, 1e-12)
+        var2 = np.maximum(std2**2, 1e-12)
+
+        kl = 0.5 * (np.log(var2 / var1) - 1.0 + var1 / var2 + (mu2 - mu1) ** 2 / var2)
+        mean_kl = float(np.mean(kl))
+        max_kl = float(np.max(kl))
+        return ToolResult(
+            data=GPTool._kl_result_data(kl, mean_kl, max_kl, len(X_test)),
+            success=True,
+        )
+
+    def _kl_posteriors(
+        self,
+        args: GPToolInput,
+        X: np.ndarray,
+        y1: np.ndarray,
+        y2: np.ndarray,
+        X_test: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         gp1 = self._create_gp(args)
         gp1.fit(X, y1)
         gp2 = self._create_gp(args)
         gp2.fit(X, y2)
         mu1, std1 = gp1.predict(X_test)
         mu2, std2 = gp2.predict(X_test)
-        var1 = np.maximum(std1**2, 1e-12)
-        var2 = np.maximum(std2**2, 1e-12)
+        return mu1, std1, mu2, std2
 
-        kl = 0.5 * (
-            np.log(var2 / var1) - 1.0 + var1 / var2 + (mu2 - mu1) ** 2 / var2
-        )
-        mean_kl = float(np.mean(kl))
-        max_kl = float(np.max(kl))
-        return ToolResult(
-            data={
-                "kl_divergence": mean_kl,
-                "per_point_kl": kl.tolist(),
-                "mean_kl": mean_kl,
-                "max_kl": max_kl,
-                "n_test_points": len(X_test),
-                "message": (
-                    f"KL divergence computed over {len(X_test)} test points. "
-                    f"Mean KL={mean_kl:.6f}, max KL={max_kl:.6f}."
-                ),
-            },
-            success=True,
-        )
+    @staticmethod
+    def _kl_result_data(
+        kl: np.ndarray,
+        mean_kl: float,
+        max_kl: float,
+        n_test_points: int,
+    ) -> dict[str, Any]:
+        return {
+            "kl_divergence": mean_kl,
+            "per_point_kl": kl.tolist(),
+            "mean_kl": mean_kl,
+            "max_kl": max_kl,
+            "n_test_points": n_test_points,
+            "message": (
+                f"KL divergence computed over {n_test_points} test points. "
+                f"Mean KL={mean_kl:.6f}, max KL={max_kl:.6f}."
+            ),
+        }
 
     def _pareto_suggest(self, args: GPToolInput) -> ToolResult:
         """Pareto 多目标 BO: NSGA-II 前沿分层 + 拥挤度 + hypervolume.
@@ -626,7 +724,9 @@ class GPTool(HuginnTool):
         fronts = fast_non_dominated_sort(y_multi)
         if not fronts:
             return ToolResult(
-                data=None, success=False, error="fast_non_dominated_sort returned empty."
+                data=None,
+                success=False,
+                error="fast_non_dominated_sort returned empty.",
             )
 
         first_front_idx = fronts[0]
@@ -634,39 +734,68 @@ class GPTool(HuginnTool):
         cd = crowding_distance(first_front_y)
 
         # hypervolume (需要 reference_point)
-        hv = None
-        if args.reference_point:
-            ref = np.asarray(args.reference_point, dtype=float)
-            hv = hypervolume(first_front_y, ref)
+        hv = GPTool._pareto_hypervolume(args, first_front_y)
 
         # 选拥挤度最大的点作为 suggested_point
         best_local = int(np.argmax(cd)) if len(cd) > 0 else 0
         best_global = int(first_front_idx[best_local])
 
         # 如果有 population_x, 返回对应的 X 坐标
+        suggested_x = GPTool._pareto_suggested_x(args, best_global)
+
+        return ToolResult(
+            data=GPTool._pareto_result_data(
+                first_front_idx,
+                first_front_y,
+                fronts,
+                hv,
+                cd,
+                suggested_x,
+                best_global,
+            ),
+            success=True,
+        )
+
+    @staticmethod
+    def _pareto_hypervolume(args: GPToolInput, first_front_y: np.ndarray):
+        if not args.reference_point:
+            return None
+        ref = np.asarray(args.reference_point, dtype=float)
+        return hypervolume(first_front_y, ref)
+
+    @staticmethod
+    def _pareto_suggested_x(args: GPToolInput, best_global: int):
         suggested_x = None
         if args.population_x and best_global < len(args.population_x):
             suggested_x = args.population_x[best_global]
+        return suggested_x
 
+    @staticmethod
+    def _pareto_result_data(
+        first_front_idx: np.ndarray,
+        first_front_y: np.ndarray,
+        fronts: list[np.ndarray],
+        hv: float | None,
+        cd: np.ndarray,
+        suggested_x: list[float] | None,
+        best_global: int,
+    ) -> dict[str, Any]:
         pareto_list = first_front_y.tolist()
-        return ToolResult(
-            data={
-                "pareto_front": pareto_list,
-                "pareto_indices": first_front_idx.tolist(),
-                "n_fronts": len(fronts),
-                "hypervolume": hv,
-                "crowding_distances": cd.tolist(),
-                "suggested_point": suggested_x,
-                "suggested_index": best_global,
-                "message": (
-                    f"Pareto suggest: {len(first_front_idx)} points on first front, "
-                    f"{len(fronts)} fronts total"
-                    + (f", HV={hv:.6f}" if hv is not None else "")
-                    + "."
-                ),
-            },
-            success=True,
-        )
+        return {
+            "pareto_front": pareto_list,
+            "pareto_indices": first_front_idx.tolist(),
+            "n_fronts": len(fronts),
+            "hypervolume": hv,
+            "crowding_distances": cd.tolist(),
+            "suggested_point": suggested_x,
+            "suggested_index": best_global,
+            "message": (
+                f"Pareto suggest: {len(first_front_idx)} points on first front, "
+                f"{len(fronts)} fronts total"
+                + (f", HV={hv:.6f}" if hv is not None else "")
+                + "."
+            ),
+        }
 
     def _create_gp(self, args: GPToolInput):
         # CI runner 上 sklearn 1.9 + numpy 2.5 的 GP.fit 会触发 OpenBLAS 原生段错误
@@ -700,18 +829,9 @@ class GPTool(HuginnTool):
 
     def _calibrate(self, args: GPToolInput) -> ToolResult:
         """Closed-loop Bayesian calibration/optimization against a symbolic objective or a real simulator tool."""
-        if not args.calibration_variables:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="calibrate action requires calibration_variables.",
-            )
-        if not args.objective_tool and not args.objective_expression:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="calibrate requires objective_expression or objective_tool.",
-            )
+        error = GPTool._calibrate_validate(args)
+        if error is not None:
+            return error
 
         bounds = [(v.low, v.high) for v in args.calibration_variables]
         var_names = [v.name for v in args.calibration_variables]
@@ -732,26 +852,9 @@ class GPTool(HuginnTool):
         ]
 
         for iteration in range(1, args.n_iterations + 1):
-            X_arr = np.asarray(X, dtype=float)
-            y_arr = np.asarray(y, dtype=float)
-
-            gp = self._create_gp(args)
-            gp.fit(X_arr, y_arr)
-
-            # Candidate grid: random samples in bounds
-            n_candidates = max(50, 10 * len(args.calibration_variables))
-            candidates = self._lhs_samples(n_candidates, bounds, rng)
-            cand_arr = np.asarray(candidates, dtype=float)
-            mu, sigma = gp.predict(cand_arr)
-
-            incumbent = float(np.max(y_arr)) if args.maximize else float(np.min(y_arr))
-            ei = self._expected_improvement(
-                mu, sigma, incumbent, maximize=args.maximize
+            next_x, next_y, ei_best = self._calibrate_iteration(
+                args, X, y, bounds, rng, evaluate
             )
-            best_idx = int(np.argmax(ei))
-            next_x = candidates[best_idx]
-            next_y = evaluate(next_x)
-
             X.append(next_x)
             y.append(next_y)
             history.append(
@@ -759,7 +862,7 @@ class GPTool(HuginnTool):
                     "iteration": iteration,
                     "X": next_x,
                     "y": next_y,
-                    "ei": float(ei[best_idx]),
+                    "ei": ei_best,
                 }
             )
 
@@ -767,21 +870,78 @@ class GPTool(HuginnTool):
         best_idx = int(np.argmax(y_arr)) if args.maximize else int(np.argmin(y_arr))
 
         return ToolResult(
-            data={
-                "method": "bayesian_calibration",
-                "maximize": args.maximize,
-                "best_X": X[best_idx],
-                "best_y": float(y_arr[best_idx]),
-                "history": history,
-                "n_evaluations": len(X),
-                "variable_names": var_names,
-                "message": (
-                    f"Calibration completed after {len(X)} evaluations. "
-                    f"Best objective: {y_arr[best_idx]:.6f}"
-                ),
-            },
+            data=GPTool._calibrate_result_data(
+                args, X, y_arr, best_idx, history, var_names
+            ),
             success=True,
         )
+
+    @staticmethod
+    def _calibrate_validate(args: GPToolInput) -> ToolResult | None:
+        if not args.calibration_variables:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="calibrate action requires calibration_variables.",
+            )
+        if not args.objective_tool and not args.objective_expression:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="calibrate requires objective_expression or objective_tool.",
+            )
+        return None
+
+    def _calibrate_iteration(
+        self,
+        args: GPToolInput,
+        X: list[list[float]],
+        y: list[float],
+        bounds: list[tuple[float, float]],
+        rng: np.random.Generator,
+        evaluate,
+    ) -> tuple[list[float], float, float]:
+        X_arr = np.asarray(X, dtype=float)
+        y_arr = np.asarray(y, dtype=float)
+
+        gp = self._create_gp(args)
+        gp.fit(X_arr, y_arr)
+
+        # Candidate grid: random samples in bounds
+        n_candidates = max(50, 10 * len(args.calibration_variables))
+        candidates = self._lhs_samples(n_candidates, bounds, rng)
+        cand_arr = np.asarray(candidates, dtype=float)
+        mu, sigma = gp.predict(cand_arr)
+
+        incumbent = float(np.max(y_arr)) if args.maximize else float(np.min(y_arr))
+        ei = self._expected_improvement(mu, sigma, incumbent, maximize=args.maximize)
+        best_idx = int(np.argmax(ei))
+        next_x = candidates[best_idx]
+        next_y = evaluate(next_x)
+        return next_x, next_y, float(ei[best_idx])
+
+    @staticmethod
+    def _calibrate_result_data(
+        args: GPToolInput,
+        X: list[list[float]],
+        y_arr: np.ndarray,
+        best_idx: int,
+        history: list[dict[str, Any]],
+        var_names: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "method": "bayesian_calibration",
+            "maximize": args.maximize,
+            "best_X": X[best_idx],
+            "best_y": float(y_arr[best_idx]),
+            "history": history,
+            "n_evaluations": len(X),
+            "variable_names": var_names,
+            "message": (
+                f"Calibration completed after {len(X)} evaluations. "
+                f"Best objective: {y_arr[best_idx]:.6f}"
+            ),
+        }
 
     def _make_evaluator(self, args: GPToolInput, var_names: list[str]):
         """Return a callable that evaluates the objective for a design vector."""

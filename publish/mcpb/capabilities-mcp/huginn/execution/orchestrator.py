@@ -95,6 +95,7 @@ class ExecutionOrchestrator:
         #   ToolRegistry 类 → 新风格, .get(name) 返回 HuginnTool, 用 .call(args, ctx)
         if tool_registry is None:
             from huginn.tools.registry import ToolRegistry as _GlobalToolRegistry
+
             tool_registry = _GlobalToolRegistry
         self.tool_registry = tool_registry
         self.enable_autofix = enable_autofix
@@ -235,23 +236,7 @@ class ExecutionOrchestrator:
             verdict = self.compute_policy.enforce(
                 tool_name, target, actor, scaling=scaling
             )
-            try:
-                from huginn.security.audit import get_audit_logger
-
-                get_audit_logger().log(
-                    event_type="compute_policy",
-                    actor=actor,
-                    action=f"{tool_name}:{target}",
-                    details={
-                        "tool": tool_name,
-                        "target": target,
-                        "allowed": verdict.allowed,
-                        "requires_approval": verdict.requires_approval,
-                        "reason": verdict.reason,
-                    },
-                )
-            except Exception:
-                logger.debug("compute_policy audit write failed", exc_info=True)
+            _audit_compute_policy(tool_name, target, actor, verdict)
             return verdict
         except Exception:
             logger.debug("compute_policy enforce failed, fail-open", exc_info=True)
@@ -287,25 +272,10 @@ class ExecutionOrchestrator:
         pending = {s["id"] for s in stages}
         while pending:
             # Find stages whose dependencies are all satisfied
-            ready = [
-                sid
-                for sid in pending
-                if all(d in completed for d in graph.get(sid, []))
-            ]
+            ready = _ready_stage_ids(pending, completed, graph)
             if not ready:
                 # Cycle detected or missing dependencies
-                unresolved = [sid for sid in pending if sid not in ready]
-                for sid in unresolved:
-                    stage = self._find_stage(stages, sid)
-                    result = StageResult(
-                        stage_id=sid,
-                        stage_name=stage.get("name", sid),
-                        tool_name=stage.get("tool", "unknown"),
-                        success=False,
-                        error_message="Dependencies unresolved (possible cycle or missing stage)",
-                    )
-                    record.stage_results.append(result)
-                    completed.add(sid)
+                _emit_unresolved_stages(self, stages, pending, completed, record)
                 break
 
             # Execute ready stages concurrently
@@ -316,43 +286,9 @@ class ExecutionOrchestrator:
             for sid, res in zip(ready, stage_results):
                 pending.remove(sid)
                 completed.add(sid)
-
-                if isinstance(res, Exception):
-                    result = StageResult(
-                        stage_id=sid,
-                        stage_name=self._find_stage(stages, sid).get("name", sid),
-                        tool_name=self._find_stage(stages, sid).get("tool", "unknown"),
-                        success=False,
-                        error_message=str(res),
-                    )
-                else:
-                    result = res
-
-                results_by_id[sid] = result
-                record.stage_results.append(result)
-
-                # If autofix enabled and stage failed, try to fix and retry
-                if (
-                    self.enable_autofix
-                    and not result.success
-                    and result.retry_count < self.max_retries
-                ):
-                    fixed = await self._attempt_autofix(
-                        result, self._find_stage(stages, sid)
-                    )
-                    if fixed:
-                        # Re-execute with fix
-                        retry_result = await self._execute_stage(
-                            self._find_stage(stages, sid),
-                            results_by_id,
-                            retry_count=result.retry_count + 1,
-                        )
-                        retry_result.retry_count = result.retry_count + 1
-                        retry_result.auto_fixed = True
-                        retry_result.fix_applied = result.fix_applied
-                        results_by_id[sid] = retry_result
-                        # Replace in record
-                        record.stage_results[-1] = retry_result
+                await _settle_stage_result(
+                    self, stages, sid, res, results_by_id, record
+                )
 
         record.finished_at = datetime.now().isoformat()
         record.overall_success = all(r.success for r in record.stage_results)
@@ -379,126 +315,36 @@ class ExecutionOrchestrator:
         # ComputeRouter: auto-select local vs HPC execution target.
         # Decision is stored on the StageResult, not injected into params —
         # most tools don't accept **kwargs and would choke on extra keys.
-        _route_target: str | None = None
-        _route_reason: str | None = None
-        if self.compute_router is not None:
-            try:
-                _route = self.compute_router.route(tool_name, action, params)
-                _route_target = _route.target
-                _route_reason = _route.reason
-                logger.debug(
-                    "stage %s routed to %s: %s",
-                    stage_id,
-                    _route_target,
-                    _route_reason,
-                )
-                # M1 分流审计: 路由决策落 audit (hash 链 + 脱敏), 供 per-tool×target
-                # 报表与"该 hpc 却 local"偏差排查. best-effort, 失败不阻断执行.
-                self._audit_compute_route(
-                    stage_id, tool_name, action, params, _route_target, _route_reason
-                )
-            except Exception:
-                logger.debug("route failed", exc_info=True)  # routing failure shouldn't block execution
+        _route_target, _route_reason = _route_stage(
+            self, stage_id, tool_name, action, params
+        )
 
         # P1(修正版) 私有化: 逐调用敏感判定覆盖远程目标.
         # 只有"这条数据的敏感度"决定是否强制本地, 全局开关不阻塞正常任务:
         #   敏感 → hpc/remote 改投 local (数据不出设备);
         #   不敏感 → 照常放行 (普通 DFT/MD 任务不受 local_only 妨碍).
-        _privacy_pd = self._decide_call_privacy(tool_name, params)
-        if _privacy_pd is not None:
-            _privacy_override_signal = _privacy_pd.signal in (
-                "user_override_allow",
-                "user_override_local",
-            )
-            if _privacy_pd.sensitive and _route_target in ("hpc", "remote"):
-                _route_target = "local"
-                _route_reason = f"privacy override: {_privacy_pd.reason}"
-                self._audit_privacy_enforce(tool_name, params, _privacy_pd)
-            elif _privacy_override_signal:
-                # 用户显式 override (允许外发 / 要求留本地): 即便未改目标也落审计,
-                # 让"用户自由度"透明可追溯, 并给合规回放证据.
-                self._audit_privacy_enforce(tool_name, params, _privacy_pd)
+        _route_target, _route_reason = _apply_privacy_override(
+            self, tool_name, params, _route_target, _route_reason
+        )
 
         # M2 细粒度权限 + 预算 (flag 门; 默认关 => _enforce 返回 None 不过滤).
-        _verdict = self._enforce_compute_policy(
-            tool_name, _route_target, "system", params
+        blocked = _policy_block_result(
+            self, stage_id, stage_name, tool_name, _route_target, _route_reason, params
         )
-        if _verdict is not None and not _verdict.allowed:
-            return StageResult(
-                stage_id=stage_id,
-                stage_name=stage_name,
-                tool_name=tool_name,
-                success=False,
-                error_message=f"blocked by compute policy: {_verdict.reason}",
-                started_at=datetime.now().isoformat(),
-                finished_at=datetime.now().isoformat(),
-                execution_target=_route_target,
-                route_reason=_route_reason,
-            )
-        if _verdict is not None and _verdict.requires_approval:
-            # orchestrator 无交互审批回调 → fail-secure: 标记需审批即拦截, 留审计.
-            return StageResult(
-                stage_id=stage_id,
-                stage_name=stage_name,
-                tool_name=tool_name,
-                success=False,
-                error_message=f"compute policy requires approval: {_verdict.reason}",
-                started_at=datetime.now().isoformat(),
-                finished_at=datetime.now().isoformat(),
-                execution_target=_route_target,
-                route_reason=_route_reason,
-            )
+        if blocked is not None:
+            return blocked
 
-        started = datetime.now().isoformat()
-        t0 = time.time()
-
-        # Find and call the tool
-        tool = self.tool_registry.get(tool_name)
-        if tool is None:
-            return StageResult(
-                stage_id=stage_id,
-                stage_name=stage_name,
-                tool_name=tool_name,
-                success=False,
-                error_message=f"Tool '{tool_name}' not found in registry",
-                started_at=started,
-                finished_at=datetime.now().isoformat(),
-                walltime_seconds=time.time() - t0,
-                execution_target=_route_target,
-                route_reason=_route_reason,
-            )
-
-        try:
-            output = await self._invoke_tool(tool, action, params, workflow_name=stage_id)
-            walltime = time.time() - t0
-            return StageResult(
-                stage_id=stage_id,
-                stage_name=stage_name,
-                tool_name=tool_name,
-                success=True,
-                output_data=self._serialize_output(output),
-                started_at=started,
-                finished_at=datetime.now().isoformat(),
-                walltime_seconds=walltime,
-                retry_count=retry_count,
-                execution_target=_route_target,
-                route_reason=_route_reason,
-            )
-        except Exception as e:
-            walltime = time.time() - t0
-            return StageResult(
-                stage_id=stage_id,
-                stage_name=stage_name,
-                tool_name=tool_name,
-                success=False,
-                error_message=str(e),
-                started_at=started,
-                finished_at=datetime.now().isoformat(),
-                walltime_seconds=walltime,
-                retry_count=retry_count,
-                execution_target=_route_target,
-                route_reason=_route_reason,
-            )
+        return await _call_stage_tool(
+            self,
+            stage_id,
+            stage_name,
+            tool_name,
+            action,
+            params,
+            retry_count,
+            _route_target,
+            _route_reason,
+        )
 
     async def _invoke_tool(
         self,
@@ -653,3 +499,333 @@ class ExecutionOrchestrator:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return WorkflowExecutionRecord(**data)
+
+
+# ----------------------------------------------------------------------
+# Module-level helpers for the stage execution pipeline
+# ----------------------------------------------------------------------
+
+
+def _audit_compute_policy(
+    tool_name: str, target: str | None, actor: str, verdict: Any
+) -> None:
+    """Record one compute-policy verdict in the audit log (best-effort)."""
+    try:
+        from huginn.security.audit import get_audit_logger
+
+        get_audit_logger().log(
+            event_type="compute_policy",
+            actor=actor,
+            action=f"{tool_name}:{target}",
+            details={
+                "tool": tool_name,
+                "target": target,
+                "allowed": verdict.allowed,
+                "requires_approval": verdict.requires_approval,
+                "reason": verdict.reason,
+            },
+        )
+    except Exception:
+        logger.debug("compute_policy audit write failed", exc_info=True)
+
+
+def _ready_stage_ids(
+    pending: set[str], completed: set[str], graph: dict[str, list[str]]
+) -> list[str]:
+    """Find stages whose dependencies are all satisfied."""
+    return [sid for sid in pending if all(d in completed for d in graph.get(sid, []))]
+
+
+def _emit_unresolved_stages(
+    orch: ExecutionOrchestrator,
+    stages: list[dict[str, Any]],
+    pending: set[str],
+    completed: set[str],
+    record: WorkflowExecutionRecord,
+) -> None:
+    """Mark every still-pending stage as failed (cycle or missing dependency)."""
+    unresolved = list(pending)
+    for sid in unresolved:
+        stage = orch._find_stage(stages, sid)
+        result = StageResult(
+            stage_id=sid,
+            stage_name=stage.get("name", sid),
+            tool_name=stage.get("tool", "unknown"),
+            success=False,
+            error_message="Dependencies unresolved (possible cycle or missing stage)",
+        )
+        record.stage_results.append(result)
+        completed.add(sid)
+
+
+async def _settle_stage_result(
+    orch: ExecutionOrchestrator,
+    stages: list[dict[str, Any]],
+    sid: str,
+    res: Any,
+    results_by_id: dict[str, StageResult],
+    record: WorkflowExecutionRecord,
+) -> None:
+    """Store one gathered stage result, then attempt autofix/retry if needed."""
+    if isinstance(res, Exception):
+        result = StageResult(
+            stage_id=sid,
+            stage_name=orch._find_stage(stages, sid).get("name", sid),
+            tool_name=orch._find_stage(stages, sid).get("tool", "unknown"),
+            success=False,
+            error_message=str(res),
+        )
+    else:
+        result = res
+
+    results_by_id[sid] = result
+    record.stage_results.append(result)
+
+    # If autofix enabled and stage failed, try to fix and retry
+    if (
+        orch.enable_autofix
+        and not result.success
+        and result.retry_count < orch.max_retries
+    ):
+        fixed = await orch._attempt_autofix(result, orch._find_stage(stages, sid))
+        if fixed:
+            # Re-execute with fix
+            retry_result = await orch._execute_stage(
+                orch._find_stage(stages, sid),
+                results_by_id,
+                retry_count=result.retry_count + 1,
+            )
+            retry_result.retry_count = result.retry_count + 1
+            retry_result.auto_fixed = True
+            retry_result.fix_applied = result.fix_applied
+            results_by_id[sid] = retry_result
+            # Replace in record
+            record.stage_results[-1] = retry_result
+
+
+def _route_stage(
+    orch: ExecutionOrchestrator,
+    stage_id: str,
+    tool_name: str,
+    action: str,
+    params: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    """ComputeRouter: auto-select local vs HPC execution target."""
+    _route_target: str | None = None
+    _route_reason: str | None = None
+    if orch.compute_router is not None:
+        try:
+            _route = orch.compute_router.route(tool_name, action, params)
+            _route_target = _route.target
+            _route_reason = _route.reason
+            logger.debug(
+                "stage %s routed to %s: %s",
+                stage_id,
+                _route_target,
+                _route_reason,
+            )
+            # M1 分流审计: 路由决策落 audit (hash 链 + 脱敏), 供 per-tool×target
+            # 报表与"该 hpc 却 local"偏差排查. best-effort, 失败不阻断执行.
+            orch._audit_compute_route(
+                stage_id, tool_name, action, params, _route_target, _route_reason
+            )
+        except Exception:
+            # routing failure shouldn't block execution
+            logger.debug("route failed", exc_info=True)
+    return _route_target, _route_reason
+
+
+def _apply_privacy_override(
+    orch: ExecutionOrchestrator,
+    tool_name: str,
+    params: dict[str, Any],
+    route_target: str | None,
+    route_reason: str | None,
+) -> tuple[str | None, str | None]:
+    """P1(修正版) 私有化: 逐调用敏感判定覆盖远程目标."""
+    # 只有"这条数据的敏感度"决定是否强制本地, 全局开关不阻塞正常任务:
+    #   敏感 → hpc/remote 改投 local (数据不出设备);
+    #   不敏感 → 照常放行 (普通 DFT/MD 任务不受 local_only 妨碍).
+    _privacy_pd = orch._decide_call_privacy(tool_name, params)
+    if _privacy_pd is not None:
+        _privacy_override_signal = _privacy_pd.signal in (
+            "user_override_allow",
+            "user_override_local",
+        )
+        if _privacy_pd.sensitive and route_target in ("hpc", "remote"):
+            route_target = "local"
+            route_reason = f"privacy override: {_privacy_pd.reason}"
+            orch._audit_privacy_enforce(tool_name, params, _privacy_pd)
+        elif _privacy_override_signal:
+            # 用户显式 override (允许外发 / 要求留本地): 即便未改目标也落审计,
+            # 让"用户自由度"透明可追溯, 并给合规回放证据.
+            orch._audit_privacy_enforce(tool_name, params, _privacy_pd)
+    return route_target, route_reason
+
+
+def _policy_block_result(
+    orch: ExecutionOrchestrator,
+    stage_id: str,
+    stage_name: str,
+    tool_name: str,
+    route_target: str | None,
+    route_reason: str | None,
+    params: dict[str, Any],
+) -> StageResult | None:
+    """M2 细粒度权限 + 预算 (flag 门; 默认关 => _enforce 返回 None 不过滤)."""
+    _verdict = orch._enforce_compute_policy(tool_name, route_target, "system", params)
+    if _verdict is not None and not _verdict.allowed:
+        return StageResult(
+            stage_id=stage_id,
+            stage_name=stage_name,
+            tool_name=tool_name,
+            success=False,
+            error_message=f"blocked by compute policy: {_verdict.reason}",
+            started_at=datetime.now().isoformat(),
+            finished_at=datetime.now().isoformat(),
+            execution_target=route_target,
+            route_reason=route_reason,
+        )
+    if _verdict is not None and _verdict.requires_approval:
+        # orchestrator 无交互审批回调 → fail-secure: 标记需审批即拦截, 留审计.
+        return StageResult(
+            stage_id=stage_id,
+            stage_name=stage_name,
+            tool_name=tool_name,
+            success=False,
+            error_message=f"compute policy requires approval: {_verdict.reason}",
+            started_at=datetime.now().isoformat(),
+            finished_at=datetime.now().isoformat(),
+            execution_target=route_target,
+            route_reason=route_reason,
+        )
+    return None
+
+
+def _missing_tool_stage_result(
+    stage_id: str,
+    stage_name: str,
+    tool_name: str,
+    started: str,
+    t0: float,
+    route_target: str | None,
+    route_reason: str | None,
+) -> StageResult:
+    """Build the failure result for an unknown tool."""
+    return StageResult(
+        stage_id=stage_id,
+        stage_name=stage_name,
+        tool_name=tool_name,
+        success=False,
+        error_message=f"Tool '{tool_name}' not found in registry",
+        started_at=started,
+        finished_at=datetime.now().isoformat(),
+        walltime_seconds=time.time() - t0,
+        execution_target=route_target,
+        route_reason=route_reason,
+    )
+
+
+def _successful_stage_result(
+    stage_id: str,
+    stage_name: str,
+    tool_name: str,
+    output_data: dict[str, Any],
+    started: str,
+    walltime: float,
+    retry_count: int,
+    route_target: str | None,
+    route_reason: str | None,
+) -> StageResult:
+    """Build the success result for a completed tool call."""
+    return StageResult(
+        stage_id=stage_id,
+        stage_name=stage_name,
+        tool_name=tool_name,
+        success=True,
+        output_data=output_data,
+        started_at=started,
+        finished_at=datetime.now().isoformat(),
+        walltime_seconds=walltime,
+        retry_count=retry_count,
+        execution_target=route_target,
+        route_reason=route_reason,
+    )
+
+
+def _failed_stage_result(
+    stage_id: str,
+    stage_name: str,
+    tool_name: str,
+    error_message: str,
+    started: str,
+    walltime: float,
+    retry_count: int,
+    route_target: str | None,
+    route_reason: str | None,
+) -> StageResult:
+    """Build the failure result for a tool call that raised."""
+    return StageResult(
+        stage_id=stage_id,
+        stage_name=stage_name,
+        tool_name=tool_name,
+        success=False,
+        error_message=error_message,
+        started_at=started,
+        finished_at=datetime.now().isoformat(),
+        walltime_seconds=walltime,
+        retry_count=retry_count,
+        execution_target=route_target,
+        route_reason=route_reason,
+    )
+
+
+async def _call_stage_tool(
+    orch: ExecutionOrchestrator,
+    stage_id: str,
+    stage_name: str,
+    tool_name: str,
+    action: str,
+    params: dict[str, Any],
+    retry_count: int,
+    route_target: str | None,
+    route_reason: str | None,
+) -> StageResult:
+    """Find and call the tool, converting its outcome into a StageResult."""
+    started = datetime.now().isoformat()
+    t0 = time.time()
+
+    # Find and call the tool
+    tool = orch.tool_registry.get(tool_name)
+    if tool is None:
+        return _missing_tool_stage_result(
+            stage_id, stage_name, tool_name, started, t0, route_target, route_reason
+        )
+
+    try:
+        output = await orch._invoke_tool(tool, action, params, workflow_name=stage_id)
+        walltime = time.time() - t0
+        return _successful_stage_result(
+            stage_id,
+            stage_name,
+            tool_name,
+            orch._serialize_output(output),
+            started,
+            walltime,
+            retry_count,
+            route_target,
+            route_reason,
+        )
+    except Exception as e:
+        walltime = time.time() - t0
+        return _failed_stage_result(
+            stage_id,
+            stage_name,
+            tool_name,
+            str(e),
+            started,
+            walltime,
+            retry_count,
+            route_target,
+            route_reason,
+        )

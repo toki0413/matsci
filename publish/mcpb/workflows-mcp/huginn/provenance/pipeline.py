@@ -26,22 +26,24 @@ logger = logging.getLogger(__name__)
 class PipelineStage(Enum):
     """仿真管线的阶段, 按科学逻辑排序."""
 
-    STRUCTURE = "structure"    # 结构准备 (structure_tool, packing_tool)
-    RELAX = "relax"            # 结构优化 (vasp_tool relax, qe_tool, cp2k_tool, lammps_tool)
-    STATIC = "static"          # 静态计算 (vasp_tool static)
+    STRUCTURE = "structure"  # 结构准备 (structure_tool, packing_tool)
+    RELAX = "relax"  # 结构优化 (vasp_tool relax, qe_tool, cp2k_tool, lammps_tool)
+    STATIC = "static"  # 静态计算 (vasp_tool static)
     PROPERTIES = "properties"  # 性质计算 (vasp_tool band/dos, characterization_tool)
     MECHANICAL = "mechanical"  # 力学性质 (mechanical_tool, 弹性常数/模量/硬度)
-    MD = "md"                  # 分子动力学 (lammps_tool, gromacs_tool)
-    CHEMINFO = "cheminfo"      # 化学信息学 (rdkit_tool, 描述符/指纹/相似性)
-    DOCKING = "docking"        # 分子对接 (vina_tool, AutoDock Vina)
-    BIOMD = "biomd"           # 生物分子 MD (openmm_tool, 能量最小化/动力学)
+    MD = "md"  # 分子动力学 (lammps_tool, gromacs_tool)
+    CHEMINFO = "cheminfo"  # 化学信息学 (rdkit_tool, 描述符/指纹/相似性)
+    DOCKING = "docking"  # 分子对接 (vina_tool, AutoDock Vina)
+    BIOMD = "biomd"  # 生物分子 MD (openmm_tool, 能量最小化/动力学)
     FREE_ENERGY = "free_energy"  # 自由能计算 (fep_tool, TI/FEP/BAR/Jarzynski)
-    ENHANCED_SAMPLING = "enhanced_sampling"  # 增强采样 (enhanced_sampling_tool, metadynamics/WHAM)
-    KINETICS = "kinetics"     # 动力学分析 (msm_tool, 马尔可夫状态模型)
+    ENHANCED_SAMPLING = (
+        "enhanced_sampling"  # 增强采样 (enhanced_sampling_tool, metadynamics/WHAM)
+    )
+    KINETICS = "kinetics"  # 动力学分析 (msm_tool, 马尔可夫状态模型)
     MOTIF_ANALYSIS = "motif_analysis"  # 结构 motif 挖掘 (motif_mining_tool)
     INVERSE_DESIGN = "inverse_design"  # 逆向设计 (inverse_design_tool, GA/BO/Pareto)
-    CONSENSUS = "consensus"   # 共识打分 (consensus_scoring_tool, 多模型排名聚合)
-    ANALYSIS = "analysis"     # 数据分析 (任何产出最终结果的工具)
+    CONSENSUS = "consensus"  # 共识打分 (consensus_scoring_tool, 多模型排名聚合)
+    ANALYSIS = "analysis"  # 数据分析 (任何产出最终结果的工具)
 
 
 # ponytail: 把 DFT 和 MD 两条平行路线拍平到一条线性序号上算完成度.
@@ -76,40 +78,78 @@ _STAGE_PREREQUISITES: dict[PipelineStage, list[PipelineStage]] = {
     PipelineStage.CHEMINFO: [],
     PipelineStage.DOCKING: [PipelineStage.CHEMINFO],
     PipelineStage.BIOMD: [PipelineStage.CHEMINFO],
-    PipelineStage.FREE_ENERGY: [PipelineStage.DOCKING, PipelineStage.BIOMD, PipelineStage.MD],
+    PipelineStage.FREE_ENERGY: [
+        PipelineStage.DOCKING,
+        PipelineStage.BIOMD,
+        PipelineStage.MD,
+    ],
     PipelineStage.ENHANCED_SAMPLING: [PipelineStage.BIOMD, PipelineStage.MD],
     PipelineStage.KINETICS: [PipelineStage.BIOMD, PipelineStage.MD],
     PipelineStage.MOTIF_ANALYSIS: [PipelineStage.RELAX, PipelineStage.STATIC],
     PipelineStage.INVERSE_DESIGN: [],
-    PipelineStage.CONSENSUS: [PipelineStage.DOCKING, PipelineStage.FREE_ENERGY, PipelineStage.PROPERTIES],
-    PipelineStage.ANALYSIS: [PipelineStage.MD, PipelineStage.PROPERTIES, PipelineStage.MECHANICAL,
-                             PipelineStage.KINETICS, PipelineStage.CONSENSUS],
+    PipelineStage.CONSENSUS: [
+        PipelineStage.DOCKING,
+        PipelineStage.FREE_ENERGY,
+        PipelineStage.PROPERTIES,
+    ],
+    PipelineStage.ANALYSIS: [
+        PipelineStage.MD,
+        PipelineStage.PROPERTIES,
+        PipelineStage.MECHANICAL,
+        PipelineStage.KINETICS,
+        PipelineStage.CONSENSUS,
+    ],
 }
 
 # 管线认识的所有工具, 遍历注册表时用
 _KNOWN_TOOLS = [
-    "structure_tool", "packing_tool", "convergence_test_tool",
-    "vasp_tool", "qe_tool", "cp2k_tool", "lammps_tool", "gromacs_tool",
-    "mechanical_tool", "characterization_tool",
+    "structure_tool",
+    "packing_tool",
+    "convergence_test_tool",
+    "vasp_tool",
+    "qe_tool",
+    "cp2k_tool",
+    "lammps_tool",
+    "gromacs_tool",
+    "mechanical_tool",
+    "characterization_tool",
     # 注: MSD/RDF 是 lammps_tool 的 analyze_trajectory 动作, 不是工具. 早期误列为
     # 工具名, find_by_tool 永不命中 (MECE 审计记的允许表死项), 已移除; 该动作的
     # 阶段推断改由 _infer_stage 直接识别 (见下).
     # 量子化学
-    "gaussian_tool", "orca_tool",
+    "gaussian_tool",
+    "orca_tool",
     # 生物医药工具
-    "rdkit_tool", "vina_tool", "openmm_tool",
+    "rdkit_tool",
+    "vina_tool",
+    "openmm_tool",
     # 跨学科工具
-    "fep_tool", "enhanced_sampling_tool", "msm_tool",
-    "inverse_design_tool", "motif_mining_tool", "consensus_scoring_tool",
+    "fep_tool",
+    "enhanced_sampling_tool",
+    "msm_tool",
+    "inverse_design_tool",
+    "motif_mining_tool",
+    "consensus_scoring_tool",
     # 高级分析工具 (loop engineering 补全)
-    "neb_tool", "tda_tool", "descriptor_tool", "gp_tool",
-    "multi_fidelity_tool", "thermo_tool", "symmetry_tool",
-    "ml_potential_tool", "generative_design_tool", "xrd_sim_tool",
-    "dynamics_discovery_tool", "high_throughput_tool",
-    "active_learning_tool", "uq_tool",
-    "symbolic_regression_tool", "evidence_fusion_tool",
+    "neb_tool",
+    "tda_tool",
+    "descriptor_tool",
+    "gp_tool",
+    "multi_fidelity_tool",
+    "thermo_tool",
+    "symmetry_tool",
+    "ml_potential_tool",
+    "generative_design_tool",
+    "xrd_sim_tool",
+    "dynamics_discovery_tool",
+    "high_throughput_tool",
+    "active_learning_tool",
+    "uq_tool",
+    "symbolic_regression_tool",
+    "evidence_fusion_tool",
     # 视觉 × 力学交叉
-    "image_analysis_tool", "specialty_analysis_tool",
+    "image_analysis_tool",
+    "specialty_analysis_tool",
 ]
 
 
@@ -293,7 +333,11 @@ PIPELINE_RULES: list[PipelineRule] = [
         stage=PipelineStage.BIOMD,
         tool_name="openmm_tool",
         action_matcher="md_run",
-        next_stages=[PipelineStage.KINETICS, PipelineStage.ENHANCED_SAMPLING, PipelineStage.FREE_ENERGY],
+        next_stages=[
+            PipelineStage.KINETICS,
+            PipelineStage.ENHANCED_SAMPLING,
+            PipelineStage.FREE_ENERGY,
+        ],
         next_tool_hints=["msm_tool", "enhanced_sampling_tool", "fep_tool"],
         description="MD 运行完成, 可做 MSM 动力学分析/增强采样 FES/自由能计算",
     ),
@@ -595,10 +639,8 @@ class PipelineSuggestion:
 # ── 工具函数 ──────────────────────────────────────────────────────
 
 
-def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | None:
-    """从工具名和输入参数推断它属于哪个阶段."""
-    action = str(tool_input.get("action", "")).lower()
-
+def _infer_structure_stage(tool_name, action):
+    """结构准备/优化/性质类工具的阶段推断."""
     if tool_name in ("structure_tool", "packing_tool", "convergence_test_tool"):
         return PipelineStage.STRUCTURE
 
@@ -631,6 +673,11 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
     if tool_name in ("mechanical_tool", "characterization_tool"):
         return PipelineStage.PROPERTIES
 
+    return None
+
+
+def _infer_biomedical_stage(tool_name, action):
+    """生物医药工具的阶段推断."""
     # ── 生物医药工具 ──
     if tool_name == "rdkit_tool":
         return PipelineStage.CHEMINFO
@@ -647,6 +694,11 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
             return PipelineStage.ANALYSIS
         return PipelineStage.BIOMD
 
+    return None
+
+
+def _infer_cross_discipline_stage(tool_name, action):
+    """跨学科与量子化学工具的阶段推断."""
     # ── 跨学科工具 ──
     if tool_name == "fep_tool":
         return PipelineStage.FREE_ENERGY
@@ -672,6 +724,11 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
             return PipelineStage.STATIC
         return PipelineStage.RELAX
 
+    return None
+
+
+def _infer_analysis_stage(tool_name, action):
+    """高级分析工具的阶段推断."""
     # ── 高级分析工具 ──
     if tool_name == "neb_tool":
         return PipelineStage.PROPERTIES
@@ -679,12 +736,22 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
     if tool_name in ("tda_tool", "dynamics_discovery_tool", "uq_tool"):
         return PipelineStage.ANALYSIS
 
-    if tool_name in ("descriptor_tool", "thermo_tool", "symmetry_tool",
-                      "xrd_sim_tool", "high_throughput_tool"):
+    if tool_name in (
+        "descriptor_tool",
+        "thermo_tool",
+        "symmetry_tool",
+        "xrd_sim_tool",
+        "high_throughput_tool",
+    ):
         return PipelineStage.PROPERTIES
 
-    if tool_name in ("gp_tool", "multi_fidelity_tool", "generative_design_tool",
-                      "active_learning_tool", "symbolic_regression_tool"):
+    if tool_name in (
+        "gp_tool",
+        "multi_fidelity_tool",
+        "generative_design_tool",
+        "active_learning_tool",
+        "symbolic_regression_tool",
+    ):
         return PipelineStage.INVERSE_DESIGN
 
     if tool_name == "ml_potential_tool":
@@ -705,6 +772,21 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
     return None
 
 
+def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | None:
+    """从工具名和输入参数推断它属于哪个阶段."""
+    action = str(tool_input.get("action", "")).lower()
+
+    for resolver in (
+        _infer_structure_stage,
+        _infer_biomedical_stage,
+        _infer_cross_discipline_stage,
+    ):
+        stage = resolver(tool_name, action)
+        if stage is not None:
+            return stage
+    return _infer_analysis_stage(tool_name, action)
+
+
 def _is_converged(tool_output: Any) -> bool:
     """检查 convergence_test_tool 的输出是否收敛."""
     if not isinstance(tool_output, dict):
@@ -713,6 +795,128 @@ def _is_converged(tool_output: Any) -> bool:
     if not isinstance(result, dict):
         return False
     return result.get("converged") is True
+
+
+def _matching_rules(tool_name, action):
+    """返回与工具名和 action 匹配的管线规则."""
+    # 找所有匹配的规则
+    matched: list[PipelineRule] = []
+    for rule in PIPELINE_RULES:
+        if rule.tool_name != tool_name:
+            continue
+        if rule.action_matcher is not None and rule.action_matcher.lower() != action:
+            continue
+        matched.append(rule)
+
+    # 有特定 action 匹配时, 丢弃 action_matcher=None 的通用规则
+    # 比如 lammps_tool(action=relax) 同时命中 relax 规则和 None 规则, 只留 relax
+    specific = [r for r in matched if r.action_matcher is not None]
+    if specific:
+        matched = specific
+    return matched
+
+
+def _rule_suggestions(matched, tool_name, action, prerequisite_check):
+    """为每条匹配规则的后继阶段生成建议."""
+    suggestions: list[PipelineSuggestion] = []
+    for rule in matched:
+        for stage in rule.next_stages:
+            # stage 和 hints 数量对齐时取对应 hint, 否则拼一起
+            if len(rule.next_tool_hints) == len(rule.next_stages):
+                hint = rule.next_tool_hints[rule.next_stages.index(stage)]
+            else:
+                hint = ", ".join(rule.next_tool_hints) if rule.next_tool_hints else ""
+
+            suggestions.append(
+                PipelineSuggestion(
+                    stage=stage,
+                    tool_hint=hint,
+                    description=rule.description,
+                    prerequisite_met=prerequisite_check(stage),
+                    reason=f"{tool_name}({action or 'default'}) 已完成",
+                )
+            )
+    return suggestions
+
+
+def _publish_stage_events(suggestions):
+    """内部事件总线: 发布 pipeline.stage_change 字符串事件 (best-effort).
+
+    suggest_next 是 stage 推进点, 每条 suggestion 对应一个 next_stage.
+    """
+    for _s in suggestions:
+        try:
+            from huginn.events.integration import (
+                publish_pipeline_event_sync,
+            )
+
+            publish_pipeline_event_sync(
+                _s.description,
+                thread_id="",
+                stage=_s.stage.value,
+            )
+        except Exception:
+            logger.debug("pipeline event publish failed (non-fatal)", exc_info=True)
+
+
+def _starting_suggestions(prerequisite_check):
+    """返回所有入口规则的后继 (啥都没做时)."""
+    starting: list[PipelineSuggestion] = []
+    seen_stages: set[PipelineStage] = set()
+    for rule in PIPELINE_RULES:
+        if rule.stage in (PipelineStage.STRUCTURE, PipelineStage.CHEMINFO):
+            for next_stage in rule.next_stages:
+                if next_stage not in seen_stages:
+                    seen_stages.add(next_stage)
+                    hint = rule.next_tool_hints[0] if rule.next_tool_hints else ""
+                    starting.append(
+                        PipelineSuggestion(
+                            stage=next_stage,
+                            tool_hint=hint,
+                            description=rule.description,
+                            prerequisite_met=prerequisite_check(next_stage),
+                            reason="available from start",
+                        )
+                    )
+    return starting
+
+
+def _available_suggestions(completed, prerequisite_check):
+    """返回每个已完成阶段后面能做什么."""
+    # 找所有「源阶段已完成」的规则, 收集它们的后继
+    all_suggestions: list[PipelineSuggestion] = []
+    seen: set[tuple[PipelineStage, str]] = set()
+    for rule in PIPELINE_RULES:
+        if rule.stage not in completed:
+            continue
+        for next_stage in rule.next_stages:
+            # 跳过已经做完的阶段
+            if next_stage in completed:
+                continue
+            key = (next_stage, rule.tool_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            # hints 和 stages 数量对齐时取对应的, 否则拼一起
+            if len(rule.next_tool_hints) == len(rule.next_stages):
+                hint = rule.next_tool_hints[rule.next_stages.index(next_stage)]
+            else:
+                hint = ", ".join(rule.next_tool_hints) if rule.next_tool_hints else ""
+            # Skip if same (stage, hint) already added from another rule
+            hint_key = (next_stage, hint)
+            if hint_key in seen:
+                continue
+            seen.add(hint_key)
+            all_suggestions.append(
+                PipelineSuggestion(
+                    stage=next_stage,
+                    tool_hint=hint,
+                    description=rule.description,
+                    prerequisite_met=prerequisite_check(next_stage),
+                    reason=f"available after {rule.stage.value}",
+                )
+            )
+    return all_suggestions
 
 
 # ── SimulationPipeline ────────────────────────────────────────────
@@ -737,58 +941,19 @@ class SimulationPipeline:
         """根据当前工具和输出, 返回下一步建议."""
         action = str(tool_input.get("action", "")).lower()
 
-        # 找所有匹配的规则
-        matched: list[PipelineRule] = []
-        for rule in PIPELINE_RULES:
-            if rule.tool_name != tool_name:
-                continue
-            if rule.action_matcher is not None and rule.action_matcher.lower() != action:
-                continue
-            matched.append(rule)
-
-        # 有特定 action 匹配时, 丢弃 action_matcher=None 的通用规则
-        # 比如 lammps_tool(action=relax) 同时命中 relax 规则和 None 规则, 只留 relax
-        specific = [r for r in matched if r.action_matcher is not None]
-        if specific:
-            matched = specific
+        matched = _matching_rules(tool_name, action)
 
         # convergence_test_tool 没收敛就不建议往下走
         if tool_name == "convergence_test_tool" and not _is_converged(tool_output):
             self._latest = []
             return []
 
-        suggestions: list[PipelineSuggestion] = []
-        for rule in matched:
-            for stage in rule.next_stages:
-                # stage 和 hints 数量对齐时取对应 hint, 否则拼一起
-                if len(rule.next_tool_hints) == len(rule.next_stages):
-                    hint = rule.next_tool_hints[rule.next_stages.index(stage)]
-                else:
-                    hint = ", ".join(rule.next_tool_hints) if rule.next_tool_hints else ""
-
-                suggestions.append(PipelineSuggestion(
-                    stage=stage,
-                    tool_hint=hint,
-                    description=rule.description,
-                    prerequisite_met=self._check_prerequisite(stage),
-                    reason=f"{tool_name}({action or 'default'}) 已完成",
-                ))
+        suggestions = _rule_suggestions(
+            matched, tool_name, action, self._check_prerequisite
+        )
 
         self._latest = suggestions
-        # 内部事件总线: 发布 pipeline.stage_change 字符串事件 (best-effort)
-        # suggest_next 是 stage 推进点, 每条 suggestion 对应一个 next_stage.
-        for _s in suggestions:
-            try:
-                from huginn.events.integration import (
-                    publish_pipeline_event_sync,
-                )
-                publish_pipeline_event_sync(
-                    _s.description, thread_id="", stage=_s.stage.value,
-                )
-            except Exception:
-                logger.debug(
-                    "pipeline event publish failed (non-fatal)", exc_info=True
-                )
+        _publish_stage_events(suggestions)
         return suggestions
 
     def affordance(self) -> list[PipelineSuggestion]:
@@ -801,56 +966,8 @@ class SimulationPipeline:
         completed = self._get_completed_stages()
         if not completed:
             # 啥都没做 — 返回所有入口规则的后继
-            starting: list[PipelineSuggestion] = []
-            seen_stages: set[PipelineStage] = set()
-            for rule in PIPELINE_RULES:
-                if rule.stage in (PipelineStage.STRUCTURE, PipelineStage.CHEMINFO):
-                    for next_stage in rule.next_stages:
-                        if next_stage not in seen_stages:
-                            seen_stages.add(next_stage)
-                            hint = (rule.next_tool_hints[0]
-                                    if rule.next_tool_hints else "")
-                            starting.append(PipelineSuggestion(
-                                stage=next_stage,
-                                tool_hint=hint,
-                                description=rule.description,
-                                prerequisite_met=self._check_prerequisite(next_stage),
-                                reason="available from start",
-                            ))
-            return starting
-
-        # 找所有「源阶段已完成」的规则, 收集它们的后继
-        all_suggestions: list[PipelineSuggestion] = []
-        seen: set[tuple[PipelineStage, str]] = set()
-        for rule in PIPELINE_RULES:
-            if rule.stage not in completed:
-                continue
-            for next_stage in rule.next_stages:
-                # 跳过已经做完的阶段
-                if next_stage in completed:
-                    continue
-                key = (next_stage, rule.tool_name)
-                if key in seen:
-                    continue
-                seen.add(key)
-                # hints 和 stages 数量对齐时取对应的, 否则拼一起
-                if len(rule.next_tool_hints) == len(rule.next_stages):
-                    hint = rule.next_tool_hints[rule.next_stages.index(next_stage)]
-                else:
-                    hint = ", ".join(rule.next_tool_hints) if rule.next_tool_hints else ""
-                # Skip if same (stage, hint) already added from another rule
-                hint_key = (next_stage, hint)
-                if hint_key in seen:
-                    continue
-                seen.add(hint_key)
-                all_suggestions.append(PipelineSuggestion(
-                    stage=next_stage,
-                    tool_hint=hint,
-                    description=rule.description,
-                    prerequisite_met=self._check_prerequisite(next_stage),
-                    reason=f"available after {rule.stage.value}",
-                ))
-        return all_suggestions
+            return _starting_suggestions(self._check_prerequisite)
+        return _available_suggestions(completed, self._check_prerequisite)
 
     def get_current_stage(self) -> PipelineStage | None:
         """从 provenance 注册表推断当前处于哪个阶段 (取已完成的最高阶段)."""
@@ -875,14 +992,13 @@ class SimulationPipeline:
         if not suggestions:
             entry = self._latest_entry()
             if entry is not None:
-                suggestions = self.suggest_next(
-                    entry.produced_by, entry.parameters, {}
-                )
+                suggestions = self.suggest_next(entry.produced_by, entry.parameters, {})
 
         return {
             "current_stage": current.value if current else None,
             "completed_stages": [
-                s.value for s in sorted(completed, key=lambda st: _STAGE_ORDER.get(st, 0))
+                s.value
+                for s in sorted(completed, key=lambda st: _STAGE_ORDER.get(st, 0))
             ],
             "suggested_next": [s.to_dict() for s in suggestions],
             "completion_pct": pct,
@@ -905,9 +1021,7 @@ class SimulationPipeline:
         if not suggestions:
             entry = self._latest_entry()
             if entry is not None:
-                suggestions = self.suggest_next(
-                    entry.produced_by, entry.parameters, {}
-                )
+                suggestions = self.suggest_next(entry.produced_by, entry.parameters, {})
 
         if suggestions:
             lines.append("  Suggested next steps:")

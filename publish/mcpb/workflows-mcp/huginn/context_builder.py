@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity as _sklearn_cosine
+
     _SKLEARN_OK = True
 except ImportError:  # pragma: no cover
     logger.debug("best-effort op failed", exc_info=True)
@@ -106,6 +107,46 @@ def _semantic_tokenize(text: str) -> list[str]:
     return re.findall(r"\b\w\w+\b", text_l)
 
 
+def _sklearn_overlap(a: str, b: str) -> float | None:
+    """sklearn TF-IDF cosine; 不可用/空 vocab 时返回 None 让调用方走兜底."""
+    if not _SKLEARN_OK:
+        return None
+    try:
+        # 自定义 tokenizer 让 TF-IDF 也吃到 jieba 中文分词 (英文词由
+        # _semantic_tokenize 兜底保留). lowercase=False 因为 _semantic_tokenize
+        # 内部已 lower.
+        vec = TfidfVectorizer(tokenizer=_semantic_tokenize, lowercase=False)
+        X = vec.fit_transform([a, b])
+        # 矩阵只有 2 行, [0,1] 是 a vs b 的 cosine.
+        return float(_sklearn_cosine(X)[0, 1])
+    except ValueError:
+        # TfidfVectorizer 在空 vocab (全 stop word / 全 1-char) 时抛 ValueError,
+        # 走 stdlib 兜底.
+        logger.debug("best-effort op failed", exc_info=True)
+    except Exception:
+        logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
+    return None
+
+
+def _stdlib_overlap(a: str, b: str) -> float:
+    """stdlib 兜底: Counter (TF, 无 IDF) + math.sqrt 算 cosine."""
+    # 用 jieba 分词 (中文语义词元), 无 jieba 时回退 ASCII 2+ char 词.
+    ta = _semantic_tokenize(a)
+    tb = _semantic_tokenize(b)
+    if not ta or not tb:
+        return 0.0
+    ca = Counter(ta)
+    cb = Counter(tb)
+    dot = sum(ca[t] * cb[t] for t in ca.keys() & cb.keys())
+    if dot == 0:
+        return 0.0
+    na = math.sqrt(sum(v * v for v in ca.values()))
+    nb = math.sqrt(sum(v * v for v in cb.values()))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
 def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
     """TF-IDF + cosine similarity between two free-form texts.
 
@@ -129,39 +170,47 @@ def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
     b = text_b.strip()
     if not a or not b:
         return 0.0
+    sklearn_score = _sklearn_overlap(a, b)
+    if sklearn_score is not None:
+        return sklearn_score
+    return _stdlib_overlap(a, b)
 
-    if _SKLEARN_OK:
+
+def _kb_chunk_lines(
+    idx: int,
+    chunk: dict[str, Any],
+    *,
+    memory_recall_fn: Any,
+    with_image_ref: bool,
+    max_chars: int,
+    cross_ref_top_k: int,
+) -> list[str]:
+    """单个 chunk → prompt 行 (正文 + 视觉压缩页引用 + memory 交叉召回)."""
+    text = (chunk.get("text") or "").strip()
+    if not text:
+        return []
+    if len(text) > max_chars:
+        text = text[:max_chars] + "…"
+    lines = [f"[{idx}] {text}"]
+
+    # 视觉压缩页引用: metadata 带 image_ref 的 chunk 是整页视觉压缩,
+    # 多模态 agent 可以直接读图. 文本里只加引用路径, 不加载图像.
+    if with_image_ref:
+        meta = chunk.get("metadata") or {}
+        img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
+        if img_ref:
+            lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
+
+    # KB chunk → memory cross-ref: 用 chunk 文本做 query 召回相关长期记忆,
+    # 建立 memory↔KB 双向链接. 只对前 N 个 chunk 做, 避免每 chunk 都查一次.
+    if memory_recall_fn is not None and idx <= cross_ref_top_k:
         try:
-            # 自定义 tokenizer 让 TF-IDF 也吃到 jieba 中文分词 (英文词由
-            # _semantic_tokenize 兜底保留). lowercase=False 因为 _semantic_tokenize
-            # 内部已 lower.
-            vec = TfidfVectorizer(tokenizer=_semantic_tokenize, lowercase=False)
-            X = vec.fit_transform([a, b])
-            # 矩阵只有 2 行, [0,1] 是 a vs b 的 cosine.
-            return float(_sklearn_cosine(X)[0, 1])
-        except ValueError:
-            # TfidfVectorizer 在空 vocab (全 stop word / 全 1-char) 时抛 ValueError,
-            # 走 stdlib 兜底.
-            logger.debug("best-effort op failed", exc_info=True)
+            related = memory_recall_fn(text[:200], max_entries=1)
+            if related:
+                lines.append(f"    ↳ Memory: {related[:200]}")
         except Exception:
-            logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
-
-    # stdlib fallback: Counter (TF, 无 IDF) + math.sqrt 算 cosine.
-    # 用 jieba 分词 (中文语义词元), 无 jieba 时回退 ASCII 2+ char 词.
-    ta = _semantic_tokenize(a)
-    tb = _semantic_tokenize(b)
-    if not ta or not tb:
-        return 0.0
-    ca = Counter(ta)
-    cb = Counter(tb)
-    dot = sum(ca[t] * cb[t] for t in ca.keys() & cb.keys())
-    if dot == 0:
-        return 0.0
-    na = math.sqrt(sum(v * v for v in ca.values()))
-    nb = math.sqrt(sum(v * v for v in cb.values()))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
+            logger.debug("recall for prompt failed", exc_info=True)
+    return lines
 
 
 def format_kb_chunks(
@@ -192,57 +241,40 @@ def format_kb_chunks(
         return ""
     lines: list[str] = []
     for i, c in enumerate(chunks, 1):
-        text = (c.get("text") or "").strip()
-        if not text:
-            continue
-        if len(text) > max_chars:
-            text = text[:max_chars] + "…"
-        lines.append(f"[{i}] {text}")
-
-        # 视觉压缩页引用: metadata 带 image_ref 的 chunk 是整页视觉压缩,
-        # 多模态 agent 可以直接读图. 文本里只加引用路径, 不加载图像.
-        if with_image_ref:
-            meta = c.get("metadata") or {}
-            img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
-            if img_ref:
-                lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
-
-        # KB chunk → memory cross-ref: 用 chunk 文本做 query 召回相关长期记忆,
-        # 建立 memory↔KB 双向链接. 只对前 N 个 chunk 做, 避免每 chunk 都查一次.
-        if memory_recall_fn is not None and i <= cross_ref_top_k:
-            try:
-                related = memory_recall_fn(text[:200], max_entries=1)
-                if related:
-                    lines.append(f"    ↳ Memory: {related[:200]}")
-            except Exception:
-                logger.debug("recall for prompt failed", exc_info=True)
+        lines.extend(
+            _kb_chunk_lines(
+                i,
+                c,
+                memory_recall_fn=memory_recall_fn,
+                with_image_ref=with_image_ref,
+                max_chars=max_chars,
+                cross_ref_top_k=cross_ref_top_k,
+            )
+        )
 
     if not lines:
         return ""
     return "\n".join(lines)
 
 
-def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
-    """读 .huginn/meta_trace.jsonl, 取最近 last_n 条拼成结构化摘要文本.
+def _short_trace_field(s: Any, n: int = 200) -> str:
+    """trace 字段压成单行并截断 (超长补省略号)."""
+    s = str(s or "").strip().replace("\n", " ")
+    return s[:n] + ("…" if len(s) > n else "")
 
-    engine (autoloop) 和 ContextBuilder 共享 — 之前 engine 只写不读, 导致
-    autoloop 长轨迹里 agent 看不到自己上轮蒸馏的结构化历史. 文件不存在/
-    空/读失败都返回 "".
 
-    ponytail: 每字段截 200 字符, 总量约 2K tokens. 不做 schema 校验, 旧 entry
-      补默认值. 升级路径: pydantic model + version tag + 按 darwin_score top-K.
-    """
-    trace_path = Path(workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl"
+def _read_trace_entries(trace_path: Path, last_n: int) -> list[dict]:
+    """读 jsonl 取最近 last_n 条 (倒序), 旧 entry 补默认字段; 失败返回 []."""
     if not trace_path.exists():
-        return ""
+        return []
     try:
         with trace_path.open("r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except (OSError, UnicodeDecodeError):
         logger.debug("best-effort op failed", exc_info=True)
-        return ""
+        return []
     if not lines:
-        return ""
+        return []
 
     # 取最后 last_n 条, 倒序展示 (最新在前)
     recent = lines[-last_n:][::-1]
@@ -265,41 +297,56 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
             e.setdefault("domain", "unknown")
             e.setdefault("task_id", "legacy")
         entries.append(e)
+    return entries
 
+
+def _render_trace_entry(e: dict) -> list[str]:
+    """单条 trace entry → 展示行 (空字段略过)."""
+    it = e.get("iteration", "?")
+    ds = e.get("darwin_score", "?")
+    sr = e.get("supported_ratio", "?")
+    out = [f"[iter {it}] darwin={ds} supported={sr}"]
+    att = _short_trace_field(e.get("attempted", ""))
+    if att:
+        out.append(f"  attempted: {att}")
+    fnd = _short_trace_field(e.get("found", ""))
+    if fnd:
+        out.append(f"  found: {fnd}")
+    ev = e.get("evidence") or []
+    if isinstance(ev, list) and ev:
+        ev_text = "; ".join(_short_trace_field(x, 100) for x in ev[:3])
+        out.append(f"  evidence: {ev_text}")
+    lim = e.get("limitations") or []
+    if isinstance(lim, list) and lim:
+        lim_text = "; ".join(_short_trace_field(x, 150) for x in lim[:2])
+        out.append(f"  limitations: {lim_text}")
+    art = e.get("artifacts") or []
+    if isinstance(art, list) and art:
+        art_text = ", ".join(_short_trace_field(x, 80) for x in art[:5])
+        out.append(f"  artifacts: {art_text}")
+    hint = _short_trace_field(e.get("next_hint", ""), 250)
+    if hint:
+        out.append(f"  next_hint: {hint}")
+    return out
+
+
+def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
+    """读 .huginn/meta_trace.jsonl, 取最近 last_n 条拼成结构化摘要文本.
+
+    engine (autoloop) 和 ContextBuilder 共享 — 之前 engine 只写不读, 导致
+    autoloop 长轨迹里 agent 看不到自己上轮蒸馏的结构化历史. 文件不存在/
+    空/读失败都返回 "".
+
+    ponytail: 每字段截 200 字符, 总量约 2K tokens. 不做 schema 校验, 旧 entry
+      补默认值. 升级路径: pydantic model + version tag + 按 darwin_score top-K.
+    """
+    trace_path = Path(workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    entries = _read_trace_entries(trace_path, last_n)
     if not entries:
         return ""
-
-    def _short(s: Any, n: int = 200) -> str:
-        s = str(s or "").strip().replace("\n", " ")
-        return s[:n] + ("…" if len(s) > n else "")
-
     out = ["### Research Trace (recent iterations, newest first)"]
     for e in entries:
-        it = e.get("iteration", "?")
-        ds = e.get("darwin_score", "?")
-        sr = e.get("supported_ratio", "?")
-        out.append(f"[iter {it}] darwin={ds} supported={sr}")
-        att = _short(e.get("attempted", ""))
-        if att:
-            out.append(f"  attempted: {att}")
-        fnd = _short(e.get("found", ""))
-        if fnd:
-            out.append(f"  found: {fnd}")
-        ev = e.get("evidence") or []
-        if isinstance(ev, list) and ev:
-            ev_text = "; ".join(_short(x, 100) for x in ev[:3])
-            out.append(f"  evidence: {ev_text}")
-        lim = e.get("limitations") or []
-        if isinstance(lim, list) and lim:
-            lim_text = "; ".join(_short(x, 150) for x in lim[:2])
-            out.append(f"  limitations: {lim_text}")
-        art = e.get("artifacts") or []
-        if isinstance(art, list) and art:
-            art_text = ", ".join(_short(x, 80) for x in art[:5])
-            out.append(f"  artifacts: {art_text}")
-        hint = _short(e.get("next_hint", ""), 250)
-        if hint:
-            out.append(f"  next_hint: {hint}")
+        out.extend(_render_trace_entry(e))
     out.append("### End Research Trace")
     return "\n".join(out)
 
@@ -400,6 +447,7 @@ class ContextBuilder:
             # 那会和 core.py 的 _current_user_message 一样被并发覆盖.
             try:
                 from huginn.utils.session_context import get_user_message
+
                 query = get_user_message() or "materials science computation"
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)
@@ -415,6 +463,7 @@ class ContextBuilder:
         # Inject verified/in-progress conjectures from the research log
         try:
             from huginn.research_log import get_research_log
+
             log = get_research_log()
             verified = log.list_by_status("verified", limit=3)
             in_progress = log.list_by_status("in_progress", limit=2)
@@ -543,6 +592,7 @@ class ContextBuilder:
             return ""
         try:
             from huginn.utils.jieba_utils import get_jieba
+
             jieba = get_jieba()
         except Exception:
             jieba = None
@@ -587,6 +637,7 @@ class ContextBuilder:
         try:
             if self._kb is None:
                 from huginn.knowledge.store import get_knowledge_base
+
                 self._kb = get_knowledge_base(self.workspace)
             if self._kb.count() == 0:
                 return ""
@@ -631,6 +682,64 @@ class ContextBuilder:
 
     # ── Conversation history ────────────────────────────────────────
 
+    @staticmethod
+    def _ct_node_meta(node: Any, node_id: str) -> dict:
+        """会话树节点 → 重建用中间 meta (node 缺失返回 {})."""
+        if node is None:
+            return {}
+        meta = node.metadata or {}
+        return {
+            "role": node.role,
+            "content": _flatten_replay_content(node.content),
+            "tool_calls": meta.get("tool_calls"),
+            "tool_call_id": meta.get("tool_call_id", ""),
+            "name": meta.get("name"),
+            "node_id": node_id,
+        }
+
+    @staticmethod
+    def _ct_answered_ids(node_meta_list: list[dict]) -> set[str]:
+        """收集所有 ToolMessage 的 tool_call_id, 用于判断 tool_calls 是否 dangling."""
+        answered: set[str] = set()
+        for m in node_meta_list:
+            if m.get("role") != "tool":
+                continue
+            tc_id = m.get("tool_call_id")
+            if tc_id:
+                answered.add(tc_id)
+        return answered
+
+    @staticmethod
+    def _ct_message(m: dict, answered: set[str], lc: Any) -> Any | None:
+        """单条 meta → LC message (空 meta / 未知 role 返回 None)."""
+        if not m:
+            return None
+        role = m.get("role")
+        msg_id = f"ct_{m['node_id']}"
+        flat = m.get("content", "")
+        if role == "user":
+            return lc.HumanMessage(content=flat, id=msg_id)
+        if role == "assistant":
+            tool_calls = m.get("tool_calls")
+            if not tool_calls:
+                return lc.AIMessage(content=flat, id=msg_id)
+            # 剥掉 dangling: 没有对应 ToolMessage 的 tool_call 不发给 LLM
+            kept = [tc for tc in tool_calls if tc.get("id") in answered]
+            if kept:
+                return lc.AIMessage(content=flat, tool_calls=kept, id=msg_id)
+            # 全部 dangling → 退化为纯 AIMessage (content 可能含已展示给用户的工具调用说明)
+            return lc.AIMessage(content=flat, id=msg_id)
+        if role == "system":
+            return lc.SystemMessage(content=flat, id=msg_id)
+        if role == "tool":
+            return lc.ToolMessage(
+                content=flat,
+                tool_call_id=m.get("tool_call_id", ""),
+                name=m.get("name"),
+                id=msg_id,
+            )
+        return None
+
     def conversation_tree_to_messages(self) -> list[Any]:
         """Convert the active conversation path to LC messages.
 
@@ -639,14 +748,8 @@ class ContextBuilder:
         if self._conversation_tree is None:
             return []
 
-        from langchain_core.messages import (
-            AIMessage,
-            HumanMessage,
-            SystemMessage,
-            ToolMessage,
-        )
+        from langchain_core import messages as lc
 
-        messages: list[Any] = []
         path = self._conversation_tree.active_path()
         # 先收集每个 node 的 (role, tool_calls, tool_call_id), 用于 dangling 检测.
         # dangling = AIMessage(tool_calls) 后续没有对应的 ToolMessage (timeout/异常
@@ -654,63 +757,19 @@ class ContextBuilder:
         # Step 3 用同 thread 调 agent.chat 直接挂. 这里剥掉 dangling tool_calls,
         # 保留 content 作为纯 AIMessage. ponytail: lookahead 不改树, 只改重建结果.
         # 升级路径: 修 streaming.py 写树时保证 tool_calls + ToolMessage 原子提交.
-        node_meta_list: list[dict] = []
-        for node_id in path[:-1]:
-            node = self._conversation_tree.get_node(node_id)
-            if node is None:
-                node_meta_list.append({})
-                continue
-            meta = node.metadata or {}
-            node_meta_list.append({
-                "role": node.role,
-                "content": _flatten_replay_content(node.content),
-                "tool_calls": meta.get("tool_calls"),
-                "tool_call_id": meta.get("tool_call_id", ""),
-                "name": meta.get("name"),
-                "node_id": node_id,
-            })
+        node_meta_list = [
+            ContextBuilder._ct_node_meta(self._conversation_tree.get_node(nid), nid)
+            for nid in path[:-1]
+        ]
 
-        # 收集所有 ToolMessage 的 tool_call_id, 用于判断 AIMessage 的 tool_calls 是否 dangling
-        answered_call_ids: set[str] = set()
-        for m in node_meta_list:
-            if m.get("role") == "tool":
-                tc_id = m.get("tool_call_id")
-                if tc_id:
-                    answered_call_ids.add(tc_id)
+        # 判断 AIMessage 的 tool_calls 是否 dangling 需要全部 ToolMessage 的 id
+        answered_call_ids = ContextBuilder._ct_answered_ids(node_meta_list)
 
+        messages: list[Any] = []
         for m in node_meta_list:
-            if not m:
-                continue
-            role = m.get("role")
-            msg_id = f"ct_{m['node_id']}"
-            flat = m.get("content", "")
-            if role == "user":
-                messages.append(HumanMessage(content=flat, id=msg_id))
-            elif role == "assistant":
-                tool_calls = m.get("tool_calls")
-                if tool_calls:
-                    # 剥掉 dangling: 没有对应 ToolMessage 的 tool_call 不发给 LLM
-                    kept = [tc for tc in tool_calls if tc.get("id") in answered_call_ids]
-                    if kept:
-                        messages.append(
-                            AIMessage(content=flat, tool_calls=kept, id=msg_id)
-                        )
-                    else:
-                        # 全部 dangling → 退化为纯 AIMessage (content 可能含已展示给用户的工具调用说明)
-                        messages.append(AIMessage(content=flat, id=msg_id))
-                else:
-                    messages.append(AIMessage(content=flat, id=msg_id))
-            elif role == "system":
-                messages.append(SystemMessage(content=flat, id=msg_id))
-            elif role == "tool":
-                messages.append(
-                    ToolMessage(
-                        content=flat,
-                        tool_call_id=m.get("tool_call_id", ""),
-                        name=m.get("name"),
-                        id=msg_id,
-                    )
-                )
+            msg = ContextBuilder._ct_message(m, answered_call_ids, lc)
+            if msg is not None:
+                messages.append(msg)
         return messages
 
     # ── Plan & session continuity ──────────────────────────────────
@@ -795,6 +854,7 @@ class ContextBuilder:
         """Inject active persistent goal from GoalStore."""
         try:
             from huginn.autoloop.goal_store import get_goal_store
+
             store = get_goal_store()
             active = store.get_active()
             if not active:
@@ -910,10 +970,23 @@ class ContextBuilder:
     def meta_trace_available(self) -> bool:
         """快速检查 trace 文件是否存在 — streaming.py 用它决定 compaction 强度."""
         from pathlib import Path
+
         return (Path(self.workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl").exists()
 
     _evolution_rules_cache: str | None = None
     _evolution_rules_mtime: float = 0.0
+
+    @staticmethod
+    def _evolution_rule_lines(relevant: list[dict]) -> list[str]:
+        """高置信演进规则 → 展示行."""
+        lines = ["### Learned Lessons (from past executions)"]
+        for r in relevant:
+            lines.append(
+                f"- When {r.get('trigger', '?')}: {r.get('action', '?')} "
+                f"(confidence: {r.get('confidence', 0):.0%})"
+            )
+        lines.append("### End Learned Lessons")
+        return lines
 
     def build_evolution_rules(self) -> str:
         """Inject learned evolution rules into context.
@@ -937,7 +1010,10 @@ class ContextBuilder:
 
             # Cache by mtime — file rarely changes during a session
             mtime = rules_path.stat().st_mtime
-            if self._evolution_rules_cache is not None and mtime == self._evolution_rules_mtime:
+            if (
+                self._evolution_rules_cache is not None
+                and mtime == self._evolution_rules_mtime
+            ):
                 return self._evolution_rules_cache
             self._evolution_rules_mtime = mtime
 
@@ -948,22 +1024,14 @@ class ContextBuilder:
                 return ""
 
             # Only inject high-confidence rules, max 5 to keep prompt small
-            relevant = [
-                r for r in rules
-                if r.get("confidence", 0) >= 0.5
-            ][:5]
+            relevant = [r for r in rules if r.get("confidence", 0) >= 0.5][:5]
             if not relevant:
                 self._evolution_rules_cache = ""
                 return ""
 
-            lines = ["### Learned Lessons (from past executions)"]
-            for r in relevant:
-                lines.append(
-                    f"- When {r.get('trigger', '?')}: {r.get('action', '?')} "
-                    f"(confidence: {r.get('confidence', 0):.0%})"
-                )
-            lines.append("### End Learned Lessons")
-            self._evolution_rules_cache = "\n".join(lines)
+            self._evolution_rules_cache = "\n".join(
+                ContextBuilder._evolution_rule_lines(relevant)
+            )
             return self._evolution_rules_cache
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)
@@ -985,7 +1053,9 @@ class ContextBuilder:
         for it in fired_intentions:
             desc = getattr(it, "description", str(it))
             step = getattr(it, "source_step", "?")
-            lines.append(f"- 你之前计划了 {desc}（创建于 step {step}），现在是执行的时候")
+            lines.append(
+                f"- 你之前计划了 {desc}（创建于 step {step}），现在是执行的时候"
+            )
         return "## 待执行的前瞻意图\n" + "\n".join(lines)
 
     def build_target_chain_text(self, target_chains: list, current_step: int) -> str:
@@ -997,6 +1067,7 @@ class ContextBuilder:
         if not target_chains:
             return ""
         from huginn.metacog.target_chain import format_target_chain_text as _fmt
+
         return _fmt(target_chains, current_step)
 
     def build_step_eval_text(self, last_evaluation) -> str:
@@ -1008,7 +1079,79 @@ class ContextBuilder:
         if last_evaluation is None:
             return ""
         from huginn.metacog.step_evaluator import format_step_eval_text as _fmt
+
         return _fmt(last_evaluation)
+
+    @staticmethod
+    def _meta_planner_section(target_chains: list) -> str:
+        """Planner 段: 目标链 → "拆解 N 步 / 当前位置 / 下一步该做什么"."""
+        if not target_chains:
+            return ""
+        lines: list[str] = ["[Planner]"]
+        total = 0
+        done = 0
+        next_step = ""
+        for tc in target_chains:
+            results = getattr(tc, "required_results", []) or []
+            completed = getattr(tc, "completed_results", set()) or set()
+            tid = getattr(tc, "target_id", "?")
+            tgt = getattr(tc, "target", "")
+            prog = getattr(tc, "progress", 0.0)
+            total += len(results)
+            done += sum(1 for r in results if r in completed)
+            missing = [r for r in results if r not in completed]
+            if missing and not next_step:
+                next_step = missing[0]
+            lines.append(f"- {tid}: {tgt} [{int(prog * 100)}%] missing={missing}")
+        if total <= 0:
+            return ""
+        lines.insert(
+            1,
+            f"拆解 {total} 步, 当前 {done}/{total}, 下一步: {next_step or '(全部完成)'}",
+        )
+        return "## 元 Agent 视角\n" + "\n".join(lines)
+
+    @staticmethod
+    def _meta_adviser_section(
+        last_step_evaluation: Any, drift_info: tuple | None
+    ) -> str:
+        """Adviser 段: on_track=false 或 drift_info 非 None → 漂移/策略告警."""
+        adviser: list[str] = []
+        if last_step_evaluation is not None:
+            on_track = getattr(last_step_evaluation, "on_track", "true")
+            if on_track == "false":
+                dev = getattr(last_step_evaluation, "deviation", "") or ""
+                adviser.append(
+                    "[Adviser] 上一步偏离目标链"
+                    + (f": {dev}" if dev else "")
+                    + " — 建议重审方法选择 / 补数据"
+                )
+        if drift_info is not None:
+            is_drift, drift_msg = drift_info
+            if is_drift:
+                adviser.append(f"[Adviser] 漂移告警: {drift_msg}")
+        if not adviser:
+            return ""
+        return "## 元 Agent 视角\n" + "\n".join(adviser)
+
+    @staticmethod
+    def _meta_reflector_section(tool_call_health: Any) -> str:
+        """Reflector 段: tool_call_health.is_anomalous() → 介入建议."""
+        if tool_call_health is None:
+            return ""
+        is_anom = getattr(tool_call_health, "is_anomalous", None)
+        if not (callable(is_anom) and is_anom()):
+            return ""
+        sr = getattr(tool_call_health, "success_rate", 1.0)
+        rc = getattr(tool_call_health, "retry_count", 0)
+        to = getattr(tool_call_health, "timeout_count", 0)
+        pe = getattr(tool_call_health, "param_error_count", 0)
+        return (
+            "## 元 Agent 视角\n"
+            f"[Reflector] 工具调用异常: success_rate={sr:.2f}, "
+            f"retry={rc}, timeout={to}, param_err={pe}\n"
+            "介入建议: 检查工具参数 / 切换备选工具 / 暂停调用并人工介入"
+        )
 
     def build_meta_agent_text(
         self,
@@ -1028,70 +1171,56 @@ class ContextBuilder:
         升级路径: 真要独立 Reflector 组件时, 把第三段抽成
         ReflectorComponent.observe().
         """
-        sections: list[str] = []
-
-        # ── Planner: 目标链 → "拆解 N 步 / 当前位置 / 下一步该做什么" ──
-        if target_chains:
-            lines: list[str] = ["[Planner]"]
-            total = 0
-            done = 0
-            next_step = ""
-            for tc in target_chains:
-                results = getattr(tc, "required_results", []) or []
-                completed = getattr(tc, "completed_results", set()) or set()
-                tid = getattr(tc, "target_id", "?")
-                tgt = getattr(tc, "target", "")
-                prog = getattr(tc, "progress", 0.0)
-                total += len(results)
-                done += sum(1 for r in results if r in completed)
-                missing = [r for r in results if r not in completed]
-                if missing and not next_step:
-                    next_step = missing[0]
-                lines.append(
-                    f"- {tid}: {tgt} [{int(prog * 100)}%] missing={missing}"
-                )
-            if total > 0:
-                lines.insert(
-                    1,
-                    f"拆解 {total} 步, 当前 {done}/{total}, "
-                    f"下一步: {next_step or '(全部完成)'}",
-                )
-                sections.append("## 元 Agent 视角\n" + "\n".join(lines))
-
-        # ── Adviser: on_track=false 或 drift_info 非 None → 漂移/策略告警 ──
-        adviser: list[str] = []
-        if last_step_evaluation is not None:
-            on_track = getattr(last_step_evaluation, "on_track", "true")
-            if on_track == "false":
-                dev = getattr(last_step_evaluation, "deviation", "") or ""
-                adviser.append(
-                    "[Adviser] 上一步偏离目标链"
-                    + (f": {dev}" if dev else "")
-                    + " — 建议重审方法选择 / 补数据"
-                )
-        if drift_info is not None:
-            is_drift, drift_msg = drift_info
-            if is_drift:
-                adviser.append(f"[Adviser] 漂移告警: {drift_msg}")
-        if adviser:
-            sections.append("## 元 Agent 视角\n" + "\n".join(adviser))
-
-        # ── Reflector: tool_call_health.is_anomalous() → 介入建议 ──
-        if tool_call_health is not None:
-            is_anom = getattr(tool_call_health, "is_anomalous", None)
-            if callable(is_anom) and is_anom():
-                sr = getattr(tool_call_health, "success_rate", 1.0)
-                rc = getattr(tool_call_health, "retry_count", 0)
-                to = getattr(tool_call_health, "timeout_count", 0)
-                pe = getattr(tool_call_health, "param_error_count", 0)
-                sections.append(
-                    "## 元 Agent 视角\n"
-                    f"[Reflector] 工具调用异常: success_rate={sr:.2f}, "
-                    f"retry={rc}, timeout={to}, param_err={pe}\n"
-                    "介入建议: 检查工具参数 / 切换备选工具 / 暂停调用并人工介入"
-                )
-
+        sections = [
+            ContextBuilder._meta_planner_section(target_chains),
+            ContextBuilder._meta_adviser_section(last_step_evaluation, drift_info),
+            ContextBuilder._meta_reflector_section(tool_call_health),
+        ]
+        sections = [s for s in sections if s]
         return "\n\n".join(sections) if sections else ""
+
+    @staticmethod
+    def _pmk_persona_text(persona: Any) -> str:
+        """persona → 立场文本 (description 优先, dict 回退)."""
+        if persona is None:
+            return ""
+        return str(
+            getattr(persona, "description", None)
+            or (persona.get("description") if isinstance(persona, dict) else "")
+            or ""
+        )
+
+    @staticmethod
+    def _pmk_feedback_seg(last_step_evaluation: Any, prefix: str) -> str:
+        """从 pmk_feedback "Persona: ...; Memory: ...; KB: ..." 抓指定段."""
+        if last_step_evaluation is None:
+            return ""
+        pmk_fb = getattr(last_step_evaluation, "pmk_feedback", "") or ""
+        for seg in pmk_fb.split(";"):
+            seg = seg.strip()
+            if seg.lower().startswith(prefix):
+                return seg[len(prefix) :].strip()
+        return ""
+
+    @staticmethod
+    def _pmk_consistency_label(
+        persona_text: str, memory_text: str, kb_text: str
+    ) -> str:
+        """三路立场一致性标签 — 复用 _check_pmk_consistency (H¹ proxy)."""
+        try:
+            from huginn.runtime.task_lifecycle import _check_pmk_consistency
+
+            pmk_state = {
+                "persona": persona_text,
+                "memory": memory_text,
+                "kb": kb_text,
+            }
+            inconsistent, _reason = _check_pmk_consistency(pmk_state)
+            return "INCONSISTENT" if inconsistent else "consistent"
+        except Exception:
+            # import 失败或检查异常, 标 consistent 不阻塞
+            logger.debug("best-effort op failed", exc_info=True)
+            return "consistent"
 
     def build_pmk_text(
         self,
@@ -1112,51 +1241,21 @@ class ContextBuilder:
         全空返回空串. 升级路径: 一致性判定换 LLM 语义判断.
         """
         # 抽三路立场文本
-        persona_text = ""
-        if persona is not None:
-            persona_text = str(
-                getattr(persona, "description", None)
-                or (persona.get("description") if isinstance(persona, dict) else "")
-                or ""
-            )
-        memory_text = ""
-        if last_step_evaluation is not None:
-            pmk_fb = getattr(last_step_evaluation, "pmk_feedback", "") or ""
-            # pmk_feedback 格式 "Persona: ...; Memory: ...; KB: ..." — 抓 Memory 段
-            for seg in pmk_fb.split(";"):
-                seg = seg.strip()
-                if seg.lower().startswith("memory:"):
-                    memory_text = seg[len("memory:"):].strip()
-                    break
-        kb_text = ""
-        if kb is not None:
-            kb_text = "(available)"  # kb 召回内容走 build_kb_text, 这里只标记可用性
-        # 但如果 last_step_eval.pmk_feedback 有 KB 段, 优先用那个 (显式立场)
-        if last_step_evaluation is not None:
-            pmk_fb = getattr(last_step_evaluation, "pmk_feedback", "") or ""
-            for seg in pmk_fb.split(";"):
-                seg = seg.strip()
-                if seg.lower().startswith("kb:"):
-                    kb_text = seg[len("kb:"):].strip()
-                    break
+        persona_text = ContextBuilder._pmk_persona_text(persona)
+        memory_text = ContextBuilder._pmk_feedback_seg(last_step_evaluation, "memory:")
+        # kb 召回内容走 build_kb_text, 这里只标记可用性;
+        # 但 last_step_eval.pmk_feedback 有 KB 段时优先用那个 (显式立场)
+        kb_text = "(available)" if kb is not None else ""
+        kb_feedback = ContextBuilder._pmk_feedback_seg(last_step_evaluation, "kb:")
+        if kb_feedback:
+            kb_text = kb_feedback
 
         if not (persona_text or memory_text or kb_text):
             return ""
 
-        # 一致性标签 — 复用 task_lifecycle._check_pmk_consistency (H¹ proxy)
-        consistency_label = "consistent"
-        try:
-            from huginn.runtime.task_lifecycle import _check_pmk_consistency
-            pmk_state = {
-                "persona": persona_text,
-                "memory": memory_text,
-                "kb": kb_text,
-            }
-            inconsistent, reason = _check_pmk_consistency(pmk_state)
-            consistency_label = "INCONSISTENT" if inconsistent else "consistent"
-        except Exception:
-            logger.debug("best-effort op failed", exc_info=True)  # import 失败或检查异常, 标 consistent 不阻塞
-
+        consistency_label = ContextBuilder._pmk_consistency_label(
+            persona_text, memory_text, kb_text
+        )
         lines = [
             "## PMK 循环状态",
             f"一致性: {consistency_label}",
@@ -1166,12 +1265,101 @@ class ContextBuilder:
         ]
         if consistency_label == "INCONSISTENT":
             lines.append(
-                "- ⚠ 三路立场冲突 — 局部模型无法粘合成全局, "
-                "请显式选择遵从哪一路"
+                "- ⚠ 三路立场冲突 — 局部模型无法粘合成全局, 请显式选择遵从哪一路"
             )
         return "\n".join(lines)
 
     # ── Full input messages ────────────────────────────────────────
+
+    @staticmethod
+    def _context_router_selection(message: str, session_state: Any) -> set[str] | None:
+        """P3 Context Router: phase + task 语义 → 选中的 context 段; None = 全塞.
+
+        参考 "Diversity of information pathways drives sparsity in real-world
+        networks" (Nature Physics 2023). 信息路径多样性 D_proxy 监控.
+        默认关, flag 开启 (零 LLM 成本, 纯规则).
+        """
+        from huginn.feature_flags import FeatureFlags
+
+        if not FeatureFlags.shared().is_enabled("context_router"):
+            return None
+        try:
+            from huginn.runtime.context_router import (
+                log_routing_decision,
+                route_context_segments,
+            )
+
+            _phase = ""
+            if session_state is not None:
+                _phase = getattr(session_state, "current_phase", "") or (
+                    session_state.get("current_phase", "")
+                    if isinstance(session_state, dict)
+                    else ""
+                )
+            _routing = route_context_segments(phase=_phase, task_message=message)
+            log_routing_decision(_routing, _phase, message)
+            return set(_routing.selected)
+        except Exception:
+            logger.debug("ContextRouter disabled or failed, full ctx", exc_info=True)
+            return None
+
+    def _collect_ctx_parts(
+        self, message: str, session_state: Any, keep: Any
+    ) -> list[str]:
+        """按固定顺序收集 context 段 (router 未选中的段跳过).
+
+        Order: meta_trace → emotion → plan → cognitive → tool_hint → evolution
+        → continuity → subgoal → goal. Meta-Trace 放最前: 长轨迹里它是 token
+        密度最高的历史信息, agent 读 ctx_parts 顺序就是它看到上下文的顺序.
+        """
+        builders = (
+            ("meta_trace", lambda: self.build_meta_trace_text()),
+            ("emotion", lambda: self.build_emotion_text(message)),
+            ("plan", lambda: self.build_plan_text(session_state)),
+            ("cognitive", lambda: self.build_cognitive_prompt(session_state)),
+            ("tool_hint", lambda: self.build_tool_preference_hint(session_state)),
+            ("evolution", lambda: self.build_evolution_rules()),
+            ("continuity", lambda: self.build_session_continuity(session_state)),
+            ("subgoal", lambda: self.build_subgoal_text(session_state)),
+            ("goal", lambda: self.build_goal_text(session_state)),
+        )
+        ctx_parts: list[str] = []
+        for seg, build in builders:
+            text = build()
+            if text and keep(seg):
+                ctx_parts.append(text)
+        return ctx_parts
+
+    @staticmethod
+    def _merge_ctx_into_user(messages: list[Any], ctx_parts: list[str]) -> None:
+        """ctx_block 合并进最后一条 HumanMessage (不单独插 SystemMessage)."""
+        if not ctx_parts:
+            return
+        # 旧版 insert(-1) 在 user message 前插 SystemMessage, 内容每turn变
+        # (memory/kg/kb/trace/emotion/plan...), 破坏 DeepSeek context cache
+        # prefix hash → 命中率卡在 50%. 合并进 user message 让 prefix 只剩
+        # system + history (稳定), 动态 context 跟 user 一起走 (本来每turn就变).
+        from langchain_core.messages import HumanMessage
+
+        _ctx_text = "\n\n".join(ctx_parts)
+        if messages and isinstance(messages[-1], HumanMessage):
+            _orig = messages[-1].content
+            messages[-1] = HumanMessage(
+                content=f"{_ctx_text}\n\n---\n\n{_orig}",
+                id=getattr(messages[-1], "id", None),
+            )
+
+    def _resolve_ctx_texts(
+        self, message: str, memory_text: Any, kg_text: Any, kb_text: Any
+    ) -> tuple[str, str, str]:
+        """未显式传入的 memory/KG/KB 文本按 query 现算."""
+        if memory_text is None:
+            memory_text = self.build_memory_text(query=message)
+        if kg_text is None:
+            kg_text = self.build_kg_text(query=message)
+        if kb_text is None:
+            kb_text = self.build_kb_text(query=message)
+        return memory_text, kg_text, kb_text
 
     def build_input_messages(
         self,
@@ -1189,12 +1377,9 @@ class ContextBuilder:
         + memory + KG + KB + emotion + plan status + session continuity
         + current user message.
         """
-        if memory_text is None:
-            memory_text = self.build_memory_text(query=message)
-        if kg_text is None:
-            kg_text = self.build_kg_text(query=message)
-        if kb_text is None:
-            kb_text = self.build_kb_text(query=message)
+        memory_text, kg_text, kb_text = self._resolve_ctx_texts(
+            message, memory_text, kg_text, kb_text
+        )
 
         # G34: 之前 checkpointer 在时 include_history=False, 历史 langgraph 自己加,
         # compact_messages 只能修本轮新消息 → checkpoint 持久化历史从不被修剪,
@@ -1215,40 +1400,7 @@ class ContextBuilder:
             kb_text=kb_text,
         )
 
-        # Merge all context injections into one SystemMessage to reduce
-        # message overhead (each role tag costs tokens in the prompt).
-        # Order: meta_trace → emotion → plan → cognitive → tool_hint → evolution → continuity
-        # Meta-Trace 放最前: 长轨迹里它是 token 密度最高的历史信息, agent
-        # 读 ctx_parts 顺序就是它看到上下文的顺序, trace 必须先看到.
-        ctx_parts: list[str] = []
-
-        # P3: Context Router — 根据 phase + task 语义稀疏化 context 段
-        # 参考 "Diversity of information pathways drives sparsity in real-world
-        # networks" (Nature Physics 2023). 信息路径多样性 D_proxy 监控.
-        # 默认关, flag 开启 (零 LLM 成本, 纯规则).
-        from huginn.feature_flags import FeatureFlags
-
-        _router_enabled = FeatureFlags.shared().is_enabled("context_router")
-        _selected: set[str] | None = None
-        if _router_enabled:
-            try:
-                from huginn.runtime.context_router import (
-                    log_routing_decision,
-                    route_context_segments,
-                )
-                _phase = ""
-                if session_state is not None:
-                    _phase = getattr(session_state, "current_phase", "") or \
-                             (session_state.get("current_phase", "")
-                              if isinstance(session_state, dict) else "")
-                _routing = route_context_segments(
-                    phase=_phase, task_message=message,
-                )
-                _selected = set(_routing.selected)
-                log_routing_decision(_routing, _phase, message)
-            except Exception:
-                logger.debug("ContextRouter disabled or failed, full ctx", exc_info=True)
-                _selected = None
+        _selected = ContextBuilder._context_router_selection(message, session_state)
 
         def _keep(seg: str) -> bool:
             """P3: 未启用 router → 全塞; 启用时只塞 selected."""
@@ -1256,57 +1408,8 @@ class ContextBuilder:
                 return True
             return seg in _selected
 
-        meta_trace_text = self.build_meta_trace_text()
-        if meta_trace_text and _keep("meta_trace"):
-            ctx_parts.append(meta_trace_text)
-
-        emotion_text = self.build_emotion_text(message)
-        if emotion_text and _keep("emotion"):
-            ctx_parts.append(emotion_text)
-
-        plan_text = self.build_plan_text(session_state)
-        if plan_text and _keep("plan"):
-            ctx_parts.append(plan_text)
-
-        cognitive_text = self.build_cognitive_prompt(session_state)
-        if cognitive_text and _keep("cognitive"):
-            ctx_parts.append(cognitive_text)
-
-        tool_hint = self.build_tool_preference_hint(session_state)
-        if tool_hint and _keep("tool_hint"):
-            ctx_parts.append(tool_hint)
-
-        evolution_text = self.build_evolution_rules()
-        if evolution_text and _keep("evolution"):
-            ctx_parts.append(evolution_text)
-
-        continuity_text = self.build_session_continuity(session_state)
-        if continuity_text and _keep("continuity"):
-            ctx_parts.append(continuity_text)
-
-        subgoal_text = self.build_subgoal_text(session_state)
-        if subgoal_text and _keep("subgoal"):
-            ctx_parts.append(subgoal_text)
-
-        goal_text = self.build_goal_text(session_state)
-        if goal_text and _keep("goal"):
-            ctx_parts.append(goal_text)
-
-        if ctx_parts:
-            # ctx_block 合并进 user message, 不单独插 SystemMessage.
-            # 旧版 insert(-1) 在 user message 前插 SystemMessage, 内容每turn变
-            # (memory/kg/kb/trace/emotion/plan...), 破坏 DeepSeek context cache
-            # prefix hash → 命中率卡在 50%. 合并进 user message 让 prefix 只剩
-            # system + history (稳定), 动态 context 跟 user 一起走 (本来每turn就变).
-            from langchain_core.messages import HumanMessage
-            _ctx_text = "\n\n".join(ctx_parts)
-            if messages and isinstance(messages[-1], HumanMessage):
-                _orig = messages[-1].content
-                messages[-1] = HumanMessage(
-                    content=f"{_ctx_text}\n\n---\n\n{_orig}",
-                    id=getattr(messages[-1], "id", None),
-                )
-
+        ctx_parts = self._collect_ctx_parts(message, session_state, _keep)
+        ContextBuilder._merge_ctx_into_user(messages, ctx_parts)
         return messages
 
 
@@ -1334,7 +1437,9 @@ def _selfcheck() -> None:
 
     # 3. persona vs memory 冲突 → INCONSISTENT
     persona = SimpleNamespace(description="recommend DFT calculation")
-    last_eval = SimpleNamespace(pmk_feedback="Memory: oppose DFT calculation; KB: support DFT")
+    last_eval = SimpleNamespace(
+        pmk_feedback="Memory: oppose DFT calculation; KB: support DFT"
+    )
     out = ctx.build_pmk_text(persona=persona, last_step_evaluation=last_eval)
     assert "INCONSISTENT" in out, f"conflict should be INCONSISTENT: {out}"
     assert "⚠" in out, f"missing warning: {out}"
@@ -1347,9 +1452,13 @@ def _selfcheck() -> None:
     print("4. dict persona OK")
 
     # 5. pmk_feedback Memory 段解析
-    last_eval = SimpleNamespace(pmk_feedback="Persona: try symbolic; Memory: avoid symbolic; KB: neutral")
-    out = ctx.build_pmk_text(persona=SimpleNamespace(description="try symbolic"),
-                             last_step_evaluation=last_eval)
+    last_eval = SimpleNamespace(
+        pmk_feedback="Persona: try symbolic; Memory: avoid symbolic; KB: neutral"
+    )
+    out = ctx.build_pmk_text(
+        persona=SimpleNamespace(description="try symbolic"),
+        last_step_evaluation=last_eval,
+    )
     assert "avoid symbolic" in out, f"memory parse failed: {out}"
     print("5. pmk_feedback parse OK")
 

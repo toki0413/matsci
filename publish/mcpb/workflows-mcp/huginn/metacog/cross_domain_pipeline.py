@@ -58,9 +58,7 @@ def _extract_math_concept(problem: str) -> str | None:
     return None
 
 
-def _find_lca_with_target(
-    math_concept: str, target_domain_profile: Any
-) -> str | None:
+def _find_lca_with_target(math_concept: str, target_domain_profile: Any) -> str | None:
     """找 math_concept 与 target_domain 共享的最近公共祖先.
 
     ponytail: target_domain_profile.structure_signature 的 canonical_name
@@ -68,6 +66,7 @@ def _find_lca_with_target(
     """
     try:
         from huginn.kg.graph import MathConceptGraph
+
         g = MathConceptGraph()
         # target domain 的 structure_signature 取第一个 canonical_name
         sigs = getattr(target_domain_profile, "structure_signature", ()) or ()
@@ -81,39 +80,17 @@ def _find_lca_with_target(
         return None
 
 
-def cross_domain_reframe(
-    problem: str,
-    target_composition: frozenset[str] | set[str] | list[str] | None = None,
-    target_structure: str = "",
-    target_property: str = "",
-    target_method: str = "",
-    n_samples: int = 0,
-    threshold: float = 0.3,
-    model: Any = None,
-) -> TransferHypothesis | None:
-    """5 步跨域迁移 pipeline. 失败返 None.
-
-    target_composition/structure/property/method: 目标域画像, 缺省时从 problem
-    推断 (用 _extract_math_concept 命中的概念当 property_type).
-    model: reframe_problem 用的 LLM, None 走模板路径.
-    """
-    trace: list[str] = []
-
-    # Step 1: 从 problem 提取 MathConcept
-    math_concept = _extract_math_concept(problem)
-    if math_concept is None:
-        trace.append("step1: no math concept matched")
-        logger.debug("cross_domain: no math concept for %r", problem[:80])
-        return None
-    trace.append(f"step1: math_concept={math_concept}")
-
-    # Step 2: 找结构同构预训练域
+def _find_transfer_target(
+    math_concept,
+    target_composition,
+    target_structure,
+    target_property,
+    target_method,
+    n_samples,
+    threshold,
+):
     try:
-        from huginn.ml.transfer_registry import (
-            _REGISTRY,
-            find_transfer_domain,
-            shared_structure,
-        )
+        from huginn.ml.transfer_registry import find_transfer_domain
     except Exception:
         logger.debug("transfer_registry import failed", exc_info=True)
         return None
@@ -121,13 +98,12 @@ def cross_domain_reframe(
     # 推断 target_property: 用 math_concept 当作 property_type 初筛
     if not target_property:
         target_property = math_concept
-
     if target_composition is None:
         # 无 composition 也调, find_transfer_domain 会用 jaccard 兜底
         target_composition = frozenset()
 
     try:
-        target_profile, similarity, recommendation = find_transfer_domain(
+        return find_transfer_domain(
             target_composition=target_composition,
             target_structure=target_structure,
             target_property=target_property,
@@ -139,15 +115,34 @@ def cross_domain_reframe(
         logger.debug("find_transfer_domain failed", exc_info=True)
         return None
 
+
+def _step1_math_concept(problem, trace):
+    math_concept = _extract_math_concept(problem)
+    if math_concept is None:
+        trace.append("step1: no math concept matched")
+        logger.debug("cross_domain: no math concept for %r", problem[:80])
+        return None
+    trace.append(f"step1: math_concept={math_concept}")
+    return math_concept
+
+
+def _trace_step2(found, problem, threshold, trace):
+    if found is None:
+        return False
+    target_profile, similarity, recommendation = found
     if target_profile is None:
         trace.append(f"step2: no transfer domain (similarity below {threshold})")
         logger.debug("cross_domain: no transfer domain for %r", problem[:80])
-        return None
+        return False
     trace.append(f"step2: target_domain={target_profile.name}, sim={similarity:.3f}")
+    return True
 
-    # Step 3: SymPy unify 验证结构等价
+
+def _compute_shared_math(target_profile, trace):
     shared_math: list[str] = []
     try:
+        from huginn.ml.transfer_registry import _REGISTRY, shared_structure
+
         # target_profile 自己就是 source (它有 structure_signature)
         # 找 _REGISTRY 里和它 shared_structure 命中的所有结构
         for other in _REGISTRY:
@@ -162,33 +157,39 @@ def cross_domain_reframe(
     except Exception:
         logger.debug("shared_structure failed", exc_info=True)
     trace.append(f"step3: shared_math={shared_math}")
+    return shared_math
 
-    # Step 4: LCA 找公共数学祖先 (用于 confidence)
-    lca = _find_lca_with_target(math_concept, target_profile)
-    if lca:
-        trace.append(f"step4: lca={lca}")
-    else:
-        trace.append("step4: no lca")
 
-    # Step 5: reframe_problem 翻译到候选域
+def _reframe_problem_safe(problem, model, target_profile):
     try:
         from huginn.autoloop.conjecture import reframe_problem
+
         reframe_result = reframe_problem(
             problem,
             mode="analogy_map",
             model=model,
             target_domain=target_profile.name,
         )
-        reframed = (
+        return (
             reframe_result.get("reframed_problem")
             or reframe_result.get("reframed", "")
             or problem
         )
     except Exception:
         logger.debug("reframe_problem failed, fallback to original", exc_info=True)
-        reframed = problem
-    trace.append(f"step5: reframed={'ok' if reframed != problem else 'fallback'}")
+        return problem
 
+
+def _build_transfer(
+    problem,
+    target_profile,
+    shared_math,
+    math_concept,
+    lca,
+    reframed,
+    similarity,
+    trace,
+):
     # confidence: LCA 命中 (0.4) + similarity (0.4) + shared 命中 (0.2)
     confidence = 0.0
     if lca:
@@ -219,34 +220,72 @@ def cross_domain_reframe(
     return transfer
 
 
-def write_transfer_to_kg(
-    transfer: TransferHypothesis,
-    kg: Any = None,
-    memory_manager: Any = None,
-) -> None:
-    """把 transfer 写 KG + memory. flag off 或组件不可用时降级.
+def cross_domain_reframe(
+    problem: str,
+    target_composition: frozenset[str] | set[str] | list[str] | None = None,
+    target_structure: str = "",
+    target_property: str = "",
+    target_method: str = "",
+    n_samples: int = 0,
+    threshold: float = 0.3,
+    model: Any = None,
+) -> TransferHypothesis | None:
+    """5 步跨域迁移 pipeline. 失败返 None.
 
-    ponytail: 不在 cross_domain_reframe 内部直接调, 而是单独函数让 caller
-    决定是否写 (避免单测依赖全局 kg/memory_manager). KG 用 conjecture.get_kg
-    单例, 不新建存储.
+    target_composition/structure/property/method: 目标域画像, 缺省时从 problem
+    推断 (用 _extract_math_concept 命中的概念当 property_type).
+    model: reframe_problem 用的 LLM, None 走模板路径.
     """
-    # 1. 写 KG: caller 没传 kg 时用 conjecture 的全局单例, 不可用就跳过
-    if kg is None:
-        try:
-            from huginn.autoloop.conjecture import get_kg
-            kg = get_kg()
-        except Exception:
-            logger.debug("get_kg unavailable", exc_info=True)
-            kg = None
-    if kg is not None:
-        try:
-            kg.add_transfer_edge(transfer)
-        except Exception:
-            logger.warning("add_transfer_edge failed", exc_info=True)
+    trace: list[str] = []
+    # Step 1: 从 problem 提取 MathConcept
+    math_concept = _step1_math_concept(problem, trace)
+    if math_concept is None:
+        return None
+    # Step 2: 找结构同构预训练域
+    found = _find_transfer_target(
+        math_concept,
+        target_composition,
+        target_structure,
+        target_property,
+        target_method,
+        n_samples,
+        threshold,
+    )
+    if not _trace_step2(found, problem, threshold, trace):
+        return None
+    target_profile, similarity, recommendation = found
+    # Step 3: SymPy unify 验证结构等价
+    shared_math = _compute_shared_math(target_profile, trace)
+    return _finish_pipeline(
+        problem, math_concept, target_profile, shared_math, similarity, model, trace
+    )
 
-    # 2. 写 memory: caller 没传 mm 时跳过 (cross_domain_reframe 不知道 mm 在哪)
-    if memory_manager is None:
-        return
+
+def _finish_pipeline(
+    problem, math_concept, target_profile, shared_math, similarity, model, trace
+):
+    # Step 4: LCA 找公共数学祖先 (用于 confidence)
+    lca = _find_lca_with_target(math_concept, target_profile)
+    if lca:
+        trace.append(f"step4: lca={lca}")
+    else:
+        trace.append("step4: no lca")
+    # Step 5: reframe_problem 翻译到候选域
+    reframed = _reframe_problem_safe(problem, model, target_profile)
+    trace.append(f"step5: reframed={'ok' if reframed != problem else 'fallback'}")
+    return _build_transfer(
+        problem,
+        target_profile,
+        shared_math,
+        math_concept,
+        lca,
+        reframed,
+        similarity,
+        trace,
+    )
+
+
+def _write_transfer_to_memory(transfer, memory_manager):
     try:
         content = (
             f"CrossDomain transfer: {transfer.original_problem} -> "
@@ -269,6 +308,38 @@ def write_transfer_to_kg(
             )
     except Exception:
         logger.warning("remember_typed failed, fallback skipped", exc_info=True)
+
+
+def write_transfer_to_kg(
+    transfer: TransferHypothesis,
+    kg: Any = None,
+    memory_manager: Any = None,
+) -> None:
+    """把 transfer 写 KG + memory. flag off 或组件不可用时降级.
+
+    ponytail: 不在 cross_domain_reframe 内部直接调, 而是单独函数让 caller
+    决定是否写 (避免单测依赖全局 kg/memory_manager). KG 用 conjecture.get_kg
+    单例, 不新建存储.
+    """
+    # 1. 写 KG: caller 没传 kg 时用 conjecture 的全局单例, 不可用就跳过
+    if kg is None:
+        try:
+            from huginn.autoloop.conjecture import get_kg
+
+            kg = get_kg()
+        except Exception:
+            logger.debug("get_kg unavailable", exc_info=True)
+            kg = None
+    if kg is not None:
+        try:
+            kg.add_transfer_edge(transfer)
+        except Exception:
+            logger.warning("add_transfer_edge failed", exc_info=True)
+
+    # 2. 写 memory: caller 没传 mm 时跳过 (cross_domain_reframe 不知道 mm 在哪)
+    if memory_manager is None:
+        return
+    _write_transfer_to_memory(transfer, memory_manager)
 
 
 # === 自检 ===
@@ -324,9 +395,16 @@ if __name__ == "__main__":
 
     # 5) TransferHypothesis dataclass 字段完整性
     if hyp is not None:
-        for f in ("original_problem", "target_domain", "shared_math",
-                  "math_concept", "lca_concept", "reframed_problem",
-                  "confidence", "trace"):
+        for f in (
+            "original_problem",
+            "target_domain",
+            "shared_math",
+            "math_concept",
+            "lca_concept",
+            "reframed_problem",
+            "confidence",
+            "trace",
+        ):
             assert hasattr(hyp, f), f"TransferHypothesis 缺字段 {f}"
 
     # 6) confidence 计算: LCA 命中给 0.4
@@ -348,7 +426,8 @@ if __name__ == "__main__":
     #    跑这个需要 target 命中 ferromagnet, 然后扫描 _REGISTRY 找 shared
     if hyp2 is not None and hyp2.target_domain == "ferromagnet":
         # landau_phi4 在 ferromagnet 和 perovskite_solar 都有, SymPy unify 应等价
-        assert "landau_phi4" in hyp2.shared_math, \
+        assert "landau_phi4" in hyp2.shared_math, (
             f"ferromagnet 应与 perovskite_solar 共享 landau_phi4, got {hyp2.shared_math}"
+        )
 
     print("all self-checks passed")

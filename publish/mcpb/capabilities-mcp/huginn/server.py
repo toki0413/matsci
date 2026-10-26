@@ -80,10 +80,9 @@ from huginn.security.auth import require_api_key  # noqa: E402
 # begin accepting health checks immediately. See lifespan._register_tools.
 
 # Hide interactive docs in production to avoid leaking API surface.
-_hide_docs = (
-    os.environ.get("HUGINN_ENV", "").lower() == "production"
-    or os.environ.get("HUGINN_HIDE_DOCS", "").lower() in ("1", "true", "yes")
-)
+_hide_docs = os.environ.get("HUGINN_ENV", "").lower() == "production" or os.environ.get(
+    "HUGINN_HIDE_DOCS", ""
+).lower() in ("1", "true", "yes")
 
 app = FastAPI(
     title="Huginn Server",
@@ -128,53 +127,55 @@ def _sweep_empty_buckets() -> None:
         del _rate_buckets[ip]
 
 
-@app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    """Enforce per-IP rate limiting when HUGINN_RATE_LIMIT_PER_MINUTE > 0."""
-    if _RATE_LIMIT <= 0:
-        return await call_next(request)
-
+def _is_exempt_path(path: str) -> bool:
     # Skip health checks, docs, and the Prometheus scrape endpoint.
     # 健康检查走 /health/live、/health/ready 这些子路径, 前缀匹配才真正豁免,
     # 否则测试/探针高频打健康端点会被当普通请求计入 per-IP 限流, 误回 429.
-    path = request.url.path
-    if path == "/health" or path.startswith("/health/") or path in (
-        "/docs",
-        "/openapi.json",
-        "/redoc",
-        "/metrics",
-        "/diagnostics",
-    ):
-        return await call_next(request)
+    return (
+        path == "/health"
+        or path.startswith("/health/")
+        or path
+        in (
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+            "/metrics",
+            "/diagnostics",
+        )
+    )
 
-    client_ip = request.client.host if request.client else "unknown"
-    now = time.monotonic()
 
-    # Stricter limit for auth endpoints — brute-force protection
-    if path in ("/auth/login", "/auth/token", "/v1/auth/login", "/v1/auth/token"):
-        auth_key = f"auth:{client_ip}"
-        auth_bucket = _rate_buckets[auth_key]
-        while auth_bucket and auth_bucket[0] < now - _RATE_WINDOW:
-            auth_bucket.popleft()
-        if not auth_bucket:
-            del _rate_buckets[auth_key]
-        if len(auth_bucket) >= _AUTH_RATE_LIMIT:
-            RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
-            from huginn.errors import huginn_error_response
-            request_id = getattr(request.state, "request_id", "unknown")
-            return JSONResponse(
+def _auth_limit_response(
+    request: Request, client_ip: str, now: float
+) -> JSONResponse | None:
+    auth_key = f"auth:{client_ip}"
+    auth_bucket = _rate_buckets[auth_key]
+    while auth_bucket and auth_bucket[0] < now - _RATE_WINDOW:
+        auth_bucket.popleft()
+    if not auth_bucket:
+        del _rate_buckets[auth_key]
+    if len(auth_bucket) >= _AUTH_RATE_LIMIT:
+        RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
+        from huginn.errors import huginn_error_response
+
+        request_id = getattr(request.state, "request_id", "unknown")
+        return JSONResponse(
+            status_code=429,
+            content=huginn_error_response(
+                "RATE_LIMITED",
+                "Too many auth attempts, slow down.",
+                request_id,
                 status_code=429,
-                content=huginn_error_response(
-                    "RATE_LIMITED",
-                    "Too many auth attempts, slow down.",
-                    request_id,
-                    status_code=429,
-                ),
-                headers={"Retry-After": str(int(_RATE_WINDOW))},
-            )
-        _rate_buckets[auth_key].append(now)
-        return await call_next(request)
+            ),
+            headers={"Retry-After": str(int(_RATE_WINDOW))},
+        )
+    _rate_buckets[auth_key].append(now)
+    return None
 
+
+def _ip_limit_response(
+    request: Request, client_ip: str, now: float
+) -> JSONResponse | None:
     bucket = _rate_buckets[client_ip]
 
     # Drop timestamps older than the window
@@ -190,6 +191,7 @@ async def rate_limit_middleware(request: Request, call_next):
     if len(bucket) >= _RATE_LIMIT:
         RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
         from huginn.errors import huginn_error_response
+
         request_id = getattr(request.state, "request_id", "unknown")
         return JSONResponse(
             status_code=429,
@@ -204,6 +206,32 @@ async def rate_limit_middleware(request: Request, call_next):
 
     # defaultdict re-creates the bucket if we deleted it above.
     _rate_buckets[client_ip].append(now)
+    return None
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Enforce per-IP rate limiting when HUGINN_RATE_LIMIT_PER_MINUTE > 0."""
+    if _RATE_LIMIT <= 0:
+        return await call_next(request)
+
+    path = request.url.path
+    if _is_exempt_path(path):
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+
+    # Stricter limit for auth endpoints — brute-force protection
+    if path in ("/auth/login", "/auth/token", "/v1/auth/login", "/v1/auth/token"):
+        response = _auth_limit_response(request, client_ip, now)
+        if response is not None:
+            return response
+        return await call_next(request)
+
+    response = _ip_limit_response(request, client_ip, now)
+    if response is not None:
+        return response
 
     # Every so often, reclaim buckets for clients that have gone quiet.
     global _request_counter
@@ -252,7 +280,10 @@ async def _global_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
     logging.getLogger("huginn.server").error(
         "Unhandled exception in %s %s [request_id=%s]: %s",
-        request.method, request.url.path, request_id, exc,
+        request.method,
+        request.url.path,
+        request_id,
+        exc,
         exc_info=True,
     )
     # Don't leak internal details to the client, but include request_id
@@ -358,5 +389,6 @@ if __name__ == "__main__":
     except Exception:
         logger.debug("failed to write backend port file", exc_info=True)
 
-    uvicorn.run(app, host="127.0.0.1", port=port,
-                ws_ping_interval=300, ws_ping_timeout=300)
+    uvicorn.run(
+        app, host="127.0.0.1", port=port, ws_ping_interval=300, ws_ping_timeout=300
+    )

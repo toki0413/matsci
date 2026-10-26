@@ -20,6 +20,21 @@ from pathlib import Path
 from typing import Any
 
 
+def default_workspace_dir() -> Path:
+    """工具缺省工作目录: run workspace 优先, 无则回退 cwd.
+
+    driver 的 cwd 是**源码树**, 缺省落到 cwd 会让被测 agent 的产物写进
+    rag 同级的代码目录 (ws9 的 4 个 ``.py`` 就是这么进 ``/workspace/agent``
+    的). ``HUGINN_WORKSPACE`` 由 engine 在 run 开始时写实; ``WORKSPACE_DIR``
+    是 driver 的入口约定, 作为兼容回退. 两者都无 → 保持旧行为.
+    """
+    for name in ("HUGINN_WORKSPACE", "WORKSPACE_DIR"):
+        raw = os.environ.get(name)
+        if raw and raw.strip():
+            return Path(os.path.expandvars(raw)).expanduser()
+    return Path.cwd()
+
+
 def now_iso() -> str:
     """UTC ISO 8601 时间戳."""
     return datetime.now(UTC).isoformat()

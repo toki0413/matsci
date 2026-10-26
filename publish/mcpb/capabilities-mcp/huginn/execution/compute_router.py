@@ -59,13 +59,19 @@ class ComputeToolSpec:
 
 
 _DFT_MD_SPEC = ComputeToolSpec(
-    scaling="dft_md", atom_threshold=_DFT_MD_ATOM_THRESHOLD, walltime_hpc=_WALLTIME_HPC_SECONDS
+    scaling="dft_md",
+    atom_threshold=_DFT_MD_ATOM_THRESHOLD,
+    walltime_hpc=_WALLTIME_HPC_SECONDS,
 )
-_QC_SPEC = ComputeToolSpec(scaling="qc", atom_threshold=_QC_ATOM_THRESHOLD, walltime_hpc=None)
+_QC_SPEC = ComputeToolSpec(
+    scaling="qc", atom_threshold=_QC_ATOM_THRESHOLD, walltime_hpc=None
+)
 _GENERIC_SPEC = ComputeToolSpec(scaling="generic")
 
 # 默认登记表: 复刻原 _DFT_MD_TOOLS / _QC_TOOLS 的硬编码归属.
-_DEFAULT_TOOL_SPECS: dict[str, ComputeToolSpec] = dict.fromkeys(_DFT_MD_TOOLS, _DFT_MD_SPEC)
+_DEFAULT_TOOL_SPECS: dict[str, ComputeToolSpec] = dict.fromkeys(
+    _DFT_MD_TOOLS, _DFT_MD_SPEC
+)
 _DEFAULT_TOOL_SPECS.update(dict.fromkeys(_QC_TOOLS, _QC_SPEC))
 
 # 缩放族 → 路由标签 (保持历史 reason 文案以兼容下游).
@@ -91,9 +97,7 @@ class ComputeRouter:
     构造参数 ``tool_specs`` 或 :meth:`register_tool` 覆盖/新增, 无需改代码即换阈值.
     """
 
-    def __init__(
-        self, tool_specs: dict[str, ComputeToolSpec] | None = None
-    ) -> None:
+    def __init__(self, tool_specs: dict[str, ComputeToolSpec] | None = None) -> None:
         merged = dict(_DEFAULT_TOOL_SPECS)
         if tool_specs:
             for k, v in tool_specs.items():
@@ -109,7 +113,12 @@ class ComputeRouter:
         return self._tool_specs.get(tool_name.lower(), _GENERIC_SPEC)
 
     def route(
-        self, tool_name: str, action: str, params: dict[str, Any], *, local_only: bool = False,
+        self,
+        tool_name: str,
+        action: str,
+        params: dict[str, Any],
+        *,
+        local_only: bool = False,
     ) -> RouteDecision:
         """路由决策; ``local_only`` (M3 设备私有化) 强制任何远程目标回落到本地.
 
@@ -124,37 +133,12 @@ class ComputeRouter:
         # Explicit user preference always wins (除非 local_only 强制本地).
         backend = params.get("execution_backend")
         if backend in ("local", "hpc", "remote", "device"):
-            target = {"remote": "hpc", "device": "device"}.get(backend, backend)
-            if local_only and target not in ("local", "device"):
-                return RouteDecision(
-                    target="local",
-                    reason=(
-                        f"execution_backend '{backend}' overridden "
-                        "by execution_privacy=local_only"
-                    ),
-                )
-            return RouteDecision(target=target, reason="user_preference")
+            return _preference_decision(backend, local_only)
 
         spec = self._tool_specs.get(tool_lower, _GENERIC_SPEC)
         n_atoms = _extract_n_atoms(params)
         walltime_s = _extract_walltime_seconds(params)
-
-        target: str = "local"
-        reason = "default local routing"
-        if spec.atom_threshold is not None and n_atoms is not None and n_atoms > spec.atom_threshold:
-            target, reason = "hpc", (
-                f"n_atoms={n_atoms} > {spec.atom_threshold} "
-                f"for {_SCALING_LABELS.get(spec.scaling, 'tool')}"
-            )
-        elif spec.walltime_hpc is not None and walltime_s is not None and walltime_s > spec.walltime_hpc:
-            target, reason = "hpc", (
-                f"walltime={walltime_s}s > {spec.walltime_hpc}s "
-                f"for {_SCALING_LABELS.get(spec.scaling, 'tool')}"
-            )
-        elif spec.scaling == "dft_md":
-            target, reason = "local", "below DFT/MD HPC thresholds"
-        elif spec.scaling == "qc":
-            target, reason = "local", "below QC HPC threshold"
+        target, reason = _heuristic_target(spec, n_atoms, walltime_s)
 
         # M3 设备私有化: 远程目标强制本地, 数据不出设备.
         if local_only and target not in ("local", "device"):
@@ -166,6 +150,57 @@ class ComputeRouter:
 
 
 # ── helpers ─────────────────────────────────────────────────────────
+
+
+def _preference_decision(backend: str, local_only: bool) -> RouteDecision:
+    """用户显式 execution_backend 偏好的决策 (local_only 时强制本地)."""
+    target = {"remote": "hpc", "device": "device"}.get(backend, backend)
+    if local_only and target not in ("local", "device"):
+        return RouteDecision(
+            target="local",
+            reason=(
+                f"execution_backend '{backend}' overridden "
+                "by execution_privacy=local_only"
+            ),
+        )
+    return RouteDecision(target=target, reason="user_preference")
+
+
+def _heuristic_target(
+    spec: ComputeToolSpec, n_atoms: int | None, walltime_s: float | None
+) -> tuple[str, str]:
+    """按规格阈值判定 target/reason (顺序与原启发式一致)."""
+    target: str = "local"
+    reason = "default local routing"
+    if (
+        spec.atom_threshold is not None
+        and n_atoms is not None
+        and n_atoms > spec.atom_threshold
+    ):
+        target, reason = (
+            "hpc",
+            (
+                f"n_atoms={n_atoms} > {spec.atom_threshold} "
+                f"for {_SCALING_LABELS.get(spec.scaling, 'tool')}"
+            ),
+        )
+    elif (
+        spec.walltime_hpc is not None
+        and walltime_s is not None
+        and walltime_s > spec.walltime_hpc
+    ):
+        target, reason = (
+            "hpc",
+            (
+                f"walltime={walltime_s}s > {spec.walltime_hpc}s "
+                f"for {_SCALING_LABELS.get(spec.scaling, 'tool')}"
+            ),
+        )
+    elif spec.scaling == "dft_md":
+        target, reason = "local", "below DFT/MD HPC thresholds"
+    elif spec.scaling == "qc":
+        target, reason = "local", "below QC HPC threshold"
+    return target, reason
 
 
 def _extract_n_atoms(params: dict[str, Any]) -> int | None:

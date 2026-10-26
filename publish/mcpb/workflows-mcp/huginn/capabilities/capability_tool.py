@@ -27,8 +27,7 @@ from huginn.tools.profile import ToolProfile
 class CapabilityToolInput(BaseModel):
     action: Literal["list", "run", "search"] = Field(
         default="list",
-        description="list=返回能力清单; run=按 name 执行能力; "
-                    "search=按关键词过滤清单",
+        description="list=返回能力清单; run=按 name 执行能力; search=按关键词过滤清单",
     )
     name: str | None = Field(
         default=None,
@@ -41,6 +40,46 @@ class CapabilityToolInput(BaseModel):
     query: str = Field(
         default="",
         description="search 时用: 按 name/category/description 关键词过滤",
+    )
+
+
+def _list_result(manifest: list[dict]) -> ToolResult:
+    return ToolResult(
+        data={
+            "action": "list",
+            "n_capabilities": len(manifest),
+            "capabilities": manifest,
+        },
+        success=True,
+    )
+
+
+def _search_result(q: str, manifest: list[dict]) -> ToolResult:
+    if not q:
+        return ToolResult(
+            data={
+                "action": "search",
+                "query": q,
+                "n_capabilities": len(manifest),
+                "capabilities": manifest,
+            },
+            success=True,
+        )
+    hit = [
+        m
+        for m in manifest
+        if q in (m.get("name", "")).lower()
+        or q in (m.get("category", "")).lower()
+        or q in (m.get("description", "")).lower()
+    ]
+    return ToolResult(
+        data={
+            "action": "search",
+            "query": q,
+            "n_capabilities": len(hit),
+            "capabilities": hit,
+        },
+        success=True,
     )
 
 
@@ -61,55 +100,27 @@ class CapabilityTool(HuginnTool):
     input_schema = CapabilityToolInput
     profile = ToolProfile(cost_tier="none", phases=None)
 
-    async def call(self, args: CapabilityToolInput, context: ToolContext | None = None) -> ToolResult:
+    async def call(
+        self, args: CapabilityToolInput, context: ToolContext | None = None
+    ) -> ToolResult:
         from huginn.capabilities.registry import CapabilityRegistry
 
         if args.action == "list":
-            manifest = CapabilityRegistry.manifest()
-            return ToolResult(
-                data={
-                    "action": "list",
-                    "n_capabilities": len(manifest),
-                    "capabilities": manifest,
-                },
-                success=True,
-            )
+            return _list_result(CapabilityRegistry.manifest())
         if args.action == "search":
             q = (args.query or "").lower().strip()
-            manifest = CapabilityRegistry.manifest()
-            if not q:
-                return ToolResult(
-                    data={
-                        "action": "search",
-                        "query": q,
-                        "n_capabilities": len(manifest),
-                        "capabilities": manifest,
-                    },
-                    success=True,
-                )
-            hit = [
-                m for m in manifest
-                if q in (m.get("name", "")).lower()
-                or q in (m.get("category", "")).lower()
-                or q in (m.get("description", "")).lower()
-            ]
-            return ToolResult(
-                data={
-                    "action": "search",
-                    "query": q,
-                    "n_capabilities": len(hit),
-                    "capabilities": hit,
-                },
-                success=True,
-            )
+            return _search_result(q, CapabilityRegistry.manifest())
         # run
         name = (args.name or "").strip()
         if not name:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="run action requires 'name' (from list output)",
             )
-        result = await CapabilityRegistry.run(name, args.args, self._make_context(context))
+        result = await CapabilityRegistry.run(
+            name, args.args, self._make_context(context)
+        )
         tool_result = result.to_tool_result()
         if not result.success:
             return tool_result

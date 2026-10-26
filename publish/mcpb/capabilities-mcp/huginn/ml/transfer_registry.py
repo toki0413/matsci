@@ -31,10 +31,10 @@ class DomainProfile:
 
     name: str
     composition: frozenset[str]  # 涉及元素: {"Si", "O", "Ti"}
-    structure_type: str = ""    # perovskite, layered, amorphous, bulk, molecular
-    property_type: str = ""     # electronic, mechanical, thermal, magnetic, optical
-    method: str = ""             # DFT-PBE, DFT-HSE, MD, ML, experiment
-    scale: str = "atomic"        # atomic, nano, meso, macro
+    structure_type: str = ""  # perovskite, layered, amorphous, bulk, molecular
+    property_type: str = ""  # electronic, mechanical, thermal, magnetic, optical
+    method: str = ""  # DFT-PBE, DFT-HSE, MD, ML, experiment
+    scale: str = "atomic"  # atomic, nano, meso, macro
     # 预训练数据量 (0-1 归一化, 1.0 = 1000+ 样本)
     pretrain_coverage: float = 0.0
     # 该域可用的预训练模型名 (GP/NN surrogate 名称)
@@ -260,7 +260,40 @@ def find_transfer_domain(
     迁移有效性 = similarity × min(1.0, n_samples / 30)
     （迁移学习需要至少 ~30 个样本做 fine-tune）
     """
-    target = DomainProfile(
+    target = _target_profile(
+        target_composition, target_structure, target_property, target_method
+    )
+
+    best, best_sim = _best_domain_match(target)
+
+    if best is None or best_sim < threshold:
+        return None, best_sim, _no_match_recommendation(best, best_sim, threshold)
+
+    data_sufficiency = min(1.0, n_samples / 30.0) if n_samples > 0 else 0.0
+    transfer_effectiveness = best_sim * data_sufficiency
+
+    # 共享结构提示 (若两域 structure_signature 有交集)
+    shared_hint = _shared_structure_hint(best, target)
+
+    if data_sufficiency < 0.1:
+        recommendation = _insufficient_data_recommendation(
+            best, best_sim, n_samples, shared_hint
+        )
+        return best, best_sim, recommendation
+
+    recommendation = _viable_recommendation(
+        best, best_sim, n_samples, transfer_effectiveness, shared_hint
+    )
+    return best, best_sim, recommendation
+
+
+def _target_profile(
+    target_composition: frozenset[str] | set[str] | list[str],
+    target_structure: str,
+    target_property: str,
+    target_method: str,
+) -> DomainProfile:
+    return DomainProfile(
         name="target",
         composition=frozenset(target_composition),
         structure_type=target_structure,
@@ -268,6 +301,29 @@ def find_transfer_domain(
         method=target_method,
     )
 
+
+def _no_match_recommendation(
+    best: DomainProfile | None, best_sim: float, threshold: float
+) -> str:
+    return (
+        f"No pretrained domain exceeds similarity threshold ({threshold}). "
+        f"Best was {best.name if best else 'none'} at {best_sim:.2f}. "
+        f"Consider collecting more data or using a general surrogate."
+    )
+
+
+def _shared_structure_hint(best: DomainProfile, target: DomainProfile) -> str:
+    shared = shared_structure(best, target)
+    return (
+        f" Shared mathematical structure: {', '.join(shared)}. "
+        f"Cross-domain transfer by structural isomorphism, "
+        f"surface features may differ."
+        if shared
+        else ""
+    )
+
+
+def _best_domain_match(target: DomainProfile) -> tuple[DomainProfile | None, float]:
     best: DomainProfile | None = None
     best_sim = 0.0
 
@@ -277,35 +333,29 @@ def find_transfer_domain(
             best_sim = sim
             best = src
 
-    if best is None or best_sim < threshold:
-        return None, best_sim, (
-            f"No pretrained domain exceeds similarity threshold ({threshold}). "
-            f"Best was {best.name if best else 'none'} at {best_sim:.2f}. "
-            f"Consider collecting more data or using a general surrogate."
-        )
+    return best, best_sim
 
-    data_sufficiency = min(1.0, n_samples / 30.0) if n_samples > 0 else 0.0
-    transfer_effectiveness = best_sim * data_sufficiency
 
-    # 共享结构提示 (若两域 structure_signature 有交集)
-    shared = shared_structure(best, target)
-    shared_hint = (
-        f" Shared mathematical structure: {', '.join(shared)}. "
-        f"Cross-domain transfer by structural isomorphism, "
-        f"surface features may differ."
-        if shared else ""
+def _insufficient_data_recommendation(
+    best: DomainProfile, best_sim: float, n_samples: int, shared_hint: str
+) -> str:
+    return (
+        f"Domain '{best.name}' matched (similarity={best_sim:.2f}) but "
+        f"insufficient target data ({n_samples}/30 samples). "
+        f"Collect at least {30 - n_samples} more samples for effective transfer. "
+        f"Available pretrained models: {', '.join(best.pretrained_models) or 'none'}."
+        f"{shared_hint}"
     )
 
-    if data_sufficiency < 0.1:
-        return best, best_sim, (
-            f"Domain '{best.name}' matched (similarity={best_sim:.2f}) but "
-            f"insufficient target data ({n_samples}/30 samples). "
-            f"Collect at least {30 - n_samples} more samples for effective transfer. "
-            f"Available pretrained models: {', '.join(best.pretrained_models) or 'none'}."
-            f"{shared_hint}"
-        )
 
-    return best, best_sim, (
+def _viable_recommendation(
+    best: DomainProfile,
+    best_sim: float,
+    n_samples: int,
+    transfer_effectiveness: float,
+    shared_hint: str,
+) -> str:
+    return (
         f"Transfer learning viable: '{best.name}' → target "
         f"(similarity={best_sim:.2f}, effectiveness={transfer_effectiveness:.2f}). "
         f"Pretrained models: {', '.join(best.pretrained_models) or 'none'}. "
@@ -319,19 +369,23 @@ def find_transfer_domain(
 # _sympy_equivalent → shared_structure → _render_transfer_prompt 注入 LLM
 # ponytail: 静默丢弃不在 allowlist 的 signature, 不阻断主流程
 # 升级: 从用户材料自动抽取 signature 时, 改为从已知数据库查表而非信任输入
-_ALLOWED_SIGNATURE_NAMES: frozenset[str] = frozenset({
-    "landau_phi4",
-    "group_O3",
-    "parabolic_pde",
-    "semigroup",
-    "conserved_current",
-    "order_discrete",
-    "kane_model",
-})
+_ALLOWED_SIGNATURE_NAMES: frozenset[str] = frozenset(
+    {
+        "landau_phi4",
+        "group_O3",
+        "parabolic_pde",
+        "semigroup",
+        "conserved_current",
+        "order_discrete",
+        "kane_model",
+    }
+)
 _MAX_EXPR_LEN = 200  # sympy_expr 最大字符数, 防长 payload 注入
 
 
-def _sanitize_signature(sig: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+def _sanitize_signature(
+    sig: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
     """过滤掉不在 allowlist 的 signature, 截断过长的表达式."""
     return tuple(
         (name, expr[:_MAX_EXPR_LEN])
@@ -350,5 +404,6 @@ def register_domain(profile: DomainProfile) -> None:
     if profile.structure_signature:
         clean = _sanitize_signature(profile.structure_signature)
         from dataclasses import replace
+
         profile = replace(profile, structure_signature=clean)
     _REGISTRY.append(profile)

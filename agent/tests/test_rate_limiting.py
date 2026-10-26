@@ -28,6 +28,7 @@ async def _noop():
 @pytest.fixture(scope="module")
 def app_client(tmp_path_factory):
     ws = tmp_path_factory.mktemp("rate_ws")
+    prev_ws = os.environ.get("HUGINN_WORKSPACE")
     os.environ["HUGINN_WORKSPACE"] = str(ws)
     import huginn.server as sm
     sm._init_mcp_tools = _noop
@@ -45,8 +46,16 @@ def app_client(tmp_path_factory):
     store = get_user_store()
     store._users["rate-user"] = User(user_id="rate-user", username="rate", role=Role.ADMIN, active=True, api_key_hash="", created_at=0)
     from fastapi.testclient import TestClient
-    with TestClient(sm.app) as c:
-        yield c
+    try:
+        with TestClient(sm.app) as c:
+            yield c
+    finally:
+        # 恢复 HUGINN_WORKSPACE: 否则同进程后续测试的 default_workspace_dir()
+        # 读到本 fixture 的临时目录, 沙箱 allowed_roots 判错 (CI 顺序依赖).
+        if prev_ws is None:
+            os.environ.pop("HUGINN_WORKSPACE", None)
+        else:
+            os.environ["HUGINN_WORKSPACE"] = prev_ws
 
 
 @pytest.fixture

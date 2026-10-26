@@ -94,7 +94,8 @@ class NumericalToolInput(BaseModel):
         description="Cost coefficients for lp/milp (objective: minimize c@x).",
     )
     A_ub: list[list[float]] | None = Field(
-        default=None, description="Inequality constraint matrix for lp (A_ub @ x <= b_ub)."
+        default=None,
+        description="Inequality constraint matrix for lp (A_ub @ x <= b_ub).",
     )
     b_ub: list[float] | None = Field(default=None)
     A_eq: list[list[float]] | None = Field(
@@ -129,8 +130,12 @@ class NumericalToolInput(BaseModel):
         default="birch_murnaghan",
         description="Equation of state type for eos_fit.",
     )
-    volumes: list[float] | None = Field(default=None, description="Volume data points (Å³)")
-    energies: list[float] | None = Field(default=None, description="Energy data points (eV)")
+    volumes: list[float] | None = Field(
+        default=None, description="Volume data points (Å³)"
+    )
+    energies: list[float] | None = Field(
+        default=None, description="Energy data points (eV)"
+    )
 
     # Solver options
     method: str | None = Field(default=None)
@@ -242,54 +247,210 @@ class NumericalTool(HuginnTool):
     def is_read_only(self, args: NumericalToolInput) -> bool:
         return True
 
+    @staticmethod
+    def _validate_expression_actions(args: NumericalToolInput) -> str | None:
+        """Checks for actions driven by a user expression / initial guess."""
+        if (
+            args.action
+            in ("ode", "minimize", "constrained_minimize", "root", "integrate")
+            and not args.func
+        ):
+            return f"{args.action} requires a func expression."
+        if args.action == "constrained_minimize" and args.x0 is None:
+            return "constrained_minimize requires x0."
+        if args.action == "curve_fit" and (
+            not args.func_fit or args.xdata is None or args.ydata is None
+        ):
+            return "curve_fit requires func_fit, xdata, and ydata."
+        return None
+
+    @staticmethod
+    def _validate_array_actions(args: NumericalToolInput) -> str | None:
+        """Checks for actions driven by matrices / arrays."""
+        if args.action == "linear_solve" and (args.A is None or args.b_vec is None):
+            return "linear_solve requires A and b."
+        if args.action in ("eigenvalues", "svd", "matrix_exp") and args.A is None:
+            return f"{args.action} requires A."
+        if args.action == "interpolate" and (args.x is None or args.y is None):
+            return "interpolate requires x and y arrays."
+        if args.action == "fft" and args.data is None:
+            return "fft requires data array."
+        return None
+
+    @staticmethod
+    def _validate_problem_actions(args: NumericalToolInput) -> str | None:
+        """Checks for optimisation / EOS actions."""
+        if args.action in ("lp", "milp") and args.c_vec is None:
+            return f"{args.action} requires c_vec (cost coefficients)."
+        if args.action == "convex" and not args.convex_problem:
+            return "convex requires convex_problem (problem description)."
+        if args.action == "eos_fit" and (args.volumes is None or args.energies is None):
+            return "eos_fit requires volumes and energies."
+        return None
+
     async def validate_input(
         self, args: NumericalToolInput, context: ToolContext | None = None
     ) -> ValidationResult:
-        if args.action in ("ode", "minimize", "constrained_minimize", "root", "integrate") and not args.func:
-            return ValidationResult(
-                result=False,
-                message=f"{args.action} requires a func expression.",
-            )
-        if args.action == "constrained_minimize" and args.x0 is None:
-            return ValidationResult(
-                result=False,
-                message="constrained_minimize requires x0.",
-            )
-        if args.action == "curve_fit" and (not args.func_fit or args.xdata is None or args.ydata is None):
-            return ValidationResult(
-                result=False,
-                message="curve_fit requires func_fit, xdata, and ydata.",
-            )
-        if args.action == "linear_solve" and (args.A is None or args.b_vec is None):
-            return ValidationResult(
-                result=False,
-                message="linear_solve requires A and b.",
-            )
-        if args.action in ("eigenvalues", "svd", "matrix_exp") and args.A is None:
-            return ValidationResult(
-                result=False,
-                message=f"{args.action} requires A.",
-            )
-        if args.action == "interpolate" and (args.x is None or args.y is None):
-            return ValidationResult(
-                result=False,
-                message="interpolate requires x and y arrays.",
-            )
-        if args.action == "fft" and args.data is None:
-            return ValidationResult(result=False, message="fft requires data array.")
-        if args.action in ("lp", "milp") and args.c_vec is None:
-            return ValidationResult(
-                result=False, message=f"{args.action} requires c_vec (cost coefficients)."
-            )
-        if args.action == "convex" and not args.convex_problem:
-            return ValidationResult(
-                result=False, message="convex requires convex_problem (problem description)."
-            )
-        if args.action == "eos_fit" and (args.volumes is None or args.energies is None):
-            return ValidationResult(
-                result=False, message="eos_fit requires volumes and energies."
-            )
+        for message in (
+            self._validate_expression_actions(args),
+            self._validate_array_actions(args),
+            self._validate_problem_actions(args),
+        ):
+            if message is not None:
+                return ValidationResult(result=False, message=message)
         return ValidationResult(result=True)
+
+    def _dispatch_direct(self, d: NumericalToolInput) -> ToolResult | None:
+        """Actions handled by their own method, bypassing the scipy library."""
+        handlers = {
+            "svd": self._svd,
+            "matrix_exp": self._matrix_exp,
+            "constrained_minimize": self._constrained_minimize,
+            "lp": self._lp,
+            "milp": self._milp,
+            "convex": self._convex,
+            "eos_fit": self._eos_fit,
+        }
+        handler = handlers.get(d.action)
+        return handler(d) if handler is not None else None
+
+    def _library_result(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        """Route remaining actions to huginn.utils.numerical; (result, error)."""
+        handlers = {
+            "ode": self._num_ode,
+            "minimize": self._num_minimize,
+            "root": self._num_root,
+            "curve_fit": self._num_curve_fit,
+            "integrate": self._num_integrate,
+            "linear_solve": self._num_linear_solve,
+            "eigenvalues": self._num_eigenvalues,
+            "interpolate": self._num_interpolate,
+            "fft": self._num_fft,
+        }
+        handler = handlers.get(d.action)
+        if handler is None:
+            return None, f"Unknown action: {d.action}"
+        return handler(d)
+
+    def _num_ode(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import solve_ode
+
+        if d.t_span is None or d.y0 is None:
+            return None, "ode requires t_span and y0"
+        func = _compile_ode_func(d.func or "-y[0]")
+        return (
+            solve_ode(
+                func,
+                tuple(d.t_span),  # type: ignore[arg-type]
+                d.y0,
+                method=d.method or "RK45",
+                t_eval=d.t_eval,
+                rtol=d.tol or 1e-6,
+            ),
+            None,
+        )
+
+    def _num_minimize(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import minimize_func
+
+        if d.x0 is None:
+            return None, "minimize requires x0"
+        func = _compile_vector_func(d.func or "X[0]**2")
+        return (
+            minimize_func(func, d.x0, method=d.method or "BFGS", tol=d.tol or 1e-6),
+            None,
+        )
+
+    def _num_root(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import find_root
+
+        if d.x0 is None:
+            return None, "root requires x0"
+        func = _compile_scalar_func(d.func or "x**2 - 4")
+        return (
+            find_root(
+                func,
+                d.x0,
+                method=d.method or "hybr",
+                tol=d.tol or 1e-8,
+                maxiter=d.maxiter or 100,
+            ),
+            None,
+        )
+
+    def _num_curve_fit(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import fit_curve
+
+        fit_expr = d.func_fit or "a0*x + a1"
+        func = _compile_fit_func(fit_expr)
+        return (
+            fit_curve(
+                func,
+                np.asarray(d.xdata, dtype=float),
+                np.asarray(d.ydata, dtype=float),
+                p0=[1.0] * _fit_param_count(fit_expr),
+            ),
+            None,
+        )
+
+    def _num_integrate(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import integrate
+
+        if d.a is None or d.b is None:
+            return None, "integrate requires a and b"
+        func = _compile_scalar_func(d.func or "x**2")
+        return (
+            integrate(
+                func,
+                d.a,
+                d.b,
+                method=d.method or "quad",
+                n_points=d.n_points,
+            ),
+            None,
+        )
+
+    def _num_linear_solve(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import solve_linear
+
+        return (
+            solve_linear(
+                np.asarray(d.A, dtype=float),
+                np.asarray(d.b_vec, dtype=float),
+            ),
+            None,
+        )
+
+    def _num_eigenvalues(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import eigenvalues
+
+        if d.A is None:
+            return None, "eigenvalues requires A"
+        return eigenvalues(np.asarray(d.A, dtype=float)), None
+
+    def _num_interpolate(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import interpolate_1d
+
+        return (
+            interpolate_1d(
+                np.asarray(d.x, dtype=float),
+                np.asarray(d.y, dtype=float),
+                kind=d.kind,
+                x_new=np.asarray(d.x_new, dtype=float) if d.x_new else None,
+            ),
+            None,
+        )
+
+    def _num_fft(self, d: NumericalToolInput) -> tuple[Any, str | None]:
+        from huginn.utils.numerical import fft
+
+        return (
+            fft(
+                np.asarray(d.data, dtype=float),
+                sampling_rate=d.sampling_rate,
+            ),
+            None,
+        )
 
     async def call(
         self, args: dict[str, Any], context: ToolContext | None = None
@@ -297,123 +458,13 @@ class NumericalTool(HuginnTool):
         input_data = NumericalToolInput(**args)
 
         try:
-            # Actions that don't route through huginn.utils.numerical.
-            if input_data.action == "svd":
-                return self._svd(input_data)
-            if input_data.action == "matrix_exp":
-                return self._matrix_exp(input_data)
-            if input_data.action == "constrained_minimize":
-                return self._constrained_minimize(input_data)
-            if input_data.action == "lp":
-                return self._lp(input_data)
-            if input_data.action == "milp":
-                return self._milp(input_data)
-            if input_data.action == "convex":
-                return self._convex(input_data)
-            if input_data.action == "eos_fit":
-                return self._eos_fit(input_data)
+            direct = self._dispatch_direct(input_data)
+            if direct is not None:
+                return direct
 
-            from huginn.utils.numerical import (
-                eigenvalues,
-                fft,
-                find_root,
-                fit_curve,
-                integrate,
-                interpolate_1d,
-                minimize_func,
-                solve_linear,
-                solve_ode,
-            )
-
-            if input_data.action == "ode":
-                if input_data.t_span is None or input_data.y0 is None:
-                    return ToolResult(data=None, success=False, error="ode requires t_span and y0")
-                func = _compile_ode_func(input_data.func or "-y[0]")
-                result = solve_ode(
-                    func,
-                    tuple(input_data.t_span),  # type: ignore[arg-type]
-                    input_data.y0,
-                    method=input_data.method or "RK45",
-                    t_eval=input_data.t_eval,
-                    rtol=input_data.tol or 1e-6,
-                )
-
-            elif input_data.action == "minimize":
-                if input_data.x0 is None:
-                    return ToolResult(data=None, success=False, error="minimize requires x0")
-                func = _compile_vector_func(input_data.func or "X[0]**2")
-                result = minimize_func(
-                    func,
-                    input_data.x0,
-                    method=input_data.method or "BFGS",
-                    tol=input_data.tol or 1e-6,
-                )
-
-            elif input_data.action == "root":
-                if input_data.x0 is None:
-                    return ToolResult(data=None, success=False, error="root requires x0")
-                func = _compile_scalar_func(input_data.func or "x**2 - 4")
-                result = find_root(
-                    func,
-                    input_data.x0,
-                    method=input_data.method or "hybr",
-                    tol=input_data.tol or 1e-8,
-                    maxiter=input_data.maxiter or 100,
-                )
-
-            elif input_data.action == "curve_fit":
-                fit_expr = input_data.func_fit or "a0*x + a1"
-                func = _compile_fit_func(fit_expr)
-                result = fit_curve(
-                    func,
-                    np.asarray(input_data.xdata, dtype=float),
-                    np.asarray(input_data.ydata, dtype=float),
-                    p0=[1.0] * _fit_param_count(fit_expr),
-                )
-
-            elif input_data.action == "integrate":
-                if input_data.a is None or input_data.b is None:
-                    return ToolResult(data=None, success=False, error="integrate requires a and b")
-                func = _compile_scalar_func(input_data.func or "x**2")
-                result = integrate(
-                    func,
-                    input_data.a,
-                    input_data.b,
-                    method=input_data.method or "quad",
-                    n_points=input_data.n_points,
-                )
-
-            elif input_data.action == "linear_solve":
-                result = solve_linear(
-                    np.asarray(input_data.A, dtype=float),
-                    np.asarray(input_data.b_vec, dtype=float),
-                )
-
-            elif input_data.action == "eigenvalues":
-                if input_data.A is None:
-                    return ToolResult(data=None, success=False, error="eigenvalues requires A")
-                result = eigenvalues(np.asarray(input_data.A, dtype=float))
-
-            elif input_data.action == "interpolate":
-                result = interpolate_1d(
-                    np.asarray(input_data.x, dtype=float),
-                    np.asarray(input_data.y, dtype=float),
-                    kind=input_data.kind,
-                    x_new=np.asarray(input_data.x_new, dtype=float) if input_data.x_new else None,
-                )
-
-            elif input_data.action == "fft":
-                result = fft(
-                    np.asarray(input_data.data, dtype=float),
-                    sampling_rate=input_data.sampling_rate,
-                )
-
-            else:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Unknown action: {input_data.action}",
-                )
+            result, missing = self._library_result(input_data)
+            if missing is not None:
+                return ToolResult(data=None, success=False, error=missing)
 
             if result.success:
                 return ToolResult(data=result.to_dict(), success=True)
@@ -513,80 +564,119 @@ class NumericalTool(HuginnTool):
 
     # ── Linear Programming ──────────────────────────────────────────
 
-    def _lp(self, args: NumericalToolInput) -> ToolResult:
-        """Solve: minimize c@x  s.t.  A_ub@x <= b_ub, A_eq@x = b_eq, lb <= x <= ub."""
-        try:
-            from scipy.optimize import linprog
-        except ImportError:
-            return ToolResult(
-                data=None, success=False,
-                error="scipy is required for linear programming.",
-            )
+    @staticmethod
+    def _lp_arrays(
+        args: NumericalToolInput,
+    ) -> tuple[np.ndarray, Any, Any, Any, Any]:
+        """(c, A_ub, b_ub, A_eq, b_eq) as float arrays or None."""
+        return (
+            np.asarray(args.c_vec, dtype=float),
+            np.asarray(args.A_ub, dtype=float) if args.A_ub else None,
+            np.asarray(args.b_ub, dtype=float) if args.b_ub else None,
+            np.asarray(args.A_eq, dtype=float) if args.A_eq else None,
+            np.asarray(args.b_eq, dtype=float) if args.b_eq else None,
+        )
 
-        c = np.asarray(args.c_vec, dtype=float)
-        A_ub = np.asarray(args.A_ub, dtype=float) if args.A_ub else None
-        b_ub = np.asarray(args.b_ub, dtype=float) if args.b_ub else None
-        A_eq = np.asarray(args.A_eq, dtype=float) if args.A_eq else None
-        b_eq = np.asarray(args.b_eq, dtype=float) if args.b_eq else None
-
-        bounds = self._parse_var_bounds(args.var_bounds, n_vars=len(c))
-
-        try:
-            res = linprog(
-                c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
-                bounds=bounds, method=args.method or "highs",
-            )
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"LP failed: {e}")
-
+    @staticmethod
+    def _lp_result(res: Any, method: str | None) -> ToolResult:
+        """Package a linprog result."""
         if res.success:
             return ToolResult(
                 data={
                     "x": res.x.tolist(),
                     "fun": float(res.fun),
-                    "method": "linprog (HiGHS)" if args.method is None else args.method,
+                    "method": "linprog (HiGHS)" if method is None else method,
                     "message": res.message or "Optimization terminated successfully.",
                     "n_iter": getattr(res, "nit", None),
                 },
                 success=True,
             )
         return ToolResult(
-            data={"message": res.message or "LP failed", "fun": float(res.fun) if res.fun is not None else None},
+            data={
+                "message": res.message or "LP failed",
+                "fun": float(res.fun) if res.fun is not None else None,
+            },
             success=False,
             error=f"LP failed: {res.message}",
         )
 
+    def _lp(self, args: NumericalToolInput) -> ToolResult:
+        """Solve: minimize c@x  s.t.  A_ub@x <= b_ub, A_eq@x = b_eq, lb <= x <= ub."""
+        try:
+            from scipy.optimize import linprog
+        except ImportError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="scipy is required for linear programming.",
+            )
+
+        c, A_ub, b_ub, A_eq, b_eq = self._lp_arrays(args)
+        bounds = self._parse_var_bounds(args.var_bounds, n_vars=len(c))
+
+        try:
+            res = linprog(
+                c,
+                A_ub=A_ub,
+                b_ub=b_ub,
+                A_eq=A_eq,
+                b_eq=b_eq,
+                bounds=bounds,
+                method=args.method or "highs",
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"LP failed: {e}")
+
+        return self._lp_result(res, args.method)
+
     # ── Mixed-Integer Linear Programming ────────────────────────────
 
-    def _milp(self, args: NumericalToolInput) -> ToolResult:
-        """Solve MILP: minimize c@x with linear constraints and integer variables."""
-        try:
-            from scipy.optimize import Bounds, LinearConstraint, milp
-        except ImportError:
-            return self._milp_fallback_pulp(args)
+    @staticmethod
+    def _milp_constraints(args: NumericalToolInput) -> list[Any]:
+        """Linear inequality / equality constraints as scipy LinearConstraint."""
+        from scipy.optimize import LinearConstraint
 
-        c = np.asarray(args.c_vec, dtype=float)
-        len(c)
-
-        constraints = []
+        constraints: list[Any] = []
         if args.A_ub is not None and args.b_ub is not None:
             # A_ub @ x <= b_ub  →  LinearConstraint(A_ub, -inf, b_ub)
-            A_ub = np.asarray(args.A_ub, dtype=float)
-            b_ub = np.asarray(args.b_ub, dtype=float)
-            constraints.append(LinearConstraint(A_ub, -np.inf, b_ub))
+            constraints.append(
+                LinearConstraint(
+                    np.asarray(args.A_ub, dtype=float),
+                    -np.inf,
+                    np.asarray(args.b_ub, dtype=float),
+                )
+            )
         if args.A_eq is not None and args.b_eq is not None:
-            A_eq = np.asarray(args.A_eq, dtype=float)
             b_eq = np.asarray(args.b_eq, dtype=float)
-            constraints.append(LinearConstraint(A_eq, b_eq, b_eq))
+            constraints.append(
+                LinearConstraint(np.asarray(args.A_eq, dtype=float), b_eq, b_eq)
+            )
+        return constraints
+
+    @staticmethod
+    def _milp_bounds(args: NumericalToolInput) -> Any:
+        """Variable box bounds; defaults to x >= 0."""
+        from scipy.optimize import Bounds
 
         if args.var_bounds:
             lb = [b[0] for b in args.var_bounds]
             ub = [b[1] for b in args.var_bounds]
-            bounds = Bounds(lb=lb, ub=ub)
-        else:
-            bounds = Bounds(lb=0, ub=np.inf)
+            return Bounds(lb=lb, ub=ub)
+        return Bounds(lb=0, ub=np.inf)
 
-        integrality = np.asarray(args.integrality, dtype=int) if args.integrality else None
+    def _milp(self, args: NumericalToolInput) -> ToolResult:
+        """Solve MILP: minimize c@x with linear constraints and integer variables."""
+        try:
+            from scipy.optimize import milp
+        except ImportError:
+            return self._milp_fallback_pulp(args)
+
+        c = np.asarray(args.c_vec, dtype=float)
+        constraints = self._milp_constraints(args)
+        bounds = self._milp_bounds(args)
+        integrality = (
+            np.asarray(args.integrality, dtype=int) if args.integrality else None
+        )
 
         try:
             res = milp(
@@ -614,28 +704,28 @@ class NumericalTool(HuginnTool):
             error=f"MILP failed: {res.message}",
         )
 
-    def _milp_fallback_pulp(self, args: NumericalToolInput) -> ToolResult:
-        """Fallback MILP solver using PuLP when scipy.optimize.milp is unavailable."""
-        try:
-            import pulp
-        except ImportError:
-            return ToolResult(
-                data=None, success=False,
-                error=(
-                    "MILP requires scipy>=1.9 (milp) or pulp. "
-                    "Install one: pip install scipy --upgrade  OR  pip install pulp"
-                ),
+    @staticmethod
+    def _pulp_variables(c: list[float], integrality: list[int] | None) -> list[Any]:
+        """One non-negative LpVariable per decision variable."""
+        import pulp
+
+        return [
+            pulp.LpVariable(
+                f"x{i}",
+                lowBound=0,
+                cat="Integer" if (integrality and integrality[i]) else "Continuous",
             )
+            for i in range(len(c))
+        ]
 
-        c = args.c_vec or []
-        n = len(c)
-        prob = pulp.LpProblem("milp", pulp.LpMinimize)
-        xs = [pulp.LpVariable(f"x{i}", lowBound=0, cat="Integer" if
-              (args.integrality and args.integrality[i]) else "Continuous")
-              for i in range(n)]
+    @staticmethod
+    def _pulp_solve_constraints(
+        prob: Any, xs: list[Any], args: NumericalToolInput
+    ) -> None:
+        """Attach inequality / equality constraints to the PuLP problem."""
+        import pulp
 
-        prob += pulp.lpSum(c[i] * xs[i] for i in range(n))
-
+        n = len(xs)
         if args.A_ub and args.b_ub:
             for row, bi in zip(args.A_ub, args.b_ub):
                 prob += pulp.lpSum(row[j] * xs[j] for j in range(n)) <= bi
@@ -643,12 +733,37 @@ class NumericalTool(HuginnTool):
             for row, bi in zip(args.A_eq, args.b_eq):
                 prob += pulp.lpSum(row[j] * xs[j] for j in range(n)) == bi
 
+    @staticmethod
+    def _pulp_apply_bounds(xs: list[Any], var_bounds: list[Any]) -> None:
+        """Override per-variable bounds when the user supplied finite ones."""
+        for i, (lb, ub) in enumerate(var_bounds):
+            if lb is not None and lb > -1e30:
+                xs[i].lowBound = lb
+            if ub is not None and ub < 1e30:
+                xs[i].upBound = ub
+
+    def _milp_fallback_pulp(self, args: NumericalToolInput) -> ToolResult:
+        """Fallback MILP solver using PuLP when scipy.optimize.milp is unavailable."""
+        try:
+            import pulp
+        except ImportError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    "MILP requires scipy>=1.9 (milp) or pulp. "
+                    "Install one: pip install scipy --upgrade  OR  pip install pulp"
+                ),
+            )
+
+        c = args.c_vec or []
+        prob = pulp.LpProblem("milp", pulp.LpMinimize)
+        xs = self._pulp_variables(c, args.integrality)
+        prob += pulp.lpSum(c[i] * xs[i] for i in range(len(c)))
+
+        self._pulp_solve_constraints(prob, xs, args)
         if args.var_bounds:
-            for i, (lb, ub) in enumerate(args.var_bounds):
-                if lb is not None and lb > -1e30:
-                    xs[i].lowBound = lb
-                if ub is not None and ub < 1e30:
-                    xs[i].upBound = ub
+            self._pulp_apply_bounds(xs, args.var_bounds)
 
         status = prob.solve(pulp.PULP_CBC_CMD(msg=0))
         if status == 1:
@@ -669,46 +784,25 @@ class NumericalTool(HuginnTool):
 
     # ── Convex Optimization (cvxpy) ────────────────────────────────
 
-    def _convex(self, args: NumericalToolInput) -> ToolResult:
-        """Solve a convex optimization problem using cvxpy.
-
-        Accepts a structured problem description that the LLM can generate:
-        {
-            "action": "convex",
-            "convex_problem": "minimize 0.5*sum_squares(A@x - b)\nsubject to\nx >= 0\nsum(x) <= 1"
-        }
-
-        For more complex problems with named variables, the LLM can pass
-        Python code that constructs a cvxpy Problem directly.
-        """
-        try:
-            import cvxpy as cp
-        except ImportError:
-            return ToolResult(
-                data=None, success=False,
-                error="cvxpy is required for convex optimization. Install: pip install cvxpy",
-            )
-
-        problem_str = args.convex_problem or ""
-        lines = [line.strip() for line in problem_str.strip().splitlines() if line.strip()]
-
+    @staticmethod
+    def _convex_parse(problem_str: str) -> tuple[str, str, list[str]]:
+        """Split the problem text into (sense, objective, constraint lines)."""
+        lines = [ln.strip() for ln in problem_str.strip().splitlines() if ln.strip()]
         if not lines:
-            return ToolResult(data=None, success=False, error="Empty convex problem.")
+            return "minimize", "", []
 
         # Parse: [minimize|maximize] <objective>
         #        subject to
         #        <constraint1>
-        #        <constraint2>
         sense = "minimize"
         obj_line = lines[0]
         for s in ("minimize", "maximize", "min", "max"):
             if obj_line.lower().startswith(s):
                 sense = "maximize" if "max" in s.lower() else "minimize"
-                obj_line = obj_line[len(s):].strip()
+                obj_line = obj_line[len(s) :].strip()
                 break
 
-        # Split objective and constraints
-        constraints_str = []
+        constraints_str: list[str] = []
         in_constraints = False
         for line in lines[1:]:
             if line.lower() in ("subject to", "s.t.", "st:"):
@@ -718,66 +812,99 @@ class NumericalTool(HuginnTool):
                 constraints_str.append(line)
             else:
                 obj_line += "\n" + line
+        return sense, obj_line, constraints_str
 
-        # Build cvxpy problem with variable vector x
-        # Determine variable count from bounds or A_ub
-        n = len(args.c_vec) if args.c_vec else (
-            len(args.A_ub[0]) if args.A_ub else
-            len(args.A_eq[0]) if args.A_eq else
-            len(args.var_bounds or []) if args.var_bounds else 1
-        )
+    @staticmethod
+    def _convex_n_vars(args: NumericalToolInput) -> int:
+        """Infer the variable count from whichever array was supplied."""
+        if args.c_vec:
+            return len(args.c_vec)
+        if args.A_ub:
+            return len(args.A_ub[0])
+        if args.A_eq:
+            return len(args.A_eq[0])
+        return len(args.var_bounds) if args.var_bounds else 1
 
-        x = cp.Variable(n, name="x")
-
-        # Build a safe evaluation context
+    @staticmethod
+    def _convex_globals(cp: Any, x: Any, args: NumericalToolInput) -> dict[str, Any]:
+        """Eval namespace exposing cvxpy helpers + problem arrays, no builtins."""
         A = np.asarray(args.A_ub, dtype=float) if args.A_ub else None
         b_ub = np.asarray(args.b_ub, dtype=float) if args.b_ub else None
         A_eq = np.asarray(args.A_eq, dtype=float) if args.A_eq else None
         b_eq = np.asarray(args.b_eq, dtype=float) if args.b_eq else None
-
         # ponytail: eval with __builtins__={} blocks common escapes but
         # numpy/cvxpy attribute chains can still reach os/subprocess.
         # Acceptable for local single-user tool; switch to Docker sandbox
         # (security/docker_sandbox.py) if untrusted users share the instance.
-        eval_globals = {
+        return {
             "__builtins__": {},  # sandbox: no __import__, no open, no exec
-            "cp": cp, "np": np, "x": x,
-            "A": A, "b": b_ub, "A_ub": A, "b_ub": b_ub,
-            "A_eq": A_eq, "b_eq": b_eq,
-            "sum": cp.sum, "norm": cp.norm, "abs": cp.abs,
-            "square": cp.square, "quad_form": cp.quad_form,
+            "cp": cp,
+            "np": np,
+            "x": x,
+            "A": A,
+            "b": b_ub,
+            "A_ub": A,
+            "b_ub": b_ub,
+            "A_eq": A_eq,
+            "b_eq": b_eq,
+            "sum": cp.sum,
+            "norm": cp.norm,
+            "abs": cp.abs,
+            "square": cp.square,
+            "quad_form": cp.quad_form,
             "sum_squares": cp.sum_squares,
         }
-        eval_locals = {}
 
+    @staticmethod
+    def _convex_objective(
+        cp: Any, obj_line: str, sense: str, eval_globals: dict[str, Any]
+    ) -> tuple[Any, str | None]:
+        """Compile the objective expression into a cvxpy Minimize/Maximize."""
         try:
-            objective_expr = eval(obj_line, eval_globals, eval_locals)
-            if sense == "maximize":
-                objective = cp.Maximize(objective_expr)
-            else:
-                objective = cp.Minimize(objective_expr)
+            objective_expr = eval(obj_line, eval_globals, {})
         except Exception as e:
-            return ToolResult(
-                data=None, success=False,
-                error=f"Failed to parse objective '{obj_line}': {e}",
-            )
+            return None, f"Failed to parse objective '{obj_line}': {e}"
+        if sense == "maximize":
+            return cp.Maximize(objective_expr), None
+        return cp.Minimize(objective_expr), None
 
-        constraints = []
+    @staticmethod
+    def _convex_constraints(
+        constraints_str: list[str], eval_globals: dict[str, Any]
+    ) -> tuple[list[Any], str | None]:
+        """Compile each constraint line; return (constraints, error)."""
+        constraints: list[Any] = []
         for cstr in constraints_str:
             try:
-                c_expr = eval(cstr, eval_globals, eval_locals)
-                constraints.append(c_expr)
+                constraints.append(eval(cstr, eval_globals, {}))
             except Exception as e:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"Failed to parse constraint '{cstr}': {e}",
-                )
+                return [], f"Failed to parse constraint '{cstr}': {e}"
+        return constraints, None
 
-        prob = cp.Problem(objective, constraints)
-        try:
-            prob.solve()
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"cvxpy solve failed: {e}")
+    @staticmethod
+    def _convex_solve(cp: Any, prob: Any, x: Any) -> ToolResult:
+        """Solve the cvxpy problem and package the outcome.
+
+        Solver preference: CLARABEL → SCS → cvxpy default. cvxpy's default QP
+        solver is OSQP, and osqp 1.x hard-crashes (segfault) in processes that
+        have loaded many other C extensions -- which is exactly the state of
+        the server and of a full test-suite run, where every tool is imported.
+        The first two are self-contained wheels without that failure mode.
+        """
+        last_error: Exception | None = None
+        for solver in ("CLARABEL", "SCS", None):
+            try:
+                if solver is None:
+                    prob.solve()
+                else:
+                    prob.solve(solver=solver)
+                break
+            except Exception as e:  # solver may not fit this problem class
+                last_error = e
+        else:
+            return ToolResult(
+                data=None, success=False, error=f"cvxpy solve failed: {last_error}"
+            )
 
         if prob.status in ("optimal", "optimal_inaccurate"):
             return ToolResult(
@@ -796,49 +923,63 @@ class NumericalTool(HuginnTool):
             error=f"Convex optimization did not converge: {prob.status}",
         )
 
+    def _convex(self, args: NumericalToolInput) -> ToolResult:
+        """Solve a convex optimization problem using cvxpy.
+
+        Accepts a structured problem description that the LLM can generate:
+        {
+            "action": "convex",
+            "convex_problem": "minimize 0.5*sum_squares(A@x - b)\nsubject to\nx >= 0\nsum(x) <= 1"
+        }
+
+        For more complex problems with named variables, the LLM can pass
+        Python code that constructs a cvxpy Problem directly.
+        """
+        try:
+            import cvxpy as cp
+        except ImportError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="cvxpy is required for convex optimization. Install: pip install cvxpy",
+            )
+
+        sense, obj_line, constraints_str = self._convex_parse(args.convex_problem or "")
+        if not obj_line:
+            return ToolResult(data=None, success=False, error="Empty convex problem.")
+
+        x = cp.Variable(self._convex_n_vars(args), name="x")
+        eval_globals = self._convex_globals(cp, x, args)
+
+        objective, err = self._convex_objective(cp, obj_line, sense, eval_globals)
+        if err is not None:
+            return ToolResult(data=None, success=False, error=err)
+
+        constraints, err = self._convex_constraints(constraints_str, eval_globals)
+        if err is not None:
+            return ToolResult(data=None, success=False, error=err)
+
+        return self._convex_solve(cp, cp.Problem(objective, constraints), x)
+
     # ── Equation of State fitting ───────────────────────────────────
 
     # 1 eV/Å³ = 160.21766208 GPa
     _EV_PER_A3_TO_GPA = 160.21766208
 
-    def _eos_fit(self, args: NumericalToolInput) -> ToolResult:
-        """Fit an equation of state to energy-volume data.
-
-        Supports third-order Birch-Murnaghan, Murnaghan, and Vinet EOS.
-        All internal math uses eV and Å³; B0 is reported in both eV/Å³ and GPa.
-        """
+    @staticmethod
+    def _eos_validate(args: NumericalToolInput) -> str | None:
+        """Return an error message when E-V data cannot be fitted, else None."""
         if not args.volumes or not args.energies:
-            return ToolResult(
-                data=None, success=False,
-                error="eos_fit requires volumes and energies.",
-            )
+            return "eos_fit requires volumes and energies."
         if len(args.volumes) != len(args.energies):
-            return ToolResult(
-                data=None, success=False,
-                error="volumes and energies must have the same length.",
-            )
+            return "volumes and energies must have the same length."
         if len(args.volumes) < 4:
-            return ToolResult(
-                data=None, success=False,
-                error=f"EOS fit needs ≥4 points, got {len(args.volumes)}.",
-            )
+            return f"EOS fit needs ≥4 points, got {len(args.volumes)}."
+        return None
 
-        try:
-            from scipy.optimize import curve_fit
-        except ImportError:
-            return ToolResult(
-                data=None, success=False,
-                error="scipy is required for eos_fit.",
-            )
-
-        V = np.asarray(args.volumes, dtype=float)
-        E = np.asarray(args.energies, dtype=float)
-
-        # sort by volume so gradient estimation is sane
-        order = np.argsort(V)
-        V, E = V[order], E[order]
-
-        # ── initial guesses from the data itself ──
+    @staticmethod
+    def _eos_guess(V: np.ndarray, E: np.ndarray) -> list[float]:
+        """Initial [E0, V0, B0, B0'] guesses derived from the data itself."""
         i_min = int(np.argmin(E))
         V0_guess = float(V[i_min])
         E0_guess = float(E[i_min])
@@ -850,42 +991,45 @@ class NumericalTool(HuginnTool):
         else:
             B0_guess = 1e-3
         B0p_guess = 4.0  # typical value for crystalline solids
+        return [E0_guess, V0_guess, B0_guess, B0p_guess]
 
-        eos_type = args.eos_type
-        eos_func = self._get_eos_function(eos_type)
-        if eos_func is None:
-            return ToolResult(
-                data=None, success=False,
-                error=f"Unknown EOS type: {eos_type}",
-            )
-
-        p0 = [E0_guess, V0_guess, B0_guess, B0p_guess]
-        # keep V0 inside the data range, B0 positive, B0' physical
-        bounds = (
-            [-np.inf, float(V.min()) * 0.5, 1e-8, 0.1],
-            [np.inf, float(V.max()) * 2.0, np.inf, 20.0],
+    @staticmethod
+    def _eos_param_dicts(
+        popt: Any, pcov: np.ndarray
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """(parameters, 1σ uncertainties) keyed by E0/V0/B0/B0_prime."""
+        names = ("E0", "V0", "B0", "B0_prime")
+        perr = np.sqrt(np.diag(pcov))
+        return (
+            {n: float(popt[i]) for i, n in enumerate(names)},
+            {n: float(perr[i]) for i, n in enumerate(names)},
         )
 
-        try:
-            popt, pcov = curve_fit(eos_func, V, E, p0=p0, bounds=bounds, maxfev=10000)
-        except Exception as e:
-            return ToolResult(
-                data=None, success=False,
-                error=f"EOS curve_fit failed: {e}",
-            )
-
-        E0_fit, V0_fit, B0_fit, B0p_fit = (float(x) for x in popt)
-        perr = np.sqrt(np.diag(pcov))
-
-        # R²
+    @staticmethod
+    def _eos_fit_stats(
+        eos_func: Any, V: np.ndarray, E: np.ndarray, popt: np.ndarray
+    ) -> tuple[float, np.ndarray, np.ndarray]:
+        """R² plus the smoothed V/E curve used for plotting."""
         E_pred = eos_func(V, *popt)
         ss_res = float(np.sum((E - E_pred) ** 2))
         ss_tot = float(np.sum((E - np.mean(E)) ** 2))
         r_squared = 1.0 - ss_res / ss_tot if ss_tot > 1e-30 else 1.0
-
-        # smooth curve for plotting
         V_smooth = np.linspace(float(V.min()), float(V.max()), 200)
-        E_smooth = eos_func(V_smooth, *popt)
+        return r_squared, V_smooth, eos_func(V_smooth, *popt)
+
+    def _eos_result(
+        self,
+        eos_type: str,
+        eos_func: Any,
+        V: np.ndarray,
+        E: np.ndarray,
+        popt: np.ndarray,
+        pcov: np.ndarray,
+    ) -> ToolResult:
+        """Package fitted parameters, uncertainties, R² and the smooth curve."""
+        params, uncertainties = self._eos_param_dicts(popt, pcov)
+        E0_fit, V0_fit, B0_fit, B0p_fit = params.values()
+        r_squared, V_smooth, E_smooth = self._eos_fit_stats(eos_func, V, E, popt)
 
         B0_gpa = B0_fit * self._EV_PER_A3_TO_GPA
 
@@ -898,18 +1042,8 @@ class NumericalTool(HuginnTool):
                 "B0_eV_per_A3": B0_fit,
                 "B0_prime": B0p_fit,
                 "r_squared": r_squared,
-                "parameters": {
-                    "E0": E0_fit,
-                    "V0": V0_fit,
-                    "B0": B0_fit,
-                    "B0_prime": B0p_fit,
-                },
-                "uncertainties": {
-                    "E0": float(perr[0]),
-                    "V0": float(perr[1]),
-                    "B0": float(perr[2]),
-                    "B0_prime": float(perr[3]),
-                },
+                "parameters": params,
+                "uncertainties": uncertainties,
                 "fit_curve": {
                     "volumes": V_smooth.tolist(),
                     "energies": E_smooth.tolist(),
@@ -926,6 +1060,65 @@ class NumericalTool(HuginnTool):
             },
             success=True,
         )
+
+    @staticmethod
+    def _eos_curve_fit(
+        curve_fit: Any, eos_func: Any, V: np.ndarray, E: np.ndarray, p0: list[float]
+    ) -> tuple[Any, Any, str | None]:
+        """Run the bounded curve fit; return (popt, pcov, error)."""
+        # keep V0 inside the data range, B0 positive, B0' physical
+        bounds = (
+            [-np.inf, float(V.min()) * 0.5, 1e-8, 0.1],
+            [np.inf, float(V.max()) * 2.0, np.inf, 20.0],
+        )
+        try:
+            popt, pcov = curve_fit(eos_func, V, E, p0=p0, bounds=bounds, maxfev=10000)
+        except Exception as e:
+            return None, None, f"EOS curve_fit failed: {e}"
+        return popt, pcov, None
+
+    def _eos_fit(self, args: NumericalToolInput) -> ToolResult:
+        """Fit an equation of state to energy-volume data.
+
+        Supports third-order Birch-Murnaghan, Murnaghan, and Vinet EOS.
+        All internal math uses eV and Å³; B0 is reported in both eV/Å³ and GPa.
+        """
+        error = self._eos_validate(args)
+        if error is not None:
+            return ToolResult(data=None, success=False, error=error)
+
+        try:
+            from scipy.optimize import curve_fit
+        except ImportError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="scipy is required for eos_fit.",
+            )
+
+        V = np.asarray(args.volumes, dtype=float)
+        E = np.asarray(args.energies, dtype=float)
+
+        # sort by volume so gradient estimation is sane
+        order = np.argsort(V)
+        V, E = V[order], E[order]
+
+        eos_type = args.eos_type
+        eos_func = self._get_eos_function(eos_type)
+        if eos_func is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Unknown EOS type: {eos_type}",
+            )
+
+        popt, pcov, error = self._eos_curve_fit(
+            curve_fit, eos_func, V, E, self._eos_guess(V, E)
+        )
+        if error is not None:
+            return ToolResult(data=None, success=False, error=error)
+
+        return self._eos_result(eos_type, eos_func, V, E, popt, pcov)
 
     @staticmethod
     def _get_eos_function(eos_type: str):
@@ -949,29 +1142,30 @@ class NumericalTool(HuginnTool):
             # (循环论证), 且 B0P_TRUE=4.0 恰好消掉三次项.
             def eos(V, E0, V0, B0, B0p):
                 eta = (V0 / V) ** (1.0 / 3.0)
-                x = eta ** 2 - 1.0
-                return E0 + (9.0 / 16.0) * B0 * V0 * (
-                    B0p * x ** 3 + 6.0 * x ** 2
-                )
+                x = eta**2 - 1.0
+                return E0 + (9.0 / 16.0) * B0 * V0 * (B0p * x**3 + 6.0 * x**2)
+
             return eos
 
         if eos_type == "murnaghan":
+
             def eos(V, E0, V0, B0, B0p):
                 r = V0 / V
                 return E0 + (B0 * V0 / B0p) * (
-                    r ** (B0p - 1.0) / (B0p - 1.0)
-                    - B0p / (B0p - 1.0)
-                    + V / V0
+                    r ** (B0p - 1.0) / (B0p - 1.0) - B0p / (B0p - 1.0) + V / V0
                 )
+
             return eos
 
         if eos_type == "vinet":
+
             def eos(V, E0, V0, B0, B0p):
                 eta = (V / V0) ** (1.0 / 3.0)
                 xi = 1.5 * (B0p - 1.0) * (1.0 - eta)
                 return E0 + 4.0 * B0 * V0 / (B0p - 1.0) ** 2 * (
                     1.0 - (1.0 - xi) * np.exp(xi)
                 )
+
             return eos
 
         return None

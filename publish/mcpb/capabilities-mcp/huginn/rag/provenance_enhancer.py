@@ -59,9 +59,35 @@ def _extract_result_text(result: dict) -> str:
     return str(result.get("document") or result.get("text") or "")
 
 
-def enhance_rag_results(
-    query: str, results: list[dict], top_k: int = 3
-) -> list[dict]:
+def _build_provenance_context(tools: list[str], reg: Any, top_k: int) -> dict[str, Any]:
+    provenance_context: dict[str, Any] = {}
+    if tools:
+        provenance_context["detected_tools"] = tools
+        recent_outputs: list[dict[str, Any]] = []
+        for tool in tools:
+            entries = reg.find_by_tool(tool)
+            # 按时间倒序取最近 top_k 条
+            entries = sorted(entries, key=lambda e: e.produced_at, reverse=True)
+            for entry in entries[:top_k]:
+                output_info: dict[str, Any] = {
+                    "tool": tool,
+                    "file_path": entry.file_path,
+                    "file_format": entry.file_format,
+                    "key_properties": entry.key_properties,
+                }
+                # 溯源链摘要: 从这个文件往上追几层
+                lineage = reg.get_lineage(entry.file_path, depth=3)
+                if lineage:
+                    output_info["lineage_summary"] = " -> ".join(
+                        f"{e.produced_by}:{e.file_format or '?'}" for e in lineage
+                    )
+                recent_outputs.append(output_info)
+        if recent_outputs:
+            provenance_context["recent_outputs"] = recent_outputs
+    return provenance_context
+
+
+def enhance_rag_results(query: str, results: list[dict], top_k: int = 3) -> list[dict]:
     """增强 RAG 检索结果, 附带相关工具的 provenance 上下文.
 
     从 query 和 results 文本中识别工具名, 从 ProvenanceRegistry 拉取
@@ -82,32 +108,7 @@ def enhance_rag_results(
     combined = query + " " + " ".join(_extract_result_text(r) for r in results)
     tools = _detect_tools(combined)
 
-    provenance_context: dict[str, Any] = {}
-    if tools:
-        provenance_context["detected_tools"] = tools
-        recent_outputs: list[dict[str, Any]] = []
-        for tool in tools:
-            entries = reg.find_by_tool(tool)
-            # 按时间倒序取最近 top_k 条
-            entries = sorted(entries, key=lambda e: e.produced_at, reverse=True)
-            for entry in entries[:top_k]:
-                output_info: dict[str, Any] = {
-                    "tool": tool,
-                    "file_path": entry.file_path,
-                    "file_format": entry.file_format,
-                    "key_properties": entry.key_properties,
-                }
-                # 溯源链摘要: 从这个文件往上追几层
-                lineage = reg.get_lineage(entry.file_path, depth=3)
-                if lineage:
-                    output_info["lineage_summary"] = " -> ".join(
-                        f"{e.produced_by}:{e.file_format or '?'}"
-                        for e in lineage
-                    )
-                recent_outputs.append(output_info)
-        if recent_outputs:
-            provenance_context["recent_outputs"] = recent_outputs
-
+    provenance_context = _build_provenance_context(tools, reg, top_k)
     # 给每个 result 附加 provenance_context, 不动原始 dict
     # ARGUS: RAG 检索结果来自外部知识库, 标 source_class=external_content.
     # 下游 PhaseGate / RedTeam 可据此降级或加强审查.

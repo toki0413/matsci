@@ -134,7 +134,7 @@ def test_sandbox_transaction_rolls_back(tmp_path: Path) -> None:
 
 
 def test_sandbox_run_revertible_removes_new_files(tmp_path: Path) -> None:
-    cfg = SandboxConfig(allowed_executables={"sh"})
+    cfg = SandboxConfig(allowed_executables={"sh"}, allowed_work_dirs={tmp_path})
     sb = SandboxExecutor(cfg)
     env = {"PATH": "/usr/bin:/bin"}
     result, dispose = sb.run_revertible(
@@ -150,7 +150,7 @@ def test_sandbox_run_revertible_removes_new_files(tmp_path: Path) -> None:
 
 
 def test_sandbox_run_revertible_keeps_preexisting(tmp_path: Path) -> None:
-    cfg = SandboxConfig(allowed_executables={"sh"})
+    cfg = SandboxConfig(allowed_executables={"sh"}, allowed_work_dirs={tmp_path})
     sb = SandboxExecutor(cfg)
     pre = tmp_path / "keep.txt"
     pre.write_text("keep")

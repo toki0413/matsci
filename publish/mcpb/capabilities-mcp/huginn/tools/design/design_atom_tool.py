@@ -49,12 +49,17 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "layout",
         "description": "Flexbox 布局",
         "params": {
-            "direction": {"type": "str", "default": "row",
-                          "description": "row|column|row-reverse|column-reverse"},
-            "justify": {"type": "str", "default": "flex-start",
-                        "description": "主轴对齐"},
-            "align": {"type": "str", "default": "stretch",
-                      "description": "交叉轴对齐"},
+            "direction": {
+                "type": "str",
+                "default": "row",
+                "description": "row|column|row-reverse|column-reverse",
+            },
+            "justify": {
+                "type": "str",
+                "default": "flex-start",
+                "description": "主轴对齐",
+            },
+            "align": {"type": "str", "default": "stretch", "description": "交叉轴对齐"},
             "gap": {"type": "str", "default": "12px", "description": "间距"},
         },
     },
@@ -65,16 +70,22 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
             "title": {"type": "str", "default": "Title", "description": "主标题"},
             "subtitle": {"type": "str", "default": "", "description": "副标题"},
             "cta": {"type": "str", "default": "Get Started", "description": "按钮文字"},
-            "align": {"type": "str", "default": "center",
-                      "description": "left|center|right"},
+            "align": {
+                "type": "str",
+                "default": "center",
+                "description": "left|center|right",
+            },
         },
     },
     "layout.two_column": {
         "category": "layout",
         "description": "两栏布局: 主内容 + 侧栏",
         "params": {
-            "main_ratio": {"type": "float", "default": 0.7,
-                           "description": "主栏占比 0-1"},
+            "main_ratio": {
+                "type": "float",
+                "default": 0.7,
+                "description": "主栏占比 0-1",
+            },
             "gap": {"type": "str", "default": "24px", "description": "栏间距"},
         },
     },
@@ -82,10 +93,16 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "layout",
         "description": "仪表板布局: 顶栏 + 侧边栏 + 内容区",
         "params": {
-            "sidebar_width": {"type": "str", "default": "240px",
-                              "description": "侧边栏宽度"},
-            "header_height": {"type": "str", "default": "64px",
-                              "description": "顶栏高度"},
+            "sidebar_width": {
+                "type": "str",
+                "default": "240px",
+                "description": "侧边栏宽度",
+            },
+            "header_height": {
+                "type": "str",
+                "default": "64px",
+                "description": "顶栏高度",
+            },
         },
     },
     # Style atoms
@@ -94,10 +111,8 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "配色方案",
         "params": {
             "primary": {"type": "str", "default": "#2563eb", "description": "主色"},
-            "secondary": {"type": "str", "default": "#64748b",
-                          "description": "次色"},
-            "accent": {"type": "str", "default": "#f59e0b",
-                       "description": "强调色"},
+            "secondary": {"type": "str", "default": "#64748b", "description": "次色"},
+            "accent": {"type": "str", "default": "#f59e0b", "description": "强调色"},
             "bg": {"type": "str", "default": "#ffffff", "description": "背景色"},
             "text": {"type": "str", "default": "#0f172a", "description": "文字色"},
         },
@@ -106,36 +121,43 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "style",
         "description": "字体排版",
         "params": {
-            "font_family": {"type": "str", "default": "Arial, sans-serif",
-                            "description": "字体族"},
-            "base_size": {"type": "str", "default": "16px",
-                          "description": "基础字号"},
-            "heading_scale": {"type": "float", "default": 1.25,
-                              "description": "标题放大比例"},
-            "line_height": {"type": "float", "default": 1.6,
-                            "description": "行高"},
+            "font_family": {
+                "type": "str",
+                "default": "Arial, sans-serif",
+                "description": "字体族",
+            },
+            "base_size": {"type": "str", "default": "16px", "description": "基础字号"},
+            "heading_scale": {
+                "type": "float",
+                "default": 1.25,
+                "description": "标题放大比例",
+            },
+            "line_height": {"type": "float", "default": 1.6, "description": "行高"},
         },
     },
     "style.spacing": {
         "category": "style",
         "description": "间距系统",
         "params": {
-            "unit": {"type": "str", "default": "8px",
-                     "description": "基础间距单位"},
-            "scale": {"type": "str", "default": "major-third",
-                      "description": "比例尺: major-third|minor-third|perfect-fourth"},
+            "unit": {"type": "str", "default": "8px", "description": "基础间距单位"},
+            "scale": {
+                "type": "str",
+                "default": "major-third",
+                "description": "比例尺: major-third|minor-third|perfect-fourth",
+            },
         },
     },
     "style.theme": {
         "category": "style",
         "description": "主题 (亮/暗)",
         "params": {
-            "mode": {"type": "str", "default": "light",
-                     "description": "light|dark"},
-            "radius": {"type": "str", "default": "8px",
-                       "description": "圆角"},
-            "shadow": {"type": "str", "default": "0 1px 3px rgba(0,0,0,0.1)",
-                       "description": "阴影"},
+            "mode": {"type": "str", "default": "light", "description": "light|dark"},
+            "radius": {"type": "str", "default": "8px", "description": "圆角"},
+            "shadow": {
+                "type": "str",
+                "default": "0 1px 3px rgba(0,0,0,0.1)",
+                "description": "阴影",
+            },
         },
     },
     # Geometry atoms
@@ -143,24 +165,26 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "geometry",
         "description": "形状 (SVG)",
         "params": {
-            "kind": {"type": "str", "default": "rect",
-                     "description": "rect|circle|ellipse|polygon|path"},
-            "width": {"type": "str", "default": "100",
-                      "description": "宽度(SVG单位)"},
-            "height": {"type": "str", "default": "100",
-                       "description": "高度(SVG单位)"},
-            "fill": {"type": "str", "default": "#2563eb",
-                     "description": "填充色"},
-            "stroke": {"type": "str", "default": "none",
-                       "description": "描边色"},
+            "kind": {
+                "type": "str",
+                "default": "rect",
+                "description": "rect|circle|ellipse|polygon|path",
+            },
+            "width": {"type": "str", "default": "100", "description": "宽度(SVG单位)"},
+            "height": {"type": "str", "default": "100", "description": "高度(SVG单位)"},
+            "fill": {"type": "str", "default": "#2563eb", "description": "填充色"},
+            "stroke": {"type": "str", "default": "none", "description": "描边色"},
         },
     },
     "geometry.position": {
         "category": "geometry",
         "description": "定位 (CSS)",
         "params": {
-            "position": {"type": "str", "default": "relative",
-                         "description": "static|relative|absolute|fixed|sticky"},
+            "position": {
+                "type": "str",
+                "default": "relative",
+                "description": "static|relative|absolute|fixed|sticky",
+            },
             "top": {"type": "str", "default": "auto"},
             "right": {"type": "str", "default": "auto"},
             "bottom": {"type": "str", "default": "auto"},
@@ -172,14 +196,15 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "dataviz",
         "description": "柱状图 (matplotlib)",
         "params": {
-            "title": {"type": "str", "default": "Bar Chart",
-                      "description": "图表标题"},
+            "title": {"type": "str", "default": "Bar Chart", "description": "图表标题"},
             "x_label": {"type": "str", "default": "X"},
             "y_label": {"type": "str", "default": "Y"},
-            "color": {"type": "str", "default": "#2563eb",
-                      "description": "柱色"},
-            "data": {"type": "list", "default": [],
-                     "description": "数据, [(label, value), ...]"},
+            "color": {"type": "str", "default": "#2563eb", "description": "柱色"},
+            "data": {
+                "type": "list",
+                "default": [],
+                "description": "数据, [(label, value), ...]",
+            },
         },
     },
     "dataviz.line": {
@@ -190,10 +215,12 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
             "x_label": {"type": "str", "default": "X"},
             "y_label": {"type": "str", "default": "Y"},
             "color": {"type": "str", "default": "#2563eb"},
-            "marker": {"type": "str", "default": "o",
-                       "description": "点标记: o|s|^|none"},
-            "data": {"type": "list", "default": [],
-                     "description": "[(x, y), ...]"},
+            "marker": {
+                "type": "str",
+                "default": "o",
+                "description": "点标记: o|s|^|none",
+            },
+            "data": {"type": "list", "default": [], "description": "[(x, y), ...]"},
         },
     },
     "dataviz.scatter": {
@@ -213,10 +240,12 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "热力图 (matplotlib)",
         "params": {
             "title": {"type": "str", "default": "Heatmap"},
-            "cmap": {"type": "str", "default": "viridis",
-                     "description": "色彩映射"},
-            "data": {"type": "list", "default": [],
-                     "description": "2D 数组 [[...], ...]"},
+            "cmap": {"type": "str", "default": "viridis", "description": "色彩映射"},
+            "data": {
+                "type": "list",
+                "default": [],
+                "description": "2D 数组 [[...], ...]",
+            },
         },
     },
     "dataviz.contour": {
@@ -227,14 +256,18 @@ _ATOM_REGISTRY: dict[str, dict[str, Any]] = {
             "x_label": {"type": "str", "default": "X"},
             "y_label": {"type": "str", "default": "Y"},
             "levels": {"type": "int", "default": 10, "description": "等值线数"},
-            "data": {"type": "dict", "default": {},
-                     "description": "{X: [...], Y: [...], Z: [[...], ...]}"},
+            "data": {
+                "type": "dict",
+                "default": {},
+                "description": "{X: [...], Y: [...], Z: [[...], ...]}",
+            },
         },
     },
 }
 
 
 # ---------- 原子渲染器 ----------
+
 
 def _render_layout_grid(p: dict[str, Any]) -> str:
     cols = p.get("columns", 3)
@@ -267,11 +300,11 @@ def _render_layout_hero(p: dict[str, Any]) -> str:
     subtitle = p.get("subtitle", "")
     cta = p.get("cta", "Get Started")
     align = p.get("align", "center")
-    sub_html = f"\n    <p class=\"hero-sub\">{subtitle}</p>" if subtitle else ""
+    sub_html = f'\n    <p class="hero-sub">{subtitle}</p>' if subtitle else ""
     return (
-        f"<section class=\"hero\" style=\"text-align: {align}; padding: 64px 24px;\">\n"
-        f"  <h1 class=\"hero-title\">{title}</h1>{sub_html}\n"
-        f"  <button class=\"hero-cta\">{cta}</button>\n"
+        f'<section class="hero" style="text-align: {align}; padding: 64px 24px;">\n'
+        f'  <h1 class="hero-title">{title}</h1>{sub_html}\n'
+        f'  <button class="hero-cta">{cta}</button>\n'
         f"</section>\n"
     )
 
@@ -298,7 +331,7 @@ def _render_layout_dashboard(p: dict[str, Any]) -> str:
         f"  display: grid;\n"
         f"  grid-template-columns: {sw} 1fr;\n"
         f"  grid-template-rows: {hh} 1fr;\n"
-        f"  grid-template-areas: \"header header\" \"sidebar main\";\n"
+        f'  grid-template-areas: "header header" "sidebar main";\n'
         f"  height: 100vh;\n"
         f"}}\n"
         f".dashboard-header {{ grid-area: header; }}\n"
@@ -324,8 +357,8 @@ def _render_style_typography(p: dict[str, Any]) -> str:
     base = p.get("base_size", "16px")
     scale = float(p.get("heading_scale", 1.25))
     lh = float(p.get("line_height", 1.6))
-    h1 = float(base.replace("px", "")) * (scale ** 3)
-    h2 = float(base.replace("px", "")) * (scale ** 2)
+    h1 = float(base.replace("px", "")) * (scale**3)
+    h2 = float(base.replace("px", "")) * (scale**2)
     h3 = float(base.replace("px", "")) * scale
     return (
         f":root {{\n"
@@ -354,7 +387,7 @@ def _render_style_spacing(p: dict[str, Any]) -> str:
         "perfect-fourth": 1.333,
     }
     r = ratios.get(scale_name, 1.25)
-    sizes = [unit_val * (r ** i) for i in range(6)]
+    sizes = [unit_val * (r**i) for i in range(6)]
     css = ":root {\n"
     for i, s in enumerate(sizes):
         css += f"  --space-{i}: {s:.2f}px;\n"
@@ -393,8 +426,8 @@ def _render_geometry_shape(p: dict[str, Any]) -> str:
     stroke = p.get("stroke", "none")
     if kind == "rect":
         return (
-            f"<svg width=\"{w}\" height=\"{h}\">\n"
-            f"  <rect width=\"{w}\" height=\"{h}\" fill=\"{fill}\" stroke=\"{stroke}\"/>\n"
+            f'<svg width="{w}" height="{h}">\n'
+            f'  <rect width="{w}" height="{h}" fill="{fill}" stroke="{stroke}"/>\n'
             f"</svg>\n"
         )
     if kind == "circle":
@@ -402,8 +435,8 @@ def _render_geometry_shape(p: dict[str, Any]) -> str:
         cx = str(float(w) / 2)
         cy = str(float(h) / 2)
         return (
-            f"<svg width=\"{w}\" height=\"{h}\">\n"
-            f"  <circle cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\" fill=\"{fill}\" stroke=\"{stroke}\"/>\n"
+            f'<svg width="{w}" height="{h}">\n'
+            f'  <circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}" stroke="{stroke}"/>\n'
             f"</svg>\n"
         )
     if kind == "ellipse":
@@ -412,13 +445,13 @@ def _render_geometry_shape(p: dict[str, Any]) -> str:
         cx = str(float(w) / 2)
         cy = str(float(h) / 2)
         return (
-            f"<svg width=\"{w}\" height=\"{h}\">\n"
-            f"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" fill=\"{fill}\" stroke=\"{stroke}\"/>\n"
+            f'<svg width="{w}" height="{h}">\n'
+            f'  <ellipse cx="{cx}" cy="{cy}" rx="{rx}" ry="{ry}" fill="{fill}" stroke="{stroke}"/>\n'
             f"</svg>\n"
         )
     # polygon / path: 让 agent 自己给完整 path d
     return (
-        f"<svg width=\"{w}\" height=\"{h}\">\n"
+        f'<svg width="{w}" height="{h}">\n'
         f"  <!-- kind={kind} 需要额外 path 数据 -->\n"
         f"</svg>\n"
     )
@@ -594,6 +627,45 @@ _RENDERERS: dict[str, Any] = {
 }
 
 
+def _build_python_preview(atoms: list[dict[str, Any]], snippets: list[str]) -> str:
+    # 拼接所有 dataviz 代码块, 加注释分隔
+    parts = [
+        "# DesignAtom generated Python preview",
+        "# Arial 20pt+ bold 按用户规范",
+        "",
+    ]
+    for a, s in zip(atoms, snippets):
+        parts.append(f"# === {a['atom_name']} ===")
+        parts.append(s)
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _collect_preview_blocks(
+    atoms: list[dict[str, Any]], snippets: list[str]
+) -> tuple[list[str], list[str], list[str]]:
+    css_parts = []
+    html_parts = []
+    svg_parts = []
+    for a, s in zip(atoms, snippets):
+        cat = _ATOM_REGISTRY[a["atom_name"]]["category"]
+        if cat in ("style",):
+            css_parts.append(f"/* {a['atom_name']} */\n{s}")
+        elif cat == "layout" and "<" in s:
+            # hero 这种直接出 HTML
+            html_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
+        elif cat == "layout":
+            css_parts.append(f"/* {a['atom_name']} */\n{s}")
+        elif cat == "geometry":
+            svg_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
+        else:
+            # dataviz 在 html 模式下退化成占位
+            html_parts.append(
+                f"<!-- {a['atom_name']}: 需要 python 输出, 见 compose -->\n"
+            )
+    return css_parts, html_parts, svg_parts
+
+
 class DesignAtomInput(BaseModel):
     action: Literal["list_atoms", "render_atom", "compose", "preview"] = Field(...)
     # render_atom 时必填
@@ -601,9 +673,7 @@ class DesignAtomInput(BaseModel):
         default=None,
         description="原子名, 如 layout.grid / style.palette / dataviz.bar",
     )
-    params: dict[str, Any] | None = Field(
-        default=None, description="原子参数"
-    )
+    params: dict[str, Any] | None = Field(default=None, description="原子参数")
     # compose / preview 时必填
     atoms: list[dict[str, Any]] | None = Field(
         default=None,
@@ -670,68 +740,16 @@ class DesignAtomTool(HuginnTool):
 
         try:
             if input_data.action == "list_atoms":
-                return ToolResult(
-                    data={
-                        "atoms": {
-                            name: {
-                                "category": info["category"],
-                                "description": info["description"],
-                                "params": info["params"],
-                            }
-                            for name, info in _ATOM_REGISTRY.items()
-                        },
-                        "categories": sorted({
-                            info["category"]
-                            for info in _ATOM_REGISTRY.values()
-                        }),
-                        "total": len(_ATOM_REGISTRY),
-                    },
-                    success=True,
-                )
+                return DesignAtomTool._list_atoms_result(self)
 
             if input_data.action == "render_atom":
-                code = self._render_one(
-                    input_data.atom_name or "",
-                    input_data.params or {},
-                )
-                return ToolResult(
-                    data={
-                        "atom_name": input_data.atom_name,
-                        "category": _ATOM_REGISTRY[input_data.atom_name]["category"],
-                        "code": code,
-                    },
-                    success=True,
-                )
+                return DesignAtomTool._render_atom_result(self, input_data)
 
             if input_data.action == "compose":
-                snippets = []
-                for a in input_data.atoms or []:
-                    name = a["atom_name"]
-                    params = a.get("params", {})
-                    snippets.append({
-                        "atom_name": name,
-                        "category": _ATOM_REGISTRY[name]["category"],
-                        "code": self._render_one(name, params),
-                    })
-                return ToolResult(
-                    data={"snippets": snippets, "count": len(snippets)},
-                    success=True,
-                )
+                return DesignAtomTool._compose_result(self, input_data)
 
             if input_data.action == "preview":
-                content = self._build_preview(
-                    input_data.atoms or [],
-                    input_data.output_format,
-                )
-                return ToolResult(
-                    data={
-                        "content": content,
-                        "format": input_data.output_format
-                        if input_data.output_format != "auto"
-                        else self._detect_format(input_data.atoms or []),
-                    },
-                    success=True,
-                )
+                return DesignAtomTool._preview_result(self, input_data)
 
             return ToolResult(
                 data=None,
@@ -743,15 +761,77 @@ class DesignAtomTool(HuginnTool):
             logger.warning("design_atom_tool failed: %s", e, exc_info=True)
             return ToolResult(data=None, success=False, error=str(e))
 
+    def _list_atoms_result(self) -> ToolResult:
+        return ToolResult(
+            data={
+                "atoms": {
+                    name: {
+                        "category": info["category"],
+                        "description": info["description"],
+                        "params": info["params"],
+                    }
+                    for name, info in _ATOM_REGISTRY.items()
+                },
+                "categories": sorted(
+                    {info["category"] for info in _ATOM_REGISTRY.values()}
+                ),
+                "total": len(_ATOM_REGISTRY),
+            },
+            success=True,
+        )
+
+    def _render_atom_result(self, input_data: DesignAtomInput) -> ToolResult:
+        code = self._render_one(
+            input_data.atom_name or "",
+            input_data.params or {},
+        )
+        return ToolResult(
+            data={
+                "atom_name": input_data.atom_name,
+                "category": _ATOM_REGISTRY[input_data.atom_name]["category"],
+                "code": code,
+            },
+            success=True,
+        )
+
+    def _compose_result(self, input_data: DesignAtomInput) -> ToolResult:
+        snippets = []
+        for a in input_data.atoms or []:
+            name = a["atom_name"]
+            params = a.get("params", {})
+            snippets.append(
+                {
+                    "atom_name": name,
+                    "category": _ATOM_REGISTRY[name]["category"],
+                    "code": self._render_one(name, params),
+                }
+            )
+        return ToolResult(
+            data={"snippets": snippets, "count": len(snippets)},
+            success=True,
+        )
+
+    def _preview_result(self, input_data: DesignAtomInput) -> ToolResult:
+        content = self._build_preview(
+            input_data.atoms or [],
+            input_data.output_format,
+        )
+        return ToolResult(
+            data={
+                "content": content,
+                "format": input_data.output_format
+                if input_data.output_format != "auto"
+                else self._detect_format(input_data.atoms or []),
+            },
+            success=True,
+        )
+
     def _render_one(self, name: str, params: dict[str, Any]) -> str:
         renderer = _RENDERERS.get(name)
         if not renderer:
             return f"<!-- 未知原子: {name} -->\n"
         # 用注册表的默认值兜底
-        defaults = {
-            k: v["default"]
-            for k, v in _ATOM_REGISTRY[name]["params"].items()
-        }
+        defaults = {k: v["default"] for k, v in _ATOM_REGISTRY[name]["params"].items()}
         merged = {**defaults, **(params or {})}
         return renderer(merged)
 
@@ -772,50 +852,21 @@ class DesignAtomTool(HuginnTool):
             fmt = self._detect_format(atoms)
 
         snippets = [
-            self._render_one(a["atom_name"], a.get("params", {}))
-            for a in atoms
+            self._render_one(a["atom_name"], a.get("params", {})) for a in atoms
         ]
 
         if fmt == "python":
-            # 拼接所有 dataviz 代码块, 加注释分隔
-            parts = [
-                "# DesignAtom generated Python preview",
-                "# Arial 20pt+ bold 按用户规范",
-                "",
-            ]
-            for a, s in zip(atoms, snippets):
-                parts.append(f"# === {a['atom_name']} ===")
-                parts.append(s)
-                parts.append("")
-            return "\n".join(parts)
+            return _build_python_preview(atoms, snippets)
 
         # html: 包一个完整 HTML 文档, CSS 进 <style>, HTML body 进 body
-        css_parts = []
-        html_parts = []
-        svg_parts = []
-        for a, s in zip(atoms, snippets):
-            cat = _ATOM_REGISTRY[a["atom_name"]]["category"]
-            if cat in ("style",):
-                css_parts.append(f"/* {a['atom_name']} */\n{s}")
-            elif cat == "layout" and "<" in s:
-                # hero 这种直接出 HTML
-                html_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
-            elif cat == "layout":
-                css_parts.append(f"/* {a['atom_name']} */\n{s}")
-            elif cat == "geometry":
-                svg_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
-            else:
-                # dataviz 在 html 模式下退化成占位
-                html_parts.append(
-                    f"<!-- {a['atom_name']}: 需要 python 输出, 见 compose -->\n"
-                )
+        css_parts, html_parts, svg_parts = _collect_preview_blocks(atoms, snippets)
         css_block = "\n".join(css_parts) if css_parts else "/* no css atoms */"
         html_block = "\n".join(html_parts) if html_parts else ""
         svg_block = "\n".join(svg_parts) if svg_parts else ""
         return (
-            "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
-            "<meta charset=\"UTF-8\">\n"
-            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+            '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n'
+            '<meta charset="UTF-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
             "<title>DesignAtom Preview</title>\n"
             "<style>\n"
             f"{css_block}\n"

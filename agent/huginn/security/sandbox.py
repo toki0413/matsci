@@ -701,6 +701,8 @@ class SandboxExecutor:
         找不到 → 这里让 cmd.exe 走内置命令 (dir/copy/type/...). 白名单已含
         cmd.exe 间接调用, 不开新口子. 只在 cmd[0] 是 POSIX coreutil 时翻译,
         参数透传.
+        ponytail: 用 cmd /c 单层包裹, 不递归. 天花板: cmd /c 参数语义跟 POSIX
+          不完全一致 (e.g. ls -la vs dir), agent LLM 通常会自己适配 Windows 语法.
         """
         if os.name == "nt" and cmd and cmd[0].lower() in _WIN_COREUTIL_CMD_MAP:
             _mapped = _WIN_COREUTIL_CMD_MAP.get(cmd[0].lower(), cmd[0])

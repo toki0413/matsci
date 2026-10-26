@@ -99,64 +99,58 @@ class BranchIncubator:
         return self._registry
 
     async def run_round(
-        self,
-        task: str,
-        agent_factory: Any,
-        *,
-        n_branches: int = DEFAULT_N_BRANCHES,
-        math_background: str = "",
-        researcher_intuition: str = "",
-        round_idx: int = 0,
-        total_rounds: int = 10,
-        depth: int = 1,
-        width: int = 2,
-        wave_mode: str = "push",
-        model_families: list[str] | None = None,
+        self, task: str, agent_factory: Any, *, n_branches: int = DEFAULT_N_BRANCHES,
+        math_background: str = "", researcher_intuition: str = "", round_idx: int = 0,
+        total_rounds: int = 10, depth: int = 1, width: int = 2,
+        wave_mode: str = "push", model_families: list[str] | None = None,
         value_fn: Callable[[BranchResult], Any] | None = None,
         budget_remaining_fn: Callable[[], float | None] | None = None,
         trace_fn: Callable[[str, str, str], None] | None = None,
         slice_min_s: float | None = None,
     ) -> list[BranchResult]:
-        """跑一轮隔离探索.
-
-        agent_factory 必传, 跟 SubagentDispatch.dispatch 一致.
-        返回 N 个 BranchResult, 失败的也有记录 (success=False).
+        """跑一轮隔离探索; 返回 N 个 BranchResult (失败的也有记录, success=False).
 
         depth=1: flat asyncio.gather N (Part 1 兼容).
-        depth=2: PTD tree-shape — layer1 N flat → 每 layer1 成功 branch 派
-          width 个 sub-branch → 每 parent prune top-1 (tokens_used 最小 + success).
-          layer2 全失败的 parent 回退到 layer1. 返回长度 = n_branches.
+        depth=2: PTD tree-shape — layer1 N flat → 每成功 branch 派 width 个
+        sub-branch → 每 parent prune top-1 (value 最大 + success). layer2 全失败
+        的 parent 回退 layer1. 返回长度 = n_branches.
 
-        P4 (chaoxu 启发):
-        - wave_mode: "push" 生成假设 / "verify" 验证上轮假设. 轮替使用避免
-          "自己生成自己验证"的确认偏差. verify 模式 enhanced_task 加验证引导.
-        - model_families: 传入可用 model family 列表时, 给每个 branch 分配一个
-          model_family (尽量分散), 记录在 BranchResult.model_family 供调用方调度.
-          None 时不分配 (向后兼容).
-        - value_fn: rollout value 注入器 (MCTS select/prune 用). 每个 BranchResult
-          过一遍它 (可同步或 async, 典型来自 step_verifier 的 PRM 打分),
-          结果写进 .value (越高越好). layer2 prune 优先取 max value; value 缺失
-          (None) 时回退旧价值 min(tokens_used). None 时所有 .value 保持 None →
-          行为 100% 不变.
+        P4 (chaoxu 启发): wave_mode 轮替 push/verify 防"自己生成自己验证"的确认
+        偏差; model_families 尽量分散到各 branch; value_fn 注入 rollout value
+        (缺失时 prune 回退 tokens_used).
 
-        D-slice (细粒度预算切片, 不设硬时长):
-        把一轮拆成**有序、各自独立有价值**的 slice —
-          S1 layer1 扇出   (产出 N 条可用假设, 核心)
-          S2 layer1 PRM 打分 (可选)
-          S3 layer2 精修扇出 (逐 parent, 可选)
-          S4 layer2 PRM 打分 (可选)
-          S5 prune          (廉价, 总是执行)
-        每个可选 slice **启动前**查一次剩余挂钟预算 `budget_remaining_fn()`; 剩余
-        不足 `slice_min_s` 就跳过该 slice, 用"已产出的最优结果"收尾 —— 单阶段超支
-        被限制在**一个 slice** 以内 (而非整棵树 2 层 × N 路). 这是"少给硬时长、多
-        切细粒度"的实现: 不 kill 正在跑的动作, 只拒绝启动注定越预算的下一个 slice.
-
-        切片成本**自校准**: 下一片 (layer2) 的成本用上一片 (layer1) 的**实测挂钟**
-        估计, 门槛取 `max(slice_min_s, 上一片实测)`. 于是"刚烧了 300s 只剩 120s"
-        时不会再启动一个同样要 ~300s 的 layer2 —— 而不是拿一个拍脑袋的固定阈值.
-        `budget_remaining_fn=None` (非长程 / 无 goal) 或返回 None → 全部 slice 照跑,
-        行为 100% 不变. `slice_min_s` 缺省读 HUGINN_BRANCH_SLICE_MIN_S (默认 60s).
+        D-slice (细粒度预算切片): 一轮拆成 S1 layer1 扇出 / S2 PRM 打分 /
+        S3 layer2 扇出 / S4 PRM 打分 / S5 prune, 每个可选 slice 启动前查剩余
+        挂钟预算, 成本用上一片实测自校准 — 详见 `_slice_affordable`.
         """
+        _min_s, bundle, fams, models = self._rr_prepare(
+            task, n_branches, math_background, researcher_intuition,
+            model_families, slice_min_s,
+        )
+        layer1, _cost = await self._rr_layer1(
+            bundle, task, agent_factory, round_idx, fams, models,
+            wave_mode, budget_remaining_fn,
+        )
+        # 反完成审计: 过热族 mark_blocked, 下一轮强制 redirect.
+        self._check_convergence(round_idx, total_rounds, layer1)
+
+        _need = max(_min_s, _cost)
+        await self._rr_value_slice(
+            layer1, value_fn, budget_remaining_fn, _need, trace_fn
+        )
+        if depth < 2:
+            return layer1
+        return await self._rr_tree_layer2(
+            layer1, bundle, task, agent_factory, round_idx, width, wave_mode,
+            value_fn, budget_remaining_fn, _need, _cost, trace_fn,
+        )
+
+    def _rr_prepare(
+        self, task: str, n_branches: int, math_background: str,
+        researcher_intuition: str, model_families: list[str] | None,
+        slice_min_s: float | None,
+    ) -> tuple[float, ContextBundle, list[str], list[str]]:
+        """slice 最低成本 + ContextBundle + family/model 分配."""
         # slice 最低成本 (秒): 剩余预算 < 此值就不启动下一个可选 slice.
         _min_s = (
             slice_min_s if slice_min_s is not None
@@ -169,15 +163,20 @@ class BranchIncubator:
             researcher_intuition=researcher_intuition,
             method_family_registry=self._registry.to_dict(),
         )
-
         family_assignments = self._assign_families(n_branches)
         # P4: model_family 分配 (尽量分散, None 时不分配)
         model_assignments = (
             self._assign_model_families(n_branches, model_families)
             if model_families else [""] * n_branches
         )
-        # Layer 1: flat asyncio.gather (depth=1 和 depth=2 都跑这步)
-        # D-slice S1: 核心 slice, 不可跳过 (调用方启动前已查 _budget_exhausted).
+        return _min_s, bundle, family_assignments, model_assignments
+
+    async def _rr_layer1(
+        self, bundle: ContextBundle, task: str, agent_factory: Any,
+        round_idx: int, family_assignments: list[str], model_assignments: list[str],
+        wave_mode: str, budget_remaining_fn: Callable[[], float | None] | None,
+    ) -> tuple[list[BranchResult], float]:
+        """D-slice S1: flat gather 扇出 (核心 slice, 不可跳过); 返回实测挂钟."""
         _t_layer1 = time.monotonic()
         coros = [
             self._run_single_branch(
@@ -188,9 +187,14 @@ class BranchIncubator:
             for fam, mf in zip(family_assignments, model_assignments)
         ]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
-        # D-slice 自校准: layer1 实测挂钟 = 下一片 (同形状的 layer2) 的成本估计.
         _layer1_cost = time.monotonic() - _t_layer1
+        layer1 = self._rr_collect(family_assignments, raw_results, round_idx)
+        return layer1, _layer1_cost
 
+    def _rr_collect(
+        self, family_assignments: list[str], raw_results: list[Any], round_idx: int,
+    ) -> list[BranchResult]:
+        """把 gather 抓到的异常折成失败的 BranchResult."""
         layer1: list[BranchResult] = []
         for family_id, raw in zip(family_assignments, raw_results):
             if isinstance(raw, Exception):
@@ -205,36 +209,41 @@ class BranchIncubator:
                 ))
                 continue
             layer1.append(raw)
+        return layer1
 
-        # 反完成审计: 过热族 mark_blocked, 下一轮强制 redirect
-        # (layer1 后调, 跟 Part 1 一致; layer2 是 refinement, 不改 family 分布)
-        self._check_convergence(round_idx, total_rounds, layer1)
-        # D-slice 自校准门槛: 后续可选 slice 至少要有"跑完一个同形状切片"的预算.
-        # 固定 _min_s 只作下限; 上界用 layer1 实测 (run72: layer1 烧 300s 只剩
-        # 120s → 门槛 300s → 拒绝启动同样要 ~300s 的 layer2).
-        _need = max(_min_s, _layer1_cost)
-        # D-slice S2: layer1 PRM 打分 (可选). 预算不足则跳过 → value 保持 None,
-        # prune 回退 tokens_used, 结果仍可用.
-        if self._slice_affordable(budget_remaining_fn, _need):
+    async def _rr_value_slice(
+        self, layer1: list[BranchResult],
+        value_fn: Callable[[BranchResult], Any] | None,
+        budget_remaining_fn: Callable[[], float | None] | None,
+        need_s: float, trace_fn: Callable[[str, str, str], None] | None,
+    ) -> None:
+        """D-slice S2: layer1 PRM 打分 (可选). 预算不足则跳过 → prune 回退."""
+        if self._slice_affordable(budget_remaining_fn, need_s):
             await self._assign_values(layer1, value_fn)
         else:
             self._slice_skip(
-                trace_fn, "slice=layer1_value", _need,
+                trace_fn, "slice=layer1_value", need_s,
             )
 
-        if depth < 2:
-            return layer1  # Part 1 flat 行为
-
+    async def _rr_tree_layer2(
+        self, layer1: list[BranchResult], bundle: ContextBundle, task: str,
+        agent_factory: Any, round_idx: int, width: int, wave_mode: str,
+        value_fn: Callable[[BranchResult], Any] | None,
+        budget_remaining_fn: Callable[[], float | None] | None,
+        need_s: float, layer1_cost: float,
+        trace_fn: Callable[[str, str, str], None] | None,
+    ) -> list[BranchResult]:
+        """D-slice S3/S5: layer2 精修扇出 + prune (预算不足直接回退 layer1)."""
         # D-slice S3 门: layer2 精修是可选 slice. 剩余预算不足 → 直接用 layer1
         # 收尾, 不启动注定越预算的深搜. 单阶段超支由此 ≤ 一个 slice (layer1).
-        if not self._slice_affordable(budget_remaining_fn, _need):
+        if not self._slice_affordable(budget_remaining_fn, need_s):
             self._slice_skip(
-                trace_fn, "slice=layer2 (return layer1)", _need,
+                trace_fn, "slice=layer2 (return layer1)", need_s,
             )
             logger.info(
                 "branch_incubator: skip layer2 (budget<%.0fs, layer1 cost %.0fs), "
                 "return %d layer1 branches",
-                _need, _layer1_cost, len(layer1),
+                need_s, layer1_cost, len(layer1),
             )
             return layer1
 
@@ -243,7 +252,7 @@ class BranchIncubator:
             layer1, bundle, task, agent_factory, round_idx, width,
             wave_mode=wave_mode, value_fn=value_fn,
             budget_remaining_fn=budget_remaining_fn,
-            slice_min_s=_need, trace_fn=trace_fn,
+            slice_min_s=need_s, trace_fn=trace_fn,
         )
 
         # Prune + Fallback: 每 parent 保留 top-1 (value 最大 + success;
@@ -349,14 +358,8 @@ class BranchIncubator:
         return min(subs, key=lambda r: r.tokens_used)
 
     async def _run_tree_layer(
-        self,
-        layer_branches: list[BranchResult],
-        bundle: ContextBundle,
-        task: str,
-        agent_factory: Any,
-        round_idx: int,
-        width: int,
-        wave_mode: str = "push",
+        self, layer_branches: list[BranchResult], bundle: ContextBundle, task: str,
+        agent_factory: Any, round_idx: int, width: int, wave_mode: str = "push",
         value_fn: Callable[[BranchResult], Any] | None = None,
         budget_remaining_fn: Callable[[], float | None] | None = None,
         slice_min_s: float = 0.0,
@@ -372,7 +375,23 @@ class BranchIncubator:
         避免"已经没预算还继续摊大扇出".
         """
         eligible = [b for b in layer_branches if b.success and b.hypothesis]
+        coros, parent_map = self._rt_build_coros(
+            eligible, width, bundle, task, agent_factory, round_idx, wave_mode,
+            budget_remaining_fn, slice_min_s, trace_fn,
+        )
+        if not coros:
+            return {}
+        return await self._rt_gather(
+            coros, parent_map, value_fn, budget_remaining_fn, slice_min_s
+        )
 
+    def _rt_build_coros(
+        self, eligible: list[BranchResult], width: int, bundle: ContextBundle,
+        task: str, agent_factory: Any, round_idx: int, wave_mode: str,
+        budget_remaining_fn: Callable[[], float | None] | None,
+        slice_min_s: float, trace_fn: Callable[[str, str, str], None] | None,
+    ) -> tuple[list[Any], list[str]]:
+        """逐 parent 预算门 + 扇出 width 个 sub-branch; 返回 (coros, parent_map)."""
         coros = []
         parent_map: list[str] = []  # 每 coro 对应的 parent_agent_id
         for parent in eligible:
@@ -396,10 +415,15 @@ class BranchIncubator:
                     budget_remaining_fn=budget_remaining_fn,
                 ))
                 parent_map.append(parent.agent_id)
+        return coros, parent_map
 
-        if not coros:
-            return {}
-
+    async def _rt_gather(
+        self, coros: list[Any], parent_map: list[str],
+        value_fn: Callable[[BranchResult], Any] | None,
+        budget_remaining_fn: Callable[[], float | None] | None,
+        slice_min_s: float,
+    ) -> dict[str, list[BranchResult]]:
+        """gather layer2 + 折叠异常 + 注入 rollout value."""
         _t_l2 = time.monotonic()
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
         # D-slice 自校准: layer2 实测挂钟 = S4 打分 slice 的成本估计 (下限 slice_min_s).
@@ -464,52 +488,78 @@ class BranchIncubator:
         return [available[i % n_avail] for i in range(n)]
 
     async def _run_single_branch(
-        self,
-        family_id: str,
-        bundle: ContextBundle,
-        task: str,
-        agent_factory: Any,
-        round_idx: int,
-        parent_hypothesis: str = "",
-        parent_agent_id: str = "",
-        model_family: str = "",
-        wave_mode: str = "push",
+        self, family_id: str, bundle: ContextBundle, task: str, agent_factory: Any,
+        round_idx: int, parent_hypothesis: str = "", parent_agent_id: str = "",
+        model_family: str = "", wave_mode: str = "push",
         budget_remaining_fn: Callable[[], float | None] | None = None,
     ) -> BranchResult:
         """起单个 Subagent, 注入隔离后的 context + family 引导.
 
-        parent_hypothesis 非空时 (layer2 sub-branch), 加进 enhanced_task
-        让 sub-branch 看到祖先 π(v) — PTD tree 的偏序祖先链机制.
+        parent_hypothesis 非空 (layer2 sub-branch) 时带祖先 π(v) — PTD 偏序链;
+        wave_mode="verify" 时引导改为验证; model_family 记录到 BranchResult.
 
-        P4: wave_mode="verify" 时 enhanced_task 加验证引导 (而非生成引导).
-        model_family 非 "" 时记录到 BranchResult 供调用方调度.
-
-        D-slice: 起 Subagent **前**把"此刻"的剩余挂钟预算刷进 `remaining_budget_s`
-        contextvar (随 task 传播给子智能体的 streaming) — 子智能体据此自限降级空闲
-        阈值, 而不是被父级硬砍. budget_remaining_fn=None 时不写, 保持旧行为.
+        D-slice: 起 Subagent **前**把此刻剩余挂钟预算刷进 contextvar, 子智能体
+        据此自限降级 (budget_remaining_fn=None 时不写, 保持旧行为).
         """
-        # D-slice: 刷新预算 contextvar (尽力, 失败不影响 branch).
-        # D7: 同时写绝对 deadline, 让子智能体的 LLM 阻塞随时按**实时**剩余自限
-        # (相对值在 300s+ 的分支片段内会僵死).
-        if budget_remaining_fn is not None:
-            try:
-                from huginn.agent.streaming import (
-                    remaining_budget_s as _rb_s,
-                )
-                from huginn.agent.streaming import (
-                    set_budget_deadline as _set_deadline,
-                )
-
-                _rb_now = budget_remaining_fn()
-                _rb_s.set(_rb_now)
-                _set_deadline(_rb_now)
-            except Exception:  # 防御: streaming 不可用 / 查询失败 → 不刷
-                logger.debug("branch budget contextvar refresh failed", exc_info=True)
-
+        self._sb_refresh_budget(budget_remaining_fn)
         ctx = isolate(bundle, role="exploration")
         family = self._registry.by_id(family_id)
         family_essence = family.essence if family else ""
+        enhanced_task = self._sb_enhanced_task(
+            task, ctx, family_id, family_essence, parent_hypothesis, wave_mode
+        )
 
+        agent_id = f"branch_{family_id}_{uuid.uuid4().hex[:8]}"
+        try:
+            result: SubagentResult = await self._dispatch.dispatch(
+                "explore", enhanced_task, context={"agent_factory": agent_factory},
+            )
+        except Exception as exc:
+            logger.debug("branch %s dispatch failed: %s", family_id, exc)
+            return self._sb_failed(
+                family_id, agent_id, round_idx, parent_agent_id, model_family,
+                f"dispatch error: {exc}",
+            )
+
+        if not result.success:
+            # Subagent 自身失败 (unknown spec / factory 缺失等) — 降级模板
+            return self._sb_failed(
+                family_id, agent_id, round_idx, parent_agent_id, model_family,
+                result.error,
+            )
+        return self._sb_succeeded(
+            family_id, agent_id, round_idx, parent_agent_id, model_family, result
+        )
+
+    @staticmethod
+    def _sb_refresh_budget(
+        budget_remaining_fn: Callable[[], float | None] | None,
+    ) -> None:
+        """D-slice: 刷剩余挂钟预算 contextvar + 绝对 deadline (尽力, 失败不影响)."""
+        # D7: 同时写绝对 deadline, 让子智能体的 LLM 阻塞随时按**实时**剩余自限
+        # (相对值在 300s+ 的分支片段内会僵死).
+        if budget_remaining_fn is None:
+            return
+        try:
+            from huginn.agent.streaming import (
+                remaining_budget_s as _rb_s,
+            )
+            from huginn.agent.streaming import (
+                set_budget_deadline as _set_deadline,
+            )
+
+            _rb_now = budget_remaining_fn()
+            _rb_s.set(_rb_now)
+            _set_deadline(_rb_now)
+        except Exception:  # 防御: streaming 不可用 / 查询失败 → 不刷
+            logger.debug("branch budget contextvar refresh failed", exc_info=True)
+
+    @staticmethod
+    def _sb_enhanced_task(
+        task: str, ctx: dict[str, Any], family_id: str, family_essence: str,
+        parent_hypothesis: str, wave_mode: str,
+    ) -> str:
+        """family 引导 + (可选) 祖先 hypothesis + verify 模式引导."""
         # enhanced_task 把 family essence + 可见族 id 列表加进去, 引导 Subagent
         enhanced_task = (
             f"{task}\n\n"
@@ -533,41 +583,29 @@ class BranchIncubator:
             f"Approach this problem from the {family_id} perspective. "
             f"Do not assume other families' progress is visible to you."
         )
+        return enhanced_task
 
-        agent_id = f"branch_{family_id}_{uuid.uuid4().hex[:8]}"
-        try:
-            result: SubagentResult = await self._dispatch.dispatch(
-                "explore",
-                enhanced_task,
-                context={"agent_factory": agent_factory},
-            )
-        except Exception as exc:
-            logger.debug("branch %s dispatch failed: %s", family_id, exc)
-            return BranchResult(
-                family_id=family_id,
-                agent_id=agent_id,
-                hypothesis=self._fallback_hypothesis(family_id),
-                success=False,
-                error=f"dispatch error: {exc}",
-                round_idx=round_idx,
-                parent_agent_id=parent_agent_id,
-                model_family=model_family,
-            )
+    def _sb_failed(
+        self, family_id: str, agent_id: str, round_idx: int, parent_agent_id: str,
+        model_family: str, error: str | None,
+    ) -> BranchResult:
+        """Subagent 失败 → 降级模板 BranchResult."""
+        return BranchResult(
+            family_id=family_id,
+            agent_id=agent_id,
+            hypothesis=self._fallback_hypothesis(family_id),
+            success=False,
+            error=error,
+            round_idx=round_idx,
+            parent_agent_id=parent_agent_id,
+            model_family=model_family,
+        )
 
-        if not result.success:
-            # Subagent 自身失败 (unknown spec / factory 缺失等) — 降级模板
-            return BranchResult(
-                family_id=family_id,
-                agent_id=agent_id,
-                hypothesis=self._fallback_hypothesis(family_id),
-                success=False,
-                error=result.error,
-                round_idx=round_idx,
-                parent_agent_id=parent_agent_id,
-                model_family=model_family,
-            )
-
-        # 成功 — 注册到 registry, 让后续轮的 suggest_redirect 看到分布
+    def _sb_succeeded(
+        self, family_id: str, agent_id: str, round_idx: int, parent_agent_id: str,
+        model_family: str, result: SubagentResult,
+    ) -> BranchResult:
+        """成功 — 注册到 registry, 让后续轮的 suggest_redirect 看到分布."""
         self._registry.register_agent(family_id, agent_id)
         return BranchResult(
             family_id=family_id,
@@ -691,8 +729,49 @@ class _MockSubagentDispatch:
 
 
 def _selfcheck() -> None:
-    import asyncio
+    _sc_family_assignment()
+    _sc_run_round_basic()
+    _sc_run_round_partial()
+    _sc_anti_completion()
+    _sc_serialisation()
+    _sc_depth2_normal()
+    _sc_depth2_partial()
+    _sc_depth2_fallback()
+    _sc_depth2_parent()
+    _sc_depth2_parent_hypothesis()
+    _sc_wave_verify()
+    _sc_wave_push()
+    _sc_model_families()
+    _sc_model_families_none()
+    _sc_model_families_wrap()
+    _sc_combo()
+    _sc_pick_winner()
+    _sc_value_fn()
+    _sc_async_value_fn()
+    _sc_dslice_affordable()
+    _sc_dslice_low_budget()
+    _sc_dslice_rich_budget()
+    _sc_dslice_assign_values()
+    _sc_dslice_trace()
+    _sc_dslice_self_calibrate()
+    print("branch_incubator selfcheck OK")
 
+
+class _ValMock(_MockSubagentDispatch):
+    """tokens_used 递增, 便于区分 value 驱动 vs token 驱动选主."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._n = 0
+
+    async def dispatch(self, spec_name, task, context=None, on_state=None):
+        r = await super().dispatch(spec_name, task, context, on_state)
+        self._n += 1
+        r.tokens_used = self._n
+        return r
+
+
+def _sc_family_assignment() -> None:
     # 1. _assign_families: 冷门优先, 避开阻塞族
     inc = BranchIncubator()
     assignments = inc._assign_families(3)
@@ -706,6 +785,9 @@ def _selfcheck() -> None:
     assignments2 = inc._assign_families(3)
     assert "dft-direct" not in assignments2, "阻塞族不应被分配"
 
+
+
+def _sc_run_round_basic() -> None:
     # 3. run_round: mock dispatch, 3 个 branch 都成功
     # 保留本地 mock 引用, 避免访问 inc._dispatch 私有属性 (消除 type: ignore)
     mock = _MockSubagentDispatch()
@@ -736,6 +818,8 @@ def _selfcheck() -> None:
     # task 含可见族列表 (exploratory 放宽后)
     assert "Visible method families" in task_content
 
+
+def _sc_run_round_partial() -> None:
     # 5. 部分失败: 1 个 family 失败, 降级到 fallback hypothesis
     inc3 = BranchIncubator(dispatch=_MockSubagentDispatch(
         fail_families={"gaussian-process"},
@@ -754,6 +838,13 @@ def _selfcheck() -> None:
     assert all(r.hypothesis.startswith("[fallback]") for r in failed), (
         "失败应降级到 fallback hypothesis"
     )
+
+
+
+
+
+def _sc_anti_completion() -> None:
+    import asyncio
 
     # 6. 反完成审计: round_idx=0 + families_explored 少 → 标过热族
     # 第 0 轮 3 个 branch, 如果都分到不同族 families_explored=3 ≥ min=3 不触发
@@ -794,6 +885,9 @@ def _selfcheck() -> None:
         f"dft-direct 应被标 blocked (过热), got blocked={dft.is_blocked if dft else None}"
     )
 
+
+
+def _sc_serialisation() -> None:
     # 7. BranchResult.to_dict 序列化 (含 parent_agent_id)
     r = BranchResult(
         family_id="x", agent_id="y", hypothesis="z", round_idx=5,
@@ -812,6 +906,9 @@ def _selfcheck() -> None:
         family_id="a", agent_id="b", hypothesis="c", value=0.7,
     ).to_dict()["value"] == 0.7
 
+
+
+def _sc_depth2_normal() -> None:
     # 8. depth=2 正常路径: 3 layer1 + 2×3 layer2 = 9 dispatch 调用
     mock_tree = _MockSubagentDispatch()
     inc_tree = BranchIncubator(dispatch=mock_tree)
@@ -836,6 +933,8 @@ def _selfcheck() -> None:
     assert len(layer1_calls) == 3
     assert len(layer2_calls) == 6
 
+
+def _sc_depth2_partial() -> None:
     # 9. layer1 部分失败: dft-direct fail → layer2 只对 2 个成功 parent 派
     # 总 dispatch = 3 layer1 + 2×2 layer2 = 7
     mock_partial = _MockSubagentDispatch(
@@ -863,6 +962,8 @@ def _selfcheck() -> None:
     assert len(success_results) == 2
     assert all(r.parent_agent_id for r in success_results)
 
+
+def _sc_depth2_fallback() -> None:
     # 10. layer2 全失败 fallback layer1
     # fail_when_parent_hypothesis=True: layer1 全成功, layer2 全失败
     mock_l2fail = _MockSubagentDispatch(
@@ -883,6 +984,8 @@ def _selfcheck() -> None:
     # 3 layer1 + 6 layer2 (layer2 全失败但仍 dispatch)
     assert len(mock_l2fail.calls) == 9
 
+
+def _sc_depth2_parent() -> None:
     # 11. parent_agent_id: layer1 为空, layer2 = layer1 父 agent_id
     mock_pa = _MockSubagentDispatch()
     inc_pa = BranchIncubator(dispatch=mock_pa)
@@ -905,6 +1008,8 @@ def _selfcheck() -> None:
         # 找 parent: layer1 dispatch 里 family 跟 winner.family_id 相同的
         # (这里只验证格式, 具体匹配在场景 12 验)
 
+
+def _sc_depth2_parent_hypothesis() -> None:
     # 12. enhanced_task 含 [Parent hypothesis: ...] 当 parent_hypothesis 非空
     mock_ph = _MockSubagentDispatch()
     inc_ph = BranchIncubator(dispatch=mock_ph)
@@ -919,7 +1024,7 @@ def _selfcheck() -> None:
     assert len(layer2_calls_ph) == 6, "应有 6 个 layer2 task 含 [Parent hypothesis]"
     # layer2 task 含 family + essence + Parent hypothesis + Visible
     for _spec_name, task_content, _ in layer2_calls_ph:
-        assert spec_name == "explore"
+        assert _spec_name == "explore"
         assert "[Method family assigned:" in task_content
         assert "[Family essence:" in task_content
         assert "[Parent hypothesis:" in task_content
@@ -928,6 +1033,11 @@ def _selfcheck() -> None:
     for _spec_name, task_content, _ in layer1_calls_ph:
         assert "[Parent hypothesis:" not in task_content
 
+
+
+
+
+def _sc_wave_verify() -> None:
     # 13. P4: wave_mode="verify" 时 enhanced_task 含 VERIFY 引导
     mock_wv = _MockSubagentDispatch()
     inc_wv = BranchIncubator(dispatch=mock_wv)
@@ -942,6 +1052,8 @@ def _selfcheck() -> None:
             "verify 模式 enhanced_task 应含 VERIFY 引导"
     print("13. P4 wave_mode=verify 注入 VERIFY 引导 OK")
 
+
+def _sc_wave_push() -> None:
     # 14. P4: wave_mode="push" (默认) 不含 VERIFY 引导 (向后兼容)
     mock_wp = _MockSubagentDispatch()
     inc_wp = BranchIncubator(dispatch=mock_wp)
@@ -954,6 +1066,8 @@ def _selfcheck() -> None:
             "push 模式不应含 VERIFY 引导"
     print("14. P4 wave_mode=push (默认) 不含 VERIFY 引导 OK")
 
+
+def _sc_model_families() -> None:
     # 15. P4: model_families 分配 — 3 个 branch 分到不同 model_family
     inc_mf = BranchIncubator(dispatch=_MockSubagentDispatch())
     results_mf = asyncio.run(inc_mf.run_round(
@@ -967,6 +1081,8 @@ def _selfcheck() -> None:
         f"3 个 branch 应分到 3 个不同 model_family, got {_mfs}"
     print("15. P4 model_families 分配 (3 branch → 3 不同 model_family) OK")
 
+
+def _sc_model_families_none() -> None:
     # 16. P4: model_families=None (默认) → model_family 空串 (向后兼容)
     inc_nf = BranchIncubator(dispatch=_MockSubagentDispatch())
     results_nf = asyncio.run(inc_nf.run_round(
@@ -977,6 +1093,8 @@ def _selfcheck() -> None:
         "model_families=None 时 model_family 应为空串"
     print("16. P4 model_families=None 向后兼容 (model_family 空串) OK")
 
+
+def _sc_model_families_wrap() -> None:
     # 17. P4: model_families 不足时循环复用 (2 family → 3 branch, 有重复)
     inc_lr = BranchIncubator(dispatch=_MockSubagentDispatch())
     results_lr = asyncio.run(inc_lr.run_round(
@@ -989,6 +1107,8 @@ def _selfcheck() -> None:
         f"2 family → 3 branch 应循环复用, got {_mfs_lr}"
     print("17. P4 model_families 不足循环复用 OK")
 
+
+def _sc_combo() -> None:
     # 18. P4: wave_mode + model_families 组合 (verify wave + model 多样性)
     mock_combo = _MockSubagentDispatch()
     inc_combo = BranchIncubator(dispatch=mock_combo)
@@ -1004,6 +1124,11 @@ def _selfcheck() -> None:
     assert [r.model_family for r in results_combo] == ["openai", "anthropic", "deepseek"]
     print("18. P4 wave_mode=verify + model_families 组合 OK")
 
+
+
+
+
+def _sc_pick_winner() -> None:
     # 19. _pick_winner: 有 value 按 value 最大 (忽略 tokens); 全无 value 回退 min tokens
     _s_low = BranchResult(family_id="f", agent_id="a1", hypothesis="h",
                           tokens_used=1, value=0.2)
@@ -1017,19 +1142,9 @@ def _selfcheck() -> None:
         "无 value 时应回退 min(tokens_used)"
     print("19. _pick_winner value-priority + token fallback OK")
 
+
+def _sc_value_fn() -> None:
     # 20. run_round value_fn: 注入 rollout value, prune 按 value 选 (不同于 token 选)
-    class _ValMock(_MockSubagentDispatch):
-        """tokens_used 递增, 便于区分 value 驱动 vs token 驱动选主."""
-
-        def __init__(self) -> None:
-            super().__init__()
-            self._n = 0
-
-        async def dispatch(self, spec_name, task, context=None, on_state=None):
-            r = await super().dispatch(spec_name, task, context, on_state)
-            self._n += 1
-            r.tokens_used = self._n
-            return r
 
     _res_val = asyncio.run(BranchIncubator(dispatch=_ValMock()).run_round(
         task="test", agent_factory=object(),
@@ -1055,6 +1170,8 @@ def _selfcheck() -> None:
     )
     print("20. run_round value_fn rollout-value pruning OK")
 
+
+def _sc_async_value_fn() -> None:
     # 21. async value_fn: 协程自动 await (如 step_verifier 的 PRM 打分)
     async def _async_val(r: BranchResult) -> float | None:
         await asyncio.sleep(0)
@@ -1071,6 +1188,11 @@ def _selfcheck() -> None:
     )
     print("21. run_round async value_fn (PRM coroutine) OK")
 
+
+
+
+
+def _sc_dslice_affordable() -> None:
     # 22. D-slice _slice_affordable: None / None-return / 高 / 低 / 异常 五态
     assert BranchIncubator._slice_affordable(None, 60.0) is True, \
         "budget_remaining_fn=None (非长程) 应视为不受约束"
@@ -1088,6 +1210,8 @@ def _selfcheck() -> None:
         "预算查询异常应 fail-open (不误判耗尽)"
     print("22. D-slice _slice_affordable 五态 OK")
 
+
+def _sc_dslice_low_budget() -> None:
     # 23. D-slice 预算不足: depth=2 也跳过 layer2, 只跑 layer1 (3 dispatch)
     mock_low = _MockSubagentDispatch()
     results_low = asyncio.run(BranchIncubator(dispatch=mock_low).run_round(
@@ -1104,6 +1228,8 @@ def _selfcheck() -> None:
     assert all(r.hypothesis for r in results_low), "layer1 结果仍应可用"
     print("23. D-slice 预算不足跳过 layer2 (3 dispatch) OK")
 
+
+def _sc_dslice_rich_budget() -> None:
     # 24. D-slice 预算充足 / 无预算约束: 行为与旧版一致 (9 dispatch)
     mock_rich = _MockSubagentDispatch()
     _res_rich = asyncio.run(BranchIncubator(dispatch=mock_rich).run_round(
@@ -1124,6 +1250,8 @@ def _selfcheck() -> None:
     assert len(mock_none.calls) == 9, "无 budget_remaining_fn 行为应不变 (9 dispatch)"
     print("24. D-slice 预算充足/无约束行为不变 (9 dispatch) OK")
 
+
+def _sc_dslice_assign_values() -> None:
     # 25. D-slice _assign_values 逐 branch 预算门: 中途预算掉线 → 后续保持 None
     _rs = [BranchResult(family_id="f", agent_id=f"a{i}", hypothesis="h")
            for i in range(4)]
@@ -1137,6 +1265,8 @@ def _selfcheck() -> None:
     )
     print("25. D-slice _assign_values 逐 branch 预算门 OK")
 
+
+def _sc_dslice_trace() -> None:
     # 26. D-slice trace_fn: 跳过 slice 时上报 branch_slice_skip (控制面可观测)
     _traces: list[tuple[str, str, str]] = []
 
@@ -1153,6 +1283,8 @@ def _selfcheck() -> None:
     )
     print("26. D-slice trace_fn branch_slice_skip 上报 OK")
 
+
+def _sc_dslice_self_calibrate() -> None:
     # 27. D-slice 自校准: layer1 实测成本 > 剩余预算 → 跳过同形状的 layer2.
     #     场景复刻 run72: layer1 烧掉大部分预算, 只剩一点, 不足以再跑一个 layer2.
     #     用"模拟花费时钟"记账 (不依赖真 LLM 计时, 也不依赖 streaming 是否可导入).
@@ -1199,7 +1331,7 @@ def _selfcheck() -> None:
     )
     print("27. D-slice 自校准门槛 (layer1 实测 → 决定 layer2 是否负担得起) OK")
 
-    print("branch_incubator selfcheck OK")
+
 
 
 if __name__ == "__main__":

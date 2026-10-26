@@ -75,14 +75,19 @@ def _semantic_diff(old: str, new: str, path: str) -> str | None:
     if is_structure:
         try:
             from pymatgen.core import Structure
+
             fmt = "cif" if ext == ".cif" else "poscar"
             s_old = Structure.from_str(old, fmt=fmt)
             s_new = Structure.from_str(new, fmt=fmt)
             changes = []
             if s_old.composition.reduced_formula != s_new.composition.reduced_formula:
-                changes.append(f"组分: {s_old.composition.reduced_formula} → {s_new.composition.reduced_formula}")
+                changes.append(
+                    f"组分: {s_old.composition.reduced_formula} → {s_new.composition.reduced_formula}"
+                )
             if abs(s_old.lattice.volume - s_new.lattice.volume) > 0.01:
-                changes.append(f"体积: {s_old.lattice.volume:.2f} → {s_new.lattice.volume:.2f} Å³")
+                changes.append(
+                    f"体积: {s_old.lattice.volume:.2f} → {s_new.lattice.volume:.2f} Å³"
+                )
             if abs(s_old.lattice.a - s_new.lattice.a) > 0.001:
                 changes.append(f"a: {s_old.lattice.a:.3f} → {s_new.lattice.a:.3f} Å")
             if abs(s_old.lattice.b - s_new.lattice.b) > 0.001:
@@ -97,6 +102,7 @@ def _semantic_diff(old: str, new: str, path: str) -> str | None:
     if is_param:
         try:
             import json
+
             old_d = json.loads(old) if ext == ".json" else _parse_kv(old)
             new_d = json.loads(new) if ext == ".json" else _parse_kv(new)
             changes = []
@@ -128,6 +134,152 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+# Refuse to read absurdly large files — protects against OOM
+_MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _guard_target(work_dir: Path, path: Path) -> ToolResult | None:
+    """Refuse to edit outside the working directory tree / missing files / huge files."""
+    try:
+        path.relative_to(work_dir.resolve())
+    except ValueError:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Refusing to edit outside working directory: {path}",
+        )
+
+    if not path.exists():
+        return ToolResult(data=None, success=False, error=f"File not found: {path}")
+
+    try:
+        file_size = path.stat().st_size
+        if file_size > _MAX_FILE_BYTES:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"File too large ({file_size} bytes, max {_MAX_FILE_BYTES})",
+            )
+    except OSError as e:
+        return ToolResult(data=None, success=False, error=f"Cannot stat file: {e}")
+    return None
+
+
+def _check_content_hash(
+    content: str, input_data: FileEditToolInput
+) -> ToolResult | None:
+    """Hashline: 写入前校验内容 hash, 防止覆盖并发修改/外部编辑.
+
+    expected_hash 来自上次 read/edit 的 snapshot_hash; strict 不匹配即拒绝.
+    """
+    if not (input_data.expected_hash and input_data.hash_policy != "off"):
+        return None
+    current_hash = _content_hash(content)
+    if current_hash == input_data.expected_hash:
+        return None
+    msg = (
+        f"File changed since snapshot (expected {input_data.expected_hash}, "
+        f"got {current_hash}). Refusing to overwrite concurrent modification."
+    )
+    if input_data.hash_policy == "strict":
+        return ToolResult(
+            data={"current_hash": current_hash},
+            success=False,
+            error=msg,
+        )
+    logger.warning(msg)
+    return None
+
+
+def _check_occurrence(content: str, old_string: str) -> ToolResult | None:
+    """old_string 必须恰好出现一次."""
+    if content.count(old_string) != 1:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=(
+                f"old_string occurs {content.count(old_string)} times; "
+                "must occur exactly once."
+            ),
+        )
+    return None
+
+
+def _preview_result(path: Path, diff: str, sem_diff: str | None) -> ToolResult:
+    """dry-run / preview: return the diff without writing."""
+    return ToolResult(
+        data={
+            "file_path": str(path),
+            "dry_run": True,
+            "diff": diff,
+            "semantic_diff": sem_diff,
+            "message": f"Preview of edit to {path}.",
+        },
+        success=True,
+    )
+
+
+async def _approval_gate(
+    path: Path,
+    diff: str,
+    sem_diff: str | None,
+    context: ToolContext | None,
+    args: dict[str, Any],
+) -> ToolResult | None:
+    """真正写入前先过一遍权限检查. ASK 模式只返回 diff 预览, 不动文件."""
+    perm_config = (
+        context.config
+        if context is not None and isinstance(context.config, PermissionConfig)
+        else PermissionConfig()
+    )
+    checker = PermissionChecker(perm_config)
+    perm_result = await checker.check(
+        "file_edit_tool",
+        is_destructive=True,
+        args=args,
+    )
+    if perm_result.mode == PermissionMode.ASK:
+        return ToolResult(
+            data={
+                "file_path": str(path),
+                "dry_run": True,
+                "needs_approval": True,
+                "diff": diff,
+                "semantic_diff": sem_diff,
+                "reason": perm_result.reason,
+                "message": (
+                    f"Edit to {path} requires approval — "
+                    "diff preview generated, file unchanged."
+                ),
+            },
+            success=True,
+        )
+    if perm_result.mode == PermissionMode.DENY:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=perm_result.reason or f"Edit to {path} denied by permission policy.",
+        )
+    return None
+
+
+def _written_result(
+    path: Path, diff: str, sem_diff: str | None, content: str
+) -> ToolResult:
+    """写入成功后的结果数据."""
+    return ToolResult(
+        data={
+            "file_path": str(path),
+            "replacements": 1,
+            "diff": diff,
+            "semantic_diff": sem_diff,
+            "snapshot_hash": _content_hash(content),
+            "message": f"Edited {path}.",
+        },
+        success=True,
+    )
+
+
 class FileEditTool(HuginnTool):
     """Edit text files by replacing a unique string.
 
@@ -148,65 +300,27 @@ class FileEditTool(HuginnTool):
     ) -> ToolResult:
         input_data = FileEditToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir)
+            if input_data.working_dir
+            else self.default_work_dir()
         )
         path = work_dir / input_data.file_path
         if not path.is_absolute():
             path = path.resolve()
 
         # Prevent editing outside the working directory tree
-        try:
-            path.relative_to(work_dir.resolve())
-        except ValueError:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Refusing to edit outside working directory: {path}",
-            )
-
-        if not path.exists():
-            return ToolResult(data=None, success=False, error=f"File not found: {path}")
-
-        # Refuse to read absurdly large files — protects against OOM
-        _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
-        try:
-            file_size = path.stat().st_size
-            if file_size > _MAX_FILE_BYTES:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"File too large ({file_size} bytes, max {_MAX_FILE_BYTES})",
-                )
-        except OSError as e:
-            return ToolResult(data=None, success=False, error=f"Cannot stat file: {e}")
+        guard = _guard_target(work_dir, path)
+        if guard is not None:
+            return guard
 
         try:
             content = path.read_text(encoding="utf-8")
-            # Hashline: 写入前校验内容 hash, 防止覆盖并发修改/外部编辑.
-            # expected_hash 来自上次 read/edit 的 snapshot_hash; strict 不匹配即拒绝.
-            if input_data.expected_hash and input_data.hash_policy != "off":
-                current_hash = _content_hash(content)
-                if current_hash != input_data.expected_hash:
-                    msg = (
-                        f"File changed since snapshot (expected {input_data.expected_hash}, "
-                        f"got {current_hash}). Refusing to overwrite concurrent modification."
-                    )
-                    if input_data.hash_policy == "strict":
-                        return ToolResult(
-                            data={"current_hash": current_hash},
-                            success=False,
-                            error=msg,
-                        )
-                    logger.warning(msg)
-            if content.count(input_data.old_string) != 1:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=(
-                        f"old_string occurs {content.count(input_data.old_string)} times; "
-                        "must occur exactly once."
-                    ),
-                )
+            hash_err = _check_content_hash(content, input_data)
+            if hash_err is not None:
+                return hash_err
+            occurrence_err = _check_occurrence(content, input_data.old_string)
+            if occurrence_err is not None:
+                return occurrence_err
             new_content = content.replace(
                 input_data.old_string, input_data.new_string, 1
             )
@@ -216,66 +330,14 @@ class FileEditTool(HuginnTool):
 
             # Preview / dry-run: return the diff without writing.
             if input_data.dry_run or input_data.action == "preview":
-                return ToolResult(
-                    data={
-                        "file_path": str(path),
-                        "dry_run": True,
-                        "diff": diff,
-                        "semantic_diff": sem_diff,
-                        "message": f"Preview of edit to {path}.",
-                    },
-                    success=True,
-                )
+                return _preview_result(path, diff, sem_diff)
 
-            # 真正写入前先过一遍权限检查. 如果是 ASK 模式, 只把 diff 预览返回去,
-            # 不动文件 — 让 approval_callback 拿到 diff 后再决定要不要放行.
-            perm_config = (
-                context.config
-                if context is not None and isinstance(context.config, PermissionConfig)
-                else PermissionConfig()
-            )
-            checker = PermissionChecker(perm_config)
-            perm_result = await checker.check(
-                "file_edit_tool",
-                is_destructive=True,
-                args=args,
-            )
-            if perm_result.mode == PermissionMode.ASK:
-                return ToolResult(
-                    data={
-                        "file_path": str(path),
-                        "dry_run": True,
-                        "needs_approval": True,
-                        "diff": diff,
-                        "semantic_diff": sem_diff,
-                        "reason": perm_result.reason,
-                        "message": (
-                            f"Edit to {path} requires approval — "
-                            "diff preview generated, file unchanged."
-                        ),
-                    },
-                    success=True,
-                )
-            if perm_result.mode == PermissionMode.DENY:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=perm_result.reason
-                    or f"Edit to {path} denied by permission policy.",
-                )
+            approval = await _approval_gate(path, diff, sem_diff, context, args)
+            if approval is not None:
+                return approval
 
             path.write_text(new_content, encoding="utf-8")
-            return ToolResult(
-                data={
-                    "file_path": str(path),
-                    "replacements": 1,
-                    "diff": diff,
-                    "semantic_diff": sem_diff,
-                    "snapshot_hash": _content_hash(content),
-                    "message": f"Edited {path}.",
-                },
-                success=True,
-            )
+            return _written_result(path, diff, sem_diff, content)
         except Exception as e:
             return ToolResult(
                 data=None, success=False, error=f"Failed to edit file: {e}"

@@ -28,9 +28,7 @@ _DEFAULT_TIMEOUT_SEC = 180
 # -- helpers ----------------------------------------------------------------
 
 
-async def _send_json_error(
-    send: Any, status_code: int, detail: str
-) -> None:
+async def _send_json_error(send: Any, status_code: int, detail: str) -> None:
     """Short-circuit the response with a JSON error body.
 
     Only safe to call before the inner app has started writing its own
@@ -114,6 +112,12 @@ class RequestSizeLimitMiddleware:
 
         # No Content-Length (chunked). Wrap receive to enforce the cap
         # while the body streams in.
+        await self._stream_with_cap(scope, receive, send)
+
+    async def _stream_with_cap(
+        self, scope: dict[str, Any], receive: Any, send: Any
+    ) -> None:
+        """Stream the request body, tallying bytes and 413-ing past the cap."""
         consumed = 0
         capped = False
 
@@ -154,8 +158,7 @@ class RequestSizeLimitMiddleware:
             await _send_json_error(
                 send,
                 413,
-                f"Request body too large: exceeded limit of "
-                f"{self.max_bytes} bytes",
+                f"Request body too large: exceeded limit of {self.max_bytes} bytes",
             )
 
 

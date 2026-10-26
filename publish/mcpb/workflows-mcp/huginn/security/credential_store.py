@@ -95,8 +95,7 @@ def _get_fernet() -> Fernet:
     key 本身已是 256-bit 高熵随机量, 不需要再派生。
     """
     key_file = Path(
-        os.environ.get("HUGINN_CREDENTIAL_KEY_FILE")
-        or (_cred_dir() / "cred.key")
+        os.environ.get("HUGINN_CREDENTIAL_KEY_FILE") or (_cred_dir() / "cred.key")
     )
     key_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -193,8 +192,7 @@ class CredentialStore:
             )
             # 按种类 + 名称查重用得上, 走个普通索引
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_credentials_kind "
-                "ON credentials(kind)"
+                "CREATE INDEX IF NOT EXISTS idx_credentials_kind ON credentials(kind)"
             )
             conn.commit()
 
@@ -240,8 +238,7 @@ class CredentialStore:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM credentials ORDER BY "
-                    "is_default DESC, created_at ASC"
+                    "SELECT * FROM credentials ORDER BY is_default DESC, created_at ASC"
                 ).fetchall()
         return [self._row_to_record(r).to_masked_dict() for r in rows]
 
@@ -263,28 +260,17 @@ class CredentialStore:
         rec = self.get_record(cid)
         return rec.secret if rec else ""
 
-    def create(
+    def _insert_credential(
         self,
+        cid: str,
         kind: str,
         name: str,
-        metadata: dict[str, Any] | None = None,
-        secret: str = "",
-        is_default: bool | None = None,
-    ) -> dict[str, Any]:
-        """新建一条凭据。
-
-        is_default=None 时: 若该 kind 当前没有任何条目, 自动设为默认;
-        否则不设默认。显式传 True 则强制设默认 (并取消同 kind 其他默认)。
-        """
-        if kind not in _VALID_KINDS:
-            raise ValueError(f"kind 必须是 {_VALID_KINDS} 之一, 得到 {kind!r}")
-        if not name or not name.strip():
-            raise ValueError("name 不能为空")
-
-        cid = _new_id()
-        now = now_iso()
-        metadata = metadata or {}
-
+        metadata: dict[str, Any],
+        secret: str,
+        is_default: bool | None,
+        now: str,
+    ) -> None:
+        """写入一条新凭据, 并按需维护同 kind 的默认标记."""
         # 决定是否设默认
         with self._connect() as conn:
             count = conn.execute(
@@ -313,6 +299,30 @@ class CredentialStore:
                 ),
             )
             conn.commit()
+
+    def create(
+        self,
+        kind: str,
+        name: str,
+        metadata: dict[str, Any] | None = None,
+        secret: str = "",
+        is_default: bool | None = None,
+    ) -> dict[str, Any]:
+        """新建一条凭据。
+
+        is_default=None 时: 若该 kind 当前没有任何条目, 自动设为默认;
+        否则不设默认。显式传 True 则强制设默认 (并取消同 kind 其他默认)。
+        """
+        if kind not in _VALID_KINDS:
+            raise ValueError(f"kind 必须是 {_VALID_KINDS} 之一, 得到 {kind!r}")
+        if not name or not name.strip():
+            raise ValueError("name 不能为空")
+
+        cid = _new_id()
+        now = now_iso()
+        metadata = metadata or {}
+
+        self._insert_credential(cid, kind, name, metadata, secret, is_default, now)
 
         return self.get(cid)  # type: ignore[return-value]
 
@@ -436,9 +446,7 @@ class CredentialStore:
             remote_work_dir=m.get("remote_work_dir", "~/huginn_jobs"),
             default_queue=m.get("default_queue") or None,
             gpu_queue=m.get("gpu_queue") or None,
-            strict_host_key_checking=bool(
-                m.get("strict_host_key_checking", True)
-            ),
+            strict_host_key_checking=bool(m.get("strict_host_key_checking", True)),
             known_hosts_path=m.get("known_hosts_path") or None,
         )
 
@@ -497,7 +505,9 @@ class CredentialStore:
                 secret=key,
             )
             imported[m.alias] = rec["id"]
-            logger.info("imported LLM credential '%s' (provider=%s)", m.alias, m.provider)
+            logger.info(
+                "imported LLM credential '%s' (provider=%s)", m.alias, m.provider
+            )
 
         return imported
 
@@ -675,9 +685,7 @@ class ServiceCredentialStore:
             text = self.file_path.read_text(encoding="utf-8")
             data = json.loads(text) if text.strip() else {}
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "凭据文件 %s 读取失败, 当作空处理: %s", self.file_path, exc
-            )
+            logger.warning("凭据文件 %s 读取失败, 当作空处理: %s", self.file_path, exc)
             return {}
         if not isinstance(data, dict):
             return {}

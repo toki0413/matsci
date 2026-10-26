@@ -9,6 +9,7 @@
 
 env flag HUGINN_USE_ATOMWORLD=1 + atomworld 包安装才生效, 默认 off 行为不变.
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,10 +50,8 @@ class AtomMotor2KSubtask:
     def is_available(self) -> bool:
         """flag + atomworld 包是否就位. 任一缺失返 False, run() 会跳过."""
         from huginn.tools.atomworld_tool import is_available
-        return (
-            os.environ.get("HUGINN_USE_ATOMWORLD", "0") == "1"
-            and is_available()
-        )
+
+        return os.environ.get("HUGINN_USE_ATOMWORLD", "0") == "1" and is_available()
 
     def run(
         self,
@@ -73,7 +72,7 @@ class AtomMotor2KSubtask:
 
         from atomworld import load_data
 
-        from huginn.tools.atomworld_tool import evaluate, list_actions
+        from huginn.tools.atomworld_tool import list_actions
 
         per_action: dict[str, dict[str, Any]] = {}
         all_results: list[dict[str, Any]] = []
@@ -90,55 +89,60 @@ class AtomMotor2KSubtask:
             if self._n_per_action is not None:
                 df = df.head(self._n_per_action)
 
-            results: list[dict[str, Any]] = []
-            for _, row in df.iterrows():
-                input_cif = row["input_cif"]
-                action_prompt = row["action_prompt"]
-                target_cif = row["output_cif"]
-                try:
-                    predicted_cif = agent_inference_fn(input_cif, action_prompt)
-                except Exception as e:
-                    logger.debug("agent_inference_fn failed: %s", e)
-                    results.append({"correct": False, "rmsd": None, "max_dist": None})
-                    continue
-                try:
-                    er = evaluate(target_cif, predicted_cif)
-                    results.append({
+            results = self._run_rows(df, agent_inference_fn)
+            per_action[action_name] = _summarize_results(results)
+            all_results.extend(results)
+
+        return {"per_action": per_action, "overall": _summarize_results(all_results)}
+
+    def _run_rows(
+        self,
+        df,
+        agent_inference_fn: Callable[[str, str], str],
+    ) -> list[dict[str, Any]]:
+        from huginn.tools.atomworld_tool import evaluate
+
+        results: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            input_cif = row["input_cif"]
+            action_prompt = row["action_prompt"]
+            target_cif = row["output_cif"]
+            try:
+                predicted_cif = agent_inference_fn(input_cif, action_prompt)
+            except Exception as e:
+                logger.debug("agent_inference_fn failed: %s", e)
+                results.append({"correct": False, "rmsd": None, "max_dist": None})
+                continue
+            try:
+                er = evaluate(target_cif, predicted_cif)
+                results.append(
+                    {
                         "correct": er.correct,
                         "rmsd": er.rmsd,
                         "max_dist": er.max_dist,
-                    })
-                except Exception as e:
-                    logger.debug("evaluate failed: %s", e)
-                    results.append({"correct": False, "rmsd": None, "max_dist": None})
+                    }
+                )
+            except Exception as e:
+                logger.debug("evaluate failed: %s", e)
+                results.append({"correct": False, "rmsd": None, "max_dist": None})
+        return results
 
-            n = len(results)
-            success = sum(1 for r in results if r["correct"])
-            rmsds = [r["rmsd"] for r in results if r["rmsd"] is not None]
-            max_dists = [r["max_dist"] for r in results if r["max_dist"] is not None]
-            per_action[action_name] = {
-                "success_rate": success / n if n > 0 else 0.0,
-                "mean_rmsd": sum(rmsds) / len(rmsds) if rmsds else None,
-                "mean_max_dist": sum(max_dists) / len(max_dists) if max_dists else None,
-                "n": n,
-            }
-            all_results.extend(results)
 
-        n_total = len(all_results)
-        success_total = sum(1 for r in all_results if r["correct"])
-        rmsds_all = [r["rmsd"] for r in all_results if r["rmsd"] is not None]
-        max_dists_all = [r["max_dist"] for r in all_results if r["max_dist"] is not None]
-        overall = {
-            "success_rate": success_total / n_total if n_total > 0 else 0.0,
-            "mean_rmsd": sum(rmsds_all) / len(rmsds_all) if rmsds_all else None,
-            "mean_max_dist": sum(max_dists_all) / len(max_dists_all) if max_dists_all else None,
-            "n": n_total,
-        }
-
-        return {"per_action": per_action, "overall": overall}
+def _summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(results)
+    success = sum(1 for r in results if r["correct"])
+    rmsds = [r["rmsd"] for r in results if r["rmsd"] is not None]
+    max_dists = [r["max_dist"] for r in results if r["max_dist"] is not None]
+    return {
+        "success_rate": success / n if n > 0 else 0.0,
+        "mean_rmsd": sum(rmsds) / len(rmsds) if rmsds else None,
+        "mean_max_dist": sum(max_dists) / len(max_dists) if max_dists else None,
+        "n": n,
+    }
 
 
 # ── self-check ─────────────────────────────────────────────────
+
 
 def _selfcheck() -> None:
     """3 场景: flag off 跳过 / flag on 包未装跳过 / run mock 路径不崩.
@@ -147,6 +151,7 @@ def _selfcheck() -> None:
     ceiling: 没验 load_data 真 DataFrame 路径 (需真包+数据), 升级路径见 acceptance test.
     """
     import os
+
     # 备份 env, selfcheck 改完恢复
     orig_flag = os.environ.get("HUGINN_USE_ATOMWORLD", "0")
     try:
@@ -161,6 +166,7 @@ def _selfcheck() -> None:
         # 2. flag on 但包未装 (atomworld 可能在测试环境没装) -> is_available False
         os.environ["HUGINN_USE_ATOMWORLD"] = "1"
         from huginn.tools.atomworld_tool import is_available
+
         if not is_available():
             assert sub.is_available() is False, "包未装时 is_available 应 False"
             report = sub.run(lambda cif, p: "")

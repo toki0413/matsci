@@ -42,6 +42,89 @@ from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
+# 成本高到值得先跟用户确认的 plan mode (workflow=DFT/MD, 通常是几小时)
+_EXPENSIVE_MODES = ("workflow", "dft", "md", "vasp", "lammps")
+
+
+def _write_meta_trace(workspace_root: Any, entry: dict) -> None:
+    """追加一行 JSON 到 .huginn/meta_trace.jsonl; 失败只记 debug."""
+    ws = workspace_root or Path.cwd()
+    trace_path = Path(ws) / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    try:
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with trace_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:  # 防御: 元轨迹写入失败忽略
+        logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
+
+
+def _deviation_entry(
+    iteration: Any,
+    kind: str,
+    plan_mode: str,
+    plan_desc: str,
+    deviation: str,
+    expected: str,
+) -> dict[str, str]:
+    """构造一条 deviation 记录 (字段固定, 便于 _learn / Feynman 消费)."""
+    return {
+        "iteration": str(iteration),
+        "type": kind,
+        "plan_mode": plan_mode,
+        "plan_desc": plan_desc,
+        "deviation": deviation,
+        "expected": expected[:100] if expected else "(none)",
+    }
+
+
+def _clarify_plan_ctx(plan: Any, thread_id: str) -> dict | None:
+    """高成本 mode 的计划确认上下文; 非高成本返回 None."""
+    plan = plan or {}
+    mode = plan.get("mode", "")
+    if mode.lower() not in _EXPENSIVE_MODES:
+        return None
+    return {
+        "thread_id": thread_id,
+        "question_type": "cost_confirm",
+        "phase": "plan",
+        "summary": f"mode={mode}, desc={plan.get('description', '')[:200]}",
+        "tool": mode,
+        "cost_estimate_hours": 1.0,  # workflow 类至少 1h
+    }
+
+
+def _clarify_validation_ctx(
+    phase_result: Any, thread_id: str, consecutive: int
+) -> dict:
+    """验证连续失败后的方向询问上下文."""
+    return {
+        "thread_id": thread_id,
+        "question_type": "validation_fail",
+        "phase": "validate",
+        "summary": str(phase_result)[:300],
+        "consecutive_failures": consecutive,
+    }
+
+
+def _clarify_plan_check_ctx(info: Any, thread_id: str) -> dict | None:
+    """plan_check 连续失败且场景已知时的方向询问上下文."""
+    info = info or {}
+    consecutive = info.get("consecutive_fails", 0)
+    if consecutive < 3 or info.get("scene") == "other":
+        return None
+    return {
+        "thread_id": thread_id,
+        "question_type": "plan_check_fail",
+        "phase": "plan",
+        "summary": (
+            f"plan_check 连续 {consecutive} 次失败 "
+            f"(scene={info.get('scene', '?')}): "
+            f"{info.get('reason', '')[:200]}"
+        ),
+        "consecutive_fails": consecutive,
+        "scene": info.get("scene", ""),
+    }
+
 
 class EngineControl:
     """循环控制 + checkpoint 方法族协作对象.
@@ -273,25 +356,7 @@ class EngineControl:
         parent_tid = getattr(self, "_parent_run_id", None)
         # override 优先: 已强制放行的转移直接记一条 approved, 不再评估
         if (from_phase, to_phase) in state.overrides:
-            meta = state.override_meta.get((from_phase, to_phase), {})
-            state.history.append(
-                PhaseGate(
-                    from_phase=from_phase,
-                    to_phase=to_phase,
-                    status="approved",
-                    required_evidence=self.phase_gate_hook.config.required_for(
-                        from_phase, to_phase
-                    ),
-                    feedback="override 放行",
-                    reviewer=meta.get("actor", "user"),
-                    trace_id=tid,
-                    parent_trace_id=parent_tid,
-                )
-            )
-            state.pending_transition = (from_phase, to_phase)
-            # override 同时清除 pending_human_review (用户已决策)
-            if state.pending_human_review == (from_phase, to_phase):
-                state.pending_human_review = None
+            self._gate_override_record(state, from_phase, to_phase, tid, parent_tid)
             return True
 
         gate = self.phase_gate_hook.evaluate(from_phase, to_phase, evidence)
@@ -301,26 +366,76 @@ class EngineControl:
         state.pending_transition = (from_phase, to_phase)
 
         if gate.is_blocked:
-            fb = gate.feedback or (
-                f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺 {gate.missing_evidence}"
-            )
-            self._speculator_hint = (
-                (self._speculator_hint + "\n" + fb).strip()
-                if self._speculator_hint
-                else fb
-            )
-            logger.info(
-                "gate blocked %s→%s: missing %s",
-                from_phase,
-                to_phase,
-                gate.missing_evidence,
-            )
+            self._gate_blocked_hint(gate, from_phase, to_phase)
             return False
 
         # ── Human-in-the-loop checkpoint (LangGraph interrupt_before 模式) ──
-        # 硬性证据已通过, 但用户配置了该转移需要人工审查. 设 pending_human_review
-        # 并返回 False 让 engine 停在当前 phase. UI 层读到 phase_checkpoint 事件后
-        # 展示 evidence 给用户, 用户通过 phase_tool override 或 submit_evidence + resume.
+        return self._gate_human_checkpoint(
+            state, from_phase, to_phase, tid, parent_tid
+        )
+
+    def _gate_override_record(
+        self,
+        state: Any,
+        from_phase: str,
+        to_phase: str,
+        tid: str,
+        parent_tid: str | None,
+    ) -> None:
+        """记一条 approved 历史并设 pending_transition (override 放行)."""
+        meta = state.override_meta.get((from_phase, to_phase), {})
+        state.history.append(
+            PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="approved",
+                required_evidence=self.phase_gate_hook.config.required_for(
+                    from_phase, to_phase
+                ),
+                feedback="override 放行",
+                reviewer=meta.get("actor", "user"),
+                trace_id=tid,
+                parent_trace_id=parent_tid,
+            )
+        )
+        state.pending_transition = (from_phase, to_phase)
+        # override 同时清除 pending_human_review (用户已决策)
+        if state.pending_human_review == (from_phase, to_phase):
+            state.pending_human_review = None
+
+    def _gate_blocked_hint(
+        self, gate: PhaseGate, from_phase: str, to_phase: str
+    ) -> None:
+        """把阻断 feedback 拼进 _speculator_hint, 下轮 prompt 用."""
+        fb = gate.feedback or (
+            f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺 {gate.missing_evidence}"
+        )
+        self._speculator_hint = (
+            (self._speculator_hint + "\n" + fb).strip()
+            if self._speculator_hint
+            else fb
+        )
+        logger.info(
+            "gate blocked %s→%s: missing %s",
+            from_phase,
+            to_phase,
+            gate.missing_evidence,
+        )
+
+    def _gate_human_checkpoint(
+        self,
+        state: Any,
+        from_phase: str,
+        to_phase: str,
+        tid: str,
+        parent_tid: str | None,
+    ) -> bool:
+        """硬性证据已过, 但配置了人工审查时停下等人; True 表示可放行.
+
+        设 pending_human_review 并返回 False 让 engine 停在当前 phase. UI 层读到
+        phase_checkpoint 事件后展示 evidence 给用户, 用户通过 phase_tool override
+        或 submit_evidence + resume.
+        """
         if state.needs_human_checkpoint(from_phase, to_phase):
             if state.pending_human_review == (from_phase, to_phase):
                 # 已经在等了, 不重复设 — 避免 dead loop
@@ -332,33 +447,44 @@ class EngineControl:
                 to_phase,
             )
             # 记一条 pending 状态, phase_tool 查得到
-            state.history.append(
-                PhaseGate(
-                    from_phase=from_phase,
-                    to_phase=to_phase,
-                    status="pending",
-                    required_evidence=self.phase_gate_hook.config.required_for(
-                        from_phase, to_phase
-                    ),
-                    feedback=(
-                        "⚠ 硬性检查点: 此转移不可超时自动放行, 必须人工确认. "
-                        "请审查 evidence 后用 phase_tool override 显式放行, "
-                        "或 submit_evidence 补充后 resume."
-                        if state.is_hard_checkpoint(from_phase, to_phase)
-                        else "等待人工 checkpoint 审查. 用 phase_tool override 放行, "
-                        "或 submit_evidence 补充后 resume."
-                    ),
-                    reviewer="human_checkpoint",
-                    trace_id=tid,
-                    parent_trace_id=parent_tid,
-                )
-            )
+            self._gate_pending_record(state, from_phase, to_phase, tid, parent_tid)
             return False
 
         # 用户已审查完毕 (pending_human_review 被清除), 正常放行
         if state.pending_human_review == (from_phase, to_phase):
             state.pending_human_review = None
         return True
+
+    def _gate_pending_record(
+        self,
+        state: Any,
+        from_phase: str,
+        to_phase: str,
+        tid: str,
+        parent_tid: str | None,
+    ) -> None:
+        """记一条 pending 状态, phase_tool 查得到."""
+        state.history.append(
+            PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="pending",
+                required_evidence=self.phase_gate_hook.config.required_for(
+                    from_phase, to_phase
+                ),
+                feedback=(
+                    "⚠ 硬性检查点: 此转移不可超时自动放行, 必须人工确认. "
+                    "请审查 evidence 后用 phase_tool override 显式放行, "
+                    "或 submit_evidence 补充后 resume."
+                    if state.is_hard_checkpoint(from_phase, to_phase)
+                    else "等待人工 checkpoint 审查. 用 phase_tool override 放行, "
+                    "或 submit_evidence 补充后 resume."
+                ),
+                reviewer="human_checkpoint",
+                trace_id=tid,
+                parent_trace_id=parent_tid,
+            )
+        )
 
     def _plan_missing_executable(self, plan: dict[str, Any]) -> bool:
         """判定 plan 是否带"可直接运行的数值脚本"信号 (纯 advisory, 不阻断).
@@ -408,20 +534,9 @@ class EngineControl:
         )
 
         while state.pending_human_review == key and key not in state.overrides:
-            if loop.time() > deadline:
-                logger.warning(
-                    "human checkpoint %s→%s timed out after %ss, force proceed",
-                    from_phase,
-                    to_phase,
-                    timeout,
-                )
-                state.pending_human_review = None
-                await self._publish_checkpoint_event(
-                    event_type="checkpoint_timeout",
-                    from_phase=from_phase,
-                    to_phase=to_phase,
-                    is_hard=is_hard,
-                )
+            if await self._checkpoint_timed_out(
+                state, from_phase, to_phase, is_hard, deadline, timeout
+            ):
                 return
             await asyncio.sleep(1.0)
 
@@ -432,6 +547,33 @@ class EngineControl:
             to_phase=to_phase,
             is_hard=is_hard,
         )
+
+    async def _checkpoint_timed_out(
+        self,
+        state: Any,
+        from_phase: str,
+        to_phase: str,
+        is_hard: bool,
+        deadline: float,
+        timeout: float,
+    ) -> bool:
+        """超时则清 pending 并发事件; True 表示调用方应直接返回."""
+        if asyncio.get_running_loop().time() <= deadline:
+            return False
+        logger.warning(
+            "human checkpoint %s→%s timed out after %ss, force proceed",
+            from_phase,
+            to_phase,
+            timeout,
+        )
+        state.pending_human_review = None
+        await self._publish_checkpoint_event(
+            event_type="checkpoint_timeout",
+            from_phase=from_phase,
+            to_phase=to_phase,
+            is_hard=is_hard,
+        )
+        return True
 
 
     async def _publish_checkpoint_event(
@@ -747,96 +889,21 @@ class EngineControl:
 
         # 构建上下文
         if checkpoint == "plan":
-            plan = phase_result or {}
-            mode = plan.get("mode", "")
-            # 只对高成本 mode 提问 (workflow=DFT/MD, 通常是几小时)
-            expensive_modes = ("workflow", "dft", "md", "vasp", "lammps")
-            if mode.lower() not in expensive_modes:
-                return None
-
-            ctx = {
-                "thread_id": thread_id,
-                "question_type": "cost_confirm",
-                "phase": "plan",
-                "summary": f"mode={mode}, desc={plan.get('description', '')[:200]}",
-                "tool": mode,
-                "cost_estimate_hours": 1.0,  # workflow 类至少 1h
-            }
+            ctx = _clarify_plan_ctx(phase_result, thread_id)
         elif checkpoint == "validation_fail":
             if self._consecutive_failures < 3:
                 return None
-            ctx = {
-                "thread_id": thread_id,
-                "question_type": "validation_fail",
-                "phase": "validate",
-                "summary": str(phase_result)[:300],
-                "consecutive_failures": self._consecutive_failures,
-            }
-        elif checkpoint == "plan_check_fail":
-            # plan_check 连续失败 + 场景已知 -> 问用户方向.
-            # 跟 validation_fail 同款: 不阻塞, 用户可以选 force_proceed.
-            info = phase_result or {}
-            consecutive = info.get("consecutive_fails", 0)
-            if consecutive < 3 or info.get("scene") == "other":
-                return None
-            ctx = {
-                "thread_id": thread_id,
-                "question_type": "plan_check_fail",
-                "phase": "plan",
-                "summary": (
-                    f"plan_check 连续 {consecutive} 次失败 "
-                    f"(scene={info.get('scene', '?')}): "
-                    f"{info.get('reason', '')[:200]}"
-                ),
-                "consecutive_fails": consecutive,
-                "scene": info.get("scene", ""),
-            }
-        elif checkpoint == "hypothesize_align":
-            # v11: FDE 对齐轮 — 首轮或 blind_spots/conflicts 时问用户假设方向.
-            # 不阻塞, 60s timeout, 用户回答 append 到 _speculator_hint 自动流进 prompt.
-            # ponytail: 复用现有 _maybe_clarify 管道, 不新建 ClarificationManager 子类.
-            _info = phase_result if isinstance(phase_result, dict) else {}
-            _is_first = self._iteration <= 1
-            _has_signals = bool(
-                _info.get("blind_spots") or _info.get("semantic_conflicts")
+            ctx = _clarify_validation_ctx(
+                phase_result, thread_id, self._consecutive_failures
             )
-            if not (_is_first or _has_signals):
-                return None
-
-            # 拼 recommended_directions: 优先用 cluster_by_dimension, 不足补 speculator
-            _directions: list[str] = []
-            try:
-                _clusters = self.hypothesis_graph.cluster_by_dimension()
-                for _dim, _nodes in list(_clusters.items())[:3]:
-                    if _dim != "unknown" and _nodes:
-                        _directions.append(f"{_dim}: {_nodes[0].statement[:80]}")
-            except Exception:  # 防御: 方向聚类失败跳过
-                logger.debug("cluster directions skipped", exc_info=True)
-            # 不足 3 个时补 speculator predictions (首轮自然走这条)
-            while len(_directions) < 3:
-                try:
-                    _preds = getattr(self, "_speculator_predictions", []) or []
-                    if _preds:
-                        _directions.append(f"speculator: {str(_preds[len(_directions)])[:80]}")
-                    else:
-                        break
-                except Exception:  # 防御: 尽力补方向失败停止补充
-                    logger.debug("best-effort op failed", exc_info=True)
-                    break
-
-            ctx = {
-                "thread_id": thread_id,
-                "question_type": "hypothesize_align",
-                "phase": "hypothesize",
-                "summary": (
-                    f"目标: {self._objective or '?'}\n"
-                    f"现场: {str(_info.get('summary', ''))[:200]}\n"
-                    f"推荐方向:\n" + "\n".join(f"  - {d}" for d in _directions[:3])
-                ),
-                "recommended_directions": _directions[:3],
-                "is_first_iteration": _is_first,
-            }
+        elif checkpoint == "plan_check_fail":
+            ctx = _clarify_plan_check_ctx(phase_result, thread_id)
+        elif checkpoint == "hypothesize_align":
+            ctx = self._clarify_align_ctx(phase_result, thread_id)
         else:
+            ctx = None
+
+        if ctx is None:
             return None
 
         if not mgr.should_ask_contextual(ctx.get("question_type", ""), ctx):
@@ -844,7 +911,66 @@ class EngineControl:
 
         # 生成提问
         question, options, default = mgr.generate_question(ctx, model=None)
+        return await self._ask_clarification(
+            mgr, checkpoint, thread_id, ctx, question, options, default
+        )
 
+    def _clarify_align_directions(self) -> list[str]:
+        """拼 recommended_directions: 优先 cluster_by_dimension, 不足补 speculator."""
+        directions: list[str] = []
+        try:
+            clusters = self.hypothesis_graph.cluster_by_dimension()
+            for dim, nodes in list(clusters.items())[:3]:
+                if dim != "unknown" and nodes:
+                    directions.append(f"{dim}: {nodes[0].statement[:80]}")
+        except Exception:  # 防御: 方向聚类失败跳过
+            logger.debug("cluster directions skipped", exc_info=True)
+        # 不足 3 个时补 speculator predictions (首轮自然走这条)
+        while len(directions) < 3:
+            try:
+                preds = getattr(self, "_speculator_predictions", []) or []
+                if not preds:
+                    break
+                directions.append(f"speculator: {str(preds[len(directions)])[:80]}")
+            except Exception:  # 防御: 尽力补方向失败停止补充
+                logger.debug("best-effort op failed", exc_info=True)
+                break
+        return directions
+
+    def _clarify_align_ctx(self, phase_result: Any, thread_id: str) -> dict | None:
+        """FDE 对齐轮上下文; 仅首轮或存在 blind_spots/conflicts 时提问."""
+        info = phase_result if isinstance(phase_result, dict) else {}
+        is_first = self._iteration <= 1
+        has_signals = bool(
+            info.get("blind_spots") or info.get("semantic_conflicts")
+        )
+        if not (is_first or has_signals):
+            return None
+        directions = self._clarify_align_directions()
+        return {
+            "thread_id": thread_id,
+            "question_type": "hypothesize_align",
+            "phase": "hypothesize",
+            "summary": (
+                f"目标: {self._objective or '?'}\n"
+                f"现场: {str(info.get('summary', ''))[:200]}\n"
+                f"推荐方向:\n" + "\n".join(f"  - {d}" for d in directions[:3])
+            ),
+            "recommended_directions": directions[:3],
+            "is_first_iteration": is_first,
+        }
+
+    async def _ask_clarification(
+        self,
+        mgr: Any,
+        checkpoint: str,
+        thread_id: str,
+        ctx: dict,
+        question: str,
+        options: Any,
+        default: Any,
+    ) -> str | None:
+        """发问并等最多 60s; 失败/超时返回 None."""
         try:
             answer = await mgr.ask(
                 thread_id=thread_id,
@@ -859,16 +985,55 @@ class EngineControl:
                     "iteration": self._iteration,
                 },
             )
-            logger.info("clarify %s: %s", checkpoint, answer[:80])
-            # v11: hypothesize_align 的回答 append 到 _speculator_hint,
-            # 自动流进 _build_hypothesis_prompt 的 hint_block (零改动).
-            if checkpoint == "hypothesize_align" and answer:
-                self._speculator_hint += f"\n[FDE 对齐] 用户方向: {answer[:200]}\n"
-            return answer
         except Exception:  # 防御: 澄清失败返回空
             logger.warning("clarify %s failed", checkpoint, exc_info=True)
             return None
+        logger.info("clarify %s: %s", checkpoint, answer[:80])
+        # v11: hypothesize_align 的回答 append 到 _speculator_hint,
+        # 自动流进 _build_hypothesis_prompt 的 hint_block (零改动).
+        if checkpoint == "hypothesize_align" and answer:
+            self._speculator_hint += f"\n[FDE 对齐] 用户方向: {answer[:200]}\n"
+        return answer
 
+
+    def _meta_trace_fields(self) -> dict[str, Any]:
+        """从 self.* 抽本轮关键信息 (都是上一轮 phase 写进去的)."""
+        attempted = ""
+        if getattr(self, "_last_hypothesis", None):
+            attempted = str(self._last_hypothesis)[:300]
+
+        found = ""
+        limitations: list[str] = []
+        last_validation = getattr(self, "_last_validation", None)
+        if last_validation and isinstance(last_validation, dict):
+            found = str(last_validation.get("result", ""))[:300]
+            if last_validation.get("errors"):
+                limitations.append(str(last_validation["errors"])[:200])
+
+        evidence: list[str] = []
+        try:
+            for nd in self.hypothesis_graph.supported()[:3]:
+                evidence.append(str(nd.statement)[:150])
+        except Exception:  # 防御: 支撑证据收集失败跳过
+            logger.debug("supported evidence collect skipped", exc_info=True)
+
+        artifacts: list[str] = []
+        last_exec = getattr(self, "_last_execution_result", None)
+        if last_exec and isinstance(last_exec, dict):
+            outs = last_exec.get("outputs") or last_exec.get("files")
+            if isinstance(outs, list):
+                artifacts = [str(f)[:150] for f in outs[:5]]
+            elif isinstance(outs, str):
+                artifacts = [outs[:150]]
+
+        return {
+            "attempted": attempted,
+            "found": found,
+            "evidence": evidence,
+            "limitations": limitations,
+            "artifacts": artifacts,
+            "next_hint": (getattr(self, "_speculator_hint", "") or "")[-300:],
+        }
 
     def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
         """把本轮蒸馏成结构化科研要点, 追加到 .huginn/meta_trace.jsonl.
@@ -879,62 +1044,17 @@ class EngineControl:
         ponytail: 字段从 self.* 现有状态抽, 不调 LLM. ceiling 是 LLM 蒸馏.
                   文件路径跟 stable_principles 同目录 (.huginn/), 一行一个 JSON.
         """
-
-        # 从 self.* 抽本轮关键信息 (都是上一轮 phase 写进去的)
-        attempted = ""
-        if getattr(self, "_last_hypothesis", None):
-            attempted = str(self._last_hypothesis)[:300]
-
-        found = ""
-        limitations: list[str] = []
-        if getattr(self, "_last_validation", None) and isinstance(self._last_validation, dict):
-            v = self._last_validation
-            found = str(v.get("result", ""))[:300]
-            if v.get("errors"):
-                limitations.append(str(v["errors"])[:200])
-
-        evidence: list[str] = []
-        try:
-            for nd in self.hypothesis_graph.supported()[:3]:
-                evidence.append(str(nd.statement)[:150])
-        except Exception:  # 防御: 支撑证据收集失败跳过
-            logger.debug("supported evidence collect skipped", exc_info=True)
-
-        artifacts: list[str] = []
-        if getattr(self, "_last_execution_result", None) and isinstance(self._last_execution_result, dict):
-            outs = self._last_execution_result.get("outputs") or self._last_execution_result.get("files")
-            if isinstance(outs, list):
-                artifacts = [str(f)[:150] for f in outs[:5]]
-            elif isinstance(outs, str):
-                artifacts = [outs[:150]]
-
-        next_hint = (getattr(self, "_speculator_hint", "") or "")[-300:]
-
         entry = {
             "iteration": self._iteration,
             "ts": time.time(),
             "role": "autoloop",  # ponytail: 单 agent, role 固定; 升级多 agent 后填实际 role
-            "attempted": attempted,
-            "found": found,
-            "evidence": evidence,
-            "limitations": limitations,
-            "artifacts": artifacts,
-            "next_hint": next_hint,
+            **self._meta_trace_fields(),
             "darwin_score": round(darwin_score, 2),
             "supported_ratio": round(supported_ratio, 3),
         }
-
         # 写到 workspace 的 .huginn/meta_trace.jsonl (不存在就建)
         # ponytail: 不走 memory_manager, 直接写文件. 跟 directive_rejections 同模式.
-        ws = getattr(self, "workspace_root", None) or Path.cwd()
-        trace_path = Path(ws) / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        try:
-            trace_path.parent.mkdir(parents=True, exist_ok=True)
-            with trace_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:  # 防御: 元轨迹写入失败忽略
-            logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
-
+        _write_meta_trace(getattr(self, "workspace_root", None), entry)
 
     def stop(self) -> None:
         """Signal the loop to stop at the next safe point."""
@@ -964,43 +1084,29 @@ class EngineControl:
         plan_desc = plan.get("description", "")[:200]
         expected = plan.get("expected_prediction", "")
 
+        def record(kind: str, deviation: str) -> None:
+            deviations.append(
+                _deviation_entry(
+                    self._iteration, kind, plan_mode, plan_desc, deviation, expected
+                )
+            )
+
         # 检查 1: 有 error
         if isinstance(result, dict) and result.get("error"):
-            deviations.append(
-                {
-                    "iteration": str(self._iteration),
-                    "type": "execution_error",
-                    "plan_mode": plan_mode,
-                    "plan_desc": plan_desc,
-                    "deviation": f"Execution failed: {str(result['error'])[:200]}",
-                    "expected": expected[:100] if expected else "(none)",
-                }
-            )
+            record("execution_error", f"Execution failed: {str(result['error'])[:200]}")
 
         # 检查 2: evolved fix 被使用
         if isinstance(context, dict) and context.get("_evolved_fix"):
-            deviations.append(
-                {
-                    "iteration": str(self._iteration),
-                    "type": "heuristic_fix",
-                    "plan_mode": plan_mode,
-                    "plan_desc": plan_desc,
-                    "deviation": "Applied evolved heuristic fix instead of following original plan",
-                    "expected": expected[:100] if expected else "(none)",
-                }
+            record(
+                "heuristic_fix",
+                "Applied evolved heuristic fix instead of following original plan",
             )
 
         # 检查 3: result success=False
         if isinstance(result, dict) and result.get("success") is False:
-            deviations.append(
-                {
-                    "iteration": str(self._iteration),
-                    "type": "plan_mismatch",
-                    "plan_mode": plan_mode,
-                    "plan_desc": plan_desc,
-                    "deviation": "Plan produced unsuccessful result, will need refinement",
-                    "expected": expected[:100] if expected else "(none)",
-                }
+            record(
+                "plan_mismatch",
+                "Plan produced unsuccessful result, will need refinement",
             )
 
 

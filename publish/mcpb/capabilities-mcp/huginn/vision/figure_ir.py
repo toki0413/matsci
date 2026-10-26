@@ -105,6 +105,7 @@ def _resolve_output_path(output_path: str | Path | None, ext: str) -> Path:
         from datetime import datetime
 
         from huginn.utils.runtime import get_runtime_home
+
         fig_dir = get_runtime_home() / "figures"
         fig_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -137,93 +138,122 @@ def _render_scienceplots(
     - 主题: SciencePlots science / ieee
     ponytail: 用 plt.style.context, 不全局改 rcParams. 升级: 自定义 rcParams.
     """
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        raise RuntimeError("matplotlib not available, install: pip install matplotlib") from None
-
-    scienceplots_available = True
-    try:
-        import scienceplots  # noqa: F401
-    except ImportError:
-        scienceplots_available = False
-        logger.debug("SciencePlots not available, using default matplotlib style")
+    plt = _import_matplotlib()
+    scienceplots_available = _scienceplots_available()
 
     # SciencePlots 不可用时, science/ieee/nature 这些专属 style 不存在,
     # 直接用 matplotlib 内置默认样式, 避免 plt.style.context 抛 OSError.
-    styles = _apply_style(ir.get("style", "science")) if scienceplots_available else ["default"]
+    styles = (
+        _apply_style(ir.get("style", "science"))
+        if scienceplots_available
+        else ["default"]
+    )
     figsize = kwargs.get("figsize", (6, 4))
     dpi = kwargs.get("dpi", 150)
 
     with plt.style.context(styles):
-        # 固化样式: Arial 20pt 加粗
-        plt.rcParams["font.family"] = "Arial"
-        plt.rcParams["font.size"] = 20
-        plt.rcParams["font.weight"] = "bold"
-        plt.rcParams["axes.labelweight"] = "bold"
-        plt.rcParams["axes.titleweight"] = "bold"
-        # SciencePlots science 主题默认 usetex=True, 需要完整 LaTeX 环境.
-        # TinyTeX 常缺 type1cm.sty, 关掉用 matplotlib 内置渲染.
-        # ponytail: 关 usetex, 字体降级到 DejaVu Sans (Arial 找不到时). 升级: 装完整 LaTeX.
-        plt.rcParams["text.usetex"] = False
+        _configure_scienceplots_style(plt)
 
         fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         chart_type = ir.get("chart_type", "line")
         series_list = ir.get("series", [])
         axes = ir.get("axes", {})
 
-        for s in series_list:
-            label = s.get("label", "")
-            data = s.get("data", [])
-            color = s.get("color")
-            if not data:
-                continue
-            if chart_type == "line":
-                if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
-                    xs = [p[0] for p in data]
-                    ys = [p[1] for p in data]
-                    ax.plot(xs, ys, label=label, color=color, linewidth=2)
-                else:
-                    ax.plot(data, label=label, color=color, linewidth=2)
-            elif chart_type == "bar":
-                if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
-                    labels = [str(p[0]) for p in data]
-                    values = [p[1] for p in data]
-                    ax.bar(labels, values, label=label, color=color)
-                else:
-                    ax.bar(range(len(data)), data, label=label, color=color)
-            elif chart_type == "scatter":
-                if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
-                    xs = [p[0] for p in data]
-                    ys = [p[1] for p in data]
-                    ax.scatter(xs, ys, label=label, color=color, s=50)
-                else:
-                    ax.scatter(range(len(data)), data, label=label, color=color, s=50)
-            elif chart_type == "heatmap":
-                try:
-                    import numpy as np
-                    arr = np.array(data)
-                    im = ax.imshow(arr, cmap=color or "viridis", aspect="auto")
-                    fig.colorbar(im, ax=ax, label=label)
-                except Exception:
-                    logger.debug("heatmap render failed", exc_info=True)
-
-        if ir.get("title"):
-            ax.set_title(ir["title"])
-        if axes.get("x"):
-            ax.set_xlabel(axes["x"])
-        if axes.get("y"):
-            ax.set_ylabel(axes["y"])
-        if len(series_list) > 1:
-            ax.legend()
+        _draw_series(ax, fig, chart_type, series_list)
+        _decorate_axes(ax, ir, axes, series_list)
 
         fig.tight_layout()
         out = _resolve_output_path(output_path, "png")
         fig.savefig(out, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         return str(out)
+
+
+def _import_matplotlib() -> Any:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        raise RuntimeError(
+            "matplotlib not available, install: pip install matplotlib"
+        ) from None
+    return plt
+
+
+def _scienceplots_available() -> bool:
+    try:
+        import scienceplots  # noqa: F401
+    except ImportError:
+        logger.debug("SciencePlots not available, using default matplotlib style")
+        return False
+    return True
+
+
+def _configure_scienceplots_style(plt: Any) -> None:
+    # 固化样式: Arial 20pt 加粗
+    plt.rcParams["font.family"] = "Arial"
+    plt.rcParams["font.size"] = 20
+    plt.rcParams["font.weight"] = "bold"
+    plt.rcParams["axes.labelweight"] = "bold"
+    plt.rcParams["axes.titleweight"] = "bold"
+    # SciencePlots science 主题默认 usetex=True, 需要完整 LaTeX 环境.
+    # TinyTeX 常缺 type1cm.sty, 关掉用 matplotlib 内置渲染.
+    # ponytail: 关 usetex, 字体降级到 DejaVu Sans (Arial 找不到时). 升级: 装完整 LaTeX.
+    plt.rcParams["text.usetex"] = False
+
+
+def _draw_series(ax: Any, fig: Any, chart_type: str, series_list: list[Any]) -> None:
+    for s in series_list:
+        label = s.get("label", "")
+        data = s.get("data", [])
+        color = s.get("color")
+        if not data:
+            continue
+        if chart_type == "line":
+            if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
+                xs = [p[0] for p in data]
+                ys = [p[1] for p in data]
+                ax.plot(xs, ys, label=label, color=color, linewidth=2)
+            else:
+                ax.plot(data, label=label, color=color, linewidth=2)
+        elif chart_type == "bar":
+            if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
+                labels = [str(p[0]) for p in data]
+                values = [p[1] for p in data]
+                ax.bar(labels, values, label=label, color=color)
+            else:
+                ax.bar(range(len(data)), data, label=label, color=color)
+        elif chart_type == "scatter":
+            if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
+                xs = [p[0] for p in data]
+                ys = [p[1] for p in data]
+                ax.scatter(xs, ys, label=label, color=color, s=50)
+            else:
+                ax.scatter(range(len(data)), data, label=label, color=color, s=50)
+        elif chart_type == "heatmap":
+            try:
+                import numpy as np
+
+                arr = np.array(data)
+                im = ax.imshow(arr, cmap=color or "viridis", aspect="auto")
+                fig.colorbar(im, ax=ax, label=label)
+            except Exception:
+                logger.debug("heatmap render failed", exc_info=True)
+
+
+def _decorate_axes(
+    ax: Any, ir: dict[str, Any], axes: dict[str, Any], series_list: list[Any]
+) -> None:
+    if ir.get("title"):
+        ax.set_title(ir["title"])
+    if axes.get("x"):
+        ax.set_xlabel(axes["x"])
+    if axes.get("y"):
+        ax.set_ylabel(axes["y"])
+    if len(series_list) > 1:
+        ax.legend()
 
 
 def _render_ultraplot(
@@ -281,12 +311,16 @@ def _render_flint(
         "encoding": {
             "x": {"field": "x", "type": "quantitative", "title": axes.get("x", "")},
             "y": {"field": "y", "type": "quantitative", "title": axes.get("y", "")},
-            "color": {"field": "series", "type": "nominal"} if len(series_list) > 1 else {},
+            "color": {"field": "series", "type": "nominal"}
+            if len(series_list) > 1
+            else {},
         },
     }
 
     out = _resolve_output_path(output_path, "json")
-    Path(out).write_text(json.dumps(vl_spec, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path(out).write_text(
+        json.dumps(vl_spec, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return str(out)
 
 

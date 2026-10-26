@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from collections import defaultdict
+from typing import Any
 
 from fastapi import WebSocket, status
 
@@ -124,9 +125,7 @@ def _inject_token_auth(websocket: WebSocket, token: str) -> None:
             (b"authorization", f"Bearer {token}".encode())
         )
     else:
-        websocket.scope["headers"].append(
-            (b"x-huginn-api-key", token.encode())
-        )
+        websocket.scope["headers"].append((b"x-huginn-api-key", token.encode()))
 
 
 def _inject_token_auth(websocket: WebSocket, token: str) -> None:
@@ -182,36 +181,52 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
         # 30s timeout — was 10s but under heavy load (concurrent LLM calls
         # blocking the event loop) the client's auth message can take
         # longer to arrive. 30s is still short enough to reject idle probes.
-        if not await _accept(websocket):
-            return None
-        websocket.scope["_ws_pre_accepted"] = True
-        try:
-            raw = await asyncio.wait_for(
-                websocket.receive_text(), timeout=30.0
-            )
-        except Exception:
-            await websocket.close(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="auth timeout",
-            )
-            return None
-        # Parse: {"type":"auth","token":"xxx"} or raw token string
-        token = None
-        try:
-            msg = json.loads(raw)
-            if isinstance(msg, dict):
-                token = msg.get("token") or msg.get("auth")
-        except (json.JSONDecodeError, TypeError):
-            token = raw.strip() or None
-        if not token:
-            await websocket.close(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="no token in auth message",
-            )
+        token = await _first_message_token(websocket)
+        if token is None:
             return None
         _inject_token_auth(websocket, token)
     # else: dev mode, no token — require_api_key will bypass
 
+    return await _authorize_and_track(websocket, require_api_key)
+
+
+async def _first_message_token(websocket: WebSocket) -> str | None:
+    """Accept the socket and read the first-message auth token.
+
+    Returns None (after closing the socket) if the handshake or auth fails.
+    """
+    if not await _accept(websocket):
+        return None
+    websocket.scope["_ws_pre_accepted"] = True
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+    except Exception:
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="auth timeout",
+        )
+        return None
+    # Parse: {"type":"auth","token":"xxx"} or raw token string
+    token = None
+    try:
+        msg = json.loads(raw)
+        if isinstance(msg, dict):
+            token = msg.get("token") or msg.get("auth")
+    except (json.JSONDecodeError, TypeError):
+        token = raw.strip() or None
+    if not token:
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="no token in auth message",
+        )
+        return None
+    return token
+
+
+async def _authorize_and_track(
+    websocket: WebSocket, require_api_key: Any
+) -> str | None:
+    """Run credential check, complete the accept, then acquire a slot."""
     # require_api_key is sync — it raises HTTPException on bad credentials
     try:
         require_api_key(request=None, websocket=websocket)

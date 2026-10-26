@@ -77,6 +77,61 @@ _PURE_PROPERTIES: dict[str, str] = {
 }
 
 
+# 核心热力学关系的量纲自检规格: (name, expr, 符号单位表, 期望量纲).
+# 这些是固定物理定律, 量纲本就自洽; 自检的价值是在实现出现公式笔误/单位指针
+# 漂移时第一时间如实暴露, 而不是静默产出错误数值.
+_THERMO_DIM_CHECKS: tuple[tuple[str, str, dict[str, str], str], ...] = (
+    # G = H − T·S → [J/mol] (Gibbs 自由能 = 焓 − 温度×熵)
+    ("gibbs_identity", "H - T*S", {"H": "J/mol", "T": "K", "S": "J/(mol·K)"}, "J/mol"),
+    # F = E − T·S → [J/mol] (Helmholtz 自由能, md_thermo 用到)
+    (
+        "helmholtz_free_energy",
+        "E - T*S",
+        {"E": "J/mol", "T": "K", "S": "J/(mol·K)"},
+        "J/mol",
+    ),
+    # Cv = Var(E)/(k_B·T²·N) → [J/(mol·K)] (能量涨落公式)
+    (
+        "cv_fluctuation",
+        "var_e/(kb*T**2*N)",
+        {"var_e": "J2/mol2", "kb": "J/(mol·K)", "T": "K", "N": "1"},
+        "J/(mol·K)",
+    ),
+    # dG = −S·dT + V·dP → [J/mol] (热力学基本方程)
+    (
+        "fundamental_relation",
+        "-S*dT + V*dP",
+        {"S": "J/(mol·K)", "dT": "K", "V": "m3/mol", "dP": "Pa"},
+        "J/mol",
+    ),
+)
+
+
+def _dim_check(
+    name: str, expr: str, symbols: dict[str, str], expected: str
+) -> dict[str, Any]:
+    """跑单条公式的量纲自检, 返回带 name/expr 的 check 记录."""
+    from huginn.research.external_validator import check_expression_dimensions
+
+    return {
+        "name": name,
+        "expr": expr,
+        **check_expression_dimensions(expr, symbols, expected),
+    }
+
+
+def _pymatgen_missing() -> ToolResult:
+    """pymatgen 缺失时的统一降级返回 (给 LLM 明确安装提示)."""
+    return ToolResult(
+        data=None,
+        success=False,
+        error=(
+            "pymatgen is required for phase_diagram. "
+            "Install with: pip install pymatgen"
+        ),
+    )
+
+
 class ThermoToolInput(BaseModel):
     """热力学数据工具的输入参数.
 
@@ -228,6 +283,135 @@ class ThermoToolOutput(BaseModel):
     warnings: list[str] = []
     # 热力学关系量纲自检(契约层, 非学习) — 每条 {name, expr, inferred, expected, ok, error}
     dimensional_checks: list[dict[str, Any]] | None = None
+
+
+# ── MD 时序 → 热力学量 (纯 numpy 涨落公式, 不需要 thermo 库) ──────────
+
+_MD_KB = 8.617333e-5  # k_B [eV/K]
+_MD_EV_TO_J_MOL = 96485.0  # 1 eV/particle -> J/mol
+_MD_T_REF = 300.0  # Helmholtz 近似里的参考温度
+
+
+def _md_resolve_series(raw: dict[str, Any]) -> dict[str, Any]:
+    """按 LAMMPS thermo 别名解析各列 (同一量列名不统一, 依次试).
+
+    ``time`` 仅回显, 不参与计算 (step 也能当时间轴用).
+    """
+    import numpy as np
+
+    def _resolve(*keys: str) -> Any:
+        for k in keys:
+            v = raw.get(k)
+            if v is not None:
+                return np.asarray(v, dtype=float)
+        return None
+
+    return {
+        "temp": _resolve("temperature", "temp", "t"),
+        "ke": _resolve("kinetic_energy", "kineng", "ke"),
+        "pe": _resolve("potential_energy", "poteng", "pe"),
+        "total": _resolve("total_energy", "toteng", "etotal", "te"),
+        "time": _resolve("time", "step"),
+    }
+
+
+def _md_pick_total(total: Any, ke: Any, pe: Any) -> Any:
+    """总能量: 优先 LAMMPS 直接给的 TotEng; 没有就 KE+PE; 再没有就退 PE."""
+    if total is not None:
+        return total
+    if ke is not None and pe is not None:
+        return ke + pe
+    # NVT thermostat 下 KE 波动由 thermostat 吸收, 用 PE 涨落也算得动
+    return pe
+
+
+def _md_truncate(series: dict[str, Any], total: Any) -> tuple[int, Any]:
+    """按最短序列对齐截断 (LAMMPS 列本应等长, 这里防一手), 返回 (n, total)."""
+    arrays = [a for a in (series["temp"], series["ke"], series["pe"], total) if a is not None]
+    n = min(a.size for a in arrays) if arrays else series["temp"].size
+    for key in ("temp", "ke", "pe"):
+        if series[key] is not None:
+            series[key] = series[key][:n]
+    if total is not None:
+        total = total[:n]
+    return n, total
+
+
+def _md_n_atoms(args: ThermoToolInput, raw: dict[str, Any]) -> int:
+    """原子数: 显式 > md_time_series 内嵌 > 1 (下限 1)."""
+    n_atoms = args.n_atoms
+    if n_atoms is None:
+        n_atoms = int(raw.get("n_atoms", 1) or 1)
+    return max(1, n_atoms)
+
+
+def _md_basic_stats(temp: Any, ke: Any, pe: Any, n: int, n_atoms: int) -> dict[str, Any]:
+    """温度均值/标准差 + 可选动能/势能均值."""
+    import numpy as np
+
+    result: dict[str, Any] = {
+        "avg_temperature": float(np.mean(temp)),
+        "std_temperature": float(np.std(temp)),
+        "n_samples": int(n),
+        "n_atoms": n_atoms,
+    }
+    if ke is not None:
+        result["avg_kinetic"] = float(np.mean(ke))
+    if pe is not None:
+        result["avg_potential"] = float(np.mean(pe))
+    return result
+
+
+def _md_cv_estimate(
+    result: dict[str, Any], total: Any, n_atoms: int
+) -> tuple[float | None, str, str]:
+    """估算 per-atom Cv [eV/K], 并写入 total 的均值/标准差.
+
+    优先能量涨落公式 Cv = <dE^2>/(k_B*T^2*N); 能量不可用时退温度涨落近似
+    k_B*<dT^2>/<T>^2 (NVT 下温度几乎不涨, 仅作 fallback).
+    """
+    import numpy as np
+
+    cv_eV_K: float | None = None
+    method = "fluctuation_formula"
+    note = ""
+    avg_t = result["avg_temperature"]
+
+    if total is not None and total.size > 1:
+        avg_e = float(np.mean(total))
+        var_e = float(np.var(total))  # <E^2> - <E>^2
+        result["avg_total"] = avg_e
+        result["std_total"] = float(np.std(total))
+        if avg_t > 0 and var_e > 0:
+            cv_eV_K = var_e / (_MD_KB * avg_t * avg_t * n_atoms)
+            note = "Cv from energy fluctuations: (<E^2>-<E>^2)/(k_B*T^2*N)"
+        else:
+            note = "energy variance or temperature non-positive; Cv from energy skipped"
+    else:
+        result["avg_total"] = None
+        result["std_total"] = None
+
+    std_t = result["std_temperature"]
+    if cv_eV_K is None and std_t > 0 and avg_t > 0:
+        cv_eV_K = _MD_KB * (std_t * std_t) / (avg_t * avg_t)
+        method = "temperature_fluctuation_approx"
+        note = (
+            "Cv approximated from temperature fluctuations "
+            "(k_B*<dT^2>/<T>^2); energy-based value unavailable"
+        )
+    return cv_eV_K, method, note
+
+
+def _md_helmholtz(avg_e: float | None, cv_eV_K: float | None, avg_t: float, n_atoms: int):
+    """F = <E> - T*S, S ~ Cv_total*ln(T/T_ref); 无配分函数只能粗估."""
+    import numpy as np
+
+    if avg_e is None or cv_eV_K is None or avg_t <= 0 or avg_t == _MD_T_REF:
+        # ln(1)=0 时 S=0, 没意义
+        return None
+    cv_total = cv_eV_K * n_atoms  # eV/K, 整个体系
+    s_est = cv_total * float(np.log(avg_t / _MD_T_REF))
+    return avg_e - avg_t * s_est
 
 
 class ThermoTool(HuginnTool):
@@ -474,46 +658,19 @@ class ThermoTool(HuginnTool):
         用 pymatgen 的 PhaseDiagram / PDPlotter. pymatgen 没装就优雅降级,
         返回明确的安装提示而不是崩溃.
         """
-        try:
-            from pymatgen.analysis.phase_diagram import (
-                PDPlotter,
-                PhaseDiagram,
-            )
-            from pymatgen.core import Composition
-            from pymatgen.entries.computed_entries import ComputedEntry
-        except ImportError:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    "pymatgen is required for phase_diagram. "
-                    "Install with: pip install pymatgen"
-                ),
-            )
+        imported = self._pd_import()
+        if imported is None:
+            return _pymatgen_missing()
+        plotter_cls, diagram_cls, composition_cls, entry_cls = imported
 
-        # 把 user entries 转成 ComputedEntry
-        comp_entries: list[ComputedEntry] = []
-        for e in args.entries or []:
-            try:
-                comp = Composition(e["composition"])
-                energy = float(e["energy"])
-                comp_entries.append(ComputedEntry(comp, energy))
-            except Exception as exc:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Invalid entry {e}: {exc}",
-                )
-
-        if not comp_entries:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="No valid entries provided for phase diagram",
-            )
+        comp_entries, build_err = self._pd_build_entries(
+            args, composition_cls, entry_cls
+        )
+        if build_err:
+            return ToolResult(data=None, success=False, error=build_err)
 
         try:
-            pd = PhaseDiagram(comp_entries)
+            pd = diagram_cls(comp_entries)
         except Exception as exc:
             return ToolResult(
                 data=None,
@@ -521,16 +678,69 @@ class ThermoTool(HuginnTool):
                 error=f"Failed to construct phase diagram: {exc}",
             )
 
-        # 稳定相
-        stable_phases: list[dict[str, Any]] = []
-        for entry in pd.stable_entries:
-            stable_phases.append({
+        stable_phases = self._pd_stable_phases(pd)
+        result: dict[str, Any] = {
+            "stable_phases": stable_phases,
+            "all_entries": self._pd_decomp_info(pd, comp_entries),
+            "n_stable": len(stable_phases),
+            "n_total": len(comp_entries),
+        }
+
+        # 画图 — 失败不影响数据返回
+        if args.output_plot:
+            self._pd_attach_plot(pd, result, args.output_plot, plotter_cls)
+
+        output = ThermoToolOutput(
+            action="phase_diagram",
+            properties=result,
+            conditions={"n_entries": len(comp_entries)},
+            warnings=[],
+        )
+        return ToolResult(data=output.model_dump(), success=True)
+
+    @staticmethod
+    def _pd_import() -> tuple[Any, Any, Any, Any] | None:
+        """延迟 import pymatgen; 缺依赖时返回 None."""
+        try:
+            from pymatgen.analysis.phase_diagram import PDPlotter, PhaseDiagram
+            from pymatgen.core import Composition
+            from pymatgen.entries.computed_entries import ComputedEntry
+        except ImportError:
+            return None
+        return PDPlotter, PhaseDiagram, Composition, ComputedEntry
+
+    @staticmethod
+    def _pd_build_entries(
+        args: ThermoToolInput, composition_cls: Any, entry_cls: Any
+    ) -> tuple[list[Any], str | None]:
+        """把 user entries 转成 ComputedEntry; 任一非法条目即整体报错."""
+        comp_entries: list[Any] = []
+        for e in args.entries or []:
+            try:
+                comp = composition_cls(e["composition"])
+                energy = float(e["energy"])
+                comp_entries.append(entry_cls(comp, energy))
+            except Exception as exc:
+                return [], f"Invalid entry {e}: {exc}"
+        if not comp_entries:
+            return [], "No valid entries provided for phase diagram"
+        return comp_entries, None
+
+    @staticmethod
+    def _pd_stable_phases(pd: Any) -> list[dict[str, Any]]:
+        """提取凸包上的稳定相."""
+        return [
+            {
                 "composition": entry.composition.reduced_formula,
                 "energy": entry.energy,
                 "energy_per_atom": entry.energy_per_atom,
-            })
+            }
+            for entry in pd.stable_entries
+        ]
 
-        # 每个输入 entry 的分解焓和距离凸包的能量
+    @staticmethod
+    def _pd_decomp_info(pd: Any, comp_entries: list[Any]) -> list[dict[str, Any]]:
+        """每个输入 entry 的分解焓和距离凸包的能量."""
         decomp_info: list[dict[str, Any]] = []
         for entry in comp_entries:
             try:
@@ -548,37 +758,24 @@ class ThermoTool(HuginnTool):
                 "is_stable": entry in pd.stable_entries,
                 "decomposition": decomp_dict,
             })
+        return decomp_info
 
-        result: dict[str, Any] = {
-            "stable_phases": stable_phases,
-            "all_entries": decomp_info,
-            "n_stable": len(stable_phases),
-            "n_total": len(comp_entries),
-        }
-
-        # 画图 — 失败不影响数据返回
-        if args.output_plot:
-            try:
-                plotter = PDPlotter(pd)
-                fig = plotter.get_plot()
-                plot_path = args.output_plot
-                # PDPlotter 返回 matplotlib Figure, 直接 savefig
-                if hasattr(fig, "savefig"):
-                    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
-                else:
-                    # 某些 pymatgen 版本返回 Plotly 对象
-                    fig.write_image(plot_path)
-                result["plot_path"] = plot_path
-            except Exception as exc:
-                result["plot_warning"] = f"Failed to generate plot: {exc}"
-
-        output = ThermoToolOutput(
-            action="phase_diagram",
-            properties=result,
-            conditions={"n_entries": len(comp_entries)},
-            warnings=[],
-        )
-        return ToolResult(data=output.model_dump(), success=True)
+    @staticmethod
+    def _pd_attach_plot(
+        pd: Any, result: dict[str, Any], plot_path: str, plotter_cls: Any
+    ) -> None:
+        """渲染相图到文件; 失败仅记 warning, 不影响数据返回."""
+        try:
+            fig = plotter_cls(pd).get_plot()
+            # PDPlotter 返回 matplotlib Figure, 直接 savefig
+            if hasattr(fig, "savefig"):
+                fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+            else:
+                # 某些 pymatgen 版本返回 Plotly 对象
+                fig.write_image(plot_path)
+            result["plot_path"] = plot_path
+        except Exception as exc:
+            result["plot_warning"] = f"Failed to generate plot: {exc}"
 
     async def _md_thermo(
         self, args: ThermoToolInput, context: ToolContext
@@ -588,30 +785,9 @@ class ThermoTool(HuginnTool):
         把 LAMMPS thermo 输出的 KE/PE/T 时序转成统计力学量. 全部基于
         涨落公式, 不做积分也不拟合, 纯 numpy 均值/方差. thermo 库不需要.
         """
-        import numpy as np
-
-        # 物理常数: k_B [eV/K], 1 eV/particle -> J/mol
-        KB = 8.617333e-5
-        EV_TO_J_MOL = 96485.0
-        T_REF = 300.0  # Helmholtz 近似里的参考温度
-
         raw = args.md_time_series or {}
-
-        def _resolve(*keys: str) -> np.ndarray | None:
-            # 同一个量在 LAMMPS thermo 里列名不统一, 依次试一遍别名
-            for k in keys:
-                v = raw.get(k)
-                if v is not None:
-                    return np.asarray(v, dtype=float)
-            return None
-
-        temp = _resolve("temperature", "temp", "t")
-        ke = _resolve("kinetic_energy", "kineng", "ke")
-        pe = _resolve("potential_energy", "poteng", "pe")
-        total = _resolve("total_energy", "toteng", "etotal", "te")
-        # time 仅回显, 不参与计算 (step 也能当时间轴用)
-        _time = _resolve("time", "step")  # noqa: F841
-
+        series = _md_resolve_series(raw)
+        temp = series["temp"]
         if temp is None:
             return ToolResult(
                 data=None,
@@ -622,101 +798,18 @@ class ThermoTool(HuginnTool):
                 ),
             )
 
-        # 总能量: 优先用 LAMMPS 直接给的 TotEng, 没有就 KE+PE 拼
-        if total is None and ke is not None and pe is not None:
-            total = ke + pe
-        elif total is None and pe is not None:
-            # NVT thermostat 下 KE 波动由 thermostat 吸收, 用 PE 涨落也算得动
-            total = pe
+        total = _md_pick_total(series["total"], series["ke"], series["pe"])
+        n, total = _md_truncate(series, total)
+        n_atoms = _md_n_atoms(args, raw)
 
-        # 对齐长度 (LAMMPS thermo 列本应等长, 这里防一手长度不齐)
-        arrays = [a for a in (temp, ke, pe, total) if a is not None]
-        n = min(a.size for a in arrays) if arrays else temp.size
-        temp = temp[:n]
-        if ke is not None:
-            ke = ke[:n]
-        if pe is not None:
-            pe = pe[:n]
-        if total is not None:
-            total = total[:n]
+        result = _md_basic_stats(series["temp"], series["ke"], series["pe"], n, n_atoms)
+        cv_eV_K, method, note = _md_cv_estimate(result, total, n_atoms)
 
-        # 原子数: 显式 > md_time_series 内嵌 > 1
-        n_atoms = args.n_atoms
-        if n_atoms is None:
-            n_atoms = int(raw.get("n_atoms", 1) or 1)
-        if n_atoms < 1:
-            n_atoms = 1
-
-        avg_t = float(np.mean(temp))
-        std_t = float(np.std(temp))
-
-        result: dict[str, Any] = {
-            "avg_temperature": avg_t,
-            "std_temperature": std_t,
-            "n_samples": int(n),
-            "n_atoms": n_atoms,
-        }
-        if ke is not None:
-            result["avg_kinetic"] = float(np.mean(ke))
-        if pe is not None:
-            result["avg_potential"] = float(np.mean(pe))
-
-        cv_eV_K: float | None = None
-        method = "fluctuation_formula"
-        note = ""
-
-        if total is not None and n > 1:
-            avg_e = float(np.mean(total))
-            var_e = float(np.var(total))  # <E^2> - <E>^2
-            std_e = float(np.std(total))
-            result["avg_total"] = avg_e
-            result["std_total"] = std_e
-
-            # Cv (per atom) = <dE^2> / (k_B * T^2 * N),  eV/K
-            if avg_t > 0 and var_e > 0:
-                cv_eV_K = var_e / (KB * avg_t * avg_t * n_atoms)
-                note = "Cv from energy fluctuations: (<E^2>-<E>^2)/(k_B*T^2*N)"
-            else:
-                note = (
-                    "energy variance or temperature non-positive; "
-                    "Cv from energy skipped"
-                )
-        else:
-            result["avg_total"] = None
-            result["std_total"] = None
-
-        # 温度涨落兜底: 只在能量涨落不可用时才用
-        # per-atom 近似 k_B * <dT^2>/<T>^2; NVT 下温度几乎不涨, 仅作 fallback
-        if cv_eV_K is None and std_t > 0 and avg_t > 0:
-            cv_eV_K = KB * (std_t * std_t) / (avg_t * avg_t)
-            method = "temperature_fluctuation_approx"
-            note = (
-                "Cv approximated from temperature fluctuations "
-                "(k_B*<dT^2>/<T>^2); energy-based value unavailable"
-            )
-
-        if cv_eV_K is not None:
-            result["cv_eV_K"] = cv_eV_K
-            result["cv_j_mol_k"] = cv_eV_K * EV_TO_J_MOL
-        else:
-            result["cv_eV_K"] = None
-            result["cv_j_mol_k"] = None
-
-        # Helmholtz 自由能: F = <E> - T*S, S ~ Cv_total * ln(T/T_ref)
-        # 没有配分函数只能粗估; 需要总能量和 (per-atom) Cv 推出总 Cv
-        avg_e = result.get("avg_total")
-        if (
-            avg_e is not None
-            and cv_eV_K is not None
-            and avg_t > 0
-            and avg_t != T_REF  # ln(1)=0 时 S=0, 没意义
-        ):
-            cv_total = cv_eV_K * n_atoms  # eV/K, 整个体系
-            s_est = cv_total * float(np.log(avg_t / T_REF))
-            result["helmholtz_free_energy_eV"] = avg_e - avg_t * s_est
-        else:
-            result["helmholtz_free_energy_eV"] = None
-
+        result["cv_eV_K"] = cv_eV_K
+        result["cv_j_mol_k"] = cv_eV_K * _MD_EV_TO_J_MOL if cv_eV_K is not None else None
+        result["helmholtz_free_energy_eV"] = _md_helmholtz(
+            result.get("avg_total"), cv_eV_K, result["avg_temperature"], n_atoms
+        )
         result["method"] = method
         result["note"] = note
 
@@ -752,60 +845,11 @@ class ThermoTool(HuginnTool):
         契约层 UnitRegistry) 推断量纲并与声明量纲对账. ``ok=False`` 且 error 为空表示
         真量的量纲不匹配(公式/单位声明笔误); error 非空表示量纲引擎不可用(如实报).
         """
-        from huginn.research.external_validator import check_expression_dimensions
-
-        # 符号单位表: 均可用契约层 UnitRegistry 解析. var_e 是能量方差, 量纲为 J²/mol².
-        checks: list[dict[str, Any]] = []
-
-        # G = H − T·S → [J/mol] (Gibbs 自由能 = 焓 − 温度×熵)
-        checks.append({
-            "name": "gibbs_identity",
-            "expr": "H - T*S",
-            **check_expression_dimensions(
-                "H - T*S",
-                {"H": "J/mol", "T": "K", "S": "J/(mol·K)"},
-                "J/mol",
-            ),
-        })
-
-        # F = E − T·S → [J/mol] (Helmholtz 自由能, md_thermo 用到)
-        checks.append({
-            "name": "helmholtz_free_energy",
-            "expr": "E - T*S",
-            **check_expression_dimensions(
-                "E - T*S",
-                {"E": "J/mol", "T": "K", "S": "J/(mol·K)"},
-                "J/mol",
-            ),
-        })
-
-        # Cv = Var(E)/(k_B·T²·N) → [J/(mol·K)] (能量涨落公式)
-        checks.append({
-            "name": "cv_fluctuation",
-            "expr": "var_e/(kb*T**2*N)",
-            **check_expression_dimensions(
-                "var_e/(kb*T**2*N)",
-                {"var_e": "J2/mol2", "kb": "J/(mol·K)", "T": "K", "N": "1"},
-                "J/(mol·K)",
-            ),
-        })
-
-        # dG = −S·dT + V·dP → [J/mol] (热力学基本方程)
-        checks.append({
-            "name": "fundamental_relation",
-            "expr": "-S*dT + V*dP",
-            **check_expression_dimensions(
-                "-S*dT + V*dP",
-                {"S": "J/(mol·K)", "dT": "K", "V": "m3/mol", "dP": "Pa"},
-                "J/mol",
-            ),
-        })
+        checks = [_dim_check(*spec) for spec in _THERMO_DIM_CHECKS]
 
         # 只有"真量的量纲不匹配"(error 为空)才算公式回归; 引擎不可用(如 sympy 缺失)
         # 时 err 非空, 如实带出但不阻断工具 —— 避免离线环境里热力学查询整体失效.
-        hard_fail = any(
-            c.get("ok") is False and not c.get("error") for c in checks
-        )
+        hard_fail = any(c.get("ok") is False and not c.get("error") for c in checks)
         return (not hard_fail, checks)
 
     @staticmethod

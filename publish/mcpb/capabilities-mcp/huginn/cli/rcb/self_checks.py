@@ -11,6 +11,7 @@ rcb_runner, 本模块在每个用到它们的 self_check 函数体内做局部 i
 
 ponytail: 不引新依赖, 不改逻辑, 纯 import 抽取 + 局部 import 改写.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,8 +19,40 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from huginn.utils.runtime import HUGINN_DIR_NAME
+
+
+def _v14t4_cycle_entries() -> list[dict]:
+    """5 entry 环路 (5 节点 6 边 → β_0=1, β_1=2).
+
+    图论: s1-s2 (s1.att vs s2.ev) + s1-s4 (s1.att vs s4.ev, "compute X value"
+    在 s4.ev "compute X value again done" 里) + s2-s3 + s2-s5 + s3-s4 + s4-s5.
+    """
+    return [
+        {"simplex_id": "s1", "attempted": "compute X value", "evidence": ""},
+        {
+            "simplex_id": "s2",
+            "attempted": "verify Y value",
+            "evidence": "compute X value done",
+        },
+        {
+            "simplex_id": "s3",
+            "attempted": "compute X value again",
+            "evidence": "verify Y value done",
+        },
+        {
+            "simplex_id": "s4",
+            "attempted": "verify Y value again",
+            "evidence": "compute X value again done",
+        },
+        {
+            "simplex_id": "s5",
+            "attempted": "compute X value done",
+            "evidence": "verify Y value again done",
+        },
+    ]
 
 
 def self_check_v14_task4() -> None:
@@ -42,21 +75,88 @@ def self_check_v14_task4() -> None:
     print(f"[CHECK v14 Task 4] single entry OK (β_0={b0}, β_1={b1})")
 
     # === 5 entry 环路: β_0=1, β_1≥1 ===
-    # 图论: s1-s2 (s1.att vs s2.ev) + s1-s4 (s1.att vs s4.ev, "compute X value"
-    # 在 s4.ev "compute X value again done" 里) + s2-s3 + s2-s5 + s3-s4 + s4-s5.
-    # 5 节点 6 边 → β_0=1, β_1=6-(5-1)=2.
-    entries = [
-        {"simplex_id": "s1", "attempted": "compute X value", "evidence": ""},
-        {"simplex_id": "s2", "attempted": "verify Y value", "evidence": "compute X value done"},
-        {"simplex_id": "s3", "attempted": "compute X value again", "evidence": "verify Y value done"},
-        {"simplex_id": "s4", "attempted": "verify Y value again", "evidence": "compute X value again done"},
-        {"simplex_id": "s5", "attempted": "compute X value done", "evidence": "verify Y value again done"},
-    ]
-    b0, b1 = compute_betti(entries)
+    b0, b1 = compute_betti(_v14t4_cycle_entries())
     assert b0 == 1, f"5-entry β_0 expected 1 (单连通分量), got {b0}"
     assert b1 >= 1, f"5-entry β_1 expected ≥1 (有环路), got {b1}"
     print(f"[CHECK v14 Task 4] 5-entry cycle OK (β_0={b0}, β_1={b1})")
     print("v14 Task 4 self-check PASSED")
+
+
+# v14 Task 6 self-check 的 base prompt 字面量 (抽成常量便于复用)
+_V14T6_STEP2_BASE = (
+    "Now execute the task following your methodology checklist. "
+    "Implement each [EXACT] component as-specified in the paper. "
+    "If a component fails, debug and push through — do NOT silently substitute a simpler model. "
+    "Write report/report.md with your results, referencing the checklist items you covered. "
+    "Use file_write_tool for report.md, code_tool for analysis/plotting, bash_tool for running scripts."
+)
+_V14T6_ITER_BASE = (
+    "Continue execution. Iteration 3/4.\n"
+    "Review the Research Trace section above for what you've already tried.\n"
+    "Identify the NEXT gap from your checklist and address it.\n"
+    "OVERWRITE report/report.md with updated results as you make progress."
+)
+
+
+def _v14t6_coordinate(hc: Any) -> tuple[str, list]:
+    """场景 1: iter 2 + β_1=1 + verdict=fix_needed — 触发 curl+harmonic+conflict 仲裁."""
+    return hc.coordinate(
+        iter_n=2,
+        csm_state="S4_CONSTRUCT",
+        beta=(1, 1),
+        last_verdict="fix_needed",
+        fcm_winner="按选定方案执行: 用 PDE 求解器数值离散化",
+        scan_text=None,
+        step2_prompt=_V14T6_STEP2_BASE,
+        iter_prompt=_V14T6_ITER_BASE,
+        compass="coverage=60%, missing band gap section",
+        step_eval="gap_severity=0.4, missing [EXACT] component: band_gap_calculation",
+        drift_info="drift=0.2, target_chain进度偏离 20%",
+        imagination="换数学结构家族: PDE ↔ variational formulation",
+        meta_agent="Reflector: 上轮 tool_call_health=poor, 3 次 retry",
+    )
+
+
+def _v14t6_check_markers(prompt: str) -> list[str]:
+    """断言 hint 至少含一个族标识, 返回命中的标识列表."""
+    family_markers = ("[gradient block]", "[progress audit]", "[topology probe]")
+    found_markers = [m for m in family_markers if m in prompt]
+    assert found_markers, (
+        f"no family marker in prompt, expected ≥1 of {family_markers}:\n{prompt}"
+    )
+    return found_markers
+
+
+def _v14t6_check_hint_len(prompt: str) -> int:
+    """断言 hint 块 (去掉 base instruction) ≤1500 chars, 返回其长度."""
+    # ponytail: 估算法 — iter 2 时 gradient block 内容就是 iter_base (无 scan/fcm 叠加),
+    #   所以 prompt 总长减去 iter_base 长度, 余下视为 hint 部分 (含 marker header + curl/harmonic 块).
+    #   天花板: gradient block 里若再嵌 scan_text/fcm_winner (iter 0 场景), 这部分会被
+    #   当成 hint 多算, 但 spec 对 iter 0 限制更宽松 (verdict=None 不触发 curl), 影响可控.
+    hint_len = max(0, len(prompt) - len(_V14T6_ITER_BASE))
+    assert hint_len <= 1500, (
+        f"hint block {hint_len} chars > 1500, prompt total={len(prompt)}:\n{prompt}"
+    )
+    return hint_len
+
+
+def _v14t6_check_legacy(legacy_step2_fn: Any, legacy_iter_fn: Any) -> None:
+    """legacy 路径也跑一遍 — 确认 _legacy_build_* 函数不抛错, 产物是字符串."""
+    legacy_step2 = legacy_step2_fn(
+        _V14T6_STEP2_BASE, "\n\n## scan hint", "\n\n## fcm hint"
+    )
+    assert isinstance(legacy_step2, str) and "scan hint" in legacy_step2
+    legacy_iter = legacy_iter_fn(
+        _V14T6_ITER_BASE,
+        "compass text",
+        "\n\n## fcm reminder",
+        "\n\n## kb chunks",
+        "\n\n## merge hint",
+        "\n\n## imagination",
+        "\n\n## ctx inject",
+    )
+    assert isinstance(legacy_iter, str) and "compass text" in legacy_iter
+    assert "kb chunks" in legacy_iter and "imagination" in legacy_iter
 
 
 def self_check_v14_task6() -> None:
@@ -74,69 +174,121 @@ def self_check_v14_task6() -> None:
         _legacy_build_step2_prompt,
     )
 
-    _hc = HintCoordinator()
-    _step2_base = (
-        "Now execute the task following your methodology checklist. "
-        "Implement each [EXACT] component as-specified in the paper. "
-        "If a component fails, debug and push through — do NOT silently substitute a simpler model. "
-        "Write report/report.md with your results, referencing the checklist items you covered. "
-        "Use file_write_tool for report.md, code_tool for analysis/plotting, bash_tool for running scripts."
-    )
-    _iter_base = (
-        "Continue execution. Iteration 3/4.\n"
-        "Review the Research Trace section above for what you've already tried.\n"
-        "Identify the NEXT gap from your checklist and address it.\n"
-        "OVERWRITE report/report.md with updated results as you make progress."
-    )
-    # 场景 1: iter 2 + β_1=1 + verdict=fix_needed — 触发 curl+harmonic+conflict 仲裁
-    prompt, events = _hc.coordinate(
-        iter_n=2,
-        csm_state="S4_CONSTRUCT",
-        beta=(1, 1),
-        last_verdict="fix_needed",
-        fcm_winner="按选定方案执行: 用 PDE 求解器数值离散化",
-        scan_text=None,
-        step2_prompt=_step2_base,
-        iter_prompt=_iter_base,
-        compass="coverage=60%, missing band gap section",
-        step_eval="gap_severity=0.4, missing [EXACT] component: band_gap_calculation",
-        drift_info="drift=0.2, target_chain进度偏离 20%",
-        imagination="换数学结构家族: PDE ↔ variational formulation",
-        meta_agent="Reflector: 上轮 tool_call_health=poor, 3 次 retry",
-    )
+    prompt, events = _v14t6_coordinate(HintCoordinator())
+    found_markers = _v14t6_check_markers(prompt)
+    hint_len = _v14t6_check_hint_len(prompt)
+    _v14t6_check_legacy(_legacy_build_step2_prompt, _legacy_build_iter_prompt)
 
-    # 1. 至少一个族标识
-    family_markers = ("[gradient block]", "[progress audit]", "[topology probe]")
-    found_markers = [m for m in family_markers if m in prompt]
-    assert found_markers, (
-        f"no family marker in prompt, expected ≥1 of {family_markers}:\n{prompt}"
+    print(
+        f"[CHECK v14 Task 6] HintCoordinator OK "
+        f"(markers={found_markers}, hint_len={hint_len}, events={events})"
     )
-
-    # 2. hint 部分字符数 ≤1500 — 去掉 base instruction 后的 hint 块
-    # ponytail: 估算法 — iter 2 时 gradient block 内容就是 iter_base (无 scan/fcm 叠加),
-    #   所以 prompt 总长减去 iter_base 长度, 余下视为 hint 部分 (含 marker header + curl/harmonic 块).
-    #   天花板: gradient block 里若再嵌 scan_text/fcm_winner (iter 0 场景), 这部分会被
-    #   当成 hint 多算, 但 spec 对 iter 0 限制更宽松 (verdict=None 不触发 curl), 影响可控.
-    base_len = len(_iter_base)
-    hint_len = max(0, len(prompt) - base_len)
-    assert hint_len <= 1500, (
-        f"hint block {hint_len} chars > 1500, prompt total={len(prompt)}:\n{prompt}"
-    )
-
-    # 3. legacy 路径也跑一遍 — 确认 _legacy_build_* 函数不抛错, 产物是字符串
-    legacy_step2 = _legacy_build_step2_prompt(_step2_base, "\n\n## scan hint", "\n\n## fcm hint")
-    assert isinstance(legacy_step2, str) and "scan hint" in legacy_step2
-    legacy_iter = _legacy_build_iter_prompt(
-        _iter_base, "compass text", "\n\n## fcm reminder", "\n\n## kb chunks",
-        "\n\n## merge hint", "\n\n## imagination",
-        "\n\n## ctx inject",
-    )
-    assert isinstance(legacy_iter, str) and "compass text" in legacy_iter
-    assert "kb chunks" in legacy_iter and "imagination" in legacy_iter
-
-    print(f"[CHECK v14 Task 6] HintCoordinator OK "
-          f"(markers={found_markers}, hint_len={hint_len}, events={events})")
     print("v14 Task 6 self-check PASSED")
+
+
+def _a3_check_extract(extract_fn: Any) -> None:
+    """1. _extract_exact_components 正确抽 [EXACT], 忽略 [VARIANT] / 空行."""
+    cl = (
+        "## Methodology checklist\n"
+        "- [EXACT] GVAE encoder (GraphSAGE backbone)\n"
+        "- [EXACT] C2ST classifier (MLP, 2 hidden layers)\n"
+        "- [VARIANT] Latent dimension (paper 用 64, 可降为 32)\n"
+        "- [EXACT] Prior N(0, I) over latent\n"
+        "Some prose without markers.\n"
+    )
+    comps = extract_fn(cl)
+    assert len(comps) == 3, f"expected 3 [EXACT], got {comps}"
+    assert "GVAE encoder (GraphSAGE backbone)" in comps
+    assert "C2ST classifier (MLP, 2 hidden layers)" in comps
+    assert "Prior N(0, I) over latent" in comps
+    # empty / no-marker
+    assert extract_fn("") == []
+    assert extract_fn("no markers here") == []
+    print("[CHECK A3.1] _extract_exact_components OK")
+
+
+def _a3_write_ws(ws: Path) -> None:
+    """铺 A3 用的最小 workspace: code/ + report/ + .huginn/ trace."""
+    (ws / "code").mkdir()
+    (ws / "code" / "model.py").write_text(
+        "# GVAE encoder implementation (GraphSAGE backbone)\n"
+        "class GVAE_Encoder: pass\n",
+        encoding="utf-8",
+    )
+    (ws / "report").mkdir()
+    (ws / "report" / "report.md").write_text(
+        "# Report\nWe used C2ST classifier with MLP.\n", encoding="utf-8"
+    )
+    # .huginn/ 内 trace 不算产物
+    (ws / HUGINN_DIR_NAME).mkdir()
+    (ws / HUGINN_DIR_NAME / "trace.json").write_text(
+        '{"attempted": "Prior N(0, I) over latent"}', encoding="utf-8"
+    )
+
+
+def _a3_check_scan(scan_fn: Any, ws: Path) -> None:
+    """2. _scan_implementation_traces 子串匹配 + 跳过 .huginn/."""
+    traces = scan_fn(
+        ws,
+        [
+            "GVAE encoder",
+            "C2ST classifier",
+            "Prior N(0, I) over latent",
+            "nonexistent component",
+        ],
+    )
+    assert traces["GVAE encoder"] is True
+    assert traces["C2ST classifier"] is True
+    # Prior 只在 .huginn/ 里 — 不应算产物痕迹
+    assert traces["Prior N(0, I) over latent"] is False
+    assert traces["nonexistent component"] is False
+    print("[CHECK A3.2] _scan_implementation_traces OK")
+
+
+def _a3_check_headers(parse_fn: Any, ws: Path) -> None:
+    """3. _parse_substitute_headers 只扫 report.md 顶部, 严格匹配格式."""
+    (ws / "report" / "report.md").write_text(
+        "# Title\n\n"
+        "METHOD SUBSTITUTE: GVAE encoder replaced MLP encoder because OOM on 150M params (2 attempts, see traceback below)\n"
+        "## Method\n"
+        "METHOD SUBSTITUTE: this should not match (too late in file)\n",
+        encoding="utf-8",
+    )
+    subs = parse_fn(ws / "report" / "report.md")
+    assert len(subs) == 1, f"expected 1 sub header, got {subs}"
+    assert subs[0]["replaced"] == "GVAE encoder"
+    assert "OOM" in subs[0]["reason"]
+    print("[CHECK A3.3] _parse_substitute_headers OK")
+
+
+def _a3_check_failed(count_fn: Any, ws: Path) -> None:
+    """4. _count_failed_attempts 从 trace + evals 双源计数."""
+    # 写 trace 文件
+    trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    trace_path.write_text(
+        '{"on_track": "false", "attempted": "GVAE encoder training failed"}\n'
+        '{"on_track": "false", "attempted": "GVAE encoder second attempt"}\n'
+        '{"on_track": "true", "attempted": "GVAE encoder worked"}\n'
+        '{"on_track": "false", "attempted": "unrelated component"}\n',
+        encoding="utf-8",
+    )
+
+    # evals_history mock
+    class _MockEval:
+        def __init__(self, on_track, attempted):
+            self.on_track = on_track
+            self.attempted = attempted
+
+    evals = [
+        _MockEval("false", "GVAE encoder eval-fail-1"),
+        _MockEval("true", "GVAE encoder eval-ok"),
+    ]
+    n = count_fn(ws, evals, "GVAE encoder")
+    # trace 2 + evals 1 = 3
+    assert n == 3, f"expected 3 failures, got {n}"
+    # 未出现组件 = 0
+    assert count_fn(ws, evals, "nonexistent") == 0
+    print("[CHECK A3.4] _count_failed_attempts OK")
 
 
 def self_check_a3() -> None:
@@ -151,96 +303,73 @@ def self_check_a3() -> None:
     """
     import tempfile
 
-    # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
-    from huginn.cli.rcb_runner import (
+    # lazy import: audit 不依赖 rcb_runner, 可安全在函数体内 import.
+    from huginn.cli.rcb.audit import (
         _count_failed_attempts,
         _extract_exact_components,
         _parse_substitute_headers,
         _scan_implementation_traces,
     )
 
-    # 1. _extract_exact_components
-    cl = (
-        "## Methodology checklist\n"
-        "- [EXACT] GVAE encoder (GraphSAGE backbone)\n"
-        "- [EXACT] C2ST classifier (MLP, 2 hidden layers)\n"
-        "- [VARIANT] Latent dimension (paper 用 64, 可降为 32)\n"
-        "- [EXACT] Prior N(0, I) over latent\n"
-        "Some prose without markers.\n"
-    )
-    comps = _extract_exact_components(cl)
-    assert len(comps) == 3, f"expected 3 [EXACT], got {comps}"
-    assert "GVAE encoder (GraphSAGE backbone)" in comps
-    assert "C2ST classifier (MLP, 2 hidden layers)" in comps
-    assert "Prior N(0, I) over latent" in comps
-    # empty / no-marker
-    assert _extract_exact_components("") == []
-    assert _extract_exact_components("no markers here") == []
-    print("[CHECK A3.1] _extract_exact_components OK")
+    _a3_check_extract(_extract_exact_components)
 
-    # 2. _scan_implementation_traces
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
-        (ws / "code").mkdir()
-        (ws / "code" / "model.py").write_text(
-            "# GVAE encoder implementation (GraphSAGE backbone)\n"
-            "class GVAE_Encoder: pass\n", encoding="utf-8")
-        (ws / "report").mkdir()
-        (ws / "report" / "report.md").write_text(
-            "# Report\nWe used C2ST classifier with MLP.\n", encoding="utf-8")
-        # .huginn/ 内 trace 不算产物
-        (ws / HUGINN_DIR_NAME).mkdir()
-        (ws / HUGINN_DIR_NAME / "trace.json").write_text(
-            '{"attempted": "Prior N(0, I) over latent"}', encoding="utf-8")
-        traces = _scan_implementation_traces(
-            ws, ["GVAE encoder", "C2ST classifier", "Prior N(0, I) over latent",
-                 "nonexistent component"])
-        assert traces["GVAE encoder"] is True
-        assert traces["C2ST classifier"] is True
-        # Prior 只在 .huginn/ 里 — 不应算产物痕迹
-        assert traces["Prior N(0, I) over latent"] is False
-        assert traces["nonexistent component"] is False
-        print("[CHECK A3.2] _scan_implementation_traces OK")
-
-        # 3. _parse_substitute_headers
-        (ws / "report" / "report.md").write_text(
-            "# Title\n\n"
-            "METHOD SUBSTITUTE: GVAE encoder replaced MLP encoder because OOM on 150M params (2 attempts, see traceback below)\n"
-            "## Method\n"
-            "METHOD SUBSTITUTE: this should not match (too late in file)\n",
-            encoding="utf-8")
-        subs = _parse_substitute_headers(ws / "report" / "report.md")
-        assert len(subs) == 1, f"expected 1 sub header, got {subs}"
-        assert subs[0]["replaced"] == "GVAE encoder"
-        assert "OOM" in subs[0]["reason"]
-        print("[CHECK A3.3] _parse_substitute_headers OK")
-
-        # 4. _count_failed_attempts
-        # 写 trace 文件
-        trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        trace_path.write_text(
-            '{"on_track": "false", "attempted": "GVAE encoder training failed"}\n'
-            '{"on_track": "false", "attempted": "GVAE encoder second attempt"}\n'
-            '{"on_track": "true", "attempted": "GVAE encoder worked"}\n'
-            '{"on_track": "false", "attempted": "unrelated component"}\n',
-            encoding="utf-8")
-        # evals_history mock
-        class _MockEval:
-            def __init__(self, on_track, attempted):
-                self.on_track = on_track
-                self.attempted = attempted
-        evals = [
-            _MockEval("false", "GVAE encoder eval-fail-1"),
-            _MockEval("true", "GVAE encoder eval-ok"),
-        ]
-        n = _count_failed_attempts(ws, evals, "GVAE encoder")
-        # trace 2 + evals 1 = 3
-        assert n == 3, f"expected 3 failures, got {n}"
-        # 未出现组件 = 0
-        assert _count_failed_attempts(ws, evals, "nonexistent") == 0
-        print("[CHECK A3.4] _count_failed_attempts OK")
+        _a3_write_ws(ws)
+        _a3_check_scan(_scan_implementation_traces, ws)
+        _a3_check_headers(_parse_substitute_headers, ws)
+        _a3_check_failed(_count_failed_attempts, ws)
 
     print("[CHECK A3] ALL ASSERTS PASSED")
+
+
+def _a2_write_outputs(ws: Path) -> bool:
+    """铺 outputs/ 各样本 (真实 / 占位 / 空 / 长文本 / npy), 返回 npy 是否真写过."""
+    out_dir = ws / "outputs"
+    out_dir.mkdir()
+    (out_dir / "metrics.json").write_text(
+        '{"loss": 0.5, "rmse": 0.1, "epoch": 100}', encoding="utf-8"
+    )
+    (out_dir / "results.csv").write_text("epoch,loss\n1,0.5\n2,0.3\n", encoding="utf-8")
+    # .npy 二进制 (numpy)
+    try:
+        import numpy as _np
+
+        _np.save(out_dir / "arr.npy", _np.array([1.0, 2.0, 3.0]))
+        _has_npy = True
+    except ImportError:
+        _has_npy = False
+        (out_dir / "arr.npy").write_bytes(b"\x93NUMPY\x00v0")
+    # 占位文件
+    (out_dir / "todo.txt").write_text("TODO: fill in", encoding="utf-8")
+    (out_dir / "expected.txt").write_text("Expected: 0.5", encoding="utf-8")
+    # 空文件
+    (out_dir / "empty.json").write_text("", encoding="utf-8")
+    # 长文本含 'expected' 但是正常叙述 (>200 chars after strip)
+    (out_dir / "long.json").write_text(
+        '{"narrative": "the expected behavior of the model is described '
+        "in detail here. this is a long text to exceed the 200 char limit. "
+        "we discuss the theoretical guarantees, empirical observations, "
+        "and edge cases that inform the experimental design choices made "
+        'throughout this study, along with references to prior work."}',
+        encoding="utf-8",
+    )
+    return _has_npy
+
+
+def _a2_check_metrics(scan_fn: Any, ws: Path, has_npy: bool) -> None:
+    """断言真实 metrics 命中, 占位 / 空文件被过滤."""
+    metrics = scan_fn(ws)
+    names = {p.name for p in metrics}
+    assert "metrics.json" in names, f"metrics.json missing: {names}"
+    assert "results.csv" in names, f"results.csv missing: {names}"
+    assert "todo.txt" not in names, f"todo.txt should be filtered: {names}"
+    assert "expected.txt" not in names, f"expected.txt should be filtered: {names}"
+    assert "empty.json" not in names, f"empty.json should be filtered: {names}"
+    assert "long.json" in names, f"long.json should pass: {names}"
+    if has_npy:
+        assert "arr.npy" in names, f"arr.npy missing: {names}"
+    print(f"[CHECK A2.2] real metrics filter OK ({len(metrics)} files)")
 
 
 def self_check_a2() -> None:
@@ -255,8 +384,8 @@ def self_check_a2() -> None:
     """
     import tempfile
 
-    # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
-    from huginn.cli.rcb_runner import _scan_real_metrics
+    # lazy import: audit 不依赖 rcb_runner, 可安全在函数体内 import.
+    from huginn.cli.rcb.audit import _scan_real_metrics
 
     # 1. 无 outputs/ → []
     with tempfile.TemporaryDirectory() as tmp:
@@ -264,46 +393,9 @@ def self_check_a2() -> None:
         assert _scan_real_metrics(ws) == []
         print("[CHECK A2.1] no outputs/ OK")
 
-        # 2. 真实 metrics 文件
-        out_dir = ws / "outputs"
-        out_dir.mkdir()
-        (out_dir / "metrics.json").write_text(
-            '{"loss": 0.5, "rmse": 0.1, "epoch": 100}', encoding="utf-8")
-        (out_dir / "results.csv").write_text(
-            "epoch,loss\n1,0.5\n2,0.3\n", encoding="utf-8")
-        # .npy 二进制 (numpy)
-        try:
-            import numpy as _np
-            _np.save(out_dir / "arr.npy", _np.array([1.0, 2.0, 3.0]))
-            _has_npy = True
-        except ImportError:
-            _has_npy = False
-            (out_dir / "arr.npy").write_bytes(b"\x93NUMPY\x00v0")
-        # 占位文件
-        (out_dir / "todo.txt").write_text("TODO: fill in", encoding="utf-8")
-        (out_dir / "expected.txt").write_text("Expected: 0.5", encoding="utf-8")
-        # 空文件
-        (out_dir / "empty.json").write_text("", encoding="utf-8")
-        # 长文本含 'expected' 但是正常叙述 (>200 chars after strip)
-        (out_dir / "long.json").write_text(
-            '{"narrative": "the expected behavior of the model is described '
-            'in detail here. this is a long text to exceed the 200 char limit. '
-            'we discuss the theoretical guarantees, empirical observations, '
-            'and edge cases that inform the experimental design choices made '
-            'throughout this study, along with references to prior work."}',
-            encoding="utf-8")
-
-        metrics = _scan_real_metrics(ws)
-        names = {p.name for p in metrics}
-        assert "metrics.json" in names, f"metrics.json missing: {names}"
-        assert "results.csv" in names, f"results.csv missing: {names}"
-        assert "todo.txt" not in names, f"todo.txt should be filtered: {names}"
-        assert "expected.txt" not in names, f"expected.txt should be filtered: {names}"
-        assert "empty.json" not in names, f"empty.json should be filtered: {names}"
-        assert "long.json" in names, f"long.json should pass: {names}"
-        if _has_npy:
-            assert "arr.npy" in names, f"arr.npy missing: {names}"
-        print(f"[CHECK A2.2] real metrics filter OK ({len(metrics)} files)")
+        # 2. 真实 metrics 文件 / 占位 / 空 / npy
+        has_npy = _a2_write_outputs(ws)
+        _a2_check_metrics(_scan_real_metrics, ws, has_npy)
 
     print("[CHECK A2] ALL ASSERTS PASSED")
 
@@ -331,18 +423,136 @@ def self_check_a4() -> None:
     spec = _build_retry_budget(50)
     assert spec is not None
     assert spec.max_calls == 50, f"expected max_calls=50, got {spec.max_calls}"
-    assert spec.recursion_limit == 250, f"expected recursion_limit=250, got {spec.recursion_limit}"
+    assert spec.recursion_limit == 250, (
+        f"expected recursion_limit=250, got {spec.recursion_limit}"
+    )
     print("[CHECK A4.2] extra_budget=50 → BudgetSpec(50, 250) OK")
 
     # 3. recursion_limit 公式: max(250, extra_budget * 5)
     #    extra_budget=100 → 500; extra_budget=10 → 250 (floor)
     spec_100 = _build_retry_budget(100)
-    assert spec_100.recursion_limit == 500, f"expected 500, got {spec_100.recursion_limit}"
+    assert spec_100.recursion_limit == 500, (
+        f"expected 500, got {spec_100.recursion_limit}"
+    )
     spec_10 = _build_retry_budget(10)
-    assert spec_10.recursion_limit == 250, f"expected 250 (floor), got {spec_10.recursion_limit}"
+    assert spec_10.recursion_limit == 250, (
+        f"expected 250 (floor), got {spec_10.recursion_limit}"
+    )
     print("[CHECK A4.3] recursion_limit formula max(250, n*5) OK")
 
     print("[CHECK A4] ALL ASSERTS PASSED")
+
+
+def _v14t1_entry(
+    iteration: int,
+    darwin_score: float,
+    supported_ratio: float,
+    attempted: str,
+    found: str,
+    **extra: Any,
+) -> dict:
+    """构造一条 meta_trace entry; extra 放 simplicial complex 新字段."""
+    return {
+        "iteration": iteration,
+        "darwin_score": darwin_score,
+        "supported_ratio": supported_ratio,
+        "attempted": attempted,
+        "found": found,
+        "evidence": [],
+        "limitations": [],
+        "artifacts": [],
+        "next_hint": "",
+        **extra,
+    }
+
+
+def _v14t1_entries() -> tuple[dict, dict, dict, dict]:
+    """2 legacy (缺新字段) + 2 new (带 simplicial complex 字段)."""
+    legacy_e1 = _v14t1_entry(1, 0.3, 0.1, "legacy run 1", "legacy found 1")
+    legacy_e2 = _v14t1_entry(2, 0.5, 0.2, "legacy run 2", "legacy found 2")
+    new_e1 = _v14t1_entry(
+        3,
+        0.7,
+        0.4,
+        "new run 1",
+        "new found 1",
+        simplex_id="trace:Astronomy_000:iter_3:rcb_exec",
+        cochain_type="gradient",
+        domain="astronomy",
+        task_id="Astronomy_000",
+    )
+    new_e2 = _v14t1_entry(
+        4,
+        0.8,
+        0.5,
+        "new run 2",
+        "new found 2",
+        simplex_id="trace:Astronomy_000:iter_4:step_evaluation",
+        cochain_type="curl",
+        domain="astronomy",
+        task_id="Astronomy_000",
+    )
+    return legacy_e1, legacy_e2, new_e1, new_e2
+
+
+def _v14t1_check_helpers(
+    infer_task_id: Any, infer_domain: Any, make_simplex_id: Any
+) -> None:
+    """helper 函数验证: task_id strip / domain / simplex_id."""
+    assert infer_task_id("Astronomy_000_20260720_034353") == "Astronomy_000"
+    assert infer_task_id("Astronomy_000") == "Astronomy_000"  # 无时间戳原样返回
+    assert infer_task_id("Material_003_20260101_000000") == "Material_003"
+    assert infer_domain("Astronomy_000") == "astronomy"
+    assert infer_domain("Material_000") == "material"
+    assert infer_domain("Math_000") == "math"
+    assert infer_domain("Unknown_000") == "unknown"
+    assert infer_domain("") == "unknown"
+    assert make_simplex_id("Astronomy_000", 3, "rcb_exec") == (
+        "trace:Astronomy_000:iter_3:rcb_exec"
+    )
+    print("[CHECK v14 Task 1] helpers OK (task_id strip / domain / simplex_id)")
+
+
+def _v14t1_write_trace(td_path: Path, entries: tuple) -> Path:
+    """把 entries 写进临时 workspace 的 meta_trace.jsonl."""
+    trace_path = td_path / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    with trace_path.open("w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    return trace_path
+
+
+def _v14t1_build_text(context_builder_cls: Any, td_path: Path, entries: tuple) -> str:
+    """写 trace 并跑 build_meta_trace_text."""
+    _v14t1_write_trace(td_path, entries)
+    b = context_builder_cls(
+        memory_manager=None, workspace=str(td_path), cache_builder=None
+    )
+    return b.build_meta_trace_text(last_n=10)
+
+
+def _v14t1_check_backcompat(context_builder_cls: Any, entries: tuple) -> None:
+    """build_meta_trace_text 向后兼容验证 (2 legacy + 2 new)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        # 1. 混合 legacy + new entry 不报错
+        text = _v14t1_build_text(context_builder_cls, Path(td), entries)
+
+        # 2. 新字段被识别 — 新 entry 内容出现在输出
+        assert "new run 1" in text, "new entry 1 missing from output"
+        assert "new found 2" in text, "new entry 2 missing from output"
+        assert "darwin=0.8" in text, "new entry darwin_score missing"
+
+        # 3. legacy entry 也被读出 (补默认值后仍正常渲染)
+        assert "legacy run 1" in text, "legacy entry 1 missing from output"
+        assert "darwin=0.3" in text, "legacy entry darwin_score missing"
+        # 4 条都进来了
+        assert "[iter 1]" in text and "[iter 4]" in text, "entries dropped"
+    print(
+        "[CHECK v14 Task 1] build_meta_trace_text backward compat OK (2 legacy + 2 new)"
+    )
 
 
 def self_check_v14_task1() -> None:
@@ -356,9 +566,6 @@ def self_check_v14_task1() -> None:
     另验证 helper 函数 _infer_task_id_from_workspace / _infer_domain / _make_simplex_id.
     ponytail: 不引框架, 全用 assert. ContextBuilder 只 mock workspace, 其他传 None.
     """
-    import logging as _stdlogging
-    import tempfile
-
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
     from huginn.cli.rcb_runner import (
         _infer_domain,
@@ -367,90 +574,61 @@ def self_check_v14_task1() -> None:
     )
 
     # === helper 函数验证 ===
-    assert _infer_task_id_from_workspace("Astronomy_000_20260720_034353") == "Astronomy_000"
-    assert _infer_task_id_from_workspace("Astronomy_000") == "Astronomy_000"  # 无时间戳原样返回
-    assert _infer_task_id_from_workspace("Material_003_20260101_000000") == "Material_003"
-    assert _infer_domain("Astronomy_000") == "astronomy"
-    assert _infer_domain("Material_000") == "material"
-    assert _infer_domain("Math_000") == "math"
-    assert _infer_domain("Unknown_000") == "unknown"
-    assert _infer_domain("") == "unknown"
-    assert _make_simplex_id("Astronomy_000", 3, "rcb_exec") == "trace:Astronomy_000:iter_3:rcb_exec"
-    print("[CHECK v14 Task 1] helpers OK (task_id strip / domain / simplex_id)")
+    _v14t1_check_helpers(_infer_task_id_from_workspace, _infer_domain, _make_simplex_id)
 
     # === build_meta_trace_text 向后兼容验证 ===
     from huginn.context_builder import ContextBuilder
 
-    # 2 legacy (缺新字段) + 2 new (带 simplicial complex 字段)
-    legacy_e1 = {
-        "iteration": 1, "darwin_score": 0.3, "supported_ratio": 0.1,
-        "attempted": "legacy run 1", "found": "legacy found 1",
-        "evidence": [], "limitations": [], "artifacts": [], "next_hint": "",
-    }
-    legacy_e2 = {
-        "iteration": 2, "darwin_score": 0.5, "supported_ratio": 0.2,
-        "attempted": "legacy run 2", "found": "legacy found 2",
-        "evidence": [], "limitations": [], "artifacts": [], "next_hint": "",
-    }
-    new_e1 = {
-        "iteration": 3, "darwin_score": 0.7, "supported_ratio": 0.4,
-        "attempted": "new run 1", "found": "new found 1",
-        "evidence": [], "limitations": [], "artifacts": [], "next_hint": "",
-        "simplex_id": "trace:Astronomy_000:iter_3:rcb_exec",
-        "cochain_type": "gradient", "domain": "astronomy", "task_id": "Astronomy_000",
-    }
-    new_e2 = {
-        "iteration": 4, "darwin_score": 0.8, "supported_ratio": 0.5,
-        "attempted": "new run 2", "found": "new found 2",
-        "evidence": [], "limitations": [], "artifacts": [], "next_hint": "",
-        "simplex_id": "trace:Astronomy_000:iter_4:step_evaluation",
-        "cochain_type": "curl", "domain": "astronomy", "task_id": "Astronomy_000",
-    }
+    _v14t1_check_backcompat(ContextBuilder, _v14t1_entries())
 
-    with tempfile.TemporaryDirectory() as td:
-        td_path = Path(td)
-        trace_path = td_path / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        trace_path.parent.mkdir(parents=True, exist_ok=True)
-        with trace_path.open("w", encoding="utf-8") as f:
-            for e in (legacy_e1, legacy_e2, new_e1, new_e2):
-                f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
-        b = ContextBuilder(memory_manager=None, workspace=str(td_path), cache_builder=None)
+def _v14t2_check_gap_dict(darwin_fn: Any) -> None:
+    """dict 直传 gap_severity 三档 + None 探索期默认."""
+    assert abs(darwin_fn({"gap_severity": 0.2}) - 0.8) < 1e-9, "gap=0.2 → darwin=0.8"
+    assert abs(darwin_fn({"gap_severity": 0.5}) - 0.5) < 1e-9, "gap=0.5 → darwin=0.5"
+    assert abs(darwin_fn({"gap_severity": 0.9}) - 0.1) < 1e-9, "gap=0.9 → darwin=0.1"
+    print("[CHECK v14 Task 2] dict gap_severity path OK (3 cases)")
 
-        # capture warning — logger 名是 huginn.context_builder
-        captured: list[str] = []
+    assert abs(darwin_fn(None) - 0.5) < 1e-9, "None → 0.5"
+    print("[CHECK v14 Task 2] None → 0.5 (exploration default) OK")
 
-        class _ListHandler(_stdlogging.Handler):
-            def emit(self, record):
-                captured.append(self.format(record))
 
-        cb_logger = _stdlogging.getLogger("huginn.context_builder")
-        cb_logger.setLevel(_stdlogging.WARNING)
-        _h = _ListHandler()
-        cb_logger.addHandler(_h)
-        try:
-            # 1. 不报错
-            text = b.build_meta_trace_text(last_n=10)
-        finally:
-            cb_logger.removeHandler(_h)
+def _v14t2_make_eval(step_eval_cls: Any, on_track: str) -> Any:
+    """构造只改 on_track 的 StepEvaluation."""
+    return step_eval_cls(
+        step_id=1,
+        attempted="",
+        found="",
+        target_chain_ref=None,
+        on_track=on_track,
+        structure_check="not_applicable",
+        evidence_quality="unknown",
+        deviation="",
+    )
 
-        # 2. 新字段被识别 — 新 entry 内容出现在输出
-        assert "new run 1" in text, "new entry 1 missing from output"
-        assert "new found 2" in text, "new entry 2 missing from output"
-        assert "darwin=0.8" in text, "new entry darwin_score missing"
 
-        # 3. legacy entry 也被读出 (内容出现在输出)
-        assert "legacy run 1" in text, "legacy entry 1 missing from output"
-        assert "darwin=0.3" in text, "legacy entry darwin_score missing"
-        # 4 条都进来了
-        assert "[iter 1]" in text and "[iter 4]" in text, "entries dropped"
+def _v14t2_check_object_path(darwin_fn: Any, step_eval_cls: Any) -> None:
+    """StepEvaluation 对象派生 (on_track 主导)."""
+    cases = (("true", 0.9), ("unsure", 0.5), ("false", 0.1))
+    for on_track, expected in cases:
+        got = darwin_fn(_v14t2_make_eval(step_eval_cls, on_track))
+        assert abs(got - expected) < 1e-9, (
+            f"on_track={on_track} → {expected}, got {got}"
+        )
+    print("[CHECK v14 Task 2] StepEvaluation derive path OK (3 on_track cases)")
 
-        # 4. warning 被输出, 且 legacy 计数 == 2 (说明 2 条 legacy 被检测+补默认值)
-        assert len(captured) >= 1, "no warning emitted for legacy entries"
-        joined = "\n".join(captured)
-        assert "legacy entries detected: 2" in joined, f"warning text: {joined}"
 
-    print("[CHECK v14 Task 1] build_meta_trace_text backward compat OK (2 legacy + 2 new)")
+def _v14t2_check_bounds(darwin_fn: Any) -> None:
+    """clamp 越界 + 坏值降级到 on_track."""
+    assert darwin_fn({"gap_severity": -0.5}) == 1.0, (
+        "negative gap → darwin clamped to 1.0"
+    )
+    assert darwin_fn({"gap_severity": 1.5}) == 0.0, "gap>1 → darwin clamped to 0.0"
+    print("[CHECK v14 Task 2] clamp OK (2 boundary cases)")
+
+    got = darwin_fn({"gap_severity": "bad", "on_track": "true"})
+    assert abs(got - 0.9) < 1e-9, "bad gap → on_track fallback"
+    print("[CHECK v14 Task 2] bad value fallback OK")
 
 
 def self_check_v14_task2() -> None:
@@ -469,39 +647,81 @@ def self_check_v14_task2() -> None:
         _compute_darwin_score,
     )
 
-    # 1. dict 直传 gap_severity (测试 / Phase 2 LLM 覆盖路径)
-    assert abs(_compute_darwin_score({"gap_severity": 0.2}) - 0.8) < 1e-9, "gap=0.2 → darwin=0.8"
-    assert abs(_compute_darwin_score({"gap_severity": 0.5}) - 0.5) < 1e-9, "gap=0.5 → darwin=0.5"
-    assert abs(_compute_darwin_score({"gap_severity": 0.9}) - 0.1) < 1e-9, "gap=0.9 → darwin=0.1"
-    print("[CHECK v14 Task 2] dict gap_severity path OK (3 cases)")
-
-    # 2. None → 0.5 (探索期默认)
-    assert abs(_compute_darwin_score(None) - 0.5) < 1e-9, "None → 0.5"
-    print("[CHECK v14 Task 2] None → 0.5 (exploration default) OK")
-
-    # 3. StepEvaluation 对象派生 (on_track 主导)
-    def _mk_eval(on_track: str) -> StepEvaluation:
-        return StepEvaluation(
-            step_id=1, attempted="", found="", target_chain_ref=None,
-            on_track=on_track, structure_check="not_applicable",
-            evidence_quality="unknown", deviation="",
-        )
-
-    assert abs(_compute_darwin_score(_mk_eval("true")) - 0.9) < 1e-9, "on_track=true → darwin=0.9"
-    assert abs(_compute_darwin_score(_mk_eval("unsure")) - 0.5) < 1e-9, "on_track=unsure → darwin=0.5"
-    assert abs(_compute_darwin_score(_mk_eval("false")) - 0.1) < 1e-9, "on_track=false → darwin=0.1"
-    print("[CHECK v14 Task 2] StepEvaluation derive path OK (3 on_track cases)")
-
-    # 4. clamp 验证: gap_severity 越界被 clamp 到 [0, 1]
-    assert _compute_darwin_score({"gap_severity": -0.5}) == 1.0, "negative gap → darwin clamped to 1.0"
-    assert _compute_darwin_score({"gap_severity": 1.5}) == 0.0, "gap>1 → darwin clamped to 0.0"
-    print("[CHECK v14 Task 2] clamp OK (2 boundary cases)")
-
-    # 5. 坏值降级: gap_severity 不是数字 → 走 on_track 派生
-    assert abs(_compute_darwin_score({"gap_severity": "bad", "on_track": "true"}) - 0.9) < 1e-9, "bad gap → on_track fallback"
-    print("[CHECK v14 Task 2] bad value fallback OK")
+    _v14t2_check_gap_dict(_compute_darwin_score)
+    _v14t2_check_object_path(_compute_darwin_score, StepEvaluation)
+    _v14t2_check_bounds(_compute_darwin_score)
 
     print("v14 Task 2 self-check PASSED")
+
+
+def _v14t3_entries() -> tuple[dict, dict, dict]:
+    """构造 3 个 entry, 模拟 Step 2 主循环 _trace_history 累积过程."""
+    entry1 = {
+        "attempted": "compute orbital parameters",
+        # evidence 含 entry3.attempted 的 content token, 让 cosine > 0.7.
+        "evidence": ["compute orbital parameters and verify: a=1.0 e=0.1"],
+    }
+    entry2 = {
+        "attempted": "verify Kepler law",
+        "evidence": ["Kepler third law verified: T^2 proportional a^3"],
+    }
+    entry3 = {
+        "attempted": "compute orbital parameters and verify Kepler law",
+        "evidence": [],
+    }
+    return entry1, entry2, entry3
+
+
+def _v14t3_check_basics(overlap_fn: Any) -> None:
+    """1+2. 空 input → 0.0; 自相似 → 1.0."""
+    assert overlap_fn("", "anything") == 0.0, "empty a → 0.0"
+    assert overlap_fn("anything", "") == 0.0, "empty b → 0.0"
+    assert overlap_fn("", "") == 0.0, "both empty → 0.0"
+    print("[CHECK v14 Task 3] empty input → 0.0 OK (3 cases)")
+
+    self_sim = overlap_fn("compute orbital parameters", "compute orbital parameters")
+    assert abs(self_sim - 1.0) < 1e-9, f"self-similarity should be 1.0, got {self_sim}"
+    print(f"[CHECK v14 Task 3] self-similarity = 1.0 OK (got {self_sim:.4f})")
+
+
+def _v14t3_check_support(
+    overlap_fn: Any, entry1: dict, entry2: dict, entry3: dict
+) -> None:
+    """3+4. entry3.attempted vs 历史 evidence 的 >0.7 / <0.7 两侧."""
+    e3_att = entry3["attempted"]
+    e1_ev_text = " ".join(entry1["evidence"])
+    s1 = overlap_fn(e3_att, e1_ev_text)
+    assert s1 > 0.7, f"e3 vs e1 should > 0.7, got {s1:.4f}"
+    print(f"[CHECK v14 Task 3] e3.attempted vs e1.evidence = {s1:.4f} > 0.7 OK")
+
+    e2_ev_text = " ".join(entry2["evidence"])
+    s2 = overlap_fn(e3_att, e2_ev_text)
+    assert s2 < 0.7, f"e3 vs e2 should < 0.7, got {s2:.4f}"
+    print(f"[CHECK v14 Task 3] e3.attempted vs e2.evidence = {s2:.4f} < 0.7 OK")
+
+
+def _v14t3_check_ratio(
+    overlap_fn: Any, entry1: dict, entry2: dict, entry3: dict
+) -> None:
+    """5+6. supported_ratio = 1/2 = 0.5; 首轮历史为空 → 0.0."""
+    e3_att = entry3["attempted"]
+    _trace_history = [entry1, entry2]
+    _supported_hits = 0
+    for _hist in _trace_history:
+        _hev = _hist.get("evidence") or []
+        _hev_text = " ".join(_hev) if isinstance(_hev, list) else str(_hev)
+        if overlap_fn(e3_att, _hev_text) > 0.7:
+            _supported_hits += 1
+    _supported_ratio = _supported_hits / max(len(_trace_history), 1)
+    assert abs(_supported_ratio - 0.5) < 1e-9, (
+        f"supported_ratio should be 0.5, got {_supported_ratio:.4f} "
+        f"(hits={_supported_hits}, total={len(_trace_history)})"
+    )
+    print(f"[CHECK v14 Task 3] supported_ratio = {_supported_ratio:.4f} (1/2) OK")
+
+    _empty_ratio = 0 / max(0, 1)  # 模拟 _trace_history=[] 路径
+    assert _empty_ratio == 0.0, "empty history → supported_ratio = 0.0"
+    print("[CHECK v14 Task 3] empty history → supported_ratio = 0.0 OK")
 
 
 def self_check_v14_task3() -> None:
@@ -525,67 +745,141 @@ def self_check_v14_task3() -> None:
     """
     from huginn.context_builder import _compute_semantic_overlap
 
-    entry1 = {
-        "attempted": "compute orbital parameters",
-        # evidence 含 entry3.attempted 的 content token, 让 cosine > 0.7.
-        "evidence": ["compute orbital parameters and verify: a=1.0 e=0.1"],
-    }
-    entry2 = {
-        "attempted": "verify Kepler law",
-        "evidence": ["Kepler third law verified: T^2 proportional a^3"],
-    }
-    entry3 = {
-        "attempted": "compute orbital parameters and verify Kepler law",
-        "evidence": [],
-    }
-
-    # 1. 空 input → 0.0
-    assert _compute_semantic_overlap("", "anything") == 0.0, "empty a → 0.0"
-    assert _compute_semantic_overlap("anything", "") == 0.0, "empty b → 0.0"
-    assert _compute_semantic_overlap("", "") == 0.0, "both empty → 0.0"
-    print("[CHECK v14 Task 3] empty input → 0.0 OK (3 cases)")
-
-    # 2. 自相似 → 1.0
-    self_sim = _compute_semantic_overlap(
-        "compute orbital parameters", "compute orbital parameters"
-    )
-    assert abs(self_sim - 1.0) < 1e-9, f"self-similarity should be 1.0, got {self_sim}"
-    print(f"[CHECK v14 Task 3] self-similarity = 1.0 OK (got {self_sim:.4f})")
-
-    # 3. entry3.attempted vs entry1.evidence > 0.7
-    e3_att = entry3["attempted"]
-    e1_ev_text = " ".join(entry1["evidence"])
-    s1 = _compute_semantic_overlap(e3_att, e1_ev_text)
-    assert s1 > 0.7, f"e3 vs e1 should > 0.7, got {s1:.4f}"
-    print(f"[CHECK v14 Task 3] e3.attempted vs e1.evidence = {s1:.4f} > 0.7 OK")
-
-    # 4. entry3.attempted vs entry2.evidence < 0.7
-    e2_ev_text = " ".join(entry2["evidence"])
-    s2 = _compute_semantic_overlap(e3_att, e2_ev_text)
-    assert s2 < 0.7, f"e3 vs e2 should < 0.7, got {s2:.4f}"
-    print(f"[CHECK v14 Task 3] e3.attempted vs e2.evidence = {s2:.4f} < 0.7 OK")
-
-    # 5. supported_ratio = 1/2 = 0.5 (模拟 Step 2 主循环逻辑)
-    _trace_history = [entry1, entry2]
-    _supported_hits = 0
-    for _hist in _trace_history:
-        _hev = _hist.get("evidence") or []
-        _hev_text = " ".join(_hev) if isinstance(_hev, list) else str(_hev)
-        if _compute_semantic_overlap(e3_att, _hev_text) > 0.7:
-            _supported_hits += 1
-    _supported_ratio = _supported_hits / max(len(_trace_history), 1)
-    assert abs(_supported_ratio - 0.5) < 1e-9, (
-        f"supported_ratio should be 0.5, got {_supported_ratio:.4f} "
-        f"(hits={_supported_hits}, total={len(_trace_history)})"
-    )
-    print(f"[CHECK v14 Task 3] supported_ratio = {_supported_ratio:.4f} (1/2) OK")
-
-    # 6. 首轮历史为空 → 0.0
-    _empty_ratio = 0 / max(0, 1)  # 模拟 _trace_history=[] 路径
-    assert _empty_ratio == 0.0, "empty history → supported_ratio = 0.0"
-    print("[CHECK v14 Task 3] empty history → supported_ratio = 0.0 OK")
+    entry1, entry2, entry3 = _v14t3_entries()
+    _v14t3_check_basics(_compute_semantic_overlap)
+    _v14t3_check_support(_compute_semantic_overlap, entry1, entry2, entry3)
+    _v14t3_check_ratio(_compute_semantic_overlap, entry1, entry2, entry3)
 
     print("v14 Task 3 self-check PASSED")
+
+
+def _v14t8_make_mocks(behavior: str) -> tuple[Any, Any, Any, list, list]:
+    """behavior='fix_then_pass' (3rd call pass) 或 'always_fix'."""
+    calls = [0]
+    stream_calls: list = []
+
+    async def _mock_critique(_model, _report, _checklist, *, mode="object", **_kw):
+        calls[0] += 1
+        if behavior == "fix_then_pass" and calls[0] >= 3:
+            return {
+                "overall_verdict": "pass",
+                "implausible_metrics": [],
+                "silent_substitutions": [],
+                "missing_components": [],
+            }
+        return {
+            "overall_verdict": "fix_needed",
+            "implausible_metrics": [
+                {"metric": "MAE", "paper": 0.5, "yours": 0.05, "red_flag": "too good"}
+            ],
+            "silent_substitutions": [],
+            "missing_components": [],
+        }
+
+    async def _mock_stream(_msg, _label, _tid=None, **_kw):
+        stream_calls.append((_label, _msg))
+        return ""
+
+    def _mock_csm(_sig, _ctx=None):
+        pass
+
+    return _mock_critique, _mock_stream, _mock_csm, stream_calls, calls
+
+
+def _v14t8_setup_ws(td: str, task_tag: str) -> tuple[Path, Path]:
+    """铺 report/report.md + 3 行 gradient cochain 的 meta_trace."""
+    ws = Path(td)
+    (ws / "report").mkdir(parents=True)
+    (ws / "report" / "report.md").write_text("# stub report\n", encoding="utf-8")
+    (ws / HUGINN_DIR_NAME).mkdir(parents=True)
+    trace = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    for i in range(3):
+        with trace.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "iteration": i,
+                        "role": "stub",
+                        "attempted": "x",
+                        "evidence": [],
+                        "darwin_score": 0.5,
+                        "supported_ratio": 0.0,
+                        "simplex_id": f"trace:{task_tag}:i:{i}",
+                        "cochain_type": "gradient",
+                        "domain": "unknown",
+                        "task_id": task_tag,
+                    }
+                )
+                + "\n"
+            )
+    return ws, trace
+
+
+def _v14t8_run_step3(ws: Path, behavior: str, mod: Any) -> list:
+    """patch mod.adversarial_critique 后跑 _step3_adversarial, 返回 stream_calls."""
+    critique, stream, csm, stream_calls, _calls = _v14t8_make_mocks(behavior)
+    orig = mod.adversarial_critique
+    mod.adversarial_critique = critique
+    try:
+        asyncio.run(
+            mod._step3_adversarial(ws, None, None, "stub checklist", [], stream, csm)
+        )
+    finally:
+        mod.adversarial_critique = orig
+    return stream_calls
+
+
+def _v14t8_curl_entries(trace_path: Path) -> list[dict]:
+    """从 trace 里筛出 step3_retry 的 curl cochain 条目."""
+    lines = trace_path.read_text(encoding="utf-8").strip().split("\n")
+    entries = [json.loads(line) for line in lines if line.strip()]
+    return [
+        e
+        for e in entries
+        if e.get("cochain_type") == "curl" and e.get("role") == "step3_retry"
+    ]
+
+
+def _v14t8_check_scenario1(td: str, mod: Any) -> None:
+    """场景 1: 修复后 pass → 1 次 retry, 无 rejection."""
+    ws, trace = _v14t8_setup_ws(td, "t1")
+    stream_calls = _v14t8_run_step3(ws, "fix_then_pass", mod)
+
+    retry = [c for c in stream_calls if c[0] == "step3_retry"]
+    assert len(retry) == 1, (
+        f"scenario 1: expected 1 retry, got {len(retry)}: {stream_calls}"
+    )
+    finalize = [c for c in stream_calls if c[0] == "step3_finalize"]
+    assert len(finalize) == 0, f"scenario 1: expected 0 finalize, got {len(finalize)}"
+
+    curls = _v14t8_curl_entries(trace)
+    assert len(curls) == 1, f"scenario 1: expected 1 curl entry, got {len(curls)}"
+
+    rejections = ws / HUGINN_DIR_NAME / "directive_rejections.jsonl"
+    assert not rejections.exists(), "scenario 1: should NOT write rejection"
+
+
+def _v14t8_check_scenario2(td: str, mod: Any) -> None:
+    """场景 2: 始终 fix_needed → 2 retry + 1 finalize + rejection."""
+    ws, trace = _v14t8_setup_ws(td, "t2")
+    stream_calls = _v14t8_run_step3(ws, "always_fix", mod)
+
+    retry = [c for c in stream_calls if c[0] == "step3_retry"]
+    assert len(retry) == 2, (
+        f"scenario 2: expected 2 retries, got {len(retry)}: {stream_calls}"
+    )
+    finalize = [c for c in stream_calls if c[0] == "step3_finalize"]
+    assert len(finalize) == 1, f"scenario 2: expected 1 finalize, got {len(finalize)}"
+
+    curls = _v14t8_curl_entries(trace)
+    assert len(curls) == 2, f"scenario 2: expected 2 curl entries, got {len(curls)}"
+
+    rejections = ws / HUGINN_DIR_NAME / "directive_rejections.jsonl"
+    assert rejections.exists(), "scenario 2: directive_rejections.jsonl not written"
+    last = json.loads(rejections.read_text(encoding="utf-8").strip().split("\n")[-1])
+    assert last["reason"] == "step3_retry_limit_reached", f"wrong reason: {last}"
+    assert last["retry_count"] == 2, f"wrong retry_count: {last}"
+    assert last["gap_type"] == "numeric_recompute", f"wrong gap_type: {last}"
 
 
 def self_check_v14_task8() -> None:
@@ -595,135 +889,153 @@ def self_check_v14_task8() -> None:
     两个场景: (1) 修复后 pass → 1 retry; (2) 始终 fix_needed → 2 retry + rejection.
     ponytail: 从 __main__ 内联块抽出, 让 comprehensive 能直接调. 不重写, 只挪位置.
     """
-    import json as _json_t8
     import tempfile
 
-    def _make_mocks(behavior: str):
-        """behavior='fix_then_pass' (3rd call pass) 或 'always_fix'."""
-        _calls = [0]
-        _stream_calls: list = []
+    # lazy import: rcb_step3 不依赖 self_checks, 可安全在函数体内 import.
+    # 注意 patch 目标必须是 rcb_step3 (定义 _step3_adversarial 的模块) — patch
+    # rcb_runner 的同名 re-export 不会影响 rcb_step3 内部的模块级引用.
+    import huginn.cli.rcb_step3 as _mod_t8
 
-        async def _mock_critique(_model, _report, _checklist, *, mode="object", **_kw):
-            _calls[0] += 1
-            if behavior == "fix_then_pass" and _calls[0] >= 3:
-                return {
-                    "overall_verdict": "pass",
-                    "implausible_metrics": [],
-                    "silent_substitutions": [],
-                    "missing_components": [],
-                }
-            return {
-                "overall_verdict": "fix_needed",
-                "implausible_metrics": [{
-                    "metric": "MAE", "paper": 0.5, "yours": 0.05,
-                    "red_flag": "too good",
-                }],
-                "silent_substitutions": [],
-                "missing_components": [],
-            }
-
-        async def _mock_stream(_msg, _label, _tid=None, **_kw):
-            _stream_calls.append((_label, _msg))
-            return ""
-
-        def _mock_csm(_sig, _ctx=None):
-            pass
-
-        return _mock_critique, _mock_stream, _mock_csm, _stream_calls, _calls
-
-    def _setup_ws(td: str, task_tag: str):
-        _ws = Path(td)
-        (_ws / "report").mkdir(parents=True)
-        (_ws / "report" / "report.md").write_text("# stub report\n", encoding="utf-8")
-        (_ws / HUGINN_DIR_NAME).mkdir(parents=True)
-        _trace = _ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        for _i in range(3):
-            with _trace.open("a", encoding="utf-8") as _f:
-                _f.write(_json_t8.dumps({
-                    "iteration": _i, "role": "stub", "attempted": "x",
-                    "evidence": [], "darwin_score": 0.5, "supported_ratio": 0.0,
-                    "simplex_id": f"trace:{task_tag}:i:{_i}",
-                    "cochain_type": "gradient",
-                    "domain": "unknown", "task_id": task_tag,
-                }) + "\n")
-        return _ws, _trace
-
-    import huginn.cli.rcb_runner as _mod_t8
-    _orig_critique_t8 = _mod_t8.adversarial_critique
-
-    # === 场景 1: 修复后 pass → 1 次 retry, 无 rejection ===
-    with tempfile.TemporaryDirectory() as _td1:
-        _ws1, _trace1 = _setup_ws(_td1, "t1")
-        _mc, _ms, _mcsm, _scalls, _ccalls = _make_mocks("fix_then_pass")
-        _mod_t8.adversarial_critique = _mc
-        try:
-            asyncio.run(_mod_t8._step3_adversarial(
-                _ws1, None, None, "stub checklist", [], _ms, _mcsm,
-            ))
-        finally:
-            _mod_t8.adversarial_critique = _orig_critique_t8
-
-        _retry1 = [c for c in _scalls if c[0] == "step3_retry"]
-        assert len(_retry1) == 1, \
-            f"scenario 1: expected 1 retry, got {len(_retry1)}: {_scalls}"
-        _fin1 = [c for c in _scalls if c[0] == "step3_finalize"]
-        assert len(_fin1) == 0, \
-            f"scenario 1: expected 0 finalize, got {len(_fin1)}"
-
-        _lines1 = _trace1.read_text(encoding="utf-8").strip().split("\n")
-        _curl1 = [
-            _json_t8.loads(_l) for _l in _lines1
-            if _l.strip()
-            and _json_t8.loads(_l).get("cochain_type") == "curl"
-            and _json_t8.loads(_l).get("role") == "step3_retry"
-        ]
-        assert len(_curl1) == 1, \
-            f"scenario 1: expected 1 curl entry, got {len(_curl1)}"
-
-        _rej1 = _ws1 / HUGINN_DIR_NAME / "directive_rejections.jsonl"
-        assert not _rej1.exists(), "scenario 1: should NOT write rejection"
-
-    # === 场景 2: 始终 fix_needed → 2 retry + 1 finalize + rejection ===
-    with tempfile.TemporaryDirectory() as _td2:
-        _ws2, _trace2 = _setup_ws(_td2, "t2")
-        _mc, _ms, _mcsm, _scalls, _ccalls = _make_mocks("always_fix")
-        _mod_t8.adversarial_critique = _mc
-        try:
-            asyncio.run(_mod_t8._step3_adversarial(
-                _ws2, None, None, "stub checklist", [], _ms, _mcsm,
-            ))
-        finally:
-            _mod_t8.adversarial_critique = _orig_critique_t8
-
-        _retry2 = [c for c in _scalls if c[0] == "step3_retry"]
-        assert len(_retry2) == 2, \
-            f"scenario 2: expected 2 retries, got {len(_retry2)}: {_scalls}"
-        _fin2 = [c for c in _scalls if c[0] == "step3_finalize"]
-        assert len(_fin2) == 1, \
-            f"scenario 2: expected 1 finalize, got {len(_fin2)}"
-
-        _lines2 = _trace2.read_text(encoding="utf-8").strip().split("\n")
-        _curl2 = [
-            _json_t8.loads(_l) for _l in _lines2
-            if _l.strip()
-            and _json_t8.loads(_l).get("cochain_type") == "curl"
-            and _json_t8.loads(_l).get("role") == "step3_retry"
-        ]
-        assert len(_curl2) == 2, \
-            f"scenario 2: expected 2 curl entries, got {len(_curl2)}"
-
-        _rej2 = _ws2 / HUGINN_DIR_NAME / "directive_rejections.jsonl"
-        assert _rej2.exists(), "scenario 2: directive_rejections.jsonl not written"
-        _rej_lines2 = _rej2.read_text(encoding="utf-8").strip().split("\n")
-        _last_rej = _json_t8.loads(_rej_lines2[-1])
-        assert _last_rej["reason"] == "step3_retry_limit_reached", \
-            f"wrong reason: {_last_rej}"
-        assert _last_rej["retry_count"] == 2, \
-            f"wrong retry_count: {_last_rej}"
-        assert _last_rej["gap_type"] == "numeric_recompute", \
-            f"wrong gap_type: {_last_rej}"
+    with tempfile.TemporaryDirectory() as td1:
+        _v14t8_check_scenario1(td1, _mod_t8)
+    with tempfile.TemporaryDirectory() as td2:
+        _v14t8_check_scenario2(td2, _mod_t8)
 
     print("v14 Task 8 self-check PASSED")
+
+
+def _v15t3_check_collect_observations(_collect_observations):
+    """Step 1: mock step_result 抓 MAE / R² / accuracy."""
+    obs = _collect_observations(
+        step_result="Final MAE = 0.45, R²: 0.82, accuracy=0.91",
+        report_text="",
+        checklist="",
+    )
+    assert obs, f"_collect_observations returned empty: {obs}"
+    obs_names = {o.name for o in obs}
+    assert "mae" in obs_names, f"mae not captured: {obs_names}"
+    assert "r2" in obs_names or "r²" in obs_names, f"r2 not captured: {obs_names}"
+    print(f"[CHECK v15 Task 3] _collect_observations: {len(obs)} obs from mock text OK")
+    return obs
+
+
+def _v15t3_init_manifold(_init_hypothesis_manifold, ws):
+    """Step 2: temp workspace + checklist 创建 manifold 并持久化."""
+    manifold = _init_hypothesis_manifold(
+        ws=ws,
+        task_id="Test_000",
+        checklist="Paper claims MAE = 0.5, R²: 0.85, accuracy = 0.90",
+        instructions="",
+        scan_text="",
+    )
+    assert manifold is not None, "manifold should not be None"
+    assert len(manifold._hyp) >= 3, f"expected >=3 hypotheses, got {len(manifold._hyp)}"
+    h_ids = set(manifold._hyp.keys())
+    assert "h_paper_repro" in h_ids, f"missing h_paper_repro: {h_ids}"
+    assert "h_partial_repro" in h_ids, f"missing h_partial_repro: {h_ids}"
+    assert "h_null_baseline" in h_ids, f"missing h_null_baseline: {h_ids}"
+    # 持久化文件存在
+    path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
+    assert path.exists(), f"manifold file not persisted: {path}"
+    print(
+        f"[CHECK v15 Task 3] _init_hypothesis_manifold: "
+        f"{len(manifold._hyp)} hypotheses, persisted OK"
+    )
+    return manifold, path
+
+
+def _v15t3_check_load(_load_manifold, path, manifold):
+    """Step 3: 重启后能加载."""
+    loaded = _load_manifold(path)
+    assert loaded is not None, "loaded manifold should not be None"
+    assert len(loaded._hyp) == len(manifold._hyp), (
+        f"loaded {len(loaded._hyp)} != original {len(manifold._hyp)}"
+    )
+    print(f"[CHECK v15 Task 3] _load_manifold: reload {len(loaded._hyp)} hypotheses OK")
+
+
+def _v15t3_check_abduction(_collect_observations, _compute_v15_fields, manifold):
+    """Step 4: observations 接近 paper targets → 选 h_paper_repro."""
+    obs_paper = _collect_observations(
+        step_result="MAE = 0.50, R²: 0.84, accuracy = 0.89",
+        report_text="",
+        checklist="",
+    )
+    best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, obs_paper)
+    assert best_h_id == "h_paper_repro", f"expected h_paper_repro, got {best_h_id}"
+    # log_posterior 可能为负 (log of prob ≤ 0), 只要非零就说明计算路径走通
+    assert log_post != 0.0 or not obs_paper, (
+        f"log_posterior should not be 0 with obs, got {log_post}"
+    )
+    print(
+        f"[CHECK v15 Task 3] abductive_inference: best={best_h_id} "
+        f"log_post={log_post:.3f} fisher_info={fisher_info:.3f} OK"
+    )
+    return obs_paper
+
+
+def _v15t3_check_record_abduction(
+    _record_abduction, manifold, obs_paper, trace_path, ts
+):
+    """Step 5: 写 abduction entry 到 trace."""
+    _record_abduction(
+        manifold,
+        obs_paper,
+        trace_path=trace_path,
+        task_id="Test_000",
+        iteration=1,
+        ts=ts,
+    )
+    assert trace_path.exists(), "abduction entry not written"
+    lines = trace_path.read_text(encoding="utf-8").strip().split("\n")
+    abd_lines = [
+        json.loads(_l)
+        for _l in lines
+        if _l.strip() and json.loads(_l).get("role") == "abductive_inference"
+    ]
+    assert len(abd_lines) == 1, f"expected 1 abduction entry, got {len(abd_lines)}"
+    abd = abd_lines[0]
+    assert abd["hypothesis_id"] == "h_paper_repro", (
+        f"abduction entry hypothesis_id wrong: {abd['hypothesis_id']}"
+    )
+    assert "log_posterior" in abd, "abduction entry missing log_posterior"
+    assert "fisher_info" in abd, "abduction entry missing fisher_info"
+    assert abd["imagination_parent"] is None, "imagination_parent should be None"
+    print("[CHECK v15 Task 3] _record_abduction: abduction entry written OK")
+
+
+def _v15t3_check_upgrade_entry():
+    """Step 6: v14 entry 自动补 v15 字段, v14 darwin_score 保留."""
+    from huginn.metacog.trace_topology import upgrade_entry
+
+    v14_entry = {
+        "simplex_id": "trace:Test_000:iter_1:rcb_exec",
+        "attempted": "test",
+        "evidence": ["x"],
+        "darwin_score": 0.5,
+        "cochain_type": "gradient",
+    }
+    upgrade_entry(v14_entry)
+    assert v14_entry["hypothesis_id"] is None
+    assert v14_entry["log_posterior"] == 0.0
+    assert v14_entry["fisher_info"] == 0.0
+    assert v14_entry["imagination_parent"] is None
+    assert v14_entry["darwin_score"] == 0.5, "v14 darwin_score must preserve"
+    print("[CHECK v15 Task 3] upgrade_entry: v14 entry gets v15 defaults OK")
+
+
+def _v15t3_check_degradation(_compute_v15_fields, manifold, obs_paper):
+    """Step 7: manifold=None / 空 obs 时返回默认值."""
+    h_id, lp, fi = _compute_v15_fields(None, obs_paper)
+    assert h_id is None and lp == 0.0 and fi == 0.0, (
+        f"manifold=None should return defaults, got ({h_id}, {lp}, {fi})"
+    )
+    # observations 为空时也返回默认值
+    h_id2, lp2, fi2 = _compute_v15_fields(manifold, [])
+    assert h_id2 is None and lp2 == 0.0 and fi2 == 0.0, (
+        f"empty obs should return defaults, got ({h_id2}, {lp2}, {fi2})"
+    )
+    print("[CHECK v15 Task 3] failure degradation: None manifold / empty obs OK")
 
 
 def self_check_v15_task3() -> None:
@@ -748,116 +1060,23 @@ def self_check_v15_task3() -> None:
     print("[v15 Task 3] running HypothesisManifold integration self-check...")
 
     # 1. _collect_observations: mock step_result 抓 MAE / R² / accuracy
-    obs = _collect_observations(
-        step_result="Final MAE = 0.45, R²: 0.82, accuracy=0.91",
-        report_text="",
-        checklist="",
-    )
-    assert obs, f"_collect_observations returned empty: {obs}"
-    obs_names = {o.name for o in obs}
-    assert "mae" in obs_names, f"mae not captured: {obs_names}"
-    assert "r2" in obs_names or "r²" in obs_names, f"r2 not captured: {obs_names}"
-    print(f"[CHECK v15 Task 3] _collect_observations: {len(obs)} obs from mock text OK")
+    _v15t3_check_collect_observations(_collect_observations)
 
     # 2. _init_hypothesis_manifold: temp workspace + checklist 创建 manifold
     with tempfile.TemporaryDirectory() as td:
         ws = Path(td)
-        manifold = _init_hypothesis_manifold(
-            ws=ws,
-            task_id="Test_000",
-            checklist="Paper claims MAE = 0.5, R²: 0.85, accuracy = 0.90",
-            instructions="",
-            scan_text="",
+        manifold, manifold_path = _v15t3_init_manifold(_init_hypothesis_manifold, ws)
+        _v15t3_check_load(_load_manifold, manifold_path, manifold)
+        obs_paper = _v15t3_check_abduction(
+            _collect_observations, _compute_v15_fields, manifold
         )
-        assert manifold is not None, "manifold should not be None"
-        assert len(manifold._hyp) >= 3, (
-            f"expected >=3 hypotheses, got {len(manifold._hyp)}")
-        h_ids = set(manifold._hyp.keys())
-        assert "h_paper_repro" in h_ids, f"missing h_paper_repro: {h_ids}"
-        assert "h_partial_repro" in h_ids, f"missing h_partial_repro: {h_ids}"
-        assert "h_null_baseline" in h_ids, f"missing h_null_baseline: {h_ids}"
-        # 持久化文件存在
-        path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
-        assert path.exists(), f"manifold file not persisted: {path}"
-        print(
-            f"[CHECK v15 Task 3] _init_hypothesis_manifold: "
-            f"{len(manifold._hyp)} hypotheses, persisted OK")
-
-        # 3. _load_manifold: 重启后能加载
-        loaded = _load_manifold(path)
-        assert loaded is not None, "loaded manifold should not be None"
-        assert len(loaded._hyp) == len(manifold._hyp), (
-            f"loaded {len(loaded._hyp)} != original {len(manifold._hyp)}")
-        print(f"[CHECK v15 Task 3] _load_manifold: reload {len(loaded._hyp)} hypotheses OK")
-
-        # 4. abductive_inference: observations 接近 paper targets → 选 h_paper_repro
-        obs_paper = _collect_observations(
-            step_result="MAE = 0.50, R²: 0.84, accuracy = 0.89",
-            report_text="",
-            checklist="",
-        )
-        best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, obs_paper)
-        assert best_h_id == "h_paper_repro", (
-            f"expected h_paper_repro, got {best_h_id}")
-        # log_posterior 可能为负 (log of prob ≤ 0), 只要非零就说明计算路径走通
-        assert log_post != 0.0 or not obs_paper, (
-            f"log_posterior should not be 0 with obs, got {log_post}")
-        print(
-            f"[CHECK v15 Task 3] abductive_inference: best={best_h_id} "
-            f"log_post={log_post:.3f} fisher_info={fisher_info:.3f} OK")
-
-        # 5. _record_abduction: 写 abduction entry 到 trace
         trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
-        _record_abduction(
-            manifold,
-            obs_paper,
-            trace_path=trace_path,
-            task_id="Test_000",
-            iteration=1,
-            ts=_time_t3.time(),
+        _v15t3_check_record_abduction(
+            _record_abduction, manifold, obs_paper, trace_path, _time_t3.time()
         )
-        assert trace_path.exists(), "abduction entry not written"
-        lines = trace_path.read_text(encoding="utf-8").strip().split("\n")
-        abd_lines = [
-            json.loads(_l) for _l in lines
-            if _l.strip() and json.loads(_l).get("role") == "abductive_inference"
-        ]
-        assert len(abd_lines) == 1, f"expected 1 abduction entry, got {len(abd_lines)}"
-        abd = abd_lines[0]
-        assert abd["hypothesis_id"] == "h_paper_repro", (
-            f"abduction entry hypothesis_id wrong: {abd['hypothesis_id']}")
-        assert "log_posterior" in abd, "abduction entry missing log_posterior"
-        assert "fisher_info" in abd, "abduction entry missing fisher_info"
-        assert abd["imagination_parent"] is None, "imagination_parent should be None"
-        print("[CHECK v15 Task 3] _record_abduction: abduction entry written OK")
-
-        # 6. upgrade_entry: v14 entry 自动补 v15 字段, v14 darwin_score 保留
-        from huginn.metacog.trace_topology import upgrade_entry
-        v14_entry = {
-            "simplex_id": "trace:Test_000:iter_1:rcb_exec",
-            "attempted": "test",
-            "evidence": ["x"],
-            "darwin_score": 0.5,
-            "cochain_type": "gradient",
-        }
-        upgrade_entry(v14_entry)
-        assert v14_entry["hypothesis_id"] is None
-        assert v14_entry["log_posterior"] == 0.0
-        assert v14_entry["fisher_info"] == 0.0
-        assert v14_entry["imagination_parent"] is None
-        assert v14_entry["darwin_score"] == 0.5, "v14 darwin_score must preserve"
-        print("[CHECK v15 Task 3] upgrade_entry: v14 entry gets v15 defaults OK")
-
-        # 7. 失败降级: manifold=None 时 _compute_v15_fields 返回默认值
-        h_id, lp, fi = _compute_v15_fields(None, obs_paper)
-        assert h_id is None and lp == 0.0 and fi == 0.0, (
-            f"manifold=None should return defaults, got ({h_id}, {lp}, {fi})")
-        # observations 为空时也返回默认值
-        h_id2, lp2, fi2 = _compute_v15_fields(manifold, [])
-        assert h_id2 is None and lp2 == 0.0 and fi2 == 0.0, (
-            f"empty obs should return defaults, got ({h_id2}, {lp2}, {fi2})")
-        print("[CHECK v15 Task 3] failure degradation: None manifold / empty obs OK")
+        _v15t3_check_upgrade_entry()
+        _v15t3_check_degradation(_compute_v15_fields, manifold, obs_paper)
 
     print("v15 Task 3 self-check PASSED")
 
@@ -883,56 +1102,91 @@ def self_check_v15_task4() -> None:
 
     print("[v15 Task 4] running HintCoordinator posterior-guided hint self-check...")
 
-    # 1. _build_posterior_guided_hint: 正常路径
+    manifold, obs = _v15t4_manifold_and_obs(Hypothesis, HypothesisManifold, Observation)
+    hint = _v15t4_check_build_hint(_build_posterior_guided_hint, manifold, obs)
+    _v15t4_check_degradation(
+        _build_posterior_guided_hint, manifold, obs, HypothesisManifold
+    )
+
+    hc = HintCoordinator()
+    step2_base = _V15T4_STEP2_BASE
+    iter_base = "Continue execution. Iteration 2/4."
+    _v15t4_check_coordinate_injection(hc, hint, step2_base, iter_base)
+    _v15t4_check_lift_boost(hc, manifold, obs, step2_base)
+    _v15t4_check_v14_fallback(hc, manifold, step2_base)
+    _v15t4_check_token_control(
+        _build_posterior_guided_hint, Hypothesis, HypothesisManifold, Observation
+    )
+
+    print("v15 Task 4 self-check PASSED")
+
+
+_V15T4_STEP2_BASE = (
+    "Now execute the task following your methodology checklist. "
+    "Implement each [EXACT] component as-specified in the paper."
+)
+
+
+def _v15t4_manifold_and_obs(Hypothesis, HypothesisManifold, Observation):
+    """构造 3 假设 + 3 观测的 mock manifold."""
     manifold = HypothesisManifold()
-    manifold.add(Hypothesis(
-        h_id="h_paper_repro",
-        description="Paper results reproducible: metrics match claimed values",
-        predictions={"mae": 0.5, "r2": 0.85, "accuracy": 0.90},
-        n_params=2,
-    ))
-    manifold.add(Hypothesis(
-        h_id="h_partial_repro",
-        description="Partial reproduction: metrics at 50% of claimed values",
-        predictions={"mae": 0.25, "r2": 0.425, "accuracy": 0.45},
-        n_params=3,
-    ))
-    manifold.add(Hypothesis(
-        h_id="h_null_baseline",
-        description="Null/baseline result: no signal, default metrics",
-        predictions={"mae": 0.0, "r2": 0.0, "accuracy": 0.0},
-        n_params=1,
-    ))
+    manifold.add(
+        Hypothesis(
+            h_id="h_paper_repro",
+            description="Paper results reproducible: metrics match claimed values",
+            predictions={"mae": 0.5, "r2": 0.85, "accuracy": 0.90},
+            n_params=2,
+        )
+    )
+    manifold.add(
+        Hypothesis(
+            h_id="h_partial_repro",
+            description="Partial reproduction: metrics at 50% of claimed values",
+            predictions={"mae": 0.25, "r2": 0.425, "accuracy": 0.45},
+            n_params=3,
+        )
+    )
+    manifold.add(
+        Hypothesis(
+            h_id="h_null_baseline",
+            description="Null/baseline result: no signal, default metrics",
+            predictions={"mae": 0.0, "r2": 0.0, "accuracy": 0.0},
+            n_params=1,
+        )
+    )
     obs = [
         Observation("mae", 0.48, sigma=0.1),
         Observation("r2", 0.83, sigma=0.1),
         Observation("accuracy", 0.88, sigma=0.1),
     ]
-    hint = _build_posterior_guided_hint(manifold, obs)
+    return manifold, obs
+
+
+def _v15t4_check_build_hint(build_fn, manifold, obs) -> str:
+    """1. _build_posterior_guided_hint: 正常路径."""
+    hint = build_fn(manifold, obs)
     assert hint, f"hint should not be empty:\n{hint}"
     assert "[posterior core hint]" in hint, f"missing core hint:\n{hint}"
     assert "[posterior explore hint]" in hint, f"missing explore hint:\n{hint}"
     assert "posterior_lift:" in hint, f"missing lift:\n{hint}"
     assert len(hint) <= 1500, f"hint {len(hint)} > 1500 chars:\n{hint}"
     print(f"[CHECK v15 Task 4] _build_posterior_guided_hint OK ({len(hint)} chars)")
+    return hint
 
-    # 2. 失败降级: manifold=None / 空 obs / 空 manifold
-    assert _build_posterior_guided_hint(None, obs) == "", \
-        "manifold=None should return ''"
-    assert _build_posterior_guided_hint(manifold, []) == "", \
-        "empty obs should return ''"
+
+def _v15t4_check_degradation(build_fn, manifold, obs, HypothesisManifold) -> None:
+    """2. 失败降级: manifold=None / 空 obs / 空 manifold."""
+    assert build_fn(None, obs) == "", "manifold=None should return ''"
+    assert build_fn(manifold, []) == "", "empty obs should return ''"
     empty_m = HypothesisManifold()
-    assert _build_posterior_guided_hint(empty_m, obs) == "", \
-        "empty manifold should return ''"
+    assert build_fn(empty_m, obs) == "", "empty manifold should return ''"
     print("[CHECK v15 Task 4] failure degradation OK")
 
-    # 3. coordinate() 注入 posterior_hint
-    hc = HintCoordinator()
-    step2_base = (
-        "Now execute the task following your methodology checklist. "
-        "Implement each [EXACT] component as-specified in the paper."
-    )
-    iter_base = "Continue execution. Iteration 2/4."
+
+def _v15t4_check_coordinate_injection(
+    hc, hint: str, step2_base: str, iter_base: str
+) -> None:
+    """3. coordinate() 注入 posterior_hint."""
     prompt, events = hc.coordinate(
         iter_n=1,
         csm_state="S4_CONSTRUCT",
@@ -949,22 +1203,26 @@ def self_check_v15_task4() -> None:
         meta_agent=None,
         posterior_hint=hint,
     )
-    assert "[posterior core hint]" in prompt, \
-        f"posterior_hint not injected:\n{prompt}"
-    assert prompt.index("[posterior core hint]") < prompt.index("[gradient block]"), \
+    assert "[posterior core hint]" in prompt, f"posterior_hint not injected:\n{prompt}"
+    assert prompt.index("[posterior core hint]") < prompt.index("[gradient block]"), (
         f"posterior_hint should be before gradient block:\n{prompt}"
+    )
     print("[CHECK v15 Task 4] coordinate injection OK")
 
-    # 4. posterior lift boost: v15 entry (有 hypothesis_id + log_posterior) + manifold
+
+def _v15t4_check_lift_boost(hc, manifold, obs, step2_base: str) -> None:
+    """4. posterior lift boost: v15 entry (有 hypothesis_id + log_posterior) + manifold."""
     best_h = manifold.abductive_inference(obs)
     log_post = manifold.log_posterior(obs).get(best_h.h_id, 0.0)
-    prior_v15 = [{
-        "attempted": "compute band gap via DFT",
-        "darwin_score": 0.9,
-        "hypothesis_id": best_h.h_id,
-        "log_posterior": log_post,
-        "domain": "materials",
-    }]
+    prior_v15 = [
+        {
+            "attempted": "compute band gap via DFT",
+            "darwin_score": 0.9,
+            "hypothesis_id": best_h.h_id,
+            "log_posterior": log_post,
+            "domain": "materials",
+        }
+    ]
     prompt_b, events_b = hc.coordinate(
         iter_n=1,
         csm_state="S4_CONSTRUCT",
@@ -982,18 +1240,22 @@ def self_check_v15_task4() -> None:
         cross_task_prior=prior_v15,
         manifold=manifold,
     )
-    assert any(e.startswith("posterior_lift_boost:") for e in events_b), \
+    assert any(e.startswith("posterior_lift_boost:") for e in events_b), (
         f"posterior_lift_boost event missing: {events_b}"
-    assert "[prior validated: lift=" in prompt_b, \
-        f"lift marker missing:\n{prompt_b}"
+    )
+    assert "[prior validated: lift=" in prompt_b, f"lift marker missing:\n{prompt_b}"
     print(f"[CHECK v15 Task 4] posterior lift boost OK (events={events_b})")
 
-    # 5. 失败降级到 v14 keyword overlap: entry 无 v15 字段
-    prior_v14 = [{
-        "attempted": "compute band gap",
-        "darwin_score": 0.9,
-        "domain": "materials",
-    }]
+
+def _v15t4_check_v14_fallback(hc, manifold, step2_base: str) -> None:
+    """5. 失败降级到 v14 keyword overlap: entry 无 v15 字段."""
+    prior_v14 = [
+        {
+            "attempted": "compute band gap",
+            "darwin_score": 0.9,
+            "domain": "materials",
+        }
+    ]
     prompt_c, events_c = hc.coordinate(
         iter_n=1,
         csm_state="S4_CONSTRUCT",
@@ -1011,33 +1273,39 @@ def self_check_v15_task4() -> None:
         cross_task_prior=prior_v14,
         manifold=manifold,
     )
-    assert not any(e.startswith("posterior_lift_boost:") for e in events_c), \
+    assert not any(e.startswith("posterior_lift_boost:") for e in events_c), (
         f"v14 entry should not trigger posterior_lift: {events_c}"
+    )
     print("[CHECK v15 Task 4] v14 keyword overlap fallback OK")
 
-    # 6. token 控制: 极长 description 时仍 ≤1500 chars
-    m_long = HypothesisManifold()
-    m_long.add(Hypothesis(
-        h_id="h_long_core",
-        description="X" * 800,
-        predictions={"mae": 0.5},
-        n_params=2,
-    ))
-    m_long.add(Hypothesis(
-        h_id="h_long_explore",
-        description="Y" * 800,
-        predictions={"mae": 0.0},
-        n_params=1,
-    ))
-    hint_long = _build_posterior_guided_hint(
-        m_long, [Observation("mae", 0.5, sigma=0.1)])
-    assert len(hint_long) <= 1500, \
-        f"long hint {len(hint_long)} > 1500:\n{hint_long}"
-    assert "[posterior core hint]" in hint_long, \
-        f"core must survive truncation:\n{hint_long}"
-    print(f"[CHECK v15 Task 4] token control OK (truncated to {len(hint_long)} chars)")
 
-    print("v15 Task 4 self-check PASSED")
+def _v15t4_check_token_control(
+    build_fn, Hypothesis, HypothesisManifold, Observation
+) -> None:
+    """6. token 控制: 极长 description 时仍 ≤1500 chars."""
+    m_long = HypothesisManifold()
+    m_long.add(
+        Hypothesis(
+            h_id="h_long_core",
+            description="X" * 800,
+            predictions={"mae": 0.5},
+            n_params=2,
+        )
+    )
+    m_long.add(
+        Hypothesis(
+            h_id="h_long_explore",
+            description="Y" * 800,
+            predictions={"mae": 0.0},
+            n_params=1,
+        )
+    )
+    hint_long = build_fn(m_long, [Observation("mae", 0.5, sigma=0.1)])
+    assert len(hint_long) <= 1500, f"long hint {len(hint_long)} > 1500:\n{hint_long}"
+    assert "[posterior core hint]" in hint_long, (
+        f"core must survive truncation:\n{hint_long}"
+    )
+    print(f"[CHECK v15 Task 4] token control OK (truncated to {len(hint_long)} chars)")
 
 
 def self_check_v14_comprehensive() -> None:
@@ -1067,7 +1335,9 @@ def self_check_v14_comprehensive() -> None:
     print("[v14 comprehensive] running HintCoordinator self-check (Task 5)...")
     subprocess.check_call([sys.executable, "-m", "huginn.agent.hint_coordinator"])
     print("[v14 comprehensive] running Task 7 retry-trigger self-check...")
-    subprocess.check_call([sys.executable, "-m", "huginn.cli.rcb_runner", "--self-check"])
+    subprocess.check_call(
+        [sys.executable, "-m", "huginn.cli.rcb_runner", "--self-check"]
+    )
     print("[v14 comprehensive] running code_tool self-check (Task 9)...")
     subprocess.check_call([sys.executable, "-m", "huginn.tools.code_tool"])
     print("[v14 comprehensive] running subagent self-check (Task 10)...")
@@ -1092,12 +1362,30 @@ def self_check_v14_p234() -> None:
 
     checks = [
         ("Task 11 LLM darwin", [sys.executable, "-m", "huginn.metacog.step_evaluator"]),
-        ("Task 12+13 PersistentTerminal", [sys.executable, "-m", "huginn.tools.persistent_terminal"]),
-        ("Task 14 CrossTaskStore", [sys.executable, "-m", "huginn.metacog.cross_task_store"]),
-        ("Task 15 cross_task prior", [sys.executable, "-m", "huginn.agent.hint_coordinator"]),
-        ("Task 16 UnifiedComplexView", [sys.executable, "-m", "huginn.metacog.unified_complex"]),
-        ("Task 17+18 darwin_exporter", [sys.executable, "-m", "huginn.training.darwin_exporter"]),
-        ("Task 19 model_tracker", [sys.executable, "-m", "huginn.training.model_tracker"]),
+        (
+            "Task 12+13 PersistentTerminal",
+            [sys.executable, "-m", "huginn.tools.persistent_terminal"],
+        ),
+        (
+            "Task 14 CrossTaskStore",
+            [sys.executable, "-m", "huginn.metacog.cross_task_store"],
+        ),
+        (
+            "Task 15 cross_task prior",
+            [sys.executable, "-m", "huginn.agent.hint_coordinator"],
+        ),
+        (
+            "Task 16 UnifiedComplexView",
+            [sys.executable, "-m", "huginn.metacog.unified_complex"],
+        ),
+        (
+            "Task 17+18 darwin_exporter",
+            [sys.executable, "-m", "huginn.training.darwin_exporter"],
+        ),
+        (
+            "Task 19 model_tracker",
+            [sys.executable, "-m", "huginn.training.model_tracker"],
+        ),
     ]
     for name, cmd in checks:
         print(f"[v14 P2/3/4] running {name}...")
@@ -1105,7 +1393,9 @@ def self_check_v14_p234() -> None:
     print("v14 Phase 2/3/4 comprehensive self-check PASSED")
     # ponytail: spec §"Phase 2/3/4 验收" 实测项需 RCBench + deepseek API + workspace.
     #           代码层 self-check 只覆盖各模块 __main__ 入口, 不覆盖跨模块闭环.
-    print("NOTE: 实测 PersistentTerminal ≥5min 长任务 / 跨 task 累积 / 训练池 ≥100 SFT 需手动跑 RCBench")
+    print(
+        "NOTE: 实测 PersistentTerminal ≥5min 长任务 / 跨 task 累积 / 训练池 ≥100 SFT 需手动跑 RCBench"
+    )
 
 
 def self_check_v14_all() -> None:
@@ -1115,5 +1405,5 @@ def self_check_v14_all() -> None:
     ponytail: 只编排现有 self-check, 不新增检查逻辑. RCBench 实测项见各 phase NOTE.
     """
     self_check_v14_comprehensive()  # Phase 1
-    self_check_v14_p234()           # Phase 2/3/4
+    self_check_v14_p234()  # Phase 2/3/4
     print("v14 ALL Phase 1-4 comprehensive self-check PASSED")

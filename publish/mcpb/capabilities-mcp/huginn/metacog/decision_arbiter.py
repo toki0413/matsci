@@ -30,16 +30,16 @@ class DecisionContext:
     """决策时可见的统一上下文 — 所有决策器共享."""
 
     # 认知状态
-    csm_state: str = ""           # CognitiveState 枚举值
+    csm_state: str = ""  # CognitiveState 枚举值
     l1_coordinates: str = ""
-    phase: str = ""               # ResearchPhase 枚举值
+    phase: str = ""  # ResearchPhase 枚举值
 
     # Bandit 信号
     bandit_advice: str = "continue"  # continue/switch/requery
     effort_budget_remaining: int = 0
 
     # CompletionGate 信号
-    gate_status: str = "pending"     # pass/block/gaps_hint/pending
+    gate_status: str = "pending"  # pass/block/gaps_hint/pending
     gate_should_stop: bool = False
     gate_reason: str = ""
 
@@ -67,6 +67,73 @@ class Decision:
     def should_stop(self) -> bool:
         """是否应该停止."""
         return self.action == "stop"
+
+
+def _decide_gate_block(ctx: DecisionContext) -> Decision:
+    if ctx.bandit_advice == "switch":
+        return Decision(
+            action="switch_tool",
+            reason=f"Gate blocked ({ctx.gate_reason}), bandit suggests switch",
+            source="arbiter",
+            confidence=0.7,
+        )
+    return Decision(
+        action="continue",
+        reason=f"Gate blocked: {ctx.gate_reason}",
+        source="gate",
+        confidence=0.8,
+    )
+
+
+def _decide_gate_pass(ctx: DecisionContext) -> Decision:
+    if ctx.bandit_advice == "switch":
+        return Decision(
+            action="switch_tool",
+            reason="Gate passed, bandit suggests switch",
+            source="bandit",
+            confidence=0.6,
+        )
+    if ctx.bandit_advice == "requery":
+        # 冲突: Gate 说 pass 但 bandit 说 requery
+        # 仲裁: 信任 Gate 的收敛判断, 但允许 requery
+        return Decision(
+            action="requery",
+            reason="Gate passed but bandit suggests requery",
+            source="arbiter",
+            confidence=0.5,
+        )
+    # bandit continue + gate pass → 正常继续
+    return Decision(
+        action="continue",
+        reason="Gate passed, bandit continue",
+        source="arbiter",
+        confidence=0.85,
+    )
+
+
+def _decide_default(ctx: DecisionContext) -> Decision:
+    if ctx.bandit_advice == "switch":
+        return Decision(
+            action="switch_tool",
+            reason="Bandit suggests switch (gate pending)",
+            source="bandit",
+            confidence=0.6,
+        )
+    if ctx.bandit_advice == "requery":
+        return Decision(
+            action="requery",
+            reason="Bandit suggests requery (gate pending)",
+            source="bandit",
+            confidence=0.6,
+        )
+
+    # 7. 默认: continue
+    return Decision(
+        action="continue",
+        reason="Default: continue",
+        source="arbiter",
+        confidence=0.5,
+    )
 
 
 class DecisionArbiter:
@@ -105,19 +172,7 @@ class DecisionArbiter:
 
         # 3. Gate block → 继续努力 (不管 bandit 说什么)
         if ctx.gate_status == "block":
-            if ctx.bandit_advice == "switch":
-                return Decision(
-                    action="switch_tool",
-                    reason=f"Gate blocked ({ctx.gate_reason}), bandit suggests switch",
-                    source="arbiter",
-                    confidence=0.7,
-                )
-            return Decision(
-                action="continue",
-                reason=f"Gate blocked: {ctx.gate_reason}",
-                source="gate",
-                confidence=0.8,
-            )
+            return _decide_gate_block(ctx)
 
         # 4. Gate gaps_hint → 继续, gap 作为 hint
         if ctx.gate_status == "gaps_hint":
@@ -130,53 +185,10 @@ class DecisionArbiter:
 
         # 5. Gate pass (无 should_stop) + bandit 建议
         if ctx.gate_status == "pass":
-            if ctx.bandit_advice == "switch":
-                return Decision(
-                    action="switch_tool",
-                    reason="Gate passed, bandit suggests switch",
-                    source="bandit",
-                    confidence=0.6,
-                )
-            if ctx.bandit_advice == "requery":
-                # 冲突: Gate 说 pass 但 bandit 说 requery
-                # 仲裁: 信任 Gate 的收敛判断, 但允许 requery
-                return Decision(
-                    action="requery",
-                    reason="Gate passed but bandit suggests requery",
-                    source="arbiter",
-                    confidence=0.5,
-                )
-            # bandit continue + gate pass → 正常继续
-            return Decision(
-                action="continue",
-                reason="Gate passed, bandit continue",
-                source="arbiter",
-                confidence=0.85,
-            )
+            return _decide_gate_pass(ctx)
 
-        # 6. Gate pending → 信任 bandit
-        if ctx.bandit_advice == "switch":
-            return Decision(
-                action="switch_tool",
-                reason="Bandit suggests switch (gate pending)",
-                source="bandit",
-                confidence=0.6,
-            )
-        if ctx.bandit_advice == "requery":
-            return Decision(
-                action="requery",
-                reason="Bandit suggests requery (gate pending)",
-                source="bandit",
-                confidence=0.6,
-            )
-
-        # 7. 默认: continue
-        return Decision(
-            action="continue",
-            reason="Default: continue",
-            source="arbiter",
-            confidence=0.5,
-        )
+        # 6/7. Gate pending → 信任 bandit, 否则默认 continue
+        return _decide_default(ctx)
 
     def build_context(
         self,
@@ -244,14 +256,18 @@ if __name__ == "__main__":
     assert d.action == "stop", f"budget exhausted → stop, got {d.action}"
 
     # 3. Gate block + bandit continue → continue
-    ctx = DecisionContext(gate_status="block", gate_reason="effort low", bandit_advice="continue")
+    ctx = DecisionContext(
+        gate_status="block", gate_reason="effort low", bandit_advice="continue"
+    )
     d = arbiter.evaluate(ctx)
     assert d.action == "continue", f"gate block → continue, got {d.action}"
 
     # 4. Gate block + bandit switch → switch_tool
     ctx = DecisionContext(gate_status="block", bandit_advice="switch")
     d = arbiter.evaluate(ctx)
-    assert d.action == "switch_tool", f"gate block + switch → switch_tool, got {d.action}"
+    assert d.action == "switch_tool", (
+        f"gate block + switch → switch_tool, got {d.action}"
+    )
 
     # 5. Gate gaps_hint → continue
     ctx = DecisionContext(gate_status="gaps_hint", gate_reason="missing X")
@@ -275,11 +291,14 @@ if __name__ == "__main__":
 
     # 9. build_context
     class _MockBandit:
-        def policy(self): return "switch"
+        def policy(self):
+            return "switch"
+
     class _MockGate:
         status = "pass"
         should_stop = False
         reason = "ok"
+
     ctx = arbiter.build_context(
         csm_state="S4_CONSTRUCT",
         bandit=_MockBandit(),

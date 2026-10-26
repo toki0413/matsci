@@ -23,6 +23,61 @@ def _build_function(expr_str: str, sym_dict: dict[str, sp.Symbol]) -> sp.Expr:
     return safe_parse(expr_str, sym_dict)
 
 
+def _pde_classify_discriminant(
+    A: sp.Expr, B: sp.Expr, C: sp.Expr
+) -> tuple[sp.Expr, complex | None, str]:
+    """计算判别式 B^2 - 4AC, 并按判别式给出分类名称."""
+    # 判别式: 计算前先替换任何符号到自由变量, 用 sp.N 试求值
+    disc_expr = sp.expand(B**2 - 4 * A * C)
+    try:
+        disc_val = complex(sp.N(disc_expr))
+    except Exception:
+        # 符号判别式: 看是否能定号
+        disc_val = None
+
+    if disc_val is not None:
+        if abs(disc_val.imag) > 1e-12:
+            classification = "indeterminate (complex discriminant)"
+        elif disc_val.real < -1e-12:
+            classification = "elliptic"
+        elif abs(disc_val.real) < 1e-12:
+            classification = "parabolic"
+        else:
+            classification = "hyperbolic"
+    else:
+        classification = "symbolic (sign depends on parameters)"
+    return disc_expr, disc_val, classification
+
+
+def _pde_classify_result(
+    A: sp.Expr,
+    B: sp.Expr,
+    C: sp.Expr,
+    disc_expr: sp.Expr,
+    disc_val: complex | None,
+    classification: str,
+) -> ToolResult:
+    """组装 classify 的结果 payload (含 canonical example 映射)."""
+    examples = {
+        "elliptic": "Laplace / Poisson: u_xx + u_yy = 0",
+        "parabolic": "Heat: u_t - k u_xx = 0",
+        "hyperbolic": "Wave: u_tt - c^2 u_xx = 0",
+    }
+
+    return ToolResult(
+        data={
+            "A": str(A),
+            "B": str(B),
+            "C": str(C),
+            "discriminant": str(disc_expr),
+            "discriminant_value": disc_val,
+            "classification": classification,
+            "canonical_form": examples.get(classification.split()[0], "n/a"),
+        },
+        success=True,
+    )
+
+
 def classify(args: SymbolicMathInput) -> ToolResult:
     """按判别式 B^2 - 4AC 给二阶线性 PDE 分类.
 
@@ -54,45 +109,83 @@ def classify(args: SymbolicMathInput) -> ToolResult:
     except Exception as exc:
         return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
 
-    # 判别式: 计算前先替换任何符号到自由变量, 用 sp.N 试求值
-    disc_expr = sp.expand(B**2 - 4 * A * C)
-    try:
-        disc_val = complex(sp.N(disc_expr))
-    except Exception:
-        # 符号判别式: 看是否能定号
-        disc_val = None
+    disc_expr, disc_val, classification = _pde_classify_discriminant(A, B, C)
+    return _pde_classify_result(A, B, C, disc_expr, disc_val, classification)
 
-    if disc_val is not None:
-        if abs(disc_val.imag) > 1e-12:
-            classification = "indeterminate (complex discriminant)"
-        elif disc_val.real < -1e-12:
-            classification = "elliptic"
-        elif abs(disc_val.real) < 1e-12:
-            classification = "parabolic"
-        else:
-            classification = "hyperbolic"
-    else:
-        classification = "symbolic (sign depends on parameters)"
 
-    examples = {
-        "elliptic": "Laplace / Poisson: u_xx + u_yy = 0",
-        "parabolic": "Heat: u_t - k u_xx = 0",
-        "hyperbolic": "Wave: u_tt - c^2 u_xx = 0",
-    }
-
+def _separation_payload(
+    target: str,
+    ode_X_str: str,
+    ode_T_str: str,
+    general_form: str,
+    eigenvalues: str,
+    eigenfunctions: str,
+) -> ToolResult:
+    """组装 separation 的结果 payload."""
     return ToolResult(
         data={
-            "A": str(A),
-            "B": str(B),
-            "C": str(C),
-            "discriminant": str(disc_expr),
-            "discriminant_value": disc_val,
-            "classification": classification,
-            "canonical_form": examples.get(
-                classification.split()[0], "n/a"
-            ),
+            "pde_type": target,
+            "ansatz": "u = X(x) * T(t)" if target != "laplace" else "u = X(x) * Y(y)",
+            "spatial_ode": ode_X_str,
+            "temporal_ode": ode_T_str,
+            "separation_constant": "lambda",
+            "general_solution": general_form,
+            "eigenvalues": eigenvalues,
+            "eigenfunctions": eigenfunctions,
         },
         success=True,
+    )
+
+
+def _separation_heat(
+    sym_dict: dict[str, sp.Symbol], lam: sp.Symbol, target: str, ode_X_str: str
+) -> ToolResult:
+    """heat 模式的分离结果."""
+    k = sym_dict.get("k", sp.Symbol("k", positive=True))
+    # u_t = k u_xx;  X T' = k X'' T  →  X''/X = T'/(kT) = -λ
+    ode_T_str = f"T'(t) + {lam} * {k} * T(t) = 0"
+    general_form = "u(x,t) = Σ_n A_n sin(sqrt(λ_n) x) exp(-λ_n k t)"
+    eigenvalues = "λ_n = (n π / L)^2  (Dirichlet BC on [0, L])"
+    eigenfunctions = "X_n(x) = sin(n π x / L)"
+    return _separation_payload(
+        target, ode_X_str, ode_T_str, general_form, eigenvalues, eigenfunctions
+    )
+
+
+def _separation_wave(
+    sym_dict: dict[str, sp.Symbol], lam: sp.Symbol, target: str, ode_X_str: str
+) -> ToolResult:
+    """wave 模式的分离结果."""
+    c = sym_dict.get("c", sp.Symbol("c", positive=True))
+    # u_tt = c^2 u_xx;  X T'' = c^2 X'' T  →  X''/X = T''/(c^2 T) = -λ
+    ode_T_str = f"T''(t) + {lam} * {c}**2 * T(t) = 0"
+    general_form = (
+        "u(x,t) = Σ_n [A_n cos(c sqrt(λ_n) t) + B_n sin(c sqrt(λ_n) t)] "
+        "sin(sqrt(λ_n) x)"
+    )
+    eigenvalues = "λ_n = (n π / L)^2  (Dirichlet BC on [0, L])"
+    eigenfunctions = "X_n(x) = sin(n π x / L)"
+    return _separation_payload(
+        target, ode_X_str, ode_T_str, general_form, eigenvalues, eigenfunctions
+    )
+
+
+def _separation_laplace(
+    sym_dict: dict[str, sp.Symbol], lam: sp.Symbol, target: str, ode_X_str: str
+) -> ToolResult:
+    """laplace 模式的分离结果."""
+    sym_dict.get("y", sp.Symbol("y"))
+    sp.Function("Y")
+    # u_xx + u_yy = 0;  X''/X = -Y''/Y = -λ
+    ode_T_str = f"Y''(y) - {lam} * Y(y) = 0"
+    general_form = (
+        "u(x,y) = Σ_n [A_n cosh(sqrt(λ_n) y) + B_n sinh(sqrt(λ_n) y)] sin(sqrt(λ_n) x)"
+    )
+    eigenvalues = "λ_n = (n π / a)^2  (Dirichlet BC on x in [0, a])"
+    eigenfunctions = "X_n(x) = sin(n π x / a)"
+    ode_X_str = "X''(x) + λ X(x) = 0"
+    return _separation_payload(
+        target, ode_X_str, ode_T_str, general_form, eigenvalues, eigenfunctions
     )
 
 
@@ -115,57 +208,76 @@ def separation(args: SymbolicMathInput) -> ToolResult:
     sp.Function("T")
 
     ode_X_str = "X''(x) + λ X(x) = 0"
-    ode_T_str: str
-    general_form: str
-    eigenvalues: str
-    eigenfunctions: str
 
     if target == "heat":
-        k = sym_dict.get("k", sp.Symbol("k", positive=True))
-        # u_t = k u_xx;  X T' = k X'' T  →  X''/X = T'/(kT) = -λ
-        ode_T_str = f"T'(t) + {lam} * {k} * T(t) = 0"
-        general_form = "u(x,t) = Σ_n A_n sin(sqrt(λ_n) x) exp(-λ_n k t)"
-        eigenvalues = "λ_n = (n π / L)^2  (Dirichlet BC on [0, L])"
-        eigenfunctions = "X_n(x) = sin(n π x / L)"
-    elif target == "wave":
-        c = sym_dict.get("c", sp.Symbol("c", positive=True))
-        # u_tt = c^2 u_xx;  X T'' = c^2 X'' T  →  X''/X = T''/(c^2 T) = -λ
-        ode_T_str = f"T''(t) + {lam} * {c}**2 * T(t) = 0"
-        general_form = (
-            "u(x,t) = Σ_n [A_n cos(c sqrt(λ_n) t) + B_n sin(c sqrt(λ_n) t)] "
-            "sin(sqrt(λ_n) x)"
-        )
-        eigenvalues = "λ_n = (n π / L)^2  (Dirichlet BC on [0, L])"
-        eigenfunctions = "X_n(x) = sin(n π x / L)"
-    elif target == "laplace":
-        sym_dict.get("y", sp.Symbol("y"))
-        sp.Function("Y")
-        # u_xx + u_yy = 0;  X''/X = -Y''/Y = -λ
-        ode_T_str = f"Y''(y) - {lam} * Y(y) = 0"
-        general_form = (
-            "u(x,y) = Σ_n [A_n cosh(sqrt(λ_n) y) + B_n sinh(sqrt(λ_n) y)] "
-            "sin(sqrt(λ_n) x)"
-        )
-        eigenvalues = "λ_n = (n π / a)^2  (Dirichlet BC on x in [0, a])"
-        eigenfunctions = "X_n(x) = sin(n π x / a)"
-        ode_X_str = "X''(x) + λ X(x) = 0"
-    else:
+        return _separation_heat(sym_dict, lam, target, ode_X_str)
+    if target == "wave":
+        return _separation_wave(sym_dict, lam, target, ode_X_str)
+    if target == "laplace":
+        return _separation_laplace(sym_dict, lam, target, ode_X_str)
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"Unknown separation target: {target}",
+    )
+
+
+def _characteristics_transport(raw: str, sym_dict: dict[str, sp.Symbol]) -> ToolResult:
+    """transport 模式: u_t + c u_x = 0."""
+    # 输运方程: u_t + c u_x = 0
+    try:
+        c = _build_function(raw, sym_dict) if raw else sp.Symbol("c")
+    except Exception as exc:
+        return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
+    sym_dict.get("x", sp.Symbol("x"))
+    sym_dict.get("t", sp.Symbol("t"))
+    return ToolResult(
+        data={
+            "pde": f"u_t + ({c}) u_x = 0",
+            "characteristic_ode": "dx/dt = c",
+            "invariant": "x - c t = const",
+            "general_solution": f"u(x,t) = F(x - ({c}) t)",
+            "characteristic_curves": f"x(t) = x0 + ({c}) t",
+        },
+        success=True,
+    )
+
+
+def _characteristics_first_order(
+    raw: str, sym_dict: dict[str, sp.Symbol]
+) -> ToolResult:
+    """first_order_linear 模式: a u_x + b u_y = f."""
+    if not raw:
         return ToolResult(
             data=None,
             success=False,
-            error=f"Unknown separation target: {target}",
+            error="first_order_linear needs expression 'a;b;f'",
         )
-
+    parts = [p.strip() for p in raw.split(";")]
+    if len(parts) != 3:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="Expected 3 semicolon-separated values a;b;f",
+        )
+    try:
+        a_coef = _build_function(parts[0], sym_dict)
+        b_coef = _build_function(parts[1], sym_dict)
+        f_src = _build_function(parts[2], sym_dict)
+    except Exception as exc:
+        return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
     return ToolResult(
         data={
-            "pde_type": target,
-            "ansatz": "u = X(x) * T(t)" if target != "laplace" else "u = X(x) * Y(y)",
-            "spatial_ode": ode_X_str,
-            "temporal_ode": ode_T_str,
-            "separation_constant": "lambda",
-            "general_solution": general_form,
-            "eigenvalues": eigenvalues,
-            "eigenfunctions": eigenfunctions,
+            "pde": f"({a_coef}) u_x + ({b_coef}) u_y = {f_src}",
+            "characteristic_system": [
+                "dx/ds = a(x,y)",
+                "dy/ds = b(x,y)",
+                "du/ds = f(x,y,u)",
+            ],
+            "a": str(a_coef),
+            "b": str(b_coef),
+            "f": str(f_src),
+            "method": "Solve ODE system along characteristics, then invert mapping.",
         },
         success=True,
     )
@@ -186,62 +298,95 @@ def characteristics(args: SymbolicMathInput) -> ToolResult:
     raw = (args.expression or "").strip()
 
     if target == "transport":
-        # 输运方程: u_t + c u_x = 0
-        try:
-            c = _build_function(raw, sym_dict) if raw else sp.Symbol("c")
-        except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
-        sym_dict.get("x", sp.Symbol("x"))
-        sym_dict.get("t", sp.Symbol("t"))
-        return ToolResult(
-            data={
-                "pde": f"u_t + ({c}) u_x = 0",
-                "characteristic_ode": "dx/dt = c",
-                "invariant": "x - c t = const",
-                "general_solution": f"u(x,t) = F(x - ({c}) t)",
-                "characteristic_curves": f"x(t) = x0 + ({c}) t",
-            },
-            success=True,
-        )
-
+        return _characteristics_transport(raw, sym_dict)
     if target == "first_order_linear":
-        if not raw:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="first_order_linear needs expression 'a;b;f'",
-            )
-        parts = [p.strip() for p in raw.split(";")]
-        if len(parts) != 3:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="Expected 3 semicolon-separated values a;b;f",
-            )
-        try:
-            a_coef = _build_function(parts[0], sym_dict)
-            b_coef = _build_function(parts[1], sym_dict)
-            f_src = _build_function(parts[2], sym_dict)
-        except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
-        return ToolResult(
-            data={
-                "pde": f"({a_coef}) u_x + ({b_coef}) u_y = {f_src}",
-                "characteristic_system": [
-                    "dx/ds = a(x,y)",
-                    "dy/ds = b(x,y)",
-                    "du/ds = f(x,y,u)",
-                ],
-                "a": str(a_coef),
-                "b": str(b_coef),
-                "f": str(f_src),
-                "method": "Solve ODE system along characteristics, then invert mapping.",
-            },
-            success=True,
-        )
-
+        return _characteristics_first_order(raw, sym_dict)
     return ToolResult(
         data=None, success=False, error=f"Unknown characteristics target: {target}"
+    )
+
+
+def _discretize_laplacian_2d() -> ToolResult:
+    """5 点 stencil for Δu on uniform grid (dx=dy=h)."""
+    # (u_{i-1,j} + u_{i+1,j} + u_{i,j-1} + u_{i,j+1} - 4 u_{i,j}) / h^2
+    stencil = "(u_{i-1,j} + u_{i+1,j} + u_{i,j-1} + u_{i,j+1} - 4 u_{i,j}) / h^2"
+    return ToolResult(
+        data={
+            "scheme": "5-point Laplacian (2D)",
+            "stencil": stencil,
+            "order": "O(h^2)",
+            "stencil_points": [
+                "center:  -4/h^2",
+                "left:    +1/h^2",
+                "right:   +1/h^2",
+                "down:    +1/h^2",
+                "up:      +1/h^2",
+            ],
+            "stability": "Unconditionally stable for elliptic (Poisson) solve.",
+        },
+        success=True,
+    )
+
+
+def _discretize_laplacian_3d() -> ToolResult:
+    """7 点 stencil for Δu on uniform grid (dx=dy=h)."""
+    stencil = (
+        "(u_{i-1,j,k} + u_{i+1,j,k} + u_{i,j-1,k} + u_{i,j+1,k} + "
+        "u_{i,j,k-1} + u_{i,j,k+1} - 6 u_{i,j,k}) / h^2"
+    )
+    return ToolResult(
+        data={
+            "scheme": "7-point Laplacian (3D)",
+            "stencil": stencil,
+            "order": "O(h^2)",
+            "stencil_points": [
+                "center:  -6/h^2",
+                "±x:      +1/h^2 (each)",
+                "±y:      +1/h^2 (each)",
+                "±z:      +1/h^2 (each)",
+            ],
+        },
+        success=True,
+    )
+
+
+def _discretize_heat_ftcs(
+    sym_dict: dict[str, sp.Symbol], h: sp.Symbol, dt: sp.Symbol
+) -> ToolResult:
+    """forward time centered space (显式热传导)."""
+    # Forward Time Centered Space: u^{n+1}_i = u^n_i + (α dt / h^2)(u^n_{i-1} - 2u^n_i + u^n_{i+1})
+    alpha = sym_dict.get("alpha", sp.Symbol("alpha"))
+    r = alpha * dt / h**2
+    return ToolResult(
+        data={
+            "scheme": "FTCS (Forward Time Centered Space)",
+            "stencil": f"u^(n+1)_i = u^n_i + ({r}) (u^n_{{i-1}} - 2 u^n_i + u^n_{{i+1}})",
+            "order": "O(dt, h^2)",
+            "courant_number": f"r = α dt / h^2 = {r}",
+            "stability": "Stable iff r = α dt / h^2 <= 1/2 (von Neumann)",
+        },
+        success=True,
+    )
+
+
+def _discretize_wave_explicit(
+    sym_dict: dict[str, sp.Symbol], h: sp.Symbol, dt: sp.Symbol
+) -> ToolResult:
+    """中心时间 + 中心空间 (显式波动)."""
+    c = sym_dict.get("c", sp.Symbol("c"))
+    CFL = c * dt / h
+    return ToolResult(
+        data={
+            "scheme": "Central-difference (explicit wave)",
+            "stencil": (
+                f"u^(n+1)_i = 2 u^n_i - u^(n-1)_i + ({CFL})^2 "
+                f"(u^n_{{i-1}} - 2 u^n_i + u^n_{{i+1}})"
+            ),
+            "order": "O(dt^2, h^2)",
+            "courant_number": f"CFL = c dt / h = {CFL}",
+            "stability": "Stable iff CFL = c dt / h <= 1 (CFL condition)",
+        },
+        success=True,
     )
 
 
@@ -261,79 +406,13 @@ def discretize(args: SymbolicMathInput) -> ToolResult:
     dt = sym_dict.get("dt", sp.Symbol("dt"))
 
     if target == "laplacian_2d":
-        # (u_{i-1,j} + u_{i+1,j} + u_{i,j-1} + u_{i,j+1} - 4 u_{i,j}) / h^2
-        stencil = (
-            "(u_{i-1,j} + u_{i+1,j} + u_{i,j-1} + u_{i,j+1} - 4 u_{i,j}) / h^2"
-        )
-        return ToolResult(
-            data={
-                "scheme": "5-point Laplacian (2D)",
-                "stencil": stencil,
-                "order": "O(h^2)",
-                "stencil_points": [
-                    "center:  -4/h^2",
-                    "left:    +1/h^2",
-                    "right:   +1/h^2",
-                    "down:    +1/h^2",
-                    "up:      +1/h^2",
-                ],
-                "stability": "Unconditionally stable for elliptic (Poisson) solve.",
-            },
-            success=True,
-        )
-
+        return _discretize_laplacian_2d()
     if target == "laplacian_3d":
-        stencil = (
-            "(u_{i-1,j,k} + u_{i+1,j,k} + u_{i,j-1,k} + u_{i,j+1,k} + "
-            "u_{i,j,k-1} + u_{i,j,k+1} - 6 u_{i,j,k}) / h^2"
-        )
-        return ToolResult(
-            data={
-                "scheme": "7-point Laplacian (3D)",
-                "stencil": stencil,
-                "order": "O(h^2)",
-                "stencil_points": [
-                    "center:  -6/h^2",
-                    "±x:      +1/h^2 (each)",
-                    "±y:      +1/h^2 (each)",
-                    "±z:      +1/h^2 (each)",
-                ],
-            },
-            success=True,
-        )
-
+        return _discretize_laplacian_3d()
     if target == "heat_ftcs":
-        # Forward Time Centered Space: u^{n+1}_i = u^n_i + (α dt / h^2)(u^n_{i-1} - 2u^n_i + u^n_{i+1})
-        alpha = sym_dict.get("alpha", sp.Symbol("alpha"))
-        r = alpha * dt / h**2
-        return ToolResult(
-            data={
-                "scheme": "FTCS (Forward Time Centered Space)",
-                "stencil": f"u^(n+1)_i = u^n_i + ({r}) (u^n_{{i-1}} - 2 u^n_i + u^n_{{i+1}})",
-                "order": "O(dt, h^2)",
-                "courant_number": f"r = α dt / h^2 = {r}",
-                "stability": "Stable iff r = α dt / h^2 <= 1/2 (von Neumann)",
-            },
-            success=True,
-        )
-
+        return _discretize_heat_ftcs(sym_dict, h, dt)
     if target == "wave_explicit":
-        c = sym_dict.get("c", sp.Symbol("c"))
-        CFL = c * dt / h
-        return ToolResult(
-            data={
-                "scheme": "Central-difference (explicit wave)",
-                "stencil": (
-                    f"u^(n+1)_i = 2 u^n_i - u^(n-1)_i + ({CFL})^2 "
-                    f"(u^n_{{i-1}} - 2 u^n_i + u^n_{{i+1}})"
-                ),
-                "order": "O(dt^2, h^2)",
-                "courant_number": f"CFL = c dt / h = {CFL}",
-                "stability": "Stable iff CFL = c dt / h <= 1 (CFL condition)",
-            },
-            success=True,
-        )
-
+        return _discretize_wave_explicit(sym_dict, h, dt)
     return ToolResult(
         data=None, success=False, error=f"Unknown discretize target: {target}"
     )

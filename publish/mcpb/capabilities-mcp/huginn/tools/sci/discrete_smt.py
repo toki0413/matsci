@@ -37,6 +37,7 @@
   - SyGuS (syntax-guided synthesis) — z3 已支持, 留后续 action
   -并行求解 — z3 parallel mode, 留后续
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,37 +55,86 @@ logger = logging.getLogger(__name__)
 # ── 安全: z3 eval 白名单 ────────────────────────────────────
 # ponytail: 白名单足够覆盖 SAT/SMT 常用构造, 不暴露任意 Python.
 # 升级路径: 接 AST 解析器替代 eval (彻底无注入风险).
-_Z3_NAMES = frozenset({
-    # 逻辑
-    "And", "Or", "Not", "Implies", "If", "Xor", "BoolVal",
-    # 变量声明
-    "Bool", "Int", "Real", "BitVec", "Const", "Array", "Function",
-    # 算术
-    "Sum", "Product", "Abs", "Mod", "Pow", "Sqrt",
-    # 量词
-    "ForAll", "Exists",
-    # 转换
-    "ToInt", "ToReal", "BV2Int", "Int2BV",
-    # BV 操作
-    "UGE", "ULE", "UGT", "ULT", "LShR", "RotateLeft", "RotateRight",
-    "SignExt", "ZeroExt", "Extract", "Concat", "BVAdd", "BVMul",
-    "BVUDiv", "BVURem", "BVSub", "BVAnd", "BVOr", "BVXor", "BVNot",
-    "BVShl", "BVShr", "BVNeg",
-    # 求解器辅助
-    "Solver", "Optimize", "sat", "unsat", "unknown",
-})
+_Z3_NAMES = frozenset(
+    {
+        # 逻辑
+        "And",
+        "Or",
+        "Not",
+        "Implies",
+        "If",
+        "Xor",
+        "BoolVal",
+        # 变量声明
+        "Bool",
+        "Int",
+        "Real",
+        "BitVec",
+        "Const",
+        "Array",
+        "Function",
+        # 算术
+        "Sum",
+        "Product",
+        "Abs",
+        "Mod",
+        "Pow",
+        "Sqrt",
+        # 量词
+        "ForAll",
+        "Exists",
+        # 转换
+        "ToInt",
+        "ToReal",
+        "BV2Int",
+        "Int2BV",
+        # BV 操作
+        "UGE",
+        "ULE",
+        "UGT",
+        "ULT",
+        "LShR",
+        "RotateLeft",
+        "RotateRight",
+        "SignExt",
+        "ZeroExt",
+        "Extract",
+        "Concat",
+        "BVAdd",
+        "BVMul",
+        "BVUDiv",
+        "BVURem",
+        "BVSub",
+        "BVAnd",
+        "BVOr",
+        "BVXor",
+        "BVNot",
+        "BVShl",
+        "BVShr",
+        "BVNeg",
+        # 求解器辅助
+        "Solver",
+        "Optimize",
+        "sat",
+        "unsat",
+        "unknown",
+    }
+)
 
 
 def _safe_eval(expr: str, variables: dict[str, Any]) -> Any:
     """在受限 namespace 里 eval z3 表达式字符串."""
     # ponytail: 禁 builtins + 只暴露白名单 z3 符号 + 用户变量.
     # 天花板: 字符串解析仍可能被构造恶意语法绕过 (但白名单足以挡常规注入).
-    namespace: dict[str, Any] = {name: getattr(z3, name) for name in _Z3_NAMES if hasattr(z3, name)}
+    namespace: dict[str, Any] = {
+        name: getattr(z3, name) for name in _Z3_NAMES if hasattr(z3, name)
+    }
     namespace.update(variables)
     return eval(expr, {"__builtins__": {}}, namespace)
 
 
 # ── 稀疏: 约束图构造 ───────────────────────────────────────
+
 
 def _build_primal_graph(
     variables: list[dict], constraints: list[str]
@@ -117,8 +167,7 @@ def _analyze_graph_topology(
     try:
         import networkx as nx
         import numpy as np
-        from scipy.sparse import csr_matrix
-        from scipy.sparse.csgraph import connected_components
+        import scipy.sparse.csgraph  # noqa: F401
     except ImportError:
         return {"error": "networkx/scipy required for sparsity analysis"}
 
@@ -129,29 +178,13 @@ def _analyze_graph_topology(
     m = G.number_of_edges()
 
     # 连通分量 (scipy.sparse.csgraph)
-    nodes_list = list(G.nodes())
-    idx = {v: i for i, v in enumerate(nodes_list)}
-    row, col = [], []
-    for u, v in edges:
-        row.append(idx[u])
-        col.append(idx[v])
-        row.append(idx[v])
-        col.append(idx[u])
-    data = [1] * len(row)
-    A = csr_matrix((data, (row, col)), shape=(n, n))
-    n_comp, labels = connected_components(A, directed=False)
+    n_comp, labels = _graph_component_labels(G, edges, n)
 
     # degeneracy = treewidth 下界 (近似)
     degeneracy = max(dict(G.degree()).values()) if n > 0 else 0
 
     # networkx treewidth_min_degree 上界 (小图才算, 大图太慢)
-    tw_upper = None
-    if n <= 50:
-        try:
-            tw_upper, _ = nx.algorithms.approximation.treewidth_min_degree(G)
-        except Exception:
-            logger.debug("best-effort op failed", exc_info=True)
-            tw_upper = None
+    tw_upper = _treewidth_upper_bound(G, n)
 
     return {
         "n_vars": n,
@@ -167,7 +200,40 @@ def _analyze_graph_topology(
     }
 
 
+def _graph_component_labels(G: Any, edges: list[tuple[str, str]], n: int) -> tuple:
+    """CSR 邻接矩阵上的连通分量标记 (scipy.sparse.csgraph)."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    nodes_list = list(G.nodes())
+    idx = {v: i for i, v in enumerate(nodes_list)}
+    row, col = [], []
+    for u, v in edges:
+        row.append(idx[u])
+        col.append(idx[v])
+        row.append(idx[v])
+        col.append(idx[u])
+    data = [1] * len(row)
+    A = csr_matrix((data, (row, col)), shape=(n, n))
+    return connected_components(A, directed=False)
+
+
+def _treewidth_upper_bound(G: Any, n: int) -> int | None:
+    """networkx treewidth_min_degree 上界 (小图才算, 大图太慢)."""
+    tw_upper = None
+    if n <= 50:
+        import networkx as nx
+
+        try:
+            tw_upper, _ = nx.algorithms.approximation.treewidth_min_degree(G)
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            tw_upper = None
+    return tw_upper
+
+
 # ── 核心求解 ────────────────────────────────────────────────
+
 
 def _parse_variables(var_specs: list[dict]) -> dict[str, Any]:
     """把变量声明转成 z3 变量对象."""
@@ -244,9 +310,19 @@ def _solve_smt(
             "n_constraints": len(constraints),
         }
     elif result == z3.unsat:
-        return {"sat": False, "status": "unsat", "model": None, "n_constraints": len(constraints)}
+        return {
+            "sat": False,
+            "status": "unsat",
+            "model": None,
+            "n_constraints": len(constraints),
+        }
     else:
-        return {"sat": None, "status": "unknown", "model": None, "n_constraints": len(constraints)}
+        return {
+            "sat": None,
+            "status": "unknown",
+            "model": None,
+            "n_constraints": len(constraints),
+        }
 
 
 def _optimize(
@@ -263,16 +339,11 @@ def _optimize(
     for c in constraints:
         opt.add(_safe_eval(c, z3_vars))
     # objective: "minimize x+y" / "maximize x" — 拆关键字和表达式
-    obj_stripped = objective.strip()
-    direction = None
-    expr_str = obj_stripped
-    for kw in ("minimize", "maximize"):
-        if obj_stripped.lower().startswith(kw):
-            direction = kw
-            expr_str = obj_stripped[len(kw):].strip()
-            break
+    direction, expr_str = _parse_objective(objective)
     if direction is None:
-        return {"error": f"objective must start with 'minimize' or 'maximize', got: {objective}"}
+        return {
+            "error": f"objective must start with 'minimize' or 'maximize', got: {objective}"
+        }
     obj_expr = _safe_eval(expr_str, z3_vars)
     opt.minimize(obj_expr) if direction == "minimize" else opt.maximize(obj_expr)
     result = opt.check()
@@ -301,6 +372,19 @@ def _optimize(
         return {"optimal": None, "status": "unknown", "opt_value": None, "model": None}
 
 
+def _parse_objective(objective: str) -> tuple[str | None, str]:
+    """objective: "minimize x+y" / "maximize x" — 拆关键字和表达式."""
+    obj_stripped = objective.strip()
+    direction = None
+    expr_str = obj_stripped
+    for kw in ("minimize", "maximize"):
+        if obj_stripped.lower().startswith(kw):
+            direction = kw
+            expr_str = obj_stripped[len(kw) :].strip()
+            break
+    return direction, expr_str
+
+
 def _all_solutions(
     var_specs: list[dict],
     constraints: list[str],
@@ -322,7 +406,9 @@ def _all_solutions(
         sol = _extract_model(model, z3_vars)
         solutions.append(sol)
         # blocker: 排除当前解
-        blocker = z3.Or([z3_vars[k] != v for k, v in sol.items() if not isinstance(v, str)])
+        blocker = z3.Or(
+            [z3_vars[k] != v for k, v in sol.items() if not isinstance(v, str)]
+        )
         solver.add(blocker)
     return {
         "solutions": solutions,
@@ -385,33 +471,9 @@ def _solve_decomposed(
         for v in comp:
             var_to_comp[v] = i
 
-    component_results: list[dict[str, Any]] = []
-    global_model: dict[str, Any] = {}
-    all_sat = True
-    any_unknown = False
-    for i, comp in enumerate(components):
-        comp_vars = [v for v in var_specs if v["name"] in comp]
-        # 约束 c 属于分量 i 当且仅当 c 涉及的所有变量都在 comp 里
-        comp_constraints = []
-        for c in constraints:
-            present = [v["name"] for v in var_specs if v["name"] in c]
-            if present and all(var_to_comp.get(p, -1) == i for p in present):
-                comp_constraints.append(c)
-        r = _solve_smt(comp_vars, comp_constraints, timeout_ms)
-        component_results.append({
-            "component_id": i,
-            "n_vars": len(comp),
-            "n_constraints": len(comp_constraints),
-            "result": r["status"],
-            "model": r.get("model"),
-        })
-        if r["status"] == "unsat":
-            all_sat = False
-            break  # 一个分量 unsat 全局就 unsat
-        if r["status"] == "unknown":
-            any_unknown = True
-        if r["status"] == "sat" and r.get("model"):
-            global_model.update(r["model"])
+    component_results, global_model, all_sat, any_unknown = _solve_components(
+        components, var_specs, constraints, var_to_comp, timeout_ms
+    )
 
     if not all_sat:
         status = "unsat"
@@ -430,7 +492,48 @@ def _solve_decomposed(
     }
 
 
+def _solve_components(
+    components: list[set[str]],
+    var_specs: list[dict],
+    constraints: list[str],
+    var_to_comp: dict[str, int],
+    timeout_ms: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any], bool, bool]:
+    """逐分量求解, 返回 (component_results, global_model, all_sat, any_unknown)."""
+    component_results: list[dict[str, Any]] = []
+    global_model: dict[str, Any] = {}
+    all_sat = True
+    any_unknown = False
+    for i, comp in enumerate(components):
+        comp_vars = [v for v in var_specs if v["name"] in comp]
+        # 约束 c 属于分量 i 当且仅当 c 涉及的所有变量都在 comp 里
+        comp_constraints = []
+        for c in constraints:
+            present = [v["name"] for v in var_specs if v["name"] in c]
+            if present and all(var_to_comp.get(p, -1) == i for p in present):
+                comp_constraints.append(c)
+        r = _solve_smt(comp_vars, comp_constraints, timeout_ms)
+        component_results.append(
+            {
+                "component_id": i,
+                "n_vars": len(comp),
+                "n_constraints": len(comp_constraints),
+                "result": r["status"],
+                "model": r.get("model"),
+            }
+        )
+        if r["status"] == "unsat":
+            all_sat = False
+            break  # 一个分量 unsat 全局就 unsat
+        if r["status"] == "unknown":
+            any_unknown = True
+        if r["status"] == "sat" and r.get("model"):
+            global_model.update(r["model"])
+    return component_results, global_model, all_sat, any_unknown
+
+
 # ── HuginnTool 包装 ────────────────────────────────────────
+
 
 class DiscreteSMTInput(BaseModel):
     action: Literal[
@@ -509,7 +612,9 @@ class DiscreteSMTTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        args_obj = args if isinstance(args, DiscreteSMTInput) else DiscreteSMTInput(**args)
+        args_obj = (
+            args if isinstance(args, DiscreteSMTInput) else DiscreteSMTInput(**args)
+        )
         if len(args_obj.variables) > 100:
             return ValidationResult(result=False, message="变量数 > 100 上限")
         if len(args_obj.constraints) > 500:
@@ -517,29 +622,54 @@ class DiscreteSMTTool(HuginnTool):
         if args_obj.action == "optimize" and not args_obj.objective:
             return ValidationResult(result=False, message="optimize 需要 objective")
         if args_obj.action == "verify_implication" and not args_obj.conclusion:
-            return ValidationResult(result=False, message="verify_implication 需要 conclusion")
+            return ValidationResult(
+                result=False, message="verify_implication 需要 conclusion"
+            )
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        args_obj = args if isinstance(args, DiscreteSMTInput) else DiscreteSMTInput(**args)
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        args_obj = (
+            args if isinstance(args, DiscreteSMTInput) else DiscreteSMTInput(**args)
+        )
         try:
             if args_obj.action in ("solve_sat", "solve_smt"):
-                r = _solve_smt(args_obj.variables, args_obj.constraints, args_obj.timeout_ms)
+                r = _solve_smt(
+                    args_obj.variables, args_obj.constraints, args_obj.timeout_ms
+                )
             elif args_obj.action == "optimize":
-                r = _optimize(args_obj.variables, args_obj.constraints, args_obj.objective or "", args_obj.timeout_ms)
+                r = _optimize(
+                    args_obj.variables,
+                    args_obj.constraints,
+                    args_obj.objective or "",
+                    args_obj.timeout_ms,
+                )
             elif args_obj.action == "all_solutions":
-                r = _all_solutions(args_obj.variables, args_obj.constraints, args_obj.max_solutions, args_obj.timeout_ms)
+                r = _all_solutions(
+                    args_obj.variables,
+                    args_obj.constraints,
+                    args_obj.max_solutions,
+                    args_obj.timeout_ms,
+                )
             elif args_obj.action == "verify_implication":
-                r = _verify_implication(args_obj.variables, args_obj.premises, args_obj.conclusion or "", args_obj.timeout_ms)
+                r = _verify_implication(
+                    args_obj.variables,
+                    args_obj.premises,
+                    args_obj.conclusion or "",
+                    args_obj.timeout_ms,
+                )
             elif args_obj.action == "analyze_sparsity":
-                var_set, edges = _build_primal_graph(args_obj.variables, args_obj.constraints)
+                var_set, edges = _build_primal_graph(
+                    args_obj.variables, args_obj.constraints
+                )
                 r = _analyze_graph_topology(var_set, edges)
             elif args_obj.action == "solve_decomposed":
-                r = _solve_decomposed(args_obj.variables, args_obj.constraints, args_obj.timeout_ms)
+                r = _solve_decomposed(
+                    args_obj.variables, args_obj.constraints, args_obj.timeout_ms
+                )
             else:
-                return ToolResult(data=None, success=False, error=f"unknown action: {args_obj.action}")
+                return ToolResult(
+                    data=None, success=False, error=f"unknown action: {args_obj.action}"
+                )
             return ToolResult(data=r, success="error" not in r)
         except Exception as exc:
             logger.warning("discrete_smt failed: %s", exc, exc_info=True)
@@ -548,17 +678,32 @@ class DiscreteSMTTool(HuginnTool):
 
 # ── selfcheck ──────────────────────────────────────────────
 
+
 def _selfcheck() -> None:
     """12 项 assert 验证 SMT + 稀疏分析核心行为."""
     print("[discrete_smt] running self-check...")
 
+    _selfcheck_solve_core()
+    _selfcheck_optimize_and_enum()
+    _selfcheck_implication()
+    _selfcheck_queens()
+    _selfcheck_sparsity()
+    _selfcheck_decomposed_solve()
+
+    print("[discrete_smt] self-check OK (12/12)")
+
+
+def _selfcheck_solve_core() -> None:
+    """1-4: SAT / UNSAT / 整数 SMT / 整数 UNSAT."""
     # 1. SAT 简单
     r = _solve_smt(
         [{"name": "x", "type": "bool"}, {"name": "y", "type": "bool"}],
         ["And(x, Not(y))"],
     )
     assert r["sat"] is True, f"1. expected sat, got {r}"
-    assert r["model"]["x"] is True and r["model"]["y"] is False, f"1. model wrong: {r['model']}"
+    assert r["model"]["x"] is True and r["model"]["y"] is False, (
+        f"1. model wrong: {r['model']}"
+    )
 
     # 2. UNSAT
     r = _solve_smt(
@@ -569,41 +714,59 @@ def _selfcheck() -> None:
 
     # 3. SMT 整数
     r = _solve_smt(
-        [{"name": "x", "type": "int", "domain": [0, 20]},
-         {"name": "y", "type": "int", "domain": [0, 20]}],
+        [
+            {"name": "x", "type": "int", "domain": [0, 20]},
+            {"name": "y", "type": "int", "domain": [0, 20]},
+        ],
         ["x + y == 10", "x > 3", "y > 3"],
     )
     assert r["sat"] is True, f"3. expected sat, got {r}"
-    assert r["model"]["x"] + r["model"]["y"] == 10, f"3. model violates x+y=10: {r['model']}"
+    assert r["model"]["x"] + r["model"]["y"] == 10, (
+        f"3. model violates x+y=10: {r['model']}"
+    )
 
     # 4. SMT UNSAT (整数)
     r = _solve_smt(
-        [{"name": "x", "type": "int", "domain": [0, 100]},
-         {"name": "y", "type": "int", "domain": [0, 100]}],
+        [
+            {"name": "x", "type": "int", "domain": [0, 100]},
+            {"name": "y", "type": "int", "domain": [0, 100]},
+        ],
         ["x + y == 10", "x > 8", "y > 8"],
     )
     assert r["sat"] is False, f"4. expected unsat, got {r}"
 
+
+def _selfcheck_optimize_and_enum() -> None:
+    """5-6: 优化 minimize / all_solutions 枚举."""
     # 5. 优化 minimize
     r = _optimize(
-        [{"name": "x", "type": "int", "domain": [0, 100]},
-         {"name": "y", "type": "int", "domain": [0, 100]}],
+        [
+            {"name": "x", "type": "int", "domain": [0, 100]},
+            {"name": "y", "type": "int", "domain": [0, 100]},
+        ],
         ["x + y >= 10"],
         "minimize x + y",
     )
     assert r["optimal"] is True, f"5. expected optimal, got {r}"
-    assert r["model"]["x"] + r["model"]["y"] == 10, f"5. opt should be 10, model: {r['model']}"
+    assert r["model"]["x"] + r["model"]["y"] == 10, (
+        f"5. opt should be 10, model: {r['model']}"
+    )
 
     # 6. all_solutions
     r = _all_solutions(
-        [{"name": "x", "type": "int", "domain": [0, 3]},
-         {"name": "y", "type": "int", "domain": [0, 3]}],
+        [
+            {"name": "x", "type": "int", "domain": [0, 3]},
+            {"name": "y", "type": "int", "domain": [0, 3]},
+        ],
         ["x != y"],
         max_solutions=20,
     )
     assert r["n_found"] == 12, f"6. expected 12 (4*3), got {r['n_found']}"
     assert r["truncated"] is False, "6. should not be truncated"
 
+
+def _selfcheck_implication() -> None:
+    """7-8: verify_implication 真 / 反例."""
     # 7. verify_implication 真
     r = _verify_implication(
         [{"name": "x", "type": "int", "domain": [0, 100]}],
@@ -619,8 +782,13 @@ def _selfcheck() -> None:
         conclusion="x > 5",
     )
     assert r["holds"] is False, f"8. (x>3) ⟹ (x>5) should NOT hold, got {r}"
-    assert r["counterexample"]["x"] == 4, f"8. ce should be x=4, got {r['counterexample']}"
+    assert r["counterexample"]["x"] == 4, (
+        f"8. ce should be x=4, got {r['counterexample']}"
+    )
 
+
+def _selfcheck_queens() -> None:
+    """9: N-queens N=4 (经典 SAT)."""
     # 9. N-queens N=4 (经典 SAT)
     queens = [{"name": f"q_{i}", "type": "int", "domain": [0, 3]} for i in range(4)]
     qcons = []
@@ -637,6 +805,9 @@ def _selfcheck() -> None:
         for j in range(i + 1, 4):
             assert abs(qs[i] - qs[j]) != j - i, f"9. diagonal conflict: {qs}"
 
+
+def _selfcheck_sparsity() -> None:
+    """10-11: analyze_sparsity 基础 / 多连通分量."""
     # 10. analyze_sparsity 基础
     r = _analyze_graph_topology(
         {"x", "y", "z", "w"},
@@ -651,23 +822,34 @@ def _selfcheck() -> None:
         {"a", "b", "c", "d", "e"},
         [("a", "b"), ("c", "d")],  # 2 个二元分量 + 1 个孤立点 e = 3 分量
     )
-    assert r["n_components"] == 3, f"11. expected 3 components (incl. isolated), got {r['n_components']}"
-    assert r["largest_component_size"] == 2, f"11. largest comp should be 2, got {r['largest_component_size']}"
+    assert r["n_components"] == 3, (
+        f"11. expected 3 components (incl. isolated), got {r['n_components']}"
+    )
+    assert r["largest_component_size"] == 2, (
+        f"11. largest comp should be 2, got {r['largest_component_size']}"
+    )
 
+
+def _selfcheck_decomposed_solve() -> None:
+    """12: solve_decomposed 两块独立约束."""
     # 12. solve_decomposed: 两块独立约束
     r = _solve_decomposed(
-        [{"name": "x", "type": "int", "domain": [0, 10]},
-         {"name": "y", "type": "int", "domain": [0, 10]},
-         {"name": "u", "type": "int", "domain": [0, 10]},
-         {"name": "v", "type": "int", "domain": [0, 10]}],
+        [
+            {"name": "x", "type": "int", "domain": [0, 10]},
+            {"name": "y", "type": "int", "domain": [0, 10]},
+            {"name": "u", "type": "int", "domain": [0, 10]},
+            {"name": "v", "type": "int", "domain": [0, 10]},
+        ],
         ["x + y == 5", "u + v == 7"],  # x,y 与 u,v 不耦合 → 2 分量
     )
     assert r["status"] == "sat", f"12. decomposed should be sat, got {r['status']}"
     assert r["n_components"] == 2, f"12. expected 2 components, got {r['n_components']}"
-    assert r["model"]["x"] + r["model"]["y"] == 5, f"12. component 1 model wrong: {r['model']}"
-    assert r["model"]["u"] + r["model"]["v"] == 7, f"12. component 2 model wrong: {r['model']}"
-
-    print("[discrete_smt] self-check OK (12/12)")
+    assert r["model"]["x"] + r["model"]["y"] == 5, (
+        f"12. component 1 model wrong: {r['model']}"
+    )
+    assert r["model"]["u"] + r["model"]["v"] == 7, (
+        f"12. component 2 model wrong: {r['model']}"
+    )
 
 
 if __name__ == "__main__":

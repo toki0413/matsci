@@ -47,15 +47,7 @@ def workflow(
         ctx.console.print(f"[red]Template '{template}' not found[/red]")
         return
 
-    kwargs: dict[str, Any] = {}
-    for a in args:
-        if "=" not in a:
-            ctx.console.print(f"[yellow]Ignoring malformed arg: {a}[/yellow]")
-            continue
-        key, value = a.split("=", 1)
-        with contextlib.suppress(Exception):
-            value = json.loads(value)
-        kwargs[key] = value
+    kwargs = _parse_workflow_kwargs(ctx, args)
 
     try:
         stages = template_fn(**kwargs)
@@ -83,6 +75,23 @@ def workflow(
             engine.execute(stages, context, checkpoint_path=checkpoint_path)
         )
 
+    _render_workflow_result(ctx, result)
+
+
+def _parse_workflow_kwargs(ctx: CliContext, args: tuple[str, ...]) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    for a in args:
+        if "=" not in a:
+            ctx.console.print(f"[yellow]Ignoring malformed arg: {a}[/yellow]")
+            continue
+        key, value = a.split("=", 1)
+        with contextlib.suppress(Exception):
+            value = json.loads(value)
+        kwargs[key] = value
+    return kwargs
+
+
+def _render_workflow_result(ctx: CliContext, result: Any) -> None:
     ctx.console.print(
         json.dumps(
             {

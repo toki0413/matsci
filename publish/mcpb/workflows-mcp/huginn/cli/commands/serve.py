@@ -78,17 +78,9 @@ def _setup_signal_handlers(pid_file: Path) -> None:
         # No server bound yet — the signal caught us during startup. Give
         # the process a short grace window to either finish booting or
         # abort, then exit so we don't hang on the import lock.
-        def _force_exit_after_timeout():
-            import time
-
-            time.sleep(5.0)
-            try:
-                pid_file.unlink(missing_ok=True)
-            except Exception:
-                logger.debug("unlink failed", exc_info=True)
-            sys.exit(0)
-
-        threading.Thread(target=_force_exit_after_timeout, daemon=True).start()
+        threading.Thread(
+            target=_force_exit_after_timeout, args=(pid_file,), daemon=True
+        ).start()
 
     signal.signal(signal.SIGINT, _drain)
     signal.signal(signal.SIGTERM, _drain)
@@ -96,6 +88,17 @@ def _setup_signal_handlers(pid_file: Path) -> None:
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _drain)  # type: ignore[attr-defined]
     atexit.register(lambda: pid_file.unlink(missing_ok=True))
+
+
+def _force_exit_after_timeout(pid_file: Path) -> None:
+    import time
+
+    time.sleep(5.0)
+    try:
+        pid_file.unlink(missing_ok=True)
+    except Exception:
+        logger.debug("unlink failed", exc_info=True)
+    sys.exit(0)
 
 
 def _build_drainable_server(app: Any, host: str, port: int):
@@ -115,8 +118,9 @@ def _build_drainable_server(app: Any, host: str, port: int):
 
     # Long LLM calls (DeepSeek reasoner 60s+) outlast uvicorn's default
     # 20s WS ping timeout. 5 min keeps the connection alive mid-response.
-    config = uvicorn.Config(app, host=host, port=port,
-                            ws_ping_interval=300, ws_ping_timeout=300)
+    config = uvicorn.Config(
+        app, host=host, port=port, ws_ping_interval=300, ws_ping_timeout=300
+    )
     return _DrainableServer(config)
 
 

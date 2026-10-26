@@ -27,6 +27,7 @@ Python 确定性)分档:
   3. 异域先验(goal_slug 不匹配)一律拒绝套用 —— 先验只对**同域**生效;
   4. applicable=False / 无 slug 的字典可安全注入(等价无先验/未验证), 不抛错.
 """
+
 from __future__ import annotations
 
 import math
@@ -57,8 +58,11 @@ def extract_prior(out: Any) -> dict[str, Any]:
     st = es.get("stability") or {}
     stopped = es.get("verdict") == "early_stopped"
     layer_index = es.get("stopped_after_layer")
-    _goal = ((getattr(out, "plan_summary", None) or {}).get("goal")
-             or (getattr(out, "harness", None) or {}).get("goal") or "")
+    _goal = (
+        (getattr(out, "plan_summary", None) or {}).get("goal")
+        or (getattr(out, "harness", None) or {}).get("goal")
+        or ""
+    )
     _base = {
         "source": "layered_settlement",
         "goal": _goal,
@@ -67,15 +71,17 @@ def extract_prior(out: Any) -> dict[str, Any]:
     if not stopped or layer_index is None or not st:
         _base.update({"applicable": False, "reason": "no_early_stopped"})
         return _base
-    _base.update({
-        "applicable": True,
-        "plateau": {
-            "layer_index": int(layer_index),
-            "top": st.get("top"),
-            "score": st.get("score"),
-            "relative_change": st.get("relative_change"),
-        },
-    })
+    _base.update(
+        {
+            "applicable": True,
+            "plateau": {
+                "layer_index": int(layer_index),
+                "top": st.get("top"),
+                "score": st.get("score"),
+                "relative_change": st.get("relative_change"),
+            },
+        }
+    )
     return _base
 
 
@@ -83,7 +89,80 @@ def extract_prior(out: Any) -> dict[str, Any]:
 # 让"同一领域不同措辞"的共享实义词主导相似度(双文档语料下泛词 IDF 会失真,
 # 不剔除反而抬高独有功能词权重, 稀释主题信号).
 _STOPWORDS = frozenset(
-    ["a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "with", "at", "by", "from", "into", "about", "as", "be", "by", "over", "under", "this", "that", "these", "those", "it", "its", "is", "are", "was", "were", "been", "being", "have", "has", "had", "do", "does", "did", "we", "you", "they", "them", "their", "our", "your", "my", "me", "him", "her", "he", "she", "i", "will", "would", "can", "could", "should", "may", "might", "must", "not", "no", "nor", "but", "if", "then", "than", "so", "such", "more", "most"]
+    [
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "for",
+        "to",
+        "in",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "into",
+        "about",
+        "as",
+        "be",
+        "by",
+        "over",
+        "under",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "is",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "we",
+        "you",
+        "they",
+        "them",
+        "their",
+        "our",
+        "your",
+        "my",
+        "me",
+        "him",
+        "her",
+        "he",
+        "she",
+        "i",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "not",
+        "no",
+        "nor",
+        "but",
+        "if",
+        "then",
+        "than",
+        "so",
+        "such",
+        "more",
+        "most",
+    ]
 )
 
 
@@ -166,47 +245,73 @@ def resolve_early_stop_args(
         weight = decay(0.5 ** age) × match(1.0 exact/unknown, sim related);
       - unknown(先验无 goal 信息) → 不因匹配惩罚, 只受 A5 衰减影响(向后兼容).
     """
+    defaults = (default_min_layers, default_margin)
+    ctx = _early_stop_context(prior, current_goal, current_goal_slug)
+    if ctx["no_prior"]:
+        return _stop_args(ctx, defaults, "default", "no_prior", None)
+    if ctx["goal_level"] == "foreign":
+        return _stop_args(ctx, defaults, "rejected", "goal_mismatch", False)
+    plateau = prior.get("plateau") or {}
+    idx = plateau.get("layer_index")
+    gm = ctx["goal_matched"]
+    if idx is None:
+        return _stop_args(ctx, defaults, "default", "prior_without_plateau", gm)
+    candidate = min(int(idx) + 1, 4)  # 钳制上限 4
+    delta = max(0, candidate - default_min_layers)
+    adjusted = default_min_layers + round(delta * ctx["weight"])  # 权重合成的增量
+    min_layers = max(default_min_layers, adjusted)  # 诚实红线: 永不低于默认
+    return _stop_args(
+        ctx, (min_layers, default_margin), "cross_run_prior", f"plateau_layer={idx}", gm
+    )
+
+
+def _early_stop_context(
+    prior: dict | None, current_goal: str | None, current_goal_slug: str | None
+) -> dict[str, Any]:
     no_prior = not prior or not prior.get("applicable")
     prior_goal = (prior or {}).get("goal", "")
     prior_slug = (prior or {}).get("goal_slug")
     # A6: 匹配档位(exact/related/foreign/unknown)
-    _match = goal_match_level(prior_goal, current_goal or "",
-                              prior_slug, current_goal_slug)
+    _match = goal_match_level(
+        prior_goal, current_goal or "", prior_slug, current_goal_slug
+    )
     goal_level = _match["level"]
     goal_overlap = _match["overlap"]
-    goal_matched = (goal_level in ("exact", "related"))
+    goal_matched = goal_level in ("exact", "related")
     # A5: 时间衰减(半衰期=1)
     prior_age = float((prior or {}).get("age", 0.0) or 0.0)
-    decay_weight = 0.5 ** prior_age
+    decay_weight = 0.5**prior_age
     # 综合权重: 匹配档位权重(exact/unknown=1.0, related=overlap) × 时间衰减
     match_weight = 1.0 if goal_level in ("exact", "unknown") else goal_overlap
     weight = (decay_weight * match_weight) if match_weight is not None else decay_weight
+    return {
+        "no_prior": no_prior,
+        "goal_level": goal_level,
+        "goal_overlap": goal_overlap,
+        "goal_matched": goal_matched,
+        "decay_weight": decay_weight,
+        "prior_age": prior_age,
+        "weight": weight,
+    }
 
-    if no_prior:
-        return {"min_layers": default_min_layers, "margin": default_margin,
-                "source": "default", "note": "no_prior",
-                "goal_matched": None, "goal_level": goal_level,
-                "goal_overlap": goal_overlap, "decay_weight": decay_weight,
-                "prior_age": prior_age, "weight": weight}
-    if goal_level == "foreign":
-        return {"min_layers": default_min_layers, "margin": default_margin,
-                "source": "rejected", "note": "goal_mismatch", "goal_matched": False,
-                "goal_level": goal_level, "goal_overlap": goal_overlap,
-                "decay_weight": decay_weight, "prior_age": prior_age, "weight": weight}
-    plateau = prior.get("plateau") or {}
-    idx = plateau.get("layer_index")
-    if idx is None:
-        return {"min_layers": default_min_layers, "margin": default_margin,
-                "source": "default", "note": "prior_without_plateau",
-                "goal_matched": goal_matched, "goal_level": goal_level,
-                "goal_overlap": goal_overlap, "decay_weight": decay_weight,
-                "prior_age": prior_age, "weight": weight}
-    candidate = min(int(idx) + 1, 4)                      # 钳制上限 4
-    delta = max(0, candidate - default_min_layers)
-    adjusted = default_min_layers + round(delta * weight)  # 权重合成的增量
-    min_layers = max(default_min_layers, adjusted)         # 诚实红线: 永不低于默认
-    return {"min_layers": min_layers, "margin": default_margin,
-            "source": "cross_run_prior", "note": f"plateau_layer={idx}",
-            "goal_matched": goal_matched, "goal_level": goal_level,
-            "goal_overlap": goal_overlap, "decay_weight": decay_weight,
-            "prior_age": prior_age, "weight": weight}
+
+def _stop_args(
+    ctx: dict[str, Any],
+    defaults: tuple[int, float],
+    source: str,
+    note: str,
+    goal_matched: bool | None,
+) -> dict[str, Any]:
+    min_layers, margin = defaults
+    return {
+        "min_layers": min_layers,
+        "margin": margin,
+        "source": source,
+        "note": note,
+        "goal_matched": goal_matched,
+        "goal_level": ctx["goal_level"],
+        "goal_overlap": ctx["goal_overlap"],
+        "decay_weight": ctx["decay_weight"],
+        "prior_age": ctx["prior_age"],
+        "weight": ctx["weight"],
+    }

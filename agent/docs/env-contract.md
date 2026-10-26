@@ -83,7 +83,7 @@
 | `HUGINN_DEEPSEEK_OCR_PATH` | '' | tools/vision_describe_tool.py:70 | — | external |
 | `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:167, middleware/ws_governance.py:168, permissions.py:107, +3 处 | — | external |
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/_offline.py:22 | tools/web_search_tool.py:926, tools/web_search_tool.py:931 | code-set |
-| `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:880 | — | external |
+| `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:882 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:555 | — | external |
 | `HUGINN_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | knowledge/store.py:37 | — | external |
 | `HUGINN_EM_RECALL_TOP_K` | 5 | config.py:949 | — | external |
@@ -307,7 +307,7 @@
 | `HUGINN_USE_COGNITIVE_MAP` | 0 | bench/mini_rotation_baseline.py:645, security/code_act_sandbox.py:133 | cli/rcb_runner.py:340, security/code_act_sandbox.py:247 | code-set |
 | `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:2832 | — | external |
 | `HUGINN_USE_CROSS_DOMAIN` | 0 | autoloop/hypothesis_loop.py:3770 | — | external |
-| `HUGINN_USE_DOCKER` | '' | security/sandbox.py:877 | — | external |
+| `HUGINN_USE_DOCKER` | '' | security/sandbox.py:879 | — | external |
 | `HUGINN_USE_EVOLUTION_MANAGER` | 1 | autoloop/engine_reflect.py:4584, autoloop/engine_reflect.py:4752, memory/manager.py:261 | — | external |
 | `HUGINN_USE_KNOWLEDGE_GRAPH` | 0 | cli/rcb_runner.py:636 | cli/rcb_runner.py:344 | code-set |
 | `HUGINN_USE_MENTAL_IMAGERY` | 0 | cli/rcb_step2.py:3065 | cli/rcb_runner.py:343 | code-set |

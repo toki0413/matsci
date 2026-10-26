@@ -27,6 +27,15 @@ class Action:
     reason: str = ""
 
 
+def _count_active_branches(space: ExplorationSpace) -> int:
+    """Count branches currently pending or running."""
+    active = 0
+    for b in space.branches.values():
+        if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}:
+            active += 1
+    return active
+
+
 class ExplorationStrategy(ABC):
     """Base class for exploration strategies."""
 
@@ -37,6 +46,52 @@ class ExplorationStrategy(ABC):
 
     @abstractmethod
     def name(self) -> str: ...
+
+
+def _prune_dominated_actions(
+    space: ExplorationSpace, front: list[str], strategy: ParetoPruningStrategy
+) -> list[Action]:
+    """Prune completed branches that are significantly dominated."""
+    actions: list[Action] = []
+    for branch_id, branch in space.branches.items():
+        if branch.status != BranchStatus.COMPLETED:
+            continue
+        if branch_id in front:
+            continue
+        # Check if significantly dominated
+        if strategy._is_significantly_dominated(space, branch_id, front):
+            actions.append(
+                Action(
+                    action_type="prune",
+                    target_branch=branch_id,
+                    reason="Dominated by Pareto front branches",
+                )
+            )
+    return actions
+
+
+def _refine_front_gaps_actions(
+    space: ExplorationSpace,
+    front: list[str],
+    budget: int,
+    strategy: ParetoPruningStrategy,
+) -> list[Action]:
+    """Suggest expanding near gaps in the Pareto front."""
+    actions: list[Action] = []
+    # Find gaps in the Pareto front and suggest refinement
+    gaps = strategy._find_front_gaps(space, front)
+    for gap in gaps[:budget]:
+        actions.append(
+            Action(
+                action_type="refine",
+                target_branch=gap["near_branch"],
+                new_branches=[
+                    {"hypothesis": f"Refine between {gap['a']} and {gap['b']}"}
+                ],
+                reason="Gap in Pareto front between objectives",
+            )
+        )
+    return actions
 
 
 class ParetoPruningStrategy(ExplorationStrategy):
@@ -66,43 +121,16 @@ class ParetoPruningStrategy(ExplorationStrategy):
         front = space.update_pareto_front()
 
         # Prune dominated branches
-        for branch_id, branch in space.branches.items():
-            if branch.status != BranchStatus.COMPLETED:
-                continue
-            if branch_id in front:
-                continue
-            # Check if significantly dominated
-            if self._is_significantly_dominated(space, branch_id, front):
-                actions.append(
-                    Action(
-                        action_type="prune",
-                        target_branch=branch_id,
-                        reason="Dominated by Pareto front branches",
-                    )
-                )
+        actions.extend(_prune_dominated_actions(space, front, self))
 
         # If we have room, suggest expanding near Pareto front
-        active_count = len(
-            [
-                b
-                for b in space.branches.values()
-                if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
-            ]
-        )
+        active_count = _count_active_branches(space)
         if active_count < self.max_active and front:
-            # Find gaps in the Pareto front and suggest refinement
-            gaps = self._find_front_gaps(space, front)
-            for gap in gaps[: self.max_active - active_count]:
-                actions.append(
-                    Action(
-                        action_type="refine",
-                        target_branch=gap["near_branch"],
-                        new_branches=[
-                            {"hypothesis": f"Refine between {gap['a']} and {gap['b']}"}
-                        ],
-                        reason="Gap in Pareto front between objectives",
-                    )
+            actions.extend(
+                _refine_front_gaps_actions(
+                    space, front, self.max_active - active_count, self
                 )
+            )
 
         # Termination check: front converged
         if len(front) == self._previous_front_size and active_count == 0:
@@ -275,6 +303,58 @@ class BayesianExplorationStrategy(ExplorationStrategy):
                 self._evaluated_objectives.append(obj_val)
 
 
+def _coarse_grid_expand(resolution: int) -> Action:
+    """Action for the initial coarse-grid exploration."""
+    return Action(
+        action_type="expand",
+        new_branches=[{"hypothesis": f"Coarse grid level {resolution}"}],
+        reason="Initial grid exploration",
+    )
+
+
+def _update_region_potential(
+    strategy: AdaptiveGridStrategy, completed: list[Branch]
+) -> None:
+    """Identify high-potential regions."""
+    for branch in completed:
+        potential = strategy._compute_potential(branch)
+        strategy._region_potential[branch.id] = potential
+
+
+def _grid_refine_actions(
+    strategy: AdaptiveGridStrategy, sorted_regions: list[tuple[str, float]]
+) -> list[Action]:
+    """Refine top regions."""
+    actions: list[Action] = []
+    for branch_id, potential in sorted_regions[:3]:
+        if potential > 0.7 and strategy.resolution < strategy.max_resolution:
+            actions.append(
+                Action(
+                    action_type="refine",
+                    target_branch=branch_id,
+                    new_branches=[
+                        {
+                            "hypothesis": f"Grid refinement (res={strategy.resolution + 1}) near high-potential region",
+                        }
+                    ],
+                    reason=f"Region potential = {potential:.2f}",
+                )
+            )
+    return actions
+
+
+def _uniform_grid_refine(strategy: AdaptiveGridStrategy) -> Action:
+    """Fallback: bump resolution and refine the whole grid uniformly."""
+    strategy.resolution += 1
+    return Action(
+        action_type="expand",
+        new_branches=[
+            {"hypothesis": f"Uniform grid refinement to level {strategy.resolution}"}
+        ],
+        reason="No high-potential regions found — uniform refinement",
+    )
+
+
 class AdaptiveGridStrategy(ExplorationStrategy):
     """Adaptive grid refinement strategy.
 
@@ -297,54 +377,20 @@ class AdaptiveGridStrategy(ExplorationStrategy):
             b for b in space.branches.values() if b.status == BranchStatus.COMPLETED
         ]
         if not completed:
-            actions.append(
-                Action(
-                    action_type="expand",
-                    new_branches=[
-                        {"hypothesis": f"Coarse grid level {self.resolution}"}
-                    ],
-                    reason="Initial grid exploration",
-                )
-            )
+            actions.append(_coarse_grid_expand(self.resolution))
             return actions
 
         # Identify high-potential regions
-        for branch in completed:
-            potential = self._compute_potential(branch)
-            self._region_potential[branch.id] = potential
+        _update_region_potential(self, completed)
 
         # Sort by potential
         sorted_regions = sorted(self._region_potential.items(), key=lambda x: -x[1])
 
         # Refine top regions
-        for branch_id, potential in sorted_regions[:3]:
-            if potential > 0.7 and self.resolution < self.max_resolution:
-                actions.append(
-                    Action(
-                        action_type="refine",
-                        target_branch=branch_id,
-                        new_branches=[
-                            {
-                                "hypothesis": f"Grid refinement (res={self.resolution + 1}) near high-potential region",
-                            }
-                        ],
-                        reason=f"Region potential = {potential:.2f}",
-                    )
-                )
+        actions.extend(_grid_refine_actions(self, sorted_regions))
 
         if not actions and self.resolution < self.max_resolution:
-            self.resolution += 1
-            actions.append(
-                Action(
-                    action_type="expand",
-                    new_branches=[
-                        {
-                            "hypothesis": f"Uniform grid refinement to level {self.resolution}"
-                        }
-                    ],
-                    reason="No high-potential regions found — uniform refinement",
-                )
-            )
+            actions.append(_uniform_grid_refine(self))
 
         return actions
 
@@ -359,6 +405,47 @@ class AdaptiveGridStrategy(ExplorationStrategy):
         # Simple sigmoid of average
         avg = np.mean(vals)
         return float(1 / (1 + np.exp(-avg)))
+
+
+def _mutation_candidates(space: ExplorationSpace, front: list[str]) -> list[Branch]:
+    """Completed Pareto-front branches eligible for mutation."""
+    return [
+        b
+        for b in space.branches.values()
+        if b.id in front and b.status == BranchStatus.COMPLETED and b.objectives
+    ]
+
+
+def _generate_mutants(
+    strategy: MutationStrategy, candidates: list[Branch], allowed: int
+) -> list[dict[str, Any]]:
+    """Generate mutated child branch specs, capped at *allowed*."""
+    mutated: list[dict[str, Any]] = []
+    for b in candidates:
+        if strategy.rng.random() > strategy.mutation_rate:
+            continue
+        for _ in range(strategy.max_children):
+            new_params = strategy._perturb(b)
+            if not new_params:
+                continue
+            strategy.created += (
+                1  # 全局递增序号 → 子代名唯一(跨轮次不重名, 保证 cache/前沿可溯源)
+            )
+            mutated.append(
+                {
+                    "name": f"{b.name}~mut{strategy.created}",
+                    "hypothesis": (
+                        f"[mutation of {b.name}] "
+                        + ", ".join(f"{p}={v}" for p, v in sorted(new_params.items()))
+                    ),
+                    "params": new_params,
+                    "mutation_of": b.name,
+                    "parent_hypothesis": b.hypothesis,
+                }
+            )
+        if len(mutated) >= allowed:
+            break
+    return mutated
 
 
 class MutationStrategy(ExplorationStrategy):
@@ -384,12 +471,14 @@ class MutationStrategy(ExplorationStrategy):
         rng: random.Random | None = None,
     ):
         self.wrapped = wrapped or ParetoPruningStrategy()
-        self.param_space = param_space or {}          # param -> (min, max), 变异峰值取目标值(缺则取中值)
+        self.param_space = (
+            param_space or {}
+        )  # param -> (min, max), 变异峰值取目标值(缺则取中值)
         self.mutation_rate = mutation_rate
         self.max_children = max_children
         self.max_active = max_active
         self.rng = rng or random.Random(0)
-        self.created = 0                              # 累计生成的变异子代数 (供上层/报告统计)
+        self.created = 0  # 累计生成的变异子代数 (供上层/报告统计)
 
     def name(self) -> str:
         return f"mutation({self.wrapped.name()})"
@@ -399,43 +488,13 @@ class MutationStrategy(ExplorationStrategy):
         if not self.param_space:
             return actions
         front = list(space.update_pareto_front() or [])
-        active_count = len(
-            [
-                b
-                for b in space.branches.values()
-                if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
-            ]
-        )
-        candidates = [
-            b
-            for b in space.branches.values()
-            if b.id in front and b.status == BranchStatus.COMPLETED and b.objectives
-        ]
+        active_count = _count_active_branches(space)
+        candidates = _mutation_candidates(space, front)
         if not candidates or active_count >= self.max_active:
             return actions
 
-        mutated: list[dict[str, Any]] = []
         allowed = self.max_active - active_count
-        for b in candidates:
-            if self.rng.random() > self.mutation_rate:
-                continue
-            for _ in range(self.max_children):
-                new_params = self._perturb(b)
-                if not new_params:
-                    continue
-                self.created += 1  # 全局递增序号 → 子代名唯一(跨轮次不重名, 保证 cache/前沿可溯源)
-                mutated.append({
-                    "name": f"{b.name}~mut{self.created}",
-                    "hypothesis": (
-                        f"[mutation of {b.name}] "
-                        + ", ".join(f"{p}={v}" for p, v in sorted(new_params.items()))
-                    ),
-                    "params": new_params,
-                    "mutation_of": b.name,
-                    "parent_hypothesis": b.hypothesis,
-                })
-            if len(mutated) >= allowed:
-                break
+        mutated = _generate_mutants(self, candidates, allowed)
         if mutated:
             actions.append(
                 Action(

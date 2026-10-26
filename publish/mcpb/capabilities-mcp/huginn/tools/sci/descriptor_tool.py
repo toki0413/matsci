@@ -36,15 +36,18 @@ class DescriptorInput(BaseModel):
         default=None,
         description="Structure dict with 'lattice' and 'sites' keys",
     )
-    descriptor_type: Literal[
-        "composition_basic",
-        "soap",
-        "matminer",
-        "mbtr",
-        "acsf",
-        "coulomb_matrix",
-        "ibp",
-    ] | None = Field(default="composition_basic")
+    descriptor_type: (
+        Literal[
+            "composition_basic",
+            "soap",
+            "matminer",
+            "mbtr",
+            "acsf",
+            "coulomb_matrix",
+            "ibp",
+        ]
+        | None
+    ) = Field(default="composition_basic")
 
     # MBTR parameters
     k: int = Field(default=2, ge=1, le=3, description="MBTR k-term (1, 2, or 3)")
@@ -66,7 +69,9 @@ class DescriptorInput(BaseModel):
     )
 
     # Coulomb matrix parameters
-    n_atoms_max: int = Field(default=50, description="Max atoms for Coulomb matrix padding")
+    n_atoms_max: int = Field(
+        default=50, description="Max atoms for Coulomb matrix padding"
+    )
     permutation: Literal["sorted_l2", "random", "eigenspectrum", "none"] = Field(
         default="sorted_l2", description="Coulomb matrix permutation mode"
     )
@@ -76,9 +81,7 @@ class DescriptorInput(BaseModel):
         default=None,
         description="Input data for IBP (N samples x D observed features)",
     )
-    alpha: float = Field(
-        default=1.0, gt=0, description="IBP concentration parameter"
-    )
+    alpha: float = Field(default=1.0, gt=0, description="IBP concentration parameter")
     n_iterations: int = Field(
         default=100, ge=1, description="Number of Gibbs sampling iterations"
     )
@@ -107,7 +110,9 @@ class DescriptorInput(BaseModel):
         default=None,
         description="Names of descriptors to rank. If None, use all keys from feature_importances.",
     )
-    top_k: int = Field(default=10, description="Number of top descriptors to return for select action.")
+    top_k: int = Field(
+        default=10, description="Number of top descriptors to return for select action."
+    )
     threshold: float | None = Field(
         default=None,
         description="Importance threshold. Only return descriptors above this score.",
@@ -127,7 +132,9 @@ class DescriptorTool(HuginnTool):
 
     name = "descriptor_tool"
     category = "sci"
-    profile = ToolProfile(phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.PLANNING}))
+    profile = ToolProfile(
+        phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.PLANNING})
+    )
     description = (
         "Compute composition and structure descriptors for machine-learning "
         "materials screening."
@@ -319,37 +326,12 @@ class DescriptorTool(HuginnTool):
         labels = ep.feature_labels()
 
         # Group by property so callers get {prop: {mean, min, max, std, ...}}
-        grouped: dict[str, dict[str, float | None]] = {}
-        for label, val in zip(labels, values):
-            # Labels look like "MagpieData mean Number"
-            parts = label.rsplit(" ", 2)
-            if len(parts) != 3:
-                continue
-            _, stat, prop = parts
-            stat_key = {"minimum": "min", "maximum": "max"}.get(stat, stat)
-            grouped.setdefault(prop, {})[stat_key] = (
-                float(val) if val is not None and not np.isnan(val) else None
-            )
+        grouped = _group_matminer_values(labels, values)
 
         # std isn't in the Magpie stat set, so compute it from element values
         for prop in properties:
             entry = grouped.setdefault(prop, {})
-            vals: list[float] = []
-            weights: list[float] = []
-            for el, frac in comp.items():
-                v = _magpie_value(el, prop)
-                if v is not None:
-                    vals.append(v)
-                    weights.append(float(frac))
-            if vals:
-                arr = np.asarray(vals, dtype=float)
-                w = np.asarray(weights, dtype=float)
-                w = w / w.sum()
-                mean = float(np.sum(arr * w))
-                var = float(np.sum(w * (arr - mean) ** 2))
-                entry["std"] = float(np.sqrt(var))
-            else:
-                entry["std"] = None
+            entry["std"] = _magpie_weighted_std(comp, prop)
 
         return {
             "formula": comp.formula.replace(" ", ""),
@@ -377,27 +359,8 @@ class DescriptorTool(HuginnTool):
         k = args.k
         n = args.n_grid
 
-        grid: dict[str, dict[str, float]] = {}
-        if k >= 1:
-            grid["k1"] = {
-                "min": 1,
-                "max": max(len(species), 2),
-                "n": n,
-                "sigma": 0.1,
-            }
-        if k >= 2:
-            grid["k2"] = {"min": -1.0, "max": 1.0, "n": n, "sigma": 0.1}
-        if k >= 3:
-            grid["k3"] = {"min": -1.0, "max": 1.0, "n": n, "sigma": 0.1}
-
-        if args.weighting == "exp":
-            weighting: dict[str, Any] = {
-                "function": "exp",
-                "scale": 0.5,
-                "cutoff": 1e-3,
-            }
-        else:
-            weighting = {"function": "unity"}
+        grid = _mbtr_grid(k, n, len(species))
+        weighting = _mbtr_weighting(args.weighting)
 
         mbtr = MBTR(
             species=species,
@@ -507,26 +470,9 @@ class DescriptorTool(HuginnTool):
     # ibp - Indian Buffet Process for nonparametric feature discovery
     # ------------------------------------------------------------------ #
 
-    def _ibp_features(
-        self, args: DescriptorInput
-    ) -> tuple[dict[str, Any], list[str]]:
-        if not args.data:
-            raise ValueError("ibp action requires data (list of lists)")
-
-        X = np.asarray(args.data, dtype=float)
-        if X.ndim != 2:
-            raise ValueError("data must be a 2D array (N samples x D features)")
-
-        N, D = X.shape
-        if N < 2:
-            raise ValueError("ibp requires at least 2 samples")
-
-        # Standardize columns so the fixed noise/prior variances behave
-        # sensibly regardless of the raw feature scales.
-        col_mean = X.mean(axis=0)
-        col_std = X.std(axis=0)
-        col_std[col_std == 0] = 1.0
-        X_norm = (X - col_mean) / col_std
+    def _ibp_prepare(self, args: DescriptorInput) -> dict[str, Any]:
+        """Validate input + initialize IBP sampler state."""
+        X_norm, N, D = _ibp_normalize_data(args.data)
 
         rng = np.random.default_rng(args.seed)
 
@@ -550,75 +496,155 @@ class DescriptorTool(HuginnTool):
         # Harmonic number H_N shows up in the alpha posterior
         H_N = float(np.sum(1.0 / np.arange(1, N + 1)))
 
-        for _ in range(n_iter):
-            # -- Block sample W | Z via conjugate Gaussian --
-            ZtZ = Z.T @ Z
-            Sigma_inv = np.eye(K) / sigma_w2 + ZtZ / sigma_x2
-            Sigma_inv += 1e-6 * np.eye(K)  # jitter to dodge singular matrices
-            Sigma = np.linalg.inv(Sigma_inv)
-            L = np.linalg.cholesky(Sigma)
-            Mu = Sigma @ (Z.T @ X_norm) / sigma_x2
-            W = Mu + L @ rng.standard_normal(size=(K, D))
+        return {
+            "X_norm": X_norm,
+            "N": N,
+            "D": D,
+            "rng": rng,
+            "alpha": alpha,
+            "n_iter": n_iter,
+            "K": K,
+            "beta": beta,
+            "sigma_x2": sigma_x2,
+            "sigma_w2": sigma_w2,
+            "a_prior": a_prior,
+            "b_prior": b_prior,
+            "Z": Z,
+            "W": W,
+            "alpha_trace": alpha_trace,
+            "H_N": H_N,
+        }
 
-            # -- Sample Z | W, one row at a time (vectorised over features) --
-            pred = Z @ W
-            for n in range(N):
-                # Residual with feature k removed: r_{n,-k} = x_n - pred_n + z_nk w_k
-                r = X_norm[n] - pred[n] + Z[n][:, None] * W  # (K, D)
+    def _ibp_sample_w(
+        self,
+        Z: np.ndarray,
+        X_norm: np.ndarray,
+        K: int,
+        D: int,
+        sigma_w2: float,
+        sigma_x2: float,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Block sample W | Z via conjugate Gaussian."""
+        ZtZ = Z.T @ Z
+        Sigma_inv = np.eye(K) / sigma_w2 + ZtZ / sigma_x2
+        Sigma_inv += 1e-6 * np.eye(K)  # jitter to dodge singular matrices
+        Sigma = np.linalg.inv(Sigma_inv)
+        L = np.linalg.cholesky(Sigma)
+        Mu = Sigma @ (Z.T @ X_norm) / sigma_x2
+        return Mu + L @ rng.standard_normal(size=(K, D))
 
-                log_lik1 = -0.5 * np.sum((r - W) ** 2, axis=1) / sigma_x2
-                log_lik0 = -0.5 * np.sum(r ** 2, axis=1) / sigma_x2
+    def _ibp_sample_z(
+        self,
+        Z: np.ndarray,
+        W: np.ndarray,
+        X_norm: np.ndarray,
+        N: int,
+        K: int,
+        beta: float,
+        sigma_x2: float,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Sample Z | W, one row at a time (vectorised over features)."""
+        pred = Z @ W
+        for n in range(N):
+            # Residual with feature k removed: r_{n,-k} = x_n - pred_n + z_nk w_k
+            r = X_norm[n] - pred[n] + Z[n][:, None] * W  # (K, D)
 
-                # IBP prior with Beta(beta, beta) smoothing on the activation prob
-                m_minus = Z.sum(axis=0) - Z[n]
-                p_prior1 = (m_minus + beta) / (N - 1 + 2 * beta)
-                p_prior1 = np.clip(p_prior1, 1e-10, 1 - 1e-10)
-                log_prior1 = np.log(p_prior1)
-                log_prior0 = np.log(1.0 - p_prior1)
+            log_lik1 = -0.5 * np.sum((r - W) ** 2, axis=1) / sigma_x2
+            log_lik0 = -0.5 * np.sum(r**2, axis=1) / sigma_x2
 
-                log_diff = (log_lik1 + log_prior1) - (log_lik0 + log_prior0)
-                log_diff = np.clip(log_diff, -500, 500)
-                p1 = 1.0 / (1.0 + np.exp(-log_diff))
+            # IBP prior with Beta(beta, beta) smoothing on the activation prob
+            m_minus = Z.sum(axis=0) - Z[n]
+            p_prior1 = (m_minus + beta) / (N - 1 + 2 * beta)
+            p_prior1 = np.clip(p_prior1, 1e-10, 1 - 1e-10)
+            log_prior1 = np.log(p_prior1)
+            log_prior0 = np.log(1.0 - p_prior1)
 
-                Z[n] = (rng.random(K) < p1).astype(float)
-                pred[n] = Z[n] @ W
+            log_diff = (log_lik1 + log_prior1) - (log_lik0 + log_prior0)
+            log_diff = np.clip(log_diff, -500, 500)
+            p1 = 1.0 / (1.0 + np.exp(-log_diff))
 
-            # -- Drop features that no sample owns --
-            non_empty = Z.sum(axis=0) > 0
-            if not non_empty.all():
-                Z = Z[:, non_empty]
-                W = W[non_empty]
-                K = Z.shape[1]
-                if K == 0:
-                    # Re-seed one feature so the sampler doesn't collapse
-                    K = 1
-                    Z = np.zeros((N, K))
-                    Z[0, 0] = 1.0
-                    W = rng.normal(0.0, np.sqrt(sigma_w2), size=(K, D))
+            Z[n] = (rng.random(K) < p1).astype(float)
+            pred[n] = Z[n] @ W
+        return Z
 
-            # -- Propose new features via the IBP Chinese restaurant process --
-            # Cap K so a runaway alpha can't blow up memory. The Z sweep
-            # above is what really decides which features survive.
-            max_features = 2 * N
-            for n in range(N):
-                if max_features <= K:
-                    break
-                n_new = rng.poisson(alpha / N)
-                if n_new <= 0:
-                    continue
-                # Don't overshoot the cap
-                n_new = min(n_new, max_features - K)
-                new_Z = np.zeros((N, n_new))
-                new_Z[n] = 1.0
-                # Sample weights from the prior, not the singleton posterior.
-                # Posterior-sampled weights fit the residual too well and the
-                # features never get pruned, which causes K to explode.
-                new_W = rng.normal(
-                    0.0, np.sqrt(sigma_w2), size=(n_new, D)
-                )
-                Z = np.hstack([Z, new_Z])
-                W = np.vstack([W, new_W])
-                K = Z.shape[1]
+    def _ibp_prune_and_grow(
+        self,
+        Z: np.ndarray,
+        W: np.ndarray,
+        K: int,
+        N: int,
+        D: int,
+        alpha: float,
+        sigma_w2: float,
+        rng: np.random.Generator,
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        """Drop empty features, then propose new ones via the IBP CRP."""
+        # -- Drop features that no sample owns --
+        non_empty = Z.sum(axis=0) > 0
+        if not non_empty.all():
+            Z = Z[:, non_empty]
+            W = W[non_empty]
+            K = Z.shape[1]
+            if K == 0:
+                # Re-seed one feature so the sampler doesn't collapse
+                K = 1
+                Z = np.zeros((N, K))
+                Z[0, 0] = 1.0
+                W = rng.normal(0.0, np.sqrt(sigma_w2), size=(K, D))
+
+        # -- Propose new features via the IBP Chinese restaurant process --
+        # Cap K so a runaway alpha can't blow up memory. The Z sweep
+        # above is what really decides which features survive.
+        max_features = 2 * N
+        for n in range(N):
+            if max_features <= K:
+                break
+            n_new = rng.poisson(alpha / N)
+            if n_new <= 0:
+                continue
+            # Don't overshoot the cap
+            n_new = min(n_new, max_features - K)
+            new_Z = np.zeros((N, n_new))
+            new_Z[n] = 1.0
+            # Sample weights from the prior, not the singleton posterior.
+            # Posterior-sampled weights fit the residual too well and the
+            # features never get pruned, which causes K to explode.
+            new_W = rng.normal(0.0, np.sqrt(sigma_w2), size=(n_new, D))
+            Z = np.hstack([Z, new_Z])
+            W = np.vstack([W, new_W])
+            K = Z.shape[1]
+        return Z, W, K
+
+    def _ibp_interpret(self, W: np.ndarray, K: int) -> list[list[dict[str, Any]]]:
+        """For each latent feature, list the top-3 observed features by |weight|."""
+        feature_interpretation: list[list[dict[str, Any]]] = []
+        for k in range(K):
+            top_idx = np.argsort(np.abs(W[k]))[-3:][::-1]
+            feature_interpretation.append(
+                [
+                    {"observed_feature_index": int(i), "weight": float(W[k, i])}
+                    for i in top_idx
+                ]
+            )
+        return feature_interpretation
+
+    def _ibp_features(self, args: DescriptorInput) -> tuple[dict[str, Any], list[str]]:
+        """Indian Buffet Process sampler for nonparametric feature discovery."""
+        st = self._ibp_prepare(args)
+        X_norm, rng = st["X_norm"], st["rng"]
+        N, D, K = st["N"], st["D"], st["K"]
+        alpha, beta = st["alpha"], st["beta"]
+        sigma_x2, sigma_w2 = st["sigma_x2"], st["sigma_w2"]
+        a_prior, b_prior = st["a_prior"], st["b_prior"]
+        Z, W = st["Z"], st["W"]
+        alpha_trace, H_N = st["alpha_trace"], st["H_N"]
+
+        for _ in range(st["n_iter"]):
+            W = self._ibp_sample_w(Z, X_norm, K, D, sigma_w2, sigma_x2, rng)
+            Z = self._ibp_sample_z(Z, W, X_norm, N, K, beta, sigma_x2, rng)
+            Z, W, K = self._ibp_prune_and_grow(Z, W, K, N, D, alpha, sigma_w2, rng)
 
             # -- Update alpha from its Gamma posterior --
             K_plus = int((Z.sum(axis=0) > 0).sum())
@@ -634,18 +660,7 @@ class DescriptorTool(HuginnTool):
         pred = Z @ W
         recon_error = float(np.mean((X_norm - pred) ** 2))
         feature_importance = Z.sum(axis=0).astype(int).tolist()
-
-        # For each latent feature, list the top-3 observed features by |weight|
-        # so the user has a rough idea what the feature encodes.
-        feature_interpretation: list[list[dict[str, Any]]] = []
-        for k in range(K):
-            top_idx = np.argsort(np.abs(W[k]))[-3:][::-1]
-            feature_interpretation.append(
-                [
-                    {"observed_feature_index": int(i), "weight": float(W[k, i])}
-                    for i in top_idx
-                ]
-            )
+        feature_interpretation = self._ibp_interpret(W, K)
 
         return {
             "n_samples": N,
@@ -659,10 +674,6 @@ class DescriptorTool(HuginnTool):
             "alpha_trace": alpha_trace,
             "alpha_final": float(alpha),
         }, []
-
-    # ------------------------------------------------------------------ #
-    # select — rank descriptors by external importance (SR / Sobol pipeline)
-    # ------------------------------------------------------------------ #
 
     def _select(self, args: DescriptorInput) -> ToolResult:
         """Rank descriptors by external importance scores.
@@ -680,33 +691,12 @@ class DescriptorTool(HuginnTool):
             )
 
         # Restrict to a caller-specified subset if asked
-        if args.descriptor_names:
-            wanted = set(args.descriptor_names)
-            importances = {k: v for k, v in importances.items() if k in wanted}
-
-        # Sort by absolute importance, biggest first
-        ranked = sorted(importances.items(), key=lambda x: abs(x[1]), reverse=True)
-
-        if args.threshold is not None:
-            ranked = [(n, s) for n, s in ranked if abs(s) >= args.threshold]
-
-        top = ranked[: args.top_k]
+        ranked, top = _rank_descriptors(importances, args)
 
         # Normalise so scores from different sources are comparable, and
         # track how much variance the top-k set explains cumulatively.
         total = sum(abs(s) for _, s in ranked) or 1.0
-        cumulative = 0.0
-        selected = []
-        for name, score in top:
-            cumulative += abs(score) / total
-            selected.append(
-                {
-                    "descriptor": name,
-                    "importance": float(score),
-                    "normalized_importance": float(abs(score) / total),
-                    "cumulative_importance": float(cumulative),
-                }
-            )
+        selected = _selected_descriptors(top, total)
 
         return ToolResult(
             data={
@@ -768,38 +758,19 @@ class DescriptorTool(HuginnTool):
         if not sites:
             raise ValueError("Structure dict contains no sites")
 
-        symbols: list[str] = []
-        positions: list[list[float]] = []
-        use_fractional = False
-        for site in sites:
-            sp = site.get("species", site.get("element"))
-            if isinstance(sp, list):
-                # pymatgen format: [{"element": "Fe", "occu": 1.0}]
-                symbols.append(sp[0]["element"])
-            elif isinstance(sp, dict):
-                symbols.append(sp.get("element", sp.get("symbol", "")))
-            else:
-                symbols.append(str(sp))
-
-            if "xyz" in site:
-                positions.append(list(site["xyz"]))
-            elif "abc" in site:
-                positions.append(list(site["abc"]))
-                use_fractional = True
-            else:
-                positions.append([0.0, 0.0, 0.0])
-
-        positions_arr = np.asarray(positions, dtype=float)
+        symbols, positions_arr, use_fractional = _structure_sites(sites)
 
         if isinstance(lattice, dict):
-            cell = Cell.fromcellpar([
-                lattice.get("a", 1.0),
-                lattice.get("b", 1.0),
-                lattice.get("c", 1.0),
-                lattice.get("alpha", 90.0),
-                lattice.get("beta", 90.0),
-                lattice.get("gamma", 90.0),
-            ])
+            cell = Cell.fromcellpar(
+                [
+                    lattice.get("a", 1.0),
+                    lattice.get("b", 1.0),
+                    lattice.get("c", 1.0),
+                    lattice.get("alpha", 90.0),
+                    lattice.get("beta", 90.0),
+                    lattice.get("gamma", 90.0),
+                ]
+            )
             if use_fractional:
                 positions_arr = positions_arr @ np.asarray(cell)
             return Atoms(symbols=symbols, positions=positions_arr, cell=cell, pbc=True)
@@ -851,3 +822,158 @@ def _parse_formula(formula: str) -> dict[str, int]:
     for elem, count in tokens:
         result[elem] = result.get(elem, 0) + (int(count) if count else 1)
     return result
+
+
+def _group_matminer_values(
+    labels: list[str], values: list[float]
+) -> dict[str, dict[str, float | None]]:
+    """按 element property 聚合 Magpie 统计量."""
+    grouped: dict[str, dict[str, float | None]] = {}
+    for label, val in zip(labels, values):
+        # Labels look like "MagpieData mean Number"
+        parts = label.rsplit(" ", 2)
+        if len(parts) != 3:
+            continue
+        _, stat, prop = parts
+        stat_key = {"minimum": "min", "maximum": "max"}.get(stat, stat)
+        grouped.setdefault(prop, {})[stat_key] = (
+            float(val) if val is not None and not np.isnan(val) else None
+        )
+    return grouped
+
+
+def _magpie_weighted_std(comp, prop: str) -> float | None:
+    """从元素值按化学计量权重算加权标准差 (Magpie 本身没有 std)."""
+    vals: list[float] = []
+    weights: list[float] = []
+    for el, frac in comp.items():
+        v = _magpie_value(el, prop)
+        if v is not None:
+            vals.append(v)
+            weights.append(float(frac))
+    if not vals:
+        return None
+    arr = np.asarray(vals, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+    mean = float(np.sum(arr * w))
+    var = float(np.sum(w * (arr - mean) ** 2))
+    return float(np.sqrt(var))
+
+
+def _mbtr_grid(k: int, n: int, n_species: int) -> dict[str, dict[str, float]]:
+    """按 MBTR k-term 构造 grid 配置."""
+    grid: dict[str, dict[str, float]] = {}
+    if k >= 1:
+        grid["k1"] = {
+            "min": 1,
+            "max": max(n_species, 2),
+            "n": n,
+            "sigma": 0.1,
+        }
+    if k >= 2:
+        grid["k2"] = {"min": -1.0, "max": 1.0, "n": n, "sigma": 0.1}
+    if k >= 3:
+        grid["k3"] = {"min": -1.0, "max": 1.0, "n": n, "sigma": 0.1}
+    return grid
+
+
+def _mbtr_weighting(mode: str) -> dict[str, Any]:
+    if mode == "exp":
+        return {
+            "function": "exp",
+            "scale": 0.5,
+            "cutoff": 1e-3,
+        }
+    return {"function": "unity"}
+
+
+def _rank_descriptors(
+    importances: dict[str, float], args: DescriptorInput
+) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+    """子集过滤 + 阈值过滤 + 按 |importance| 排序, 返回 (ranked, top_k)."""
+    # Restrict to a caller-specified subset if asked
+    if args.descriptor_names:
+        wanted = set(args.descriptor_names)
+        importances = {k: v for k, v in importances.items() if k in wanted}
+
+    # Sort by absolute importance, biggest first
+    ranked = sorted(importances.items(), key=lambda x: abs(x[1]), reverse=True)
+
+    if args.threshold is not None:
+        ranked = [(n, s) for n, s in ranked if abs(s) >= args.threshold]
+
+    top = ranked[: args.top_k]
+    return ranked, top
+
+
+def _selected_descriptors(
+    top: list[tuple[str, float]], total: float
+) -> list[dict[str, Any]]:
+    """把 top-k 变成带归一化 / 累计重要性的输出条目."""
+    cumulative = 0.0
+    selected = []
+    for name, score in top:
+        cumulative += abs(score) / total
+        selected.append(
+            {
+                "descriptor": name,
+                "importance": float(score),
+                "normalized_importance": float(abs(score) / total),
+                "cumulative_importance": float(cumulative),
+            }
+        )
+    return selected
+
+
+def _ibp_normalize_data(
+    data: list[list[float]] | None,
+) -> tuple[np.ndarray, int, int]:
+    """校验 IBP 输入数据并逐列标准化, 返回 (X_norm, N, D)."""
+    if not data:
+        raise ValueError("ibp action requires data (list of lists)")
+
+    X = np.asarray(data, dtype=float)
+    if X.ndim != 2:
+        raise ValueError("data must be a 2D array (N samples x D features)")
+
+    N, D = X.shape
+    if N < 2:
+        raise ValueError("ibp requires at least 2 samples")
+
+    # Standardize columns so the fixed noise/prior variances behave
+    # sensibly regardless of the raw feature scales.
+    col_mean = X.mean(axis=0)
+    col_std = X.std(axis=0)
+    col_std[col_std == 0] = 1.0
+    X_norm = (X - col_mean) / col_std
+    return X_norm, N, D
+
+
+def _structure_sites(
+    sites: list[dict[str, Any]],
+) -> tuple[list[str], np.ndarray, bool]:
+    """解析 {species, xyz/abc} 站点, 返回 (symbols, positions, 是否分数坐标)."""
+    symbols: list[str] = []
+    positions: list[list[float]] = []
+    use_fractional = False
+    for site in sites:
+        sp = site.get("species", site.get("element"))
+        if isinstance(sp, list):
+            # pymatgen format: [{"element": "Fe", "occu": 1.0}]
+            symbols.append(sp[0]["element"])
+        elif isinstance(sp, dict):
+            symbols.append(sp.get("element", sp.get("symbol", "")))
+        else:
+            symbols.append(str(sp))
+
+        if "xyz" in site:
+            positions.append(list(site["xyz"]))
+        elif "abc" in site:
+            positions.append(list(site["abc"]))
+            use_fractional = True
+        else:
+            positions.append([0.0, 0.0, 0.0])
+
+    positions_arr = np.asarray(positions, dtype=float)
+    return symbols, positions_arr, use_fractional

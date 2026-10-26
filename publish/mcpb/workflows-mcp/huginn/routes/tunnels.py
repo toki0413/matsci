@@ -156,6 +156,20 @@ def _resolve_credentials(credential_id: str) -> dict[str, Any] | None:
     }
 
 
+def _load_pkey(paramiko: Any, key_path: str) -> Any:
+    """加载私钥: 先按 RSA 试, 再逐个试 ed25519/ecdsa/dss."""
+    try:
+        return paramiko.RSAKey.from_private_key_file(key_path)
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+    for kls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.DSSKey):
+        try:
+            return kls.from_private_key_file(key_path)
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+    raise RuntimeError(f"无法加载密钥文件: {key_path}")
+
+
 class _TunnelWorker:
     """单条隧道的运行时, 封装 paramiko Transport + 转发线程。
 
@@ -203,19 +217,7 @@ class _TunnelWorker:
 
         # 认证: 优先用密钥, 没有密钥才用密码
         if cred.get("key_path"):
-            try:
-                pkey = paramiko.RSAKey.from_private_key_file(cred["key_path"])
-            except Exception:
-                # 可能是 ed25519 / ecdsa, 逐个试
-                for kls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.DSSKey):
-                    try:
-                        pkey = kls.from_private_key_file(cred["key_path"])
-                        break
-                    except Exception:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                else:
-                    raise RuntimeError(f"无法加载密钥文件: {cred['key_path']}")
+            pkey = _load_pkey(paramiko, cred["key_path"])
             transport.connect(username=username, pkey=pkey)
         elif cred.get("password"):
             transport.connect(username=username, password=cred["password"])

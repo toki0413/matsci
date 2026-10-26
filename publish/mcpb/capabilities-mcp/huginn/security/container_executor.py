@@ -31,6 +31,7 @@ from huginn.security.sandbox import (
 # Container security configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ContainerSecurityConfig:
     """Security hardening options for container execution."""
@@ -39,9 +40,9 @@ class ContainerSecurityConfig:
     network_none: bool = True
 
     # Resource limits
-    memory_limit: str | None = None       # e.g. "512m", "2g"
-    cpu_limit: float | None = None        # e.g. 2.0 = 2 CPUs
-    pids_limit: int | None = None         # max number of processes
+    memory_limit: str | None = None  # e.g. "512m", "2g"
+    cpu_limit: float | None = None  # e.g. 2.0 = 2 CPUs
+    pids_limit: int | None = None  # max number of processes
 
     # Image pinning — require sha256 digest instead of mutable tags
     require_digest: bool = False
@@ -49,7 +50,7 @@ class ContainerSecurityConfig:
 
     # Filesystem and user
     read_only_root: bool = True
-    run_as_user: str | None = "1000"      # UID to run as (None = image default)
+    run_as_user: str | None = "1000"  # UID to run as (None = image default)
     no_new_privileges: bool = True
 
     # Extra volume mounts (host:container) — use sparingly
@@ -68,6 +69,104 @@ _DIGEST_RE = re.compile(r"^[a-z0-9._/-]+@sha256:[a-f0-9]{64}$")
 def _is_digest_pinned(image: str) -> bool:
     """Return True if the image reference uses a sha256 digest."""
     return bool(_DIGEST_RE.match(image))
+
+
+def _dry_run_result(runtime: str, image: str, cmd: list[str]) -> SandboxResult:
+    return SandboxResult(
+        success=True,
+        returncode=0,
+        stdout=f"[dry-run] Would run in {runtime} container '{image}': "
+        + " ".join(cmd),
+        stderr="",
+        command=cmd,
+        dry_run=True,
+    )
+
+
+def _runtime_missing_result(runtime: str, cmd: list[str]) -> SandboxResult:
+    return SandboxResult(
+        success=False,
+        returncode=-1,
+        stdout="",
+        stderr=f"Container runtime '{runtime}' not found in PATH",
+        command=cmd,
+        dry_run=False,
+    )
+
+
+def _run_container(
+    container_cmd: list[str],
+    cmd: list[str],
+    *,
+    capture_output: bool,
+    text: bool,
+    timeout: float,
+) -> SandboxResult:
+    try:
+        result = subprocess.run(
+            container_cmd,
+            capture_output=capture_output,
+            text=text,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        return SandboxResult(
+            success=False,
+            returncode=-1,
+            stdout=e.stdout or "",
+            stderr=e.stderr or "",
+            command=cmd,
+            dry_run=False,
+        )
+
+    return SandboxResult(
+        success=result.returncode == 0,
+        returncode=result.returncode,
+        stdout=result.stdout or "",
+        stderr=result.stderr or "",
+        command=cmd,
+        dry_run=False,
+    )
+
+
+def _docker_hardening_flags(sec: ContainerSecurityConfig) -> list[str]:
+    """Docker/podman 的安全与资源限制参数."""
+    flags: list[str] = []
+
+    # Network isolation
+    if sec.network_none:
+        flags.extend(["--network", "none"])
+
+    # Resource limits
+    if sec.memory_limit:
+        flags.extend(["--memory", sec.memory_limit])
+    if sec.cpu_limit is not None:
+        flags.extend(["--cpus", str(sec.cpu_limit)])
+    if sec.pids_limit is not None:
+        flags.extend(["--pids-limit", str(sec.pids_limit)])
+
+    # Read-only root filesystem
+    if sec.read_only_root:
+        flags.append("--read-only")
+
+    # Run as non-root user
+    if sec.run_as_user:
+        flags.extend(["--user", sec.run_as_user])
+
+    # No new privileges
+    if sec.no_new_privileges:
+        flags.append("--security-opt=no-new-privileges")
+
+    # Drop all capabilities
+    if sec.drop_all_capabilities:
+        flags.append("--cap-drop=ALL")
+
+    # Seccomp profile
+    if sec.seccomp_profile:
+        flags.append(f"--security-opt=seccomp={sec.seccomp_profile}")
+    return flags
 
 
 class ContainerExecutor:
@@ -100,27 +199,8 @@ class ContainerExecutor:
         self.workdir_mount = workdir_mount
         self._sandbox = SandboxExecutor(self.sandbox_config)
 
-    def run(
-        self,
-        cmd: list[str],
-        cwd: str | Path | None = None,
-        timeout: float | None = None,
-        capture_output: bool = True,
-        text: bool = True,
-        env: dict[str, str] | None = None,
-        **kwargs: Any,
-    ) -> SandboxResult:
-        """Run ``cmd`` inside the container."""
-        valid_cwd = self._sandbox._validate_cwd(cwd, config=self.sandbox_config)
-        if valid_cwd is None:
-            valid_cwd = Path.cwd()
-
-        cfg = self.sandbox_config
-        if timeout is None:
-            timeout = cfg.default_timeout
-        timeout = min(float(timeout), cfg.max_timeout)
-
-        # --- image policy checks -------------------------------------------
+    def _image_policy_violation(self, cmd: list[str]) -> SandboxResult | None:
+        """Return a blocked SandboxResult if the image violates policy."""
         sec = self.security_config
         if sec.require_digest and not _is_digest_pinned(self.image):
             return SandboxResult(
@@ -151,57 +231,48 @@ class ContainerExecutor:
                     blocked=True,
                     block_reason="image_not_allowed",
                 )
+        return None
+
+    def run(
+        self,
+        cmd: list[str],
+        cwd: str | Path | None = None,
+        timeout: float | None = None,
+        capture_output: bool = True,
+        text: bool = True,
+        env: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> SandboxResult:
+        """Run ``cmd`` inside the container."""
+        valid_cwd = self._sandbox._validate_cwd(cwd, config=self.sandbox_config)
+        if valid_cwd is None:
+            valid_cwd = Path.cwd()
+
+        cfg = self.sandbox_config
+        if timeout is None:
+            timeout = cfg.default_timeout
+        timeout = min(float(timeout), cfg.max_timeout)
+
+        # --- image policy checks -------------------------------------------
+        blocked = self._image_policy_violation(cmd)
+        if blocked is not None:
+            return blocked
 
         if cfg.dry_run:
-            return SandboxResult(
-                success=True,
-                returncode=0,
-                stdout=f"[dry-run] Would run in {self.runtime} container '{self.image}': "
-                + " ".join(cmd),
-                stderr="",
-                command=cmd,
-                dry_run=True,
-            )
+            return _dry_run_result(self.runtime, self.image, cmd)
 
         runtime_exe = shutil.which(self.runtime)
         if runtime_exe is None:
-            return SandboxResult(
-                success=False,
-                returncode=-1,
-                stdout="",
-                stderr=f"Container runtime '{self.runtime}' not found in PATH",
-                command=cmd,
-                dry_run=False,
-            )
+            return _runtime_missing_result(self.runtime, cmd)
 
         container_cmd = self._build_command(runtime_exe, cmd, valid_cwd, env=env or {})
 
-        try:
-            result = subprocess.run(
-                container_cmd,
-                capture_output=capture_output,
-                text=text,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as e:
-            return SandboxResult(
-                success=False,
-                returncode=-1,
-                stdout=e.stdout or "",
-                stderr=e.stderr or "",
-                command=cmd,
-                dry_run=False,
-            )
-
-        return SandboxResult(
-            success=result.returncode == 0,
-            returncode=result.returncode,
-            stdout=result.stdout or "",
-            stderr=result.stderr or "",
-            command=cmd,
-            dry_run=False,
+        return _run_container(
+            container_cmd,
+            cmd,
+            capture_output=capture_output,
+            text=text,
+            timeout=timeout,
         )
 
     def _build_command(
@@ -211,59 +282,45 @@ class ContainerExecutor:
         cwd: Path,
         env: dict[str, str],
     ) -> list[str]:
-        sec = self.security_config
-
         if self.runtime in ("docker", "podman"):
-            command = [runtime_exe, "run", "--rm"]
+            return self._build_docker_command(runtime_exe, cmd, cwd, env)
+        return self._build_apptainer_command(runtime_exe, cmd, cwd, env)
 
-            # Network isolation
-            if sec.network_none:
-                command.extend(["--network", "none"])
+    def _build_docker_command(
+        self,
+        runtime_exe: str,
+        cmd: list[str],
+        cwd: Path,
+        env: dict[str, str],
+    ) -> list[str]:
+        sec = self.security_config
+        command = [runtime_exe, "run", "--rm"]
 
-            # Resource limits
-            if sec.memory_limit:
-                command.extend(["--memory", sec.memory_limit])
-            if sec.cpu_limit is not None:
-                command.extend(["--cpus", str(sec.cpu_limit)])
-            if sec.pids_limit is not None:
-                command.extend(["--pids-limit", str(sec.pids_limit)])
+        command.extend(_docker_hardening_flags(sec))
 
-            # Read-only root filesystem
-            if sec.read_only_root:
-                command.append("--read-only")
+        # Volume mounts
+        command.extend(["-v", f"{cwd}:{self.workdir_mount}"])
+        for mount in sec.extra_mounts:
+            command.extend(["-v", mount])
 
-            # Run as non-root user
-            if sec.run_as_user:
-                command.extend(["--user", sec.run_as_user])
+        command.extend(["-w", self.workdir_mount])
 
-            # No new privileges
-            if sec.no_new_privileges:
-                command.append("--security-opt=no-new-privileges")
+        # Environment variables
+        for k, v in env.items():
+            command.extend(["-e", f"{k}={v}"])
 
-            # Drop all capabilities
-            if sec.drop_all_capabilities:
-                command.append("--cap-drop=ALL")
+        command.append(self.image)
+        command.extend(cmd)
+        return command
 
-            # Seccomp profile
-            if sec.seccomp_profile:
-                command.append(f"--security-opt=seccomp={sec.seccomp_profile}")
-
-            # Volume mounts
-            command.extend(["-v", f"{cwd}:{self.workdir_mount}"])
-            for mount in sec.extra_mounts:
-                command.extend(["-v", mount])
-
-            command.extend(["-w", self.workdir_mount])
-
-            # Environment variables
-            for k, v in env.items():
-                command.extend(["-e", f"{k}={v}"])
-
-            command.append(self.image)
-            command.extend(cmd)
-            return command
-
-        # Apptainer / Singularity
+    def _build_apptainer_command(
+        self,
+        runtime_exe: str,
+        cmd: list[str],
+        cwd: Path,
+        env: dict[str, str],
+    ) -> list[str]:
+        sec = self.security_config
         command = [runtime_exe, "exec"]
 
         # Network isolation (Apptainer uses --net --network=none or fakeroot)

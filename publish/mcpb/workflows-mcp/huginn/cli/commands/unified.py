@@ -80,8 +80,7 @@ def unified_bridge(
     """Compute a multiscale bridge relation."""
     import sympy as sp
 
-    from huginn.unified.bridge import ConstitutiveModel, get_bridge
-    from huginn.unified.models import get_model
+    from huginn.unified.bridge import get_bridge
 
     bridge_name = name.lower().replace("-", "_")
     bridge_fn = get_bridge(bridge_name)
@@ -89,32 +88,9 @@ def unified_bridge(
         ctx.console.print(f"[red]Bridge '{name}' not found[/red]")
         return
 
-    kwargs: dict[str, Any] = {}
-    if bridge_name == "dft_to_md":
-        if model:
-            factory = get_model(model)
-            if not factory:
-                ctx.console.print(f"[red]Model '{model}' not found[/red]")
-                return
-            kwargs["dft_problem"] = factory()
-        else:
-            from huginn.unified.models import one_d_kohn_sham_dft
-
-            kwargs["dft_problem"] = one_d_kohn_sham_dft()
-    elif bridge_name in ("cauchy_born", "md_to_elasticity"):
-        if not expression or not symbols:
-            ctx.console.print(
-                "[red]--expression and --symbols required for this bridge[/red]"
-            )
-            return
-        sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
-        sym_dict = {s: sp.Symbol(s) for s in sym_list}
-        expr = sp.sympify(expression, locals=sym_dict)
-        kwargs["potential"] = ConstitutiveModel(
-            name="user_potential",
-            expression=expr,
-            parameters={s: str(sym_dict[s]) for s in sym_list},
-        )
+    kwargs = _build_bridge_kwargs(ctx, bridge_name, model, expression, symbols, sp)
+    if kwargs is None:
+        return
 
     result = bridge_fn(**kwargs)
     ctx.console.print(
@@ -128,6 +104,46 @@ def unified_bridge(
         if key == "interpretation":
             continue
         ctx.console.print(f"  [bold]{key}:[/bold] {val}")
+
+
+def _build_bridge_kwargs(
+    ctx: CliContext,
+    bridge_name: str,
+    model: str | None,
+    expression: str | None,
+    symbols: str | None,
+    sp,
+) -> dict[str, Any] | None:
+    from huginn.unified.bridge import ConstitutiveModel
+    from huginn.unified.models import get_model
+
+    kwargs: dict[str, Any] = {}
+    if bridge_name == "dft_to_md":
+        if model:
+            factory = get_model(model)
+            if not factory:
+                ctx.console.print(f"[red]Model '{model}' not found[/red]")
+                return None
+            kwargs["dft_problem"] = factory()
+        else:
+            from huginn.unified.models import one_d_kohn_sham_dft
+
+            kwargs["dft_problem"] = one_d_kohn_sham_dft()
+    elif bridge_name in ("cauchy_born", "md_to_elasticity"):
+        if not expression or not symbols:
+            ctx.console.print(
+                "[red]--expression and --symbols required for this bridge[/red]"
+            )
+            return None
+        sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+        sym_dict = {s: sp.Symbol(s) for s in sym_list}
+        expr = sp.sympify(expression, locals=sym_dict)
+        kwargs["potential"] = ConstitutiveModel(
+            name="user_potential",
+            expression=expr,
+            parameters={s: str(sym_dict[s]) for s in sym_list},
+        )
+    return kwargs
 
 
 @unified.command("solve")

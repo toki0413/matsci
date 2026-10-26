@@ -21,6 +21,7 @@ from huginn.unified.core import UnifiedProblem, VariationalPrinciple
 # Discretization metadata — lightweight annotation
 # ====================================================================
 
+
 @dataclass
 class DiscretizationMetadata:
     """Metadata attached to discretization output matrices.
@@ -61,27 +62,25 @@ class DiscretizationMetadata:
         }
 
 
-def _attach_metadata(
-    result: dict[str, Any],
-    problem: UnifiedProblem,
-    method: str,
-) -> dict[str, Any]:
-    """Attach DiscretizationMetadata to the result dict (non-invasive)."""
-    dim = len(problem.domain.coordinates) if problem.domain else 1
-    bounds = dict(problem.domain.bounds) if problem.domain else {}
-
+def _dof_descriptor(problem: UnifiedProblem) -> tuple[str, str, str]:
     # Extract DOF type from the first field in the problem
     dof_type, dof_kind, dof_units = "u", "scalar", ""
     if problem.fields:
         first_field = next(iter(problem.fields.values()))
         dof_type = first_field.name
-        dof_kind = str(first_field.kind.value) if hasattr(first_field.kind, "value") else str(first_field.kind)
+        dof_kind = (
+            str(first_field.kind.value)
+            if hasattr(first_field.kind, "value")
+            else str(first_field.kind)
+        )
         dof_units = first_field.units or ""
+    return dof_type, dof_kind, dof_units
 
-    coeff = _material_coefficient(problem)
-    source = _source_term(problem)
 
-    n_dof: int = result.get("n_dof", 0)
+def _detect_dirichlet_dofs(
+    result: dict[str, Any], n_dof: int
+) -> tuple[list[int], list[float]]:
+    """Detect Dirichlet DOFs from identity rows with zero right-hand side."""
     bc_indices: list[int] = []
     bc_values: list[float] = []
 
@@ -96,6 +95,38 @@ def _attach_metadata(
             if off_diag_sum < 1e-12 and i < len(F) and abs(F[i]) < 1e-12:
                 bc_indices.append(i)
                 bc_values.append(0.0)
+    return bc_indices, bc_values
+
+
+def _element_profile(dim: int, method: str) -> tuple[str, str]:
+    # Element type label
+    if dim == 1 and method == "fem":
+        return "linear_segment", "symmetric_positive_definite"
+    if dim == 1 and method == "fd":
+        return "3pt_stencil", "tridiagonal"
+    if dim == 2 and method == "fem":
+        return "linear_triangle", "symmetric_positive_definite"
+    if dim == 2 and method == "fd":
+        return "5pt_stencil", "symmetric_positive_definite"
+    return "unknown", "dense"
+
+
+def _attach_metadata(
+    result: dict[str, Any],
+    problem: UnifiedProblem,
+    method: str,
+) -> dict[str, Any]:
+    """Attach DiscretizationMetadata to the result dict (non-invasive)."""
+    dim = len(problem.domain.coordinates) if problem.domain else 1
+    bounds = dict(problem.domain.bounds) if problem.domain else {}
+
+    dof_type, dof_kind, dof_units = _dof_descriptor(problem)
+
+    coeff = _material_coefficient(problem)
+    source = _source_term(problem)
+
+    n_dof: int = result.get("n_dof", 0)
+    bc_indices, bc_values = _detect_dirichlet_dofs(result, n_dof)
 
     all_indices = set(range(n_dof))
     bc_set = set(bc_indices)
@@ -103,22 +134,7 @@ def _attach_metadata(
 
     bc_type = "dirichlet" if bc_indices else "none"
 
-    # Element type label
-    if dim == 1 and method == "fem":
-        element_type = "linear_segment"
-        matrix_structure = "symmetric_positive_definite"
-    elif dim == 1 and method == "fd":
-        element_type = "3pt_stencil"
-        matrix_structure = "tridiagonal"
-    elif dim == 2 and method == "fem":
-        element_type = "linear_triangle"
-        matrix_structure = "symmetric_positive_definite"
-    elif dim == 2 and method == "fd":
-        element_type = "5pt_stencil"
-        matrix_structure = "symmetric_positive_definite"
-    else:
-        element_type = "unknown"
-        matrix_structure = "dense"
+    element_type, matrix_structure = _element_profile(dim, method)
 
     metadata = DiscretizationMetadata(
         spatial_dimension=dim,
@@ -242,6 +258,109 @@ def _discretize_fd_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     }
 
 
+def _node_index_2d(i: int, j: int, ny: int) -> int:
+    return i * ny + j
+
+
+def _node_coord_2d(
+    i: int, j: int, x0: float, y0: float, hx: float, hy: float
+) -> tuple[float, float]:
+    return (x0 + i * hx, y0 + j * hy)
+
+
+def _triangle_area_2d(tri: list[tuple[float, float]]) -> float:
+    (x_a, y_a), (x_b, y_b), (x_c, y_c) = tri
+    return 0.5 * abs((x_b - x_a) * (y_c - y_a) - (x_c - x_a) * (y_b - y_a))
+
+
+def _triangle_stiffness_2d(tri: list[tuple[float, float]], coeff: float) -> np.ndarray:
+    (x_a, y_a), (x_b, y_b), (x_c, y_c) = tri
+    area = _triangle_area_2d(tri)
+    if area == 0.0:
+        return np.zeros((3, 3))
+    # Shape function gradients (constant over element)
+    dndx = np.array([y_b - y_c, y_c - y_a, y_a - y_b]) / (2.0 * area)
+    dndy = np.array([x_c - x_b, x_a - x_c, x_b - x_a]) / (2.0 * area)
+    bmat = np.vstack([dndx, dndy])
+    return coeff * area * (bmat.T @ bmat)
+
+
+def _triangle_load_2d(area: float, f: float) -> np.ndarray:
+    # Consistent load: f * area / 3 for each node of a linear triangle
+    return (f * area / 3.0) * np.ones(3)
+
+
+def _cell_triangles_2d(
+    i: int, j: int, ny: int, x0: float, y0: float, hx: float, hy: float
+) -> list[tuple[list[tuple[float, float]], list[int]]]:
+    p00 = _node_coord_2d(i, j, x0, y0, hx, hy)
+    p10 = _node_coord_2d(i + 1, j, x0, y0, hx, hy)
+    p01 = _node_coord_2d(i, j + 1, x0, y0, hx, hy)
+    p11 = _node_coord_2d(i + 1, j + 1, x0, y0, hx, hy)
+
+    return [
+        (
+            [p00, p10, p01],
+            [
+                _node_index_2d(i, j, ny),
+                _node_index_2d(i + 1, j, ny),
+                _node_index_2d(i, j + 1, ny),
+            ],
+        ),
+        (
+            [p10, p11, p01],
+            [
+                _node_index_2d(i + 1, j, ny),
+                _node_index_2d(i + 1, j + 1, ny),
+                _node_index_2d(i, j + 1, ny),
+            ],
+        ),
+    ]
+
+
+def _assemble_fem_2d(
+    n: int,
+    nx: int,
+    ny: int,
+    x0: float,
+    y0: float,
+    hx: float,
+    hy: float,
+    coeff: float,
+    f: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    N = nx * ny
+    K = np.zeros((N, N), dtype=float)
+    F = np.zeros(N, dtype=float)
+
+    for i in range(n):
+        for j in range(n):
+            for tri, nodes in _cell_triangles_2d(i, j, ny, x0, y0, hx, hy):
+                ke = _triangle_stiffness_2d(tri, coeff)
+                area = _triangle_area_2d(tri)
+                fe = _triangle_load_2d(area, f)
+                for a in range(3):
+                    F[nodes[a]] += fe[a]
+                    for b in range(3):
+                        K[nodes[a], nodes[b]] += ke[a, b]
+
+    return K, F
+
+
+def _apply_dirichlet_fem_2d(
+    K: np.ndarray, F: np.ndarray, nx: int, ny: int, n: int
+) -> None:
+    # Dirichlet boundary: u = 0 on rectangle edges
+    for i in range(nx):
+        for j in range(ny):
+            if i == 0 or i == n or j == 0 or j == n:
+                k = _node_index_2d(i, j, ny)
+                K[k, :] = 0.0
+                K[:, k] = 0.0
+                K[k, k] = 1.0
+                F[k] = 0.0
+
+
 def _discretize_fem_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     """2D linear triangular FEM discretization for -coeff Δu = f.
 
@@ -261,71 +380,13 @@ def _discretize_fem_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     ny = n + 1
     N = nx * ny
 
-    def node_idx(i: int, j: int) -> int:
-        return i * ny + j
+    K, F = _assemble_fem_2d(n, nx, ny, x0, y0, hx, hy, coeff, f)
 
-    def node_coord(i: int, j: int) -> tuple[float, float]:
-        return (x0 + i * hx, y0 + j * hy)
+    _apply_dirichlet_fem_2d(K, F, nx, ny, n)
 
-    K = np.zeros((N, N), dtype=float)
-    F = np.zeros(N, dtype=float)
-
-    def element_stiffness(tri: list[tuple[float, float]]) -> np.ndarray:
-        (x_a, y_a), (x_b, y_b), (x_c, y_c) = tri
-        area = 0.5 * abs((x_b - x_a) * (y_c - y_a) - (x_c - x_a) * (y_b - y_a))
-        if area == 0.0:
-            return np.zeros((3, 3))
-        # Shape function gradients (constant over element)
-        dndx = np.array([y_b - y_c, y_c - y_a, y_a - y_b]) / (2.0 * area)
-        dndy = np.array([x_c - x_b, x_a - x_c, x_b - x_a]) / (2.0 * area)
-        bmat = np.vstack([dndx, dndy])
-        return coeff * area * (bmat.T @ bmat)
-
-    def element_load(area: float) -> np.ndarray:
-        # Consistent load: f * area / 3 for each node of a linear triangle
-        return (f * area / 3.0) * np.ones(3)
-
-    for i in range(n):
-        for j in range(n):
-            p00 = node_coord(i, j)
-            p10 = node_coord(i + 1, j)
-            p01 = node_coord(i, j + 1)
-            p11 = node_coord(i + 1, j + 1)
-
-            triangles = [
-                (
-                    [p00, p10, p01],
-                    [node_idx(i, j), node_idx(i + 1, j), node_idx(i, j + 1)],
-                ),
-                (
-                    [p10, p11, p01],
-                    [node_idx(i + 1, j), node_idx(i + 1, j + 1), node_idx(i, j + 1)],
-                ),
-            ]
-
-            for tri, nodes in triangles:
-                ke = element_stiffness(tri)
-                area = 0.5 * abs(
-                    (tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1])
-                    - (tri[2][0] - tri[0][0]) * (tri[1][1] - tri[0][1])
-                )
-                fe = element_load(area)
-                for a in range(3):
-                    F[nodes[a]] += fe[a]
-                    for b in range(3):
-                        K[nodes[a], nodes[b]] += ke[a, b]
-
-    # Dirichlet boundary: u = 0 on rectangle edges
-    for i in range(nx):
-        for j in range(ny):
-            if i == 0 or i == n or j == 0 or j == n:
-                k = node_idx(i, j)
-                K[k, :] = 0.0
-                K[:, k] = 0.0
-                K[k, k] = 1.0
-                F[k] = 0.0
-
-    mesh = [list(node_coord(i, j)) for i in range(nx) for j in range(ny)]
+    mesh = [
+        list(_node_coord_2d(i, j, x0, y0, hx, hy)) for i in range(nx) for j in range(ny)
+    ]
     return {
         "method": "fem_2d",
         "n_elements_per_dim": n,
@@ -386,6 +447,24 @@ def _discretize_fd_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     }
 
 
+def _dispatch_discretize(
+    problem: UnifiedProblem, method: str, dim: int, n: int
+) -> dict[str, Any]:
+    if dim == 1:
+        if method == "fem":
+            return _discretize_fem_1d(problem, n)
+        if method == "fd":
+            return _discretize_fd_1d(problem, n)
+        raise ValueError(f"Unknown discretization method for 1D: {method}")
+    if dim == 2:
+        if method == "fem":
+            return _discretize_fem_2d(problem, n)
+        if method == "fd":
+            return _discretize_fd_2d(problem, n)
+        raise ValueError(f"Unknown discretization method for 2D: {method}")
+    raise ValueError(f"Unsupported domain dimension: {dim}")
+
+
 def discretize(
     problem: UnifiedProblem,
     method: str = "fem",
@@ -417,23 +496,6 @@ def discretize(
         raise ValueError("Problem must have a domain")
 
     dim = len(problem.domain.coordinates)
-    result: dict[str, Any]
-
-    if dim == 1:
-        if method == "fem":
-            result = _discretize_fem_1d(problem, n)
-        elif method == "fd":
-            result = _discretize_fd_1d(problem, n)
-        else:
-            raise ValueError(f"Unknown discretization method for 1D: {method}")
-    elif dim == 2:
-        if method == "fem":
-            result = _discretize_fem_2d(problem, n)
-        elif method == "fd":
-            result = _discretize_fd_2d(problem, n)
-        else:
-            raise ValueError(f"Unknown discretization method for 2D: {method}")
-    else:
-        raise ValueError(f"Unsupported domain dimension: {dim}")
+    result: dict[str, Any] = _dispatch_discretize(problem, method, dim, n)
 
     return _attach_metadata(result, problem, method)

@@ -92,6 +92,18 @@ class EcoToolOutput(BaseModel):
     error: str | None = None
 
 
+def _import_skill_targets(
+    importer: Any, targets: list[Path], platform: str
+) -> list[Any]:
+    skills = []
+    for t in targets:
+        if t.is_dir():
+            skills.extend(importer.import_directory(t, platform))
+        else:
+            skills.append(importer.import_file(t, platform))
+    return skills
+
+
 class EcoTool(HuginnTool[EcoToolInput, EcoToolOutput]):
     """安装/启用 skill、插件、MCP server 的生态管理工具."""
 
@@ -134,36 +146,11 @@ class EcoTool(HuginnTool[EcoToolInput, EcoToolOutput]):
         install_dir.mkdir(parents=True, exist_ok=True)
         importer = SkillImporter()
 
-        if args.local_path:
-            src = Path(args.local_path)
-            if not src.exists():
-                return self._out_err(args.action, f"本地路径不存在: {args.local_path}")
-            if src.is_dir():
-                self._copy_skill_dir(src, install_dir)
-                targets: list[Path] = [install_dir / src.name]
-            else:
-                text = src.read_text(encoding="utf-8")
-                targets = [self._write_skill_text(text, install_dir, src.stem)]
-        elif args.url:
-            try:
-                text = self._fetch_url_text(args.url)
-            except Exception as exc:
-                logger.warning("skill 拉取失败: %s", exc)
-                return self._out_err(args.action, f"拉取 skill 失败: {exc}")
-            targets = [
-                self._write_skill_text(text, install_dir, self._url_basename(args.url))
-            ]
-        else:
-            return self._out_err(
-                args.action, "skill_install 需要 local_path 或 url 参数之一"
-            )
+        targets, error = EcoTool._resolve_skill_targets(self, args, install_dir)
+        if error is not None:
+            return error
 
-        skills = []
-        for t in targets:
-            if t.is_dir():
-                skills.extend(importer.import_directory(t, args.platform))
-            else:
-                skills.append(importer.import_file(t, args.platform))
+        skills = _import_skill_targets(importer, targets, args.platform)
 
         for skill in skills:
             SkillRegistry.register(skill)
@@ -184,6 +171,36 @@ class EcoTool(HuginnTool[EcoToolInput, EcoToolOutput]):
                 ],
             },
         )
+
+    def _resolve_skill_targets(
+        self, args: EcoToolInput, install_dir: Path
+    ) -> tuple[list[Path], ToolResult | None]:
+        if args.local_path:
+            src = Path(args.local_path)
+            if not src.exists():
+                return [], self._out_err(
+                    args.action, f"本地路径不存在: {args.local_path}"
+                )
+            if src.is_dir():
+                self._copy_skill_dir(src, install_dir)
+                targets: list[Path] = [install_dir / src.name]
+            else:
+                text = src.read_text(encoding="utf-8")
+                targets = [self._write_skill_text(text, install_dir, src.stem)]
+        elif args.url:
+            try:
+                text = self._fetch_url_text(args.url)
+            except Exception as exc:
+                logger.warning("skill 拉取失败: %s", exc)
+                return [], self._out_err(args.action, f"拉取 skill 失败: {exc}")
+            targets = [
+                self._write_skill_text(text, install_dir, self._url_basename(args.url))
+            ]
+        else:
+            return [], self._out_err(
+                args.action, "skill_install 需要 local_path 或 url 参数之一"
+            )
+        return targets, None
 
     def _skills_install_dir(self) -> Path:
         """skill 落盘根目录: $HUGINN_SKILLS_DIR > <workspace>/.huginn/skills."""

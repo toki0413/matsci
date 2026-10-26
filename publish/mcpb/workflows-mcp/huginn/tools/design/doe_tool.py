@@ -16,6 +16,7 @@ from __future__ import annotations
 import itertools
 import math
 import random
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -81,18 +82,25 @@ def _build_l27() -> list[list[int]]:
     """
     # 13 个线性型 (a1,a2,a3) 对应 a1*x1 + a2*x2 + a3*x3 (mod 3)
     forms = [
-        (1, 0, 0), (0, 1, 0), (1, 1, 0), (1, 2, 0),
-        (0, 0, 1), (1, 0, 1), (1, 0, 2), (0, 1, 1), (0, 1, 2),
-        (1, 1, 1), (1, 1, 2), (1, 2, 1), (1, 2, 2),
+        (1, 0, 0),
+        (0, 1, 0),
+        (1, 1, 0),
+        (1, 2, 0),
+        (0, 0, 1),
+        (1, 0, 1),
+        (1, 0, 2),
+        (0, 1, 1),
+        (0, 1, 2),
+        (1, 1, 1),
+        (1, 1, 2),
+        (1, 2, 1),
+        (1, 2, 2),
     ]
     table: list[list[int]] = []
     for x1 in range(3):
         for x2 in range(3):
             for x3 in range(3):
-                row = [
-                    (a1 * x1 + a2 * x2 + a3 * x3) % 3 + 1
-                    for a1, a2, a3 in forms
-                ]
+                row = [(a1 * x1 + a2 * x2 + a3 * x3) % 3 + 1 for a1, a2, a3 in forms]
                 table.append(row)
     return table
 
@@ -100,7 +108,10 @@ def _build_l27() -> list[list[int]]:
 _L27: list[list[int]] = _build_l27()
 
 _ORTHOGONAL_TABLES: dict[str, list[list[int]]] = {
-    "L8": _L8, "L9": _L9, "L16": _L16, "L27": _L27,
+    "L8": _L8,
+    "L9": _L9,
+    "L16": _L16,
+    "L27": _L27,
 }
 
 
@@ -126,9 +137,9 @@ _FRACTIONAL_DESIGNS: dict[tuple[int, int], tuple[list[tuple[int, ...]], str]] = 
 
 
 class DOEInput(BaseModel):
-    action: Literal["factorial", "fractional", "orthogonal", "rsm", "randomize", "power"] = Field(
-        ..., description="实验设计动作类型"
-    )
+    action: Literal[
+        "factorial", "fractional", "orthogonal", "rsm", "randomize", "power"
+    ] = Field(..., description="实验设计动作类型")
     factors: list[dict[str, Any]] = Field(
         default_factory=list,
         description="因子列表，每个含 name/type/levels/low/high",
@@ -137,29 +148,32 @@ class DOEInput(BaseModel):
         default="",
         description="设计子类型: full/half/quarter/L8/L16/L9/L27/CCD/Box-Behnken",
     )
-    runs: int | None = Field(
-        default=None, description="期望实验次数 (部分因子设计用)"
-    )
+    runs: int | None = Field(default=None, description="期望实验次数 (部分因子设计用)")
     center_points: int = Field(
         default=3, ge=0, description="中心点重复次数 (RSM 用，默认 3)"
     )
-    randomize: bool = Field(
-        default=True, description="是否随机化实验顺序 (默认 True)"
-    )
+    randomize: bool = Field(default=True, description="是否随机化实验顺序 (默认 True)")
     seed: int | None = Field(default=None, description="随机种子")
     design_matrix: list[dict[str, Any]] | None = Field(
-        default=None, description="已有实验矩阵 (randomize 动作用)",
+        default=None,
+        description="已有实验矩阵 (randomize 动作用)",
     )
     # ── power action 字段 ──
-    effect_size: float | None = Field(default=None, description="效应量 (Cohen's d / f / w)")
+    effect_size: float | None = Field(
+        default=None, description="效应量 (Cohen's d / f / w)"
+    )
     test_type: Literal["ttest", "anova", "chisq"] = Field(
         default="ttest", description="power 计算的检验类型"
     )
-    alpha: float = Field(default=0.05, ge=0.0, le=1.0, description="显著性水平 (power 用)")
+    alpha: float = Field(
+        default=0.05, ge=0.0, le=1.0, description="显著性水平 (power 用)"
+    )
     power_target: float = Field(default=0.80, ge=0.0, le=1.0, description="目标功效")
     n_groups: int = Field(default=2, ge=2, description="组数 (anova power)")
     n_bins: int = Field(default=4, ge=2, description="类别数 (chisq power)")
-    sample_ratio: float = Field(default=1.0, gt=0, description="两组样本量比 (ttest power)")
+    sample_ratio: float = Field(
+        default=1.0, gt=0, description="两组样本量比 (ttest power)"
+    )
     # ── randomize 分配字段 (alloc_design 不为 None 时走分配模式) ──
     n_units: int | None = Field(default=None, description="待分配单元数")
     alloc_design: Literal["simple", "block", "stratified", "cluster"] | None = Field(
@@ -167,8 +181,12 @@ class DOEInput(BaseModel):
     )
     arms: list[str] | None = Field(default=None, description="臂名列表")
     block_size: int = Field(default=2, description="区组内每臂重复数 (block)")
-    strata: dict[str, int] | None = Field(default=None, description="层名: 单元数 (stratified)")
-    alloc_ratio: list[int] | None = Field(default=None, description="分配比 (stratified)")
+    strata: dict[str, int] | None = Field(
+        default=None, description="层名: 单元数 (stratified)"
+    )
+    alloc_ratio: list[int] | None = Field(
+        default=None, description="分配比 (stratified)"
+    )
     clusters: list[str] | None = Field(default=None, description="整群列表 (cluster)")
 
 
@@ -188,6 +206,382 @@ def _maybe_shuffle(rows: list[Any], args: DOEInput) -> None:
     if args.randomize:
         rng = random.Random(args.seed)
         rng.shuffle(rows)
+
+
+# ── 部分因子设计 (2^(k-p)) 分步构件 ─────────────────────────────────
+
+
+def _fractional_p(k: int, args: DOEInput) -> int:
+    """确定生成元个数 p：design_type 优先，其次按 runs 反推."""
+    dt = (args.design_type or "").lower()
+    if "half" in dt:
+        return 1
+    if "quarter" in dt:
+        return 2
+    if args.runs is not None:
+        log2_runs = math.log2(args.runs)
+        if not log2_runs.is_integer():
+            raise ValueError(f"runs={args.runs} 不是 2 的幂")
+        return k - int(log2_runs)
+    return 1  # 默认半因子
+
+
+def _fractional_base(n_base: int) -> list[list[int]]:
+    """基础设计 ±1 矩阵 (Yates 序，第一个基础因子变化最慢)."""
+    runs = 2**n_base
+    base: list[list[int]] = []
+    for r in range(runs):
+        row = []
+        for b in range(n_base):
+            period = 2 ** (n_base - b - 1)
+            row.append(-1 if (r // period) % 2 == 0 else 1)
+        base.append(row)
+    return base
+
+
+def _fractional_full(
+    base: list[list[int]], generators: list[tuple[int, ...]]
+) -> list[list[int]]:
+    """在基础矩阵右侧追加生成元列 (对应基础列的乘积)."""
+    full = [row[:] for row in base]
+    for gen in generators:
+        for r, base_row in enumerate(base):
+            val = 1
+            for idx in gen:
+                val *= base_row[idx]
+            full[r].append(val)
+    return full
+
+
+def _fractional_rows(
+    factors: list[dict], full: list[list[int]]
+) -> list[dict[str, Any]]:
+    """±1 矩阵映射到因子实际水平行."""
+    rows: list[dict[str, Any]] = []
+    for full_row in full:
+        run: dict[str, Any] = {}
+        for i, f in enumerate(factors):
+            levels = _factor_levels(f)
+            if len(levels) != 2:
+                raise ValueError(f"部分因子设计要求因子 {f['name']!r} 为 2 水平")
+            run[f["name"]] = levels[0] if full_row[i] == -1 else levels[1]
+        rows.append(run)
+    return rows
+
+
+def _fractional_gen_strs(
+    generators: list[tuple[int, ...]],
+    base_names: list[str],
+    gen_names: list[str],
+) -> list[str]:
+    """生成元定义字符串 (e.g. "D=ABC")."""
+    gen_strs: list[str] = []
+    for i, gen in enumerate(generators):
+        rhs = "".join(base_names[idx] for idx in gen)
+        gen_strs.append(f"{gen_names[i]}={rhs}")
+    return gen_strs
+
+
+# ── 正交表选表 + 行构造 ─────────────────────────────────────────────
+
+
+def _pick_orthogonal_table(dt: str, factors: list[dict], n: int) -> str:
+    """显式指定的表名优先，否则按因子水平数自动选表."""
+    if dt in _ORTHOGONAL_TABLES:
+        return dt
+
+    levels_counts = [len(_factor_levels(f)) for f in factors]
+    if all(c == 2 for c in levels_counts):
+        if n <= 7:
+            return "L8"
+        if n <= 15:
+            return "L16"
+        raise ValueError(f"2 水平因子数 {n} 超出 L16 容量 (15)")
+    if all(c == 3 for c in levels_counts):
+        if n <= 4:
+            return "L9"
+        if n <= 13:
+            return "L27"
+        raise ValueError(f"3 水平因子数 {n} 超出 L27 容量 (13)")
+    raise ValueError("正交表要求所有因子同为 2 水平或 3 水平")
+
+
+def _orthogonal_rows(
+    factors: list[dict], table: list[list[int]], table_name: str
+) -> list[dict[str, Any]]:
+    """正交表 1-based 水平索引 → 因子实际取值行."""
+    rows: list[dict[str, Any]] = []
+    for table_row in table:
+        run: dict[str, Any] = {}
+        for i, f in enumerate(factors):
+            levels = _factor_levels(f)
+            lvl_idx = table_row[i]  # 1-based
+            if lvl_idx > len(levels):
+                raise ValueError(
+                    f"因子 {f['name']!r} 水平数 {len(levels)} 少于 {table_name} 要求"
+                )
+            run[f["name"]] = levels[lvl_idx - 1]
+        rows.append(run)
+    return rows
+
+
+# ── 响应面共用构件 ────────────────────────────────────────────────
+
+
+def _coded_to_actual(
+    factors: list[dict],
+    centers: list[float],
+    half_ranges: list[float],
+    coded: list[float],
+) -> dict[str, Any]:
+    """编码值 (±1 / 0 / ±α) → 因子实际取值."""
+    return {
+        factors[i]["name"]: centers[i] + coded[i] * half_ranges[i]
+        for i in range(len(coded))
+    }
+
+
+def _shuffle_paired(paired: list[tuple[dict[str, Any], str]], args: DOEInput) -> None:
+    """按 args.randomize / args.seed 原地打乱 (点, 点类型) 列表."""
+    if args.randomize:
+        rng = random.Random(args.seed)
+        rng.shuffle(paired)
+
+
+def _ccd_points(
+    k: int, alpha: float, center_points: int
+) -> list[tuple[list[float], str]]:
+    """CCD 编码点：角点 2^k → 轴点 2k → 中心点."""
+    coded_pts: list[tuple[list[float], str]] = []
+    for combo in itertools.product([-1.0, 1.0], repeat=k):
+        coded_pts.append((list(combo), "factorial"))
+    for i in range(k):
+        for sign in (-1.0, 1.0):
+            coded = [0.0] * k
+            coded[i] = sign * alpha
+            coded_pts.append((coded, "axial"))
+    for _ in range(center_points):
+        coded_pts.append(([0.0] * k, "center"))
+    return coded_pts
+
+
+def _bb_points(k: int, center_points: int) -> list[tuple[list[float], str]]:
+    """Box-Behnken 编码点：每对因子 2^2 子设计 + 中心点."""
+    coded_pts: list[tuple[list[float], str]] = []
+    for i, j in itertools.combinations(range(k), 2):
+        for si in (-1.0, 1.0):
+            for sj in (-1.0, 1.0):
+                coded = [0.0] * k
+                coded[i] = si
+                coded[j] = sj
+                coded_pts.append((coded, "edge"))
+    for _ in range(center_points):
+        coded_pts.append(([0.0] * k, "center"))
+    return coded_pts
+
+
+# ── 功效/样本量计算分支 ────────────────────────────────────────────
+
+
+def _power_classes() -> dict[str, Any]:
+    """懒加载 statsmodels power 类 (未安装时此处抛 ImportError, 与旧行为一致)."""
+    from statsmodels.stats.power import (
+        FTestAnovaPower,
+        GofChisquarePower,
+        TTestIndPower,
+    )
+
+    return {
+        "anova": FTestAnovaPower,
+        "chisq": GofChisquarePower,
+        "ttest": TTestIndPower,
+    }
+
+
+def _power_ttest(
+    effect: float, args: DOEInput, classes: dict[str, Any]
+) -> tuple[dict[str, Any], str]:
+    """两样本 t 检验：按 sample_ratio 推第二组样本量."""
+    n1 = math.ceil(
+        classes["ttest"]().solve_power(
+            effect_size=effect,
+            alpha=args.alpha,
+            power=args.power_target,
+            ratio=args.sample_ratio,
+            alternative="two-sided",
+        )
+    )
+    n2 = math.ceil(n1 * args.sample_ratio)
+    return (
+        {
+            "action": "power",
+            "test": "ttest",
+            "n_per_group": [n1, n2],
+            "total_n": n1 + n2,
+            "parameters": {
+                "effect_size": effect,
+                "alpha": args.alpha,
+                "power": args.power_target,
+                "ratio": args.sample_ratio,
+            },
+        },
+        f"两样本 t 检验: 组1 N={n1}, 组2 N={n2}, 总 N={n1 + n2}",
+    )
+
+
+def _power_anova(
+    effect: float, args: DOEInput, classes: dict[str, Any]
+) -> tuple[dict[str, Any], str]:
+    """单因素 ANOVA：总样本量按组数向上取整到每组等量."""
+    if args.n_groups < 2:
+        raise ValueError("anova power 至少需要 2 组")
+    n_total_f = classes["anova"]().solve_power(
+        effect_size=effect,
+        alpha=args.alpha,
+        power=args.power_target,
+        k_groups=args.n_groups,
+    )
+    per = math.ceil(n_total_f / args.n_groups)
+    n_total = per * args.n_groups
+    return (
+        {
+            "action": "power",
+            "test": "anova",
+            "n_per_group": per,
+            "total_n": n_total,
+            "parameters": {
+                "effect_size": effect,
+                "alpha": args.alpha,
+                "power": args.power_target,
+                "k_groups": args.n_groups,
+            },
+        },
+        f"ANOVA ({args.n_groups} 组): 每组 N={per}, 总 N={n_total}",
+    )
+
+
+def _power_chisq(
+    effect: float, args: DOEInput, classes: dict[str, Any]
+) -> tuple[dict[str, Any], str]:
+    """卡方拟合优度：总样本量."""
+    if args.n_bins < 2:
+        raise ValueError("chisq power 至少需要 2 个类别")
+    n = math.ceil(
+        classes["chisq"]().solve_power(
+            effect_size=effect,
+            alpha=args.alpha,
+            power=args.power_target,
+            n_bins=args.n_bins,
+        )
+    )
+    return (
+        {
+            "action": "power",
+            "test": "chisq",
+            "total_n": n,
+            "parameters": {
+                "effect_size": effect,
+                "alpha": args.alpha,
+                "power": args.power_target,
+                "n_bins": args.n_bins,
+            },
+        },
+        f"卡方检验: 总 N={n}",
+    )
+
+
+_POWER_CALCULATORS: dict[
+    str, Callable[[float, DOEInput, dict[str, Any]], tuple[dict[str, Any], str]]
+] = {
+    "ttest": _power_ttest,
+    "anova": _power_anova,
+    "chisq": _power_chisq,
+}
+
+
+# ── 处理分配 (randomize / alloc_design) 分支 ────────────────────────
+
+
+def _alloc_simple(
+    args: DOEInput, arms: list[str], rng: random.Random
+) -> tuple[list[tuple[int, str]], list[str]]:
+    """简单随机: 每个单元独立抽臂."""
+    if not args.n_units or args.n_units < 1:
+        raise ValueError("simple 分配需要 n_units >= 1")
+    alloc = [(i + 1, rng.choice(arms)) for i in range(args.n_units)]
+    return alloc, ["unit", "arm"]
+
+
+def _alloc_block(
+    args: DOEInput, arms: list[str], rng: random.Random
+) -> tuple[list[tuple[int, str]], list[str]]:
+    """区组随机: 每块内各臂重复 block_size 次后整体洗牌."""
+    if not args.n_units or args.n_units < 1:
+        raise ValueError("block 分配需要 n_units >= 1")
+    unit_block: list[str] = []
+    for a in arms:
+        unit_block += [a] * args.block_size
+    alloc: list[tuple[int, str]] = []
+    i = 0
+    while len(alloc) < args.n_units:
+        b = unit_block[:]
+        rng.shuffle(b)
+        for a in b:
+            if len(alloc) >= args.n_units:
+                break
+            i += 1
+            alloc.append((i, a))
+    return alloc, ["unit", "arm"]
+
+
+def _alloc_stratified(
+    args: DOEInput, arms: list[str], rng: random.Random
+) -> tuple[list[tuple[str, int, str]], list[str]]:
+    """分层随机: 每层内按分配比洗牌填满."""
+    if not args.strata:
+        raise ValueError("stratified 分配需要 strata={层名: 数量}")
+    ratio = args.alloc_ratio or [1] * len(arms)
+    if len(ratio) != len(arms):
+        raise ValueError(f"alloc_ratio 项数({len(ratio)}) 必须等于臂数({len(arms)})")
+    unit: list[str] = []
+    for a, r in zip(arms, ratio):
+        unit += [a] * r
+    alloc: list[tuple[str, int, str]] = []
+    for stratum, cnt in args.strata.items():
+        i = 0
+        while i < cnt:
+            b = unit[:]
+            rng.shuffle(b)
+            for a in b:
+                if i >= cnt:
+                    break
+                i += 1
+                alloc.append((stratum, i, a))
+    return alloc, ["stratum", "unit", "arm"]
+
+
+def _alloc_cluster(
+    args: DOEInput, arms: list[str], rng: random.Random
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """整群随机: 洗牌后按轮转把整群分给各臂."""
+    if not args.clusters:
+        raise ValueError("cluster 分配需要 clusters 列表")
+    if len(args.clusters) < len(arms):
+        raise ValueError(f"整群数({len(args.clusters)}) 少于臂数({len(arms)})")
+    cl = args.clusters[:]
+    rng.shuffle(cl)
+    alloc = [(c, arms[i % len(arms)]) for i, c in enumerate(cl)]
+    return alloc, ["cluster", "arm"]
+
+
+_ALLOC_BUILDERS: dict[
+    str, Callable[[DOEInput, list[str], random.Random], tuple[list[tuple], list[str]]]
+] = {
+    "simple": _alloc_simple,
+    "block": _alloc_block,
+    "stratified": _alloc_stratified,
+    "cluster": _alloc_cluster,
+}
 
 
 class DOETool(HuginnTool):
@@ -261,20 +655,7 @@ class DOETool(HuginnTool):
         if k < 3:
             raise ValueError("部分因子设计至少需要 3 个因子")
 
-        # 确定 p：优先看 design_type，再看 runs
-        dt = (args.design_type or "").lower()
-        if "half" in dt:
-            p = 1
-        elif "quarter" in dt:
-            p = 2
-        elif args.runs is not None:
-            log2_runs = math.log2(args.runs)
-            if not log2_runs.is_integer():
-                raise ValueError(f"runs={args.runs} 不是 2 的幂")
-            p = k - int(log2_runs)
-        else:
-            p = 1  # 默认半因子
-
+        p = _fractional_p(k, args)
         if p < 0:
             raise ValueError("runs 大于全因子实验数，请改用 factorial")
         if k - p < 3:
@@ -287,45 +668,13 @@ class DOETool(HuginnTool):
         generators, resolution = _FRACTIONAL_DESIGNS[key]
 
         n_base = k - p
-        runs = 2 ** n_base
-
-        # 基础设计 ±1 矩阵 (Yates 序，第一个基础因子变化最慢)
-        base: list[list[int]] = []
-        for r in range(runs):
-            row = []
-            for b in range(n_base):
-                period = 2 ** (n_base - b - 1)
-                row.append(-1 if (r // period) % 2 == 0 else 1)
-            base.append(row)
-
-        # 生成元列 = 对应基础列的乘积
-        full = [row[:] for row in base]
-        for gen in generators:
-            for r in range(runs):
-                val = 1
-                for idx in gen:
-                    val *= base[r][idx]
-                full[r].append(val)
-
-        # ±1 映射到因子实际水平
-        rows: list[dict[str, Any]] = []
-        for r in range(runs):
-            run: dict[str, Any] = {}
-            for i, f in enumerate(factors):
-                levels = _factor_levels(f)
-                if len(levels) != 2:
-                    raise ValueError(f"部分因子设计要求因子 {f['name']!r} 为 2 水平")
-                run[f["name"]] = levels[0] if full[r][i] == -1 else levels[1]
-            rows.append(run)
-
+        full = _fractional_full(_fractional_base(n_base), generators)
+        rows = _fractional_rows(factors, full)
         _maybe_shuffle(rows, args)
 
         base_names = [factors[i]["name"] for i in range(n_base)]
         gen_names = [factors[n_base + i]["name"] for i in range(p)]
-        gen_strs = []
-        for i, gen in enumerate(generators):
-            rhs = "".join(base_names[idx] for idx in gen)
-            gen_strs.append(f"{gen_names[i]}={rhs}")
+        gen_strs = _fractional_gen_strs(generators, base_names, gen_names)
 
         return ToolResult(
             data={
@@ -343,8 +692,7 @@ class DOETool(HuginnTool):
                     "generators": gen_strs,
                 },
                 "summary": (
-                    f"2^({k}-{p}) 部分因子设计，{len(rows)} runs，"
-                    f"分辨度 {resolution}"
+                    f"2^({k}-{p}) 部分因子设计，{len(rows)} runs，分辨度 {resolution}"
                 ),
             },
             success=True,
@@ -358,46 +706,14 @@ class DOETool(HuginnTool):
             raise ValueError("至少需要一个因子")
 
         dt = (args.design_type or "").upper().replace(" ", "")
-        if dt in _ORTHOGONAL_TABLES:
-            table_name = dt
-        else:
-            # 按因子水平数自动选表
-            levels_counts = [len(_factor_levels(f)) for f in factors]
-            if all(c == 2 for c in levels_counts):
-                if n <= 7:
-                    table_name = "L8"
-                elif n <= 15:
-                    table_name = "L16"
-                else:
-                    raise ValueError(f"2 水平因子数 {n} 超出 L16 容量 (15)")
-            elif all(c == 3 for c in levels_counts):
-                if n <= 4:
-                    table_name = "L9"
-                elif n <= 13:
-                    table_name = "L27"
-                else:
-                    raise ValueError(f"3 水平因子数 {n} 超出 L27 容量 (13)")
-            else:
-                raise ValueError("正交表要求所有因子同为 2 水平或 3 水平")
+        table_name = _pick_orthogonal_table(dt, factors, n)
 
         table = _ORTHOGONAL_TABLES[table_name]
         n_cols = len(table[0])
         if n > n_cols:
             raise ValueError(f"{table_name} 只有 {n_cols} 列，容纳不了 {n} 个因子")
 
-        rows: list[dict[str, Any]] = []
-        for table_row in table:
-            run: dict[str, Any] = {}
-            for i, f in enumerate(factors):
-                levels = _factor_levels(f)
-                lvl_idx = table_row[i]  # 1-based
-                if lvl_idx > len(levels):
-                    raise ValueError(
-                        f"因子 {f['name']!r} 水平数 {len(levels)} 少于 {table_name} 要求"
-                    )
-                run[f["name"]] = levels[lvl_idx - 1]
-            rows.append(run)
-
+        rows = _orthogonal_rows(factors, table, table_name)
         _maybe_shuffle(rows, args)
 
         return ToolResult(
@@ -424,7 +740,9 @@ class DOETool(HuginnTool):
         if k < 2:
             raise ValueError("响应面设计至少需要 2 个因子")
 
-        design_type = (args.design_type or "CCD").upper().replace("-", "").replace("_", "")
+        design_type = (
+            (args.design_type or "CCD").upper().replace("-", "").replace("_", "")
+        )
         if design_type in ("CCD", "CENTRALCOMPOSITE"):
             return self._ccd(args, k, factors)
         if design_type in ("BB", "BOXBEHNKEN"):
@@ -434,31 +752,13 @@ class DOETool(HuginnTool):
     def _ccd(self, args: DOEInput, k: int, factors: list[dict]) -> ToolResult:
         centers, half_ranges = self._factor_centers(factors)
         # 可旋转 α = (2^k)^(1/4)
-        alpha = (2.0 ** k) ** 0.25
+        alpha = (2.0**k) ** 0.25
 
-        def to_actual(coded: list[float]) -> dict[str, Any]:
-            return {
-                factors[i]["name"]: centers[i] + coded[i] * half_ranges[i]
-                for i in range(k)
-            }
-
-        paired: list[tuple[dict[str, Any], str]] = []
-        # 角点 2^k
-        for combo in itertools.product([-1.0, 1.0], repeat=k):
-            paired.append((to_actual(list(combo)), "factorial"))
-        # 轴点 2k
-        for i in range(k):
-            for sign in (-1.0, 1.0):
-                coded = [0.0] * k
-                coded[i] = sign * alpha
-                paired.append((to_actual(coded), "axial"))
-        # 中心点
-        for _ in range(args.center_points):
-            paired.append((to_actual([0.0] * k), "center"))
-
-        if args.randomize:
-            rng = random.Random(args.seed)
-            rng.shuffle(paired)
+        paired = [
+            (_coded_to_actual(factors, centers, half_ranges, coded), ptype)
+            for coded, ptype in _ccd_points(k, alpha, args.center_points)
+        ]
+        _shuffle_paired(paired, args)
 
         rows = [p[0] for p in paired]
         point_types = [p[1] for p in paired]
@@ -475,13 +775,13 @@ class DOETool(HuginnTool):
                     "design_type": "CCD",
                     "alpha": alpha,
                     "n_center": args.center_points,
-                    "n_factorial": 2 ** k,
+                    "n_factorial": 2**k,
                     "n_axial": 2 * k,
                     "rotatable": True,
                     "point_types": point_types,
                 },
                 "summary": (
-                    f"CCD 中心复合设计：2^{k}+{2*k}+{args.center_points}"
+                    f"CCD 中心复合设计：2^{k}+{2 * k}+{args.center_points}"
                     f" = {len(rows)} runs，α={alpha:.4f}"
                 ),
             },
@@ -493,27 +793,11 @@ class DOETool(HuginnTool):
             raise ValueError("Box-Behnken 设计至少需要 3 个因子")
         centers, half_ranges = self._factor_centers(factors)
 
-        def to_actual(coded: list[float]) -> dict[str, Any]:
-            return {
-                factors[i]["name"]: centers[i] + coded[i] * half_ranges[i]
-                for i in range(k)
-            }
-
-        paired: list[tuple[dict[str, Any], str]] = []
-        # 每对因子做 2^2 子设计，其余因子保持中心
-        for i, j in itertools.combinations(range(k), 2):
-            for si in (-1.0, 1.0):
-                for sj in (-1.0, 1.0):
-                    coded = [0.0] * k
-                    coded[i] = si
-                    coded[j] = sj
-                    paired.append((to_actual(coded), "edge"))
-        for _ in range(args.center_points):
-            paired.append((to_actual([0.0] * k), "center"))
-
-        if args.randomize:
-            rng = random.Random(args.seed)
-            rng.shuffle(paired)
+        paired = [
+            (_coded_to_actual(factors, centers, half_ranges, coded), ptype)
+            for coded, ptype in _bb_points(k, args.center_points)
+        ]
+        _shuffle_paired(paired, args)
 
         rows = [p[0] for p in paired]
         point_types = [p[1] for p in paired]
@@ -592,68 +876,16 @@ class DOETool(HuginnTool):
     # ── 功效/样本量计算 ────────────────────────────────────────
     def _power(self, args: DOEInput) -> ToolResult:
         """a-priori 样本量计算, 包装 statsmodels power 类."""
-        import math as _math
-
-        from statsmodels.stats.power import (
-            FTestAnovaPower,
-            GofChisquarePower,
-            TTestIndPower,
-        )
+        classes = _power_classes()
 
         if args.effect_size is None or args.effect_size == 0:
-            raise ValueError("effect_size 不能为 0 (无穷样本)，请基于文献/预实验给非零值")
+            raise ValueError(
+                "effect_size 不能为 0 (无穷样本)，请基于文献/预实验给非零值"
+            )
         effect = abs(args.effect_size)  # 双侧检验只看绝对值
 
-        if args.test_type == "ttest":
-            n1 = _math.ceil(TTestIndPower().solve_power(
-                effect_size=effect, alpha=args.alpha, power=args.power_target,
-                ratio=args.sample_ratio, alternative="two-sided",
-            ))
-            n2 = _math.ceil(n1 * args.sample_ratio)
-            return ToolResult(data={
-                "action": "power",
-                "test": "ttest",
-                "n_per_group": [n1, n2],
-                "total_n": n1 + n2,
-                "parameters": {"effect_size": effect, "alpha": args.alpha,
-                               "power": args.power_target, "ratio": args.sample_ratio},
-                "summary": f"两样本 t 检验: 组1 N={n1}, 组2 N={n2}, 总 N={n1+n2}",
-            }, success=True)
-
-        if args.test_type == "anova":
-            if args.n_groups < 2:
-                raise ValueError("anova power 至少需要 2 组")
-            n_total_f = FTestAnovaPower().solve_power(
-                effect_size=effect, alpha=args.alpha,
-                power=args.power_target, k_groups=args.n_groups,
-            )
-            per = _math.ceil(n_total_f / args.n_groups)
-            n_total = per * args.n_groups
-            return ToolResult(data={
-                "action": "power",
-                "test": "anova",
-                "n_per_group": per,
-                "total_n": n_total,
-                "parameters": {"effect_size": effect, "alpha": args.alpha,
-                               "power": args.power_target, "k_groups": args.n_groups},
-                "summary": f"ANOVA ({args.n_groups} 组): 每组 N={per}, 总 N={n_total}",
-            }, success=True)
-
-        # chisq
-        if args.n_bins < 2:
-            raise ValueError("chisq power 至少需要 2 个类别")
-        n = _math.ceil(GofChisquarePower().solve_power(
-            effect_size=effect, alpha=args.alpha,
-            power=args.power_target, n_bins=args.n_bins,
-        ))
-        return ToolResult(data={
-            "action": "power",
-            "test": "chisq",
-            "total_n": n,
-            "parameters": {"effect_size": effect, "alpha": args.alpha,
-                           "power": args.power_target, "n_bins": args.n_bins},
-            "summary": f"卡方检验: 总 N={n}",
-        }, success=True)
+        data, summary = _POWER_CALCULATORS[args.test_type](effect, args, classes)
+        return ToolResult(data={**data, "summary": summary}, success=True)
 
     # ── 随机化分配方案 ─────────────────────────────────────────
     def _alloc(self, args: DOEInput) -> ToolResult:
@@ -666,72 +898,22 @@ class DOETool(HuginnTool):
         rng = random.Random(args.seed)
         design = args.alloc_design
 
-        if design == "simple":
-            if not args.n_units or args.n_units < 1:
-                raise ValueError("simple 分配需要 n_units >= 1")
-            alloc = [(i + 1, rng.choice(arms)) for i in range(args.n_units)]
-            header = ["unit", "arm"]
-
-        elif design == "block":
-            if not args.n_units or args.n_units < 1:
-                raise ValueError("block 分配需要 n_units >= 1")
-            unit_block = []
-            for a in arms:
-                unit_block += [a] * args.block_size
-            alloc, i = [], 0
-            while len(alloc) < args.n_units:
-                b = unit_block[:]
-                rng.shuffle(b)
-                for a in b:
-                    if len(alloc) >= args.n_units:
-                        break
-                    i += 1
-                    alloc.append((i, a))
-            header = ["unit", "arm"]
-
-        elif design == "stratified":
-            if not args.strata:
-                raise ValueError("stratified 分配需要 strata={层名: 数量}")
-            ratio = args.alloc_ratio or [1] * len(arms)
-            if len(ratio) != len(arms):
-                raise ValueError(f"alloc_ratio 项数({len(ratio)}) 必须等于臂数({len(arms)})")
-            unit = []
-            for a, r in zip(arms, ratio):
-                unit += [a] * r
-            alloc = []
-            for stratum, cnt in args.strata.items():
-                i = 0
-                while i < cnt:
-                    b = unit[:]
-                    rng.shuffle(b)
-                    for a in b:
-                        if i >= cnt:
-                            break
-                        i += 1
-                        alloc.append((stratum, i, a))
-            header = ["stratum", "unit", "arm"]
-
-        elif design == "cluster":
-            if not args.clusters:
-                raise ValueError("cluster 分配需要 clusters 列表")
-            if len(args.clusters) < len(arms):
-                raise ValueError(f"整群数({len(args.clusters)}) 少于臂数({len(arms)})")
-            cl = args.clusters[:]
-            rng.shuffle(cl)
-            alloc = [(c, arms[i % len(arms)]) for i, c in enumerate(cl)]
-            header = ["cluster", "arm"]
-
-        else:
+        build = _ALLOC_BUILDERS.get(design or "")
+        if build is None:
             raise ValueError(f"未知 alloc_design: {design}")
+        alloc, header = build(args, arms, rng)
 
         balance = dict(Counter(r[-1] for r in alloc))
-        return ToolResult(data={
-            "action": "randomize",
-            "alloc_design": design,
-            "allocation": [list(r) for r in alloc],
-            "header": header,
-            "balance": balance,
-            "n_units": len(alloc),
-            "seed": args.seed,
-            "summary": f"{design} 随机化, seed={args.seed}, 各臂计数: {balance}",
-        }, success=True)
+        return ToolResult(
+            data={
+                "action": "randomize",
+                "alloc_design": design,
+                "allocation": [list(r) for r in alloc],
+                "header": header,
+                "balance": balance,
+                "n_units": len(alloc),
+                "seed": args.seed,
+                "summary": f"{design} 随机化, seed={args.seed}, 各臂计数: {balance}",
+            },
+            success=True,
+        )

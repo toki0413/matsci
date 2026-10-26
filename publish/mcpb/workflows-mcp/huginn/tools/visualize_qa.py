@@ -52,9 +52,7 @@ def _load_gray_resized(
     meta: dict[str, Any] = {"orig_width": w, "orig_height": h, "downscaled": False}
     if max_dim and max(w, h) > max_dim:
         scale = max_dim / max(w, h)
-        img = img.resize(
-            (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
-        )
+        img = img.resize((max(1, int(round(w * scale))), max(1, int(round(h * scale)))))
         meta["downscaled"] = True
     arr = np.asarray(img, dtype=float)
     meta["width"], meta["height"] = arr.shape[1], arr.shape[0]
@@ -92,7 +90,11 @@ def check_blank(gray: np.ndarray) -> tuple[str | None, dict[str, Any]]:
     std = float(gray.std())
     non_bg = _content_ratio(gray)
     flag = "blank" if (std < 3.0 or non_bg < 0.01) else None
-    return flag, {"std": std, "non_bg_ratio": non_bg, "bg_level": _background_level(gray)}
+    return flag, {
+        "std": std,
+        "non_bg_ratio": non_bg,
+        "bg_level": _background_level(gray),
+    }
 
 
 def check_clipped(
@@ -121,9 +123,7 @@ def check_aspect(
     """极端纵横比 → 可能被拉伸/压缩失真."""
     h, w = gray.shape
     ratio = w / h if h > 0 else 0.0
-    flag = (
-        "extremely_elongated" if (ratio < min_ratio or ratio > max_ratio) else None
-    )
+    flag = "extremely_elongated" if (ratio < min_ratio or ratio > max_ratio) else None
     return flag, {"width": w, "height": h, "aspect": float(ratio)}
 
 
@@ -146,6 +146,30 @@ def check_cluttered(
     edge = float((np.hypot(sx, sy) > 50).mean())
     flag = "cluttered" if edge > edge_thresh else None
     return flag, {"inner_edge_density": edge}
+
+
+def _run_checks(gray, result: dict[str, Any]) -> None:
+    """逐个跑确定性检查, 记录 metrics / flags / remedies; 单个失败不阻断整体."""
+    for fn in (check_blank, check_clipped, check_aspect, check_cluttered):
+        try:
+            flag, m = fn(gray)
+        except Exception as exc:  # 单个检查失败不阻断整体
+            logger.debug("visualize_qa: check %s failed", fn.__name__, exc_info=True)
+            result["metrics"][fn.__name__] = {"error": str(exc)}
+            continue
+        result["metrics"][fn.__name__] = m
+        if flag:
+            result["flags"].append(flag)
+            result["remedies"].append(FLAG_REMEDIES[flag])
+
+
+def _verdict_for(flags: list[str]) -> str:
+    """按 flags 判定 verdict: blank/clipped 直接 fail; 其余问题 fix_needed."""
+    if not flags:
+        return VERDICT_PASS
+    if any(f in ("blank", "clipped") for f in flags):
+        return VERDICT_FAIL
+    return VERDICT_FIX
 
 
 def qa_figure(
@@ -181,24 +205,9 @@ def qa_figure(
         return result
 
     result["metrics"]["image"] = meta
-    for fn in (check_blank, check_clipped, check_aspect, check_cluttered):
-        try:
-            flag, m = fn(gray)
-        except Exception as exc:  # 单个检查失败不阻断整体
-            logger.debug("visualize_qa: check %s failed", fn.__name__, exc_info=True)
-            result["metrics"][fn.__name__] = {"error": str(exc)}
-            continue
-        result["metrics"][fn.__name__] = m
-        if flag:
-            result["flags"].append(flag)
-            result["remedies"].append(FLAG_REMEDIES[flag])
+    _run_checks(gray, result)
 
-    if not result["flags"]:
-        result["verdict"] = VERDICT_PASS
-    elif any(f in ("blank", "clipped") for f in result["flags"]):
-        result["verdict"] = VERDICT_FAIL
-    else:
-        result["verdict"] = VERDICT_FIX
+    result["verdict"] = _verdict_for(result["flags"])
     return result
 
 
