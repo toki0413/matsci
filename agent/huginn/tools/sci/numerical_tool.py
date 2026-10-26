@@ -883,12 +883,27 @@ class NumericalTool(HuginnTool):
 
     @staticmethod
     def _convex_solve(cp: Any, prob: Any, x: Any) -> ToolResult:
-        """Solve the cvxpy problem and package the outcome."""
-        try:
-            prob.solve()
-        except Exception as e:
+        """Solve the cvxpy problem and package the outcome.
+
+        Solver preference: CLARABEL → SCS → cvxpy default. cvxpy's default QP
+        solver is OSQP, and osqp 1.x hard-crashes (segfault) in processes that
+        have loaded many other C extensions -- which is exactly the state of
+        the server and of a full test-suite run, where every tool is imported.
+        The first two are self-contained wheels without that failure mode.
+        """
+        last_error: Exception | None = None
+        for solver in ("CLARABEL", "SCS", None):
+            try:
+                if solver is None:
+                    prob.solve()
+                else:
+                    prob.solve(solver=solver)
+                break
+            except Exception as e:  # solver may not fit this problem class
+                last_error = e
+        else:
             return ToolResult(
-                data=None, success=False, error=f"cvxpy solve failed: {e}"
+                data=None, success=False, error=f"cvxpy solve failed: {last_error}"
             )
 
         if prob.status in ("optimal", "optimal_inaccurate"):
