@@ -666,6 +666,14 @@ class NumericalTool(HuginnTool):
 
     def _milp(self, args: NumericalToolInput) -> ToolResult:
         """Solve MILP: minimize c@x with linear constraints and integer variables."""
+        if not args.c_vec:
+            # 无目标系数时 PuLP 会把空问题当"已最优"解出来 (status=1, x=[]),
+            # 静默返回 success=True. 这里显式拒绝, 与缺 A 的 svd/matrix_exp 同口径.
+            return ToolResult(
+                data=None,
+                success=False,
+                error="milp requires c_vec (objective coefficients)",
+            )
         try:
             from scipy.optimize import milp
         except ImportError:

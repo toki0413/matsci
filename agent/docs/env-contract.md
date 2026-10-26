@@ -327,7 +327,7 @@
 | `HUGINN_WM_SUMMARIZE` | rule | config.py:944, memory/session.py:243 | memory/session.py:448, memory/session.py:470, memory/session.py:487, +1 处, memory/session.py:399, memory/session.py:407 | code-set |
 | `HUGINN_WM_SUMMARIZE_EVERY_N` | 5 | config.py:952, memory/session.py:68 | — | external |
 | `HUGINN_WM_TOKEN_BUDGET` | 8192 | config.py:948, memory/session.py:63 | — | external |
-| `HUGINN_WORKSPACE` | . | cli/causal_runner.py:284, config.py:828, config.py:1524, +11 处 | autoloop/cognitive_loop.py:1892 | code-set |
+| `HUGINN_WORKSPACE` | . | autoloop/cognitive_loop.py:4415, cli/causal_runner.py:284, config.py:828, +12 处 | autoloop/cognitive_loop.py:1892, autoloop/cognitive_loop.py:4438, autoloop/cognitive_loop.py:4436 | code-set |
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:60 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:61 | — | external |
 
