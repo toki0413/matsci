@@ -1470,13 +1470,18 @@ BUDGET_SPECS: tuple[dict, ...] = (
         "owner_kind": "ci_step",
         "direction": "cap",
     },
+    # 显式决策 (2026-10-26, PR #59): 24 → 25. setuptools GHSA-xmj3-9gf7-h52w
+    # (fix 84.1.0) 仅 Windows legacy wheel 的 install_as_egg 路径可写出
+    # destination_eggdir 之外, Linux/macOS 安装路径不经过该分支; 且被 fairchem-core
+    # (含最新 2.24.0) 硬约束 setuptools<81.0.0 锁死在 80.10.2, 无法升级. 与已豁免的
+    # GHSA-h35f-9h28-mq5c 同一根因、同一可选组, 故同口径放行而非放宽其它门.
     {
         "id": "pip_audit_ignore",
         "name": "pip-audit 漏洞豁免数",
         "path": ".github/workflows/ci.yml",
         "root": "repo",
         "source": "ceiling",
-        "value": 24,
+        "value": 25,
         "probe": "regex_match_count",
         # 只数真正的 `--ignore-vuln <ID>` 标志 (ID 首字符为大写/数字), 排除注释里的同名字样.
         "pattern": r"--ignore-vuln\s+[A-Z]",
