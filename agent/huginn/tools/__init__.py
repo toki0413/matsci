@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import sys
@@ -317,6 +318,29 @@ def validate_tool_specs() -> list[str]:
     return resolved
 
 
+def _record_import(node: ast.AST, deps: set[str], internal_targets: list[str]) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            top = alias.name.split(".")[0]
+            if top.startswith("huginn"):
+                internal_targets.append(alias.name)
+            else:
+                deps.add(top)
+    elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+        top = node.module.split(".")[0]
+        if top.startswith("huginn"):
+            internal_targets.append(node.module)
+        else:
+            deps.add(top)
+
+
+def _walk_imports(node: ast.AST, deps: set[str], internal_targets: list[str]) -> None:
+    """Collect imports nested inside a function/class body (lazy deps)."""
+    for child in ast.iter_child_nodes(node):
+        _record_import(child, deps, internal_targets)
+        _walk_imports(child, deps, internal_targets)
+
+
 def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     """Collect the set of third-party packages a module depends on.
 
@@ -334,7 +358,6 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     Returns raw top-level names (stdlib / huginn / third-party); the caller
     filters out stdlib and huginn-internal.
     """
-    import ast
     import importlib.util
     import tokenize
 
@@ -348,33 +371,12 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     internal_targets: list[str] = []
     has_logic = False
 
-    def _collect(node: ast.AST) -> None:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top = alias.name.split(".")[0]
-                if top.startswith("huginn"):
-                    internal_targets.append(alias.name)
-                else:
-                    deps.add(top)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            top = node.module.split(".")[0]
-            if top.startswith("huginn"):
-                internal_targets.append(node.module)
-            else:
-                deps.add(top)
-
-    def _walk_body(node: ast.AST) -> None:
-        """Collect imports nested inside a function/class body (lazy deps)."""
-        for child in ast.iter_child_nodes(node):
-            _collect(child)
-            _walk_body(child)
-
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             has_logic = True
-            _walk_body(node)
+            _walk_imports(node, deps, internal_targets)
         else:
-            _collect(node)
+            _record_import(node, deps, internal_targets)
 
     # Only follow re-export targets for pure shims (no logic). This surfaces a
     # shim's real deps without letting a tool inherit a broad facade's params.
@@ -501,6 +503,41 @@ def register_core_tools(config: Any | None = None) -> list[str]:
     return ToolRegistry.list_tools()
 
 
+def _register_science_skills_bridge(registered: list[str]) -> None:
+    # Science-skills bridge
+    try:
+        from huginn.plugins.science_skills_bridge import register_science_skills
+
+        science_names = register_science_skills()
+        registered.extend(science_names)
+        logger.info(f"Registered {len(science_names)} science-skills bridge tools")
+    except Exception as exc:
+        logger.warning(f"Science-skills bridge registration failed: {exc}")
+
+
+def _probe_optional_dependencies(pending: list[tuple[str, str]]) -> None:
+    # Static probe of optional tools' third-party deps — warn loudly when a
+    # tool registers with a name but its backing libraries are absent, so
+    # capability degradation isn't silent.
+    try:
+        probe_tool_dependencies(pending)
+    except Exception as exc:
+        logger.warning(f"Tool dependency probe failed: {exc}")
+
+
+def _start_system_health_monitor() -> None:
+    # Start system health monitor if enabled
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        if FeatureFlags.shared().is_enabled("system_health_monitor"):
+            from huginn.diagnostics.system_health import SystemHealthMonitor
+
+            SystemHealthMonitor.shared().start()
+    except Exception as exc:
+        logger.warning(f"System health monitor failed to start: {exc}")
+
+
 def register_optional_tools(config: Any | None = None) -> list[str]:
     """Register optional simulation/science tools (slow, heavy imports).
 
@@ -523,36 +560,13 @@ def register_optional_tools(config: Any | None = None) -> list[str]:
             f"Skipped {len(skipped)} optional tools (missing deps): {', '.join(skipped[:5])}"
         )
 
-    # Science-skills bridge
-    try:
-        from huginn.plugins.science_skills_bridge import register_science_skills
-
-        science_names = register_science_skills()
-        registered.extend(science_names)
-        logger.info(f"Registered {len(science_names)} science-skills bridge tools")
-    except Exception as exc:
-        logger.warning(f"Science-skills bridge registration failed: {exc}")
+    _register_science_skills_bridge(registered)
 
     _rebuild_dispatch_tables()
 
-    # Static probe of optional tools' third-party deps — warn loudly when a
-    # tool registers with a name but its backing libraries are absent, so
-    # capability degradation isn't silent.
-    try:
-        probe_tool_dependencies(pending)
-    except Exception as exc:
-        logger.warning(f"Tool dependency probe failed: {exc}")
+    _probe_optional_dependencies(pending)
 
-    # Start system health monitor if enabled
-    try:
-        from huginn.feature_flags import FeatureFlags
-
-        if FeatureFlags.shared().is_enabled("system_health_monitor"):
-            from huginn.diagnostics.system_health import SystemHealthMonitor
-
-            SystemHealthMonitor.shared().start()
-    except Exception as exc:
-        logger.warning(f"System health monitor failed to start: {exc}")
+    _start_system_health_monitor()
 
     logger.info(
         f"[tools] registered {len(registered)} optional tools (total: {len(ToolRegistry.list_tools())})"

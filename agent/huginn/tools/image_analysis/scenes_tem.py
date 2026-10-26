@@ -1,4 +1,5 @@
 """TEM 晶格分析 — FFT 径向功率谱 + d-spacing 晶面匹配."""
+
 from __future__ import annotations
 
 import logging
@@ -19,35 +20,46 @@ logger = logging.getLogger(__name__)
 # 数值取常见金属/半导体, 仅做粗略指认, 真要做标定还得知道晶格常数
 _D_SPACING_TABLE: dict[str, float] = {
     # FCC (Au/Ag/Cu/Pt/Al/Ni)
-    "FCC(111)": 0.235, "FCC(200)": 0.204, "FCC(220)": 0.144, "FCC(311)": 0.123,
+    "FCC(111)": 0.235,
+    "FCC(200)": 0.204,
+    "FCC(220)": 0.144,
+    "FCC(311)": 0.123,
     # BCC (Fe/W/Cr/Mo)
-    "BCC(110)": 0.203, "BCC(200)": 0.143, "BCC(211)": 0.117,
+    "BCC(110)": 0.203,
+    "BCC(200)": 0.143,
+    "BCC(211)": 0.117,
     # HCP (Ti/Mg/Zn/Zr)
-    "HCP(100)": 0.247, "HCP(002)": 0.236, "HCP(101)": 0.209,
+    "HCP(100)": 0.247,
+    "HCP(002)": 0.236,
+    "HCP(101)": 0.209,
     # 石墨/石墨烯
-    "Graphite(002)": 0.335, "Graphite(100)": 0.213, "Graphite(110)": 0.123,
+    "Graphite(002)": 0.335,
+    "Graphite(100)": 0.213,
+    "Graphite(110)": 0.123,
     # 硅 (金刚石立方)
-    "Si(111)": 0.314, "Si(220)": 0.192, "Si(311)": 0.164,
+    "Si(111)": 0.314,
+    "Si(220)": 0.192,
+    "Si(311)": 0.164,
     # TiO2 锐钛矿常见面
-    "Anatase(101)": 0.352, "Anatase(200)": 0.189,
+    "Anatase(101)": 0.352,
+    "Anatase(200)": 0.189,
 }
 
 
-def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
-    arr = load_gray(args.image_path)
-    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
-    fft_threshold = args.parameters.get("fft_threshold", None)
-
+def _import_fft() -> tuple[dict[str, Any] | None, Exception | None]:
+    """导入 scipy.fft / scipy.signal 所需算子; 缺失时返回 (None, 异常)."""
     try:
         from scipy.fft import fft2, fftshift
         from scipy.signal import find_peaks
     except ImportError as exc:
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"TEM 晶格分析需要 scipy.fft 和 scipy.signal, 请安装 scipy ({exc})",
-        )
+        return None, exc
+    return {"fft2": fft2, "fftshift": fftshift, "find_peaks": find_peaks}, None
 
+
+def _radial_spectrum(
+    arr: np.ndarray, fft2: Any, fftshift: Any
+) -> tuple[np.ndarray, np.ndarray]:
+    """减均值后做 FFT, 再算径向平均功率谱 (去 DC)."""
     # 减均值后做 FFT, 抑制 DC
     fft = fftshift(fft2(arr - arr.mean()))
     power = np.abs(fft) ** 2
@@ -57,25 +69,23 @@ def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
     y, x = np.indices(power.shape)
     r = np.sqrt((x - cx) ** 2 + (y - cy) ** 2).astype(int)
     r_flat = r.ravel()
-    radial = (
-        np.bincount(r_flat, power.ravel())
-        / np.maximum(np.bincount(r_flat), 1)
-    )
+    radial = np.bincount(r_flat, power.ravel()) / np.maximum(np.bincount(r_flat), 1)
     radial[:1] = 0.0  # 去 DC
+    return power, radial
 
-    thr = float(np.max(radial) * 0.1) if fft_threshold is None else float(fft_threshold)
 
-    peaks, _ = find_peaks(radial, height=thr, distance=3)
-
+def _d_spacing_entries(
+    peaks: np.ndarray, pixel_size: float, n_max: float
+) -> list[dict[str, Any]]:
+    """像素频率 → d-spacing, 并在参考表里找最近晶面."""
     # 像素频率 → d-spacing
     # 径向距离 r 对应频率 f = r / N (cycles/pixel), 周期 = 1/f = N/r px
     # d = 周期 * pixel_size
-    N = float(max(arr.shape))
     d_entries: list[dict[str, Any]] = []
     for r_val in peaks:
         if r_val <= 0:
             continue
-        d_nm = pixel_size * N / float(r_val)
+        d_nm = pixel_size * n_max / float(r_val)
         entry: dict[str, Any] = {
             "freq_px": int(r_val),
             "d_nm": float(d_nm),
@@ -95,8 +105,11 @@ def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
         d_entries.append(entry)
 
     d_entries.sort(key=lambda e: e["freq_px"])
+    return d_entries
 
-    # 2D FFT 局部峰值 (找最强的几个峰, 用于判断晶格方向)
+
+def _fft_peaks_2d(power: np.ndarray, thr: float) -> list[dict[str, int]]:
+    """2D FFT 局部峰值 (找最强的几个峰, 用于判断晶格方向)."""
     peak_2d: list[dict[str, int]] = []
     try:
         local_max = power > thr
@@ -106,18 +119,55 @@ def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
             vals = power[ys, xs]
             order = np.argsort(vals)[::-1][:10]
             for i in order:
-                peak_2d.append({"y": int(ys[i]), "x": int(xs[i]), "power": float(vals[i])})
+                peak_2d.append(
+                    {"y": int(ys[i]), "x": int(xs[i]), "power": float(vals[i])}
+                )
     except Exception:
         logger.debug("tem lattice failed", exc_info=True)
+    return peak_2d
 
+
+def _tem_summary(peaks: np.ndarray, d_entries: list[dict[str, Any]]) -> str:
+    """按是否命中 FFT 峰生成 summary."""
     if d_entries:
-        summary = (
+        return (
             f"TEM 晶格分析: 检测到 {len(peaks)} 个径向 FFT 峰, "
             f"最强 d={d_entries[0]['d_nm']:.3f} nm"
-            + (f" → {d_entries[0]['matched_plane']}" if d_entries[0].get("matched_plane") else "")
+            + (
+                f" → {d_entries[0]['matched_plane']}"
+                if d_entries[0].get("matched_plane")
+                else ""
+            )
         )
-    else:
-        summary = "TEM 晶格分析: 未检测到明显 FFT 峰, 检查 fft_threshold 或图片质量"
+    return "TEM 晶格分析: 未检测到明显 FFT 峰, 检查 fft_threshold 或图片质量"
+
+
+def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
+    arr = load_gray(args.image_path)
+    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
+    fft_threshold = args.parameters.get("fft_threshold", None)
+
+    ops, fft_err = _import_fft()
+    if ops is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"TEM 晶格分析需要 scipy.fft 和 scipy.signal, 请安装 scipy ({fft_err})",
+        )
+
+    power, radial = _radial_spectrum(arr, ops["fft2"], ops["fftshift"])
+
+    thr = float(np.max(radial) * 0.1) if fft_threshold is None else float(fft_threshold)
+
+    peaks, _ = ops["find_peaks"](radial, height=thr, distance=3)
+
+    n_max = float(max(arr.shape))
+    d_entries = _d_spacing_entries(peaks, pixel_size, n_max)
+
+    # 2D FFT 局部峰值 (找最强的几个峰, 用于判断晶格方向)
+    peak_2d = _fft_peaks_2d(power, thr)
+
+    summary = _tem_summary(peaks, d_entries)
 
     data = {
         "summary": summary,

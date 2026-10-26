@@ -32,6 +32,7 @@
   - confirmed=False 时显式警告, 不静默用 LLM 草稿
   - 不实现 L3 反事实 (需 abduction, 留 Phase 3)
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── 核心算法: Monte Carlo do-calculus ────────────────────────
+
 
 def _simulate_once(
     scm: VisualSCM,
@@ -89,6 +91,134 @@ def _simulate_once(
     return values
 
 
+def _validate_request(
+    scm: VisualSCM,
+    intervention: dict[str, float],
+    targets: list[str],
+) -> dict[str, Any] | None:
+    """校验 targets / intervention 节点与取值范围; 返回 error dict 或 None."""
+    # 校验: targets 在 SCM 里
+    missing = [t for t in targets if t not in scm.nodes]
+    if missing:
+        return {
+            "error": f"targets 不在 SCM 节点里: {missing}",
+            "scm_nodes": list(scm.nodes.keys()),
+        }
+    # 校验: intervention 节点在 SCM 里
+    bad_interv = [k for k in intervention if k not in scm.nodes]
+    if bad_interv:
+        return {
+            "error": f"intervention 节点不在 SCM: {bad_interv}",
+            "scm_nodes": list(scm.nodes.keys()),
+        }
+    # 校验: 干预值在合理范围
+    for k, v in intervention.items():
+        var = scm.nodes[k]
+        if var.range:
+            lo, hi = var.range
+            if v < lo or v > hi:
+                logger.warning("干预值 %s=%s 超出范围 [%s, %s]", k, v, lo, hi)
+    return None
+
+
+def _monte_carlo_samples(
+    scm: VisualSCM,
+    intervention: dict[str, float],
+    targets: list[str],
+    base_conditions: dict[str, float] | None,
+    n_samples: int,
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    """Monte Carlo 采样: 返回 (干预组样本, 对照组样本)."""
+    target_samples: dict[str, list[float]] = {t: [] for t in targets}
+    baseline_samples: dict[str, list[float]] = {t: [] for t in targets}
+
+    for _ in range(n_samples):
+        # 干预组
+        sim_interv = _simulate_once(scm, intervention, base_conditions)
+        for t in targets:
+            target_samples[t].append(sim_interv.get(t, 0.0))
+        # 对照组 (无干预, 用 base_conditions 或 SCM 默认)
+        sim_base = _simulate_once(scm, {}, base_conditions)
+        for t in targets:
+            baseline_samples[t].append(sim_base.get(t, 0.0))
+    return target_samples, baseline_samples
+
+
+def _stats(samples: list[float]) -> dict[str, Any]:
+    if not samples:
+        return {"mean": 0, "std": 0}
+    s_sorted = sorted(samples)
+    n = len(s_sorted)
+    return {
+        "mean": statistics.mean(samples),
+        "std": statistics.stdev(samples) if n > 1 else 0.0,
+        "p5": s_sorted[int(0.05 * n)],
+        "p50": s_sorted[int(0.50 * n)],
+        "p95": s_sorted[int(0.95 * n)],
+        "min": s_sorted[0],
+        "max": s_sorted[-1],
+        "histogram": _histogram(samples, 10),
+    }
+
+
+def _histogram(samples: list[float], bins: int) -> list[int]:
+    if not samples:
+        return [0] * bins
+    lo, hi = min(samples), max(samples)
+    if lo == hi:
+        return [len(samples)] + [0] * (bins - 1)
+    width = (hi - lo) / bins
+    counts = [0] * bins
+    for v in samples:
+        idx = min(int((v - lo) / width), bins - 1)
+        counts[idx] += 1
+    return counts
+
+
+def _compute_delta(
+    targets_stats: dict[str, Any],
+    baseline_stats: dict[str, Any],
+    targets: list[str],
+) -> dict[str, Any]:
+    """delta: 干预 vs 对照."""
+    delta: dict[str, Any] = {}
+    for t in targets:
+        m_int = targets_stats[t]["mean"]
+        m_base = baseline_stats[t]["mean"]
+        # ponytail: 1e-30 而非 1e-12, diffusion 的 D≈1e-14 量级, 1e-12 会被当 0
+        rel = (m_int - m_base) / m_base if abs(m_base) > 1e-30 else 0.0
+        delta[t] = {
+            "mean_delta": m_int - m_base,
+            "relative_delta": rel,
+            "significant": abs(rel) > 0.05,  # 5% 阈值
+        }
+    return delta
+
+
+def _build_result(
+    scm: VisualSCM,
+    intervention: dict[str, float],
+    targets: list[str],
+    target_samples: dict[str, list[float]],
+    baseline_samples: dict[str, list[float]],
+    base_conditions: dict[str, float] | None,
+    n_samples: int,
+) -> dict[str, Any]:
+    """组装结果 dict (键顺序与原实现一致)."""
+    return {
+        "targets": {t: _stats(target_samples[t]) for t in targets},
+        "baseline": {t: _stats(baseline_samples[t]) for t in targets},
+        "intervention": intervention,
+        "base_conditions": base_conditions or {},
+        "scm_name": scm.name,
+        "scm_confirmed": scm.confirmed,
+        "scm_source": scm.source,
+        "scm_notes": scm.notes,
+        "n_samples": n_samples,
+        "warning": None,
+    }
+
+
 def predict_intervention(
     scm: VisualSCM,
     intervention: dict[str, float],
@@ -116,98 +246,31 @@ def predict_intervention(
           "n_samples": int,
         }
     """
-    # 校验: targets 在 SCM 里
-    missing = [t for t in targets if t not in scm.nodes]
-    if missing:
-        return {
-            "error": f"targets 不在 SCM 节点里: {missing}",
-            "scm_nodes": list(scm.nodes.keys()),
-        }
-    # 校验: intervention 节点在 SCM 里
-    bad_interv = [k for k in intervention if k not in scm.nodes]
-    if bad_interv:
-        return {
-            "error": f"intervention 节点不在 SCM: {bad_interv}",
-            "scm_nodes": list(scm.nodes.keys()),
-        }
-    # 校验: 干预值在合理范围
-    for k, v in intervention.items():
-        var = scm.nodes[k]
-        if var.range:
-            lo, hi = var.range
-            if v < lo or v > hi:
-                logger.warning("干预值 %s=%s 超出范围 [%s, %s]", k, v, lo, hi)
+    error = _validate_request(scm, intervention, targets)
+    if error is not None:
+        return error
 
-    # Monte Carlo 采样
-    target_samples: dict[str, list[float]] = {t: [] for t in targets}
-    baseline_samples: dict[str, list[float]] = {t: [] for t in targets}
+    target_samples, baseline_samples = _monte_carlo_samples(
+        scm, intervention, targets, base_conditions, n_samples
+    )
 
-    for _ in range(n_samples):
-        # 干预组
-        sim_interv = _simulate_once(scm, intervention, base_conditions)
-        for t in targets:
-            target_samples[t].append(sim_interv.get(t, 0.0))
-        # 对照组 (无干预, 用 base_conditions 或 SCM 默认)
-        sim_base = _simulate_once(scm, {}, base_conditions)
-        for t in targets:
-            baseline_samples[t].append(sim_base.get(t, 0.0))
+    result = _build_result(
+        scm,
+        intervention,
+        targets,
+        target_samples,
+        baseline_samples,
+        base_conditions,
+        n_samples,
+    )
+    return _finalize_result(result, scm, targets)
 
-    # 统计
-    def _stats(samples: list[float]) -> dict[str, Any]:
-        if not samples:
-            return {"mean": 0, "std": 0}
-        s_sorted = sorted(samples)
-        n = len(s_sorted)
-        return {
-            "mean": statistics.mean(samples),
-            "std": statistics.stdev(samples) if n > 1 else 0.0,
-            "p5": s_sorted[int(0.05 * n)],
-            "p50": s_sorted[int(0.50 * n)],
-            "p95": s_sorted[int(0.95 * n)],
-            "min": s_sorted[0],
-            "max": s_sorted[-1],
-            "histogram": _histogram(samples, 10),
-        }
 
-    def _histogram(samples: list[float], bins: int) -> list[int]:
-        if not samples:
-            return [0] * bins
-        lo, hi = min(samples), max(samples)
-        if lo == hi:
-            return [len(samples)] + [0] * (bins - 1)
-        width = (hi - lo) / bins
-        counts = [0] * bins
-        for v in samples:
-            idx = min(int((v - lo) / width), bins - 1)
-            counts[idx] += 1
-        return counts
-
-    result: dict[str, Any] = {
-        "targets": {t: _stats(target_samples[t]) for t in targets},
-        "baseline": {t: _stats(baseline_samples[t]) for t in targets},
-        "intervention": intervention,
-        "base_conditions": base_conditions or {},
-        "scm_name": scm.name,
-        "scm_confirmed": scm.confirmed,
-        "scm_source": scm.source,
-        "scm_notes": scm.notes,
-        "n_samples": n_samples,
-        "warning": None,
-    }
-
-    # delta: 干预 vs 对照
-    delta: dict[str, Any] = {}
-    for t in targets:
-        m_int = result["targets"][t]["mean"]
-        m_base = result["baseline"][t]["mean"]
-        # ponytail: 1e-30 而非 1e-12, diffusion 的 D≈1e-14 量级, 1e-12 会被当 0
-        rel = (m_int - m_base) / m_base if abs(m_base) > 1e-30 else 0.0
-        delta[t] = {
-            "mean_delta": m_int - m_base,
-            "relative_delta": rel,
-            "significant": abs(rel) > 0.05,  # 5% 阈值
-        }
-    result["delta"] = delta
+def _finalize_result(
+    result: dict[str, Any], scm: VisualSCM, targets: list[str]
+) -> dict[str, Any]:
+    """补 delta 与未确认警告, 就地写回 result."""
+    result["delta"] = _compute_delta(result["targets"], result["baseline"], targets)
 
     # 警告: 未确认 SCM
     if not scm.confirmed:
@@ -215,7 +278,6 @@ def predict_intervention(
             f"SCM '{scm.name}' 未确认 (source={scm_source_str(scm.source)}). "
             "预测结果仅供参考, 建议用户审核 SCM 结构后再用于决策."
         )
-
     return result
 
 
@@ -230,6 +292,7 @@ def scm_source_str(source: str) -> str:
 
 # ── HuginnTool 包装 ──────────────────────────────────────────
 
+
 class PredictInterventionInput(BaseModel):
     scm_name: str = Field(
         ...,
@@ -240,15 +303,15 @@ class PredictInterventionInput(BaseModel):
     )
     intervention: dict[str, float] = Field(
         ...,
-        description="干预 do(X=v), e.g. {\"T\": 1500} 表示把温度设为 1500K",
+        description='干预 do(X=v), e.g. {"T": 1500} 表示把温度设为 1500K',
     )
     targets: list[str] = Field(
         ...,
-        description="要预测的节点名列表, e.g. [\"particle_size\", \"density\"]",
+        description='要预测的节点名列表, e.g. ["particle_size", "density"]',
     )
     base_conditions: dict[str, float] = Field(
         default_factory=dict,
-        description="非干预的条件节点取值, e.g. {\"t\": 5} 当只干预 T",
+        description='非干预的条件节点取值, e.g. {"t": 5} 当只干预 T',
     )
     n_samples: int = Field(
         default=500,
@@ -287,37 +350,36 @@ class PredictInterventionTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        input_data = args if isinstance(args, PredictInterventionInput) \
+        input_data = (
+            args
+            if isinstance(args, PredictInterventionInput)
             else PredictInterventionInput(**args)
+        )
         if input_data.scm_name not in list_templates():
             return ValidationResult(
                 result=False,
                 message=f"未知 SCM 模板: {input_data.scm_name}. 可用: {list_templates()}",
             )
         if not input_data.intervention:
-            return ValidationResult(
-                result=False, message="intervention 不能为空"
-            )
+            return ValidationResult(result=False, message="intervention 不能为空")
         if not input_data.targets:
-            return ValidationResult(
-                result=False, message="targets 不能为空"
-            )
+            return ValidationResult(result=False, message="targets 不能为空")
         if input_data.n_samples < 10:
-            return ValidationResult(
-                result=False, message="n_samples 至少 10"
-            )
+            return ValidationResult(result=False, message="n_samples 至少 10")
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        input_data = args if isinstance(args, PredictInterventionInput) \
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        input_data = (
+            args
+            if isinstance(args, PredictInterventionInput)
             else PredictInterventionInput(**args)
+        )
         try:
             scm = get_template(input_data.scm_name)
             if scm is None:
                 return ToolResult(
-                    data=None, success=False,
+                    data=None,
+                    success=False,
                     error=f"SCM 模板 '{input_data.scm_name}' 不存在",
                 )
             result = predict_intervention(
@@ -329,7 +391,8 @@ class PredictInterventionTool(HuginnTool):
             )
             success = "error" not in result
             return ToolResult(
-                data=result, success=success,
+                data=result,
+                success=success,
                 error=None if success else result.get("error"),
             )
         except Exception as exc:
@@ -339,15 +402,17 @@ class PredictInterventionTool(HuginnTool):
 
 # ── self-check ───────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """10 项 assert 验证 predict_intervention 核心行为."""
-    from huginn.causal.visual_scm import _template_diffusion, _template_sintering
+
+def _sc_basic_intervention() -> None:
+    """1-2. 基本干预预测 + delta 字段."""
+    from huginn.causal.visual_scm import _template_sintering
 
     scm = _template_sintering()
 
     # 1. 基本干预预测: do(T=1800) → particle_size 升
     r = predict_intervention(
-        scm, intervention={"T": 1800},
+        scm,
+        intervention={"T": 1800},
         targets=["particle_size", "density"],
         base_conditions={"t": 5},
         n_samples=100,
@@ -363,11 +428,17 @@ def _selfcheck() -> None:
     assert "mean_delta" in r["delta"]["particle_size"]
     assert "relative_delta" in r["delta"]["particle_size"]
 
-    # 3. Arrhenius 物理: 用 diffusion 模板验 (sintering Ea=250 在 T<2000 下 exp 项下溢,
+
+def _sc_arrhenius_diffusion() -> None:
+    """3. Arrhenius 物理 (diffusion 模板)."""
+    from huginn.causal.visual_scm import _template_diffusion
+
+    # 用 diffusion 模板验 (sintering Ea=250 在 T<2000 下 exp 项下溢,
     # 信号被噪声盖, 测试会 flaky. diffusion Ea=150 T=800→1000 D 升 ~100x, 信号清晰)
     scm_diff = _template_diffusion()
     r_diff = predict_intervention(
-        scm_diff, intervention={"T": 1000},
+        scm_diff,
+        intervention={"T": 1000},
         targets=["D"],
         base_conditions={"c": 1.0},
         n_samples=200,
@@ -382,9 +453,17 @@ def _selfcheck() -> None:
         f"1e-30 阈值修复失效: rel_delta=0.0 baseline={r_diff['baseline']['D']['mean']:.3e}"
     )
 
+
+def _sc_validation_errors() -> None:
+    """4-6. 非法输入返 error / 超范围只警告."""
+    from huginn.causal.visual_scm import _template_sintering
+
+    scm = _template_sintering()
+
     # 4. targets 不存在返 error
     r = predict_intervention(
-        scm, intervention={"T": 1800},
+        scm,
+        intervention={"T": 1800},
         targets=["nonexistent_node"],
         n_samples=50,
     )
@@ -392,7 +471,8 @@ def _selfcheck() -> None:
 
     # 5. intervention 节点不存在返 error
     r = predict_intervention(
-        scm, intervention={"nonexistent": 1.0},
+        scm,
+        intervention={"nonexistent": 1.0},
         targets=["particle_size"],
         n_samples=50,
     )
@@ -400,19 +480,25 @@ def _selfcheck() -> None:
 
     # 6. 干预值超出范围不报错 (只警告), 仍返结果
     r = predict_intervention(
-        scm, intervention={"T": 99999},  # 远超 range
+        scm,
+        intervention={"T": 99999},  # 远超 range
         targets=["particle_size"],
         n_samples=50,
     )
     assert "error" not in r
     assert "particle_size" in r["targets"]
 
-    # 7. 未确认 SCM 触发警告
+
+def _sc_unconfirmed_warning() -> None:
+    """7. 未确认 SCM 触发警告."""
+    from huginn.causal.visual_scm import _template_sintering
+
     scm_draft = _template_sintering()
     scm_draft.confirmed = False
     scm_draft.source = "llm_draft"
     r = predict_intervention(
-        scm_draft, intervention={"T": 1800},
+        scm_draft,
+        intervention={"T": 1800},
         targets=["particle_size"],
         n_samples=50,
     )
@@ -420,9 +506,17 @@ def _selfcheck() -> None:
     assert r["warning"] is not None
     assert "未确认" in r["warning"]
 
+
+def _sc_sample_statistics() -> None:
+    """8-9. Monte Carlo 统计量 + histogram."""
+    from huginn.causal.visual_scm import _template_sintering
+
+    scm = _template_sintering()
+
     # 8. Monte Carlo 结果统计量合理 (std > 0 当有噪声)
     r = predict_intervention(
-        scm, intervention={"T": 1500},
+        scm,
+        intervention={"T": 1500},
         targets=["particle_size"],
         base_conditions={"t": 5},
         n_samples=200,
@@ -435,10 +529,15 @@ def _selfcheck() -> None:
     assert len(r["targets"]["particle_size"]["histogram"]) == 10
     assert sum(r["targets"]["particle_size"]["histogram"]) == 200
 
-    # 10. diffusion SCM 也能跑
+
+def _sc_diffusion_template() -> None:
+    """10. diffusion SCM 也能跑."""
+    from huginn.causal.visual_scm import _template_diffusion
+
     scm_diff = _template_diffusion()
     r = predict_intervention(
-        scm_diff, intervention={"T": 1500},
+        scm_diff,
+        intervention={"T": 1500},
         targets=["D"],
         base_conditions={"c": 1.0},
         n_samples=100,
@@ -449,6 +548,15 @@ def _selfcheck() -> None:
     d_mean = r["targets"]["D"]["mean"]
     assert 1e-25 < d_mean < 1e-5, f"D={d_mean} 不在物理合理范围"
 
+
+def _selfcheck() -> None:
+    """10 项 assert 验证 predict_intervention 核心行为."""
+    _sc_basic_intervention()
+    _sc_arrhenius_diffusion()
+    _sc_validation_errors()
+    _sc_unconfirmed_warning()
+    _sc_sample_statistics()
+    _sc_diffusion_template()
     print("all self-checks passed")
 
 

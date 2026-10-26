@@ -46,6 +46,25 @@ _WORKFLOW_TEMPLATES: list[str] = [
 # 假设证据状态: pending 默认, 由后续验证流程更新为 verified / unsupported
 _EvidenceStatus = Literal["verified", "pending", "unsupported"]
 
+# 守恒律启发式检查关键词 (与原实现逐字一致)
+_ENERGY_SUSPECT_KEYWORDS = [
+    "创造能量",
+    "产生能量",
+    "efficiency > 100",
+    "效率大于100",
+    "overunity",
+    "perpetual",
+]
+_CHARGE_BALANCED_KEYWORDS = ["balanced", "守恒", "compensated", "平衡"]
+_MASS_TRIGGER_KEYWORDS = [
+    "相变",
+    "phase transition",
+    "反应",
+    "reaction",
+    "decomposition",
+]
+_MASS_BALANCED_KEYWORDS = ["守恒", "conserve", "balanced", "stoichiometric"]
+
 _HYPOTHESIS_SYSTEM_PROMPT = """你是材料科学假设生成专家. 基于给定的研究主题、文献摘要和研究空白, 生成可测试的科学假设.
 
 每个假设必须包含:
@@ -109,9 +128,7 @@ class HypothesisGeneratorInput(BaseModel):
     literature_query: str | None = Field(
         default=None, description="文献检索 query, 留空则用 research_topic"
     )
-    max_hypotheses: int = Field(
-        default=3, ge=1, le=10, description="最多生成几个假设"
-    )
+    max_hypotheses: int = Field(default=3, ge=1, le=10, description="最多生成几个假设")
     target_workflow: str | None = Field(
         default=None,
         description="指定 workflow 模板名, 不指定则由 LLM 自动选",
@@ -128,16 +145,18 @@ def _lit_papers_from_hits(hits: list[Any]) -> list[dict[str, Any]]:
     papers: list[dict[str, Any]] = []
     for h in hits:
         if isinstance(h, dict) and h.get("title"):
-            papers.append({
-                "title": h.get("title", ""),
-                "authors": h.get("authors", []),
-                "year": h.get("year"),
-                "venue": h.get("venue", ""),
-                "doi": h.get("doi"),
-                "abstract": h.get("abstract", "") or "",
-                "url": h.get("url", ""),
-                "citations": h.get("citations"),
-            })
+            papers.append(
+                {
+                    "title": h.get("title", ""),
+                    "authors": h.get("authors", []),
+                    "year": h.get("year"),
+                    "venue": h.get("venue", ""),
+                    "doi": h.get("doi"),
+                    "abstract": h.get("abstract", "") or "",
+                    "url": h.get("url", ""),
+                    "citations": h.get("citations"),
+                }
+            )
     return papers
 
 
@@ -146,16 +165,18 @@ def _lit_papers_from_web(results: list[Any]) -> list[dict[str, Any]]:
     papers: list[dict[str, Any]] = []
     for h in results:
         if isinstance(h, dict):
-            papers.append({
-                "title": h.get("title", ""),
-                "authors": [],
-                "year": None,
-                "venue": "",
-                "doi": None,
-                "abstract": h.get("snippet", h.get("content", "")),
-                "url": h.get("url", ""),
-                "citations": None,
-            })
+            papers.append(
+                {
+                    "title": h.get("title", ""),
+                    "authors": [],
+                    "year": None,
+                    "venue": "",
+                    "doi": None,
+                    "abstract": h.get("snippet", h.get("content", "")),
+                    "url": h.get("url", ""),
+                    "citations": None,
+                }
+            )
     return papers
 
 
@@ -164,17 +185,89 @@ def _lit_papers_from_rag(docs: list[Any]) -> list[dict[str, Any]]:
     papers: list[dict[str, Any]] = []
     for d in docs:
         if isinstance(d, dict):
-            papers.append({
-                "title": d.get("title", d.get("doc_id", "")),
-                "authors": [],
-                "year": None,
-                "venue": "",
-                "doi": None,
-                "abstract": str(d.get("content", d.get("text", "")))[:500],
-                "url": "",
-                "citations": None,
-            })
+            papers.append(
+                {
+                    "title": d.get("title", d.get("doc_id", "")),
+                    "authors": [],
+                    "year": None,
+                    "venue": "",
+                    "doi": None,
+                    "abstract": str(d.get("content", d.get("text", "")))[:500],
+                    "url": "",
+                    "citations": None,
+                }
+            )
     return papers
+
+
+def _acquire_model(
+    tool: HypothesisGeneratorTool, context: ToolContext
+) -> tuple[Any, ToolResult | None]:
+    """拿 LLM 客户端; 初始化失败时返回 (None, 错误结果)."""
+    try:
+        return tool._get_model(context), None
+    except Exception as exc:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error=f"初始化 LLM 客户端失败: {exc}",
+        )
+
+
+async def _postprocess(
+    tool: HypothesisGeneratorTool,
+    hypotheses: list[dict[str, Any]],
+    args: HypothesisGeneratorInput,
+    model: Any,
+    context: ToolContext,
+) -> tuple[list[dict[str, Any]], bool, list[Any], list[Any]]:
+    """排序 → 守恒律检查 → 映射 workflow, 顺序与原实现一致."""
+    ranked = False
+    if args.rank and hypotheses:
+        hypotheses = await tool._rank_hypotheses(hypotheses, context)
+        ranked = True
+
+    conservation_flags = [tool._check_conservation_laws(h) for h in hypotheses]
+
+    workflow_proposals = await tool._map_to_workflow(
+        hypotheses, args.target_workflow, model
+    )
+    return hypotheses, ranked, conservation_flags, workflow_proposals
+
+
+def _literature_data(
+    args: HypothesisGeneratorInput,
+    literature_summary: Any,
+    papers: list[Any],
+    lit_mode: Any,
+    lit_warnings: list[Any],
+    research_gaps: Any,
+) -> dict[str, Any]:
+    """文献部分的 data 键, 顺序与原实现一致."""
+    return {
+        "research_topic": args.research_topic,
+        "literature_summary": literature_summary,
+        "literature_count": len(papers),
+        "literature_mode": lit_mode,
+        "literature_warnings": lit_warnings,
+        "research_gaps": research_gaps,
+    }
+
+
+def _hypotheses_data(
+    hypotheses: list[dict[str, Any]],
+    conservation_flags: list[Any],
+    workflow_proposals: list[Any],
+    ranked: bool,
+) -> dict[str, Any]:
+    """假设部分的 data 键, 顺序与原实现一致."""
+    return {
+        "hypotheses": hypotheses,
+        "conservation_flags": conservation_flags,
+        "workflow_proposals": workflow_proposals,
+        "n_hypotheses": len(hypotheses),
+        "ranked": ranked,
+    }
 
 
 class HypothesisGeneratorTool(HuginnTool):
@@ -207,19 +300,14 @@ class HypothesisGeneratorTool(HuginnTool):
         lit_mode, lit_warnings = self._check_literature_threshold(len(papers))
 
         # 2. 识别研究空白
-        research_gaps = await self._identify_gaps(
-            args.research_topic, papers, context
-        ) or {}
+        research_gaps = (
+            await self._identify_gaps(args.research_topic, papers, context) or {}
+        )
 
         # 3. 拿 LLM 客户端
-        try:
-            model = self._get_model(context)
-        except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"初始化 LLM 客户端失败: {exc}",
-            )
+        model, model_err = _acquire_model(self, context)
+        if model_err is not None:
+            return model_err
 
         # 4. LLM 生成假设 (带文献门禁模式)
         hypotheses = await self._generate_hypotheses(
@@ -233,34 +321,17 @@ class HypothesisGeneratorTool(HuginnTool):
         )
 
         # 4b. 排序: novelty + feasibility + kb_relevance 三维打分
-        ranked = False
-        if args.rank and hypotheses:
-            hypotheses = await self._rank_hypotheses(hypotheses, context)
-            ranked = True
-
         # 4c. 守恒律自洽检查: 标记可能违反守恒律的假设, 不阻断只警告
-        conservation_flags = [
-            self._check_conservation_laws(h) for h in hypotheses
-        ]
-
         # 5. LLM 映射到 workflow 模板
-        workflow_proposals = await self._map_to_workflow(
-            hypotheses, args.target_workflow, model
-        )
+        processed = await _postprocess(self, hypotheses, args, model, context)
+        hypotheses, ranked, conservation_flags, workflow_proposals = processed
 
-        data: dict[str, Any] = {
-            "research_topic": args.research_topic,
-            "literature_summary": literature_summary,
-            "literature_count": len(papers),
-            "literature_mode": lit_mode,
-            "literature_warnings": lit_warnings,
-            "research_gaps": research_gaps,
-            "hypotheses": hypotheses,
-            "conservation_flags": conservation_flags,
-            "workflow_proposals": workflow_proposals,
-            "n_hypotheses": len(hypotheses),
-            "ranked": ranked,
-        }
+        data = _literature_data(
+            args, literature_summary, papers, lit_mode, lit_warnings, research_gaps
+        )
+        data.update(
+            _hypotheses_data(hypotheses, conservation_flags, workflow_proposals, ranked)
+        )
         return ToolResult(data=data, success=True)
 
     # ------------------------------------------------------------------ helpers
@@ -443,7 +514,8 @@ class HypothesisGeneratorTool(HuginnTool):
                 papers = _lit_papers_from_hits(res.data.get("papers", []) or [])
                 src_status = res.data.get("source_status", {}) or {}
                 ok_sources = [
-                    s for s, st in src_status.items()
+                    s
+                    for s, st in src_status.items()
                     if isinstance(st, dict) and st.get("ok")
                 ]
                 summary_parts.append(
@@ -469,9 +541,7 @@ class HypothesisGeneratorTool(HuginnTool):
         if web is None:
             return []
         try:
-            res = await self._invoke_tool(
-                web, {"query": query, "max_results": 8}, ctx
-            )
+            res = await self._invoke_tool(web, {"query": query, "max_results": 8}, ctx)
             if res and res.success and isinstance(res.data, dict):
                 papers = _lit_papers_from_web(res.data.get("results", []) or [])
                 summary_parts.append(
@@ -597,8 +667,7 @@ class HypothesisGeneratorTool(HuginnTool):
         )
         if target_workflow:
             user_prompt += (
-                f"用户指定 target_workflow='{target_workflow}', "
-                "全部映射到该模板.\n"
+                f"用户指定 target_workflow='{target_workflow}', 全部映射到该模板.\n"
             )
         user_prompt += "请输出每个假设对应的 workflow 映射."
         messages = [
@@ -693,16 +762,20 @@ class HypothesisGeneratorTool(HuginnTool):
         flags: list[str] = []
 
         # 能量守恒: "创造能量"/"无中生有"/"效率>100%" 这类表述
-        if any(kw in text for kw in ["创造能量", "产生能量", "efficiency > 100", "效率大于100", "overunity", "perpetual"]):
+        if any(kw in text for kw in _ENERGY_SUSPECT_KEYWORDS):
             flags.append("energy_conservation_suspect")
 
         # 电荷守恒: 提到电荷转移但不平衡的表述
-        if ("charge transfer" in text or "电荷转移" in text) and not any(kw in text for kw in ["balanced", "守恒", "compensated", "平衡"]):
-                flags.append("charge_conservation_check_needed")
+        has_charge_transfer = "charge transfer" in text or "电荷转移" in text
+        charge_balanced = any(kw in text for kw in _CHARGE_BALANCED_KEYWORDS)
+        if has_charge_transfer and not charge_balanced:
+            flags.append("charge_conservation_check_needed")
 
         # 质量守恒: 相变/反应但没提到产物/反应物守恒
-        if any(kw in text for kw in ["相变", "phase transition", "反应", "reaction", "decomposition"]) and not any(kw in text for kw in ["守恒", "conserve", "balanced", "stoichiometric"]):
-                flags.append("mass_conservation_check_needed")
+        has_mass_trigger = any(kw in text for kw in _MASS_TRIGGER_KEYWORDS)
+        mass_balanced = any(kw in text for kw in _MASS_BALANCED_KEYWORDS)
+        if has_mass_trigger and not mass_balanced:
+            flags.append("mass_conservation_check_needed")
 
         return {
             "hypothesis_id": hid,
@@ -737,14 +810,11 @@ class HypothesisGeneratorTool(HuginnTool):
                 "文献量充足可考虑切到 deep 模式 (允许引用方法学论文)"
             ]
         return "deep", [
-            f"literature_count={papers_count} (>50), 进入 deep 模式, "
-            "允许引用方法学论文"
+            f"literature_count={papers_count} (>50), 进入 deep 模式, 允许引用方法学论文"
         ]
 
     @staticmethod
-    def _normalize_hypothesis(
-        h: dict[str, Any], idx: int = 0
-    ) -> dict[str, Any]:
+    def _normalize_hypothesis(h: dict[str, Any], idx: int = 0) -> dict[str, Any]:
         # hypothesis_id: LLM 应给 H1-H5, 没给或格式错就按 idx 递增兜底
         raw_id = str(h.get("hypothesis_id") or "").strip()
         if not re.match(r"^H\d+$", raw_id):
@@ -795,8 +865,6 @@ class HypothesisGeneratorTool(HuginnTool):
             )
         return out
 
-    def estimate_cost(
-        self, args: HypothesisGeneratorInput
-    ) -> dict[str, float] | None:
+    def estimate_cost(self, args: HypothesisGeneratorInput) -> dict[str, float] | None:
         # 1 次检索 + 1 次 gap 分析 + 2 次 LLM 调用, 都是轻量
         return {"cpu_hours": 0.0, "gpu_hours": 0.0, "walltime_hours": 0.03}

@@ -27,6 +27,63 @@ MAX_SIZE = 2**24
 RECV_TIMEOUT = 300  # 5 min per message (DeepSeek reasoner is slow)
 
 
+def _consume_message(full_text: list, data: dict, msg_type: str) -> bool:
+    """Accumulate text/error markers; return True when the stream is finished."""
+    if msg_type == "text_delta":
+        full_text.append(data.get("text", ""))
+        return False
+    if msg_type in ("done", "message_complete"):
+        return True
+    if msg_type == "error":
+        full_text.append(f"[ERROR: {data.get('error', '')}]")
+        return True
+    return False
+
+
+async def _answer_control(ws, data: dict, msg_type: str, thread_id: str) -> None:
+    """Answer interactive server requests so the stream keeps flowing."""
+    if msg_type == "ping":
+        await ws.send(json.dumps({"type": "pong"}))
+    elif msg_type == "plan_proposed":
+        plan_id = data.get("plan_id", "")
+        if plan_id:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "plan_confirm",
+                        "plan_id": plan_id,
+                        "approved": True,
+                        "thread_id": thread_id,
+                    }
+                )
+            )
+    elif msg_type == "approval_request":
+        req_id = data.get("id", data.get("request_id", ""))
+        if req_id:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "approval_response",
+                        "request_id": req_id,
+                        "approved": True,
+                        "thread_id": thread_id,
+                    }
+                )
+            )
+    elif msg_type == "clarification":
+        q_id = data.get("question_id", "")
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "clarification_response",
+                    "question_id": q_id,
+                    "answer": "Please use your best judgment.",
+                    "thread_id": thread_id,
+                }
+            )
+        )
+
+
 @dataclass
 class WSAgent:
     """Minimal agent that chats via WebSocket — compatible with BenchmarkSuite."""
@@ -43,12 +100,16 @@ class WSAgent:
                 ping_timeout=None,
                 max_size=MAX_SIZE,
             ) as ws:
-                await ws.send(json.dumps({
-                    "type": "user_input",
-                    "content": message,
-                    "thread_id": thread_id,
-                    "persona": "research",
-                }))
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "user_input",
+                            "content": message,
+                            "thread_id": thread_id,
+                            "persona": "research",
+                        }
+                    )
+                )
 
                 while True:
                     try:
@@ -58,66 +119,27 @@ class WSAgent:
 
                     data = json.loads(raw)
                     msg_type = data.get("type", "")
-
-                    if msg_type == "text_delta":
-                        full_text.append(data.get("text", ""))
-                    elif msg_type in ("done", "message_complete"):
+                    if _consume_message(full_text, data, msg_type):
                         break
-                    elif msg_type == "error":
-                        full_text.append(f"[ERROR: {data.get('error', '')}]")
-                        break
-                    elif msg_type == "ping":
-                        await ws.send(json.dumps({"type": "pong"}))
-                    elif msg_type == "plan_proposed":
-                        plan_id = data.get("plan_id", "")
-                        if plan_id:
-                            await ws.send(json.dumps({
-                                "type": "plan_confirm",
-                                "plan_id": plan_id,
-                                "approved": True,
-                                "thread_id": thread_id,
-                            }))
-                    elif msg_type == "approval_request":
-                        req_id = data.get("id", data.get("request_id", ""))
-                        if req_id:
-                            await ws.send(json.dumps({
-                                "type": "approval_response",
-                                "request_id": req_id,
-                                "approved": True,
-                                "thread_id": thread_id,
-                            }))
-                    elif msg_type == "clarification":
-                        q_id = data.get("question_id", "")
-                        await ws.send(json.dumps({
-                            "type": "clarification_response",
-                            "question_id": q_id,
-                            "answer": "Please use your best judgment.",
-                            "thread_id": thread_id,
-                        }))
+                    await _answer_control(ws, data, msg_type, thread_id)
         except Exception as e:
             full_text.append(f"[WS ERROR: {type(e).__name__}: {e}]")
 
         yield {"messages": [SimpleNamespace(content="".join(full_text))]}
 
 
-async def run_benchmark(trials: int = 3):
-    suite = BenchmarkSuite(name="clawbench-matsci")
-    suite.materials_science_research_cases()
-
+def _print_bench_banner(suite, trials: int) -> None:
     print("=" * 60)
     print("ClawBench Materials Science Benchmark")
     print(f"Cases: {len(suite.cases)} | Trials: {trials}")
     print("=" * 60)
 
-    agent = WSAgent()
-    start = time.time()
-    result = await suite.run_multi_trial(agent, trials=trials, thread_id="clawbench")
-    elapsed = time.time() - start
 
-    print(f"\n{'='*60}")
+def _print_bench_results(result, elapsed: float) -> None:
+    print(f"\n{'=' * 60}")
     print("RESULTS")
-    print(f"{'='*60}")
-    print(f"Time: {elapsed:.0f}s ({elapsed/60:.1f} min)")
+    print(f"{'=' * 60}")
+    print(f"Time: {elapsed:.0f}s ({elapsed / 60:.1f} min)")
     print(f"FinalScore: {result.final_score:.2f}")
     print(f"  S: {result.avg_score:.4f}")
     print(f"  pass^3: {result.pass_all_rate:.4f}")
@@ -129,9 +151,14 @@ async def run_benchmark(trials: int = 3):
     print("-" * 62)
     for cr in result.case_results:
         t = cr.task[:38] + ".." if len(cr.task) > 40 else cr.task
-        print(f"  {t:<38} {cr.avg_score:>6.2f} {'Y' if cr.pass_all else 'N':>7} {'Y' if cr.pass_any else 'N':>7}")
+        print(
+            f"  {t:<38} {cr.avg_score:>6.2f} "
+            f"{'Y' if cr.pass_all else 'N':>7} {'Y' if cr.pass_any else 'N':>7}"
+        )
 
-    report = {
+
+def _build_bench_report(result, elapsed: float) -> dict:
+    return {
         "final_score": result.final_score,
         "avg_score": result.avg_score,
         "pass_all_rate": result.pass_all_rate,
@@ -141,16 +168,39 @@ async def run_benchmark(trials: int = 3):
         "total_time_s": elapsed,
         "trials": result.trials,
         "cases": [
-            {"case_id": cr.case_id, "task": cr.task, "category": cr.category,
-             "avg_score": cr.avg_score, "max_score": cr.max_score,
-             "pass_all": cr.pass_all, "pass_any": cr.pass_any}
+            {
+                "case_id": cr.case_id,
+                "task": cr.task,
+                "category": cr.category,
+                "avg_score": cr.avg_score,
+                "max_score": cr.max_score,
+                "pass_all": cr.pass_all,
+                "pass_any": cr.pass_any,
+            }
             for cr in result.case_results
         ],
     }
+
+
+def _write_bench_report(report: dict) -> None:
     out = os.path.join(os.path.dirname(__file__), "clawbench_results.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     print(f"\nResults: {out}")
+
+
+async def run_benchmark(trials: int = 3):
+    suite = BenchmarkSuite(name="clawbench-matsci")
+    suite.materials_science_research_cases()
+    _print_bench_banner(suite, trials)
+
+    agent = WSAgent()
+    start = time.time()
+    result = await suite.run_multi_trial(agent, trials=trials, thread_id="clawbench")
+    elapsed = time.time() - start
+
+    _print_bench_results(result, elapsed)
+    _write_bench_report(_build_bench_report(result, elapsed))
 
 
 if __name__ == "__main__":

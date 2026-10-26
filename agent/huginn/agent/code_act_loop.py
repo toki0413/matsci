@@ -183,13 +183,17 @@ def _get_trust(session_id: str) -> float:
     return _trust_scores.get(session_id, 0.5)
 
 
-def _record_approval(session_id: str, action: str, risk: str, code_preview: str = "") -> float:
+def _record_approval(
+    session_id: str, action: str, risk: str, code_preview: str = ""
+) -> float:
     """记录一次 approval 决策, 更新 trust_score, 返回新值."""
     delta = _TRUST_DELTA.get(action, 0.0)
     new_score = max(0.0, min(1.0, _get_trust(session_id) + delta))
     _trust_scores[session_id] = new_score
     hist = _approval_history.setdefault(session_id, [])
-    hist.append({"action": action, "risk": risk, "ts": time.time(), "code": code_preview[:200]})
+    hist.append(
+        {"action": action, "risk": risk, "ts": time.time(), "code": code_preview[:200]}
+    )
     if len(hist) > 50:
         del hist[: len(hist) - 50]
     return new_score
@@ -322,7 +326,9 @@ def _tool_signature(name: str, tool: Any) -> str:
 
 
 def _build_system_prompt(tools: dict[str, Any]) -> str:
-    sigs = "\n".join(f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items())
+    sigs = "\n".join(
+        f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items()
+    )
     prompt = f"""You are Huginn, a research agent running in CodeAct mode.
 
 In this mode you express every action as a Python code block. The block is
@@ -342,34 +348,111 @@ Rules:
 Remember: one code block per turn, then stop and wait for the execution result."""
     # AtomWorld benchmark functions are injected when HUGINN_USE_ATOMWORLD=1.
     # Surface them in the prompt so the agent knows they exist without dir().
-    if FeatureFlags.shared().is_enabled("use_atomworld"):
-        prompt += (
-            "\n\nAtomWorld benchmark tools (plain Python functions in this "
-            "namespace): atomworld_evaluate(target_cif, generated_output), "
-            "atomworld_apply_action(input_cif, action_name, **params), "
-            "atomworld_list_actions(). You can also `from atomworld import "
-            "evaluate` for the raw upstream API."
-        )
+    prompt += _atomworld_prompt_suffix()
     # Structure Cognitive Map — explicit 3D coords + adjacency + SE(3) equivariant
     # queries, opt-in via HUGINN_USE_COGNITIVE_MAP=1. Returns map_id handles so
     # the agent doesn't dump large structures into the conversation directly.
-    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
-        prompt += (
-            "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
-            "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
-            "cognitive_map_query(map_id, query_type, **params) -> dict "
-            "(query_type in distance/angle/neighbors/subgraph/after_rotation/"
-            "after_translation), cognitive_map_transform(map_id, op, **params) "
-            "-> new_map_id (op in rotate/translate/supercell/remove_atom/"
-            "add_atom/swap_atoms), cognitive_map_to_text(map_id, max_atoms=50) "
-            "-> str. SE(3) equivariant: rotations preserve distances/angles. "
-            "cognitive_map_se3_act(map_id, euler_angles=[rx,ry,rz], "
-            "translation=[tx,ty,tz], order='XYZ', degrees=True) -> dict "
-            "{text, coords, species, n_atoms} applies SE(3) group action "
-            "simultaneously to text <point3d> and 3D coords (semidirect "
-            "product (M×V)⋊SE(3) engineering entry)."
-        )
+    prompt += _cognitive_map_prompt_suffix()
     return prompt
+
+
+def _atomworld_prompt_suffix() -> str:
+    if not FeatureFlags.shared().is_enabled("use_atomworld"):
+        return ""
+    return (
+        "\n\nAtomWorld benchmark tools (plain Python functions in this "
+        "namespace): atomworld_evaluate(target_cif, generated_output), "
+        "atomworld_apply_action(input_cif, action_name, **params), "
+        "atomworld_list_actions(). You can also `from atomworld import "
+        "evaluate` for the raw upstream API."
+    )
+
+
+def _cognitive_map_prompt_suffix() -> str:
+    if not FeatureFlags.shared().is_enabled("use_cognitive_map"):
+        return ""
+    return (
+        "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
+        "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
+        "cognitive_map_query(map_id, query_type, **params) -> dict "
+        "(query_type in distance/angle/neighbors/subgraph/after_rotation/"
+        "after_translation), cognitive_map_transform(map_id, op, **params) "
+        "-> new_map_id (op in rotate/translate/supercell/remove_atom/"
+        "add_atom/swap_atoms), cognitive_map_to_text(map_id, max_atoms=50) "
+        "-> str. SE(3) equivariant: rotations preserve distances/angles. "
+        "cognitive_map_se3_act(map_id, euler_angles=[rx,ry,rz], "
+        "translation=[tx,ty,tz], order='XYZ', degrees=True) -> dict "
+        "{text, coords, species, n_atoms} applies SE(3) group action "
+        "simultaneously to text <point3d> and 3D coords (semidirect "
+        "product (M×V)⋊SE(3) engineering entry)."
+    )
+
+
+def _install_standard_modules(namespace: dict[str, Any]) -> None:
+    """Optional scientific stack — only if the user has them installed."""
+    for mod_name in ("math", "statistics", "numpy", "pandas", "sympy"):
+        with contextlib.suppress(ImportError):
+            namespace[mod_name] = __import__(mod_name)
+
+
+def _install_atomworld(namespace: dict[str, Any]) -> None:
+    """AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
+    BranchIncubator gating). atomworld_tool already no-ops when the
+    atomworld package isn't installed, so we just log and skip."""
+    if FeatureFlags.shared().is_enabled("use_atomworld"):
+        try:
+            from huginn.tools import atomworld_tool as _aw
+
+            if _aw.is_available():
+                namespace["atomworld_evaluate"] = _aw.evaluate
+                namespace["atomworld_apply_action"] = _aw.apply_action
+                namespace["atomworld_list_actions"] = _aw.list_actions
+            else:
+                logger.warning(
+                    "atomworld_tool: atomworld package not installed, "
+                    "skipping CodeAct registration"
+                )
+        except ImportError:
+            logger.warning(
+                "atomworld_tool: module import failed, skipping CodeAct registration"
+            )
+
+
+def _install_cognitive_map(namespace: dict[str, Any]) -> None:
+    """Structure Cognitive Map — opt-in via HUGINN_USE_COGNITIVE_MAP=1.
+    SE(3) equivariant 3D spatial queries for rotation-skill recovery."""
+    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
+        try:
+            from huginn.tools import structure_cognitive_map_tool as _cm
+
+            if _cm.is_available():
+                namespace["cognitive_map_from_cif"] = _cm.cognitive_map_from_cif
+                namespace["cognitive_map_query"] = _cm.cognitive_map_query
+                namespace["cognitive_map_transform"] = _cm.cognitive_map_transform
+                namespace["cognitive_map_to_text"] = _cm.cognitive_map_to_text
+                namespace["cognitive_map_se3_act"] = _cm.cognitive_map_se3_act
+            else:
+                logger.warning(
+                    "structure_cognitive_map_tool: pymatgen/scipy not installed, "
+                    "skipping CodeAct registration"
+                )
+        except ImportError:
+            logger.warning(
+                "structure_cognitive_map_tool: module import failed, "
+                "skipping CodeAct registration"
+            )
+
+
+def _install_tool_wrappers(
+    namespace: dict[str, Any], tools: dict[str, Any], context: ToolContext
+) -> None:
+    """Tool wrappers — sync facade over async tool.call via run_async bridge."""
+    for name, tool in tools.items():
+        if name in _BLOCKED_TOOLS:
+            continue
+        if not tool.active or not tool.is_available():
+            continue
+        namespace[name] = _make_tool_wrapper(tool, context, name)
 
 
 def _build_namespace(
@@ -388,60 +471,10 @@ def _build_namespace(
         "json": json,
     }
 
-    # Optional scientific stack — only if the user has them installed.
-    for mod_name in ("math", "statistics", "numpy", "pandas", "sympy"):
-        with contextlib.suppress(ImportError):
-            namespace[mod_name] = __import__(mod_name)
-
-    # AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
-    # BranchIncubator gating). atomworld_tool already no-ops when the
-    # atomworld package isn't installed, so we just log and skip.
-    if FeatureFlags.shared().is_enabled("use_atomworld"):
-        try:
-            from huginn.tools import atomworld_tool as _aw
-            if _aw.is_available():
-                namespace["atomworld_evaluate"] = _aw.evaluate
-                namespace["atomworld_apply_action"] = _aw.apply_action
-                namespace["atomworld_list_actions"] = _aw.list_actions
-            else:
-                logger.warning(
-                    "atomworld_tool: atomworld package not installed, "
-                    "skipping CodeAct registration"
-                )
-        except ImportError:
-            logger.warning(
-                "atomworld_tool: module import failed, skipping CodeAct registration"
-            )
-
-    # Structure Cognitive Map — opt-in via HUGINN_USE_COGNITIVE_MAP=1.
-    # SE(3) equivariant 3D spatial queries for rotation-skill recovery.
-    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
-        try:
-            from huginn.tools import structure_cognitive_map_tool as _cm
-            if _cm.is_available():
-                namespace["cognitive_map_from_cif"] = _cm.cognitive_map_from_cif
-                namespace["cognitive_map_query"] = _cm.cognitive_map_query
-                namespace["cognitive_map_transform"] = _cm.cognitive_map_transform
-                namespace["cognitive_map_to_text"] = _cm.cognitive_map_to_text
-                namespace["cognitive_map_se3_act"] = _cm.cognitive_map_se3_act
-            else:
-                logger.warning(
-                    "structure_cognitive_map_tool: pymatgen/scipy not installed, "
-                    "skipping CodeAct registration"
-                )
-        except ImportError:
-            logger.warning(
-                "structure_cognitive_map_tool: module import failed, "
-                "skipping CodeAct registration"
-            )
-
-    # Tool wrappers — sync facade over async tool.call via run_async bridge.
-    for name, tool in tools.items():
-        if name in _BLOCKED_TOOLS:
-            continue
-        if not tool.active or not tool.is_available():
-            continue
-        namespace[name] = _make_tool_wrapper(tool, context, name)
+    _install_standard_modules(namespace)
+    _install_atomworld(namespace)
+    _install_cognitive_map(namespace)
+    _install_tool_wrappers(namespace, tools, context)
 
     return namespace
 
@@ -519,7 +552,9 @@ async def run_code_act_turn(
     error_streak = 0
     for turn in range(_MAX_TURNS):
         result = _TurnResult(error_streak=error_streak)
-        async for event in _run_one_code_act_turn(session, agent, turn, error_streak, result):
+        async for event in _run_one_code_act_turn(
+            session, agent, turn, error_streak, result
+        ):
             yield event
         error_streak = result.error_streak
         if result.terminal_content is not None:
@@ -598,7 +633,9 @@ def _init_code_act_session(agent: Any, message: str, thread_id: str) -> _CodeAct
     context = ToolContext(
         session_id=f"code_act:{thread_id}",
         workspace=str(workspace),
-        audit_logger=getattr(getattr(agent, "session_state", None), "audit_logger", None),
+        audit_logger=getattr(
+            getattr(agent, "session_state", None), "audit_logger", None
+        ),
     )
 
     system_prompt = _build_system_prompt(tools)
@@ -607,14 +644,19 @@ def _init_code_act_session(agent: Any, message: str, thread_id: str) -> _CodeAct
         HumanMessage(content=message),
     ]
 
-    model = agent.select_model("agent") if hasattr(agent, "select_model") else agent.model
+    model = (
+        agent.select_model("agent") if hasattr(agent, "select_model") else agent.model
+    )
 
     # 注册 agent 供 SUGGEST mode WS handler 唤醒
     if not hasattr(agent, "_approval_resume"):
         agent._approval_resume = asyncio.Event()
     _register_agent(context.session_id, agent)
     return _CodeActSession(
-        tools=tools, context=context, messages=messages, model=model,
+        tools=tools,
+        context=context,
+        messages=messages,
+        model=model,
     )
 
 
@@ -656,7 +698,13 @@ async def _run_one_code_act_turn(
     # Exec each block in order; feed results back as a single ToolMessage.
     combined_feedback: list[str] = []
     async for event in _run_code_blocks(
-        session, agent, code_blocks, turn, error_streak, result, combined_feedback,
+        session,
+        agent,
+        code_blocks,
+        turn,
+        error_streak,
+        result,
+        combined_feedback,
     ):
         yield event
 
@@ -684,7 +732,9 @@ async def _run_code_blocks(
     """顺序处理本轮所有 code block, 累计 error streak, 必要时标记 degrade."""
     for code in code_blocks:
         state = _BlockState(code=code)
-        async for event in _process_code_block(session, agent, state, turn, error_streak):
+        async for event in _process_code_block(
+            session, agent, state, turn, error_streak
+        ):
             yield event
 
         if state.denied:
@@ -734,7 +784,11 @@ async def _process_code_block(
 
     # standing rule 命中时 yield 事件 (借鉴 OpenWorker Decision.rule 的可观测性)
     session_id = session.context.session_id
-    if not state.suggest_skip and state.called and _is_standing_rule(session_id, state.called):
+    if (
+        not state.suggest_skip
+        and state.called
+        and _is_standing_rule(session_id, state.called)
+    ):
         yield {"type": "standing_rule_hit", "tools": state.called}
 
     if budget_escalated:
@@ -745,7 +799,9 @@ async def _process_code_block(
         }
 
     if not skip_approval:
-        async for event in _run_approval_gate(session, agent, state, turn, error_streak):
+        async for event in _run_approval_gate(
+            session, agent, state, turn, error_streak
+        ):
             yield event
         if state.denied:
             return
@@ -755,7 +811,9 @@ async def _process_code_block(
 
 
 def _assess_block_risk(
-    session: _CodeActSession, state: _BlockState, error_streak: int,
+    session: _CodeActSession,
+    state: _BlockState,
+    error_streak: int,
 ) -> dict[str, Any]:
     """静态风险 + 动态阈值调整; 返回 risk_threshold 事件并写回 state."""
     risk, risk_reason, called = _assess_risk(state.code, session.tools)
@@ -807,8 +865,10 @@ async def _run_suggest_mode(
     action = resume_decision[0] if resume_decision else "deny"
     _nt = _record_approval(session_id, action, state.risk, state.code[:200])
     yield {
-        "type": "trust_update", "trust": _nt,
-        "action": action, "risk": state.risk,
+        "type": "trust_update",
+        "trust": _nt,
+        "action": action,
+        "risk": state.risk,
     }
     if resume_decision is None or action == "deny":
         err = (
@@ -825,7 +885,8 @@ async def _run_suggest_mode(
 
 
 def _evaluate_skip_approval(
-    session: _CodeActSession, state: _BlockState,
+    session: _CodeActSession,
+    state: _BlockState,
 ) -> tuple[bool, bool, int]:
     """信任度/预算自适应判定; 返回 (skip_approval, budget_escalated, budget)."""
     session_id = session.context.session_id
@@ -846,7 +907,10 @@ def _evaluate_skip_approval(
         state.risk == "low"
         or _should_auto_medium(session_id, state.risk)
         or budget_escalated
-        or (_is_auto_approved(session_id, state.risk) and not _should_force_ask(session_id))
+        or (
+            _is_auto_approved(session_id, state.risk)
+            and not _should_force_ask(session_id)
+        )
         or _is_standing_rule(session_id, state.called)
     )
     return skip_approval, budget_escalated, budget
@@ -867,7 +931,9 @@ async def _run_approval_gate(
     approval_fn: ApprovalFn | None = getattr(agent, "approval_fn", None)
     if approval_fn is not None:
         # 调用方注入了同步/异步审批回调, 直接等结果
-        await _approval_via_callback(agent, session_id, state, approval_fn, error_streak)
+        await _approval_via_callback(
+            agent, session_id, state, approval_fn, error_streak
+        )
         return
 
     async for event in _approval_via_inbox(session, agent, state, turn):
@@ -914,7 +980,10 @@ async def _approval_via_callback(
 
 
 async def _approval_via_inbox(
-    session: _CodeActSession, agent: Any, state: _BlockState, turn: int,
+    session: _CodeActSession,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
 ) -> AsyncIterator[dict[str, Any]]:
     """无回调时: 优先 unattended inbox 队列, 其次 resume event."""
     # ponytail: 简化版 LangGraph interrupt. 调用方拿到事件后
@@ -935,6 +1004,7 @@ async def _approval_via_inbox(
                 get_inbox_store,
                 inbox_approval_fn,
             )
+
             tc_id = f"codeact_{_hl.sha256(state.code.encode()).hexdigest()[:16]}"
             inbox_fn = inbox_approval_fn(
                 get_inbox_store(),
@@ -961,7 +1031,10 @@ async def _approval_via_inbox(
 
 
 async def _approval_via_resume(
-    agent: Any, state: _BlockState, turn: int, resume_event: Any,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+    resume_event: Any,
 ) -> AsyncIterator[dict[str, Any]]:
     """attended session: yield approval_request 后等调用方 set event."""
     yield {
@@ -978,7 +1051,10 @@ async def _approval_via_resume(
 
 
 def _apply_approval_action(
-    session_id: str, state: _BlockState, action: str, payload: str | None,
+    session_id: str,
+    state: _BlockState,
+    action: str,
+    payload: str | None,
 ) -> None:
     """approve_always / edit 的共享副作用."""
     if action == "approve_always":
@@ -989,7 +1065,9 @@ def _apply_approval_action(
 
 
 def _execute_code_block(
-    session: _CodeActSession, agent: Any, code: str,
+    session: _CodeActSession,
+    agent: Any,
+    code: str,
 ) -> tuple[str, str | None]:
     """在受限命名空间内 exec 单块代码, 返回 (stdout, error)."""
     stdout_buf = io.StringIO()
@@ -1010,6 +1088,7 @@ def _execute_code_block(
         from huginn.security.code_act_sandbox import (
             exec_with_mem_cap as _exec_cap,
         )
+
         _mem_cap_bytes = int(os.environ.get("HUGINN_CODEACT_MEM_CAP", "2147483648"))
 
         _exec_cap(code, namespace, _mem_cap_bytes)
@@ -1040,8 +1119,6 @@ async def _execute_code_block_events(
         "risk": state.risk,
     }
     if error:
-        state.feedback = (
-            f"```python\n{state.code}\n```\n--- stdout ---\n{stdout}\n--- error ---\n{error}"
-        )
+        state.feedback = f"```python\n{state.code}\n```\n--- stdout ---\n{stdout}\n--- error ---\n{error}"
     else:
         state.feedback = f"```python\n{state.code}\n```\n--- stdout ---\n{stdout}"

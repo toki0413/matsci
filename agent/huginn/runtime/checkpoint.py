@@ -101,7 +101,9 @@ def save_checkpoint(
     return cp
 
 
-def load_checkpoint(task_id: str, workspace: Path, step_id: int | None = None) -> Checkpoint | None:
+def load_checkpoint(
+    task_id: str, workspace: Path, step_id: int | None = None
+) -> Checkpoint | None:
     """Load a checkpoint by step, or the latest if step_id is None. None if missing."""
     if step_id is not None:
         path = _checkpoint_path(workspace, task_id, step_id)
@@ -180,10 +182,7 @@ def resume_engine_from_checkpoint(
     ceiling: 单进程单 run_id resume; 多任务并发需外部 run_id 隔离 (已满足).
     """
     from huginn.autoloop.engine import AutoloopEngine
-    from huginn.runtime.engine_state import (
-        engine_state_digest,
-        load_engine_state,
-    )
+    from huginn.runtime.engine_state import load_engine_state
 
     resolved_run_id = run_id or checkpoint.task_id
     state = load_engine_state(resolved_run_id, workspace)
@@ -191,23 +190,37 @@ def resume_engine_from_checkpoint(
         # flag off 或 snapshot 不存在 — 返回普通 engine, 走原 init 路径
         logger.info(
             "resume_engine_from_checkpoint: no engine_state for run_id=%s, "
-            "returning fresh engine", resolved_run_id,
+            "returning fresh engine",
+            resolved_run_id,
         )
         return AutoloopEngine(workspace=workspace)
 
     # digest drift 检测 — 不阻塞 resume, 只 log
+    _log_engine_state_drift(checkpoint, state, resolved_run_id)
+
+    return AutoloopEngine(
+        workspace=workspace,
+        resume_from_state=resolved_run_id,
+    )
+
+
+def _log_engine_state_drift(
+    checkpoint: Checkpoint,
+    state: dict,
+    resolved_run_id: str,
+) -> None:
+    from huginn.runtime.engine_state import engine_state_digest
+
     if checkpoint.engine_state_digest is not None:
         actual = engine_state_digest(state)
         if actual != checkpoint.engine_state_digest:
             logger.warning(
                 "engine_state digest drift: checkpoint=%s reloaded=%s "
                 "(run_id=%s) — engine_state 可能已被外部修改",
-                checkpoint.engine_state_digest, actual, resolved_run_id,
+                checkpoint.engine_state_digest,
+                actual,
+                resolved_run_id,
             )
-
-    return AutoloopEngine(
-        workspace=workspace, resume_from_state=resolved_run_id,
-    )
 
 
 def _prune_checkpoints(
@@ -275,7 +288,9 @@ def unanswered_trailing_tool_calls(checkpointer: Any, thread_id: str) -> list[di
     try:
         state = checkpointer.get(config)
     except Exception:
-        logger.debug("unanswered_trailing_tool_calls: checkpointer.get failed", exc_info=True)
+        logger.debug(
+            "unanswered_trailing_tool_calls: checkpointer.get failed", exc_info=True
+        )
         return []
     if state is None:
         return []
@@ -285,12 +300,20 @@ def unanswered_trailing_tool_calls(checkpointer: Any, thread_id: str) -> list[di
     messages = (
         (channel_values or {}).get("messages")
         if isinstance(channel_values, dict)
-        else state.get("messages") if isinstance(state, dict) else None
+        else state.get("messages")
+        if isinstance(state, dict)
+        else None
     )
     if not messages:
         return []
 
     # OpenWorker 逻辑: answered = {tool_call_id of all ToolMessage}
+    answered_ids = _answered_tool_call_ids(messages)
+
+    return _trailing_unanswered_tool_calls(messages, answered_ids)
+
+
+def _answered_tool_call_ids(messages) -> set[str]:
     answered_ids: set[str] = set()
     for msg in messages:
         msg_type = getattr(msg, "type", None)
@@ -298,7 +321,10 @@ def unanswered_trailing_tool_calls(checkpointer: Any, thread_id: str) -> list[di
             tc_id = getattr(msg, "tool_call_id", None)
             if tc_id:
                 answered_ids.add(tc_id)
+    return answered_ids
 
+
+def _trailing_unanswered_tool_calls(messages, answered_ids: set[str]) -> list[dict]:
     # 从末尾往前找最后一条 AIMessage (跳过 tool/user/system)
     # langchain AIMessage.type == "ai", OpenAI 格式 role == "assistant" — 都接
     for msg in reversed(messages):
@@ -310,8 +336,16 @@ def unanswered_trailing_tool_calls(checkpointer: Any, thread_id: str) -> list[di
         for tc in tool_calls:
             tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
             if tc_id and tc_id not in answered_ids:
-                name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
-                args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                name = (
+                    tc.get("name", "")
+                    if isinstance(tc, dict)
+                    else getattr(tc, "name", "")
+                )
+                args = (
+                    tc.get("args", {})
+                    if isinstance(tc, dict)
+                    else getattr(tc, "args", {})
+                )
                 unanswered.append({"id": tc_id, "name": name, "args": args or {}})
         return unanswered
     return []
@@ -328,8 +362,12 @@ if __name__ == "__main__":
     try:
         # 1. save → load roundtrip
         cp = save_checkpoint(
-            task_id="t1", step_id=1, phase="execute", workspace=ws,
-            context_digest="abc123", memory_cursor="entry_5",
+            task_id="t1",
+            step_id=1,
+            phase="execute",
+            workspace=ws,
+            context_digest="abc123",
+            memory_cursor="entry_5",
             target_chain_progress={"t_a": 0.5, "t_b": 0.0},
             prospective_queue=["i1", "i2"],
         )
@@ -352,9 +390,14 @@ if __name__ == "__main__":
 
         # load latest (step_id=None) returns highest step
         save_checkpoint(
-            task_id="t1", step_id=2, phase="validate", workspace=ws,
-            context_digest="def", memory_cursor=None,
-            target_chain_progress={"t_a": 0.5}, prospective_queue=[],
+            task_id="t1",
+            step_id=2,
+            phase="validate",
+            workspace=ws,
+            context_digest="def",
+            memory_cursor=None,
+            target_chain_progress={"t_a": 0.5},
+            prospective_queue=[],
         )
         latest = load_checkpoint("t1", ws)
         assert latest is not None and latest.step_id == 2
@@ -372,9 +415,14 @@ if __name__ == "__main__":
         # 5. retention: save steps 3..15 for task t2, expect {10, 13, 14, 15} kept
         for n in range(3, 16):
             save_checkpoint(
-                task_id="t2", step_id=n, phase="execute", workspace=ws,
-                context_digest="x", memory_cursor=None,
-                target_chain_progress={}, prospective_queue=[],
+                task_id="t2",
+                step_id=n,
+                phase="execute",
+                workspace=ws,
+                context_digest="x",
+                memory_cursor=None,
+                target_chain_progress={},
+                prospective_queue=[],
             )
         kept = sorted(c.step_id for c in list_checkpoints("t2", ws))
         # recent 3 = {13,14,15}, milestone every 10 = {10}
@@ -408,14 +456,21 @@ if __name__ == "__main__":
 
         # 7. P15: engine_state_digest 字段 — 默认 None, 显式赋值后 round-trip 保留
         from huginn.runtime.engine_state import EngineState, engine_state_digest
+
         cp_digest = save_checkpoint(
-            task_id="t3", step_id=1, phase="execute", workspace=ws,
-            context_digest="digest_xyz", memory_cursor=None,
-            target_chain_progress={}, prospective_queue=[],
+            task_id="t3",
+            step_id=1,
+            phase="execute",
+            workspace=ws,
+            context_digest="digest_xyz",
+            memory_cursor=None,
+            target_chain_progress={},
+            prospective_queue=[],
         )
         # 默认 None (向后兼容 — 老 checkpoint 没这个字段)
-        assert cp_digest.engine_state_digest is None, \
+        assert cp_digest.engine_state_digest is None, (
             "engine_state_digest default should be None"
+        )
         loaded_no_digest = load_checkpoint("t3", ws, step_id=1)
         assert loaded_no_digest is not None
         assert loaded_no_digest.engine_state_digest is None
@@ -428,8 +483,9 @@ if __name__ == "__main__":
         )
         loaded_with_digest = load_checkpoint("t3", ws, step_id=1)
         assert loaded_with_digest is not None
-        assert loaded_with_digest.engine_state_digest == "abcd1234", \
+        assert loaded_with_digest.engine_state_digest == "abcd1234", (
             f"digest round-trip failed: {loaded_with_digest.engine_state_digest}"
+        )
         print("7. engine_state_digest round-trip OK")
 
         # 8. engine_state_digest 跟 EngineState 计算结果一致
@@ -437,9 +493,14 @@ if __name__ == "__main__":
         d = engine_state_digest(state)
         assert len(d) == 8
         cp2 = save_checkpoint(
-            task_id="t4", step_id=1, phase="execute", workspace=ws,
-            context_digest="x", memory_cursor=None,
-            target_chain_progress={}, prospective_queue=[],
+            task_id="t4",
+            step_id=1,
+            phase="execute",
+            workspace=ws,
+            context_digest="x",
+            memory_cursor=None,
+            target_chain_progress={},
+            prospective_queue=[],
         )
         cp2.engine_state_digest = d
         atomic_write_json(_checkpoint_path(ws, "t4", 1), asdict(cp2))
@@ -452,34 +513,45 @@ if __name__ == "__main__":
         # - 无 engine_state 文件时返回 AutoloopEngine(workspace=ws) (无 resume_from_state)
         # - 有 engine_state 文件时返回 AutoloopEngine(workspace=ws, resume_from_state=run_id)
         import huginn.autoloop.engine as _eng_mod
+
         _orig_AE = _eng_mod.AutoloopEngine  # noqa: N816
         _calls: list[dict] = []
+
         class _StubAE:
             def __init__(self, **kw):
                 _calls.append(kw)
                 self.workspace = kw.get("workspace")
+
         _eng_mod.AutoloopEngine = _StubAE
         try:
             # 无 engine_state → fresh engine
             cp_no_state = save_checkpoint(
-                task_id="t5", step_id=1, phase="execute", workspace=ws,
-                context_digest="x", memory_cursor=None,
-                target_chain_progress={}, prospective_queue=[],
+                task_id="t5",
+                step_id=1,
+                phase="execute",
+                workspace=ws,
+                context_digest="x",
+                memory_cursor=None,
+                target_chain_progress={},
+                prospective_queue=[],
             )
             eng1 = resume_engine_from_checkpoint(cp_no_state, ws)
             assert isinstance(eng1, _StubAE), "应返回 stub 实例"
             assert len(_calls) == 1, f"应调 1 次 AutoloopEngine, got {len(_calls)}"
             assert _calls[0].get("workspace") == ws, "workspace 应传入"
-            assert _calls[0].get("resume_from_state") is None, \
+            assert _calls[0].get("resume_from_state") is None, (
                 "无 engine_state 时不应传 resume_from_state"
+            )
             print("9a. resume_engine_from_checkpoint (no state → fresh) OK")
 
             # 有 engine_state → resumed engine (带 resume_from_state)
             # 需 HUGINN_USE_PERSISTENCE=1, 否则 load_engine_state 直接返 None.
             import os as _os9
+
             _saved_persist = _os9.environ.get("HUGINN_USE_PERSISTENCE")
             _os9.environ["HUGINN_USE_PERSISTENCE"] = "1"
             from huginn.runtime.engine_state import EngineState, save_engine_state
+
             # save_engine_state 第一个参数是 engine (有 _iteration 等属性), 不是 state.
             # ponytail: 直接用 EngineState 当 engine — _snapshot_engine 走 getattr 路径.
             save_engine_state(state, "t5", ws)
@@ -489,22 +561,30 @@ if __name__ == "__main__":
                 assert isinstance(eng2, _StubAE)
                 assert len(_calls) == 1
                 assert _calls[0].get("workspace") == ws
-                assert _calls[0].get("resume_from_state") == "t5", \
+                assert _calls[0].get("resume_from_state") == "t5", (
                     f"有 engine_state 时应传 resume_from_state=t5, got {_calls[0]}"
+                )
                 print("9b. resume_engine_from_checkpoint (with state → resumed) OK")
 
                 # digest drift → log warning 但仍 resume (不阻塞)
                 cp_drift = save_checkpoint(
-                    task_id="t5", step_id=2, phase="execute", workspace=ws,
-                    context_digest="x", memory_cursor=None,
-                    target_chain_progress={}, prospective_queue=[],
+                    task_id="t5",
+                    step_id=2,
+                    phase="execute",
+                    workspace=ws,
+                    context_digest="x",
+                    memory_cursor=None,
+                    target_chain_progress={},
+                    prospective_queue=[],
                 )
                 cp_drift.engine_state_digest = "deadbeef"  # 故意 wrong
                 _calls.clear()
                 eng3 = resume_engine_from_checkpoint(cp_drift, ws)
                 assert isinstance(eng3, _StubAE), "drift 不应阻塞 resume"
                 assert len(_calls) == 1
-                print("9c. resume_engine_from_checkpoint (digest drift → warn but resume) OK")
+                print(
+                    "9c. resume_engine_from_checkpoint (digest drift → warn but resume) OK"
+                )
             finally:
                 if _saved_persist is None:
                     _os9.environ.pop("HUGINN_USE_PERSISTENCE", None)
@@ -521,6 +601,7 @@ if __name__ == "__main__":
         class _FakeCheckpointer:
             def __init__(self, state):
                 self._state = state
+
             def get(self, config):
                 return self._state
 
@@ -530,9 +611,12 @@ if __name__ == "__main__":
 
         # 10b. 所有 tool_calls 已应答 → 空列表
         msgs_answered = [
-            AIMessage(content="calling tool", tool_calls=[
-                {"id": "tc_1", "name": "search", "args": {"q": "GaN"}},
-            ]),
+            AIMessage(
+                content="calling tool",
+                tool_calls=[
+                    {"id": "tc_1", "name": "search", "args": {"q": "GaN"}},
+                ],
+            ),
             ToolMessage(content="result", tool_call_id="tc_1"),
         ]
         state_ans = {"channel_values": {"messages": msgs_answered}}
@@ -541,10 +625,13 @@ if __name__ == "__main__":
 
         # 10c. 有未应答 tool_calls → 返回列表
         msgs_pending = [
-            AIMessage(content="calling 2 tools", tool_calls=[
-                {"id": "tc_1", "name": "search", "args": {"q": "GaN"}},
-                {"id": "tc_2", "name": "calc", "args": {"x": 1}},
-            ]),
+            AIMessage(
+                content="calling 2 tools",
+                tool_calls=[
+                    {"id": "tc_1", "name": "search", "args": {"q": "GaN"}},
+                    {"id": "tc_2", "name": "calc", "args": {"x": 1}},
+                ],
+            ),
             ToolMessage(content="result1", tool_call_id="tc_1"),
             # tc_2 没有对应 ToolMessage
         ]
@@ -558,9 +645,12 @@ if __name__ == "__main__":
 
         # 10d. 最后一条是 ToolMessage → 找前面的 AIMessage
         msgs_tool_trailing = [
-            AIMessage(content="calling", tool_calls=[
-                {"id": "tc_1", "name": "search", "args": {}},
-            ]),
+            AIMessage(
+                content="calling",
+                tool_calls=[
+                    {"id": "tc_1", "name": "search", "args": {}},
+                ],
+            ),
             ToolMessage(content="result1", tool_call_id="tc_1"),
             # AIMessage 在 ToolMessage 之前, 已应答 → 空
         ]
@@ -579,7 +669,9 @@ if __name__ == "__main__":
 
         # 10f. flat state (无 channel_values, 直接 messages) — 兼容性
         state_flat = {"messages": msgs_pending}
-        pending_flat = unanswered_trailing_tool_calls(_FakeCheckpointer(state_flat), "t")
+        pending_flat = unanswered_trailing_tool_calls(
+            _FakeCheckpointer(state_flat), "t"
+        )
         assert len(pending_flat) == 1
         assert pending_flat[0]["id"] == "tc_2"
         print("10f. unanswered: flat state compat OK")

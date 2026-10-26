@@ -13,6 +13,7 @@ homology 没意义, 降级到 fisher_distance (Phase 1-6 工程近似继续用).
 
 # 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
+
 from __future__ import annotations
 
 import math
@@ -33,6 +34,7 @@ from huginn.metacog.simplicial_homology import (  # noqa: E402
 )
 
 # ---------- point cloud 构造 ----------
+
 
 def hypothese_to_pointcloud(
     manifold: HypothesisManifold,
@@ -67,6 +69,7 @@ def hypothese_to_pointcloud(
 
 # ---------- landscape ----------
 
+
 @dataclass
 class PersistenceLandscape:
     """hypothesis landscape 的 persistence diagram + 摘要.
@@ -81,6 +84,7 @@ class PersistenceLandscape:
     degraded: True 表示 GUDHI 没装 / 数据太少, diagram 是退化结果
     degrade_reason: 降级原因
     """
+
     diagram: list[tuple[int, float, float]]
     point_cloud: np.ndarray
     h_ids: list[str]
@@ -92,9 +96,34 @@ class PersistenceLandscape:
     def n_persistent_h0(self) -> int:
         """0-dim persistent feature 数 (跨尺度存活的 cluster)."""
         return sum(
-            1 for d, b, de in self.diagram
+            1
+            for d, b, de in self.diagram
             if d == 0 and (math.isinf(de) or de - b > 0.0)
         )
+
+
+def _degraded_landscape(
+    pts: np.ndarray, h_ids: list[str], n: int, reason: str
+) -> PersistenceLandscape:
+    """Build the degraded result (no diagram, infinite per-h death)."""
+    return PersistenceLandscape(
+        diagram=[],
+        point_cloud=pts,
+        h_ids=h_ids,
+        per_h_death=[float("inf")] * n,
+        degraded=True,
+        degrade_reason=reason,
+    )
+
+
+def _nearest_neighbor_deaths(pts: np.ndarray, n: int) -> list[float]:
+    """0-dim death = nearest neighbor distance (Rips 0-dim 的解析定义)."""
+    # ponytail: O(n²) pdist, n>2000 时换 sample. 跟 Phase 7.1 同样上限.
+    from scipy.spatial.distance import pdist, squareform
+
+    d_matrix = squareform(pdist(pts))
+    np.fill_diagonal(d_matrix, np.inf)
+    return [float(d_matrix[i].min()) for i in range(n)]
 
 
 def compute_landscape(
@@ -118,23 +147,11 @@ def compute_landscape(
 
     # 降级检查 — persistent homology 在这些情形下没意义
     if not is_gudhi_available():
-        return PersistenceLandscape(
-            diagram=[], point_cloud=pts, h_ids=h_ids,
-            per_h_death=[float("inf")] * n,
-            degraded=True, degrade_reason="gudhi_not_available",
-        )
+        return _degraded_landscape(pts, h_ids, n, "gudhi_not_available")
     if n < 3:
-        return PersistenceLandscape(
-            diagram=[], point_cloud=pts, h_ids=h_ids,
-            per_h_death=[float("inf")] * n,
-            degraded=True, degrade_reason=f"too_few_hypotheses_n={n}",
-        )
+        return _degraded_landscape(pts, h_ids, n, f"too_few_hypotheses_n={n}")
     if dim < 2:
-        return PersistenceLandscape(
-            diagram=[], point_cloud=pts, h_ids=h_ids,
-            per_h_death=[float("inf")] * n,
-            degraded=True, degrade_reason=f"prediction_dim_too_low_d={dim}",
-        )
+        return _degraded_landscape(pts, h_ids, n, f"prediction_dim_too_low_d={dim}")
 
     # Phase 7.1 的 GUDHI Rips
     diag = compute_persistent_homology(
@@ -142,20 +159,20 @@ def compute_landscape(
     )
 
     # 0-dim death = nearest neighbor distance (Rips 0-dim 的解析定义)
-    # ponytail: O(n²) pdist, n>2000 时换 sample. 跟 Phase 7.1 同样上限.
-    from scipy.spatial.distance import pdist, squareform
-    d_matrix = squareform(pdist(pts))
-    np.fill_diagonal(d_matrix, np.inf)
-    per_h_death = [float(d_matrix[i].min()) for i in range(n)]
+    per_h_death = _nearest_neighbor_deaths(pts, n)
 
     return PersistenceLandscape(
-        diagram=diag, point_cloud=pts, h_ids=h_ids,
+        diagram=diag,
+        point_cloud=pts,
+        h_ids=h_ids,
         per_h_death=per_h_death,
-        degraded=False, degrade_reason=None,
+        degraded=False,
+        degrade_reason=None,
     )
 
 
 # ---------- correlation: persistent feature vs posterior ----------
+
 
 @dataclass
 class CorrelationResult:
@@ -168,11 +185,12 @@ class CorrelationResult:
     consistent = (top_persistent_h == top_posterior_h) and (spearman_rho > 0)
     ponytail: 不要求 rho 高, N 小 spearman 噪声大; top 一致 + 同向就够了
     """
+
     degraded: bool
     degrade_reason: str | None
-    persistent_ranking: list[str]   # h_ids 按 death 降序
-    posterior_ranking: list[str]    # h_ids 按 posterior 降序
-    spearman_rho: float             # [-1, 1]
+    persistent_ranking: list[str]  # h_ids 按 death 降序
+    posterior_ranking: list[str]  # h_ids 按 posterior 降序
+    spearman_rho: float  # [-1, 1]
     top_persistent_h: str | None
     top_posterior_h: str | None
     consistent: bool
@@ -214,6 +232,41 @@ def _spearman_rho(x: list[float], y: list[float]) -> float:
     return num / (dx * dy)
 
 
+def _degraded_correlation(landscape: PersistenceLandscape) -> CorrelationResult:
+    """persistent feature 跟 posterior 一致性 (降级分支)."""
+    return CorrelationResult(
+        degraded=True,
+        degrade_reason=landscape.degrade_reason,
+        persistent_ranking=[],
+        posterior_ranking=[],
+        spearman_rho=0.0,
+        top_persistent_h=None,
+        top_posterior_h=None,
+        consistent=False,
+        note=f"landscape degraded ({landscape.degrade_reason}), 降级到 fisher_distance",
+    )
+
+
+def _rank_by_score(scores: list[float], h_ids: list[str]) -> list[str]:
+    """降序排, zip 后按数值大的在前."""
+    return [h for _, h in sorted(zip(scores, h_ids), reverse=True)]
+
+
+def _correlation_note(
+    top_persistent: str | None,
+    top_posterior: str | None,
+    death_vec: list[float],
+    post_vec: list[float],
+    rho: float,
+) -> str:
+    """Build the human-readable correlation summary."""
+    return (
+        f"top_persistent={top_persistent} (death={max(death_vec):.3f}), "
+        f"top_posterior={top_posterior} (post={max(post_vec):.3f}), "
+        f"spearman_rho={rho:.3f}"
+    )
+
+
 def correlate_persistence_with_posterior(
     landscape: PersistenceLandscape,
     manifold: HypothesisManifold,
@@ -232,26 +285,15 @@ def correlate_persistence_with_posterior(
     obs = list(obs)
 
     if landscape.degraded:
-        return CorrelationResult(
-            degraded=True,
-            degrade_reason=landscape.degrade_reason,
-            persistent_ranking=[],
-            posterior_ranking=[],
-            spearman_rho=0.0,
-            top_persistent_h=None,
-            top_posterior_h=None,
-            consistent=False,
-            note=f"landscape degraded ({landscape.degrade_reason}), 降级到 fisher_distance",
-        )
+        return _degraded_correlation(landscape)
 
     h_ids = landscape.h_ids
     post = manifold.posterior(obs)
     post_vec = [post.get(h, 0.0) for h in h_ids]
     death_vec = landscape.per_h_death
 
-    # 降序排, zip 后按数值大的在前
-    persistent_ranking = [h for _, h in sorted(zip(death_vec, h_ids), reverse=True)]
-    posterior_ranking = [h for _, h in sorted(zip(post_vec, h_ids), reverse=True)]
+    persistent_ranking = _rank_by_score(death_vec, h_ids)
+    posterior_ranking = _rank_by_score(post_vec, h_ids)
 
     rho = _spearman_rho(death_vec, post_vec)
 
@@ -261,11 +303,7 @@ def correlate_persistence_with_posterior(
     # 成功判据: top 一致 + spearman 同向
     consistent = (top_persistent == top_posterior) and (rho > 0.0)
 
-    note = (
-        f"top_persistent={top_persistent} (death={max(death_vec):.3f}), "
-        f"top_posterior={top_posterior} (post={max(post_vec):.3f}), "
-        f"spearman_rho={rho:.3f}"
-    )
+    note = _correlation_note(top_persistent, top_posterior, death_vec, post_vec, rho)
 
     return CorrelationResult(
         degraded=False,
@@ -282,16 +320,9 @@ def correlate_persistence_with_posterior(
 
 # ---------- Self-check ----------
 
-def _selfcheck() -> None:
-    """验证: point cloud 构造 / persistence diagram 非空 / persistent 跟 posterior 一致.
 
-    成功判据 (spec Open Problem 7.4): persistence diagram 识别 persistent feature
-    跟 posterior 高的 h 一致.
-    """
-    print("=== persistence_landscape self-check ===")
-    print()
-
-    # Test 1: point cloud 构造 — missing key 填 0, key 字母序
+def _selfcheck_pointcloud() -> None:
+    """Test 1: point cloud 构造 — missing key 填 0, key 字母序."""
     m = HypothesisManifold()
     m.add(Hypothesis("h1", "a", predictions={"x": 1.0, "y": 2.0}))
     m.add(Hypothesis("h2", "b", predictions={"x": 1.5, "z": 3.0}))
@@ -306,6 +337,9 @@ def _selfcheck() -> None:
     print(f"✓ Test 1 point cloud 构造: shape={pts.shape}, h_ids={h_ids}")
     print("  keys sorted (x,y,z); missing 填 0 ✓")
 
+
+def _selfcheck_edge_cases() -> tuple[HypothesisManifold, PersistenceLandscape]:
+    """Test 2/3: 少 hypothesis / predictions 全空 都应降级."""
     # Test 2: edge case — 1 个 hypothesis 降级
     m1 = HypothesisManifold()
     m1.add(Hypothesis("only", "solo", predictions={"x": 1.0}))
@@ -320,24 +354,43 @@ def _selfcheck() -> None:
     land_e = compute_landscape(m_empty)
     assert land_e.degraded and "dim_too_low" in (land_e.degrade_reason or "")
     print(f"✓ Test 3 edge case empty predictions: degraded ({land_e.degrade_reason})")
+    return m1, land1
 
-    # Test 4: 成功判据 — true h 跟 obs 一致, 其他 decoy 分散
-    # true h 预测 (1.0, 2.0), 4 个 decoy 预测分散在 (5,20)~(8,50) 区域
-    # true 跟 decoy 距离大, decoy 互相之间也远 — true 应该最 persistent
+
+def _selfcheck_success_fixture() -> tuple[HypothesisManifold, list[Observation]]:
+    """Test 4 fixture: true h 跟 obs 一致, 其他 decoy 分散.
+
+    true h 预测 (1.0, 2.0), 4 个 decoy 预测分散在 (5,20)~(8,50) 区域
+    true 跟 decoy 距离大, decoy 互相之间也远 — true 应该最 persistent
+    """
     m5 = HypothesisManifold()
-    m5.add(Hypothesis("true", "true hypothesis", predictions={"out": 1.0, "out2": 2.0}, n_params=1))
-    m5.add(Hypothesis("d1", "decoy 1", predictions={"out": 5.0, "out2": 20.0}, n_params=1))
-    m5.add(Hypothesis("d2", "decoy 2", predictions={"out": 6.0, "out2": 30.0}, n_params=1))
-    m5.add(Hypothesis("d3", "decoy 3", predictions={"out": 7.0, "out2": 40.0}, n_params=1))
-    m5.add(Hypothesis("d4", "decoy 4", predictions={"out": 8.0, "out2": 50.0}, n_params=1))
+    m5.add(
+        Hypothesis(
+            "true", "true hypothesis", predictions={"out": 1.0, "out2": 2.0}, n_params=1
+        )
+    )
+    m5.add(
+        Hypothesis("d1", "decoy 1", predictions={"out": 5.0, "out2": 20.0}, n_params=1)
+    )
+    m5.add(
+        Hypothesis("d2", "decoy 2", predictions={"out": 6.0, "out2": 30.0}, n_params=1)
+    )
+    m5.add(
+        Hypothesis("d3", "decoy 3", predictions={"out": 7.0, "out2": 40.0}, n_params=1)
+    )
+    m5.add(
+        Hypothesis("d4", "decoy 4", predictions={"out": 8.0, "out2": 50.0}, n_params=1)
+    )
 
     obs = [
         Observation("out", 1.0, sigma=0.1),
         Observation("out2", 2.0, sigma=0.1),
     ]
+    return m5, obs
 
-    land = compute_landscape(m5, max_dim=1)
-    print("\nTest 4 成功判据 (5 hypothesis: 1 true + 4 decoy):")
+
+def _print_landscape_summary(land: PersistenceLandscape) -> None:
+    """Print per-h death and persistence diagram details."""
     print(f"  landscape degraded={land.degraded}, n_hypotheses={len(land.h_ids)}")
     print("  per_h_death (h_id → nearest neighbor dist):")
     for h_id, d in zip(land.h_ids, land.per_h_death):
@@ -354,10 +407,9 @@ def _selfcheck() -> None:
         assert n_h0 >= 1, f"应该有 0-dim feature, got {n_h0}"
         print(f"  → persistence diagram 非空: {n_h0} 个 0-dim feature ✓")
 
-    post = m5.posterior(obs)
-    print(f"  posterior: {post}")
 
-    result = correlate_persistence_with_posterior(land, m5, obs)
+def _print_correlation_result(result: CorrelationResult) -> None:
+    """Print a CorrelationResult field by field."""
     print("\n  CorrelationResult:")
     print(f"    degraded: {result.degraded}")
     print(f"    persistent_ranking: {result.persistent_ranking}")
@@ -368,6 +420,21 @@ def _selfcheck() -> None:
     print(f"    consistent: {result.consistent}")
     print(f"    note: {result.note}")
 
+
+def _selfcheck_success_criterion() -> None:
+    """Test 4: 成功判据 — true h 跟 obs 一致, 其他 decoy 分散."""
+    m5, obs = _selfcheck_success_fixture()
+
+    land = compute_landscape(m5, max_dim=1)
+    print("\nTest 4 成功判据 (5 hypothesis: 1 true + 4 decoy):")
+    _print_landscape_summary(land)
+
+    post = m5.posterior(obs)
+    print(f"  posterior: {post}")
+
+    result = correlate_persistence_with_posterior(land, m5, obs)
+    _print_correlation_result(result)
+
     # posterior 最高的必须是 true (无论 persistent 判据如何)
     assert result.top_posterior_h == "true", (
         f"posterior 最高应该是 true h, got {result.top_posterior_h}"
@@ -375,16 +442,22 @@ def _selfcheck() -> None:
 
     if result.consistent:
         print("\n✓ Test 4 成功判据达成:")
-        print(f"  top_persistent={result.top_persistent_h} == top_posterior={result.top_posterior_h}")
+        print(
+            f"  top_persistent={result.top_persistent_h} == top_posterior={result.top_posterior_h}"
+        )
         print(f"  spearman_rho={result.spearman_rho:.3f} > 0")
         print("  → persistent feature 跟 posterior 高的 h 一致")
         print("  → Open Problem 7.4 探索成功")
     else:
-        print(f"\n? Test 4 部分一致 (top_persistent={result.top_persistent_h}, "
-              f"top_posterior={result.top_posterior_h}, rho={result.spearman_rho:.3f})")
+        print(
+            f"\n? Test 4 部分一致 (top_persistent={result.top_persistent_h}, "
+            f"top_posterior={result.top_posterior_h}, rho={result.spearman_rho:.3f})"
+        )
         print("  → 记录结果, fisher_distance 近似继续可用 (spec 允许探索失败)")
 
-    # Test 5: 紧密 cluster (判据可能弱化, 但不应 crash)
+
+def _selfcheck_close_cluster() -> None:
+    """Test 5: 紧密 cluster (判据可能弱化, 但不应 crash)."""
     m_close = HypothesisManifold()
     m_close.add(Hypothesis("a", "a", predictions={"x": 1.0, "y": 1.0}, n_params=1))
     m_close.add(Hypothesis("b", "b", predictions={"x": 1.1, "y": 1.1}, n_params=1))
@@ -394,13 +467,41 @@ def _selfcheck() -> None:
     result_close = correlate_persistence_with_posterior(land_close, m_close, obs_close)
     assert not result_close.degraded, "紧密 cluster 不应降级"
     assert result_close.top_posterior_h == "a"
-    print(f"\n✓ Test 5 紧密 cluster: top_posterior={result_close.top_posterior_h}, "
-          f"consistent={result_close.consistent}")
+    print(
+        f"\n✓ Test 5 紧密 cluster: top_posterior={result_close.top_posterior_h}, "
+        f"consistent={result_close.consistent}"
+    )
 
-    # Test 6: 降级时 correlate 也降级
-    result_deg = correlate_persistence_with_posterior(land1, m1, [Observation("x", 1.0)])
+
+def _selfcheck_degraded_propagation(
+    m1: HypothesisManifold, land1: PersistenceLandscape
+) -> None:
+    """Test 6: 降级时 correlate 也降级."""
+    result_deg = correlate_persistence_with_posterior(
+        land1, m1, [Observation("x", 1.0)]
+    )
     assert result_deg.degraded and not result_deg.consistent
-    print("✓ Test 6 降级传播: landscape degraded → correlate degraded, consistent=False")
+    print(
+        "✓ Test 6 降级传播: landscape degraded → correlate degraded, consistent=False"
+    )
+
+
+def _selfcheck() -> None:
+    """验证: point cloud 构造 / persistence diagram 非空 / persistent 跟 posterior 一致.
+
+    成功判据 (spec Open Problem 7.4): persistence diagram 识别 persistent feature
+    跟 posterior 高的 h 一致.
+    """
+    print("=== persistence_landscape self-check ===")
+    print()
+
+    # Test 1: point cloud 构造 — missing key 填 0, key 字母序
+    _selfcheck_pointcloud()
+
+    m1, land1 = _selfcheck_edge_cases()
+    _selfcheck_success_criterion()
+    _selfcheck_close_cluster()
+    _selfcheck_degraded_propagation(m1, land1)
 
     print()
     print("=== persistence_landscape self-check 完成 ===")

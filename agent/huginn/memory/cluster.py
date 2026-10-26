@@ -58,16 +58,7 @@ def cluster_memories(
         logger.warning("cluster_memories: no _vector_store, skip")
         return []
 
-    # 拉最近 N 条 alive memory (跟 longterm._where_alive 一致)
-    now = datetime.now().isoformat()
-    with ltm._connect() as conn:
-        rows = conn.execute(
-            "SELECT id, content FROM memories "
-            "WHERE expires_at IS NULL OR expires_at > ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (now, top_n_per_query),
-        ).fetchall()
-
+    rows = _fetch_alive_memories(ltm, top_n_per_query)
     if len(rows) < 2:
         return []
 
@@ -79,17 +70,42 @@ def cluster_memories(
     if not embeddings or len(embeddings) != len(ids):
         logger.warning(
             "cluster_memories: embedding failed (%d/%d), skip",
-            len(embeddings) if embeddings else 0, len(ids),
+            len(embeddings) if embeddings else 0,
+            len(ids),
         )
         return []
 
-    # cosine 相似度矩阵: normed @ normed.T
+    sim = _cosine_similarity_matrix(embeddings)
+    return _union_find_clusters(ids, sim, threshold)
+
+
+def _fetch_alive_memories(ltm: Any, top_n_per_query: int) -> list[Any]:
+    """拉最近 N 条 alive memory (跟 longterm._where_alive 一致)."""
+    now = datetime.now().isoformat()
+    with ltm._connect() as conn:
+        return conn.execute(
+            "SELECT id, content FROM memories "
+            "WHERE expires_at IS NULL OR expires_at > ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (now, top_n_per_query),
+        ).fetchall()
+
+
+def _cosine_similarity_matrix(embeddings: Any) -> np.ndarray:
+    """cosine 相似度矩阵: normed @ normed.T."""
     emb = np.asarray(embeddings, dtype=np.float32)
     norms = np.linalg.norm(emb, axis=1, keepdims=True)
     norms[norms == 0] = 1.0  # 防 0 向量除零
     normed = emb / norms
-    sim = normed @ normed.T
+    return normed @ normed.T
 
+
+def _union_find_clusters(
+    ids: list[str],
+    sim: np.ndarray,
+    threshold: float,
+) -> list[list[str]]:
+    """union-find 聚类 + 收集 cluster, 单条不返回."""
     # union-find (path compression)
     parent = list(range(len(ids)))
 
@@ -148,18 +164,7 @@ def summarize_cluster(
     if not rows:
         return None
 
-    # 拼 prompt (附 metadata 让 LLM 知道每条来源/时间)
-    items = []
-    for r in rows:
-        items.append(
-            f"[{r['id']}] (importance={r['importance']}, source={r['source']}, "
-            f"created={r['created_at']}, category={r['category']})\n{r['content']}"
-        )
-    prompt = (
-        f"把以下 {len(rows)} 条同主题 memory 合并成 1 条浓缩摘要, "
-        f"保留 evidence/source/timestamp 关键信息。输出格式:纯文本摘要,不超过 500 词。\n\n"
-        + "\n---\n".join(items)
-    )
+    prompt = _build_summary_prompt(rows)
 
     # ponytail: 同步包装 async LLM. 不能在已有 event loop 里调,
     # 升级路径: 整体改 async 或用 run_coroutine_threadsafe.
@@ -172,6 +177,26 @@ def summarize_cluster(
     if not summary or not summary.strip():
         return None
 
+    return _build_summary_record(rows, summary)
+
+
+def _build_summary_prompt(rows: list[Any]) -> str:
+    """拼 prompt (附 metadata 让 LLM 知道每条来源/时间)."""
+    items = []
+    for r in rows:
+        items.append(
+            f"[{r['id']}] (importance={r['importance']}, source={r['source']}, "
+            f"created={r['created_at']}, category={r['category']})\n{r['content']}"
+        )
+    return (
+        f"把以下 {len(rows)} 条同主题 memory 合并成 1 条浓缩摘要, "
+        f"保留 evidence/source/timestamp 关键信息。输出格式:纯文本摘要,不超过 500 词。\n\n"
+        + "\n---\n".join(items)
+    )
+
+
+def _build_summary_record(rows: list[Any], summary: str) -> dict:
+    """把 LLM 摘要与 cluster metadata 组装成写回 record."""
     importance = max((float(r["importance"]) for r in rows), default=0.5)
     sources = [r["source"] for r in rows if r["source"]]
     source = " | ".join(sources) if sources else ""
@@ -207,49 +232,61 @@ def compress_clusters(
     counts = {"summarized": 0, "archived": 0, "skipped": 0, "failed": 0}
 
     for cluster in clusters:
-        if len(cluster) < 2:
-            counts["skipped"] += 1
-            continue
-
-        result = summarize_cluster(ltm, cluster, llm_chat_fn)
-        if result is None:
-            # LLM 失败 → skip 这个 cluster, 不算 failed
-            counts["skipped"] += 1
-            continue
-
-        cluster_tag = f"cluster_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        try:
-            ltm.store(
-                content=result["summary"],
-                category=result["category"],
-                tags=result["tags"] + [cluster_tag],
-                source=result["source"],
-                importance=result["importance"],
-                tier="long",
-            )
-        except Exception:
-            logger.warning("compress_clusters: store summary failed", exc_info=True)
-            counts["failed"] += 1
-            continue
-
-        # 原条目标记 archived (Task 2 接入: longterm.py 加了 archived 字段)
-        # archived=1 → _where_alive 自动过滤, 不参与 retrieve/recall.
-        # 保留在表里, 留档可 rollback 或 audit.
-        # ponytail: 每条单独 update_archived, N≤50 不值得批量化.
-        # 升级路径: 一次 UPDATE ... WHERE id IN (...).
-        for mid in result["cluster_ids"]:
-            try:
-                ok = ltm.update_archived(mid, archived=True)
-                if ok:
-                    counts["archived"] += 1
-            except Exception:
-                logger.warning(
-                    "compress_clusters: archive %s failed", mid, exc_info=True
-                )
-
-        counts["summarized"] += 1
+        status, n_archived = _compress_one_cluster(ltm, cluster, llm_chat_fn)
+        counts[status] += 1
+        counts["archived"] += n_archived
 
     return counts
+
+
+def _compress_one_cluster(
+    ltm: Any,
+    cluster: list[str],
+    llm_chat_fn: LLMChatFn,
+) -> tuple[str, int]:
+    """压缩单个 cluster, 返回 (status, 归档条目数)."""
+    if len(cluster) < 2:
+        return "skipped", 0
+
+    result = summarize_cluster(ltm, cluster, llm_chat_fn)
+    if result is None:
+        # LLM 失败 → skip 这个 cluster, 不算 failed
+        return "skipped", 0
+
+    cluster_tag = f"cluster_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    try:
+        ltm.store(
+            content=result["summary"],
+            category=result["category"],
+            tags=result["tags"] + [cluster_tag],
+            source=result["source"],
+            importance=result["importance"],
+            tier="long",
+        )
+    except Exception:
+        logger.warning("compress_clusters: store summary failed", exc_info=True)
+        return "failed", 0
+
+    n_archived = _archive_cluster_entries(ltm, result["cluster_ids"])
+    return "summarized", n_archived
+
+
+def _archive_cluster_entries(ltm: Any, cluster_ids: list[str]) -> int:
+    """原条目标记 archived, 返回成功归档数."""
+    archived = 0
+    # 原条目标记 archived (Task 2 接入: longterm.py 加了 archived 字段)
+    # archived=1 → _where_alive 自动过滤, 不参与 retrieve/recall.
+    # 保留在表里, 留档可 rollback 或 audit.
+    # ponytail: 每条单独 update_archived, N≤50 不值得批量化.
+    # 升级路径: 一次 UPDATE ... WHERE id IN (...).
+    for mid in cluster_ids:
+        try:
+            ok = ltm.update_archived(mid, archived=True)
+            if ok:
+                archived += 1
+        except Exception:
+            logger.warning("compress_clusters: archive %s failed", mid, exc_info=True)
+    return archived
 
 
 # === 自检 (不依赖真实 SQLite/vector_store, 用 SimpleNamespace mock) ===
@@ -295,11 +332,13 @@ def _make_mock_ltm(
     """构造 mock LongTermMemory 用于自检."""
     # 三个 pattern 互不重叠: expires_at (cluster_memories),
     # id IN (summarize_cluster), SELECT tags (compress archive)
-    fake_conn = _FakeConn({
-        "expires_at": rows,
-        "id IN": rows,
-        "SELECT tags": rows,
-    })
+    fake_conn = _FakeConn(
+        {
+            "expires_at": rows,
+            "id IN": rows,
+            "SELECT tags": rows,
+        }
+    )
 
     @contextmanager
     def fake_connect():
@@ -333,11 +372,17 @@ def _row(
     tags: list[str] | None = None,
     category: str = "fact",
 ) -> _FakeRow:
-    return _FakeRow({
-        "id": id_, "content": content, "importance": importance,
-        "source": source, "created_at": created_at,
-        "tags": json.dumps(tags or []), "category": category,
-    })
+    return _FakeRow(
+        {
+            "id": id_,
+            "content": content,
+            "importance": importance,
+            "source": source,
+            "created_at": created_at,
+            "tags": json.dumps(tags or []),
+            "category": category,
+        }
+    )
 
 
 if __name__ == "__main__":
@@ -369,8 +414,12 @@ if __name__ == "__main__":
         _row("mem_f", "Si thermal conduct. about 150 W/mK"),
     ]
     emb = [
-        [1.0, 0.0], [1.0, 0.0], [1.0, 0.0],  # 组 1: GaN
-        [0.0, 1.0], [0.0, 1.0], [0.0, 1.0],  # 组 2: Si
+        [1.0, 0.0],
+        [1.0, 0.0],
+        [1.0, 0.0],  # 组 1: GaN
+        [0.0, 1.0],
+        [0.0, 1.0],
+        [0.0, 1.0],  # 组 2: Si
     ]
     ltm = _make_mock_ltm(rows, emb)
     clusters = cluster_memories(ltm)

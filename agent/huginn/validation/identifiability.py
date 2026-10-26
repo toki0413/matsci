@@ -34,6 +34,7 @@ ceiling / 诚实边界:
   - 纯 numpy 实现, 无 scipy/sklearn 依赖, 确定性可测.
   升级路径: 接入真实 SINDy/PySR benchmark 标定阈值; 给每个库函数算 Fisher 段贡献.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -52,14 +53,14 @@ _LIMITED_EIG = 1e-3
 class IdentifiabilityCeiling:
     """预飞辨识度天花板 — 一个数字 + 一个分级, 跑回归之前就能算."""
 
-    lambda_min: float       # M 最小特征值 (绝对量)
-    lambda_max: float       # M 最大特征值
-    lambda_min_rel: float   # λ_min / λ_max (归一化相对量, 跨尺度可比)
-    level: str              # "adequate" | "limited" | "deficient"
-    coverage_ratio: float   # 特征值 > 容差的比例 (吸引子对函数空间的覆盖度)
-    n_terms: int            # 候选库规模 p
-    n_samples: int          # 参考轨迹样本数 N
-    note: str               # 人类可读的结论/行动建议
+    lambda_min: float  # M 最小特征值 (绝对量)
+    lambda_max: float  # M 最大特征值
+    lambda_min_rel: float  # λ_min / λ_max (归一化相对量, 跨尺度可比)
+    level: str  # "adequate" | "limited" | "deficient"
+    coverage_ratio: float  # 特征值 > 容差的比例 (吸引子对函数空间的覆盖度)
+    n_terms: int  # 候选库规模 p
+    n_samples: int  # 参考轨迹样本数 N
+    note: str  # 人类可读的结论/行动建议
 
 
 def _relative_level(lam_rel: float) -> str:
@@ -109,22 +110,17 @@ def identifiability_ceiling(
     M = moment_matrix(Theta)
     if M.size == 0:
         return IdentifiabilityCeiling(
-            lambda_min=0.0, lambda_max=0.0, lambda_min_rel=0.0,
-            level="deficient", coverage_ratio=0.0, n_terms=0,
-            n_samples=Theta.shape[0], note="empty candidate library",
+            lambda_min=0.0,
+            lambda_max=0.0,
+            lambda_min_rel=0.0,
+            level="deficient",
+            coverage_ratio=0.0,
+            n_terms=0,
+            n_samples=Theta.shape[0],
+            note="empty candidate library",
         )
     ev = np.linalg.eigvalsh(M)
-    lam_max = float(ev[-1])
-    lam_min = float(ev[0])
-    lam_rel = (lam_min / lam_max) if lam_max > 0 else 0.0
-
-    def_t, lim_t = level_thresholds or (_DEFICIENT_EIG, _LIMITED_EIG)
-    level = _relative_level(lam_rel) if level_thresholds is None else _level_with(lam_rel, def_t, lim_t)
-
-    # 覆盖度: 特征值显著大于 0 (= 被吸引子采样到的库函数方向) 的比例.
-    tol = lim_t * lam_max if lam_max > 0 else 0.0
-    n_covered = int(np.sum(ev > tol))
-    coverage = n_covered / float(ev.size) if ev.size else 0.0
+    lam_min, lam_max, lam_rel, level, coverage = _spectral_stats(ev, level_thresholds)
 
     note = _build_note(level, lam_rel, coverage, ev.size, Theta.shape[0])
     return IdentifiabilityCeiling(
@@ -137,6 +133,32 @@ def identifiability_ceiling(
         n_samples=int(Theta.shape[0]),
         note=note,
     )
+
+
+def _spectral_stats(
+    ev: np.ndarray, level_thresholds: tuple[float, float] | None
+) -> tuple[float, float, float, str, float]:
+    """特征值 -> (λmin, λmax, λmin/λmax, level, coverage)."""
+    lam_max = float(ev[-1])
+    lam_min = float(ev[0])
+    lam_rel = (lam_min / lam_max) if lam_max > 0 else 0.0
+
+    def_t, lim_t = level_thresholds or (_DEFICIENT_EIG, _LIMITED_EIG)
+    level = (
+        _relative_level(lam_rel)
+        if level_thresholds is None
+        else _level_with(lam_rel, def_t, lim_t)
+    )
+
+    coverage = _coverage_ratio(ev, lam_max, lim_t)
+    return lam_min, lam_max, lam_rel, level, coverage
+
+
+def _coverage_ratio(ev: np.ndarray, lam_max: float, lim_t: float) -> float:
+    # 覆盖度: 特征值显著大于 0 (= 被吸引子采样到的库函数方向) 的比例.
+    tol = lim_t * lam_max if lam_max > 0 else 0.0
+    n_covered = int(np.sum(ev > tol))
+    return n_covered / float(ev.size) if ev.size else 0.0
 
 
 def _level_with(lam_rel: float, def_t: float, lim_t: float) -> str:
@@ -219,9 +241,7 @@ def trajectory_coverage(t: np.ndarray, X: np.ndarray) -> dict[str, Any]:
 
 
 # ── 候选库: 与 dynamics_discovery_tool 保持一致 ─────────────────────────
-def _build_library(
-    X: np.ndarray, max_order: int, trig: bool, exp: bool
-) -> np.ndarray:
+def _build_library(X: np.ndarray, max_order: int, trig: bool, exp: bool) -> np.ndarray:
     """构造候选库 Theta (N, p): 常数 + 多项式(含交叉) + 可选 sin/cos/exp."""
     from itertools import combinations_with_replacement
 

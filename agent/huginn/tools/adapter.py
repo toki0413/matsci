@@ -108,37 +108,62 @@ def tool_economy_snapshot() -> dict[str, Any]:
 # 点改一处, 而不是在几十个工具里各写一遍。
 _ERR_HINTS = (
     # (regex, 人话一句话, 建议下一步)
-    (re.compile(r"Permission denied(?:'[^']*')?", re.I),
-     "目标文件/目录没有写权限",
-     "检查文件属主和读写权限, 或换到有写权限的路径"),
-    (re.compile(r"FileNotFoundError|No such file|ENOENT", re.I),
-     "目标路径不存在",
-     "确认路径拼写和相对/绝对目录, 或先创建目录再写"),
-    (re.compile(r"TimeoutError|timed out|Timeout while await|> processor timeout", re.I),
-     "操作超时",
-     "缩小输入规模、加大 timeout, 或把大任务拆小分步跑"),
-    (re.compile(r"Too many open files|EMFILE|Resource temporarily unavailable", re.I),
-     "系统文件描述符耗尽",
-     "释放不再用的句柄, 减少并发, 或重启 agent 进程"),
-    (re.compile(r"Broken pipe|Connection (reset|closed|refused)|Errno 32", re.I),
-     "底层连接被断开",
-     "重试一次; 若持续失败检查网络/服务端是否还在"),
-    (re.compile(r"Out of memory|Killed|No memory|CUDA out of memory", re.I),
-     "内存/显存不足",
-     "减小单次数据量或 batch, 给计算程序配更小的内存占用"),
-    (re.compile(r"TypeError:|ValueError:", re.I),
-     "参数类型或取值不对",
-     "核对传入参数的类型和取值范围, 修正后再调"),
-    (re.compile(r"ModuleNotFoundError|ImportError", re.I),
-     "缺少依赖模块",
-     "安装缺失的依赖包后重试"),
-    (re.compile(r"ENOSPC|No space left on device", re.I),
-     "磁盘空间不足",
-     "清理临时文件/中间产物, 释放磁盘后再跑"),
-    (re.compile(r"Segmentation fault|EINSTRUCTION|assert .* failed", re.I),
-     "程序崩溃(非脚本逻辑问题)",
-     "多半是底层/砂箱问题, 换一种实现或换工具绕过"),
+    (
+        re.compile(r"Permission denied(?:'[^']*')?", re.I),
+        "目标文件/目录没有写权限",
+        "检查文件属主和读写权限, 或换到有写权限的路径",
+    ),
+    (
+        re.compile(r"FileNotFoundError|No such file|ENOENT", re.I),
+        "目标路径不存在",
+        "确认路径拼写和相对/绝对目录, 或先创建目录再写",
+    ),
+    (
+        re.compile(
+            r"TimeoutError|timed out|Timeout while await|> processor timeout", re.I
+        ),
+        "操作超时",
+        "缩小输入规模、加大 timeout, 或把大任务拆小分步跑",
+    ),
+    (
+        re.compile(
+            r"Too many open files|EMFILE|Resource temporarily unavailable", re.I
+        ),
+        "系统文件描述符耗尽",
+        "释放不再用的句柄, 减少并发, 或重启 agent 进程",
+    ),
+    (
+        re.compile(r"Broken pipe|Connection (reset|closed|refused)|Errno 32", re.I),
+        "底层连接被断开",
+        "重试一次; 若持续失败检查网络/服务端是否还在",
+    ),
+    (
+        re.compile(r"Out of memory|Killed|No memory|CUDA out of memory", re.I),
+        "内存/显存不足",
+        "减小单次数据量或 batch, 给计算程序配更小的内存占用",
+    ),
+    (
+        re.compile(r"TypeError:|ValueError:", re.I),
+        "参数类型或取值不对",
+        "核对传入参数的类型和取值范围, 修正后再调",
+    ),
+    (
+        re.compile(r"ModuleNotFoundError|ImportError", re.I),
+        "缺少依赖模块",
+        "安装缺失的依赖包后重试",
+    ),
+    (
+        re.compile(r"ENOSPC|No space left on device", re.I),
+        "磁盘空间不足",
+        "清理临时文件/中间产物, 释放磁盘后再跑",
+    ),
+    (
+        re.compile(r"Segmentation fault|EINSTRUCTION|assert .* failed", re.I),
+        "程序崩溃(非脚本逻辑问题)",
+        "多半是底层/砂箱问题, 换一种实现或换工具绕过",
+    ),
 )
+
 
 def humanize_tool_error(raw: str) -> str:
     """把工具返回的裸错误改写成'一句话 + 下一步'。
@@ -290,67 +315,84 @@ def _matches_annotation(value: Any, annotation: Any) -> bool:
         return True
 
 
+def _coerce_union(raw: Any, args: list[Any]) -> tuple[Any, str]:
+    """union: 已匹配任一分支就原样返回, 否则按分支顺序尝试一次形状修复."""
+    for arg in args:
+        if _matches_annotation(raw, arg):
+            return raw, ""
+    for arg in args:
+        value, note = _coerce_for_annotation(raw, arg)
+        if note:
+            return value, note
+    return raw, ""
+
+
+def _coerce_dict_shape(raw: Any) -> tuple[Any, str]:
+    """dict: 只把 JSON 字符串反序列化成 dict, 其余原样返回."""
+    if isinstance(raw, str):
+        parsed = _jsonish(raw)
+        if parsed is _NO_PARSE or not isinstance(parsed, dict):
+            return raw, ""
+        return parsed, "str→dict (JSON 反序列化)"
+    return raw, ""
+
+
+def _coerce_container_shape(raw: Any, container: type) -> tuple[Any, str]:
+    """list/tuple/set/frozenset: 字符串反序列化 + 容器间形状互换."""
+    if isinstance(raw, str):
+        parsed = _jsonish(raw)
+        if parsed is _NO_PARSE or not isinstance(parsed, (list, tuple, set, frozenset)):
+            return raw, ""
+        value = parsed if container is list else container(parsed)
+        return value, f"str→{container.__name__} (JSON 反序列化)"
+    if container is list and isinstance(raw, tuple):
+        return list(raw), "tuple→list"
+    if container is tuple and isinstance(raw, list):
+        return tuple(raw), "list→tuple"
+    if container in (set, frozenset) and isinstance(raw, list):
+        return container(raw), f"list→{container.__name__}"
+    return raw, ""
+
+
+def _coerce_str_scalar(raw: str, annotation: Any) -> tuple[Any, str]:
+    """str → bool/int/float 的标量转换, 解析失败原样返回."""
+    text = raw.strip()
+    if annotation is bool:
+        low = text.lower()
+        if low in {"true", "1", "yes", "on"}:
+            return True, "str→bool"
+        if low in {"false", "0", "no", "off"}:
+            return False, "str→bool"
+        return raw, ""
+    if annotation is int:
+        try:
+            return int(text), "str→int"
+        except ValueError:
+            return raw, ""
+    if annotation is float:
+        try:
+            return float(text), "str→float"
+        except ValueError:
+            return raw, ""
+    return raw, ""
+
+
 def _coerce_for_annotation(raw: Any, annotation: Any) -> tuple[Any, str]:
     """按声明类型修一次形状. 返回 (值, 修复说明); 无需修复时说明为空串."""
     origin = get_origin(annotation)
 
     if origin in (types.UnionType, typing.Union):
         args = [a for a in get_args(annotation) if a is not type(None)]
-        for arg in args:
-            if _matches_annotation(raw, arg):
-                return raw, ""
-        for arg in args:
-            value, note = _coerce_for_annotation(raw, arg)
-            if note:
-                return value, note
-        return raw, ""
+        return _coerce_union(raw, args)
 
     if origin is dict:
-        if isinstance(raw, str):
-            parsed = _jsonish(raw)
-            if parsed is _NO_PARSE or not isinstance(parsed, dict):
-                return raw, ""
-            return parsed, "str→dict (JSON 反序列化)"
-        return raw, ""
+        return _coerce_dict_shape(raw)
 
     if origin in (list, tuple, set, frozenset):
-        container = origin
-        if isinstance(raw, str):
-            parsed = _jsonish(raw)
-            if parsed is _NO_PARSE or not isinstance(
-                parsed, (list, tuple, set, frozenset)
-            ):
-                return raw, ""
-            value = parsed if container is list else container(parsed)
-            return value, f"str→{container.__name__} (JSON 反序列化)"
-        if container is list and isinstance(raw, tuple):
-            return list(raw), "tuple→list"
-        if container is tuple and isinstance(raw, list):
-            return tuple(raw), "list→tuple"
-        if container in (set, frozenset) and isinstance(raw, list):
-            return container(raw), f"list→{container.__name__}"
-        return raw, ""
+        return _coerce_container_shape(raw, origin)
 
     if isinstance(raw, str):
-        text = raw.strip()
-        if annotation is bool:
-            low = text.lower()
-            if low in {"true", "1", "yes", "on"}:
-                return True, "str→bool"
-            if low in {"false", "0", "no", "off"}:
-                return False, "str→bool"
-            return raw, ""
-        if annotation is int:
-            try:
-                return int(text), "str→int"
-            except ValueError:
-                return raw, ""
-        if annotation is float:
-            try:
-                return float(text), "str→float"
-            except ValueError:
-                return raw, ""
-        return raw, ""
+        return _coerce_str_scalar(raw, annotation)
 
     if annotation is float and isinstance(raw, int) and not isinstance(raw, bool):
         return float(raw), "int→float"
@@ -378,7 +420,9 @@ def _coerce_tool_args(
         try:
             value, note = _coerce_for_annotation(out[name], annotation)
         except Exception:  # 防御: 单个字段修复失败不影响其余字段
-            logger.debug("arg coercion failed for %s.%s", tool.name, name, exc_info=True)
+            logger.debug(
+                "arg coercion failed for %s.%s", tool.name, name, exc_info=True
+            )
             continue
         if note:
             out[name] = value
@@ -450,7 +494,10 @@ def _invalid_args_output(
         detail = [{"field": "<args>", "problem": str(exc)[:500]}]
 
     fields = getattr(getattr(tool, "input_schema", None), "model_fields", None) or {}
-    expected = {name: _annotation_example(getattr(f, "annotation", None)) for name, f in fields.items()}
+    expected = {
+        name: _annotation_example(getattr(f, "annotation", None))
+        for name, f in fields.items()
+    }
 
     return {
         "error": f"invalid_tool_args: {tool.name} 参数不符合 schema, 本次调用未执行",
@@ -805,85 +852,85 @@ class _AdaptRuntime:
         # 超过该 token 数的字符串走 LLM 智能压缩, 而不是 head/tail 截断.
         self._smart_compress_threshold = max(2000, compression_max_tokens // 2)
 
-    def _check_permission(
-        self, input_data: BaseModel, session_id: str = "default"
-    ) -> tuple[bool, str | None]:
-        """Return (approved, reason_or_none).
+    def _ask_or_deny(self, name: str, reason: str) -> tuple[bool, str | None]:
+        """需要显式审批的场景: 有 callback 走 callback, 否则直接拒绝."""
+        if self.approval_callback is not None:
+            if self.approval_callback(name, reason):
+                return True, None
+            return False, f"User denied: {reason}"
+        return False, reason
 
-        Dangerous-command patterns are checked FIRST, before any
-        auto_approve_all bypass — yolo mode must never silently
-        execute rm -rf / or equivalent.
+    def _dangerous_guard(
+        self, name: str, args: dict[str, Any]
+    ) -> tuple[bool, str | None] | None:
+        """Dangerous pattern check — overrides auto_approve_all.
+
+        This is the last-resort guard against catastrophic commands.
         """
-        name = self.tool.name
-        mode = self.permission_config.get_mode(name)
-        scope = self.tool.constraint_scope
-
-        if self.boundary_state is not None:
-            if name in self.boundary_state.blocked_tools:
-                return False, f"Tool '{name}' is blocked by dynamic boundary"
-            if scope is not None and scope in self.boundary_state.blocked_scopes:
-                return (
-                    False,
-                    f"Tool '{name}' is blocked by dynamic boundary (scope: {scope})",
-                )
-            if self.boundary_state.require_confirmation and mode == PermissionMode.AUTO:
-                mode = PermissionMode.ASK
-
-        # Dangerous pattern check — overrides auto_approve_all.
-        # This is the last-resort guard against catastrophic commands.
-        args = input_data.model_dump() if hasattr(input_data, "model_dump") else {}
         from huginn.permissions import PermissionChecker
 
         checker = PermissionChecker(self.permission_config)
         is_dangerous, matched = checker._check_dangerous(name, args)
-        if is_dangerous:
-            reason = (
-                f"Tool '{name}' matches dangerous pattern '{matched}' — "
-                "requires explicit approval even in auto-approve mode"
-            )
-            if self.approval_callback is not None:
-                if self.approval_callback(name, reason):
-                    return True, None
-                return False, f"User denied: {reason}"
-            return False, reason
+        if not is_dangerous:
+            return None
+        reason = (
+            f"Tool '{name}' matches dangerous pattern '{matched}' — "
+            "requires explicit approval even in auto-approve mode"
+        )
+        return self._ask_or_deny(name, reason)
 
-        # Second layer: command_filter for broader pattern coverage
-        if name == "bash_tool":
-            from huginn.security.command_filter import check_command_safety
+    def _command_filter_guard(
+        self, name: str, args: dict[str, Any]
+    ) -> tuple[bool, str | None] | None:
+        """Second layer: command_filter for broader pattern coverage."""
+        if name != "bash_tool":
+            return None
+        from huginn.security.command_filter import check_command_safety
 
-            cmd = args.get("command", [])
-            safety = check_command_safety(cmd)
-            if not safety.is_safe:
-                reason = (
-                    f"Command blocked by safety filter (pattern: "
-                    f"{safety.matched_pattern}). Requires explicit approval."
-                )
-                if self.approval_callback is not None:
-                    if self.approval_callback(name, reason):
-                        return True, None
-                    return False, f"User denied: {reason}"
-                return False, reason
+        cmd = args.get("command", [])
+        safety = check_command_safety(cmd)
+        if safety.is_safe:
+            return None
+        reason = (
+            f"Command blocked by safety filter (pattern: "
+            f"{safety.matched_pattern}). Requires explicit approval."
+        )
+        return self._ask_or_deny(name, reason)
 
-        if self.permission_config.auto_approve_all or mode == PermissionMode.AUTO:
-            return True, None
-
-        if mode == PermissionMode.DENY:
-            return False, f"Tool '{name}' is blocked by permission policy"
-
-        # P4-2: Standing rules — (tool, target) 维度常驻授权.
+    def _standing_rule_allows(
+        self, session_id: str, name: str, args: dict[str, Any]
+    ) -> bool:
+        """P4-2: Standing rules — (tool, target) 维度常驻授权."""
         # ASK 模式下先查 standing rules, 命中则放行 (不调 approval_callback).
         # HUGINN_STANDING_RULES=1 启用, 默认 off (向后兼容).
-        if os.environ.get("HUGINN_STANDING_RULES") == "1":
-            from huginn.permissions import (
-                extract_target_from_args,
-                get_standing_rules_store,
-            )
+        if os.environ.get("HUGINN_STANDING_RULES") != "1":
+            return False
+        from huginn.permissions import (
+            extract_target_from_args,
+            get_standing_rules_store,
+        )
 
-            _target = extract_target_from_args(args)
-            _store = get_standing_rules_store()
-            if _store.is_granted(session_id, name, _target):
-                return True, None
+        _target = extract_target_from_args(args)
+        _store = get_standing_rules_store()
+        return _store.is_granted(session_id, name, _target)
 
+    def _grant_standing_rule(
+        self, session_id: str, name: str, args: dict[str, Any]
+    ) -> None:
+        """P4-2: approval 通过后记录 standing rule, 下次同 tool+target 自动放行."""
+        # HUGINN_STANDING_RULES=1 启用, 默认 off.
+        if os.environ.get("HUGINN_STANDING_RULES") != "1":
+            return
+        from huginn.permissions import (
+            extract_target_from_args,
+            get_standing_rules_store,
+        )
+
+        _target = extract_target_from_args(args)
+        get_standing_rules_store().grant(session_id, name, _target)
+
+    def _approval_reasons(self, input_data: BaseModel) -> list[str]:
+        """收集需要审批时可展示的破坏性/成本原因."""
         reasons: list[str] = []
         try:
             if self.tool.is_destructive(input_data):
@@ -899,23 +946,35 @@ class _AdaptRuntime:
                     reasons.append(f"estimated cost: {cpu:.1f} CPU hours")
         except Exception:
             logger.debug("suppressed in _check_permission", exc_info=True)
+        return reasons
 
+    def _boundary_block_reason(self, name: str, scope: Any) -> str | None:
+        """动态边界是否直接封禁该工具/作用域; 封禁则返回原因."""
+        state = self.boundary_state
+        if state is None:
+            return None
+        if name in state.blocked_tools:
+            return f"Tool '{name}' is blocked by dynamic boundary"
+        if scope is not None and scope in state.blocked_scopes:
+            return f"Tool '{name}' is blocked by dynamic boundary (scope: {scope})"
+        return None
+
+    def _request_approval(
+        self,
+        input_data: BaseModel,
+        name: str,
+        args: dict[str, Any],
+        session_id: str,
+    ) -> tuple[bool, str | None]:
+        """ASK 模式: 汇总原因 → callback; 无 callback 时走非交互兜底."""
+        reasons = self._approval_reasons(input_data)
         reason = f"Tool '{name}' requires approval"
         if reasons:
             reason += f" ({', '.join(reasons)})"
 
         if self.approval_callback is not None:
             if self.approval_callback(name, reason):
-                # P4-2: approval 通过后记录 standing rule, 下次同 tool+target 自动放行.
-                # HUGINN_STANDING_RULES=1 启用, 默认 off.
-                if os.environ.get("HUGINN_STANDING_RULES") == "1":
-                    from huginn.permissions import (
-                        extract_target_from_args,
-                        get_standing_rules_store,
-                    )
-
-                    _target = extract_target_from_args(args)
-                    get_standing_rules_store().grant(session_id, name, _target)
+                self._grant_standing_rule(session_id, name, args)
                 return True, None
             return False, f"User denied: {reason}"
 
@@ -924,6 +983,47 @@ class _AdaptRuntime:
             return True, None
 
         return False, reason
+
+    def _check_permission(
+        self, input_data: BaseModel, session_id: str = "default"
+    ) -> tuple[bool, str | None]:
+        """Return (approved, reason_or_none).
+
+        Dangerous-command patterns are checked FIRST, before any
+        auto_approve_all bypass — yolo mode must never silently
+        execute rm -rf / or equivalent.
+        """
+        name = self.tool.name
+        mode = self.permission_config.get_mode(name)
+        scope = self.tool.constraint_scope
+
+        blocked_reason = self._boundary_block_reason(name, scope)
+        if blocked_reason is not None:
+            return False, blocked_reason
+        if (
+            self.boundary_state is not None
+            and self.boundary_state.require_confirmation
+            and mode == PermissionMode.AUTO
+        ):
+            mode = PermissionMode.ASK
+
+        args = input_data.model_dump() if hasattr(input_data, "model_dump") else {}
+        decision = self._dangerous_guard(name, args)
+        if decision is None:
+            decision = self._command_filter_guard(name, args)
+        if decision is not None:
+            return decision
+
+        if self.permission_config.auto_approve_all or mode == PermissionMode.AUTO:
+            return True, None
+
+        if mode == PermissionMode.DENY:
+            return False, f"Tool '{name}' is blocked by permission policy"
+
+        if self._standing_rule_allows(session_id, name, args):
+            return True, None
+
+        return self._request_approval(input_data, name, args, session_id)
 
     def _needs_confirmation(self, input_data: BaseModel) -> str | None:
         """破坏性/高成本操作要用户确认, 返回提问文案; 不需要则 None."""
@@ -968,7 +1068,8 @@ class _AdaptRuntime:
             return False
 
     def _build_inputs(
-        self, input_data: BaseModel | dict[str, Any],
+        self,
+        input_data: BaseModel | dict[str, Any],
     ) -> tuple[BaseModel | dict[str, Any], ToolContext]:
         """Attach the execution context to an already-validated input.
 
@@ -992,7 +1093,9 @@ class _AdaptRuntime:
         payload = input_data.model_dump() if self.wants_dict else input_data
         return payload, context
 
-    def _check_constraints(self, result: ToolResult, context: ToolContext) -> ToolResult:
+    def _check_constraints(
+        self, result: ToolResult, context: ToolContext
+    ) -> ToolResult:
         """Run domain constraints on successful tool outputs."""
         if not result.success:
             return result
@@ -1028,58 +1131,41 @@ class _AdaptRuntime:
 
         return result
 
-    def _serialize(self, result: ToolResult) -> dict[str, Any]:
-        data: dict[str, Any]
-        if result.success:
-            data = {"result": result.data}
-        else:
-            data = {"error": result.error or "Unknown error"}
-            # 可操作错误: 把裸异常转成人话+下一步, 让 LLM 不再啃一长串堆栈.
-            # 识别不了就原样返回, 不掩盖原文.
-            data["error"] = humanize_tool_error(data["error"])
-            # 兜底: 从 data 字典里抓 stderr/stdout 作为 error_detail.
-            # 之前用 getattr(result, "stderr") 是死代码 — ToolResult 没这字段.
-            # bash_tool/code_tool 把 stderr 放在 data 里, 这里抽出来给 agent 看.
-            # ponytail: data 可能是 dict 或 None, 只在 dict 路径抽.
-            _data_obj = result.data if isinstance(result.data, dict) else None
-            if _data_obj:
-                _stderr = _data_obj.get("stderr") or ""
-                _stdout = _data_obj.get("stdout") or ""
-                _tail = (_stderr or _stdout or "")[-2000:]
-                if _tail and "error_detail" not in data:
-                    data["error_detail"] = _tail
-            # P0-7: 静默失败检测 — success=False 且无 stderr/stdout/error_detail
-            # = 工具静默崩溃 (Rust sandbox 典型模式). 之前只返回 "Unknown error"
-            # 让 agent 耗死重试. 加可操作提示让 agent 换路径.
-            if (
-                not data.get("error_detail")
-                and data.get("error") == "Unknown error"
-            ):
-                if result.error_kind == ErrorKind.TIMEOUT:
-                    _d = result.data if isinstance(result.data, dict) else {}
-                    data["error"] = _timeout_failure_hint(_d.get("timeout"))
-                    data["timed_out"] = True
-                else:
-                    data["error"] = (
-                        "Unknown error (silent failure — no stderr/stdout captured). "
-                        "This is likely a sandbox/process crash, not a code bug. "
-                        "Try a different approach or tool."
-                    )
-        # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
-        # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
-        data["_source_class"] = "tool_output"
+    def _failure_payload(self, result: ToolResult) -> dict[str, Any]:
+        """失败结果的可操作错误载荷 (人话 error + error_detail + 静默失败提示)."""
+        data: dict[str, Any] = {"error": result.error or "Unknown error"}
+        # 可操作错误: 把裸异常转成人话+下一步, 让 LLM 不再啃一长串堆栈.
+        # 识别不了就原样返回, 不掩盖原文.
+        data["error"] = humanize_tool_error(data["error"])
+        # 兜底: 从 data 字典里抓 stderr/stdout 作为 error_detail.
+        # 之前用 getattr(result, "stderr") 是死代码 — ToolResult 没这字段.
+        # bash_tool/code_tool 把 stderr 放在 data 里, 这里抽出来给 agent 看.
+        # ponytail: data 可能是 dict 或 None, 只在 dict 路径抽.
+        _data_obj = result.data if isinstance(result.data, dict) else None
+        if _data_obj:
+            _stderr = _data_obj.get("stderr") or ""
+            _stdout = _data_obj.get("stdout") or ""
+            _tail = (_stderr or _stdout or "")[-2000:]
+            if _tail and "error_detail" not in data:
+                data["error_detail"] = _tail
+        # P0-7: 静默失败检测 — success=False 且无 stderr/stdout/error_detail
+        # = 工具静默崩溃 (Rust sandbox 典型模式). 之前只返回 "Unknown error"
+        # 让 agent 耗死重试. 加可操作提示让 agent 换路径.
+        if not data.get("error_detail") and data.get("error") == "Unknown error":
+            if result.error_kind == ErrorKind.TIMEOUT:
+                _d = result.data if isinstance(result.data, dict) else {}
+                data["error"] = _timeout_failure_hint(_d.get("timeout"))
+                data["timed_out"] = True
+            else:
+                data["error"] = (
+                    "Unknown error (silent failure — no stderr/stdout captured). "
+                    "This is likely a sandbox/process crash, not a code bug. "
+                    "Try a different approach or tool."
+                )
+        return data
 
-        # Pass through resolution requests so the agent loop can ask the user.
-        if result.metadata.get("needs_resolution"):
-            data["metadata"] = result.metadata
-        # 透传 mock 标记: sim 工具可执行文件缺失时返回 success=True 的假数据,
-        # 下游 dedupe/telemetry 需据此识别并跳过缓存. 参见 tool_dedupe._is_mock_result.
-        if result.metadata.get("mock") is True:
-            data["metadata"] = result.metadata
-
-        data = self._sanitize_and_compress(data)
-
-        # 磁盘卸载: 压缩后仍然超长的输出存文件, 只留预览
+    def _offload_if_oversized(self, data: dict[str, Any]) -> dict[str, Any]:
+        """磁盘卸载: 压缩后仍然超长的输出存文件, 只留预览."""
         try:
             from huginn.tools.compress import offload_tool_output
 
@@ -1107,11 +1193,15 @@ class _AdaptRuntime:
                     if h:
                         data["_recall_handle"] = h
                 except Exception:
-                    logger.debug("observation_pack handle failed (non-fatal)", exc_info=True)
+                    logger.debug(
+                        "observation_pack handle failed (non-fatal)", exc_info=True
+                    )
         except Exception:
             logger.debug("offload_tool_output failed (non-fatal)", exc_info=True)
+        return data
 
-        # Auto-render numerical results as chart for VLM analysis
+    def _enrich_visual(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Auto-render numerical results as chart for VLM analysis."""
         try:
             from huginn.tools.visual_hook import enrich_with_visual
 
@@ -1122,13 +1212,38 @@ class _AdaptRuntime:
             # DeepSeek-OCR 启发: 解码器就是 LLM, 但 base64 不该进 text context.
             # ponytail: pop + setattr. 升级: ToolMessage content 改成 multimodal list.
             b64 = data.pop("_visual_base64", None)
-            if b64 and hasattr(self.adapter, "_agent_ref") and self.adapter._agent_ref is not None:
+            if (
+                b64
+                and hasattr(self.adapter, "_agent_ref")
+                and self.adapter._agent_ref is not None
+            ):
                 with contextlib.suppress(Exception):
                     self.adapter._agent_ref._last_visual_base64 = b64
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)  # non-fatal
-
         return data
+
+    def _serialize(self, result: ToolResult) -> dict[str, Any]:
+        data: dict[str, Any]
+        if result.success:
+            data = {"result": result.data}
+        else:
+            data = self._failure_payload(result)
+        # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
+        # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
+        data["_source_class"] = "tool_output"
+
+        # Pass through resolution requests so the agent loop can ask the user.
+        if result.metadata.get("needs_resolution"):
+            data["metadata"] = result.metadata
+        # 透传 mock 标记: sim 工具可执行文件缺失时返回 success=True 的假数据,
+        # 下游 dedupe/telemetry 需据此识别并跳过缓存. 参见 tool_dedupe._is_mock_result.
+        if result.metadata.get("mock") is True:
+            data["metadata"] = result.metadata
+
+        data = self._sanitize_and_compress(data)
+        data = self._offload_if_oversized(data)
+        return self._enrich_visual(data)
 
     def _sanitize_and_compress(self, obj: Any) -> Any:
         _eco_before = _estimate_chars(obj)
@@ -1154,7 +1269,8 @@ class _AdaptRuntime:
         return out
 
     def _audit(
-        self, input_data: BaseModel,
+        self,
+        input_data: BaseModel,
         output: dict[str, Any],
         approved: bool,
         reason: str | None,
@@ -1166,9 +1282,7 @@ class _AdaptRuntime:
             }
             if reason:
                 details["reason"] = reason
-            raw_input = json.dumps(
-                input_data.model_dump(), default=str, sort_keys=True
-            )
+            raw_input = json.dumps(input_data.model_dump(), default=str, sort_keys=True)
             raw_output = json.dumps(output, default=str, sort_keys=True)
             self.audit_logger.log(
                 event_type="tool_call",
@@ -1274,9 +1388,7 @@ class _AdaptRuntime:
                 )
             )
         except Exception:
-            logger.debug(
-                "ToolRespondEvent dispatch failed (non-fatal)", exc_info=True
-            )
+            logger.debug("ToolRespondEvent dispatch failed (non-fatal)", exc_info=True)
 
     async def _dispatch_tool_execute_event(
         self, args_dict: dict[str, Any], session_id: str
@@ -1303,9 +1415,7 @@ class _AdaptRuntime:
                 )
             )
         except Exception:
-            logger.debug(
-                "ON_TOOL_EXECUTE dispatch failed (non-fatal)", exc_info=True
-            )
+            logger.debug("ON_TOOL_EXECUTE dispatch failed (non-fatal)", exc_info=True)
 
     def _schedule_event(self, coro: Any) -> None:
         """从同步路径 fire-and-forget 一个 async typed Event dispatch.
@@ -1341,7 +1451,6 @@ class _AdaptRuntime:
     def _set_cached(self, input_data: BaseModel, output: dict[str, Any]) -> None:
         if getattr(self.tool, "read_only", False) and output.get("error") is None:
             ToolAdapter._read_only_cache.set(self._cache_key(input_data), output)
-
 
     async def _smart_compress_output(self, obj: Any) -> Any:
         """Recursively compress large strings in ``obj`` using LLM summary.
@@ -1416,8 +1525,152 @@ class _AdaptRuntime:
     # only the async-call mechanism differs for confirmation and
     # validation.
 
+    def _gate_permission(
+        self, input_data: Any, context: Any
+    ) -> tuple[dict[str, Any] | None, str]:
+        """1. Permission"""
+        _sid = (
+            getattr(context, "session_id", None) or "default" if context else "default"
+        )
+        approved, reason = self._check_permission(input_data, session_id=_sid)
+        if approved:
+            return None, ""
+        output = {"error": reason or f"Tool '{self.tool.name}' was denied"}
+        self._audit(input_data, output, approved=False, reason=reason)
+        self._publish(PetMood.ERROR, f"{self.tool.name} denied", {"reason": reason})
+        return output, "permission"
+
+    def _gate_cache(self, input_data: Any) -> tuple[dict[str, Any] | None, str]:
+        """2. Cache (checked before confirmation — safe, no approval needed)"""
+        cached = self._get_cached(input_data)
+        if cached is None:
+            return None, ""
+        self._audit(input_data, cached, approved=True, reason="cache_hit")
+        self._publish(
+            PetMood.SUCCESS, f"{self.tool.name} (cached)", {"tool": self.tool.name}
+        )
+        _record_cache_hit(self.tool.name)
+        return cached, "cache"
+
+    def _gate_dedupe(
+        self, input_data: Any, kwargs: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, str]:
+        """2b. Dedupe (same step, same tool+args → return last result)"""
+        # 跟 read_only cache 互补: cache 只对 read_only 工具生效,
+        # dedupe 对所有工具生效, 防止 step 内重复调用有副作用的工具.
+        deduper = self.adapter._current_deduper
+        if deduper is None:
+            return None, ""
+        cached_dedup = deduper.lookup(self.tool.name, kwargs)
+        if cached_dedup is None:
+            return None, ""
+        _economy_bump(dedupe_hits=1)
+        self._audit(input_data, cached_dedup, approved=True, reason="dedupe_hit")
+        self._publish(
+            PetMood.SUCCESS, f"{self.tool.name} (deduped)", {"tool": self.tool.name}
+        )
+        return cached_dedup, "dedupe"
+
+    def _gate_router(
+        self, input_data: Any, kwargs: dict[str, Any], router: Any
+    ) -> tuple[dict[str, Any] | None, str]:
+        """3. Router (lightweight-path decision)"""
+        if router is None:
+            return None, ""
+        allowed, router_reason = router.should_allow(self.tool.name, kwargs, {})
+        if allowed:
+            return None, ""
+        output = {"error": router_reason, "_router_blocked": True}
+        self._audit(input_data, output, approved=False, reason="router_blocked")
+        self._publish(
+            PetMood.ERROR,
+            f"{self.tool.name} blocked by router",
+            {"reason": router_reason},
+        )
+        return output, "router"
+
+    def _gate_budget(self, input_data: Any) -> tuple[dict[str, Any] | None, str]:
+        """4. Budget"""
+        budget = self.adapter._current_budget
+        if budget is None or budget.record(self.tool.name):
+            return None, ""
+        _, budget_reason = budget.should_stop()
+        # P0-3: 加重置语义, 让 LLM 知道是本轮耗尽而非死刑.
+        # 之前 "预算耗尽" 让 agent 误判 game over 直接交卷.
+        output = {
+            "error": (
+                f"工具调用预算耗尽: {budget_reason}. "
+                f"本轮预算已尽, 下轮重置. 请换工具或收尾, "
+                f"不要放弃当前任务."
+            ),
+            "_budget_exceeded": True,
+        }
+        self._audit(input_data, output, approved=True, reason="budget_exceeded")
+        self._publish(
+            PetMood.ERROR,
+            f"{self.tool.name} blocked by budget",
+            {"reason": budget_reason},
+        )
+        return output, "budget"
+
+    def _gate_loop(
+        self, input_data: Any, kwargs: dict[str, Any], context: Any
+    ) -> tuple[dict[str, Any] | None, str]:
+        """5. Loop detection"""
+        loop_detector = self.adapter._current_loop_detector
+        if loop_detector is None or not loop_detector.record(self.tool.name, kwargs):
+            return None, ""
+        _, loop_reason = loop_detector.should_break()
+        output = {"error": loop_reason, "_loop_detected": True}
+        self._audit(input_data, output, approved=False, reason="loop_detected")
+        self._publish(
+            PetMood.ERROR,
+            f"{self.tool.name} blocked by loop detector",
+            {"reason": loop_reason},
+        )
+        self._publish_blocked(self.tool.name, input_data, loop_reason, context)
+        return output, "loop_detector"
+
+    def _gate_breaker(
+        self, input_data: Any, context: Any
+    ) -> tuple[dict[str, Any] | None, str]:
+        """6. Circuit breaker → Degradation coordinator"""
+        blocked = _breaker_blocked(self.tool.name)
+        if blocked is None:
+            return None, ""
+        # 主动降级：查 degradation_chain 自动尝试替代工具
+        from huginn.agents.degradation_coordinator import try_with_degradation
+
+        degraded = try_with_degradation(self.tool.name, input_data, context)
+        if not degraded.get("_degradation_exhausted") and not degraded.get(
+            "_no_degradation_chain"
+        ):
+            # 降级成功 — 标记并返回替代结果
+            self._audit(
+                input_data,
+                degraded,
+                approved=True,
+                reason=f"degraded:{degraded.get('_degraded_to', '?')}",
+            )
+            self._publish(
+                PetMood.NEUTRAL,
+                f"{self.tool.name} degraded → {degraded.get('_degraded_to', '?')}",
+                {"quality_tier": degraded.get("_quality_tier", "")},
+            )
+            return degraded, "degraded"
+        # 降级链耗尽或无降级链 — 返回结构化错误
+        self._audit(input_data, degraded, approved=False, reason="circuit_open")
+        self._publish(
+            PetMood.ERROR,
+            f"{self.tool.name} circuit open, all fallbacks exhausted",
+            {"tried": degraded.get("tried", [])},
+        )
+        self._publish_blocked(self.tool.name, input_data, "circuit_open", context)
+        return degraded, "circuit_breaker"
+
     def _run_pre_checks(
-        self, input_data: Any,
+        self,
+        input_data: Any,
         kwargs: dict[str, Any],
         context: Any = None,
     ) -> tuple[dict[str, Any] | None, Any, str]:
@@ -1430,181 +1683,81 @@ class _AdaptRuntime:
         gate that fired so the caller can emit a span for it (blocked calls
         used to vanish from telemetry entirely).
         """
-        # 1. Permission
-        _sid = (
-            getattr(context, "session_id", None) or "default"
-            if context
-            else "default"
-        )
-        approved, reason = self._check_permission(input_data, session_id=_sid)
-        if not approved:
-            output = {"error": reason or f"Tool '{self.tool.name}' was denied"}
-            self._audit(input_data, output, approved=False, reason=reason)
-            self._publish(PetMood.ERROR, f"{self.tool.name} denied", {"reason": reason})
-            return output, None, "permission"
-
-        # 2. Cache (checked before confirmation — safe, no approval needed)
-        cached = self._get_cached(input_data)
-        if cached is not None:
-            self._audit(input_data, cached, approved=True, reason="cache_hit")
-            self._publish(PetMood.SUCCESS, f"{self.tool.name} (cached)", {"tool": self.tool.name})
-            _record_cache_hit(self.tool.name)
-            return cached, None, "cache"
-
-        # 2b. Dedupe (same step, same tool+args → return last result)
-        # 跟 read_only cache 互补: cache 只对 read_only 工具生效,
-        # dedupe 对所有工具生效, 防止 step 内重复调用有副作用的工具.
-        deduper = self.adapter._current_deduper
-        if deduper is not None:
-            cached_dedup = deduper.lookup(self.tool.name, kwargs)
-            if cached_dedup is not None:
-                _economy_bump(dedupe_hits=1)
-                self._audit(input_data, cached_dedup, approved=True, reason="dedupe_hit")
-                self._publish(
-                    PetMood.SUCCESS, f"{self.tool.name} (deduped)", {"tool": self.tool.name}
-                )
-                return cached_dedup, None, "dedupe"
-
-        # 3. Router (lightweight-path decision)
+        output, stage = self._gate_permission(input_data, context)
+        if output is not None:
+            return output, None, stage
+        output, stage = self._gate_cache(input_data)
+        if output is not None:
+            return output, None, stage
+        output, stage = self._gate_dedupe(input_data, kwargs)
+        if output is not None:
+            return output, None, stage
         router = self.adapter._current_router
-        if router is not None:
-            allowed, router_reason = router.should_allow(self.tool.name, kwargs, {})
-            if not allowed:
-                output = {"error": router_reason, "_router_blocked": True}
-                self._audit(input_data, output, approved=False, reason="router_blocked")
-                self._publish(
-                    PetMood.ERROR,
-                    f"{self.tool.name} blocked by router",
-                    {"reason": router_reason},
-                )
-                return output, router, "router"
-
-        # 4. Budget
-        budget = self.adapter._current_budget
-        if budget is not None and not budget.record(self.tool.name):
-            _, budget_reason = budget.should_stop()
-            # P0-3: 加重置语义, 让 LLM 知道是本轮耗尽而非死刑.
-            # 之前 "预算耗尽" 让 agent 误判 game over 直接交卷.
-            output = {
-                "error": (
-                    f"工具调用预算耗尽: {budget_reason}. "
-                    f"本轮预算已尽, 下轮重置. 请换工具或收尾, "
-                    f"不要放弃当前任务."
-                ),
-                "_budget_exceeded": True,
-            }
-            self._audit(input_data, output, approved=True, reason="budget_exceeded")
-            self._publish(
-                PetMood.ERROR,
-                f"{self.tool.name} blocked by budget",
-                {"reason": budget_reason},
-            )
-            return output, router, "budget"
-
-        # 5. Loop detection
-        loop_detector = self.adapter._current_loop_detector
-        if loop_detector is not None:
-            is_loop = loop_detector.record(self.tool.name, kwargs)
-            if is_loop:
-                _, loop_reason = loop_detector.should_break()
-                output = {"error": loop_reason, "_loop_detected": True}
-                self._audit(input_data, output, approved=False, reason="loop_detected")
-                self._publish(
-                    PetMood.ERROR,
-                    f"{self.tool.name} blocked by loop detector",
-                    {"reason": loop_reason},
-                )
-                self._publish_blocked(self.tool.name, input_data, loop_reason, context)
-                return output, router, "loop_detector"
-
-        # 6. Circuit breaker → Degradation coordinator
-        blocked = _breaker_blocked(self.tool.name)
-        if blocked is not None:
-            # 主动降级：查 degradation_chain 自动尝试替代工具
-            from huginn.agents.degradation_coordinator import try_with_degradation
-
-            degraded = try_with_degradation(self.tool.name, input_data, context)
-            if not degraded.get("_degradation_exhausted") and not degraded.get(
-                "_no_degradation_chain"
-            ):
-                # 降级成功 — 标记并返回替代结果
-                self._audit(
-                    input_data,
-                    degraded,
-                    approved=True,
-                    reason=f"degraded:{degraded.get('_degraded_to', '?')}",
-                )
-                self._publish(
-                    PetMood.NEUTRAL,
-                    f"{self.tool.name} degraded → {degraded.get('_degraded_to', '?')}",
-                    {"quality_tier": degraded.get("_quality_tier", "")},
-                )
-                return degraded, router, "degraded"
-            # 降级链耗尽或无降级链 — 返回结构化错误
-            self._audit(input_data, degraded, approved=False, reason="circuit_open")
-            self._publish(
-                PetMood.ERROR,
-                f"{self.tool.name} circuit open, all fallbacks exhausted",
-                {"tried": degraded.get("tried", [])},
-            )
-            self._publish_blocked(self.tool.name, input_data, "circuit_open", context)
-            return degraded, router, "circuit_breaker"
-
+        output, stage = self._gate_router(input_data, kwargs, router)
+        if output is not None:
+            return output, router, stage
+        output, stage = self._gate_budget(input_data)
+        if output is not None:
+            return output, router, stage
+        output, stage = self._gate_loop(input_data, kwargs, context)
+        if output is not None:
+            return output, router, stage
+        output, stage = self._gate_breaker(input_data, context)
+        if output is not None:
+            return output, router, stage
         return None, router, ""
 
-    def _run_post_checks(
-        self, input_data: Any,
+    def _record_dedupe_result(
+        self,
+        input_data: Any,
         result: Any,
         output: dict[str, Any],
-        context: Any,
-        router: Any,
-        duration: float = 0.0,
-        kwargs: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Post-execution: constraints, audit, cache, publish."""
-        if router is not None:
-            router.record_light_attempt(self.tool.name)
-
-        # 记录到 deduper, 后续同 step 同 (tool, args) 命中即跳过真实执行.
+        kwargs: dict[str, Any] | None,
+    ) -> None:
+        """记录到 deduper, 后续同 step 同 (tool, args) 命中即跳过真实执行."""
         # 只缓存成功结果, 错误结果不缓存 (让 LLM 重试).
         deduper = self.adapter._current_deduper
-        if deduper is not None and result.success:
-            try:
-                deduper.record(
-                    self.tool.name, kwargs if kwargs is not None else input_data, output
-                )
-            except Exception:
-                logger.debug("deduper record failed (non-fatal)", exc_info=True)
+        if deduper is None or not result.success:
+            return
+        try:
+            deduper.record(
+                self.tool.name, kwargs if kwargs is not None else input_data, output
+            )
+        except Exception:
+            logger.debug("deduper record failed (non-fatal)", exc_info=True)
 
-        # 溯源注册: 自动提取文件路径和关键属性
-        if result.success:
-            try:
-                from huginn.provenance import register_tool_output
+    def _register_provenance(self, input_data: Any, output: dict[str, Any]) -> None:
+        """溯源注册: 自动提取文件路径和关键属性."""
+        try:
+            from huginn.provenance import register_tool_output
 
-                register_tool_output(
-                    tool_name=self.tool.name,
-                    tool_input=input_data.model_dump()
-                    if hasattr(input_data, "model_dump")
-                    else {},
-                    tool_output=output,
-                )
-            except ImportError:
-                logger.debug("best-effort op failed", exc_info=True)
-            except Exception:
-                logger.debug(
-                    "provenance register failed (non-fatal)", exc_info=True
-                )
+            register_tool_output(
+                tool_name=self.tool.name,
+                tool_input=input_data.model_dump()
+                if hasattr(input_data, "model_dump")
+                else {},
+                tool_output=output,
+            )
+        except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
+        except Exception:
+            logger.debug("provenance register failed (non-fatal)", exc_info=True)
 
-        # 贝叶斯技能进化: 多维反馈信号 (success + duration + info_gain)
+    def _record_skill_evolution(
+        self,
+        input_data: Any,
+        result: Any,
+        output: dict[str, Any],
+        duration: float,
+    ) -> None:
+        """贝叶斯技能进化: 多维反馈信号 (success + duration + info_gain)."""
         try:
             from huginn.skills.evolution import SkillEvolutionLayer
 
             _ig = len(output) if isinstance(output, dict) else 0
             SkillEvolutionLayer.shared().record_tool_call(
                 self.tool.name,
-                input_data.model_dump()
-                if hasattr(input_data, "model_dump")
-                else {},
+                input_data.model_dump() if hasattr(input_data, "model_dump") else {},
                 result.success,
                 duration=duration,
                 info_gain=_ig,
@@ -1612,36 +1765,27 @@ class _AdaptRuntime:
         except Exception:
             logger.debug("skill evolution record failed", exc_info=True)
 
-        result = self._check_constraints(result, context)
-        output = self._serialize(result)
-        self._audit(input_data, output, approved=True, reason=None)
-        if result.success:
-            self._publish(PetMood.SUCCESS, f"{self.tool.name} done", {"tool": self.tool.name})
-            self._set_cached(input_data, output)
-        else:
-            self._publish(
-                PetMood.ERROR,
-                f"{self.tool.name} failed",
-                {"tool": self.tool.name, "error": result.error},
-            )
-        # 事件总线: 发布 tool.result / tool.error
+    def _publish_tool_event(
+        self, input_data: Any, output: dict[str, Any], result: Any, context: Any
+    ) -> None:
+        """事件总线: 发布 tool.result / tool.error."""
         try:
             from huginn.events.integration import publish_tool_event_sync
 
             publish_tool_event_sync(
                 self.tool.name,
-                input_data.model_dump()
-                if hasattr(input_data, "model_dump")
-                else {},
+                input_data.model_dump() if hasattr(input_data, "model_dump") else {},
                 output,
-                thread_id=context.thread_id
-                if hasattr(context, "thread_id")
-                else "",
+                thread_id=context.thread_id if hasattr(context, "thread_id") else "",
                 error=result.error if not result.success else None,
             )
         except Exception:
             logger.debug("tool event publish failed", exc_info=True)
-        # 插件事件系统: 分发 typed ToolRespondEvent (有别于内部 tool.result 字符串事件)
+
+    def _dispatch_tool_respond_event_async(
+        self, input_data: Any, output: dict[str, Any], result: Any
+    ) -> None:
+        """插件事件系统: 分发 typed ToolRespondEvent (有别于内部 tool.result 字符串事件)."""
         try:
             _resp_args = (
                 input_data.model_dump() if hasattr(input_data, "model_dump") else {}
@@ -1654,9 +1798,43 @@ class _AdaptRuntime:
                 )
             )
         except Exception:
-            logger.debug(
-                "ToolRespondEvent dispatch skipped (non-fatal)", exc_info=True
+            logger.debug("ToolRespondEvent dispatch skipped (non-fatal)", exc_info=True)
+
+    def _run_post_checks(
+        self,
+        input_data: Any,
+        result: Any,
+        output: dict[str, Any],
+        context: Any,
+        router: Any,
+        duration: float = 0.0,
+        kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Post-execution: constraints, audit, cache, publish."""
+        if router is not None:
+            router.record_light_attempt(self.tool.name)
+
+        self._record_dedupe_result(input_data, result, output, kwargs)
+        if result.success:
+            self._register_provenance(input_data, output)
+        self._record_skill_evolution(input_data, result, output, duration)
+
+        result = self._check_constraints(result, context)
+        output = self._serialize(result)
+        self._audit(input_data, output, approved=True, reason=None)
+        if result.success:
+            self._publish(
+                PetMood.SUCCESS, f"{self.tool.name} done", {"tool": self.tool.name}
             )
+            self._set_cached(input_data, output)
+        else:
+            self._publish(
+                PetMood.ERROR,
+                f"{self.tool.name} failed",
+                {"tool": self.tool.name, "error": result.error},
+            )
+        self._publish_tool_event(input_data, output, result, context)
+        self._dispatch_tool_respond_event_async(input_data, output, result)
         return output
 
     def _prepare_args(
@@ -1674,8 +1852,12 @@ class _AdaptRuntime:
         return kwargs, input_data, invalid, repairs
 
     def _gate_return(
-        self, kwargs: dict[str, Any], output: dict[str, Any], stage: str,
-        t_start: float, repairs: list[str],
+        self,
+        kwargs: dict[str, Any],
+        output: dict[str, Any],
+        stage: str,
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any]:
         """门禁拦截: 补一条 span (被拦的调用以前在遥测里完全消失)."""
         _emit_span(
@@ -1730,8 +1912,12 @@ class _AdaptRuntime:
         )
 
     def _cancelled_output(
-        self, question: str, input_data: Any, kwargs: dict[str, Any],
-        t_start: float, repairs: list[str],
+        self,
+        question: str,
+        input_data: Any,
+        kwargs: dict[str, Any],
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any]:
         output = {
             "error": f"用户取消了 {self.tool.name} 调用",
@@ -1746,8 +1932,12 @@ class _AdaptRuntime:
         return self._gate_return(kwargs, output, "confirmation", t_start, repairs)
 
     async def _confirm_gate_async(
-        self, input_data: Any, context: Any, kwargs: dict[str, Any],
-        t_start: float, repairs: list[str],
+        self,
+        input_data: Any,
+        context: Any,
+        kwargs: dict[str, Any],
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any] | None:
         if not self._needs_confirm():
             return None
@@ -1772,14 +1962,16 @@ class _AdaptRuntime:
                 return asyncio.run(self._ask_confirmation(context, question))
         except Exception:
             # ClarificationManager 不可用 — 安全侧 fail-closed
-            logger.warning(
-                "ClarificationManager unavailable (sync), failing closed"
-            )
+            logger.warning("ClarificationManager unavailable (sync), failing closed")
             return False
 
     def _confirm_gate_sync(
-        self, input_data: Any, context: Any, kwargs: dict[str, Any],
-        t_start: float, repairs: list[str],
+        self,
+        input_data: Any,
+        context: Any,
+        kwargs: dict[str, Any],
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any] | None:
         if not self._needs_confirm():
             return None
@@ -1789,8 +1981,12 @@ class _AdaptRuntime:
         return self._cancelled_output(question, input_data, kwargs, t_start, repairs)
 
     def _validation_output(
-        self, validation: Any, input_data: Any, kwargs: dict[str, Any],
-        t_start: float, repairs: list[str],
+        self,
+        validation: Any,
+        input_data: Any,
+        kwargs: dict[str, Any],
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any] | None:
         if validation.result:
             return None
@@ -1804,15 +2000,23 @@ class _AdaptRuntime:
         return self._gate_return(kwargs, output, "validate_input", t_start, repairs)
 
     async def _validate_gate_async(
-        self, input_data: Any, context: Any, kwargs: dict[str, Any],
-        t_start: float, repairs: list[str],
+        self,
+        input_data: Any,
+        context: Any,
+        kwargs: dict[str, Any],
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any] | None:
         validation = await self.tool.validate_input(input_data, context)
         return self._validation_output(validation, input_data, kwargs, t_start, repairs)
 
     def _validate_gate_sync(
-        self, input_data: Any, context: Any, kwargs: dict[str, Any],
-        t_start: float, repairs: list[str],
+        self,
+        input_data: Any,
+        context: Any,
+        kwargs: dict[str, Any],
+        t_start: float,
+        repairs: list[str],
     ) -> dict[str, Any] | None:
         validation_result = self.tool.validate_input(input_data, context)
         if asyncio.iscoroutine(validation_result):
@@ -1843,8 +2047,13 @@ class _AdaptRuntime:
         return result
 
     def _fill_span(
-        self, span: Any, result: Any, output: dict[str, Any], payload: Any,
-        repairs: list[str], call_start: float,
+        self,
+        span: Any,
+        result: Any,
+        output: dict[str, Any],
+        payload: Any,
+        repairs: list[str],
+        call_start: float,
     ) -> None:
         if repairs:
             span.metadata["arg_repairs"] = repairs
@@ -1910,8 +2119,13 @@ class _AdaptRuntime:
             raise
 
     async def _execute_and_finalize_async(
-        self, payload: Any, context: Any, input_data: Any, kwargs: dict[str, Any],
-        router: Any, repairs: list[str],
+        self,
+        payload: Any,
+        context: Any,
+        input_data: Any,
+        kwargs: dict[str, Any],
+        router: Any,
+        repairs: list[str],
     ) -> dict[str, Any]:
         timeout = get_timeout(self.tool.name)
         call_start = time.time()
@@ -1936,8 +2150,13 @@ class _AdaptRuntime:
         )
 
     def _execute_and_finalize_sync(
-        self, payload: Any, context: Any, input_data: Any, kwargs: dict[str, Any],
-        router: Any, repairs: list[str],
+        self,
+        payload: Any,
+        context: Any,
+        input_data: Any,
+        kwargs: dict[str, Any],
+        router: Any,
+        repairs: list[str],
     ) -> dict[str, Any]:
         timeout = get_timeout(self.tool.name)
         call_start = time.time()
@@ -2031,6 +2250,7 @@ class _AdaptRuntime:
         return self._execute_and_finalize_sync(
             payload, context, input_data, kwargs, router, repairs
         )
+
 
 class ToolAdapter:
     """Adapts HuginnTool instances to LangChain StructuredTool."""

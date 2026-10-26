@@ -34,7 +34,24 @@ def _extract_member_usage(state: Any, usage: dict[str, int]) -> None:
     for key in ("usage", "_usage", "token_usage", "_tokens"):
         u = state.get(key) if isinstance(state, dict) else None
         if isinstance(u, dict) and any(u.values()):
-            usage.update({k: int(v) for k, v in u.items() if isinstance(v, int | float)})
+            usage.update(
+                {k: int(v) for k, v in u.items() if isinstance(v, int | float)}
+            )
+
+
+def _member_chat_kwargs(member: TeamMember, ctx: dict[str, Any]) -> dict[str, Any]:
+    """构造 agent.chat() 的调用参数.
+
+    VISION member 需要把真实图像透传给 agent.chat(), 否则多模态模型
+    只能看到文本拼的"图片路径", 无法真正看图. ctx 里由调用方注入
+    image_path / image_bytes, 这里原样透传 (None 时走纯文本旧路径).
+    """
+    chat_kwargs: dict[str, Any] = {
+        "thread_id": ctx.get("thread_id", f"team-{member.role.value}")
+    }
+    if ctx.get("image_path") is not None:
+        chat_kwargs["image_path"] = ctx["image_path"]
+    return chat_kwargs
 
 
 class TeamRole(enum.StrEnum):
@@ -43,8 +60,8 @@ class TeamRole(enum.StrEnum):
     CODER = "coder"
     EXECUTOR = "executor"
     CRITIC = "critic"
-    VISION = "vision"          # 本地多模态: 处理图像/视觉理解
-    SYNTHESIZER = "synthesizer" # 合成器: 跨模型信息融合
+    VISION = "vision"  # 本地多模态: 处理图像/视觉理解
+    SYNTHESIZER = "synthesizer"  # 合成器: 跨模型信息融合
 
 
 # NonAuthoritativeProvenance: 子 agent 是非权威来源, 不能继承主会话的
@@ -54,7 +71,7 @@ class TeamRole(enum.StrEnum):
 _ROLE_TOOL_FILTER: dict[TeamRole, list[str] | None] = {
     TeamRole.VISION: ["vision_describe", "image_analysis_tool", "file_read_tool"],
     TeamRole.CRITIC: ["file_read_tool", "grep", "glob", "diff_tool"],
-    TeamRole.PLANNER: None,   # planner 需要全工具视野来规划
+    TeamRole.PLANNER: None,  # planner 需要全工具视野来规划
     TeamRole.SYNTHESIZER: None,
 }
 
@@ -217,87 +234,14 @@ class ModelTeam:
 
         # 只有一个 profile: 所有角色都用它
         if len(profiles) == 1:
-            p = profiles[0]
-            model_name = _resolve_model_name(config, p.model_alias)
-            caps = get_model_capabilities(model_name) if model_name else ModelCaps()
-            members = [
-                TeamMember(
-                    name=f"{role.value}-{p.id}",
-                    profile_id=p.id,
-                    role=role,
-                    model_name=model_name,
-                    caps=caps,
-                    _config=config,
-                )
-                for role in TeamRole
-            ]
-            return cls(members)
+            return cls(_members_for_single_profile(config, profiles[0]))
 
         # 多 profile: 先按 id 直接匹配角色, 剩下的按能力路由
-        members: list[TeamMember] = []
-        used_profiles: set[str] = set()
-        assigned_roles: set[TeamRole] = set()
-
-        # 第一轮: profile.id 和角色名同名的直接绑定
-        for p in profiles:
-            try:
-                role = TeamRole(p.id)
-            except ValueError:
-                logger.debug("best-effort op failed", exc_info=True)
-                continue
-            model_name = _resolve_model_name(config, p.model_alias)
-            caps = get_model_capabilities(model_name) if model_name else ModelCaps()
-            members.append(
-                TeamMember(
-                    name=f"{role.value}-{p.id}",
-                    profile_id=p.id,
-                    role=role,
-                    model_name=model_name,
-                    caps=caps,
-                    _config=config,
-                )
-            )
-            used_profiles.add(p.id)
-            assigned_roles.add(role)
-
+        members, used_profiles, assigned_roles = _match_profiles_by_role_id(
+            config, profiles
+        )
         # 第二轮: 剩余角色按能力从剩余 profile 中挑最合适的
-        remaining_profiles = [p for p in profiles if p.id not in used_profiles]
-        for role in TeamRole:
-            if role in assigned_roles:
-                continue
-            best = _pick_best_profile(role, remaining_profiles, config)
-            if best is None:
-                # 实在没人了, 从已分配的里面借一个 (planner 和 critic 不能同一个)
-                best = _pick_fallback_profile(role, members, assigned_roles)
-                if best is None:
-                    continue
-                # 复用已有成员的 profile, 但起个新名字
-                members.append(
-                    TeamMember(
-                        name=f"{role.value}-{best.profile_id}",
-                        profile_id=best.profile_id,
-                        role=role,
-                        model_name=best.model_name,
-                        caps=best.caps,
-                        _config=config,
-                    )
-                )
-            else:
-                model_name = _resolve_model_name(config, best.model_alias)
-                caps = (
-                    get_model_capabilities(model_name) if model_name else ModelCaps()
-                )
-                members.append(
-                    TeamMember(
-                        name=f"{role.value}-{best.id}",
-                        profile_id=best.id,
-                        role=role,
-                        model_name=model_name,
-                        caps=caps,
-                        _config=config,
-                    )
-                )
-                remaining_profiles.remove(best)
+        _fill_remaining_roles(config, profiles, members, used_profiles, assigned_roles)
 
         return cls(members)
 
@@ -307,32 +251,62 @@ class ModelTeam:
         self, task: str, context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """跑完整流水线: 规划 → 按步骤执行 → 审查."""
-        import uuid
+        run_id, traces, ctx, t0 = _init_run_state(task, context)
 
-        run_id = context.get("team_run_id") if context else None
-        if not run_id:
-            run_id = uuid.uuid4().hex[:12]
-        traces: list[TeamTrace] = []
-        ctx = dict(context or {})
-        ctx["original_task"] = task
-        ctx["team_run_id"] = run_id
-        t0 = time.time()
-
-        await self._publish("team.run.start", {
-            "run_id": run_id,
-            "task": task,
-            "members": [m.role.value for m in self.members.values()],
-        })
+        await self._publish(
+            "team.run.start",
+            {
+                "run_id": run_id,
+                "task": task,
+                "members": [m.role.value for m in self.members.values()],
+            },
+        )
 
         # 1. 规划
+        steps = await ModelTeam._plan_phase(self, task, ctx, traces, run_id)
+
+        # 2. 执行
+        role_outputs = await ModelTeam._execute_phase(self, steps, ctx, traces, run_id)
+
+        # 3. 审查 (如果计划里没有)
+        await ModelTeam._review_phase(self, task, ctx, traces, run_id, role_outputs)
+
+        await self._publish(
+            "team.run.done",
+            {
+                "run_id": run_id,
+                "task": task,
+                "duration_ms": round((time.time() - t0) * 1000, 2),
+                "steps": len(traces),
+            },
+        )
+
+        return _run_result(self, task, run_id, ctx, traces)
+
+    async def _plan_phase(
+        self,
+        task: str,
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        run_id: str,
+    ) -> list[TeamStep]:
+        """规划阶段: 委派 planner 生成步骤, 没有可用步骤时用默认计划."""
         plan_text = await self._delegate(TeamRole.PLANNER, task, ctx, traces, run_id)
         ctx["planner_output"] = plan_text
         steps = self._parse_plan(plan_text)
         if not steps:
             steps = self._default_plan(task)
         ctx["plan"] = self._plan_to_text(steps)
+        return steps
 
-        # 2. 执行
+    async def _execute_phase(
+        self,
+        steps: list[TeamStep],
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        run_id: str,
+    ) -> dict[TeamRole, str]:
+        """执行阶段: 按依赖跑步骤, 把各角色输出写回 context."""
         step_outputs = await self._execute_plan(steps, ctx, traces, run_id)
         role_outputs: dict[TeamRole, str] = {}
         for step, output in zip(steps, step_outputs):
@@ -343,8 +317,17 @@ class ModelTeam:
         ctx["execution_result"] = role_outputs.get(
             TeamRole.EXECUTOR, "No executor step completed."
         )
+        return role_outputs
 
-        # 3. 审查 (如果计划里没有)
+    async def _review_phase(
+        self,
+        task: str,
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        run_id: str,
+        role_outputs: dict[TeamRole, str],
+    ) -> None:
+        """审查阶段: 计划里没有 critic 输出时再单独委派一次."""
         critic_output = role_outputs.get(TeamRole.CRITIC, "")
         if not critic_output and TeamRole.CRITIC in self.members:
             critic_input = (
@@ -356,26 +339,6 @@ class ModelTeam:
                 TeamRole.CRITIC, critic_input, ctx, traces, run_id
             )
         ctx["review"] = critic_output
-
-        await self._publish("team.run.done", {
-            "run_id": run_id,
-            "task": task,
-            "duration_ms": round((time.time() - t0) * 1000, 2),
-            "steps": len(traces),
-        })
-
-        return {
-            "task": task,
-            "run_id": run_id,
-            "context": ctx,
-            "members": [
-                {"role": m.role.value, "name": m.name, "model": m.model_name}
-                for m in self.members.values()
-            ],
-            "trace": [self._trace_to_dict(t) for t in traces],
-            "final_output": ctx["execution_result"],
-            "review": ctx["review"],
-        }
 
     # ── 内部方法 ──────────────────────────────────────────
 
@@ -422,45 +385,86 @@ class ModelTeam:
             "member": member.name,
             "model": member.model_name,
         }
-        await self._publish("team.member.start", {**base, "status": "running", "task": task[:500]})
-        final_output = ""
-        # VISION member 需要把真实图像透传给 agent.chat(), 否则多模态模型
-        # 只能看到文本拼的"图片路径", 无法真正看图. ctx 里由调用方注入
-        # image_path / image_bytes, 这里原样透传 (None 时走纯文本旧路径).
-        chat_kwargs: dict[str, Any] = {
-            "thread_id": ctx.get("thread_id", f"team-{member.role.value}")
-        }
-        if ctx.get("image_path") is not None:
-            chat_kwargs["image_path"] = ctx["image_path"]
+        await self._publish(
+            "team.member.start", {**base, "status": "running", "task": task[:500]}
+        )
+        chat_kwargs = _member_chat_kwargs(member, ctx)
         # 记录该成员这轮用掉的 token (best-effort, 拿不到就不带).
         usage: dict[str, int] = {}
         try:
-            async for state in agent.chat(task, **chat_kwargs):
-                # 工具调用 → team.member.tool 事件 (前端节点展开看调用序列)
-                for msg in state.get("messages", []):
-                    tcs = getattr(msg, "tool_calls", None)
-                    if tcs:
-                        await self._publish_member_tool_calls(base, tcs)
-                    content = getattr(msg, "content", None)
-                    if content:
-                        final_output = str(content)
-                _extract_member_usage(state, usage)
+            final_output = await ModelTeam._consume_member_stream(
+                self, agent, task, chat_kwargs, base, usage
+            )
         except Exception as exc:
-            await self._publish("team.member.done", {
+            await ModelTeam._publish_member_failure(self, base, exc, usage, start)
+            raise
+        await ModelTeam._finish_member(
+            self, member, task, traces, base, final_output, usage, start
+        )
+        return final_output
+
+    async def _consume_member_stream(
+        self,
+        agent: Any,
+        task: str,
+        chat_kwargs: dict[str, Any],
+        base: dict[str, Any],
+        usage: dict[str, int],
+    ) -> str:
+        """消费 agent.chat() 流, 发布工具调用事件并返回最后一条内容."""
+        final_output = ""
+        async for state in agent.chat(task, **chat_kwargs):
+            # 工具调用 → team.member.tool 事件 (前端节点展开看调用序列)
+            for msg in state.get("messages", []):
+                tcs = getattr(msg, "tool_calls", None)
+                if tcs:
+                    await self._publish_member_tool_calls(base, tcs)
+                content = getattr(msg, "content", None)
+                if content:
+                    final_output = str(content)
+            _extract_member_usage(state, usage)
+        return final_output
+
+    async def _publish_member_failure(
+        self,
+        base: dict[str, Any],
+        exc: Exception,
+        usage: dict[str, int],
+        start: float,
+    ) -> None:
+        """发布 team.member.done 失败事件."""
+        await self._publish(
+            "team.member.done",
+            {
                 **base,
                 "status": "failed",
                 "error": str(exc)[:300],
                 "duration_ms": round((time.time() - start) * 1000, 2),
                 "tokens": usage,
-            })
-            raise
+            },
+        )
+
+    async def _finish_member(
+        self,
+        member: TeamMember,
+        task: str,
+        traces: list[TeamTrace],
+        base: dict[str, Any],
+        final_output: str,
+        usage: dict[str, int],
+        start: float,
+    ) -> None:
+        """发布 team.member.done 成功事件并追加 trace."""
         duration_ms = round((time.time() - start) * 1000, 2)
-        await self._publish("team.member.done", {
-            **base,
-            "status": "done",
-            "duration_ms": duration_ms,
-            "tokens": usage,
-        })
+        await self._publish(
+            "team.member.done",
+            {
+                **base,
+                "status": "done",
+                "duration_ms": duration_ms,
+                "tokens": usage,
+            },
+        )
         traces.append(
             TeamTrace(
                 role=member.role,
@@ -471,7 +475,6 @@ class ModelTeam:
                 duration_ms=duration_ms,
             )
         )
-        return final_output
 
     async def _execute_plan(
         self,
@@ -493,41 +496,60 @@ class ModelTeam:
                 ready = list(pending.values())
 
             # 并行 batch 开始 → 前端可看到哪些 step 同时在跑.
-            await self._publish("team.batch.start", {
-                "run_id": run_id,
-                "steps": [{"id": s.id, "role": s.role.value, "task": s.task[:200]} for s in ready],
-            })
+            await self._publish(
+                "team.batch.start",
+                {
+                    "run_id": run_id,
+                    "steps": [
+                        {"id": s.id, "role": s.role.value, "task": s.task[:200]}
+                        for s in ready
+                    ],
+                },
+            )
 
-            async def run_one(step: TeamStep) -> tuple[str, str]:
-                member = self.members.get(step.role)
-                if member is None:
-                    return step.id, ""
-                try:
-                    dep_text = "\n".join(
-                        f"{dep}: {results[dep]}"
-                        for dep in step.depends_on
-                        if dep in results
-                    )
-                    task = step.task
-                    if dep_text:
-                        task = f"{task}\n\nContext from previous steps:\n{dep_text}"
-                    output = await self._run_member(member, task, ctx, traces, run_id)
-                    return step.id, output
-                except Exception as exc:
-                    # 失败隔离: 单个 member 异常不应团灭整个并行 batch.
-                    # 与 parallel_executor._run_one / swarm.run_one 对齐.
-                    logger.warning(
-                        "team run_one step=%s failed (isolated): %s",
-                        step.id, exc, exc_info=True,
-                    )
-                    return step.id, f"[ERROR] step {step.id} failed: {exc}"
-
-            batch = await asyncio.gather(*(run_one(s) for s in ready))
+            batch = await asyncio.gather(
+                *(
+                    ModelTeam._run_plan_step(self, s, results, ctx, traces, run_id)
+                    for s in ready
+                )
+            )
             for step_id, output in batch:
                 results[step_id] = output
                 pending.pop(step_id)
 
         return [results[s.id] for s in steps]
+
+    async def _run_plan_step(
+        self,
+        step: TeamStep,
+        results: dict[str, str],
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        run_id: str,
+    ) -> tuple[str, str]:
+        """跑计划中的单步, 异常隔离为 [ERROR] 输出而不是团灭 batch."""
+        member = self.members.get(step.role)
+        if member is None:
+            return step.id, ""
+        try:
+            dep_text = "\n".join(
+                f"{dep}: {results[dep]}" for dep in step.depends_on if dep in results
+            )
+            task = step.task
+            if dep_text:
+                task = f"{task}\n\nContext from previous steps:\n{dep_text}"
+            output = await self._run_member(member, task, ctx, traces, run_id)
+            return step.id, output
+        except Exception as exc:
+            # 失败隔离: 单个 member 异常不应团灭整个并行 batch.
+            # 与 parallel_executor._run_one / swarm.run_one 对齐.
+            logger.warning(
+                "team run_one step=%s failed (isolated): %s",
+                step.id,
+                exc,
+                exc_info=True,
+            )
+            return step.id, f"[ERROR] step {step.id} failed: {exc}"
 
     def _parse_plan(self, text: str) -> list[TeamStep]:
         if not text:
@@ -550,12 +572,10 @@ class ModelTeam:
             try:
                 steps.append(
                     TeamStep(
-                        id=str(item.get("id", f"step{len(steps)+1}")),
+                        id=str(item.get("id", f"step{len(steps) + 1}")),
                         role=TeamRole(item.get("role", "executor")),
                         task=str(item.get("task", "")),
-                        depends_on=[
-                            str(d) for d in item.get("depends_on", []) if d
-                        ],
+                        depends_on=[str(d) for d in item.get("depends_on", []) if d],
                     )
                 )
             except Exception:  # 防御: 步骤构造失败则跳过该步
@@ -647,12 +667,9 @@ class ModelTeam:
             return self._tq_no_panel_result(query)
 
         import uuid as _uuid
+
         fusion_run_id = (context or {}).get("team_run_id") or _uuid.uuid4().hex[:12]
-        await self._publish("team.run.start", {
-            "run_id": fusion_run_id,
-            "task": query,
-            "members": [r.value for r in panel_roles],
-        })
+        await ModelTeam._tq_publish_run_start(self, query, panel_roles, fusion_run_id)
 
         all_rounds, panel_responses = await self._tq_run_rounds(
             query, panel_roles, rounds, ctx, traces, fusion_run_id
@@ -664,14 +681,61 @@ class ModelTeam:
                 query, panel_responses, all_rounds, rounds, traces
             )
 
+        return await ModelTeam._tq_synthesize(
+            self,
+            query,
+            panel_responses,
+            all_rounds,
+            rounds,
+            synthesizer_role,
+            synthesizer_member,
+            ctx,
+            traces,
+            fusion_run_id,
+        )
+
+    async def _tq_publish_run_start(
+        self, query: str, panel_roles: list[TeamRole], fusion_run_id: str
+    ) -> None:
+        """发布 fusion 的 team.run.start 事件."""
+        await self._publish(
+            "team.run.start",
+            {
+                "run_id": fusion_run_id,
+                "task": query,
+                "members": [r.value for r in panel_roles],
+            },
+        )
+
+    async def _tq_synthesize(
+        self,
+        query: str,
+        panel_responses: list[dict],
+        all_rounds: list[list[dict]],
+        rounds: int,
+        synthesizer_role: TeamRole,
+        synthesizer_member: TeamMember,
+        ctx: dict[str, Any],
+        traces: list[TeamTrace],
+        fusion_run_id: str,
+    ) -> dict[str, Any]:
+        """让 synthesizer 汇总 panel 回答并组装最终 fusion 结果."""
         synthesis_prompt = self._tq_build_synthesis_prompt(query, panel_responses)
         synth_output = await self._delegate(
             synthesizer_role, synthesis_prompt, ctx, traces, fusion_run_id
         )
         consensus, dissent, final_answer = self._tq_parse_synthesis(synth_output)
         return self._tq_synthesized_result(
-            query, final_answer, panel_responses, all_rounds, rounds,
-            consensus, dissent, synthesizer_role, synthesizer_member, traces,
+            query,
+            final_answer,
+            panel_responses,
+            all_rounds,
+            rounds,
+            consensus,
+            dissent,
+            synthesizer_role,
+            synthesizer_member,
+            traces,
         )
 
     def _tq_select_panel(
@@ -683,7 +747,8 @@ class ModelTeam:
         """选择 panel 成员: 默认 tools-capable, 空则退化为非 synthesizer."""
         if panel_roles is None:
             panel_roles = [
-                role for role, member in self.members.items()
+                role
+                for role, member in self.members.items()
                 if role != synthesizer_role and member.caps.tools
             ]
         if not panel_roles:
@@ -716,15 +781,12 @@ class ModelTeam:
         return role, output, duration
 
     @staticmethod
-    def _tq_round_task(
-        query: str, panel_responses: list[dict], round_idx: int
-    ) -> str:
+    def _tq_round_task(query: str, panel_responses: list[dict], round_idx: int) -> str:
         """首轮用原 query, 后续轮拼接上一轮回答作为同侪上下文."""
         if round_idx == 0:
             return query
         peer_text = "\n\n".join(
-            f"[{r['role']} ({r['model']})]\n{r['answer']}"
-            for r in panel_responses
+            f"[{r['role']} ({r['model']})]\n{r['answer']}" for r in panel_responses
         )
         return (
             f"{query}\n\n"
@@ -742,13 +804,15 @@ class ModelTeam:
         panel_responses = []
         for role, output, duration in round_results:
             member = self.members.get(role)
-            panel_responses.append({
-                "role": role.value,
-                "model": member.model_name if member else "?",
-                "answer": output,
-                "duration_ms": duration,
-                "round": round_idx + 1,
-            })
+            panel_responses.append(
+                {
+                    "role": role.value,
+                    "model": member.model_name if member else "?",
+                    "answer": output,
+                    "duration_ms": duration,
+                    "round": round_idx + 1,
+                }
+            )
         return panel_responses
 
     async def _tq_run_rounds(
@@ -785,8 +849,7 @@ class ModelTeam:
     ) -> dict[str, Any]:
         """没有 synthesizer 时退化为原始拼接."""
         combined = "\n\n---\n\n".join(
-            f"[{r['role']} ({r['model']})]\n{r['answer']}"
-            for r in panel_responses
+            f"[{r['role']} ({r['model']})]\n{r['answer']}" for r in panel_responses
         )
         return {
             "task": query,
@@ -886,6 +949,139 @@ class ModelTeam:
 
 
 # ── 辅助函数 ──────────────────────────────────────────────
+
+
+def _init_run_state(
+    task: str, context: dict[str, Any] | None
+) -> tuple[str, list[TeamTrace], dict[str, Any], float]:
+    """初始化 run_id / trace 容器 / context / 起始时间."""
+    import uuid
+
+    run_id = context.get("team_run_id") if context else None
+    if not run_id:
+        run_id = uuid.uuid4().hex[:12]
+    traces: list[TeamTrace] = []
+    ctx = dict(context or {})
+    ctx["original_task"] = task
+    ctx["team_run_id"] = run_id
+    t0 = time.time()
+    return run_id, traces, ctx, t0
+
+
+def _run_result(
+    team: ModelTeam,
+    task: str,
+    run_id: str,
+    ctx: dict[str, Any],
+    traces: list[TeamTrace],
+) -> dict[str, Any]:
+    """组装 run() 的返回值."""
+    return {
+        "task": task,
+        "run_id": run_id,
+        "context": ctx,
+        "members": [
+            {"role": m.role.value, "name": m.name, "model": m.model_name}
+            for m in team.members.values()
+        ],
+        "trace": [ModelTeam._trace_to_dict(t) for t in traces],
+        "final_output": ctx["execution_result"],
+        "review": ctx["review"],
+    }
+
+
+def _members_for_single_profile(config: Any, p: Any) -> list[TeamMember]:
+    """单 profile 时所有角色共用同一模型."""
+    model_name = _resolve_model_name(config, p.model_alias)
+    caps = get_model_capabilities(model_name) if model_name else ModelCaps()
+    return [
+        TeamMember(
+            name=f"{role.value}-{p.id}",
+            profile_id=p.id,
+            role=role,
+            model_name=model_name,
+            caps=caps,
+            _config=config,
+        )
+        for role in TeamRole
+    ]
+
+
+def _match_profiles_by_role_id(
+    config: Any, profiles: list[Any]
+) -> tuple[list[TeamMember], set[str], set[TeamRole]]:
+    """第一轮: profile.id 和角色名同名的直接绑定."""
+    members: list[TeamMember] = []
+    used_profiles: set[str] = set()
+    assigned_roles: set[TeamRole] = set()
+
+    for p in profiles:
+        try:
+            role = TeamRole(p.id)
+        except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+        model_name = _resolve_model_name(config, p.model_alias)
+        caps = get_model_capabilities(model_name) if model_name else ModelCaps()
+        members.append(
+            TeamMember(
+                name=f"{role.value}-{p.id}",
+                profile_id=p.id,
+                role=role,
+                model_name=model_name,
+                caps=caps,
+                _config=config,
+            )
+        )
+        used_profiles.add(p.id)
+        assigned_roles.add(role)
+
+    return members, used_profiles, assigned_roles
+
+
+def _fill_remaining_roles(
+    config: Any,
+    profiles: list[Any],
+    members: list[TeamMember],
+    used_profiles: set[str],
+    assigned_roles: set[TeamRole],
+) -> None:
+    """第二轮: 剩余角色按能力从剩余 profile 中挑最合适的."""
+    remaining_profiles = [p for p in profiles if p.id not in used_profiles]
+    for role in TeamRole:
+        if role in assigned_roles:
+            continue
+        best = _pick_best_profile(role, remaining_profiles, config)
+        if best is None:
+            # 实在没人了, 从已分配的里面借一个 (planner 和 critic 不能同一个)
+            best = _pick_fallback_profile(role, members, assigned_roles)
+            if best is None:
+                continue
+            # 复用已有成员的 profile, 但起个新名字
+            members.append(
+                TeamMember(
+                    name=f"{role.value}-{best.profile_id}",
+                    profile_id=best.profile_id,
+                    role=role,
+                    model_name=best.model_name,
+                    caps=best.caps,
+                    _config=config,
+                )
+            )
+        else:
+            model_name = _resolve_model_name(config, best.model_alias)
+            caps = get_model_capabilities(model_name) if model_name else ModelCaps()
+            members.append(
+                TeamMember(
+                    name=f"{role.value}-{best.id}",
+                    profile_id=best.id,
+                    role=role,
+                    model_name=model_name,
+                    caps=caps,
+                    _config=config,
+                )
+            )
+            remaining_profiles.remove(best)
 
 
 def _resolve_model_name(config: Any, alias: str) -> str:

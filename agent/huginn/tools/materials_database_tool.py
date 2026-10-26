@@ -79,6 +79,307 @@ def _aflow_item_record(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _dedupe_batch_items(items: list[str]) -> list[str]:
+    """去重保序, 避免 LLM 把同一个 mp_id 写两遍白跑一次."""
+    seen: set[str] = set()
+    unique_items: list[str] = []
+    for it in items:
+        if it not in seen:
+            seen.add(it)
+            unique_items.append(it)
+    return unique_items
+
+
+async def _batch_query_one(
+    tool: MaterialsDatabaseTool,
+    item: str,
+    args: MaterialsDatabaseInput,
+    context: ToolContext,
+    sem: asyncio.Semaphore,
+) -> dict[str, Any]:
+    """单条查询, 走 _call_cached 复用本地缓存 + tool_cache."""
+    single_args = MaterialsDatabaseInput(
+        action="mp_summary",
+        query=item,
+        fields=args.fields,
+        limit=args.limit,
+        api_key=args.api_key,
+    )
+    async with sem:
+        try:
+            result = await tool._call_cached(single_args, context)
+        except Exception as exc:
+            return {
+                "query": item,
+                "error": str(exc),
+                "records": [],
+            }
+    if not result.success:
+        return {
+            "query": item,
+            "error": result.error or "unknown error",
+            "records": [],
+        }
+    data = result.data or {}
+    records = data.get("records", []) if isinstance(data, dict) else []
+    return {
+        "query": item,
+        "records": records,
+        "source": data.get("source") if isinstance(data, dict) else None,
+        "warnings": data.get("warnings", []) if isinstance(data, dict) else [],
+    }
+
+
+def _flatten_batch_records(
+    per_item: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """把单条结果摊平成 records 列表, 方便上层统一处理."""
+    all_records: list[dict[str, Any]] = []
+    all_warnings: list[str] = []
+    for entry in per_item:
+        if entry.get("error"):
+            all_warnings.append(f"{entry['query']}: {entry['error']}")
+            # 错误条目也进 records, 让 LLM 知道哪条挂了
+            all_records.append(
+                {
+                    "query": entry["query"],
+                    "error": entry["error"],
+                }
+            )
+            continue
+        for rec in entry.get("records", []):
+            rec_with_query = dict(rec)
+            rec_with_query.setdefault("query", entry["query"])
+            all_records.append(rec_with_query)
+        for w in entry.get("warnings", []):
+            all_warnings.append(f"{entry['query']}: {w}")
+    return all_records, all_warnings
+
+
+async def _nomad_fetch(
+    base: str, body: dict[str, Any], headers: dict[str, str]
+) -> tuple[Any, ToolResult | None]:
+    """POST NOMAD entries/query. 返回 (raw_json, 错误 ToolResult)."""
+    import aiohttp
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with (
+            aiohttp.ClientSession(timeout=timeout, headers=headers) as session,
+            session.post(base, json=body) as resp,
+        ):
+            if resp.status != 200:
+                text = await resp.text()
+                return None, ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"NOMAD API error {resp.status}: {text[:200]}",
+                )
+            raw = await resp.json()
+    except TimeoutError:
+        return None, ToolResult(
+            data=None, success=False, error="NOMAD request timed out (30s)"
+        )
+    except Exception as e:
+        return None, ToolResult(
+            data=None, success=False, error=f"NOMAD request failed: {e}"
+        )
+    return raw, None
+
+
+async def _aflow_fetch(url: str) -> tuple[Any, ToolResult | None]:
+    """GET AFLOW REST, JSON 优先失败退回 AFLUX 文本. 返回 (raw, 错误 ToolResult)."""
+    import aiohttp
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.get(url) as resp,
+        ):
+            if resp.status != 200:
+                text = await resp.text()
+                return None, ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"AFLOW API error {resp.status}: {text[:200]}",
+                )
+            # AFLOW returns JSON (newer) or AFLUX text (older)
+            try:
+                raw = await resp.json(content_type=None)
+            except Exception:
+                raw = await resp.text()
+    except TimeoutError:
+        return None, ToolResult(
+            data=None, success=False, error="AFLOW request timed out (30s)"
+        )
+    except Exception as e:
+        return None, ToolResult(
+            data=None, success=False, error=f"AFLOW request failed: {e}"
+        )
+    return raw, None
+
+
+def _omat24_read_structure(
+    struct_path: str,
+) -> tuple[str, int, ToolResult | None]:
+    """读结构拿组成和原子数. 失败返回 (\"\", 0, 错误 ToolResult)."""
+    try:
+        from ase.io import read
+
+        atoms = read(struct_path)
+        formula = atoms.get_chemical_formula()
+        n_atoms = len(atoms)
+    except Exception as exc:
+        return (
+            "",
+            0,
+            ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to read structure: {exc}",
+            ),
+        )
+    return formula, n_atoms, None
+
+
+async def _omat24_predict_energy(
+    struct_path: str,
+    args: MaterialsDatabaseInput,
+    context: ToolContext,
+    formula: str,
+    n_atoms: int,
+) -> tuple[Any, Any, ToolResult | None]:
+    """调 ml_potential_tool 预测能量. 失败返回 (None, None, 错误 ToolResult)."""
+    from huginn.tools.sci.ml_potential_tool import (
+        MLPotentialInput,
+        MLPotentialTool,
+    )
+
+    ml_tool = MLPotentialTool()
+    ml_result = await ml_tool.call(
+        MLPotentialInput(
+            backend="equiformer_v2_omat24",
+            action="predict",
+            structure_file=struct_path,
+            parameters=args.parameters,
+        ),
+        context,
+    )
+
+    if not ml_result.success:
+        return (
+            None,
+            None,
+            ToolResult(
+                data={
+                    "backend": "equiformer_v2_omat24",
+                    "action": "omat24_predict",
+                    "formula": formula,
+                    "status": "prediction_failed",
+                },
+                success=False,
+                error=f"OMat24 prediction failed: {ml_result.error}",
+            ),
+        )
+
+    predicted_energy = ml_result.data["energy"]
+    predicted_energy_per_atom = predicted_energy / n_atoms
+    return predicted_energy, predicted_energy_per_atom, None
+
+
+async def _omat24_mp_reference(
+    tool: MaterialsDatabaseTool, formula: str, args: MaterialsDatabaseInput
+) -> tuple[Any, Any]:
+    """查 MP 同组成, 拿参考能量做 hull 比对. 失败返回 (None, None)."""
+    import aiohttp
+
+    mp_energy_per_atom = None
+    mp_material_id = None
+    try:
+        api_key = tool._mp_key(args.api_key)
+        base_url = "https://api.materialsproject.org"
+        params: dict[str, Any] = {
+            "formula": formula,
+            "fields": "material_id,formula_pretty,energy_per_atom",
+            "limit": 1,
+            "API_KEY": api_key,
+        }
+        url = f"{base_url}/materials/summary/?{urlencode(params, doseq=True)}"
+        async with aiohttp.ClientSession() as session:
+            data = await tool._get_json(session, url)
+            items = data.get("data", [])
+            if items:
+                mp_energy_per_atom = items[0].get("energy_per_atom")
+                mp_material_id = items[0].get("material_id")
+    except Exception:
+        # MP 查不到不影响预测, 只是少了 hull 参考
+        logger.debug(
+            "MP lookup failed, proceeding without hull reference", exc_info=True
+        )
+    return mp_energy_per_atom, mp_material_id
+
+
+def _omat24_stability(
+    predicted_energy_per_atom: float, mp_energy_per_atom: float | None
+) -> tuple[str, str, float | None]:
+    """跟 MP 参考比稳定性, 返回 (stability, confidence, energy_diff_per_atom)."""
+    stability = "unknown (no MP reference)"
+    confidence = "low"
+    energy_diff = None
+
+    if mp_energy_per_atom is not None:
+        energy_diff = predicted_energy_per_atom - mp_energy_per_atom
+        # ponytail: 粗略阈值, 不是真正的凸包计算.
+        # 要精确的 energy above hull 需要查所有竞争相, 这里只跟 MP 已知最稳定相对比.
+        if energy_diff < -0.05:
+            stability = "below hull (predicted more stable than MP reference)"
+        elif energy_diff > 0.05:
+            stability = "above hull (predicted less stable than MP reference)"
+        else:
+            stability = "near hull (within 50 meV/atom of MP reference)"
+        confidence = "high" if abs(energy_diff) < 0.05 else "medium"
+    else:
+        # 没有 MP 参考, 只能说预测本身成功了
+        confidence = "medium"
+    return stability, confidence, energy_diff
+
+
+async def _omat24_final_result(
+    tool: MaterialsDatabaseTool,
+    args: MaterialsDatabaseInput,
+    formula: str,
+    n_atoms: int,
+    predicted_energy: Any,
+    predicted_energy_per_atom: Any,
+) -> ToolResult:
+    """查 MP 参考做 hull 比对, 判断稳定性, 组装成功返回."""
+    # 3. 查 MP 同组成, 拿参考能量做 hull 比对
+    mp_energy_per_atom, mp_material_id = await _omat24_mp_reference(tool, formula, args)
+
+    # 4. 判断稳定性 + 置信度
+    stability, confidence, energy_diff = _omat24_stability(
+        predicted_energy_per_atom, mp_energy_per_atom
+    )
+
+    return ToolResult(
+        data={
+            "backend": "equiformer_v2_omat24",
+            "action": "omat24_predict",
+            "formula": formula,
+            "n_atoms": n_atoms,
+            "predicted_energy": predicted_energy,
+            "predicted_energy_per_atom": predicted_energy_per_atom,
+            "mp_energy_per_atom": mp_energy_per_atom,
+            "mp_material_id": mp_material_id,
+            "energy_diff_per_atom": energy_diff,
+            "stability": stability,
+            "confidence": confidence,
+        },
+        success=True,
+    )
+
+
 class MaterialsDatabaseInput(BaseModel):
     action: Literal[
         "mp_summary",
@@ -164,7 +465,9 @@ class MaterialsDatabaseOutput(BaseModel):
 _BATCH_CONCURRENCY = 5
 
 
-def _retrieval_contract(args: MaterialsDatabaseInput, endpoint: str = "") -> dict[str, Any]:
+def _retrieval_contract(
+    args: MaterialsDatabaseInput, endpoint: str = ""
+) -> dict[str, Any]:
     """Build a provenance dict so another agent can replay this lookup.
 
     K-Dense database-lookup skill 的 retrieval-contract 模式: 记录 entity /
@@ -172,6 +475,7 @@ def _retrieval_contract(args: MaterialsDatabaseInput, endpoint: str = "") -> dic
     让查询结果离开工具后仍可复现.
     """
     from datetime import datetime
+
     return {
         "action": args.action,
         "query": args.query,
@@ -253,6 +557,7 @@ class MaterialsDatabaseTool(HuginnTool):
         # 属性别名归一化: 用户/LLM 可能写 "bg"/"Eg"/"band-gap" 等, 统一到 canonical name
         if args.fields:
             from huginn.data.property_aliases import normalize_property_name
+
             args.fields = [normalize_property_name(f) for f in args.fields]
         # omat24_predict 走 MLIP 预测 + MP hull 比对, 不走本地结构库
         if args.action == "omat24_predict":
@@ -327,13 +632,7 @@ class MaterialsDatabaseTool(HuginnTool):
         items: list[str] = []
         items.extend(args.mp_ids or [])
         items.extend(args.formulas or [])
-        # 去重保序, 避免 LLM 把同一个 mp_id 写两遍白跑一次
-        seen: set[str] = set()
-        unique_items: list[str] = []
-        for it in items:
-            if it not in seen:
-                seen.add(it)
-                unique_items.append(it)
+        unique_items = _dedupe_batch_items(items)
 
         if not unique_items:
             return ToolResult(
@@ -342,72 +641,23 @@ class MaterialsDatabaseTool(HuginnTool):
                 error="batch_query requires mp_ids or formulas (non-empty)",
             )
 
-
         sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
-
-        async def _query_one(item: str) -> dict[str, Any]:
-            """单条查询, 走 _call_cached 复用本地缓存 + tool_cache."""
-            single_args = MaterialsDatabaseInput(
-                action="mp_summary",
-                query=item,
-                fields=args.fields,
-                limit=args.limit,
-                api_key=args.api_key,
-            )
-            async with sem:
-                try:
-                    result = await self._call_cached(single_args, context)
-                except Exception as exc:
-                    return {
-                        "query": item,
-                        "error": str(exc),
-                        "records": [],
-                    }
-            if not result.success:
-                return {
-                    "query": item,
-                    "error": result.error or "unknown error",
-                    "records": [],
-                }
-            data = result.data or {}
-            records = data.get("records", []) if isinstance(data, dict) else []
-            return {
-                "query": item,
-                "records": records,
-                "source": data.get("source") if isinstance(data, dict) else None,
-                "warnings": data.get("warnings", []) if isinstance(data, dict) else [],
-            }
 
         # 并发跑所有单条查询, 单条挂掉不影响其它
         per_item = await asyncio.gather(
-            *[_query_one(it) for it in unique_items]
+            *[_batch_query_one(self, it, args, context, sem) for it in unique_items]
         )
 
-        # 把单条结果摊平成 records 列表, 方便上层统一处理
-        all_records: list[dict[str, Any]] = []
-        all_warnings: list[str] = []
-        for entry in per_item:
-            if entry.get("error"):
-                all_warnings.append(f"{entry['query']}: {entry['error']}")
-                # 错误条目也进 records, 让 LLM 知道哪条挂了
-                all_records.append({
-                    "query": entry["query"],
-                    "error": entry["error"],
-                })
-                continue
-            for rec in entry.get("records", []):
-                rec_with_query = dict(rec)
-                rec_with_query.setdefault("query", entry["query"])
-                all_records.append(rec_with_query)
-            for w in entry.get("warnings", []):
-                all_warnings.append(f"{entry['query']}: {w}")
+        all_records, all_warnings = _flatten_batch_records(per_item)
 
         output = MaterialsDatabaseOutput(
             source="materials_project_batch",
             count=len(all_records),
             records=all_records,
             warnings=all_warnings,
-            retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
+            retrieval_contract=_retrieval_contract(
+                args, "https://api.materialsproject.org"
+            ),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -428,13 +678,19 @@ class MaterialsDatabaseTool(HuginnTool):
     def _aflow_key(self, override: str | None) -> str | None:
         # AFLOW REST is public, key is optional
         return (
-            override or self._config_aflow_key or os.environ.get("AFLOW_API_KEY") or None
+            override
+            or self._config_aflow_key
+            or os.environ.get("AFLOW_API_KEY")
+            or None
         )
 
     def _nomad_key(self, override: str | None) -> str | None:
         # NOMAD public data doesn't need a key, only private uploads do
         return (
-            override or self._config_nomad_key or os.environ.get("NOMAD_API_KEY") or None
+            override
+            or self._config_nomad_key
+            or os.environ.get("NOMAD_API_KEY")
+            or None
         )
 
     async def _handle_mp(
@@ -460,7 +716,9 @@ class MaterialsDatabaseTool(HuginnTool):
                     records=records,
                     saved_file=saved,
                     warnings=warnings,
-                    retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
+                    retrieval_contract=_retrieval_contract(
+                        args, "https://api.materialsproject.org"
+                    ),
                 )
                 return ToolResult(data=output.model_dump(exclude_none=True))
             else:  # pragma: no cover
@@ -471,7 +729,9 @@ class MaterialsDatabaseTool(HuginnTool):
             count=len(records),
             records=records,
             warnings=warnings,
-            retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
+            retrieval_contract=_retrieval_contract(
+                args, "https://api.materialsproject.org"
+            ),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -568,14 +828,19 @@ class MaterialsDatabaseTool(HuginnTool):
                     records=records,
                     saved_file=saved,
                     warnings=warnings,
-                    retrieval_contract=_retrieval_contract(args, "http://oqmd.org/oqmdapi"),
+                    retrieval_contract=_retrieval_contract(
+                        args, "http://oqmd.org/oqmdapi"
+                    ),
                 )
                 return ToolResult(data=output.model_dump(exclude_none=True))
             else:  # pragma: no cover
                 raise ValueError(f"Unknown action: {args.action}")
 
         output = MaterialsDatabaseOutput(
-            source="oqmd", count=len(records), records=records, warnings=warnings,
+            source="oqmd",
+            count=len(records),
+            records=records,
+            warnings=warnings,
             retrieval_contract=_retrieval_contract(args, "http://oqmd.org/oqmdapi"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
@@ -660,12 +925,11 @@ class MaterialsDatabaseTool(HuginnTool):
     async def _handle_aflow(
         self, args: MaterialsDatabaseInput, context: ToolContext
     ) -> ToolResult:
-        import aiohttp
-
         target = args.query
         if not target:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="aflow_query requires a query (formula or material_id)",
             )
 
@@ -677,30 +941,15 @@ class MaterialsDatabaseTool(HuginnTool):
             params["composition"] = target
         url = f"{base}?{urlencode(params, doseq=True)}"
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(url) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        return ToolResult(
-                            data=None, success=False,
-                            error=f"AFLOW API error {resp.status}: {text[:200]}",
-                        )
-                    # AFLOW returns JSON (newer) or AFLUX text (older)
-                    try:
-                        raw = await resp.json(content_type=None)
-                    except Exception:
-                        raw = await resp.text()
-        except TimeoutError:
-            return ToolResult(
-                data=None, success=False, error="AFLOW request timed out (30s)"
-            )
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"AFLOW request failed: {e}")
+        raw, error = await _aflow_fetch(url)
+        if error is not None:
+            return error
 
         records = self._normalize_aflow(raw)
         output = MaterialsDatabaseOutput(
-            source="aflow", count=len(records), records=records,
+            source="aflow",
+            count=len(records),
+            records=records,
             warnings=[] if records else [f"No AFLOW results for: {target}"],
             retrieval_contract=_retrieval_contract(args, "http://aflowlib.org"),
         )
@@ -726,12 +975,11 @@ class MaterialsDatabaseTool(HuginnTool):
     async def _handle_nomad(
         self, args: MaterialsDatabaseInput, context: ToolContext
     ) -> ToolResult:
-        import aiohttp
-
         target = args.query
         if not target:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="nomad_query requires a query (formula or material_id)",
             )
 
@@ -750,28 +998,19 @@ class MaterialsDatabaseTool(HuginnTool):
             },
         }
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session, session.post(base, json=body) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        return ToolResult(
-                            data=None, success=False,
-                            error=f"NOMAD API error {resp.status}: {text[:200]}",
-                        )
-                    raw = await resp.json()
-        except TimeoutError:
-            return ToolResult(
-                data=None, success=False, error="NOMAD request timed out (30s)"
-            )
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"NOMAD request failed: {e}")
+        raw, error = await _nomad_fetch(base, body, headers)
+        if error is not None:
+            return error
 
         records = self._normalize_nomad(raw)
         output = MaterialsDatabaseOutput(
-            source="nomad", count=len(records), records=records,
+            source="nomad",
+            count=len(records),
+            records=records,
             warnings=[] if records else [f"No NOMAD results for: {target}"],
-            retrieval_contract=_retrieval_contract(args, "https://nomad-lab.eu/prod/rae/api"),
+            retrieval_contract=_retrieval_contract(
+                args, "https://nomad-lab.eu/prod/rae/api"
+            ),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -785,19 +1024,20 @@ class MaterialsDatabaseTool(HuginnTool):
             results = item.get("results", {})
             material = results.get("material") or [{}]
             mat = material[0] if isinstance(material, list) and material else material
-            formula = (
-                mat.get("chemical_formula_descriptive")
-                or mat.get("chemical_formula_reduced")
+            formula = mat.get("chemical_formula_descriptive") or mat.get(
+                "chemical_formula_reduced"
             )
             props = results.get("properties", {})
-            records.append({
-                "entry_id": entry_id,
-                "formula": formula,
-                "spacegroup": (mat.get("structure") or {}).get("space_group"),
-                "band_gap": props.get("electronic", {}).get("band_gap"),
-                "energy": props.get("energetic", {}).get("total_energy"),
-                "source": "nomad",
-            })
+            records.append(
+                {
+                    "entry_id": entry_id,
+                    "formula": formula,
+                    "spacegroup": (mat.get("structure") or {}).get("space_group"),
+                    "band_gap": props.get("electronic", {}).get("band_gap"),
+                    "energy": props.get("energetic", {}).get("total_energy"),
+                    "source": "nomad",
+                }
+            )
         return records[:50]
 
     def _normalize_mp_summary(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -867,8 +1107,6 @@ class MaterialsDatabaseTool(HuginnTool):
     async def _handle_omat24_predict(
         self, args: MaterialsDatabaseInput, context: ToolContext
     ) -> ToolResult:
-        import aiohttp
-
         struct_path = args.structure_file
         if not struct_path or not Path(struct_path).exists():
             return ToolResult(
@@ -878,107 +1116,20 @@ class MaterialsDatabaseTool(HuginnTool):
             )
 
         # 1. 读结构拿组成和原子数
-        try:
-            from ase.io import read
-
-            atoms = read(struct_path)
-            formula = atoms.get_chemical_formula()
-            n_atoms = len(atoms)
-        except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Failed to read structure: {exc}",
-            )
+        formula, n_atoms, struct_error = _omat24_read_structure(struct_path)
+        if struct_error is not None:
+            return struct_error
 
         # 2. 调 ml_potential_tool 预测能量
-        from huginn.tools.sci.ml_potential_tool import (
-            MLPotentialInput,
-            MLPotentialTool,
-        )
+        (
+            predicted_energy,
+            predicted_energy_per_atom,
+            predict_error,
+        ) = await _omat24_predict_energy(struct_path, args, context, formula, n_atoms)
+        if predict_error is not None:
+            return predict_error
 
-        ml_tool = MLPotentialTool()
-        ml_result = await ml_tool.call(
-            MLPotentialInput(
-                backend="equiformer_v2_omat24",
-                action="predict",
-                structure_file=struct_path,
-                parameters=args.parameters,
-            ),
-            context,
-        )
-
-        if not ml_result.success:
-            return ToolResult(
-                data={
-                    "backend": "equiformer_v2_omat24",
-                    "action": "omat24_predict",
-                    "formula": formula,
-                    "status": "prediction_failed",
-                },
-                success=False,
-                error=f"OMat24 prediction failed: {ml_result.error}",
-            )
-
-        predicted_energy = ml_result.data["energy"]
-        predicted_energy_per_atom = predicted_energy / n_atoms
-
-        # 3. 查 MP 同组成, 拿参考能量做 hull 比对
-        mp_energy_per_atom = None
-        mp_material_id = None
-        try:
-            api_key = self._mp_key(args.api_key)
-            base_url = "https://api.materialsproject.org"
-            params: dict[str, Any] = {
-                "formula": formula,
-                "fields": "material_id,formula_pretty,energy_per_atom",
-                "limit": 1,
-                "API_KEY": api_key,
-            }
-            url = f"{base_url}/materials/summary/?{urlencode(params, doseq=True)}"
-            async with aiohttp.ClientSession() as session:
-                data = await self._get_json(session, url)
-                items = data.get("data", [])
-                if items:
-                    mp_energy_per_atom = items[0].get("energy_per_atom")
-                    mp_material_id = items[0].get("material_id")
-        except Exception:
-            # MP 查不到不影响预测, 只是少了 hull 参考
-            logger.debug("MP lookup failed, proceeding without hull reference", exc_info=True)
-
-        # 4. 判断稳定性 + 置信度
-        stability = "unknown (no MP reference)"
-        confidence = "low"
-        energy_diff = None
-
-        if mp_energy_per_atom is not None:
-            energy_diff = predicted_energy_per_atom - mp_energy_per_atom
-            # ponytail: 粗略阈值, 不是真正的凸包计算.
-            # 要精确的 energy above hull 需要查所有竞争相, 这里只跟 MP 已知最稳定相对比.
-            if energy_diff < -0.05:
-                stability = "below hull (predicted more stable than MP reference)"
-            elif energy_diff > 0.05:
-                stability = "above hull (predicted less stable than MP reference)"
-            else:
-                stability = "near hull (within 50 meV/atom of MP reference)"
-            confidence = "high" if abs(energy_diff) < 0.05 else "medium"
-        else:
-            # 没有 MP 参考, 只能说预测本身成功了
-            confidence = "medium"
-
-        return ToolResult(
-            data={
-                "backend": "equiformer_v2_omat24",
-                "action": "omat24_predict",
-                "formula": formula,
-                "n_atoms": n_atoms,
-                "predicted_energy": predicted_energy,
-                "predicted_energy_per_atom": predicted_energy_per_atom,
-                "mp_energy_per_atom": mp_energy_per_atom,
-                "mp_material_id": mp_material_id,
-                "energy_diff_per_atom": energy_diff,
-                "stability": stability,
-                "confidence": confidence,
-            },
-            success=True,
+        # 3+4. 查 MP 同组成做 hull 比对, 判断稳定性 + 置信度, 组装返回
+        return await _omat24_final_result(
+            self, args, formula, n_atoms, predicted_energy, predicted_energy_per_atom
         )

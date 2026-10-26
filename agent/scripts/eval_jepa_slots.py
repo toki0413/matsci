@@ -15,6 +15,7 @@
     是**把 givens 规范化**而非"补全空缺数字"; 增益偏保守是预期。
   - slots 只含 givens/公式; detect_leak 确认任何槽不等于 actual 末位答案码。
 """
+
 from __future__ import annotations
 
 import json
@@ -30,58 +31,92 @@ MODEL = Path("/root/.huginn/models/jepa_span_predictor.json")
 
 # 方法级目标的 plan-时已知 givens + 公式 (人工核过 actual, 勿拍脑袋)
 CURATED: dict[str, tuple[list[dict], str]] = {
-    "spring_period": ([{"label": "m", "value": 0.5, "unit": "kg"},
-                       {"label": "k", "value": 8.0, "unit": "N/m"}], "T=2*pi*sqrt(m/k)"),
-    "rc_time_constant": ([{"label": "R", "value": 1000, "unit": "ohm"},
-                          {"label": "C", "value": 0.001, "unit": "F"}], "tau=R*C"),
-    "freefall_distance": ([{"label": "g", "value": 9.81, "unit": "m/s2"},
-                           {"label": "t", "value": 2.0, "unit": "s"}], "d=0.5*g*t^2"),
-    "sound_wavelength": ([{"label": "v", "value": 343, "unit": "m/s"},
-                          {"label": "f", "value": 440, "unit": "Hz"}], "lambda=v/f"),
-    "thermal_expansion": ([{"label": "alpha", "value": 1.2e-05, "unit": "1/K"},
-                           {"label": "L0", "value": 2.0, "unit": "m"},
-                           {"label": "dT", "value": 50.0, "unit": "K"}], "dL=alpha*L0*dT"),
-    "root_mean_square_identity": ([{"label": "a", "value": 3.0},
-                                   {"label": "b", "value": 4.0}], "RMS=sqrt((a^2+b^2)/2)"),
+    "spring_period": (
+        [
+            {"label": "m", "value": 0.5, "unit": "kg"},
+            {"label": "k", "value": 8.0, "unit": "N/m"},
+        ],
+        "T=2*pi*sqrt(m/k)",
+    ),
+    "rc_time_constant": (
+        [
+            {"label": "R", "value": 1000, "unit": "ohm"},
+            {"label": "C", "value": 0.001, "unit": "F"},
+        ],
+        "tau=R*C",
+    ),
+    "freefall_distance": (
+        [
+            {"label": "g", "value": 9.81, "unit": "m/s2"},
+            {"label": "t", "value": 2.0, "unit": "s"},
+        ],
+        "d=0.5*g*t^2",
+    ),
+    "sound_wavelength": (
+        [
+            {"label": "v", "value": 343, "unit": "m/s"},
+            {"label": "f", "value": 440, "unit": "Hz"},
+        ],
+        "lambda=v/f",
+    ),
+    "thermal_expansion": (
+        [
+            {"label": "alpha", "value": 1.2e-05, "unit": "1/K"},
+            {"label": "L0", "value": 2.0, "unit": "m"},
+            {"label": "dT", "value": 50.0, "unit": "K"},
+        ],
+        "dL=alpha*L0*dT",
+    ),
+    "root_mean_square_identity": (
+        [{"label": "a", "value": 3.0}, {"label": "b", "value": 4.0}],
+        "RMS=sqrt((a^2+b^2)/2)",
+    ),
     "newton_raphson_sqrt2": ([{"label": "x0", "value": 1.5}], "x_{n+1}=(x_n+2/x_n)/2"),
-    "projectile_max_range_angle": ([{"label": "v0", "value": 10, "unit": "m/s"},
-                                    {"label": "g", "value": 9.81, "unit": "m/s2"}],
-                                   "R(theta)=v0^2*sin(2theta)/g"),
-    "newton_2d_system_solve": ([{"label": "target", "value": 3.0}], "min f(x) -> x=target"),
+    "projectile_max_range_angle": (
+        [
+            {"label": "v0", "value": 10, "unit": "m/s"},
+            {"label": "g", "value": 9.81, "unit": "m/s2"},
+        ],
+        "R(theta)=v0^2*sin(2theta)/g",
+    ),
+    "newton_2d_system_solve": (
+        [{"label": "target", "value": 3.0}],
+        "min f(x) -> x=target",
+    ),
 }
 
 
 def load_model() -> dict:
     data = json.loads(MODEL.read_text(encoding="utf-8"))
-    return {"weights": {k: np.asarray(v, dtype=np.float64) for k, v in data["weights"].items()},
-            "dim": int(data["dim"])}
+    return {
+        "weights": {
+            k: np.asarray(v, dtype=np.float64) for k, v in data["weights"].items()
+        },
+        "dim": int(data["dim"]),
+    }
 
 
-def main() -> None:
-    enc = load_encoder()
-    pairs = load_pairs(Path("/root/.huginn/corpus/jepa_pairs.jsonl"))
-    by_obj: dict[str, list[dict]] = {}
-    for p in pairs:
-        by_obj.setdefault(p.get("objective", ""), []).append(p)
-    pack = load_model()
+def _vec_of(enc, pack: dict, spans) -> np.ndarray:
+    """逐 span 编码+归一, 与训练端一致."""
+    if not spans:
+        return np.zeros((0, pack["dim"]), dtype=np.float64)
+    vs = enc.encode(spans, normalize_embeddings=True)
+    return np.asarray(vs, dtype=np.float64)
 
-    def vec_of(spans):
-        # 逐 span 编码+归一, 与训练端一致
-        if not spans:
-            return np.zeros((0, pack["dim"]), dtype=np.float64)
-        vs = enc.encode(spans, normalize_embeddings=True)
-        return np.asarray(vs, dtype=np.float64)
 
-    def surprise(pred_spans, act_spans):
-        P = vec_of(pred_spans)
-        A = vec_of(act_spans)
-        if P.shape[0] == 0 or A.shape[0] == 0:
-            return None
-        H = np.tanh(P @ pack["weights"]["W1"] + pack["weights"]["b1"])
-        fwd = H @ pack["weights"]["W2"] + pack["weights"]["b2"]
-        d = [min(_dist(fwd[k], A[j]) for j in range(A.shape[0])) for k in range(P.shape[0])]
-        return float(np.mean(d)) if d else None
+def _surprise(enc, pack: dict, pred_spans, act_spans) -> float | None:
+    P = _vec_of(enc, pack, pred_spans)
+    A = _vec_of(enc, pack, act_spans)
+    if P.shape[0] == 0 or A.shape[0] == 0:
+        return None
+    H = np.tanh(P @ pack["weights"]["W1"] + pack["weights"]["b1"])
+    fwd = H @ pack["weights"]["W2"] + pack["weights"]["b2"]
+    d = [min(_dist(fwd[k], A[j]) for j in range(A.shape[0])) for k in range(P.shape[0])]
+    return float(np.mean(d)) if d else None
 
+
+def _panel(enc, pack: dict, by_obj: dict) -> tuple:
+    """A/B panel over curated objectives (leak-rejected pairs are counted, not scored)."""
     orig_vals, slot_vals = [], []
     leaked = 0
     rows = []
@@ -93,20 +128,18 @@ def main() -> None:
                 leaked += 1
                 continue
             act_spans = _spans(act)
-            s_orig = surprise(_spans(pred), act_spans)
+            s_orig = _surprise(enc, pack, _spans(pred), act_spans)
             slotted = append_slots(pred, inputs, formula)
-            s_slot = surprise(_spans(slotted), act_spans)
+            s_slot = _surprise(enc, pack, _spans(slotted), act_spans)
             if s_orig is None or s_slot is None:
                 continue
             orig_vals.append(s_orig)
             slot_vals.append(s_slot)
             rows.append((obj, s_orig, s_slot))
-        else:
-            pass
+    return orig_vals, slot_vals, rows, leaked
 
-    if not orig_vals:
-        print("无可用配对 (可能全部漏检). 退出.")
-        return
+
+def _report(orig_vals, slot_vals, rows, leaked: int) -> None:
     o = float(np.mean(orig_vals))
     s = float(np.mean(slot_vals))
     wins = sum(1 for r in rows if r[2] < r[1] - 1e-6)
@@ -115,7 +148,23 @@ def main() -> None:
     print(f"[B] PLAN_SLOTS: mean surprise = {s:.4f}")
     print(f"delta = {s - o:+.4f}; 逐对 slot<orig: {wins}/{len(rows)}")
     for obj, a, b in rows:
-        print(f"  {obj:30s} A={a:.4f}  B={b:.4f}  d={b-a:+.4f}")
+        print(f"  {obj:30s} A={a:.4f}  B={b:.4f}  d={b - a:+.4f}")
+
+
+def main() -> None:
+    enc = load_encoder()
+    pairs = load_pairs(Path("/root/.huginn/corpus/jepa_pairs.jsonl"))
+    by_obj: dict[str, list[dict]] = {}
+    for p in pairs:
+        by_obj.setdefault(p.get("objective", ""), []).append(p)
+    pack = load_model()
+
+    orig_vals, slot_vals, rows, leaked = _panel(enc, pack, by_obj)
+
+    if not orig_vals:
+        print("无可用配对 (可能全部漏检). 退出.")
+        return
+    _report(orig_vals, slot_vals, rows, leaked)
 
 
 if __name__ == "__main__":

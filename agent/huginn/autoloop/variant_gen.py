@@ -7,6 +7,7 @@
 
 toggle: cfg.feature_flags.harness_workflow_evolution (默认 off).
 """
+
 from __future__ import annotations
 
 import json
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 # register_tool_perturb_rules 登记自己的参数字典, variant_gen 按 tool_name 动态解析
 # (工具级规则 → 全局命名规则 → 数值回退), 跨仿真器复用, 不再把某个仿真器的参数名
 # 写死在 variant_gen 里.
+
 
 def _perturb_encut(v: Any) -> Any:
     """encut ±50 eV, 钳到 [200, 2000]."""
@@ -146,17 +148,20 @@ def _perturb_script(script: WorkflowScript) -> WorkflowScript:
                 from huginn.harness.joint_optimizer import (
                     select_workflow_params_for_stage,
                 )
+
                 new_args = select_workflow_params_for_stage(st.tool_name, st.args)
             except Exception:  # 防御: H3 不可用回退随机扰动
                 new_args = _perturb_args(st.args, st.tool_name)
         else:
             new_args = _perturb_args(st.args, st.tool_name)
-        new_subtasks.append({
-            "id": st.id,
-            "tool": st.tool_name,
-            "args": new_args,
-            "description": st.description,
-        })
+        new_subtasks.append(
+            {
+                "id": st.id,
+                "tool": st.tool_name,
+                "args": new_args,
+                "description": st.description,
+            }
+        )
     raw = {
         "objective": script.objective,
         "max_concurrent": script.max_concurrent,
@@ -238,33 +243,38 @@ async def generate_variants(
     return await _llm_generate_variants(objective, n, llm_chat_fn)
 
 
-def _selfcheck() -> None:
-    """variant_gen selfcheck: 参数扰动 + LLM fallback 路径."""
-    import huginn.autoloop.variant_gen as vg
-    import huginn.harness.joint_optimizer as jo
-    from huginn.autoloop.dynamic_workflow import WorkflowScript
-
-    # toggle off → 空 list. patch vg + jo 两处 (H3 接入后两模块各自有 _harness_enabled)
+def _selfcheck_toggle_off(vg: Any, jo: Any, asyncio: Any) -> tuple[Any, Any]:
+    """toggle off → 空 list; 返回原始 _harness_enabled 供恢复."""
+    # patch vg + jo 两处 (H3 接入后两模块各自有 _harness_enabled)
     orig_vg = vg._harness_enabled
     orig_jo = jo._harness_enabled
     vg._harness_enabled = lambda key, default=False: False
     jo._harness_enabled = lambda key, default=False: False
-    import asyncio
     out = asyncio.run(vg.generate_variants("test", n=3))
     assert out == [], f"toggle off should return []: {out}"
     print("1. toggle off → [] OK")
+    return orig_vg, orig_jo
 
-    # toggle on + base_script → 参数扰动 (H2 workflow_evolution on, H3 off 走原扰动)
-    vg._harness_enabled = lambda key, default=False: (
-        key == "harness_workflow_evolution"
-    )
+
+def _selfcheck_param_perturb(
+    vg: Any, jo: Any, asyncio: Any, WorkflowScript: Any
+) -> tuple[list[WorkflowScript], Any, Any]:
+    """toggle on + base_script → 参数扰动."""
+    # H2 workflow_evolution on, H3 off 走原扰动
+    vg._harness_enabled = lambda key, default=False: key == "harness_workflow_evolution"
     jo._harness_enabled = lambda key, default=False: False
-    base = WorkflowScript.from_dict({
-        "objective": "test Si band gap",
-        "subtasks": [
-            {"id": "s1", "tool": "vasp_tool", "args": {"encut": 520, "kpoints": "2 2 2", "sigma": 0.05}},
-        ],
-    })
+    base = WorkflowScript.from_dict(
+        {
+            "objective": "test Si band gap",
+            "subtasks": [
+                {
+                    "id": "s1",
+                    "tool": "vasp_tool",
+                    "args": {"encut": 520, "kpoints": "2 2 2", "sigma": 0.05},
+                },
+            ],
+        }
+    )
     out = asyncio.run(vg.generate_variants("test", n=3, base_script=base))
     assert len(out) == 3, f"should generate 3 variants: {len(out)}"
     # 每个 variant 的 encut/kpoints 应该跟 base 不同 (至少有一个不同)
@@ -272,8 +282,11 @@ def _selfcheck() -> None:
     diff_count = sum(1 for v in out if v.subtasks[0].args["encut"] != base_encut)
     assert diff_count > 0, "at least one variant should differ in encut"
     print(f"2. param perturbation: 3 variants, {diff_count} differ in encut OK")
+    return out, base, base_encut
 
-    # 扰动后的 args 应该在合理范围
+
+def _selfcheck_valid_range(out: list[WorkflowScript]) -> None:
+    """扰动后的 args 应该在合理范围."""
     for v in out:
         encut = v.subtasks[0].args["encut"]
         assert 200 <= encut <= 2000, f"encut out of range: {encut}"
@@ -284,17 +297,24 @@ def _selfcheck() -> None:
             assert 1 <= int(p) <= 12, f"kpoint out of range: {p}"
     print("3. perturbed args in valid range OK")
 
-    # base_script=None + llm_chat_fn=None → 空 list
-    out = asyncio.run(vg.generate_variants("test", n=3, base_script=None, llm_chat_fn=None))
+
+def _selfcheck_no_base(vg: Any, asyncio: Any) -> None:
+    """base_script=None + llm_chat_fn=None → 空 list."""
+    out = asyncio.run(
+        vg.generate_variants("test", n=3, base_script=None, llm_chat_fn=None)
+    )
     assert out == [], f"no base + no llm should return []: {out}"
     print("4. no base + no llm → [] OK")
 
-    # 5. H3 接入: H3 toggle on 时 _perturb_script 走 UCB 调参路径
-    jo._harness_enabled = lambda key, default=False: (
-        key == "harness_joint_optimizer"
-    )
+
+def _selfcheck_h3(
+    vg: Any, jo: Any, asyncio: Any, base: WorkflowScript, base_encut: Any
+) -> None:
+    """5. H3 接入: H3 toggle on 时 _perturb_script 走 UCB 调参路径."""
+    jo._harness_enabled = lambda key, default=False: key == "harness_joint_optimizer"
     import os as _os
     import tempfile as _tf
+
     _tmp = _tf.mkdtemp()
     _os.environ["HUGINN_CACHE_DIR"] = _tmp
     jo.JointBandit._instance = None
@@ -309,6 +329,21 @@ def _selfcheck() -> None:
     print(f"5. H3 path: 2 variants, {h3_diff} differ in encut (±10%) OK")
     _os.environ.pop("HUGINN_CACHE_DIR", None)
     jo.JointBandit._instance = None
+
+
+def _selfcheck() -> None:
+    """variant_gen selfcheck: 参数扰动 + LLM fallback 路径."""
+    import asyncio
+
+    import huginn.autoloop.variant_gen as vg
+    import huginn.harness.joint_optimizer as jo
+    from huginn.autoloop.dynamic_workflow import WorkflowScript
+
+    orig_vg, orig_jo = _selfcheck_toggle_off(vg, jo, asyncio)
+    out, base, base_encut = _selfcheck_param_perturb(vg, jo, asyncio, WorkflowScript)
+    _selfcheck_valid_range(out)
+    _selfcheck_no_base(vg, asyncio)
+    _selfcheck_h3(vg, jo, asyncio, base, base_encut)
 
     vg._harness_enabled = orig_vg
     jo._harness_enabled = orig_jo

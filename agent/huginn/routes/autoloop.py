@@ -74,6 +74,62 @@ def _make_done_callback(progress_task_id: str, run_key: str):
     return _cb
 
 
+def _build_engine(workspace: str):
+    """构造 AutoloopEngine; 配置性失败转成可读的 400."""
+    # 引擎构造阶段就可能因缺 LLM provider / 缺 API key 同步抛配置错误.
+    # 统一错误处理器会把干净的 ValueError 吞成 500 "Internal server error",
+    # 用户在无 LLM 的首次运行里只会看到不明所以的内部错误. 这里把配置性
+    # 失败提前转成可读的 400, 把"我该去配置什么"暴露给客户端.
+    from huginn.autoloop.engine import AutoloopEngine
+
+    try:
+        return AutoloopEngine(workspace=workspace)
+    except (TypeError, ValueError) as e:
+        message = str(e) or e.__class__.__name__
+        if (
+            "provider" in message.lower()
+            or "key" in message.lower()
+            or "model" in message.lower()
+        ):
+            # 缺 provider / 缺 key → 400(配置问题), 不走 500 兜底, 别把
+            # "我该配置什么" 误报成 "系统内部错误".
+            raise HTTPException(status_code=400, detail=message) from e
+        raise
+
+
+def _register_run(task: asyncio.Task, objective: str, max_iterations: int) -> str:
+    """登记顶层 progress task, 完成时 done_callback 标 complete/fail.
+
+    这样 /tasks/stream SSE 客户端能收到明确的 done 事件, 而不是靠轮询 task.done().
+    """
+    run_key = task.get_name()
+    progress_task_id = f"autoloop:{run_key}:{uuid.uuid4().hex[:8]}"
+    tracker = get_progress_tracker()
+    tracker.start_task(
+        task_id=progress_task_id,
+        description=f"autoloop: {objective[:120]}",
+        total_steps=max_iterations,
+        stage_labels=[
+            "perceive",
+            "hypothesize",
+            "plan",
+            "execute",
+            "validate",
+            "learn",
+        ],
+        engine_kind="autoloop",
+        metadata={"objective": objective, "run_key": run_key},
+    )
+    _active_runs[run_key] = {
+        "objective": objective,
+        "max_iterations": max_iterations,
+        "task": task,
+        "progress_task_id": progress_task_id,
+    }
+    task.add_done_callback(_make_done_callback(progress_task_id, run_key))
+    return progress_task_id
+
+
 @router.post("/autoloop/start")
 async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     """Start an autonomous research loop and return immediately.
@@ -86,47 +142,16 @@ async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     if not objective:
         raise HTTPException(status_code=400, detail="objective is required")
 
-    from huginn.autoloop.engine import AutoloopEngine
-
     workspace = get_context().config.workspace or "."
-    # 引擎构造阶段就可能因缺 LLM provider / 缺 API key 同步抛配置错误.
-    # 统一错误处理器会把干净的 ValueError 吞成 500 "Internal server error",
-    # 用户在无 LLM 的首次运行里只会看到不明所以的内部错误. 这里把配置性
-    # 失败提前转成可读的 400, 把"我该去配置什么"暴露给客户端.
-    try:
-        engine = AutoloopEngine(workspace=workspace)
-    except (TypeError, ValueError) as e:
-        message = str(e) or e.__class__.__name__
-        if "provider" in message.lower() or "key" in message.lower() or "model" in message.lower():
-            # 缺 provider / 缺 key → 400(配置问题), 不走 500 兜底, 别把
-            # "我该配置什么" 误报成 "系统内部错误".
-            raise HTTPException(status_code=400, detail=message) from e
-        raise
+    engine = _build_engine(workspace)
 
-    task = asyncio.create_task(engine.run_cognitive(objective, max_iterations=req.max_iterations))
+    task = asyncio.create_task(
+        engine.run_cognitive(objective, max_iterations=req.max_iterations)
+    )
     _pending.add(task)
     task.add_done_callback(_pending.discard)
 
-    # 登记一个顶层 progress task, 完成时 done_callback 标 complete/fail.
-    # 这样 /tasks/stream SSE 客户端能收到明确的 done 事件, 而不是靠轮询 task.done().
-    run_key = task.get_name()
-    progress_task_id = f"autoloop:{run_key}:{uuid.uuid4().hex[:8]}"
-    tracker = get_progress_tracker()
-    tracker.start_task(
-        task_id=progress_task_id,
-        description=f"autoloop: {objective[:120]}",
-        total_steps=req.max_iterations,
-        stage_labels=["perceive", "hypothesize", "plan", "execute", "validate", "learn"],
-        engine_kind="autoloop",
-        metadata={"objective": objective, "run_key": run_key},
-    )
-    _active_runs[run_key] = {
-        "objective": objective,
-        "max_iterations": req.max_iterations,
-        "task": task,
-        "progress_task_id": progress_task_id,
-    }
-    task.add_done_callback(_make_done_callback(progress_task_id, run_key))
+    progress_task_id = _register_run(task, objective, req.max_iterations)
 
     return {
         "status": "started",
@@ -154,13 +179,15 @@ async def autoloop_resumable() -> dict[str, Any]:
             d.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
         )[:5]:
             state = load_engine_state(p.stem, workspace)
-            runs.append({
-                "run_id": p.stem,
-                "objective": state._objective if state else "",
-                "iteration": state._iteration if state else 0,
-                "saved_at": state.saved_at if state else p.stat().st_mtime,
-                "resumable": state is not None,
-            })
+            runs.append(
+                {
+                    "run_id": p.stem,
+                    "objective": state._objective if state else "",
+                    "iteration": state._iteration if state else 0,
+                    "saved_at": state.saved_at if state else p.stat().st_mtime,
+                    "resumable": state is not None,
+                }
+            )
     return {"latest_run_id": runs[0]["run_id"] if runs else None, "runs": runs}
 
 
@@ -179,6 +206,7 @@ async def resume_autoloop() -> dict[str, Any]:
         latest_run_id,
         load_engine_state,
     )
+
     run_id = latest_run_id(workspace)
     if not run_id:
         raise HTTPException(status_code=404, detail="no resumable autoloop run")
@@ -199,10 +227,12 @@ async def autoloop_status() -> dict[str, Any]:
     runs = []
     for name, info in list(_active_runs.items()):
         task = info["task"]
-        runs.append({
-            "id": name,
-            "objective": info["objective"],
-            "done": task.done(),
-            "cancelled": task.cancelled(),
-        })
+        runs.append(
+            {
+                "id": name,
+                "objective": info["objective"],
+                "done": task.done(),
+                "cancelled": task.cancelled(),
+            }
+        )
     return {"active": len(runs), "runs": runs}

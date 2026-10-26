@@ -122,11 +122,8 @@ def test_sr_guided_gp_propagates_data_errors():
 # ── accuracy: combined beats pure SR and pure GP ──────────────────
 
 
-def test_combined_beats_pure_sr_and_pure_gp():
-    tool = InterpretableMLTool()
-    x_tr, y_tr, x_te, y_te = _trend_residual_data(seed=0, n_train=10)
-
-    # --- SR-guided GP combined prediction at the held-out test points ---
+def _run_combined_sr_gp(tool, x_tr, y_tr, x_te):
+    """SR-guided GP combined prediction at the held-out test points."""
     comb_res = _run(
         tool,
         InterpretableMLInput(
@@ -140,10 +137,11 @@ def test_combined_beats_pure_sr_and_pure_gp():
         ),
     )
     assert comb_res.success, comb_res.error
-    combined = np.asarray(comb_res.data["combined_mean"])
+    return np.asarray(comb_res.data["combined_mean"])
 
-    # --- pure SR: rebuild the design matrix at the test points with the same
-    # library SR used, then apply the discovered coefficients ---
+
+def _run_pure_sr(tool, x_tr, y_tr, x_te):
+    """Rebuild the design matrix at the test points, apply discovered coefficients."""
     sr_res = _run(
         tool,
         InterpretableMLInput(
@@ -156,9 +154,11 @@ def test_combined_beats_pure_sr_and_pure_gp():
     assert sr_res.success, sr_res.error
     coefs = np.asarray(sr_res.data["coefficients"], dtype=float)
     _, Theta_te = tool._sindy._build_library(x_te.reshape(-1, 1), 1, False, False)
-    sr_pred = Theta_te @ coefs
+    return Theta_te @ coefs
 
-    # --- pure GP on the raw target y, same kernel hyperparameters ---
+
+def _run_pure_gp(tool, x_tr, y_tr, x_te):
+    """Pure GP on the raw target y, same kernel hyperparameters."""
     gp_res = _run(
         tool,
         InterpretableMLInput(
@@ -170,7 +170,16 @@ def test_combined_beats_pure_sr_and_pure_gp():
         ),
     )
     assert gp_res.success, gp_res.error
-    gp_pred = np.asarray(gp_res.data["mean"], dtype=float)
+    return np.asarray(gp_res.data["mean"], dtype=float)
+
+
+def test_combined_beats_pure_sr_and_pure_gp():
+    tool = InterpretableMLTool()
+    x_tr, y_tr, x_te, y_te = _trend_residual_data(seed=0, n_train=10)
+
+    combined = _run_combined_sr_gp(tool, x_tr, y_tr, x_te)
+    sr_pred = _run_pure_sr(tool, x_tr, y_tr, x_te)
+    gp_pred = _run_pure_gp(tool, x_tr, y_tr, x_te)
 
     sr_rmse = _rmse(sr_pred, y_te)
     gp_rmse = _rmse(gp_pred, y_te)

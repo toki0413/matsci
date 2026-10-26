@@ -88,7 +88,23 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
     goal_judge_result = _run_goal_judge(agent, params, results, n_pass, n_total)
     traj_path = _save_eval_trajectory(collector, run_id, save_trajectory)
 
-    report = {
+    report = _build_eval_report(
+        run_id, results, n_pass, n_total, avg_grader, goal_judge_result, traj_path
+    )
+    _persist_eval_report(report, run_id)
+    return {"success": True, "report": report}
+
+
+def _build_eval_report(
+    run_id: str,
+    results: list[dict[str, Any]],
+    n_pass: int,
+    n_total: int,
+    avg_grader: float,
+    goal_judge_result: Any,
+    traj_path: Path,
+) -> dict[str, Any]:
+    return {
         "run_id": run_id,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "categories": list({r["category"] for r in results}),
@@ -101,8 +117,6 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
         "results": results,
         "trajectory_path": str(traj_path),
     }
-    _persist_eval_report(report, run_id)
-    return {"success": True, "report": report}
 
 
 def _filter_bench_tasks(bench, params: dict[str, Any]) -> None:
@@ -134,9 +148,7 @@ async def _collect_agent_output(agent, task, run_id: str) -> dict[str, Any]:
         # from stalling the entire benchmark run.
         response_text = ""
         async with asyncio.timeout(_AGENT_STREAM_TIMEOUT):
-            async for chunk in agent.astream(
-                task.prompt, thread_id=f"eval_{run_id}"
-            ):
+            async for chunk in agent.astream(task.prompt, thread_id=f"eval_{run_id}"):
                 if isinstance(chunk, dict):
                     response_text += chunk.get("content", "") or ""
                 elif isinstance(chunk, str):
@@ -171,14 +183,16 @@ async def _run_and_grade_task(agent, bench, task, run_id, collector) -> dict[str
     bench_result = bench.evaluate(task.id, agent_output)
 
     # Grade with GraderRegistry
-    grader_results = default_registry().evaluate_all({
-        "output": agent_output,
-        "task": {
-            "id": task.id,
-            "category": task.category,
-            "expected": task.expected_result,
-        },
-    })
+    grader_results = default_registry().evaluate_all(
+        {
+            "output": agent_output,
+            "task": {
+                "id": task.id,
+                "category": task.category,
+                "expected": task.expected_result,
+            },
+        }
+    )
 
     return {
         "task_id": task.id,
@@ -222,7 +236,9 @@ def _run_goal_judge(agent, params, results, n_pass: int, n_total: int):
                 judge_llm = agent.model_router.select_verification()
 
         judge = GoalJudge(llm=judge_llm)
-        final_output = f"Benchmark pass rate: {n_pass}/{n_total} ({n_pass/n_total*100:.1f}%)\n"
+        final_output = (
+            f"Benchmark pass rate: {n_pass}/{n_total} ({n_pass / n_total * 100:.1f}%)\n"
+        )
         final_output += "\n".join(
             f"  {r['task_id']}: {'PASS' if r['passed'] else 'FAIL'} (score={r['score']})"
             for r in results
@@ -241,7 +257,9 @@ def _save_eval_trajectory(collector, run_id: str, save_trajectory) -> Path:
     """Persist the telemetry trajectory; return its path regardless of failure."""
     traj_path = _eval_dir() / f"{run_id}_trajectory.json"
     try:
-        save_trajectory(collector, traj_path, metadata={"run_id": run_id, "type": "eval"})
+        save_trajectory(
+            collector, traj_path, metadata={"run_id": run_id, "type": "eval"}
+        )
     except Exception:
         logger.debug("trajectory save failed", exc_info=True)
     return traj_path
@@ -267,14 +285,16 @@ async def eval_history(limit: int = 20) -> dict[str, Any]:
         for p in sorted(_eval_dir().glob("eval_*.json"), reverse=True)[:limit]:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                runs.append({
-                    "run_id": data.get("run_id", p.stem),
-                    "timestamp": data.get("timestamp", ""),
-                    "total": data.get("total", 0),
-                    "passed": data.get("passed", 0),
-                    "pass_rate": data.get("pass_rate", 0.0),
-                    "avg_grader_score": data.get("avg_grader_score", 0.0),
-                })
+                runs.append(
+                    {
+                        "run_id": data.get("run_id", p.stem),
+                        "timestamp": data.get("timestamp", ""),
+                        "total": data.get("total", 0),
+                        "passed": data.get("passed", 0),
+                        "pass_rate": data.get("pass_rate", 0.0),
+                        "avg_grader_score": data.get("avg_grader_score", 0.0),
+                    }
+                )
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
@@ -298,14 +318,7 @@ async def eval_results(run_id: str) -> dict[str, Any]:
         return {"success": False, "error": str(exc)}
 
 
-@router.post("/eval/analyze")
-async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
-    """Analyze failure patterns from past eval runs.
-
-    Clusters failures by category and grader, showing which
-    dimensions are the weakest.
-    """
-    limit = int(params.get("limit", 10))
+def _load_recent_eval_runs(limit: int) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     try:
         for p in sorted(_eval_dir().glob("eval_*.json"), reverse=True)[:limit]:
@@ -317,11 +330,15 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
                 continue
     except Exception:
         logger.debug("eval runs glob skipped", exc_info=True)
+    return runs
 
-    if not runs:
-        return {"success": True, "analysis": {"message": "no past eval runs found"}}
 
-    # Aggregate failures by category and task
+def _accumulate_failure_stats(
+    runs: list[dict[str, Any]],
+) -> tuple[
+    dict[str, dict[str, int]], dict[str, dict[str, int]], dict[str, dict[str, int]]
+]:
+    """按 category / task / grader 聚合失败统计."""
     category_stats: dict[str, dict[str, int]] = {}
     task_stats: dict[str, dict[str, int]] = {}
     grader_stats: dict[str, dict[str, int]] = {}
@@ -348,30 +365,55 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
                 else:
                     grader_stats[gname]["failed"] += 1
 
-    # Find weakest categories
-    weak_categories = sorted(
+    return category_stats, task_stats, grader_stats
+
+
+def _pass_rate_rows(
+    stats: dict[str, dict[str, int]], label: str
+) -> list[dict[str, Any]]:
+    """按通过率升序的 breakdown 行."""
+    return sorted(
         [
             {
-                "category": k,
+                label: k,
                 "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
                 **v,
             }
-            for k, v in category_stats.items()
+            for k, v in stats.items()
         ],
         key=lambda x: x["pass_rate"],
     )
 
-    weak_tasks = sorted(
-        [
-            {
-                "task_id": k,
-                "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
-                **v,
-            }
-            for k, v in task_stats.items()
-        ],
-        key=lambda x: x["pass_rate"],
-    )
+
+def _grader_breakdown(grader_stats: dict[str, dict[str, int]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "grader": k,
+            "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
+            **v,
+        }
+        for k, v in sorted(grader_stats.items())
+    ]
+
+
+@router.post("/eval/analyze")
+async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
+    """Analyze failure patterns from past eval runs.
+
+    Clusters failures by category and grader, showing which
+    dimensions are the weakest.
+    """
+    limit = int(params.get("limit", 10))
+    runs = _load_recent_eval_runs(limit)
+
+    if not runs:
+        return {"success": True, "analysis": {"message": "no past eval runs found"}}
+
+    category_stats, task_stats, grader_stats = _accumulate_failure_stats(runs)
+
+    # Find weakest categories
+    weak_categories = _pass_rate_rows(category_stats, "category")
+    weak_tasks = _pass_rate_rows(task_stats, "task_id")
 
     return {
         "success": True,
@@ -380,14 +422,7 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
             "total_tasks": sum(v["total"] for v in task_stats.values()),
             "category_breakdown": weak_categories,
             "task_breakdown": weak_tasks,
-            "grader_breakdown": [
-                {
-                    "grader": k,
-                    "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
-                    **v,
-                }
-                for k, v in sorted(grader_stats.items())
-            ],
+            "grader_breakdown": _grader_breakdown(grader_stats),
         },
     }
 

@@ -19,7 +19,6 @@ from huginn.tools.base import HuginnTool, ToolProfile
 logger = logging.getLogger(__name__)
 
 
-
 class RAGToolInput(BaseModel):
     action: Literal["search", "ingest", "list", "delete", "count", "get"] = Field(...)
     query: str = Field(default="", description="Search query (for search action)")
@@ -147,43 +146,7 @@ class RAGTool(HuginnTool):
         # 共享 KB 路径：跳过层次化路由，直接走 KB 的 query
         kb = self._resolve_kb()
         if kb is not None:
-            try:
-                chunks = kb.query(args.query, top_k=args.top_k)
-                # KB 返回 {chunk_id, text, metadata, distance}，
-                # 映射成 VectorStore.search 的格式让调用方无感知
-                results = [
-                    {
-                        "id": c["chunk_id"],
-                        "document": c["text"],
-                        "metadata": c["metadata"],
-                        "distance": c["distance"],
-                    }
-                    for c in chunks
-                ]
-                # 视觉压缩页 chunk 的 image_ref 是裸文件系统路径, 前端拿不到.
-                # 同时塞一份 image_url 让前端按 URL 直接 fetch (GET /knowledge/image).
-                # 之前 context_builder 只把路径塞进 prompt 文本, 前端永远看不到图.
-                from urllib.parse import quote
-                for r in results:
-                    img_ref = (r.get("metadata") or {}).get("image_ref")
-                    if img_ref:
-                        r["image_url"] = f"/knowledge/image?path={quote(str(img_ref))}"
-                # ponytail: 外部检索到的 chunk 是不可信内容, LLM 可能被注入
-                # "ignore previous instructions" 之类的文本. 用显式标记包起来,
-                # 让模型把这段当数据而非指令 (Odysseus untrusted_context_message 模式)
-                wrap_rag_chunks(results)
-                return ToolResult(
-                    data={
-                        "query": args.query,
-                        "results_count": len(results),
-                        "results": results,
-                    },
-                    success=True,
-                )
-            except Exception as e:
-                return ToolResult(
-                    data=None, success=False, error=f"Search failed: {e}"
-                )
+            return RAGTool._search_kb(self, args, kb)
 
         filter_dict = None
         if args.source_filter:
@@ -215,6 +178,49 @@ class RAGTool(HuginnTool):
                 # 路由检索挂了就 fallback，不能让用户拿不到结果
                 print(f"[rag_tool] hierarchical search failed, fallback: {e}")
 
+        return RAGTool._search_store(self, args, filter_dict)
+
+    def _search_kb(self, args: RAGToolInput, kb: Any) -> ToolResult:
+        try:
+            chunks = kb.query(args.query, top_k=args.top_k)
+            # KB 返回 {chunk_id, text, metadata, distance}，
+            # 映射成 VectorStore.search 的格式让调用方无感知
+            results = [
+                {
+                    "id": c["chunk_id"],
+                    "document": c["text"],
+                    "metadata": c["metadata"],
+                    "distance": c["distance"],
+                }
+                for c in chunks
+            ]
+            # 视觉压缩页 chunk 的 image_ref 是裸文件系统路径, 前端拿不到.
+            # 同时塞一份 image_url 让前端按 URL 直接 fetch (GET /knowledge/image).
+            # 之前 context_builder 只把路径塞进 prompt 文本, 前端永远看不到图.
+            from urllib.parse import quote
+
+            for r in results:
+                img_ref = (r.get("metadata") or {}).get("image_ref")
+                if img_ref:
+                    r["image_url"] = f"/knowledge/image?path={quote(str(img_ref))}"
+            # ponytail: 外部检索到的 chunk 是不可信内容, LLM 可能被注入
+            # "ignore previous instructions" 之类的文本. 用显式标记包起来,
+            # 让模型把这段当数据而非指令 (Odysseus untrusted_context_message 模式)
+            wrap_rag_chunks(results)
+            return ToolResult(
+                data={
+                    "query": args.query,
+                    "results_count": len(results),
+                    "results": results,
+                },
+                success=True,
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"Search failed: {e}")
+
+    def _search_store(
+        self, args: RAGToolInput, filter_dict: dict[str, str] | None
+    ) -> ToolResult:
         try:
             results = self.store.search(
                 query=args.query,
@@ -236,57 +242,57 @@ class RAGTool(HuginnTool):
     def _ingest(self, args: RAGToolInput) -> ToolResult:
         kb = self._resolve_kb()
         if kb is not None:
-            if args.file_path:
-                path = Path(args.file_path)
-                if not path.exists():
-                    return ToolResult(
-                        data=None, success=False, error=f"File not found: {path}"
-                    )
-                info = None
-                try:
-                    info = kb.add_document(path.name, path.read_bytes())
-                    return ToolResult(
-                        data={
-                            "ingested": info["chunks"],
-                            "ids": [info["doc_id"]],
-                            "source": str(path),
-                        },
-                        success=True,
-                    )
-                except Exception as e:
-                    # RevertibleEffect (Cordis 时间可组合性): add_document 抛异常后,
-                    # 撤销本次写入 — 删除该 doc 的所有 chunk, 不留半成品.
-                    if info and info.get("doc_id"):
-                        kb.delete_document(info["doc_id"])
-                    return ToolResult(
-                        data=None, success=False, error=f"Ingest failed: {e}"
-                    )
-            elif args.document:
-                info = None
-                try:
-                    info = kb.add_document(
-                        "manual.txt", args.document.encode("utf-8")
-                    )
-                    return ToolResult(
-                        data={
-                            "ingested": info["chunks"],
-                            "ids": [info["doc_id"]],
-                        },
-                        success=True,
-                    )
-                except Exception as e:
-                    # RevertibleEffect: 失败撤销本次写入, 不留半成品.
-                    if info and info.get("doc_id"):
-                        kb.delete_document(info["doc_id"])
-                    return ToolResult(
-                        data=None, success=False, error=f"Ingest failed: {e}"
-                    )
-            return ToolResult(
-                data=None,
-                success=False,
-                error="file_path or document required for ingest",
-            )
+            return RAGTool._ingest_kb(self, args, kb)
 
+        return RAGTool._ingest_store(self, args)
+
+    def _ingest_kb(self, args: RAGToolInput, kb: Any) -> ToolResult:
+        if args.file_path:
+            path = Path(args.file_path)
+            if not path.exists():
+                return ToolResult(
+                    data=None, success=False, error=f"File not found: {path}"
+                )
+            info = None
+            try:
+                info = kb.add_document(path.name, path.read_bytes())
+                return ToolResult(
+                    data={
+                        "ingested": info["chunks"],
+                        "ids": [info["doc_id"]],
+                        "source": str(path),
+                    },
+                    success=True,
+                )
+            except Exception as e:
+                # RevertibleEffect (Cordis 时间可组合性): add_document 抛异常后,
+                # 撤销本次写入 — 删除该 doc 的所有 chunk, 不留半成品.
+                if info and info.get("doc_id"):
+                    kb.delete_document(info["doc_id"])
+                return ToolResult(data=None, success=False, error=f"Ingest failed: {e}")
+        elif args.document:
+            info = None
+            try:
+                info = kb.add_document("manual.txt", args.document.encode("utf-8"))
+                return ToolResult(
+                    data={
+                        "ingested": info["chunks"],
+                        "ids": [info["doc_id"]],
+                    },
+                    success=True,
+                )
+            except Exception as e:
+                # RevertibleEffect: 失败撤销本次写入, 不留半成品.
+                if info and info.get("doc_id"):
+                    kb.delete_document(info["doc_id"])
+                return ToolResult(data=None, success=False, error=f"Ingest failed: {e}")
+        return ToolResult(
+            data=None,
+            success=False,
+            error="file_path or document required for ingest",
+        )
+
+    def _ingest_store(self, args: RAGToolInput) -> ToolResult:
         if args.file_path:
             path = Path(args.file_path)
             if not path.exists():

@@ -20,6 +20,76 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 
 logger = logging.getLogger(__name__)
 
+
+def _attach_fenics_audit(
+    action: str, data: dict[str, Any], extra: dict[str, Any]
+) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit("fenics_tool", action, data, extra)
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _fenics_script_generated_result(script_path: Path) -> ToolResult:
+    """FEniCS 缺失时返回已生成的求解脚本."""
+    return ToolResult(
+        data={
+            "action": "solve_pde",
+            "status": "script_generated",
+            "script_path": str(script_path),
+            "message": (
+                "FEniCS not installed. Script saved — run it in a "
+                "FEniCS environment: python fenics_solve.py"
+            ),
+        },
+        success=True,
+    )
+
+
+def _solve_pde_data(result: Any, success: bool, work_dir: Path) -> dict[str, Any]:
+    """构造 solve_pde 的结果 data."""
+    return {
+        "action": "solve_pde",
+        "returncode": result.returncode,
+        "stdout": result.stdout[-2000:] if result.stdout else "",
+        "stderr": result.stderr[-2000:] if result.stderr else "",
+        "working_dir": str(work_dir),
+        "message": (
+            "FEniCS solve completed."
+            if success
+            else f"FEniCS solve failed (exit {result.returncode})."
+        ),
+    }
+
+
+def _mesh_info_script(mesh_path: Path) -> str:
+    """生成 dolfin mesh 信息查询脚本."""
+    return textwrap.dedent(f"""
+        from dolfin import Mesh
+        mesh = Mesh("{mesh_path}")
+        print("dim", mesh.geometry().dim())
+        print("num_vertices", mesh.num_vertices())
+        print("num_cells", mesh.num_cells())
+    """)
+
+
+def _update_mesh_info(info: dict[str, Any], stdout: str) -> None:
+    """从 mesh 查询 stdout 解析 key/value 写入 info."""
+    for line in stdout.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) == 2:
+            key, val = parts
+            try:
+                info[key] = int(val)
+            except ValueError:
+                info[key] = val
+
+
 def _convergence_diff_script(f1: Any, f2: Any) -> str:
     """生成一对解文件的 L2 差 (errornorm, 失败退回相对 L2) 脚本."""
     return textwrap.dedent(f"""
@@ -58,7 +128,6 @@ def _convergence_diff_script(f1: Any, f2: Any) -> str:
             d = abs(n1 - n2) / denom
             print("diff_rel", d)
     """)
-
 
 
 class FenicsToolInput(BaseModel):
@@ -144,9 +213,7 @@ class FenicsTool(HuginnTool):
             data=None, success=False, error=f"Unknown action: {input_data.action}"
         )
 
-    def _solve_pde(
-        self, input_data: FenicsToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _solve_pde(self, input_data: FenicsToolInput, work_dir: Path) -> ToolResult:
         if not input_data.script:
             return ToolResult(
                 data=None,
@@ -158,18 +225,7 @@ class FenicsTool(HuginnTool):
         script_path.write_text(input_data.script, encoding="utf-8")
 
         if not _fenics_available(self.sandbox):
-            return ToolResult(
-                data={
-                    "action": "solve_pde",
-                    "status": "script_generated",
-                    "script_path": str(script_path),
-                    "message": (
-                        "FEniCS not installed. Script saved — run it in a "
-                        "FEniCS environment: python fenics_solve.py"
-                    ),
-                },
-                success=True,
-            )
+            return _fenics_script_generated_result(script_path)
 
         try:
             result = self.sandbox.run(
@@ -180,32 +236,17 @@ class FenicsTool(HuginnTool):
                 timeout=300.0,
             )
             success = result.returncode == 0
-            data = {
-                "action": "solve_pde",
-                "returncode": result.returncode,
-                "stdout": result.stdout[-2000:] if result.stdout else "",
-                "stderr": result.stderr[-2000:] if result.stderr else "",
-                "working_dir": str(work_dir),
-                "message": (
-                    "FEniCS solve completed." if success
-                    else f"FEniCS solve failed (exit {result.returncode})."
-                ),
-            }
+            data = _solve_pde_data(result, success, work_dir)
 
             # Physics audit — NaN/Inf, Newton solver convergence, BC issues
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit("fenics_tool", "solve_pde", data, {})
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_fenics_audit("solve_pde", data, {})
 
             return ToolResult(
                 data=data,
                 success=success,
-                error=None if success else f"FEniCS solve failed: {result.stderr[:300]}",
+                error=None
+                if success
+                else f"FEniCS solve failed: {result.stderr[:300]}",
             )
         except SandboxError as e:
             return ToolResult(
@@ -216,9 +257,7 @@ class FenicsTool(HuginnTool):
                 data=None, success=False, error="FEniCS solve timed out (300s)."
             )
 
-    def _mesh_info(
-        self, input_data: FenicsToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _mesh_info(self, input_data: FenicsToolInput, work_dir: Path) -> ToolResult:
         if not input_data.mesh_file:
             return ToolResult(
                 data=None, success=False, error="mesh_info requires 'mesh_file'."
@@ -231,13 +270,7 @@ class FenicsTool(HuginnTool):
                 data=None, success=False, error=f"Mesh file not found: {mesh_path}"
             )
 
-        info_script = textwrap.dedent(f"""
-            from dolfin import Mesh
-            mesh = Mesh("{mesh_path}")
-            print("dim", mesh.geometry().dim())
-            print("num_vertices", mesh.num_vertices())
-            print("num_cells", mesh.num_cells())
-        """)
+        info_script = _mesh_info_script(mesh_path)
 
         try:
             result = self.sandbox.run(
@@ -254,21 +287,16 @@ class FenicsTool(HuginnTool):
                     error=f"FEniCS mesh query failed: {result.stderr[:300]}",
                 )
             info: dict[str, Any] = {"mesh_file": str(mesh_path)}
-            for line in result.stdout.splitlines():
-                parts = line.strip().split(maxsplit=1)
-                if len(parts) == 2:
-                    key, val = parts
-                    try:
-                        info[key] = int(val)
-                    except ValueError:
-                        info[key] = val
+            _update_mesh_info(info, result.stdout)
             return ToolResult(
                 data={"action": "mesh_info", **info},
                 success=True,
             )
         except SandboxError as e:
             return ToolResult(
-                data=None, success=False, error=f"FEniCS mesh query blocked by sandbox: {e}"
+                data=None,
+                success=False,
+                error=f"FEniCS mesh query blocked by sandbox: {e}",
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -376,4 +404,3 @@ class FenicsTool(HuginnTool):
             data["physics_audit"] = audit_report.to_dict()
         except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
-

@@ -47,9 +47,7 @@ def _warn_missing_api_keys(ctx: CliContext) -> None:
     if not missing:
         return
 
-    ctx.console.print(
-        "[yellow]提示: 运行 huginn api-keys 配置 API key[/yellow]"
-    )
+    ctx.console.print("[yellow]提示: 运行 huginn api-keys 配置 API key[/yellow]")
     ctx.console.print(f"[dim]未配置: {', '.join(missing)}[/dim]")
 
 
@@ -103,9 +101,7 @@ def _ai_message_view(msg: Any) -> tuple[str, str, list[str]]:
     content = msg.content
     if isinstance(content, list):
         # 多模态 content: 拼出 text blocks, 非 text 的(图片等)直接丢掉
-        content = "".join(
-            b.get("text", "") for b in content if isinstance(b, dict)
-        )
+        content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
     kind = "thought" if tcs else "answer"
     names = [tc.get("name", "unknown") for tc in tcs]
     return kind, content or "", names
@@ -117,6 +113,28 @@ def chat(ctx: CliContext) -> None:
     """Start interactive chat with the Agent."""
     ds = get_design_system()
     avatar = get_pet_avatar()
+    _show_welcome(ctx, ds, avatar)
+
+    agent = _init_chat_agent(ctx, ds)
+
+    # 启动时检测缺失的 API key, 提示用户跑 huginn api-keys 配置
+    _warn_missing_api_keys(ctx)
+
+    # Initialize MCP servers
+    _init_chat_mcp(ctx, ds, agent)
+
+    # --prompt headless 模式: 跑一次就退出, 不进交互循环
+    if ctx.prompt_text:
+        _run_one_turn(ctx, agent, ctx.prompt_text, ds)
+        with contextlib.suppress(Exception):
+            asyncio.run(shutdown_mcp())
+        return
+
+    # Chat loop
+    _chat_loop(ctx, agent, ds)
+
+
+def _show_welcome(ctx: CliContext, ds: Any, avatar: str) -> None:
     ds.dialog(
         title="Welcome",
         content=(
@@ -133,10 +151,10 @@ def chat(ctx: CliContext) -> None:
     if ctx.yolo:
         ctx.console.print("[yellow]YOLO mode: 所有操作自动执行[/yellow]")
     if ctx.resume_thread_id:
-        ctx.console.print(
-            f"[cyan]Resuming session: {ctx.resume_thread_id}[/cyan]"
-        )
+        ctx.console.print(f"[cyan]Resuming session: {ctx.resume_thread_id}[/cyan]")
 
+
+def _init_chat_agent(ctx: CliContext, ds: Any) -> Any:
     agent = build_agent_from_ctx(ctx, approval_callback=_make_approval_callback(ctx))
     if agent is None:
         ds.warning("No provider configured.")
@@ -154,11 +172,10 @@ def chat(ctx: CliContext) -> None:
     else:
         agent.register_tools_from_registry()
         ds.success(f"Agent initialized with {len(agent.langchain_tools)} tools")
+    return agent
 
-    # 启动时检测缺失的 API key, 提示用户跑 huginn api-keys 配置
-    _warn_missing_api_keys(ctx)
 
-    # Initialize MCP servers
+def _init_chat_mcp(ctx: CliContext, ds: Any, agent: Any) -> None:
     try:
         cfg = ctx.load_config()
         asyncio.run(init_mcp(cfg.abaqus_mcp_server))
@@ -168,14 +185,8 @@ def chat(ctx: CliContext) -> None:
     except Exception as e:
         ds.warning(f"MCP init skipped: {e}")
 
-    # --prompt headless 模式: 跑一次就退出, 不进交互循环
-    if ctx.prompt_text:
-        _run_one_turn(ctx, agent, ctx.prompt_text, ds)
-        with contextlib.suppress(Exception):
-            asyncio.run(shutdown_mcp())
-        return
 
-    # Chat loop
+def _chat_loop(ctx: CliContext, agent: Any, ds: Any) -> None:
     try:
         while True:
             try:

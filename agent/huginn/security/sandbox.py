@@ -410,6 +410,53 @@ def _sb_truncate(value: str | bytes, max_bytes: int) -> str | bytes:
     return value
 
 
+def _sb_completed_result(
+    completed: subprocess.CompletedProcess[str] | Any,
+    cmd: list[str],
+    max_bytes: int,
+) -> SandboxResult:
+    """把 subprocess 结果转成 SandboxResult (超限输出截断)."""
+    stdout = _sb_truncate(completed.stdout or "", max_bytes)
+    stderr = _sb_truncate(completed.stderr or "", max_bytes)
+    return SandboxResult(
+        success=completed.returncode == 0,
+        returncode=completed.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        command=cmd,
+        dry_run=False,
+    )
+
+
+def _windows_fallback_executable(name: str) -> str | None:
+    """Windows fallback: 映射 POSIX coreutils 到 cmd /c 内置命令."""
+    _WIN_FALLBACK = {
+        "ls": "dir",
+        "cp": "copy",
+        "mv": "move",
+        "rm": "del",
+        "cat": "type",
+        "touch": "copy /b",
+        "mkdir": "mkdir",
+        "rmdir": "rmdir",
+        "echo": "echo",
+        "pwd": "cd",
+        "which": "where",
+        "find": "find",
+        "sort": "sort",
+        "head": "more",
+        "tail": "more",
+        "wc": "find /c",
+        "grep": "findstr",
+        "diff": "fc",
+        "true": "rem",
+        "false": "rem",
+        "test": "if",
+        "env": "set",
+    }
+    return _WIN_FALLBACK.get(name.lower())
+
+
 class SandboxExecutor:
     """Execute subprocess commands inside a security sandbox."""
 
@@ -472,31 +519,7 @@ class SandboxExecutor:
 
         # Windows fallback: 映射 POSIX coreutils 到 cmd /c 内置命令
         if os.name == "nt":
-            _WIN_FALLBACK = {
-                "ls": "dir",
-                "cp": "copy",
-                "mv": "move",
-                "rm": "del",
-                "cat": "type",
-                "touch": "copy /b",
-                "mkdir": "mkdir",
-                "rmdir": "rmdir",
-                "echo": "echo",
-                "pwd": "cd",
-                "which": "where",
-                "find": "find",
-                "sort": "sort",
-                "head": "more",
-                "tail": "more",
-                "wc": "find /c",
-                "grep": "findstr",
-                "diff": "fc",
-                "true": "rem",
-                "false": "rem",
-                "test": "if",
-                "env": "set",
-            }
-            _win_cmd = _WIN_FALLBACK.get(cmd[0].lower())
+            _win_cmd = _windows_fallback_executable(cmd[0])
             if _win_cmd:
                 # 验证 Windows 命令可用 (cmd 内置命令 which 不到, 直接信任)
                 # 返回 cmd[0] 让上层 subprocess 走 cmd /c 路径
@@ -649,9 +672,7 @@ class SandboxExecutor:
             or (cfg.strict_work_dir and cfg.allowed_work_dirs)
         )
         if not (
-            os.name == "posix"
-            and want_confinement
-            and "preexec_fn" not in run_kwargs
+            os.name == "posix" and want_confinement and "preexec_fn" not in run_kwargs
         ):
             return
         try:
@@ -702,9 +723,7 @@ class SandboxExecutor:
 
         Raises SandboxError if policy is violated.
         """
-        cfg, valid_cwd, timeout = self._sb_validate_and_clamp(
-            cmd, cwd, timeout, config
-        )
+        cfg, valid_cwd, timeout = self._sb_validate_and_clamp(cmd, cwd, timeout, config)
         if cfg.dry_run:
             return _sb_dry_run_result(cmd)
         # Drop scheduler-only hints so they do not reach subprocess.run.
@@ -718,24 +737,21 @@ class SandboxExecutor:
         _popen_kwargs, _own_group = _sb_popen_kwargs(run_kwargs)
 
         completed, timeout_result = _sb_execute(
-            cmd, valid_cwd, capture_output, text, env,
-            _popen_kwargs, _own_group, timeout, _saved_rlimit_soft,
+            cmd,
+            valid_cwd,
+            capture_output,
+            text,
+            env,
+            _popen_kwargs,
+            _own_group,
+            timeout,
+            _saved_rlimit_soft,
         )
         if timeout_result is not None:
             return timeout_result
 
         # Truncate oversized output
-        max_bytes = self.config.max_output_bytes
-        stdout = _sb_truncate(completed.stdout or "", max_bytes)
-        stderr = _sb_truncate(completed.stderr or "", max_bytes)
-        return SandboxResult(
-            success=completed.returncode == 0,
-            returncode=completed.returncode,
-            stdout=stdout,
-            stderr=stderr,
-            command=cmd,
-            dry_run=False,
-        )
+        return _sb_completed_result(completed, cmd, self.config.max_output_bytes)
 
     @staticmethod
     def hash_data(data: str | bytes) -> str:
@@ -856,6 +872,48 @@ def _profile_mem_bytes(profile: str) -> int | None:
         return gb * 1024 * 1024 * 1024
 
 
+def _want_docker_backend(prefer_docker: bool) -> bool:
+    """环境变量开关优先级: HUGINN_USE_DOCKER > HUGINN_DOCKER_SANDBOX > prefer_docker."""
+    use_docker_env = os.environ.get("HUGINN_USE_DOCKER")
+    if use_docker_env == "0":
+        return False
+    if use_docker_env == "1" or os.environ.get("HUGINN_DOCKER_SANDBOX") == "1":
+        return True
+    return prefer_docker
+
+
+def _try_docker_executor(
+    cfg: SandboxConfig,
+    docker_image: str,
+    profile: str,
+    log: Any,
+) -> Any | None:
+    """构造 DockerSandboxExecutor; import 或构造失败时返回 None."""
+    # 延迟 import，避免 docker SDK 没装时整个 sandbox 模块都加载不了
+    try:
+        from huginn.security.docker_sandbox import DockerSandboxExecutor
+    except Exception:
+        log.warning(
+            "docker_sandbox import failed, falling back to subprocess "
+            "sandbox (profile=%s)",
+            profile,
+            exc_info=True,
+        )
+        return None
+
+    try:
+        return DockerSandboxExecutor(image=docker_image, config=cfg, profile=profile)
+    except Exception:
+        # 构造失败也别让上层挂掉
+        log.warning(
+            "DockerSandboxExecutor init failed, falling back to "
+            "subprocess sandbox (profile=%s)",
+            profile,
+            exc_info=True,
+        )
+        return None
+
+
 def create_sandbox(
     config: SandboxConfig | None = None,
     prefer_docker: bool = True,
@@ -881,49 +939,19 @@ def create_sandbox(
     # 环境变量开关，方便运维侧不改代码就切后端
     # HUGINN_USE_DOCKER 显式设值优先 (0=强制 subprocess, 1=强制 docker);
     # HUGINN_DOCKER_SANDBOX=1 是老开关, 等同显式开; 都不设时跟 prefer_docker 默认走.
-    use_docker_env = os.environ.get("HUGINN_USE_DOCKER")
-    if use_docker_env == "0":
-        want_docker = False
-    elif use_docker_env == "1" or os.environ.get("HUGINN_DOCKER_SANDBOX") == "1":
-        want_docker = True
-    else:
-        want_docker = prefer_docker
-
-    if want_docker:
-        # 延迟 import，避免 docker SDK 没装时整个 sandbox 模块都加载不了
-        try:
-            from huginn.security.docker_sandbox import DockerSandboxExecutor
-        except Exception:
-            _log.warning(
-                "docker_sandbox import failed, falling back to subprocess "
-                "sandbox (profile=%s)",
-                profile,
-                exc_info=True,
-            )
-            return SandboxExecutor(cfg, profile=profile)
-
-        try:
-            docker_executor = DockerSandboxExecutor(
-                image=docker_image, config=cfg, profile=profile
-            )
-        except Exception:
-            # 构造失败也别让上层挂掉
-            _log.warning(
-                "DockerSandboxExecutor init failed, falling back to "
-                "subprocess sandbox (profile=%s)",
-                profile,
-                exc_info=True,
-            )
-            return SandboxExecutor(cfg, profile=profile)
-
-        if docker_executor.is_available():
-            return docker_executor
-        # Docker daemon 不可用 → warn + 退回 subprocess (不 fatal)
-        _log.warning(
-            "Docker daemon unavailable, falling back to subprocess sandbox "
-            "(profile=%s). Set HUGINN_USE_DOCKER=0 to silence this.",
-            profile,
-        )
+    if not _want_docker_backend(prefer_docker):
         return SandboxExecutor(cfg, profile=profile)
 
+    docker_executor = _try_docker_executor(cfg, docker_image, profile, _log)
+    if docker_executor is None:
+        return SandboxExecutor(cfg, profile=profile)
+
+    if docker_executor.is_available():
+        return docker_executor
+    # Docker daemon 不可用 → warn + 退回 subprocess (不 fatal)
+    _log.warning(
+        "Docker daemon unavailable, falling back to subprocess sandbox "
+        "(profile=%s). Set HUGINN_USE_DOCKER=0 to silence this.",
+        profile,
+    )
     return SandboxExecutor(cfg, profile=profile)

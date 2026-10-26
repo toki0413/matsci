@@ -1,4 +1,5 @@
 """EDS 元素叠加场景: overlay / rgb / side_by_side 三种模式."""
+
 from __future__ import annotations
 
 import logging
@@ -27,9 +28,7 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
             data=None, success=False, error="eds_overlay 需要 parameters.base_path"
         )
     if not Path(base_path).exists():
-        return ToolResult(
-            data=None, success=False, error=f"基图不存在: {base_path}"
-        )
+        return ToolResult(data=None, success=False, error=f"基图不存在: {base_path}")
 
     base = load_rgb(base_path)
     H, W, _ = base.shape
@@ -38,6 +37,37 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
     title = args.parameters.get("title", None)
 
     # 加载每个元素图, 算归一化强度 + 阈值 mask
+    elem_data = _load_element_maps(element_maps)
+
+    if mode == "rgb" and len(elem_data) >= 3:
+        # 三元素分别打到 R/G/B 通道
+        fig, ax = plt.subplots(figsize=(10, 10))
+        _render_rgb(ax, elem_data, H, W)
+    elif mode == "side_by_side":
+        fig = _render_side_by_side(elem_data, base)
+    else:
+        # overlay: 基图 + 半透明伪彩
+        fig, ax = plt.subplots(figsize=(10, 10))
+        _render_overlay(ax, base, elem_data, H, W)
+
+    if title:
+        fig.suptitle(title, fontweight="bold")
+
+    save_figure(fig, args.output_path)
+
+    summary = _eds_summary(elem_data, mode)
+    metadata = _eds_metadata(mode, H, W, elem_data)
+    return ToolResult(
+        data={
+            "output_path": args.output_path,
+            "summary": summary,
+            "metadata": metadata,
+        }
+    )
+
+
+def _load_element_maps(element_maps) -> list[dict[str, Any]]:
+    """加载每个元素图, 算归一化强度 + 阈值 mask."""
     elem_data: list[dict[str, Any]] = []
     for em in element_maps:
         path = em.get("path", "")
@@ -62,79 +92,89 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
             )
         except Exception as exc:
             logger.debug("加载元素图 %s 失败: %s", path, exc)
+    return elem_data
 
-    if mode == "rgb" and len(elem_data) >= 3:
-        # 三元素分别打到 R/G/B 通道
-        fig, ax = plt.subplots(figsize=(10, 10))
-        rgb_img = np.zeros((H, W, 3), dtype=float)
-        for _i, ed in enumerate(elem_data[:3]):
-            c = parse_color(ed["color"]) / 255.0
-            rgb_img[:, :, 0] += ed["intensity"] * c[0]
-            rgb_img[:, :, 1] += ed["intensity"] * c[1]
-            rgb_img[:, :, 2] += ed["intensity"] * c[2]
-        rgb_img = np.clip(rgb_img, 0, 1)
-        ax.imshow(rgb_img)
-        legend_text = " + ".join([ed["element"] for ed in elem_data[:3]])
+
+def _render_rgb(ax, elem_data, H: int, W: int) -> None:
+    """三元素分别打到 R/G/B 通道."""
+    rgb_img = np.zeros((H, W, 3), dtype=float)
+    for _i, ed in enumerate(elem_data[:3]):
+        c = parse_color(ed["color"]) / 255.0
+        rgb_img[:, :, 0] += ed["intensity"] * c[0]
+        rgb_img[:, :, 1] += ed["intensity"] * c[1]
+        rgb_img[:, :, 2] += ed["intensity"] * c[2]
+    rgb_img = np.clip(rgb_img, 0, 1)
+    ax.imshow(rgb_img)
+    legend_text = " + ".join([ed["element"] for ed in elem_data[:3]])
+    ax.text(
+        0.02,
+        0.98,
+        legend_text,
+        transform=ax.transAxes,
+        color="white",
+        fontweight="bold",
+        fontsize=18,
+        va="top",
+        bbox={"facecolor": "black", "alpha": 0.6},
+    )
+    ax.set_axis_off()
+
+
+def _render_side_by_side(elem_data, base):
+    """基图 + 每个元素图并排, 返回 figure."""
+    import matplotlib.pyplot as plt
+
+    n = len(elem_data) + 1
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 5))
+    if n == 1:
+        axes = [axes]
+    axes[0].imshow(base.astype(np.uint8))
+    axes[0].set_title("Base", fontweight="bold")
+    axes[0].set_axis_off()
+    for i, ed in enumerate(elem_data):
+        axes[i + 1].imshow(ed["intensity"], cmap="hot")
+        axes[i + 1].set_title(ed["element"], fontweight="bold")
+        axes[i + 1].set_axis_off()
+    return fig
+
+
+def _render_overlay(ax, base, elem_data, H: int, W: int) -> None:
+    """overlay: 基图 + 半透明伪彩."""
+    ax.imshow(base.astype(np.uint8))
+    for idx, ed in enumerate(elem_data):
+        c = parse_color(ed["color"])
+        overlay = np.zeros((H, W, 4), dtype=float)
+        mask = ed["mask"]
+        overlay[mask, 0] = c[0] / 255.0
+        overlay[mask, 1] = c[1] / 255.0
+        overlay[mask, 2] = c[2] / 255.0
+        overlay[mask, 3] = 0.6
+        ax.imshow(overlay)
         ax.text(
             0.02,
-            0.98,
-            legend_text,
+            0.98 - 0.06 * idx,
+            ed["element"],
             transform=ax.transAxes,
-            color="white",
+            color=ed["color"],
             fontweight="bold",
             fontsize=18,
             va="top",
-            bbox={"facecolor": "black", "alpha": 0.6},
+            bbox={"facecolor": "black", "alpha": 0.5},
         )
-        ax.set_axis_off()
-    elif mode == "side_by_side":
-        n = len(elem_data) + 1
-        fig, axes = plt.subplots(1, n, figsize=(5 * n, 5))
-        if n == 1:
-            axes = [axes]
-        axes[0].imshow(base.astype(np.uint8))
-        axes[0].set_title("Base", fontweight="bold")
-        axes[0].set_axis_off()
-        for i, ed in enumerate(elem_data):
-            axes[i + 1].imshow(ed["intensity"], cmap="hot")
-            axes[i + 1].set_title(ed["element"], fontweight="bold")
-            axes[i + 1].set_axis_off()
-    else:
-        # overlay: 基图 + 半透明伪彩
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.imshow(base.astype(np.uint8))
-        for idx, ed in enumerate(elem_data):
-            c = parse_color(ed["color"])
-            overlay = np.zeros((H, W, 4), dtype=float)
-            mask = ed["mask"]
-            overlay[mask, 0] = c[0] / 255.0
-            overlay[mask, 1] = c[1] / 255.0
-            overlay[mask, 2] = c[2] / 255.0
-            overlay[mask, 3] = 0.6
-            ax.imshow(overlay)
-            ax.text(
-                0.02,
-                0.98 - 0.06 * idx,
-                ed["element"],
-                transform=ax.transAxes,
-                color=ed["color"],
-                fontweight="bold",
-                fontsize=18,
-                va="top",
-                bbox={"facecolor": "black", "alpha": 0.5},
-            )
-        ax.set_axis_off()
+    ax.set_axis_off()
 
-    if title:
-        fig.suptitle(title, fontweight="bold")
 
-    save_figure(fig, args.output_path)
-
+def _eds_summary(elem_data, mode) -> str:
+    """summary 文本."""
     coverage_str = ", ".join(
         f"{ed['element']}: {ed['coverage'] * 100:.1f}%" for ed in elem_data
     )
-    summary = f"EDS 叠加 ({mode}): {len(elem_data)} 个元素, {coverage_str}"
-    metadata = {
+    return f"EDS 叠加 ({mode}): {len(elem_data)} 个元素, {coverage_str}"
+
+
+def _eds_metadata(mode, H: int, W: int, elem_data) -> dict:
+    """metadata 字典."""
+    return {
         "action": "eds_overlay",
         "mode": mode,
         "image_shape": [int(H), int(W)],
@@ -147,10 +187,3 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
             for ed in elem_data
         ],
     }
-    return ToolResult(
-        data={
-            "output_path": args.output_path,
-            "summary": summary,
-            "metadata": metadata,
-        }
-    )

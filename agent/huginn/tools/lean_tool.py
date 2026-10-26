@@ -42,28 +42,40 @@ def _pre_lean_dimensional_check(
     checks: list[dict] = []
     for name, value in equations.items():
         # 等式对象 {lhs, rhs} → 两侧分别查; 普通字符串 → 整式查
-        exprs = []
-        if isinstance(value, dict):
-            if value.get("lhs") is not None:
-                exprs.append((f"{name}.lhs", str(value["lhs"])))
-            if value.get("rhs") is not None:
-                exprs.append((f"{name}.rhs", str(value["rhs"])))
-        elif isinstance(value, str):
-            exprs.append((name, value))
+        exprs = _equation_exprs(name, value)
         for label, expr in exprs:
             expected = expected_units.get(name) or expected_units.get(label)
             if not expected:
-                checks.append({
-                    "name": label, "expr": expr, "ok": False,
-                    "error": "no expected_units declared for this equation",
-                })
+                checks.append(
+                    {
+                        "name": label,
+                        "expr": expr,
+                        "ok": False,
+                        "error": "no expected_units declared for this equation",
+                    }
+                )
                 continue
-            checks.append({
-                "name": label,
-                "expr": expr,
-                **check_expression_dimensions(expr, unit_symbols, expected),
-            })
+            checks.append(
+                {
+                    "name": label,
+                    "expr": expr,
+                    **check_expression_dimensions(expr, unit_symbols, expected),
+                }
+            )
     return checks
+
+
+def _equation_exprs(name: str, value) -> list[tuple[str, str]]:
+    """等式对象 {lhs, rhs} → 两侧分别查; 普通字符串 → 整式查."""
+    exprs = []
+    if isinstance(value, dict):
+        if value.get("lhs") is not None:
+            exprs.append((f"{name}.lhs", str(value["lhs"])))
+        if value.get("rhs") is not None:
+            exprs.append((f"{name}.rhs", str(value["rhs"])))
+    elif isinstance(value, str):
+        exprs.append((name, value))
+    return exprs
 
 
 # auto_verify 子动作 → AutoLeanPipeline 上的验证器方法名.
@@ -399,7 +411,9 @@ class LeanTool(HuginnTool):
             error=None if result.success else result.stderr,
         )
 
-    def _auto_verify_derivative(self, args: LeanToolInput, pipe, sym: list) -> ToolResult:
+    def _auto_verify_derivative(
+        self, args: LeanToolInput, pipe, sym: list
+    ) -> ToolResult:
         """derivative 子动作: 支持显式字段, 也支持 SymbolicMathTool 的 symbolic_result."""
         original = args.original_expression
         variable = args.variable
@@ -492,45 +506,20 @@ class LeanTool(HuginnTool):
         if err is not None:
             return err
 
-        coords = list(args.coordinates)
-        t_name = args.time_symbol or "t"
-        t = sp.Symbol(t_name)
-
-        vel_names, err = _vp_resolve_velocities(args, coords)
+        derived_str, local_dict, coords, derived_eoms, err = _vp_derive_equations(
+            args, sp
+        )
         if err is not None:
             return err
-
-        # 坐标用 Function，速度用 Symbol（方便先对 v 求偏导再替换）
-        coord_funcs = [sp.Function(c)(t) for c in coords]
-        vel_syms = [sp.Symbol(v) for v in vel_names]
-
-        local_dict = _vp_local_dict(
-            t_name, t, coords, coord_funcs, vel_names, vel_syms,
-        )
-
-        # 解析拉氏量
-        try:
-            L = sp.sympify(args.lagrangian, locals=local_dict)
-        except Exception as e:
-            return ToolResult(
-                data=None, success=False, error=f"拉氏量解析失败: {e}"
-            )
-
-        # 把速度符号替换成 d(coord)/dt
-        subs_map = {
-            v: sp.diff(cf, t) for v, cf in zip(vel_syms, coord_funcs)
-        }
-        L_sub = L.subs(subs_map)
-
-        derived_eoms = _vp_derive_eoms(L_sub, L, t, coord_funcs, vel_syms, subs_map)
-        derived_str = _vp_format_derived(coords, derived_eoms)
 
         claimed_expr, claimed_norm_str, err = _vp_parse_claimed(args, local_dict)
         if err is not None:
             return err
 
         is_consistent, difference_str = _vp_check_consistency(
-            coords, derived_eoms, claimed_expr,
+            coords,
+            derived_eoms,
+            claimed_expr,
         )
         lean_stmt = _vp_lean_stmt(args, derived_eoms)
 
@@ -571,6 +560,7 @@ class LeanTool(HuginnTool):
 
 # ── variational_principle 分阶段 helper ──────────────────────────────
 
+
 def _vp_validate_args(args) -> ToolResult | None:
     """校验必填字段."""
     if not args.lagrangian:
@@ -599,8 +589,56 @@ def _vp_resolve_velocities(args, coords: list[str]):
     return vel_names, None
 
 
+def _vp_derive_equations(args, sp):
+    """解析拉氏量并推导 EOM, 返回 (derived_str, local_dict, coords, eoms, err)."""
+    coords = list(args.coordinates)
+    t_name = args.time_symbol or "t"
+    t = sp.Symbol(t_name)
+
+    vel_names, err = _vp_resolve_velocities(args, coords)
+    if err is not None:
+        return None, None, None, None, err
+
+    # 坐标用 Function，速度用 Symbol（方便先对 v 求偏导再替换）
+    coord_funcs = [sp.Function(c)(t) for c in coords]
+    vel_syms = [sp.Symbol(v) for v in vel_names]
+
+    local_dict = _vp_local_dict(
+        t_name,
+        t,
+        coords,
+        coord_funcs,
+        vel_names,
+        vel_syms,
+    )
+
+    # 解析拉氏量
+    try:
+        L = sp.sympify(args.lagrangian, locals=local_dict)
+    except Exception as e:
+        return (
+            None,
+            None,
+            None,
+            None,
+            ToolResult(data=None, success=False, error=f"拉氏量解析失败: {e}"),
+        )
+
+    # 把速度符号替换成 d(coord)/dt
+    subs_map = {v: sp.diff(cf, t) for v, cf in zip(vel_syms, coord_funcs)}
+    L_sub = L.subs(subs_map)
+
+    derived_eoms = _vp_derive_eoms(L_sub, L, t, coord_funcs, vel_syms, subs_map)
+    derived_str = _vp_format_derived(coords, derived_eoms)
+    return derived_str, local_dict, coords, derived_eoms, None
+
+
 def _vp_local_dict(
-    t_name: str, t, coords: list[str], coord_funcs: list, vel_names: list[str],
+    t_name: str,
+    t,
+    coords: list[str],
+    coord_funcs: list,
+    vel_names: list[str],
     vel_syms: list,
 ) -> dict:
     """构造 sympify 的 local_dict（坐标/速度/常用数学函数）."""
@@ -628,7 +666,9 @@ def _vp_local_dict(
     return local_dict
 
 
-def _vp_derive_eoms(L_sub, L, t, coord_funcs: list, vel_syms: list, subs_map: dict) -> list:
+def _vp_derive_eoms(
+    L_sub, L, t, coord_funcs: list, vel_syms: list, subs_map: dict
+) -> list:
     """逐个广义坐标推 EOM: dL/dq - d/dt(dL/dq_dot) = 0."""
     import sympy as sp
 
@@ -669,10 +709,14 @@ def _vp_parse_claimed(args, local_dict: dict):
             claimed_expr = sp.sympify(raw, locals=local_dict)
         claimed_norm_str = f"{claimed_expr} = 0"
     except Exception as e:
-        return None, None, ToolResult(
-            data=None,
-            success=False,
-            error=f"claimed_eom 解析失败: {e}",
+        return (
+            None,
+            None,
+            ToolResult(
+                data=None,
+                success=False,
+                error=f"claimed_eom 解析失败: {e}",
+            ),
         )
     return claimed_expr, claimed_norm_str, None
 
@@ -722,9 +766,6 @@ def _vp_lean_stmt(args, derived_eoms: list) -> str | None:
     if not args.return_lean:
         return None
     if len(derived_eoms) == 1:
-        return (
-            f"theorem variational_principle : "
-            f"{derived_eoms[0]} = 0 := by sorry"
-        )
+        return f"theorem variational_principle : {derived_eoms[0]} = 0 := by sorry"
     conjuncts = " ∧ ".join(f"({e} = 0)" for e in derived_eoms)
     return f"theorem variational_principle : {conjuncts} := by sorry"

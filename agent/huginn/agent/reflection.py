@@ -30,6 +30,130 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 
+def _select_summarize_model(host: Any):
+    """挑压缩用的模型: HUGINN_COMPACT_KIND 分流 local/remote/remote_v2."""
+    import os
+
+    kind = os.environ.get("HUGINN_COMPACT_KIND", "remote").lower()
+    model = None
+    if kind == "local":
+        # 本地模型 (ollama/vllm), 隐私优先
+        local = getattr(host, "_find_local_model", lambda: None)()
+        if local is not None:
+            model = local
+        else:
+            logger.warning(
+                "HUGINN_COMPACT_KIND=local but no local model found, fallback to remote"
+            )
+    elif kind == "remote_v2":
+        # 升级版远程 summarizer (例如更大的 summarization 模型)
+        if host.model_router is not None:
+            try:
+                model = host.model_router.select("summarize_v2", prefer_cheap=True)
+            except Exception:  # 防御: summarize_v2 选择失败则回退默认模型
+                logger.warning(
+                    "summarize_v2 unavailable, fallback to remote", exc_info=True
+                )
+    if model is None and host.model_router is not None:
+        try:
+            model = host.model_router.select("summarize", prefer_cheap=True)
+        except Exception:  # 防御: summarize 模型选择失败则回退默认模型
+            logger.warning(
+                "model_router.select failed for summarize model", exc_info=True
+            )
+    if model is None:
+        model = host.model
+    return model
+
+
+def _build_summary_messages(transcript: str) -> list[Any]:
+    """构造压缩请求的消息列表 (system prompt + 待压缩 transcript)."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    return [
+        SystemMessage(content=_SUMMARY_SYSTEM_PROMPT),
+        HumanMessage(content=transcript),
+    ]
+
+
+async def _s7_meta_verdict(
+    host: Any, proposal: str, sys_prompt_summary: str, recent_rejections: list
+) -> dict:
+    """调 meta critique 评估 proposal; 失败默认 reject (保守)."""
+    from huginn.metacog.critique import adversarial_critique
+
+    # 4. 调 meta critique. 之前传 model=None 导致 client=None,
+    # await client.ainvoke() 必报 AttributeError, S7 退化成全 reject 死循环.
+    # 修: 传 self.model (agent 自己的 LLM), 失败仍走 except 默认 reject.
+    try:
+        verdict = await adversarial_critique(
+            model=getattr(host, "model", None),
+            mode="meta",
+            proposal=proposal,
+            system_prompt_summary=sys_prompt_summary,
+            recent_rejections=recent_rejections,
+        )
+    except Exception as e:
+        logger.warning("S7 meta critique invocation failed: %s, treating as reject", e)
+        verdict = {
+            "verdict": "reject",
+            "reason": f"meta critique error: {e}",
+            "expected_utility_delta": 0.0,
+        }
+    return verdict
+
+
+def _apply_s7_verdict(host: Any, proposal: str, verdict: dict) -> None:
+    """处理 verdict: accept→stable_principle, reject→rejection log."""
+    from huginn.memory import store_stable_principle
+
+    # 5. 处理 verdict: accept→stable_principle, reject→rejection log
+    if verdict.get("verdict") == "accept":
+        try:
+            store_stable_principle(proposal, source="S7_self_modify")
+            logger.info("S7 accepted proposal: %s", proposal[:80])
+        except Exception:  # 防御: 原则入库失败仅告警
+            logger.warning("store_stable_principle failed", exc_info=True)
+    else:
+        try:
+            host._write_rejection(proposal, verdict.get("reason", "unknown"))
+            logger.info(
+                "S7 rejected proposal: %s reason: %s",
+                proposal[:80],
+                verdict.get("reason"),
+            )
+        except Exception:  # 防御: rejection写入失败仅告警
+            logger.warning("write_rejection failed", exc_info=True)
+
+
+def _emit_event_signal(
+    host: Any, csm: Any, overflow_events: list, tool_errors: list
+) -> None:
+    """把 overflow/tool 连发事件转成 CSM TransitionSignal (优先 SignalHub)."""
+    if overflow_events or len(tool_errors) >= 3:
+        payload = {
+            "overflow_events": len(overflow_events),
+            "tool_error_count": len(tool_errors),
+        }
+        # 优先走 Hub: overflow 用 event_overflow, tool 连发用 event_tool_burst
+        sig = None
+        if SignalHub is not None:
+            source = "event_overflow" if overflow_events else "event_tool_burst"
+            sig = SignalHub.shared().route(source, payload)
+        # ponytail: 保留 v3 逻辑骨架作 fallback, 只改信号构造走 Hub;
+        # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
+        if sig is None:
+            from huginn.cognitive_engine import TransitionSignal
+
+            sig = TransitionSignal("context_overflow", payload)
+        csm.transition(sig)
+        all_ts = [e.timestamp for e in overflow_events] + [
+            e.timestamp for e in tool_errors
+        ]
+        if all_ts:
+            host._last_event_check_ts = max(all_ts)
+
+
 class ReflectionMixin:
     """Evolution engine lifecycle, summarizer creation, and reflection."""
 
@@ -55,53 +179,18 @@ class ReflectionMixin:
         ponytail: HUGINN_COMPACT_KIND 分流 local/remote/remote_v2 三条路径.
         升级路径是注册 PRE_COMPACT 钩子动态改 kind, 现在用环境变量静态配置.
         """
-        import os
-
-        kind = os.environ.get("HUGINN_COMPACT_KIND", "remote").lower()
-        model = None
-        if kind == "local":
-            # 本地模型 (ollama/vllm), 隐私优先
-            local = getattr(self, "_find_local_model", lambda: None)()
-            if local is not None:
-                model = local
-            else:
-                logger.warning(
-                    "HUGINN_COMPACT_KIND=local but no local model found, fallback to remote"
-                )
-        elif kind == "remote_v2":
-            # 升级版远程 summarizer (例如更大的 summarization 模型)
-            if self.model_router is not None:
-                try:
-                    model = self.model_router.select("summarize_v2", prefer_cheap=True)
-                except Exception:  # 防御: summarize_v2 选择失败则回退默认模型
-                    logger.warning(
-                        "summarize_v2 unavailable, fallback to remote", exc_info=True
-                    )
-        if model is None and self.model_router is not None:
-            try:
-                model = self.model_router.select("summarize", prefer_cheap=True)
-            except Exception:  # 防御: summarize 模型选择失败则回退默认模型
-                logger.warning(
-                    "model_router.select failed for summarize model", exc_info=True
-                )
-        if model is None:
-            model = self.model
+        model = _select_summarize_model(self)
         if model is None:
             return None
 
         async def _summarize(transcript: str):
-            from langchain_core.messages import HumanMessage, SystemMessage
-
             from huginn.llm_retry import (
                 FallbackTriggeredError,
                 call_with_fallback,
                 with_retry,
             )
 
-            messages = [
-                SystemMessage(content=_SUMMARY_SYSTEM_PROMPT),
-                HumanMessage(content=transcript),
-            ]
+            messages = _build_summary_messages(transcript)
             if hasattr(model, "ainvoke"):
 
                 async def _call():
@@ -139,10 +228,7 @@ class ReflectionMixin:
         from datetime import datetime
 
         session_id = self._session_state.session_id or "default"
-        sidecar_dir = (
-            get_runtime_home()
-            / "reflections"
-        )
+        sidecar_dir = get_runtime_home() / "reflections"
         sidecar_dir.mkdir(parents=True, exist_ok=True)
         sidecar_path = sidecar_dir / f"{session_id}.jsonl"
         entry = {
@@ -172,11 +258,7 @@ class ReflectionMixin:
         import json
 
         session_id = self._session_state.session_id or "default"
-        sidecar_path = (
-            get_runtime_home()
-            / "reflections"
-            / f"{session_id}.jsonl"
-        )
+        sidecar_path = get_runtime_home() / "reflections" / f"{session_id}.jsonl"
         if not sidecar_path.exists():
             return []
         entries: list[dict] = []
@@ -329,9 +411,9 @@ class ReflectionMixin:
             # 同 session 重复犯同类错误 (gap 分析: 13 次/session).
             self._session_state.add_message(
                 "system",
-                f"Evolved fix (rule={fix.get('rule_id','')}, "
-                f"confidence={fix.get('confidence',0):.2f}): "
-                f"{fix.get('description','')[:200]}. "
+                f"Evolved fix (rule={fix.get('rule_id', '')}, "
+                f"confidence={fix.get('confidence', 0):.2f}): "
+                f"{fix.get('description', '')[:200]}. "
                 "Apply this fix in your next action.",
             )
         except Exception:  # 防御: 启发式修复失败则忽略
@@ -570,8 +652,6 @@ class ReflectionMixin:
         except Exception:  # 防御: 元知识规则评估失败则忽略
             logger.debug("meta knowledge rules evaluation failed", exc_info=True)
 
-
-
     # ── S7 self-modification helpers ────────────────────────────────────
     # 哥德尔机闭环: 把 reflection gap → proposal, 调 meta critique 评估,
     # accept 写 stable_principles, reject 写 directive_rejections.jsonl.
@@ -678,9 +758,6 @@ class ReflectionMixin:
         ponytail: gap→proposal 是字段拼接, ceiling 是 LLM 生成正式 proposal;
                   meta critique 失败默认 reject (保守, 不污染 stable_principles).
         """
-        from huginn.memory import store_stable_principle
-        from huginn.metacog.critique import adversarial_critique
-
         # 1. 从 reflection gap 提取 proposal
         proposal = self._extract_proposal_from_gap(reflection_result)
         if not proposal:
@@ -694,44 +771,10 @@ class ReflectionMixin:
         recent_rejections = self._load_recent_rejections(limit=10)
         sys_prompt_summary = self._get_system_prompt_summary()
 
-        # 4. 调 meta critique. 之前传 model=None 导致 client=None,
-        # await client.ainvoke() 必报 AttributeError, S7 退化成全 reject 死循环.
-        # 修: 传 self.model (agent 自己的 LLM), 失败仍走 except 默认 reject.
-        try:
-            verdict = await adversarial_critique(
-                model=getattr(self, "model", None),
-                mode="meta",
-                proposal=proposal,
-                system_prompt_summary=sys_prompt_summary,
-                recent_rejections=recent_rejections,
-            )
-        except Exception as e:
-            logger.warning(
-                "S7 meta critique invocation failed: %s, treating as reject", e
-            )
-            verdict = {
-                "verdict": "reject",
-                "reason": f"meta critique error: {e}",
-                "expected_utility_delta": 0.0,
-            }
-
-        # 5. 处理 verdict: accept→stable_principle, reject→rejection log
-        if verdict.get("verdict") == "accept":
-            try:
-                store_stable_principle(proposal, source="S7_self_modify")
-                logger.info("S7 accepted proposal: %s", proposal[:80])
-            except Exception:  # 防御: 原则入库失败仅告警
-                logger.warning("store_stable_principle failed", exc_info=True)
-        else:
-            try:
-                self._write_rejection(proposal, verdict.get("reason", "unknown"))
-                logger.info(
-                    "S7 rejected proposal: %s reason: %s",
-                    proposal[:80],
-                    verdict.get("reason"),
-                )
-            except Exception:  # 防御: rejection写入失败仅告警
-                logger.warning("write_rejection failed", exc_info=True)
+        verdict = await _s7_meta_verdict(
+            self, proposal, sys_prompt_summary, recent_rejections
+        )
+        _apply_s7_verdict(self, proposal, verdict)
 
         # 6. 回 S1_DISCOVER (无论 accept/reject, S7 处理完都回 discovery)
         from huginn.cognitive_engine import TransitionSignal
@@ -771,28 +814,7 @@ class ReflectionMixin:
                 for e in bus.recent_events(n=20, event_type=TOOL_ERROR)
                 if e.timestamp > last_ts
             ]
-            if overflow_events or len(tool_errors) >= 3:
-                payload = {
-                    "overflow_events": len(overflow_events),
-                    "tool_error_count": len(tool_errors),
-                }
-                # 优先走 Hub: overflow 用 event_overflow, tool 连发用 event_tool_burst
-                sig = None
-                if SignalHub is not None:
-                    source = "event_overflow" if overflow_events else "event_tool_burst"
-                    sig = SignalHub.shared().route(source, payload)
-                # ponytail: 保留 v3 逻辑骨架作 fallback, 只改信号构造走 Hub;
-                # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
-                if sig is None:
-                    from huginn.cognitive_engine import TransitionSignal
-
-                    sig = TransitionSignal("context_overflow", payload)
-                csm.transition(sig)
-                all_ts = [e.timestamp for e in overflow_events] + [
-                    e.timestamp for e in tool_errors
-                ]
-                if all_ts:
-                    self._last_event_check_ts = max(all_ts)
+            _emit_event_signal(self, csm, overflow_events, tool_errors)
         except Exception:  # 防御: 事件信号检查失败则忽略
             logger.debug("event signal check failed", exc_info=True)
 

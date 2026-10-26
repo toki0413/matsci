@@ -54,25 +54,54 @@ _SNAPSHOT_ROOT = get_runtime_home() / "snapshots"
 # 也一并认上 —— 这是 matsci agent, POSCAR/INCAR 几乎天天见.
 # ponytail: 默认列表写死, 新增后缀要改这里; 比全盘扫描省 IO.
 _DEFAULT_WATCH_PATTERNS: tuple[str, ...] = (
-    "*.py", "*.cif", "*.poscar", "*.json", "*.yaml", "*.yml",
-    "*.toml", "*.out", "*.dat", "*.csv",
+    "*.py",
+    "*.cif",
+    "*.poscar",
+    "*.json",
+    "*.yaml",
+    "*.yml",
+    "*.toml",
+    "*.out",
+    "*.dat",
+    "*.csv",
     # VASP 裸文件名, 当字面量匹配
-    "POSCAR", "CONTCAR", "INCAR", "KPOINTS", "OUTCAR", "CHGCAR", "WAVECAR",
+    "POSCAR",
+    "CONTCAR",
+    "INCAR",
+    "KPOINTS",
+    "OUTCAR",
+    "CHGCAR",
+    "WAVECAR",
 )
 
 # os.walk 下钻时跳过的目录: 缓存 / 版本库 / huginn 自己的输出.
-_SKIP_DIRS: frozenset[str] = frozenset({
-    ".git", ".hg", ".svn", "__pycache__", ".huginn", ".huginn_kb",
-    "node_modules", ".venv", "venv", "env", ".tox", ".mypy_cache",
-    ".ruff_cache", ".pytest_cache", ".eggs", ".cache",
-})
+_SKIP_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        ".huginn",
+        ".huginn_kb",
+        "node_modules",
+        ".venv",
+        "venv",
+        "env",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".eggs",
+        ".cache",
+    }
+)
 
 # 单文件备份上限: 超过就不拷内容 (太大, 回滚也不现实). 哈希照记, patch 照报.
 _MAX_BACKUP_BYTES = 5 * 1024 * 1024  # 5 MiB
 
-_PREVIEW_LEN = 500   # 内容预览截断长度, 跟 spec 对齐
+_PREVIEW_LEN = 500  # 内容预览截断长度, 跟 spec 对齐
 _MAX_SNAPSHOTS = 100  # FIFO 上限
-_MAX_LAYERS = 20      # 整层快照 FIFO 上限 (整棵树, 比步骤快照重, 上限更小)
+_MAX_LAYERS = 20  # 整层快照 FIFO 上限 (整棵树, 比步骤快照重, 上限更小)
 
 
 # ── 小工具 ───────────────────────────────────────────────────────
@@ -169,9 +198,7 @@ def _match_any(name_lower: str, patterns_lower: tuple[str, ...]) -> bool:
     return False
 
 
-def _walk_watch(
-    ws: Path, patterns: tuple[str, ...]
-) -> Iterator[tuple[str, Path]]:
+def _walk_watch(ws: Path, patterns: tuple[str, ...]) -> Iterator[tuple[str, Path]]:
     """遍历 ws 下匹配 patterns 的文件, yield (相对路径, 绝对路径).
 
     相对路径用 posix 风格 (正斜杠), 跨平台一致, 也方便存 JSON.
@@ -180,7 +207,8 @@ def _walk_watch(
     patterns_lower = tuple(p.lower() for p in patterns)
     for dirpath, dirnames, filenames in os.walk(ws):
         dirnames[:] = [
-            d for d in dirnames
+            d
+            for d in dirnames
             if d.lower() not in _SKIP_DIRS and not d.endswith(".egg-info")
         ]
         for fn in filenames:
@@ -201,7 +229,8 @@ def _walk_tree(ws: Path) -> tuple[list[str], list[tuple[str, Path]]]:
     files: list[tuple[str, Path]] = []
     for dirpath, dirnames, filenames in os.walk(ws):
         dirnames[:] = [
-            d for d in dirnames
+            d
+            for d in dirnames
             if d.lower() not in _SKIP_DIRS and not d.endswith(".egg-info")
         ]
         base = Path(dirpath)
@@ -228,12 +257,12 @@ def _walk_tree(ws: Path) -> tuple[list[str], list[tuple[str, Path]]]:
 class FilePatch:
     """单个文件在快照前后的变化."""
 
-    file_path: str                  # 相对工作区的路径
-    change_type: str                # "created" | "modified" | "deleted"
+    file_path: str  # 相对工作区的路径
+    change_type: str  # "created" | "modified" | "deleted"
     old_hash: str | None
     new_hash: str | None
-    old_content_preview: str        # 执行前内容前 500 字符
-    new_content_preview: str        # 执行后内容前 500 字符
+    old_content_preview: str  # 执行前内容前 500 字符
+    new_content_preview: str  # 执行后内容前 500 字符
 
 
 @dataclass
@@ -243,10 +272,10 @@ class FileSnapshot:
     step_id: str
     tool_name: str
     timestamp: float
-    files: dict[str, str] = field(default_factory=dict)   # rel_path -> sha256 (执行前)
+    files: dict[str, str] = field(default_factory=dict)  # rel_path -> sha256 (执行前)
     patches: list[FilePatch] = field(default_factory=list)
     reverted: bool = False
-    workspace: str = ""             # track 时的工作区, 回滚要回这里
+    workspace: str = ""  # track 时的工作区, 回滚要回这里
     watch_patterns: list[str] = field(default_factory=list)
 
 
@@ -270,6 +299,320 @@ def _snapshot_from_record(rec: dict) -> FileSnapshot:
         workspace=rec.get("workspace", ""),
         watch_patterns=rec.get("watch_patterns", []),
     )
+
+
+# ── patch 构造 / 哈希比对 ────────────────────────────────────────
+
+
+def _deleted_patch(rel: str, old_hash: str | None, backup_dir: Path) -> FilePatch:
+    """构造 deleted 变化: 旧内容预览取自备份目录."""
+    return FilePatch(
+        file_path=rel,
+        change_type="deleted",
+        old_hash=old_hash,
+        new_hash=None,
+        old_content_preview=_read_backup_preview(backup_dir, rel),
+        new_content_preview="",
+    )
+
+
+def _modified_patch(
+    rel: str,
+    old_hash: str | None,
+    new_hash: str | None,
+    new_preview: str,
+    backup_dir: Path,
+) -> FilePatch:
+    """构造 modified 变化: 旧内容预览取备份, 新预览由调用方传入."""
+    return FilePatch(
+        file_path=rel,
+        change_type="modified",
+        old_hash=old_hash,
+        new_hash=new_hash,
+        old_content_preview=_read_backup_preview(backup_dir, rel),
+        new_content_preview=new_preview,
+    )
+
+
+def _created_patch(rel: str, new_hash: str | None, new_preview: str) -> FilePatch:
+    """构造 created 变化: 没有旧内容."""
+    return FilePatch(
+        file_path=rel,
+        change_type="created",
+        old_hash=None,
+        new_hash=new_hash,
+        old_content_preview="",
+        new_content_preview=new_preview,
+    )
+
+
+def _diff_file_maps(
+    old_files: dict[str, str],
+    current: dict[str, str],
+    current_paths: dict[str, Path],
+    backup_dir: Path,
+) -> list[FilePatch]:
+    """按哈希比对旧清单与当前状态, 产出 deleted/modified/created 列表."""
+    patches: list[FilePatch] = []
+
+    # 修改 / 删除: 旧清单里存在过的文件
+    for rel, old_hash in old_files.items():
+        new_hash = current.get(rel)
+        if new_hash is None:
+            patches.append(_deleted_patch(rel, old_hash, backup_dir))
+        elif new_hash != old_hash:
+            patches.append(
+                _modified_patch(
+                    rel,
+                    old_hash,
+                    new_hash,
+                    _preview_file(current_paths[rel]),
+                    backup_dir,
+                )
+            )
+
+    # 新建: 当前有, 旧清单里没有
+    for rel, new_hash in current.items():
+        if rel not in old_files:
+            patches.append(
+                _created_patch(rel, new_hash, _preview_file(current_paths[rel]))
+            )
+    return patches
+
+
+# ── 步骤快照辅助 ─────────────────────────────────────────────────
+
+
+def _scan_watch_state(
+    ws: Path, patterns: tuple[str, ...]
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """扫描 watch_patterns 命中的文件, 返回 (rel -> sha256, rel -> 绝对路径)."""
+    current: dict[str, str] = {}
+    current_paths: dict[str, Path] = {}
+    for rel, fpath in _walk_watch(ws, patterns):
+        digest = _hash_file(fpath)
+        if digest is None:
+            continue
+        current[rel] = digest
+        current_paths[rel] = fpath
+    return current, current_paths
+
+
+def _new_step_snapshot(
+    tool_name: str, ws: Path, patterns: tuple[str, ...]
+) -> tuple[str, FileSnapshot]:
+    """生成 step_id 并建好快照元数据 (工作区 / 命中后缀 / 时间戳)."""
+    step_id = _make_step_id(tool_name)
+    snap = FileSnapshot(
+        step_id=step_id,
+        tool_name=tool_name,
+        timestamp=time.time(),
+        workspace=str(ws),
+        watch_patterns=list(patterns),
+    )
+    return step_id, snap
+
+
+def _capture_pre_tool_backups(
+    ws: Path, patterns: tuple[str, ...], snap: FileSnapshot
+) -> list[tuple[str, bytes]]:
+    """算哈希并读内容 (主线程), 返回待落盘的 (备份名, 内容) 列表.
+
+    内容必须在这里读到: track() 一返回调用方就会执行工具改工作区, 若把读文件
+    留到后台线程, 读到的可能是改后的内容 —— 备份就不再是"执行前"的了 (竞态).
+    """
+    to_backup: list[tuple[str, bytes]] = []
+    for rel, fpath in _walk_watch(ws, patterns):
+        digest = _hash_file(fpath)
+        if digest is None:
+            continue
+        snap.files[rel] = digest
+        try:
+            size = fpath.stat().st_size
+        except OSError:
+            logger.debug("best-effort op failed", exc_info=True)
+            size = 0
+        if size > _MAX_BACKUP_BYTES:
+            continue
+        try:
+            to_backup.append((_safe_backup_name(rel), fpath.read_bytes()))
+        except OSError as exc:
+            logger.debug("snapshot read skip %s: %s", fpath, exc)
+    return to_backup
+
+
+def _start_backup_thread(
+    files_dir: Path, to_backup: list[tuple[str, bytes]], step_id: str
+) -> threading.Thread:
+    """把内容落盘丢到后台线程, 返回线程句柄供 patch() join."""
+
+    def _do_backup():
+        for bname, data in to_backup:
+            try:
+                (files_dir / bname).write_bytes(data)
+            except OSError as exc:
+                logger.debug("snapshot backup skip %s: %s", bname, exc)
+
+    t = threading.Thread(target=_do_backup, name=f"snap-backup-{step_id}", daemon=True)
+    t.start()
+    return t
+
+
+def _write_revert_point(ws: Path, snap: FileSnapshot, revert_dir: Path) -> None:
+    """存执行后状态: 相关文件 = 快照里有的 + patch 里新建的."""
+    relevant: set[str] = set(snap.files.keys())
+    for p in snap.patches:
+        relevant.add(p.file_path)
+    manifest: dict[str, dict] = {}
+    for rel in relevant:
+        fpath = ws / rel
+        if fpath.exists() and fpath.is_file():
+            try:
+                shutil.copyfile(fpath, revert_dir / _safe_backup_name(rel))
+                manifest[rel] = {"state": "present"}
+            except OSError as exc:
+                logger.debug("revert_point skip %s: %s", rel, exc)
+                manifest[rel] = {"state": "deleted"}
+        else:
+            manifest[rel] = {"state": "deleted"}
+    _write_json(revert_dir / "revert_manifest.json", manifest)
+
+
+def _restore_pre_tool_files(
+    ws: Path, files: dict[str, str], files_dir: Path
+) -> list[str]:
+    """按备份恢复执行前内容, 返回恢复成功的相对路径."""
+    restored: list[str] = []
+    for rel in files:
+        backup = files_dir / _safe_backup_name(rel)
+        target = ws / rel
+        if backup.exists():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(backup, target)
+                restored.append(rel)
+            except OSError as exc:
+                logger.warning("revert restore %s failed: %s", rel, exc)
+        else:
+            logger.info("revert skip %s: no content backup", rel)
+    return restored
+
+
+def _delete_created_files(ws: Path, patches: list[FilePatch]) -> list[str]:
+    """删掉执行前不存在的文件 (patch 里 created 的)."""
+    deleted: list[str] = []
+    for p in patches:
+        if p.change_type == "created":
+            target = ws / p.file_path
+            try:
+                target.unlink()
+                deleted.append(p.file_path)
+            except FileNotFoundError:
+                logger.debug("best-effort op failed", exc_info=True)
+            except OSError as exc:
+                logger.warning("revert delete %s failed: %s", p.file_path, exc)
+    return deleted
+
+
+def _publish_revert_event(step_id: str, paths: list[str]) -> None:
+    """发布 snapshot.revert 事件 (best-effort)."""
+    try:
+        from huginn.events.unified_bus import publish_event
+
+        publish_event(
+            "snapshot.revert",
+            {"step_id": step_id, "paths": paths},
+            source="snapshot_manager",
+        )
+    except Exception:
+        logger.debug("snapshot revert event publish failed", exc_info=True)
+
+
+# ── 整层快照辅助 ─────────────────────────────────────────────────
+
+
+def _scan_layer_state(
+    files: list[tuple[str, Path]],
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """扫描整层当前文件, 符号链接以 "symlink:目标" 参与比对."""
+    current: dict[str, str] = {}
+    current_paths: dict[str, Path] = {}
+    for rel, fpath in files:
+        if fpath.is_symlink():
+            try:
+                current[rel] = "symlink:" + os.readlink(fpath)
+            except OSError:
+                continue
+        else:
+            digest = _hash_file(fpath)
+            if digest is None:
+                continue
+            current[rel] = digest
+        current_paths[rel] = fpath
+    return current, current_paths
+
+
+def _collect_layer_entries(
+    files: list[tuple[str, Path]], limit: int
+) -> tuple[dict[str, dict], list[tuple[Path, str]]]:
+    """遍历文件, 返回 (清单 entries, 待备份的 (源路径, 备份名) 列表)."""
+    entries: dict[str, dict] = {}
+    to_backup: list[tuple[Path, str]] = []
+    for rel, fpath in files:
+        if fpath.is_symlink():
+            try:
+                target = os.readlink(fpath)
+            except OSError:
+                logger.debug("layer: unreadable symlink %s", fpath, exc_info=True)
+                continue
+            entries[rel] = {"kind": "symlink", "target": target}
+            continue
+        digest = _hash_file(fpath)
+        if digest is None:
+            continue
+        try:
+            st = fpath.stat()
+            size, mode = st.st_size, st.st_mode & 0o7777
+        except OSError:
+            size, mode = 0, 0o644
+        backed = size <= limit
+        entries[rel] = {
+            "kind": "file",
+            "hash": digest,
+            "size": size,
+            "mode": mode,
+            "backed_up": backed,
+        }
+        if backed:
+            to_backup.append((fpath, _safe_backup_name(rel)))
+    return entries, to_backup
+
+
+def _copy_layer_backups(to_backup: list[tuple[Path, str]], layer_dir: Path) -> None:
+    """同步拷贝层内容备份 (失败记 debug 跳过)."""
+    for src, bname in to_backup:
+        try:
+            shutil.copyfile(src, layer_dir / bname)
+        except OSError as exc:
+            logger.debug("layer backup skip %s: %s", src, exc)
+
+
+def _build_layer_manifest(
+    layer_id: str,
+    label: str,
+    ws: Path,
+    dirs: list[str],
+    entries: dict[str, dict],
+) -> dict:
+    """组装整层清单 (文件条目 + 目录列表 + 元数据)."""
+    return {
+        "layer_id": layer_id,
+        "label": label,
+        "timestamp": time.time(),
+        "workspace": str(ws),
+        "dirs": dirs,
+        "files": entries,
+    }
 
 
 # ── discard_layer 的分步实现 ─────────────────────────────────────
@@ -443,59 +786,29 @@ class SnapshotManager:
         """
         ws = Path(workspace).resolve()
         patterns = tuple(watch_patterns) if watch_patterns else _DEFAULT_WATCH_PATTERNS
-        step_id = _make_step_id(tool_name)
-
-        snap = FileSnapshot(
-            step_id=step_id,
-            tool_name=tool_name,
-            timestamp=time.time(),
-            workspace=str(ws),
-            watch_patterns=list(patterns),
-        )
+        step_id, snap = _new_step_snapshot(tool_name, ws, patterns)
 
         files_dir = self._files_dir(step_id)
         files_dir.mkdir(parents=True, exist_ok=True)
 
-        # 先算哈希 + 读内容 (都在主线程). 内容必须在这里读到: track() 一返回
-        # 调用方就会执行工具改工作区, 若把读文件留到后台线程, 读到的可能是
-        # 改后的内容 —— 备份就不再是"执行前"的了 (竞态).
-        to_backup: list[tuple[str, bytes]] = []
-        for rel, fpath in _walk_watch(ws, patterns):
-            digest = _hash_file(fpath)
-            if digest is None:
-                continue
-            snap.files[rel] = digest
-            try:
-                size = fpath.stat().st_size
-            except OSError:
-                logger.debug("best-effort op failed", exc_info=True)
-                size = 0
-            if size > _MAX_BACKUP_BYTES:
-                continue
-            try:
-                to_backup.append((_safe_backup_name(rel), fpath.read_bytes()))
-            except OSError as exc:
-                logger.debug("snapshot read skip %s: %s", fpath, exc)
+        to_backup = _capture_pre_tool_backups(ws, patterns, snap)
 
         # 落盘仍丢后台线程 (慢的是写盘, 内容已固定在内存里)
-        def _do_backup():
-            for bname, data in to_backup:
-                try:
-                    (files_dir / bname).write_bytes(data)
-                except OSError as exc:
-                    logger.debug("snapshot backup skip %s: %s", bname, exc)
-
-        t = threading.Thread(target=_do_backup, name=f"snap-backup-{step_id}", daemon=True)
-        t.start()
+        t = _start_backup_thread(files_dir, to_backup, step_id)
         # 记住线程, patch() 里可以 join 确保备份完成再做 diff
-        self._pending_backups: dict[str, threading.Thread] = getattr(self, "_pending_backups", {})
+        self._pending_backups: dict[str, threading.Thread] = getattr(
+            self, "_pending_backups", {}
+        )
         self._pending_backups[step_id] = t
 
         self._append_log(snap)
         self._enforce_cap()
         logger.debug(
             "snapshot track %s (%s): %d files, %d queued for backup",
-            step_id, tool_name, len(snap.files), len(to_backup),
+            step_id,
+            tool_name,
+            len(snap.files),
+            len(to_backup),
         )
         return step_id
 
@@ -524,44 +837,8 @@ class SnapshotManager:
         files_dir = self._files_dir(step_id)
         patterns = tuple(snap.watch_patterns) or _DEFAULT_WATCH_PATTERNS
 
-        current: dict[str, str] = {}
-        current_paths: dict[str, Path] = {}
-        for rel, fpath in _walk_watch(ws, patterns):
-            digest = _hash_file(fpath)
-            if digest is None:
-                continue
-            current[rel] = digest
-            current_paths[rel] = fpath
-
-        patches: list[FilePatch] = []
-
-        # 修改 / 删除: 快照里存在过的文件
-        for rel, old_hash in snap.files.items():
-            new_hash = current.get(rel)
-            if new_hash is None:
-                patches.append(FilePatch(
-                    file_path=rel, change_type="deleted",
-                    old_hash=old_hash, new_hash=None,
-                    old_content_preview=_read_backup_preview(files_dir, rel),
-                    new_content_preview="",
-                ))
-            elif new_hash != old_hash:
-                patches.append(FilePatch(
-                    file_path=rel, change_type="modified",
-                    old_hash=old_hash, new_hash=new_hash,
-                    old_content_preview=_read_backup_preview(files_dir, rel),
-                    new_content_preview=_preview_file(current_paths[rel]),
-                ))
-
-        # 新建: 当前有, 快照里没有
-        for rel, new_hash in current.items():
-            if rel not in snap.files:
-                patches.append(FilePatch(
-                    file_path=rel, change_type="created",
-                    old_hash=None, new_hash=new_hash,
-                    old_content_preview="",
-                    new_content_preview=_preview_file(current_paths[rel]),
-                ))
+        current, current_paths = _scan_watch_state(ws, patterns)
+        patches = _diff_file_maps(snap.files, current, current_paths, files_dir)
 
         snap.patches = patches
         self._write_patches(step_id, patches)
@@ -590,63 +867,18 @@ class SnapshotManager:
         revert_dir.mkdir(parents=True, exist_ok=True)
 
         # 1) 存执行后状态: 相关文件 = 快照里有的 + patch 里新建的
-        relevant: set[str] = set(snap.files.keys())
-        for p in snap.patches:
-            relevant.add(p.file_path)
-        manifest: dict[str, dict] = {}
-        for rel in relevant:
-            fpath = ws / rel
-            if fpath.exists() and fpath.is_file():
-                try:
-                    shutil.copyfile(fpath, revert_dir / _safe_backup_name(rel))
-                    manifest[rel] = {"state": "present"}
-                except OSError as exc:
-                    logger.debug("revert_point skip %s: %s", rel, exc)
-                    manifest[rel] = {"state": "deleted"}
-            else:
-                manifest[rel] = {"state": "deleted"}
-        _write_json(revert_dir / "revert_manifest.json", manifest)
+        _write_revert_point(ws, snap, revert_dir)
 
         # 2) 恢复执行前内容
-        restored: list[str] = []
-        for rel in snap.files:
-            backup = files_dir / _safe_backup_name(rel)
-            target = ws / rel
-            if backup.exists():
-                try:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(backup, target)
-                    restored.append(rel)
-                except OSError as exc:
-                    logger.warning("revert restore %s failed: %s", rel, exc)
-            else:
-                logger.info("revert skip %s: no content backup", rel)
+        restored = _restore_pre_tool_files(ws, snap.files, files_dir)
 
         # 3) 删掉执行前不存在的文件 (patch 里 created 的)
-        for p in snap.patches:
-            if p.change_type == "created":
-                target = ws / p.file_path
-                try:
-                    target.unlink()
-                    restored.append(p.file_path)
-                except FileNotFoundError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                except OSError as exc:
-                    logger.warning("revert delete %s failed: %s", p.file_path, exc)
+        restored += _delete_created_files(ws, snap.patches)
 
         self._mark_reverted(step_id, True)
         logger.info("snapshot revert %s: %d paths", step_id, len(restored))
         # 发布 snapshot.revert 事件
-        try:
-            from huginn.events.unified_bus import publish_event
-
-            publish_event(
-                "snapshot.revert",
-                {"step_id": step_id, "paths": restored},
-                source="snapshot_manager",
-            )
-        except Exception:
-            logger.debug("snapshot revert event publish failed", exc_info=True)
+        _publish_revert_event(step_id, restored)
         return restored
 
     def unrevert(self, step_id: str, workspace: Path) -> list[str]:
@@ -738,52 +970,12 @@ class SnapshotManager:
         layer_dir = self._layer_files_dir(layer_id)
         layer_dir.mkdir(parents=True, exist_ok=True)
 
-        entries: dict[str, dict] = {}
-        to_backup: list[tuple[Path, str]] = []
-        for rel, fpath in files:
-            if fpath.is_symlink():
-                try:
-                    target = os.readlink(fpath)
-                except OSError:
-                    logger.debug("layer: unreadable symlink %s", fpath, exc_info=True)
-                    continue
-                entries[rel] = {"kind": "symlink", "target": target}
-                continue
-            digest = _hash_file(fpath)
-            if digest is None:
-                continue
-            try:
-                st = fpath.stat()
-                size, mode = st.st_size, st.st_mode & 0o7777
-            except OSError:
-                size, mode = 0, 0o644
-            backed = size <= limit
-            entries[rel] = {
-                "kind": "file",
-                "hash": digest,
-                "size": size,
-                "mode": mode,
-                "backed_up": backed,
-            }
-            if backed:
-                to_backup.append((fpath, _safe_backup_name(rel)))
-
-        manifest = {
-            "layer_id": layer_id,
-            "label": label,
-            "timestamp": time.time(),
-            "workspace": str(ws),
-            "dirs": dirs,
-            "files": entries,
-        }
+        entries, to_backup = _collect_layer_entries(files, limit)
+        manifest = _build_layer_manifest(layer_id, label, ws, dirs, entries)
         # 内容备份同步做. 不能像 track() 那样丢后台线程: 层一旦返回, 调用方
         # 立刻就会改工作区, 后台拷贝会读到改后的内容 —— 层就不再是"建层时"的
         # 状态了 (竞态). 整棵树拷贝本来也不便宜, 但正确性优先.
-        for src, bname in to_backup:
-            try:
-                shutil.copyfile(src, layer_dir / bname)
-            except OSError as exc:
-                logger.debug("layer backup skip %s: %s", src, exc)
+        _copy_layer_backups(to_backup, layer_dir)
 
         # 清单在内容备份**之后**落盘: 见到 manifest 就意味着内容已在本地,
         # 中途崩了不会留下"清单说能恢复、实际没内容"的半成品层.
@@ -792,13 +984,14 @@ class SnapshotManager:
         self._enforce_layer_cap()
         logger.debug(
             "layer create %s (%s): %d files, %d dirs",
-            layer_id, label or "-", len(entries), len(dirs),
+            layer_id,
+            label or "-",
+            len(entries),
+            len(dirs),
         )
         return layer_id
 
-    def discard_layer(
-        self, layer_id: str, workspace: Path | None = None
-    ) -> list[str]:
+    def discard_layer(self, layer_id: str, workspace: Path | None = None) -> list[str]:
         """整层丢弃: 把工作区恢复到本层建立时的状态, 返回受影响的相对路径.
 
         三步: 删掉建层后新建的文件 → 按清单回写改动/删掉的文件 (符号链接按
@@ -837,60 +1030,26 @@ class SnapshotManager:
         backup_dir = self._layer_files_dir(layer_id)
 
         _, cur_files = _walk_tree(ws)
-        current: dict[str, str] = {}
-        current_paths: dict[str, Path] = {}
-        for rel, fpath in cur_files:
-            if fpath.is_symlink():
-                try:
-                    current[rel] = "symlink:" + os.readlink(fpath)
-                except OSError:
-                    continue
-            else:
-                digest = _hash_file(fpath)
-                if digest is None:
-                    continue
-                current[rel] = digest
-            current_paths[rel] = fpath
-
-        patches: list[FilePatch] = []
-        for rel, info in entries.items():
-            old_hash = info.get("hash") or ("symlink:" + (info.get("target") or ""))
-            new_hash = current.get(rel)
-            if new_hash is None:
-                patches.append(FilePatch(
-                    file_path=rel, change_type="deleted",
-                    old_hash=old_hash, new_hash=None,
-                    old_content_preview=_read_backup_preview(backup_dir, rel),
-                    new_content_preview="",
-                ))
-            elif new_hash != old_hash:
-                patches.append(FilePatch(
-                    file_path=rel, change_type="modified",
-                    old_hash=old_hash, new_hash=new_hash,
-                    old_content_preview=_read_backup_preview(backup_dir, rel),
-                    new_content_preview=_preview_file(current_paths[rel]),
-                ))
-        for rel, new_hash in current.items():
-            if rel not in entries:
-                patches.append(FilePatch(
-                    file_path=rel, change_type="created",
-                    old_hash=None, new_hash=new_hash,
-                    old_content_preview="",
-                    new_content_preview=_preview_file(current_paths[rel]),
-                ))
-        return patches
+        current, current_paths = _scan_layer_state(cur_files)
+        old_files = {
+            rel: info.get("hash") or ("symlink:" + (info.get("target") or ""))
+            for rel, info in entries.items()
+        }
+        return _diff_file_maps(old_files, current, current_paths, backup_dir)
 
     def list_layers(self) -> list[LayerInfo]:
         """读整层快照历史 (按时间升序)."""
         out: list[LayerInfo] = []
         for rec in self._load_layer_log():
-            out.append(LayerInfo(
-                layer_id=rec.get("layer_id", ""),
-                label=rec.get("label", ""),
-                timestamp=rec.get("timestamp", 0.0),
-                workspace=rec.get("workspace", ""),
-                file_count=int(rec.get("file_count", 0) or 0),
-            ))
+            out.append(
+                LayerInfo(
+                    layer_id=rec.get("layer_id", ""),
+                    label=rec.get("label", ""),
+                    timestamp=rec.get("timestamp", 0.0),
+                    workspace=rec.get("workspace", ""),
+                    file_count=int(rec.get("file_count", 0) or 0),
+                )
+            )
         out.sort(key=lambda li: li.timestamp)
         return out
 
@@ -961,14 +1120,16 @@ class SnapshotManager:
         for item in rec:
             if not isinstance(item, dict):
                 continue
-            out.append(FilePatch(
-                file_path=item.get("file_path", ""),
-                change_type=item.get("change_type", ""),
-                old_hash=item.get("old_hash"),
-                new_hash=item.get("new_hash"),
-                old_content_preview=item.get("old_content_preview", ""),
-                new_content_preview=item.get("new_content_preview", ""),
-            ))
+            out.append(
+                FilePatch(
+                    file_path=item.get("file_path", ""),
+                    change_type=item.get("change_type", ""),
+                    old_hash=item.get("old_hash"),
+                    new_hash=item.get("new_hash"),
+                    old_content_preview=item.get("old_content_preview", ""),
+                    new_content_preview=item.get("new_content_preview", ""),
+                )
+            )
         return out
 
     def _is_reverted(self, step_id: str) -> bool:
@@ -1034,14 +1195,16 @@ class SnapshotManager:
         if len(recs) <= _MAX_LAYERS:
             return
         recs.sort(key=lambda r: r.get("timestamp", 0.0))
-        keep = recs[len(recs) - _MAX_LAYERS:]
+        keep = recs[len(recs) - _MAX_LAYERS :]
         keep_ids = {r.get("layer_id") for r in keep}
         for r in recs:
             lid = r.get("layer_id")
             if lid and lid not in keep_ids:
                 d = self._snap_dir(lid)
                 threading.Thread(
-                    target=shutil.rmtree, args=(d,), kwargs={"ignore_errors": True},
+                    target=shutil.rmtree,
+                    args=(d,),
+                    kwargs={"ignore_errors": True},
                     daemon=True,
                 ).start()
         try:
@@ -1060,7 +1223,7 @@ class SnapshotManager:
         if len(recs) <= _MAX_SNAPSHOTS:
             return
         recs.sort(key=lambda r: r.get("timestamp", 0.0))
-        keep = recs[len(recs) - _MAX_SNAPSHOTS:]
+        keep = recs[len(recs) - _MAX_SNAPSHOTS :]
         keep_ids = {r["step_id"] for r in keep}
         for r in recs:
             if r["step_id"] not in keep_ids:
@@ -1070,7 +1233,9 @@ class SnapshotManager:
                 # ponytail: 留下少量孤儿目录由后续清理; 升级路径换 SQLite + 定时 GC.
                 d = self._snap_dir(r["step_id"])
                 threading.Thread(
-                    target=shutil.rmtree, args=(d,), kwargs={"ignore_errors": True},
+                    target=shutil.rmtree,
+                    args=(d,),
+                    kwargs={"ignore_errors": True},
                     daemon=True,
                 ).start()
         # ponytail: 只追加日志的代价是 cap 满后必须重写一次. 升级路径换 SQLite.

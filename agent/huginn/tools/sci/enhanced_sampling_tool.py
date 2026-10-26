@@ -31,6 +31,262 @@ logger = logging.getLogger(__name__)
 KB_EV = 8.617333262e-5
 
 
+def _accumulate_metadynamics_bias(
+    cv: np.ndarray,
+    h: float,
+    sigma: float,
+    deposit_interval: int,
+    temperature: float,
+) -> tuple[list, np.ndarray]:
+    """沿 CV 轨迹沉积高斯山, 返回 (hill_positions, bias_potential)."""
+    n_frames = len(cv)
+    # Deposit hills
+    hill_positions = []
+    hill_heights = []
+    bias_potential = np.zeros(n_frames)
+
+    for i in range(0, n_frames, deposit_interval):
+        s_i = cv[i]
+        hill_positions.append(s_i)
+        # Adaptive height: decrease as we fill (well-tempered metadynamics)
+        adaptive_h = h * math.exp(-bias_potential[i] / (KB_EV * temperature))
+        hill_heights.append(adaptive_h)
+
+        # Update bias at all points
+        for j in range(n_frames):
+            dist2 = np.sum((cv[j] - s_i) ** 2)
+            bias_potential[j] += adaptive_h * math.exp(-dist2 / (2 * sigma**2))
+    return hill_positions, bias_potential
+
+
+def _wham_histograms(
+    samples_list: list[np.ndarray], bins: np.ndarray, n_windows: int, bin_count: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """对每个 umbrella window 做直方图, 返回 (hists, n_per_window)."""
+    hists = np.zeros((n_windows, bin_count))
+    n_per_window = np.zeros(n_windows)
+    for i, s in enumerate(samples_list):
+        h, _ = np.histogram(s, bins=bins, density=False)
+        hists[i] = h
+        n_per_window[i] = len(s)
+    return hists, n_per_window
+
+
+def _wham_iterate(
+    hists: np.ndarray,
+    n_per_window: np.ndarray,
+    centers: np.ndarray,
+    bin_centers: np.ndarray,
+    k: float,
+    beta: float,
+    bin_count: int,
+) -> tuple[np.ndarray, int]:
+    """WHAM 自洽迭代, 返回 (F, 最后一次迭代索引)."""
+    F = np.zeros(bin_count)  # Free energy at each bin
+    eps = 1e-10
+    max_iter = 50000
+    tol = 1e-6
+
+    # 预计算偏置势矩阵, 避免三重 Python 循环 (50000×50×8=20M 次 math.exp 超时)
+    V = (
+        0.5 * k * (bin_centers[:, None] - centers[None, :]) ** 2
+    )  # (bin_count, n_windows)
+    exp_negbV = np.exp(-beta * V)  # (bin_count, n_windows)
+    hists_T = hists.T  # (bin_count, n_windows)
+    sum_term = (n_per_window * exp_negbV).sum(axis=1)  # Σᵢ Nᵢ·exp(−βVᵢ)
+
+    for iteration in range(max_iter):  # noqa: B007  # 循环后用到 iteration 的最终值
+        F_old = F.copy()
+        numerator = (hists_T * exp_negbV).sum(axis=1)  # Σᵢ hᵢ·exp(−βVᵢ)
+        denominator = np.exp(-beta * F_old) * sum_term  # Σᵢ Nᵢ·exp(−βVᵢ)·exp(−βF)
+        prob = np.where(
+            denominator > eps, numerator / np.maximum(denominator, eps), 0.0
+        )
+        prob = np.maximum(prob, eps)
+        F = -np.log(prob) / beta
+        F = F - np.min(F)
+        if np.max(np.abs(F - F_old)) < tol:
+            break
+    return F, iteration
+
+
+def _fes_histogram_1d(
+    cv: np.ndarray, n_bins: int, beta: float, temperature: float
+) -> dict:
+    """1D histogram FES reconstruction."""
+    # 1D histogram
+    hist, edges = np.histogram(cv[:, 0], bins=n_bins, density=True)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    # F = -kT ln P
+    prob = np.maximum(hist, 1e-30)
+    fes = -np.log(prob) / beta
+    fes = fes - np.min(fes)
+
+    return {
+        "action": "reconstruct_fes",
+        "n_dimensions": 1,
+        "bin_centers": [round(float(x), 6) for x in centers],
+        "fes_eV": [round(float(x), 6) for x in fes],
+        "fes_min_eV": 0.0,
+        "fes_max_eV": round(float(np.max(fes)), 6),
+        "barrier_height_eV": round(float(np.max(fes) - np.min(fes)), 6),
+        "temperature_K": temperature,
+        "message": f"FES reconstructed. Barrier: {np.max(fes) - np.min(fes):.4f} eV.",
+    }
+
+
+def _fes_histogram_2d(
+    cv: np.ndarray, n_bins: int, beta: float, temperature: float
+) -> dict:
+    """2D histogram FES reconstruction."""
+    # 2D histogram
+    hist, xedges, yedges = np.histogram2d(cv[:, 0], cv[:, 1], bins=n_bins, density=True)
+    x_centers = 0.5 * (xedges[:-1] + xedges[1:])
+    y_centers = 0.5 * (yedges[:-1] + yedges[1:])
+    prob = np.maximum(hist, 1e-30)
+    fes = -np.log(prob) / beta
+    fes = fes - np.min(fes)
+
+    return {
+        "action": "reconstruct_fes",
+        "n_dimensions": 2,
+        "x_centers": [round(float(x), 6) for x in x_centers],
+        "y_centers": [round(float(y), 6) for y in y_centers],
+        "fes_2d_eV": [[round(float(x), 4) for x in row] for row in fes],
+        "fes_min_eV": 0.0,
+        "fes_max_eV": round(float(np.max(fes)), 6),
+        "barrier_height_eV": round(float(np.max(fes) - np.min(fes)), 6),
+        "temperature_K": temperature,
+        "message": f"2D FES reconstructed. Barrier: {np.max(fes) - np.min(fes):.4f} eV.",
+    }
+
+
+def _tail_rate(cv: np.ndarray, threshold: float, n_bins: int, beta: float) -> float:
+    """从直方图尾部估计 rate function."""
+    # Estimate from histogram tail
+    hist, edges = np.histogram(cv, bins=n_bins, density=True)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    # Find bins above threshold
+    above_mask = centers > threshold
+    if np.any(above_mask) and np.any(hist[above_mask] > 0):
+        tail_probs = hist[above_mask] / np.sum(hist)
+        tail_rates = -np.log(np.maximum(tail_probs, 1e-30)) / beta
+        avg_tail_rate = float(np.mean(tail_rates))
+    else:
+        avg_tail_rate = float("inf")
+    return avg_tail_rate
+
+
+def _decorrelation_time(cv: np.ndarray, n_total: int) -> float:
+    """从自相关估计去相关时间 τ_corr."""
+    # Transition rate (Poisson process estimate)
+    # k ≈ P(X > threshold) / τ_corr  (τ_corr estimated from autocorrelation)
+    if n_total > 10:
+        # Simple autocorrelation estimate
+        ac = np.correlate(cv - cv.mean(), cv - cv.mean(), mode="full")
+        ac = ac[len(ac) // 2 :]
+        ac = ac / ac[0] if ac[0] != 0 else ac
+        # Find decorrelation time
+        decorr = np.argmax(ac < 1.0 / np.e) if np.any(ac < 1.0 / np.e) else 1
+        return float(decorr)
+    return 1.0
+
+
+def _metadynamics_payload(
+    args,
+    n_frames: int,
+    n_dim: int,
+    h: float,
+    sigma: float,
+    hill_positions: list,
+    fes: np.ndarray,
+) -> dict:
+    """组装 metadynamics_bias 结果字典."""
+    return {
+        "action": "metadynamics_bias",
+        "n_hills_deposited": len(hill_positions),
+        "n_frames": n_frames,
+        "n_dimensions": n_dim,
+        "gaussian_height_eV": h,
+        "gaussian_width": sigma,
+        "deposit_interval": args.deposit_interval,
+        "temperature_K": args.temperature,
+        "fes_values_eV": [
+            round(float(x), 6) for x in fes[:500]
+        ],  # cap for large trajectories
+        "fes_min_eV": 0.0,
+        "fes_max_eV": round(float(np.max(fes)), 6),
+        "barrier_height_eV": round(float(np.max(fes) - np.min(fes)), 6),
+        "hill_positions": [s.tolist() for s in hill_positions[:100]],
+        "well_tempered": True,
+        "bias_factor": math.exp(h / (KB_EV * args.temperature)),
+        "message": (
+            f"Deposited {len(hill_positions)} hills. "
+            f"FES barrier: {np.max(fes) - np.min(fes):.4f} eV."
+        ),
+    }
+
+
+def _wham_payload(
+    args, n_windows: int, bin_centers: np.ndarray, F: np.ndarray, iteration: int
+) -> dict:
+    """组装 wham 结果字典."""
+    return {
+        "action": "wham",
+        "method": "Weighted Histogram Analysis Method",
+        "n_windows": n_windows,
+        "n_bins": args.bin_count,
+        "temperature_K": args.temperature,
+        "bin_centers": [round(float(x), 6) for x in bin_centers],
+        "fes_eV": [round(float(x), 6) for x in F],
+        "fes_min_eV": 0.0,
+        "fes_max_eV": round(float(np.max(F)), 6),
+        "barrier_height_eV": round(float(np.max(F) - np.min(F)), 6),
+        "converged": iteration < 50000 - 1,
+        "n_iterations": iteration + 1,
+        "message": (
+            f"WHAM converged in {iteration + 1} iterations. "
+            f"FES barrier: {np.max(F) - np.min(F):.4f} eV."
+        ),
+    }
+
+
+def _rare_event_payload(
+    args,
+    threshold: float,
+    n_total: int,
+    n_above: int,
+    p_empirical: float,
+    rate_function: float,
+    avg_tail_rate: float,
+    tau_corr: float,
+    rate_estimate: float,
+) -> dict:
+    """组装 rare_event_rate 结果字典."""
+    return {
+        "action": "rare_event_rate",
+        "threshold": round(float(threshold), 6),
+        "n_total": n_total,
+        "n_above_threshold": int(n_above),
+        "p_empirical": p_empirical,
+        "rate_function_eV": round(rate_function, 6)
+        if rate_function != float("inf")
+        else None,
+        "tail_rate_eV": round(avg_tail_rate, 6)
+        if avg_tail_rate != float("inf")
+        else None,
+        "tau_correlation": tau_corr,
+        "transition_rate": rate_estimate,
+        "temperature_K": args.temperature,
+        "message": (
+            f"P(cv > {threshold:.3f}) = {p_empirical:.6f}, "
+            f"rate function I = {rate_function:.4f} eV"
+            if rate_function != float("inf")
+            else f"No events above threshold {threshold:.3f} in {n_total} samples."
+        ),
+    }
+
+
 class EnhancedSamplingInput(BaseModel):
     action: Literal[
         "metadynamics_bias",
@@ -43,21 +299,31 @@ class EnhancedSamplingInput(BaseModel):
     # Collective variable data
     cv_trajectory: list[list[float]] | None = Field(
         default=None,
-        description="CV values along MD trajectory. cv_trajectory[i] = [cv1, cv2, ...] at frame i"
+        description="CV values along MD trajectory. cv_trajectory[i] = [cv1, cv2, ...] at frame i",
     )
     cv_names: list[str] | None = Field(
         default=None, description="Names of collective variables"
     )
 
     # Metadynamics params
-    gaussian_height: float = Field(default=0.01, gt=0, description="Gaussian hill height (eV)")
-    gaussian_width: float = Field(default=0.1, gt=0, description="Gaussian width σ (CV units)")
-    deposit_interval: int = Field(default=100, ge=1, description="Add hill every N frames")
+    gaussian_height: float = Field(
+        default=0.01, gt=0, description="Gaussian hill height (eV)"
+    )
+    gaussian_width: float = Field(
+        default=0.1, gt=0, description="Gaussian width σ (CV units)"
+    )
+    deposit_interval: int = Field(
+        default=100, ge=1, description="Add hill every N frames"
+    )
     n_dimensions: int = Field(default=1, ge=1, le=3, description="Number of CVs")
 
     # Umbrella sampling params
-    n_windows: int = Field(default=10, ge=2, le=100, description="Number of umbrella windows")
-    spring_constant: float = Field(default=10.0, gt=0, description="Umbrella spring constant (eV/CV²)")
+    n_windows: int = Field(
+        default=10, ge=2, le=100, description="Number of umbrella windows"
+    )
+    spring_constant: float = Field(
+        default=10.0, gt=0, description="Umbrella spring constant (eV/CV²)"
+    )
     cv_range: list[float] | None = Field(
         default=None, description="[cv_min, cv_max] for umbrella/WHAM"
     )
@@ -69,7 +335,9 @@ class EnhancedSamplingInput(BaseModel):
     window_samples: list[list[float]] | None = Field(
         default=None, description="CV samples from each window"
     )
-    bin_count: int = Field(default=50, ge=5, le=500, description="Number of bins for histogram")
+    bin_count: int = Field(
+        default=50, ge=5, le=500, description="Number of bins for histogram"
+    )
 
     # Thermodynamics
     temperature: float = Field(default=300.0, gt=0, description="Temperature (K)")
@@ -78,7 +346,9 @@ class EnhancedSamplingInput(BaseModel):
     threshold: float | None = Field(
         default=None, description="CV threshold defining the rare event region"
     )
-    n_bins: int = Field(default=50, ge=5, le=200, description="Bins for histogram-based estimates")
+    n_bins: int = Field(
+        default=50, ge=5, le=200, description="Bins for histogram-based estimates"
+    )
 
 
 class EnhancedSamplingTool(HuginnTool):
@@ -98,7 +368,9 @@ class EnhancedSamplingTool(HuginnTool):
     )
     input_schema = EnhancedSamplingInput
 
-    async def _execute(self, args: EnhancedSamplingInput, context: ToolContext) -> ToolResult:
+    async def _execute(
+        self, args: EnhancedSamplingInput, context: ToolContext
+    ) -> ToolResult:
         try:
             if args.action == "metadynamics_bias":
                 return self._metadynamics(args)
@@ -110,7 +382,9 @@ class EnhancedSamplingTool(HuginnTool):
                 return self._reconstruct_fes(args)
             if args.action == "rare_event_rate":
                 return self._rare_event_rate(args)
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
 
@@ -131,22 +405,9 @@ class EnhancedSamplingTool(HuginnTool):
         h = args.gaussian_height
         sigma = args.gaussian_width
 
-        # Deposit hills
-        hill_positions = []
-        hill_heights = []
-        bias_potential = np.zeros(n_frames)
-
-        for i in range(0, n_frames, args.deposit_interval):
-            s_i = cv[i]
-            hill_positions.append(s_i)
-            # Adaptive height: decrease as we fill (well-tempered metadynamics)
-            adaptive_h = h * math.exp(-bias_potential[i] / (KB_EV * args.temperature))
-            hill_heights.append(adaptive_h)
-
-            # Update bias at all points
-            for j in range(n_frames):
-                dist2 = np.sum((cv[j] - s_i) ** 2)
-                bias_potential[j] += adaptive_h * math.exp(-dist2 / (2 * sigma ** 2))
+        hill_positions, bias_potential = _accumulate_metadynamics_bias(
+            cv, h, sigma, args.deposit_interval, args.temperature
+        )
 
         # FES = −V_bias (in the long-time limit)
         fes = -bias_potential
@@ -155,27 +416,9 @@ class EnhancedSamplingTool(HuginnTool):
         fes_min = np.min(fes)
         fes = fes - fes_min
 
-        data = {
-            "action": "metadynamics_bias",
-            "n_hills_deposited": len(hill_positions),
-            "n_frames": n_frames,
-            "n_dimensions": n_dim,
-            "gaussian_height_eV": h,
-            "gaussian_width": sigma,
-            "deposit_interval": args.deposit_interval,
-            "temperature_K": args.temperature,
-            "fes_values_eV": [round(float(x), 6) for x in fes[:500]],  # cap for large trajectories
-            "fes_min_eV": 0.0,
-            "fes_max_eV": round(float(np.max(fes)), 6),
-            "barrier_height_eV": round(float(np.max(fes) - np.min(fes)), 6),
-            "hill_positions": [s.tolist() for s in hill_positions[:100]],
-            "well_tempered": True,
-            "bias_factor": math.exp(h / (KB_EV * args.temperature)),
-            "message": (
-                f"Deposited {len(hill_positions)} hills. "
-                f"FES barrier: {np.max(fes) - np.min(fes):.4f} eV."
-            ),
-        }
+        data = _metadynamics_payload(
+            args, n_frames, n_dim, h, sigma, hill_positions, fes
+        )
 
         return ToolResult(data=data)
 
@@ -184,28 +427,34 @@ class EnhancedSamplingTool(HuginnTool):
     def _umbrella_setup(self, args: EnhancedSamplingInput) -> ToolResult:
         """Generate umbrella window centers along the CV range."""
         if not args.cv_range or len(args.cv_range) != 2:
-            return ToolResult(data=None, success=False, error="cv_range [min, max] required")
+            return ToolResult(
+                data=None, success=False, error="cv_range [min, max] required"
+            )
 
         cv_min, cv_max = args.cv_range
         centers = np.linspace(cv_min, cv_max, args.n_windows)
 
         windows = []
         for i, c in enumerate(centers):
-            windows.append({
-                "window_index": i,
-                "cv_center": round(float(c), 6),
-                "spring_constant": args.spring_constant,
-                "bias_potential": f"0.5 * k * (cv - {c:.4f})^2",
-            })
+            windows.append(
+                {
+                    "window_index": i,
+                    "cv_center": round(float(c), 6),
+                    "spring_constant": args.spring_constant,
+                    "bias_potential": f"0.5 * k * (cv - {c:.4f})^2",
+                }
+            )
 
-        return ToolResult(data={
-            "action": "umbrella_setup",
-            "n_windows": args.n_windows,
-            "cv_range": [cv_min, cv_max],
-            "spring_constant": args.spring_constant,
-            "windows": windows,
-            "message": f"Set up {args.n_windows} umbrella windows from {cv_min} to {cv_max}.",
-        })
+        return ToolResult(
+            data={
+                "action": "umbrella_setup",
+                "n_windows": args.n_windows,
+                "cv_range": [cv_min, cv_max],
+                "spring_constant": args.spring_constant,
+                "windows": windows,
+                "message": f"Set up {args.n_windows} umbrella windows from {cv_min} to {cv_max}.",
+            }
+        )
 
     # ── WHAM ───────────────────────────────────────────────
 
@@ -218,7 +467,11 @@ class EnhancedSamplingTool(HuginnTool):
           F(s) = −kT ln P(s)
         """
         if not args.window_centers or not args.window_samples:
-            return ToolResult(data=None, success=False, error="window_centers and window_samples required")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="window_centers and window_samples required",
+            )
 
         centers = np.array(args.window_centers)
         samples_list = [np.array(s) for s in args.window_samples]
@@ -233,55 +486,16 @@ class EnhancedSamplingTool(HuginnTool):
         bin_centers = 0.5 * (bins[:-1] + bins[1:])
 
         # Histogram each window
-        hists = np.zeros((n_windows, args.bin_count))
-        n_per_window = np.zeros(n_windows)
-        for i, s in enumerate(samples_list):
-            h, _ = np.histogram(s, bins=bins, density=False)
-            hists[i] = h
-            n_per_window[i] = len(s)
+        hists, n_per_window = _wham_histograms(
+            samples_list, bins, n_windows, args.bin_count
+        )
 
         # WHAM self-consistent iteration
-        F = np.zeros(args.bin_count)  # Free energy at each bin
-        eps = 1e-10
-        max_iter = 50000
-        tol = 1e-6
+        F, iteration = _wham_iterate(
+            hists, n_per_window, centers, bin_centers, k, beta, args.bin_count
+        )
 
-        # 预计算偏置势矩阵, 避免三重 Python 循环 (50000×50×8=20M 次 math.exp 超时)
-        V = 0.5 * k * (bin_centers[:, None] - centers[None, :]) ** 2  # (bin_count, n_windows)
-        exp_negbV = np.exp(-beta * V)  # (bin_count, n_windows)
-        hists_T = hists.T  # (bin_count, n_windows)
-        sum_term = (n_per_window * exp_negbV).sum(axis=1)  # Σᵢ Nᵢ·exp(−βVᵢ)
-
-        for iteration in range(max_iter):  # noqa: B007  # 循环后用到 iteration 的最终值
-            F_old = F.copy()
-            numerator = (hists_T * exp_negbV).sum(axis=1)  # Σᵢ hᵢ·exp(−βVᵢ)
-            denominator = np.exp(-beta * F_old) * sum_term  # Σᵢ Nᵢ·exp(−βVᵢ)·exp(−βF)
-            prob = np.where(denominator > eps,
-                            numerator / np.maximum(denominator, eps), 0.0)
-            prob = np.maximum(prob, eps)
-            F = -np.log(prob) / beta
-            F = F - np.min(F)
-            if np.max(np.abs(F - F_old)) < tol:
-                break
-
-        data = {
-            "action": "wham",
-            "method": "Weighted Histogram Analysis Method",
-            "n_windows": n_windows,
-            "n_bins": args.bin_count,
-            "temperature_K": args.temperature,
-            "bin_centers": [round(float(x), 6) for x in bin_centers],
-            "fes_eV": [round(float(x), 6) for x in F],
-            "fes_min_eV": 0.0,
-            "fes_max_eV": round(float(np.max(F)), 6),
-            "barrier_height_eV": round(float(np.max(F) - np.min(F)), 6),
-            "converged": iteration < max_iter - 1,
-            "n_iterations": iteration + 1,
-            "message": (
-                f"WHAM converged in {iteration + 1} iterations. "
-                f"FES barrier: {np.max(F) - np.min(F):.4f} eV."
-            ),
-        }
+        data = _wham_payload(args, n_windows, bin_centers, F, iteration)
 
         return ToolResult(data=data)
 
@@ -303,48 +517,9 @@ class EnhancedSamplingTool(HuginnTool):
         n_dim = cv.shape[1]
 
         if n_dim == 1:
-            # 1D histogram
-            hist, edges = np.histogram(cv[:, 0], bins=args.n_bins, density=True)
-            centers = 0.5 * (edges[:-1] + edges[1:])
-            # F = -kT ln P
-            prob = np.maximum(hist, 1e-30)
-            fes = -np.log(prob) / beta
-            fes = fes - np.min(fes)
-
-            data = {
-                "action": "reconstruct_fes",
-                "n_dimensions": 1,
-                "bin_centers": [round(float(x), 6) for x in centers],
-                "fes_eV": [round(float(x), 6) for x in fes],
-                "fes_min_eV": 0.0,
-                "fes_max_eV": round(float(np.max(fes)), 6),
-                "barrier_height_eV": round(float(np.max(fes) - np.min(fes)), 6),
-                "temperature_K": args.temperature,
-                "message": f"FES reconstructed. Barrier: {np.max(fes) - np.min(fes):.4f} eV.",
-            }
+            data = _fes_histogram_1d(cv, args.n_bins, beta, args.temperature)
         else:
-            # 2D histogram
-            hist, xedges, yedges = np.histogram2d(
-                cv[:, 0], cv[:, 1], bins=args.n_bins, density=True
-            )
-            x_centers = 0.5 * (xedges[:-1] + xedges[1:])
-            y_centers = 0.5 * (yedges[:-1] + yedges[1:])
-            prob = np.maximum(hist, 1e-30)
-            fes = -np.log(prob) / beta
-            fes = fes - np.min(fes)
-
-            data = {
-                "action": "reconstruct_fes",
-                "n_dimensions": 2,
-                "x_centers": [round(float(x), 6) for x in x_centers],
-                "y_centers": [round(float(x), 6) for x in y_centers],
-                "fes_2d_eV": [[round(float(x), 4) for x in row] for row in fes],
-                "fes_min_eV": 0.0,
-                "fes_max_eV": round(float(np.max(fes)), 6),
-                "barrier_height_eV": round(float(np.max(fes) - np.min(fes)), 6),
-                "temperature_K": args.temperature,
-                "message": f"2D FES reconstructed. Barrier: {np.max(fes) - np.min(fes):.4f} eV.",
-            }
+            data = _fes_histogram_2d(cv, args.n_bins, beta, args.temperature)
 
         return ToolResult(data=data)
 
@@ -360,7 +535,9 @@ class EnhancedSamplingTool(HuginnTool):
             return ToolResult(data=None, success=False, error="cv_trajectory required")
 
         cv = np.array(args.cv_trajectory).flatten()
-        threshold = args.threshold if args.threshold else float(np.mean(cv) + 2 * np.std(cv))
+        threshold = (
+            args.threshold if args.threshold else float(np.mean(cv) + 2 * np.std(cv))
+        )
 
         beta = 1.0 / (KB_EV * args.temperature)
         n_total = len(cv)
@@ -376,50 +553,24 @@ class EnhancedSamplingTool(HuginnTool):
             rate_function = float("inf")
 
         # Estimate from histogram tail
-        hist, edges = np.histogram(cv, bins=args.n_bins, density=True)
-        centers = 0.5 * (edges[:-1] + edges[1:])
-        # Find bins above threshold
-        above_mask = centers > threshold
-        if np.any(above_mask) and np.any(hist[above_mask] > 0):
-            tail_probs = hist[above_mask] / np.sum(hist)
-            tail_rates = -np.log(np.maximum(tail_probs, 1e-30)) / beta
-            avg_tail_rate = float(np.mean(tail_rates))
-        else:
-            tail_rates = []
-            avg_tail_rate = float("inf")
+        avg_tail_rate = _tail_rate(cv, threshold, args.n_bins, beta)
 
         # Transition rate (Poisson process estimate)
         # k ≈ P(X > threshold) / τ_corr  (τ_corr estimated from autocorrelation)
-        if n_total > 10:
-            # Simple autocorrelation estimate
-            ac = np.correlate(cv - cv.mean(), cv - cv.mean(), mode="full")
-            ac = ac[len(ac) // 2:]
-            ac = ac / ac[0] if ac[0] != 0 else ac
-            # Find decorrelation time
-            decorr = np.argmax(ac < 1.0 / np.e) if np.any(ac < 1.0 / np.e) else 1
-            tau_corr = float(decorr)
-        else:
-            tau_corr = 1.0
+        tau_corr = _decorrelation_time(cv, n_total)
 
         rate_estimate = p_empirical / tau_corr if p_empirical > 0 else 0.0
 
-        data = {
-            "action": "rare_event_rate",
-            "threshold": round(float(threshold), 6),
-            "n_total": n_total,
-            "n_above_threshold": int(n_above),
-            "p_empirical": p_empirical,
-            "rate_function_eV": round(rate_function, 6) if rate_function != float("inf") else None,
-            "tail_rate_eV": round(avg_tail_rate, 6) if avg_tail_rate != float("inf") else None,
-            "tau_correlation": tau_corr,
-            "transition_rate": rate_estimate,
-            "temperature_K": args.temperature,
-            "message": (
-                f"P(cv > {threshold:.3f}) = {p_empirical:.6f}, "
-                f"rate function I = {rate_function:.4f} eV"
-                if rate_function != float("inf")
-                else f"No events above threshold {threshold:.3f} in {n_total} samples."
-            ),
-        }
+        data = _rare_event_payload(
+            args,
+            threshold,
+            n_total,
+            n_above,
+            p_empirical,
+            rate_function,
+            avg_tail_rate,
+            tau_corr,
+            rate_estimate,
+        )
 
         return ToolResult(data=data)

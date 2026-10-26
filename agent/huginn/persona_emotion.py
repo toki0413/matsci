@@ -235,7 +235,9 @@ class EmotionTracker:
         self._state = self._load()
 
     def _emotion_path(self) -> Path:
-        path = self.workspace / HUGINN_DIR_NAME / "emotion" / f"{self.persona_name}.json"
+        path = (
+            self.workspace / HUGINN_DIR_NAME / "emotion" / f"{self.persona_name}.json"
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -307,6 +309,35 @@ class EmotionTracker:
         tokens = set(re.findall(r"[\w']+", lower))
 
         # Classify message sentiment and specific interaction types.
+        deltas, event_type, notes = EmotionTracker._classify_message(
+            self, lower, tokens
+        )
+
+        if any(g in lower for g in ("hi ", "hello", "hey", "早上好", "晚上好")):
+            deltas["loneliness"] = max(deltas.get("loneliness", 0.0) - 0.1, -1.0)
+            deltas["arousal"] = deltas.get("arousal", 0.0) + 0.03
+            notes.append("greeting detected")
+        if any(f in lower for f in ("bye", "goodbye", "晚安", "see you")):
+            deltas["loneliness"] = deltas.get("loneliness", 0.0) + 0.05
+            deltas["arousal"] = deltas.get("arousal", 0.0) - 0.05
+            notes.append("farewell detected")
+
+        if not deltas:
+            # Neutral message still slightly increases engagement.
+            deltas["interest"] = 0.01
+            deltas["affection"] = 0.005
+
+        return self.apply_event(
+            event_type=event_type,
+            source=source,
+            deltas=deltas,
+            note="; ".join(notes) if notes else "neutral",
+        )
+
+    def _classify_message(
+        self, lower: str, tokens: set[str]
+    ) -> tuple[dict[str, float], EmotionEventType, list[str]]:
+        """Classify sentiment and specific interaction types."""
         pos_hits = len(tokens & self._POSITIVE_WORDS)
         neg_hits = len(tokens & self._NEGATIVE_WORDS)
         praise_hits = sum(1 for p in self._PRAISE_PHRASES if p in lower)
@@ -344,27 +375,7 @@ class EmotionTracker:
             deltas["trust"] = deltas.get("trust", 0.0) - 0.03
             deltas["fatigue"] = deltas.get("fatigue", 0.0) + 0.05
             notes.append("task failed")
-
-        if any(g in lower for g in ("hi ", "hello", "hey", "早上好", "晚上好")):
-            deltas["loneliness"] = max(deltas.get("loneliness", 0.0) - 0.1, -1.0)
-            deltas["arousal"] = deltas.get("arousal", 0.0) + 0.03
-            notes.append("greeting detected")
-        if any(f in lower for f in ("bye", "goodbye", "晚安", "see you")):
-            deltas["loneliness"] = deltas.get("loneliness", 0.0) + 0.05
-            deltas["arousal"] = deltas.get("arousal", 0.0) - 0.05
-            notes.append("farewell detected")
-
-        if not deltas:
-            # Neutral message still slightly increases engagement.
-            deltas["interest"] = 0.01
-            deltas["affection"] = 0.005
-
-        return self.apply_event(
-            event_type=event_type,
-            source=source,
-            deltas=deltas,
-            note="; ".join(notes) if notes else "neutral",
-        )
+        return deltas, event_type, notes
 
     def context_prompt(self) -> str:
         """Return a short mood snippet for prompt injection.

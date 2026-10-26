@@ -147,7 +147,8 @@ class ConversationTree:
         return self.fork(self._active_leaf_id)
 
     def merge_branch_into_active(
-        self, branch_leaf_id: str,
+        self,
+        branch_leaf_id: str,
     ) -> ConversationNode | None:
         """P1-2 CRDT 合并分支 metadata 回 active leaf.
 
@@ -168,66 +169,41 @@ class ConversationTree:
         if branch_leaf_id == self._active_leaf_id:
             return None  # 自己合自己无意义
 
+        payload = ConversationTree._branch_merge_payload(self, branch_leaf_id)
+        if payload is None:
+            return None
+        active_node, branch_nodes = payload
+
+        # 调 _crdt_merge (复用 P1-2 半格)
+        try:
+            from huginn.tools.subagent_tool import _crdt_merge
+
+            merged = _crdt_merge(branch_nodes)
+        except Exception:
+            return None
+
+        return _write_merged_metadata(active_node, merged)
+
+    def _branch_merge_payload(
+        self, branch_leaf_id: str
+    ) -> tuple[ConversationNode, list[dict]] | None:
         # 找共同祖先: branch path 跟 active path 的最后一个公共节点
         branch_path = self._path_to_root(branch_leaf_id)
         active_path = self._path_to_root(self._active_leaf_id)
-        active_set = set(active_path)
-        lca = None
-        for nid in branch_path:
-            if nid in active_set:
-                lca = nid
-                break
+        lca = _find_common_ancestor(branch_path, active_path)
         if lca is None:
             return None  # 无共同祖先, 不合
 
         # 收集 branch 上 lca 之后 (不含 lca) 到 branch_leaf 的所有 assistant 节点 metadata
-        branch_nodes: list[dict] = []
-        for nid in branch_path:
-            if nid == lca:
-                break
-            node = self._nodes[nid]
-            if node.role == "assistant" and node.metadata:
-                # 给 _crdt_merge 加 ts (用 created_at 转 epoch)
-                md = dict(node.metadata)
-                try:
-                    md["ts"] = datetime.fromisoformat(
-                        node.created_at.replace("Z", "+00:00")
-                    ).timestamp()
-                except Exception:
-                    md["ts"] = 0.0
-                branch_nodes.append(md)
-
+        branch_nodes = _collect_branch_metadata(self._nodes, branch_path, lca)
         if not branch_nodes:
             return None  # 分支无 assistant metadata, 无东西可合
 
         # 收集 active leaf 的 metadata 也加入 (作为 "已合并" 基线)
         active_node = self._nodes[self._active_leaf_id]
         if active_node.metadata:
-            md_active = dict(active_node.metadata)
-            try:
-                md_active["ts"] = datetime.fromisoformat(
-                    active_node.created_at.replace("Z", "+00:00")
-                ).timestamp()
-            except Exception:
-                md_active["ts"] = 0.0
-            branch_nodes.append(md_active)
-
-        # 调 _crdt_merge (复用 P1-2 半格)
-        try:
-            from huginn.tools.subagent_tool import _crdt_merge
-            merged = _crdt_merge(branch_nodes)
-        except Exception:
-            return None
-
-        # 把合并字段写回 active leaf metadata (不覆盖原始 content)
-        # 只写 G-Set / LWW / belief 字段, 跳过 _crdt_merge 的元信息字段
-        skip_keys = {"merged", "n_sources", "sources", "ts", "success", "summary", "errors"}
-        for k, v in merged.items():
-            if k in skip_keys or k.endswith("_ts"):
-                continue
-            active_node.metadata[k] = v
-
-        return active_node
+            branch_nodes.append(_metadata_with_ts(active_node))
+        return active_node, branch_nodes
 
     def _path_to_root(self, node_id: str) -> list[str]:
         """从 node_id 往上到 root 的路径 (含自身)."""
@@ -338,6 +314,66 @@ class ConversationTree:
         }
 
 
+def _find_common_ancestor(branch_path: list[str], active_path: list[str]) -> str | None:
+    """branch path 跟 active path 的最后一个公共节点."""
+    active_set = set(active_path)
+    lca = None
+    for nid in branch_path:
+        if nid in active_set:
+            lca = nid
+            break
+    return lca
+
+
+def _metadata_with_ts(node: ConversationNode) -> dict:
+    """给 _crdt_merge 加 ts (用 created_at 转 epoch)."""
+    md = dict(node.metadata)
+    try:
+        md["ts"] = datetime.fromisoformat(
+            node.created_at.replace("Z", "+00:00")
+        ).timestamp()
+    except Exception:
+        md["ts"] = 0.0
+    return md
+
+
+def _collect_branch_metadata(
+    nodes: dict[str, ConversationNode], branch_path: list[str], lca: str
+) -> list[dict]:
+    """收集 branch 上 lca 之后 (不含 lca) 到 branch_leaf 的所有 assistant 节点 metadata."""
+    branch_nodes: list[dict] = []
+    for nid in branch_path:
+        if nid == lca:
+            break
+        node = nodes[nid]
+        if node.role == "assistant" and node.metadata:
+            branch_nodes.append(_metadata_with_ts(node))
+    return branch_nodes
+
+
+def _write_merged_metadata(
+    active_node: ConversationNode, merged: dict
+) -> ConversationNode:
+    """把合并字段写回 active leaf metadata (不覆盖原始 content).
+
+    只写 G-Set / LWW / belief 字段, 跳过 _crdt_merge 的元信息字段.
+    """
+    skip_keys = {
+        "merged",
+        "n_sources",
+        "sources",
+        "ts",
+        "success",
+        "summary",
+        "errors",
+    }
+    for k, v in merged.items():
+        if k in skip_keys or k.endswith("_ts"):
+            continue
+        active_node.metadata[k] = v
+    return active_node
+
+
 def _selfcheck() -> int:
     """assert-based demo for P1-2 CRDT branch merge."""
     from huginn.feature_flags import FeatureFlags
@@ -345,14 +381,33 @@ def _selfcheck() -> int:
     _saved = FeatureFlags.shared().is_enabled("crdt_branch_merge")
     FeatureFlags.shared().enable("crdt_branch_merge")
 
+    _selfcheck_union()
+    _selfcheck_lww()
+    _selfcheck_toggle_off()
+    _selfcheck_self_merge()
+    _selfcheck_idempotent()
+
+    FeatureFlags.shared().toggle("crdt_branch_merge", _saved)
+
+    print(
+        "conversation_tree selfcheck OK (P1-2 CRDT branch merge: union/LWW/toggle/idempotent)"
+    )
+    return 0
+
+
+def _selfcheck_union() -> None:
     # 场景 1: fork + 合并分支 findings (G-Set union)
     t = ConversationTree()
     t.add_message("user", "GaN calc")
     # 主干 assistant 消息带 findings
-    a1 = t.add_message("assistant", "main-1", metadata={"findings": ["encut=520 works"]})
+    a1 = t.add_message(
+        "assistant", "main-1", metadata={"findings": ["encut=520 works"]}
+    )
     # fork 出分支探索 alternative
     t.fork_from_active()
-    b1 = t.add_message("assistant", "branch-1", metadata={"findings": ["kpoints=4x4 better"]})
+    b1 = t.add_message(
+        "assistant", "branch-1", metadata={"findings": ["kpoints=4x4 better"]}
+    )
     # 回主干, 继续走主干
     t.set_active_leaf(a1.id)
     t.add_message("assistant", "main-2", metadata={"findings": ["converged"]})
@@ -361,12 +416,16 @@ def _selfcheck() -> int:
     merged = t.merge_branch_into_active(b1.id)
     assert merged is not None, "应返回合并后的 active node"
     findings = merged.metadata.get("findings", [])
-    assert "encut=520 works" in findings or "kpoints=4x4 better" in findings, \
+    assert "encut=520 works" in findings or "kpoints=4x4 better" in findings, (
         f"findings 应 union, got {findings}"
+    )
     # branch 的 findings 应进入 active
-    assert "kpoints=4x4 better" in findings, \
+    assert "kpoints=4x4 better" in findings, (
         f"分支 findings 应合并回主干, got {findings}"
+    )
 
+
+def _selfcheck_lww() -> None:
     # 场景 2: LWW 字段 — best_encut 取 created_at 新者
     t2 = ConversationTree()
     t2.add_message("user", "q")
@@ -378,9 +437,12 @@ def _selfcheck() -> int:
     m2 = t2.add_message("assistant", "main2", metadata={"best_encut": 500})
     t2.merge_branch_into_active(b2.id)
     # m2 时间更晚, best_encut 应保留 500 (LWW ts 大者胜)
-    assert t2.get_node(m2.id).metadata.get("best_encut") == 500, \
+    assert t2.get_node(m2.id).metadata.get("best_encut") == 500, (
         f"LWW 应取 active (ts 新), got {t2.get_node(m2.id).metadata.get('best_encut')}"
+    )
 
+
+def _selfcheck_toggle_off() -> None:
     # 场景 3: toggle off → 不合并, 返回 None
     FeatureFlags.shared().disable("crdt_branch_merge")
     t3 = ConversationTree()
@@ -392,6 +454,8 @@ def _selfcheck() -> int:
     out3 = t3.merge_branch_into_active(b3.id)
     assert out3 is None, "toggle off 应返回 None"
 
+
+def _selfcheck_self_merge() -> None:
     # 场景 4: branch_leaf == active_leaf → 自己合自己无意义
     FeatureFlags.shared().enable("crdt_branch_merge")
     t4 = ConversationTree()
@@ -400,6 +464,8 @@ def _selfcheck() -> int:
     out4 = t4.merge_branch_into_active(n4.id)
     assert out4 is None, "自合应返回 None"
 
+
+def _selfcheck_idempotent() -> None:
     # 场景 5: 幂等 — 两次合并结果一致 (半格公理)
     t5 = ConversationTree()
     t5.add_message("user", "q")
@@ -411,15 +477,12 @@ def _selfcheck() -> int:
     findings_1 = sorted(t5.get_node(t5.active_leaf_id).metadata.get("findings", []))
     t5.merge_branch_into_active(b5.id)
     findings_2 = sorted(t5.get_node(t5.active_leaf_id).metadata.get("findings", []))
-    assert findings_1 == findings_2, \
+    assert findings_1 == findings_2, (
         f"幂等公理: 两次合并应一致, got {findings_1} vs {findings_2}"
-
-    FeatureFlags.shared().toggle("crdt_branch_merge", _saved)
-
-    print("conversation_tree selfcheck OK (P1-2 CRDT branch merge: union/LWW/toggle/idempotent)")
-    return 0
+    )
 
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_selfcheck())

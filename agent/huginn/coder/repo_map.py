@@ -28,7 +28,6 @@ from huginn.coder.symbol_index import Reference, SymbolIndex
 logger = logging.getLogger(__name__)
 
 
-
 # ── tree-sitter 相关 ────────────────────────────────────────────────────
 
 # 每种语言的查询规则: 抓 class / function / method 定义
@@ -83,50 +82,297 @@ _TS_REF_QUERIES: dict[str, str] = {
 # 各语言的关键字, 抽引用时跳过
 _KEYWORDS: dict[str, set[str]] = {
     "python": {
-        "def", "class", "if", "else", "elif", "for", "while", "return", "import",
-        "from", "as", "try", "except", "finally", "with", "yield", "lambda", "global",
-        "nonlocal", "pass", "break", "continue", "raise", "assert", "del", "in", "is",
-        "and", "or", "not", "True", "False", "None", "self", "cls", "async", "await",
+        "def",
+        "class",
+        "if",
+        "else",
+        "elif",
+        "for",
+        "while",
+        "return",
+        "import",
+        "from",
+        "as",
+        "try",
+        "except",
+        "finally",
+        "with",
+        "yield",
+        "lambda",
+        "global",
+        "nonlocal",
+        "pass",
+        "break",
+        "continue",
+        "raise",
+        "assert",
+        "del",
+        "in",
+        "is",
+        "and",
+        "or",
+        "not",
+        "True",
+        "False",
+        "None",
+        "self",
+        "cls",
+        "async",
+        "await",
     },
     "javascript": {
-        "var", "let", "const", "function", "return", "if", "else", "for", "while",
-        "do", "switch", "case", "break", "continue", "new", "this", "class", "extends",
-        "super", "import", "export", "from", "as", "default", "try", "catch", "finally",
-        "throw", "typeof", "instanceof", "in", "of", "true", "false", "null", "undefined",
-        "async", "await", "yield", "static", "get", "set", "void", "delete",
+        "var",
+        "let",
+        "const",
+        "function",
+        "return",
+        "if",
+        "else",
+        "for",
+        "while",
+        "do",
+        "switch",
+        "case",
+        "break",
+        "continue",
+        "new",
+        "this",
+        "class",
+        "extends",
+        "super",
+        "import",
+        "export",
+        "from",
+        "as",
+        "default",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "typeof",
+        "instanceof",
+        "in",
+        "of",
+        "true",
+        "false",
+        "null",
+        "undefined",
+        "async",
+        "await",
+        "yield",
+        "static",
+        "get",
+        "set",
+        "void",
+        "delete",
     },
     "typescript": {
-        "var", "let", "const", "function", "return", "if", "else", "for", "while",
-        "do", "switch", "case", "break", "continue", "new", "this", "class", "extends",
-        "super", "import", "export", "from", "as", "default", "try", "catch", "finally",
-        "throw", "typeof", "instanceof", "in", "of", "true", "false", "null", "undefined",
-        "async", "await", "yield", "static", "get", "set", "void", "delete", "interface",
-        "type", "enum", "namespace", "public", "private", "protected", "readonly", "abstract",
-        "implements", "declare", "keyof", "infer", "is", "never", "unknown", "any", "string",
-        "number", "boolean", "object", "symbol", "bigint",
+        "var",
+        "let",
+        "const",
+        "function",
+        "return",
+        "if",
+        "else",
+        "for",
+        "while",
+        "do",
+        "switch",
+        "case",
+        "break",
+        "continue",
+        "new",
+        "this",
+        "class",
+        "extends",
+        "super",
+        "import",
+        "export",
+        "from",
+        "as",
+        "default",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "typeof",
+        "instanceof",
+        "in",
+        "of",
+        "true",
+        "false",
+        "null",
+        "undefined",
+        "async",
+        "await",
+        "yield",
+        "static",
+        "get",
+        "set",
+        "void",
+        "delete",
+        "interface",
+        "type",
+        "enum",
+        "namespace",
+        "public",
+        "private",
+        "protected",
+        "readonly",
+        "abstract",
+        "implements",
+        "declare",
+        "keyof",
+        "infer",
+        "is",
+        "never",
+        "unknown",
+        "any",
+        "string",
+        "number",
+        "boolean",
+        "object",
+        "symbol",
+        "bigint",
     },
     "rust": {
-        "fn", "let", "mut", "if", "else", "for", "while", "loop", "match", "return",
-        "struct", "enum", "trait", "impl", "pub", "use", "mod", "crate", "self", "Self",
-        "super", "as", "in", "ref", "move", "static", "const", "type", "where", "unsafe",
-        "async", "await", "dyn", "abstract", "become", "box", "do", "final", "macro",
-        "override", "priv", "typeof", "unsized", "virtual", "yield", "try", "true", "false",
-        "Some", "None", "Ok", "Err",
+        "fn",
+        "let",
+        "mut",
+        "if",
+        "else",
+        "for",
+        "while",
+        "loop",
+        "match",
+        "return",
+        "struct",
+        "enum",
+        "trait",
+        "impl",
+        "pub",
+        "use",
+        "mod",
+        "crate",
+        "self",
+        "Self",
+        "super",
+        "as",
+        "in",
+        "ref",
+        "move",
+        "static",
+        "const",
+        "type",
+        "where",
+        "unsafe",
+        "async",
+        "await",
+        "dyn",
+        "abstract",
+        "become",
+        "box",
+        "do",
+        "final",
+        "macro",
+        "override",
+        "priv",
+        "typeof",
+        "unsized",
+        "virtual",
+        "yield",
+        "try",
+        "true",
+        "false",
+        "Some",
+        "None",
+        "Ok",
+        "Err",
     },
     "go": {
-        "func", "var", "const", "type", "struct", "interface", "package", "import",
-        "if", "else", "for", "range", "switch", "case", "default", "break", "continue",
-        "return", "go", "defer", "select", "chan", "map", "nil", "true", "false",
-        "iota", "fallthrough", "goto",
+        "func",
+        "var",
+        "const",
+        "type",
+        "struct",
+        "interface",
+        "package",
+        "import",
+        "if",
+        "else",
+        "for",
+        "range",
+        "switch",
+        "case",
+        "default",
+        "break",
+        "continue",
+        "return",
+        "go",
+        "defer",
+        "select",
+        "chan",
+        "map",
+        "nil",
+        "true",
+        "false",
+        "iota",
+        "fallthrough",
+        "goto",
     },
     "java": {
-        "public", "private", "protected", "static", "final", "class", "interface",
-        "enum", "extends", "implements", "package", "import", "if", "else", "for",
-        "while", "do", "switch", "case", "break", "continue", "return", "new", "this",
-        "super", "try", "catch", "finally", "throw", "throws", "void", "int", "long",
-        "double", "float", "boolean", "char", "byte", "short", "String", "Object",
-        "true", "false", "null", "instanceof", "synchronized", "volatile", "transient",
-        "native", "abstract", "default", "var",
+        "public",
+        "private",
+        "protected",
+        "static",
+        "final",
+        "class",
+        "interface",
+        "enum",
+        "extends",
+        "implements",
+        "package",
+        "import",
+        "if",
+        "else",
+        "for",
+        "while",
+        "do",
+        "switch",
+        "case",
+        "break",
+        "continue",
+        "return",
+        "new",
+        "this",
+        "super",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "throws",
+        "void",
+        "int",
+        "long",
+        "double",
+        "float",
+        "boolean",
+        "char",
+        "byte",
+        "short",
+        "String",
+        "Object",
+        "true",
+        "false",
+        "null",
+        "instanceof",
+        "synchronized",
+        "volatile",
+        "transient",
+        "native",
+        "abstract",
+        "default",
+        "var",
     },
 }
 
@@ -144,9 +390,24 @@ _EXT_TO_LANG: dict[str, str] = {
 
 # 跳过这些目录, 跟 SymbolIndex 保持一致
 _SKIP_DIRS = {
-    ".git", "__pycache__", ".venv", "venv", "node_modules", "target", "dist",
-    "build", ".huginn_kb", ".chroma", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".kimi", ".kimi-code", ".idea", ".vscode", "site-packages",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".huginn_kb",
+    ".chroma",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".kimi",
+    ".kimi-code",
+    ".idea",
+    ".vscode",
+    "site-packages",
 }
 
 # 单文件最大尺寸, 超过就跳过 (避免巨型生成文件拖慢)
@@ -325,15 +586,28 @@ class _TreeSitterExtractor:
         if tree is None or tree.root_node is None:
             return [], []
 
-        symbols: list[_SymbolNode] = []
-        references: list[Reference] = []
-
         # ─ 抓定义 ─
+        symbols = _TreeSitterExtractor._collect_symbol_defs(
+            self, lang_name, tree.root_node, source, path
+        )
+
+        # ─ 抓引用 ─
+        references = _TreeSitterExtractor._collect_references(
+            self, lang_name, tree.root_node, source, path
+        )
+
+        return symbols, references
+
+    def _collect_symbol_defs(
+        self, lang_name: str, root_node: Any, source: str, path: Path
+    ) -> list[_SymbolNode]:
+        """抓定义 (class/function/method)."""
+        symbols: list[_SymbolNode] = []
         def_query_src = _TS_QUERIES.get(lang_name)
         if def_query_src:
             query = self._build_query(lang_name, def_query_src)
             if query is not None:
-                captures = self._run_captures(query, tree.root_node)
+                captures = self._run_captures(query, root_node)
                 for cap_name, nodes in captures.items():
                     # cap_name 形如 "name.class" / "name.function" / "name.method"
                     kind_tag = cap_name.split(".")[-1] if "." in cap_name else cap_name
@@ -361,13 +635,18 @@ class _TreeSitterExtractor:
                                 parent=parent_name if sym_kind == "method" else None,
                             )
                         )
+        return symbols
 
-        # ─ 抓引用 ─
+    def _collect_references(
+        self, lang_name: str, root_node: Any, source: str, path: Path
+    ) -> list[Reference]:
+        """抓引用 (去重 + 过滤关键字)."""
+        references: list[Reference] = []
         ref_query_src = _TS_REF_QUERIES.get(lang_name)
         if ref_query_src:
             query = self._build_query(lang_name, ref_query_src)
             if query is not None:
-                captures = self._run_captures(query, tree.root_node)
+                captures = self._run_captures(query, root_node)
                 kw = _KEYWORDS.get(lang_name, set())
                 seen: set[tuple[int, int]] = set()
                 for nodes in captures.values():
@@ -389,8 +668,7 @@ class _TreeSitterExtractor:
                                 col=node.start_point[1],
                             )
                         )
-
-        return symbols, references
+        return references
 
     def _run_captures(self, query: Any, root: Any) -> dict[str, list[Any]]:
         """兼容多版本 captures API。"""
@@ -423,7 +701,7 @@ class _TreeSitterExtractor:
         except Exception:  # 防御: 节点解码失败走字节切片兜底
             try:
                 return source.encode("utf-8", errors="ignore")[
-                    node.start_byte:node.end_byte
+                    node.start_byte : node.end_byte
                 ].decode("utf-8", errors="ignore")
             except Exception:  # 防御: 兜底解码也失败返空文本
                 logger.debug("best-effort op failed", exc_info=True)
@@ -458,110 +736,112 @@ class _TreeSitterExtractor:
 # ── 降级路径: 复用 SymbolIndex 的 ast + 正则 ─────────────────────────────
 
 
+class _PythonAstVisitor(ast.NodeVisitor):
+    """ast 访问器: 抽符号定义与引用, 顺便记下方法所属的类名。"""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.symbols: list[_SymbolNode] = []
+        self.references: list[Reference] = []
+        self.stack: list[ast.AST] = []
+
+    def _current_class(self) -> str | None:
+        for n in reversed(self.stack):
+            if isinstance(n, ast.ClassDef):
+                return n.name
+        return None
+
+    def visit(self, node: ast.AST) -> None:
+        self.stack.append(node)
+        super().visit(node)
+        self.stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._handle_func(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._handle_func(node)
+        self.generic_visit(node)
+
+    def _handle_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        cls = self._current_class()
+        if cls is not None:
+            self.symbols.append(
+                _SymbolNode(
+                    name=node.name,
+                    kind="method",
+                    file=str(self.path),
+                    line=node.lineno,
+                    col=node.col_offset,
+                    parent=cls,
+                )
+            )
+        else:
+            self.symbols.append(
+                _SymbolNode(
+                    name=node.name,
+                    kind="function",
+                    file=str(self.path),
+                    line=node.lineno,
+                    col=node.col_offset,
+                )
+            )
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.symbols.append(
+            _SymbolNode(
+                name=node.name,
+                kind="class",
+                file=str(self.path),
+                line=node.lineno,
+                col=node.col_offset,
+            )
+        )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.references.append(
+                Reference(
+                    name=node.id,
+                    file=str(self.path),
+                    line=node.lineno,
+                    col=node.col_offset,
+                )
+            )
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.references.append(
+                Reference(
+                    name=node.attr,
+                    file=str(self.path),
+                    line=node.lineno,
+                    col=node.col_offset,
+                )
+            )
+        self.generic_visit(node)
+
+
 def _extract_python_with_ast(
     path: Path, source: str
 ) -> tuple[list[_SymbolNode], list[Reference]]:
     """Python 用 ast 模块抽符号, 顺便记下方法所属的类名。"""
-    symbols: list[_SymbolNode] = []
-    references: list[Reference] = []
-
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return [], []
 
-    class _Visitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.stack: list[ast.AST] = []
-
-        def _current_class(self) -> str | None:
-            for n in reversed(self.stack):
-                if isinstance(n, ast.ClassDef):
-                    return n.name
-            return None
-
-        def visit(self, node: ast.AST) -> None:
-            self.stack.append(node)
-            super().visit(node)
-            self.stack.pop()
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self._handle_func(node)
-            self.generic_visit(node)
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self._handle_func(node)
-            self.generic_visit(node)
-
-        def _handle_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-            cls = self._current_class()
-            if cls is not None:
-                symbols.append(
-                    _SymbolNode(
-                        name=node.name,
-                        kind="method",
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                        parent=cls,
-                    )
-                )
-            else:
-                symbols.append(
-                    _SymbolNode(
-                        name=node.name,
-                        kind="function",
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                    )
-                )
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            symbols.append(
-                _SymbolNode(
-                    name=node.name,
-                    kind="class",
-                    file=str(path),
-                    line=node.lineno,
-                    col=node.col_offset,
-                )
-            )
-            self.generic_visit(node)
-
-        def visit_Name(self, node: ast.Name) -> None:
-            if isinstance(node.ctx, ast.Load):
-                references.append(
-                    Reference(
-                        name=node.id,
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                    )
-                )
-
-        def visit_Attribute(self, node: ast.Attribute) -> None:
-            if isinstance(node.ctx, ast.Load):
-                references.append(
-                    Reference(
-                        name=node.attr,
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                    )
-                )
-            self.generic_visit(node)
-
-    _Visitor().visit(tree)
-    return symbols, references
+    visitor = _PythonAstVisitor(path)
+    visitor.visit(tree)
+    return visitor.symbols, visitor.references
 
 
 _CLASS_RE = re.compile(
     r"^\s*(?:export\s+)?(?:class|struct|interface|trait|enum)\s+(\w+)", re.M
 )
-_FUNC_RE = re.compile(
-    r"^\s*(?:export\s+)?(?:function|def|fn|func)\s+(\w+)\s*\(", re.M
-)
+_FUNC_RE = re.compile(r"^\s*(?:export\s+)?(?:function|def|fn|func)\s+(\w+)\s*\(", re.M)
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
 
@@ -643,7 +923,9 @@ class RepoMap:
         self._symbols: list[_SymbolNode] = []
         self._references: list[Reference] = []
         # 节点 id = 在 self._symbols 里的 index
-        self._out_edges: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        self._out_edges: dict[int, dict[int, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
         self._in_edges: dict[int, set[int]] = defaultdict(set)
         self._ranks: list[float] = []
         # 按符号名建索引, 方便查引用目标
@@ -718,7 +1000,9 @@ class RepoMap:
                 src = py_sources.get(sym.file)
                 if src is None:
                     try:
-                        src = Path(sym.file).read_text(encoding="utf-8", errors="ignore")
+                        src = Path(sym.file).read_text(
+                            encoding="utf-8", errors="ignore"
+                        )
                     except Exception:  # 防御: 读取失败置空源码继续
                         logger.debug("best-effort op failed", exc_info=True)
                         src = ""
@@ -980,54 +1264,72 @@ class RepoMap:
         for file in file_order:
             if used >= budget_lines:
                 break
-            rel = self._rel_path(file)
-            lines.append(rel)
-            used += 1
-
-            # 组内: class 在前, 它的 method 紧随; 然后是顶层 function
-            syms_in_file = by_file[file]
-            # 先按 parent 分桶 (None 的放顶层)
-            by_parent: dict[str | None, list[int]] = defaultdict(list)
-            for sid in syms_in_file:
-                by_parent[self._symbols[sid].parent].append(sid)
-
-            # 顶层 = class + 没有 parent 的符号 + parent 类不在选中集的孤儿 method
-            # 孤儿 method 直接拉到顶层, 不然文件头下面啥都没有很奇怪
-            top_level: list[int] = []
-            for sid in syms_in_file:
-                sym = self._symbols[sid]
-                if sym.kind == "class" or sym.parent is None:
-                    top_level.append(sid)
-                elif sym.kind == "method":
-                    # parent 类没被选进来, 当顶层处理
-                    parent_in_set = any(
-                        self._symbols[oid].kind == "class"
-                        and self._symbols[oid].name == sym.parent
-                        for oid in syms_in_file
-                    )
-                    if not parent_in_set:
-                        top_level.append(sid)
-            top_level.sort(key=lambda i: self._symbols[i].line)
-
-            for sid in top_level:
-                if used >= budget_lines:
-                    break
-                sym = self._symbols[sid]
-                lines.append(f"  {sym.kind} {sym.name} (line {sym.line})")
-                used += 1
-
-                # 该 class 下的 method
-                if sym.kind == "class":
-                    methods = by_parent.get(sym.name, [])
-                    methods.sort(key=lambda i: self._symbols[i].line)
-                    for mid in methods:
-                        if used >= budget_lines:
-                            break
-                        msym = self._symbols[mid]
-                        lines.append(f"    {msym.kind} {msym.name} (line {msym.line})")
-                        used += 1
+            section, consumed = RepoMap._render_file_section(
+                self, file, by_file[file], budget_lines - used
+            )
+            lines.extend(section)
+            used += consumed
 
         return "\n".join(lines)
+
+    def _render_file_section(
+        self, file: str, syms_in_file: list[int], remaining: int
+    ) -> tuple[list[str], int]:
+        """渲染单个文件的分组 (文件名 + 顶层符号 + 其 method), 受剩余行数约束。"""
+        budget = remaining
+        lines: list[str] = []
+        rel = self._rel_path(file)
+        lines.append(rel)
+        remaining -= 1
+
+        # 组内: class 在前, 它的 method 紧随; 然后是顶层 function
+        # 先按 parent 分桶 (None 的放顶层)
+        by_parent: dict[str | None, list[int]] = defaultdict(list)
+        for sid in syms_in_file:
+            by_parent[self._symbols[sid].parent].append(sid)
+
+        # 顶层 = class + 没有 parent 的符号 + parent 类不在选中集的孤儿 method
+        # 孤儿 method 直接拉到顶层, 不然文件头下面啥都没有很奇怪
+        top_level = RepoMap._collect_top_level_ids(self, syms_in_file)
+
+        for sid in top_level:
+            if remaining <= 0:
+                break
+            sym = self._symbols[sid]
+            lines.append(f"  {sym.kind} {sym.name} (line {sym.line})")
+            remaining -= 1
+
+            # 该 class 下的 method
+            if sym.kind == "class":
+                methods = by_parent.get(sym.name, [])
+                methods.sort(key=lambda i: self._symbols[i].line)
+                for mid in methods:
+                    if remaining <= 0:
+                        break
+                    msym = self._symbols[mid]
+                    lines.append(f"    {msym.kind} {msym.name} (line {msym.line})")
+                    remaining -= 1
+
+        return lines, budget - remaining
+
+    def _collect_top_level_ids(self, syms_in_file: list[int]) -> list[int]:
+        """顶层 = class + 没有 parent 的符号 + parent 类不在选中集的孤儿 method."""
+        top_level: list[int] = []
+        for sid in syms_in_file:
+            sym = self._symbols[sid]
+            if sym.kind == "class" or sym.parent is None:
+                top_level.append(sid)
+            elif sym.kind == "method":
+                # parent 类没被选进来, 当顶层处理
+                parent_in_set = any(
+                    self._symbols[oid].kind == "class"
+                    and self._symbols[oid].name == sym.parent
+                    for oid in syms_in_file
+                )
+                if not parent_in_set:
+                    top_level.append(sid)
+        top_level.sort(key=lambda i: self._symbols[i].line)
+        return top_level
 
     def get_symbol_context(self, symbol_name: str, depth: int = 1) -> str:
         """获取指定符号的上下文 (定义 + 引用 + 被引用)。
@@ -1051,60 +1353,11 @@ class RepoMap:
             out.append(f"  {rel}:{sym.line}  {sym.kind} {sym.name}")
 
         # 被引用: 哪些文件/符号引用了它
-        ref_sites: list[tuple[str, int]] = []
-        for ref in self._references:
-            if ref.name == symbol_name:
-                ref_sites.append((ref.file, ref.line))
-        ref_sites.sort()
-
-        if ref_sites:
-            out.append("")
-            out.append(f"被引用 ({len(ref_sites)} 处):")
-            shown = 0
-            for f, ln in ref_sites:
-                if shown >= 30:
-                    out.append(f"  ... 还有 {len(ref_sites) - shown} 处")
-                    break
-                containers = self._find_containing_symbol_ids(f, ln)
-                rel = self._rel_path(f)
-                if containers:
-                    # 取最内层 (第一个是 method/function)
-                    inner = self._symbols[containers[0]]
-                    out.append(
-                        f"  {rel}:{ln}  in {inner.kind} {inner.name}"
-                    )
-                else:
-                    out.append(f"  {rel}:{ln}")
-                shown += 1  # noqa: SIM113
+        out.extend(RepoMap._format_reference_sites(self, symbol_name))
 
         # 引用了哪些其他符号 (depth=1)
         if depth >= 1:
-            related: dict[str, int] = defaultdict(int)
-            for sid in defs:
-                sym = self._symbols[sid]
-                # 找该符号作用域内的引用: 行号在 [sym.line, next_sibling_line) 之间
-                siblings = sorted(
-                    i
-                    for i in self._symbols_by_file.get(sym.file, [])
-                    if i != sid
-                )
-                end_line = 10**9
-                for sib_id in siblings:
-                    sib = self._symbols[sib_id]
-                    if sib.line > sym.line:
-                        end_line = min(end_line, sib.line)
-
-                for ref in self._references:
-                    if ref.file != sym.file:
-                        continue
-                    if not (sym.line <= ref.line < end_line):
-                        continue
-                    if ref.name == sym.name:
-                        continue
-                    # 只记有定义的 (避免把局部变量也列出来)
-                    if ref.name in self._defs_by_name:
-                        related[ref.name] += 1
-
+            related = RepoMap._collect_scope_related(self, defs)
             if related:
                 out.append("")
                 out.append("作用域内引用的其他符号 (top 20):")
@@ -1112,6 +1365,60 @@ class RepoMap:
                     out.append(f"  {name}  ({cnt} 次)")
 
         return "\n".join(out)
+
+    def _format_reference_sites(self, symbol_name: str) -> list[str]:
+        """格式化被引用位置 (最多展示 30 处)。"""
+        ref_sites: list[tuple[str, int]] = []
+        for ref in self._references:
+            if ref.name == symbol_name:
+                ref_sites.append((ref.file, ref.line))
+        ref_sites.sort()
+
+        if not ref_sites:
+            return []
+        out: list[str] = ["", f"被引用 ({len(ref_sites)} 处):"]
+        shown = 0
+        for f, ln in ref_sites:
+            if shown >= 30:
+                out.append(f"  ... 还有 {len(ref_sites) - shown} 处")
+                break
+            containers = self._find_containing_symbol_ids(f, ln)
+            rel = self._rel_path(f)
+            if containers:
+                # 取最内层 (第一个是 method/function)
+                inner = self._symbols[containers[0]]
+                out.append(f"  {rel}:{ln}  in {inner.kind} {inner.name}")
+            else:
+                out.append(f"  {rel}:{ln}")
+            shown += 1  # noqa: SIM113
+        return out
+
+    def _collect_scope_related(self, defs: list[int]) -> dict[str, int]:
+        """统计各符号作用域内引用的其他符号频次。"""
+        related: dict[str, int] = defaultdict(int)
+        for sid in defs:
+            sym = self._symbols[sid]
+            # 找该符号作用域内的引用: 行号在 [sym.line, next_sibling_line) 之间
+            siblings = sorted(
+                i for i in self._symbols_by_file.get(sym.file, []) if i != sid
+            )
+            end_line = 10**9
+            for sib_id in siblings:
+                sib = self._symbols[sib_id]
+                if sib.line > sym.line:
+                    end_line = min(end_line, sib.line)
+
+            for ref in self._references:
+                if ref.file != sym.file:
+                    continue
+                if not (sym.line <= ref.line < end_line):
+                    continue
+                if ref.name == sym.name:
+                    continue
+                # 只记有定义的 (避免把局部变量也列出来)
+                if ref.name in self._defs_by_name:
+                    related[ref.name] += 1
+        return related
 
     # ── 辅助 ──────────────────────────────────────────────────────────
 

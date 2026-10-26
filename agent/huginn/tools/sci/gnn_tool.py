@@ -57,7 +57,9 @@ class GNNToolInput(BaseModel):
 # ── model builders ─────────────────────────────────────────────────
 
 
-def _build_gcn(in_dim: int, hidden_dim: int, num_classes: int, num_layers: int, dropout: float):
+def _build_gcn(
+    in_dim: int, hidden_dim: int, num_classes: int, num_layers: int, dropout: float
+):
     """Build a vanilla stacked-GCNConv classifier. Imports torch lazily."""
     import torch.nn as nn
     import torch.nn.functional as F  # noqa: N812
@@ -87,7 +89,9 @@ def _build_gcn(in_dim: int, hidden_dim: int, num_classes: int, num_layers: int, 
     return GCN()
 
 
-def _spectral_embedding(edge_index: np.ndarray, n: int, k: int) -> tuple[np.ndarray, int]:
+def _spectral_embedding(
+    edge_index: np.ndarray, n: int, k: int
+) -> tuple[np.ndarray, int]:
     """NetworkX + scipy spectral embedding on the normalized Laplacian.
 
     Returns (embedding n x k_eff, k_eff). Falls back to dense eigh when the
@@ -115,6 +119,120 @@ def _spectral_embedding(edge_index: np.ndarray, n: int, k: int) -> tuple[np.ndar
         vals, vecs = dense_eigh(L.toarray())
         vecs = vecs[:, :k_eff]
     return np.asarray(vecs, dtype=np.float64), int(vecs.shape[1])
+
+
+def _fit_pyg_gcn(feats, edge_index, labels, mask, args, n_classes):
+    """Build tensors + GCN, run the supervised training loop."""
+    import torch
+    import torch.nn.functional as F  # noqa: N812
+
+    from huginn.tools.sci import get_torch_device
+
+    _dev = get_torch_device()
+    x = torch.from_numpy(feats).to(_dev)
+    ei = torch.from_numpy(edge_index).to(_dev)
+    y = torch.from_numpy(labels).to(_dev)
+    m = torch.from_numpy(mask).to(_dev)
+
+    model = _build_gcn(
+        int(feats.shape[1]), args.hidden_dim, n_classes, args.num_layers, args.dropout
+    )
+    model = model.to(_dev)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    loss_curve: list[float] = []
+    for _ in range(args.epochs):
+        model.train()
+        opt.zero_grad()
+        out = model(x, ei)
+        loss = F.cross_entropy(out[m], y[m])
+        loss.backward()
+        opt.step()
+        loss_curve.append(float(loss.item()))
+
+    return model, x, ei, loss_curve
+
+
+def _fallback_state(clf, k_eff: int, n_classes: int) -> dict[str, Any]:
+    """Serialize the fitted LogisticRegression into a state_dict."""
+    return {
+        "method": "spectral_lr",
+        "coef": clf.coef_.tolist(),
+        "intercept": clf.intercept_.tolist(),
+        "classes": [int(c) for c in clf.classes_.tolist()],
+        "k": int(k_eff),
+        "num_classes": int(n_classes),
+    }
+
+
+def _train_result(
+    state: dict[str, Any],
+    loss_curve: list[float],
+    emb: np.ndarray,
+    preds: np.ndarray,
+    n_classes: int,
+    n_nodes: int,
+    fallback_used: bool,
+    message: str,
+) -> ToolResult:
+    """Common result envelope for both training paths."""
+    return ToolResult(
+        data={
+            "state_dict": state,
+            "loss_curve": loss_curve,
+            "embeddings": emb.tolist(),
+            "predictions": preds.tolist(),
+            "num_classes": int(n_classes),
+            "fallback_used": fallback_used,
+            "n_nodes": int(n_nodes),
+            "message": message,
+        },
+        success=True,
+    )
+
+
+def _embed_pyg(args, edge_index, feats, sd, n, pyg_available: bool) -> ToolResult:
+    """Run the forward pass of a restored PyG model and return embeddings."""
+    if not pyg_available:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="state_dict was trained with PyG but torch_geometric is not available",
+        )
+    import torch
+
+    meta = sd.get("_meta", {})
+    in_dim = int(meta.get("in_dim", feats.shape[1]))
+    if in_dim != feats.shape[1]:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"node_features dim {feats.shape[1]} != trained in_dim {in_dim}",
+        )
+    model = _build_gcn(
+        in_dim,
+        int(meta.get("hidden_dim", args.hidden_dim)),
+        int(meta.get("num_classes", args.num_classes or 2)),
+        int(meta.get("num_layers", args.num_layers)),
+        args.dropout,
+    )
+    GNNTool._load_pyg_state(model, sd)
+    from huginn.tools.sci import get_torch_device
+
+    _dev = get_torch_device()
+    model = model.to(_dev)
+    x = torch.from_numpy(feats).to(_dev)
+    ei = torch.from_numpy(edge_index).to(_dev)
+    with torch.no_grad():
+        emb = model.embed(x, ei).cpu().numpy()
+    return ToolResult(
+        data={
+            "embeddings": emb.tolist(),
+            "fallback_used": False,
+            "message": f"GCN hidden embeddings for {n} nodes (PyG path).",
+        },
+        success=True,
+    )
 
 
 # ── tool ───────────────────────────────────────────────────────────
@@ -248,34 +366,14 @@ class GNNTool(HuginnTool):
         self, args, edge_index, feats, labels, mask, n_classes
     ) -> ToolResult:
         import torch
-        import torch.nn.functional as F  # noqa: N812
 
         if args.seed is not None:
             torch.manual_seed(args.seed)
             np.random.seed(args.seed)
 
-        from huginn.tools.sci import get_torch_device
-        _dev = get_torch_device()
-        x = torch.from_numpy(feats).to(_dev)
-        ei = torch.from_numpy(edge_index).to(_dev)
-        y = torch.from_numpy(labels).to(_dev)
-        m = torch.from_numpy(mask).to(_dev)
-
-        model = _build_gcn(
-            int(feats.shape[1]), args.hidden_dim, n_classes, args.num_layers, args.dropout
+        model, x, ei, loss_curve = _fit_pyg_gcn(
+            feats, edge_index, labels, mask, args, n_classes
         )
-        model = model.to(_dev)
-        opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-
-        loss_curve: list[float] = []
-        for _ in range(args.epochs):
-            model.train()
-            opt.zero_grad()
-            out = model(x, ei)
-            loss = F.cross_entropy(out[m], y[m])
-            loss.backward()
-            opt.step()
-            loss_curve.append(float(loss.item()))
 
         model.eval()
         with torch.no_grad():
@@ -290,21 +388,11 @@ class GNNTool(HuginnTool):
             "num_classes": int(n_classes),
         }
 
-        return ToolResult(
-            data={
-                "state_dict": state,
-                "loss_curve": loss_curve,
-                "embeddings": emb.tolist(),
-                "predictions": preds.tolist(),
-                "num_classes": int(n_classes),
-                "fallback_used": False,
-                "n_nodes": int(len(labels)),
-                "message": (
-                    f"PyG GCN trained {args.epochs} epoch(s), "
-                    f"final loss {loss_curve[-1]:.6f}."
-                ),
-            },
-            success=True,
+        message = (
+            f"PyG GCN trained {args.epochs} epoch(s), final loss {loss_curve[-1]:.6f}."
+        )
+        return _train_result(
+            state, loss_curve, emb, preds, n_classes, len(labels), False, message
         )
 
     def _train_fallback(
@@ -347,30 +435,14 @@ class GNNTool(HuginnTool):
             loss = float(log_loss(y_train, probs))
         preds = clf.predict(emb)
 
-        state = {
-            "method": "spectral_lr",
-            "coef": clf.coef_.tolist(),
-            "intercept": clf.intercept_.tolist(),
-            "classes": [int(c) for c in clf.classes_.tolist()],
-            "k": int(k_eff),
-            "num_classes": int(n_classes),
-        }
+        state = _fallback_state(clf, k_eff, n_classes)
 
-        return ToolResult(
-            data={
-                "state_dict": state,
-                "loss_curve": [loss],
-                "embeddings": emb.tolist(),
-                "predictions": preds.tolist(),
-                "num_classes": int(n_classes),
-                "fallback_used": True,
-                "n_nodes": int(len(labels)),
-                "message": (
-                    f"Fallback (NetworkX spectral k={k_eff} + sklearn "
-                    f"LogisticRegression), train log-loss {loss:.6f}."
-                ),
-            },
-            success=True,
+        message = (
+            f"Fallback (NetworkX spectral k={k_eff} + sklearn "
+            f"LogisticRegression), train log-loss {loss:.6f}."
+        )
+        return _train_result(
+            state, [loss], emb, preds, n_classes, len(labels), True, message
         )
 
     # ── predict ────────────────────────────────────────────────────
@@ -432,6 +504,7 @@ class GNNTool(HuginnTool):
         )
         self._load_pyg_state(model, sd)
         from huginn.tools.sci import get_torch_device
+
         _dev = get_torch_device()
         model = model.to(_dev)
         x = torch.from_numpy(feats).to(_dev)
@@ -470,45 +543,7 @@ class GNNTool(HuginnTool):
                 success=True,
             )
 
-        if not self._pyg_available():
-            return ToolResult(
-                data=None,
-                success=False,
-                error="state_dict was trained with PyG but torch_geometric is not available",
-            )
-        import torch
-
-        meta = sd.get("_meta", {})
-        in_dim = int(meta.get("in_dim", feats.shape[1]))
-        if in_dim != feats.shape[1]:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"node_features dim {feats.shape[1]} != trained in_dim {in_dim}",
-            )
-        model = _build_gcn(
-            in_dim,
-            int(meta.get("hidden_dim", args.hidden_dim)),
-            int(meta.get("num_classes", args.num_classes or 2)),
-            int(meta.get("num_layers", args.num_layers)),
-            args.dropout,
-        )
-        self._load_pyg_state(model, sd)
-        from huginn.tools.sci import get_torch_device
-        _dev = get_torch_device()
-        model = model.to(_dev)
-        x = torch.from_numpy(feats).to(_dev)
-        ei = torch.from_numpy(edge_index).to(_dev)
-        with torch.no_grad():
-            emb = model.embed(x, ei).cpu().numpy()
-        return ToolResult(
-            data={
-                "embeddings": emb.tolist(),
-                "fallback_used": False,
-                "message": f"GCN hidden embeddings for {n} nodes (PyG path).",
-            },
-            success=True,
-        )
+        return _embed_pyg(args, edge_index, feats, sd, n, self._pyg_available())
 
 
 # ── self-check: karate club, 1 epoch, PyG or fallback ──────────────
@@ -542,14 +577,16 @@ if __name__ == "__main__":
     n = G.number_of_nodes()
 
     tool = GNNTool()
-    res = tool.call({
-        "action": "train",
-        "edge_index": edge_index,
-        "labels": labels,
-        "epochs": 1,
-        "hidden_dim": 8,
-        "seed": 0,
-    })
+    res = tool.call(
+        {
+            "action": "train",
+            "edge_index": edge_index,
+            "labels": labels,
+            "epochs": 1,
+            "hidden_dim": 8,
+            "seed": 0,
+        }
+    )
     assert res.success, res.error
     d = res.data
     assert "state_dict" in d
@@ -563,22 +600,26 @@ if __name__ == "__main__":
     print(f"  message: {d['message']}")
 
     # round-trip: predict + embed using the returned state_dict
-    pred = tool.call({
-        "action": "predict",
-        "edge_index": edge_index,
-        "state_dict": d["state_dict"],
-        "hidden_dim": 8,
-    })
+    pred = tool.call(
+        {
+            "action": "predict",
+            "edge_index": edge_index,
+            "state_dict": d["state_dict"],
+            "hidden_dim": 8,
+        }
+    )
     assert pred.success, pred.error
     assert len(pred.data["predictions"]) == n
     print(f"predict ok: {len(pred.data['predictions'])} predictions")
 
-    emb = tool.call({
-        "action": "embed",
-        "edge_index": edge_index,
-        "state_dict": d["state_dict"],
-        "hidden_dim": 8,
-    })
+    emb = tool.call(
+        {
+            "action": "embed",
+            "edge_index": edge_index,
+            "state_dict": d["state_dict"],
+            "hidden_dim": 8,
+        }
+    )
     assert emb.success, emb.error
     assert len(emb.data["embeddings"]) == n
     print(f"embed ok: {len(emb.data['embeddings'])} embeddings")

@@ -62,7 +62,9 @@ def should_retry_render(
     return attempt < max_attempts
 
 
-def _error_directive(qa_result: dict[str, Any] | None, consistency_result: dict[str, Any] | None) -> str:
+def _error_directive(
+    qa_result: dict[str, Any] | None, consistency_result: dict[str, Any] | None
+) -> str:
     parts = []
     for r in (qa_result, consistency_result):
         if isinstance(r, dict) and r.get("error"):
@@ -70,7 +72,9 @@ def _error_directive(qa_result: dict[str, Any] | None, consistency_result: dict[
     return "visual gate error: " + (" | ".join(parts) if parts else "unknown")
 
 
-def _directive(qa_result: dict[str, Any] | None, consistency_result: dict[str, Any] | None) -> str:
+def _directive(
+    qa_result: dict[str, Any] | None, consistency_result: dict[str, Any] | None
+) -> str:
     """拼接机读修正指令 (重渲染时传给精修循环)."""
     parts: list[str] = []
     if isinstance(qa_result, dict):
@@ -88,6 +92,50 @@ def _directive(qa_result: dict[str, Any] | None, consistency_result: dict[str, A
     for f in cons.get("flags", []):
         parts.append(f"figure {f}")
     return " | ".join(parts) if parts else "figure needs refinement"
+
+
+def _gate_decision(
+    action: str,
+    verdict: str,
+    gap_type: str,
+    directive: str,
+    flags: list[str],
+    attempt: int,
+    max_attempts: int,
+) -> dict[str, Any]:
+    """组装门禁判定 dict (键顺序固定)."""
+    return {
+        "action": action,
+        "verdict": verdict,
+        "gap_type": gap_type,
+        "directive": directive,
+        "flags": flags,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+    }
+
+
+def _short_circuit_decision(
+    qa_result, consistency_result, flags, attempt: int, max_attempts: int
+):
+    """error / pass 短路判定; 不短路返回 None."""
+    # error 短路
+    if (qa_result or {}).get("verdict") == "error" or (consistency_result or {}).get(
+        "verdict"
+    ) == "error":
+        return _gate_decision(
+            "error",
+            "error",
+            "none",
+            _error_directive(qa_result, consistency_result),
+            flags,
+            attempt,
+            max_attempts,
+        )
+
+    if not flags:
+        return _gate_decision("pass", "pass", "none", "", [], attempt, max_attempts)
+    return None
 
 
 def render_gate_decision(
@@ -110,30 +158,11 @@ def render_gate_decision(
     cons_flags = list((consistency_result or {}).get("flags", []))
     flags = qa_flags + cons_flags
 
-    # error 短路
-    if (qa_result or {}).get("verdict") == "error" or (
-        consistency_result or {}
-    ).get("verdict") == "error":
-        return {
-            "action": "error",
-            "verdict": "error",
-            "gap_type": "none",
-            "directive": _error_directive(qa_result, consistency_result),
-            "flags": flags,
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-        }
-
-    if not flags:
-        return {
-            "action": "pass",
-            "verdict": "pass",
-            "gap_type": "none",
-            "directive": "",
-            "flags": [],
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-        }
+    early = _short_circuit_decision(
+        qa_result, consistency_result, flags, attempt, max_attempts
+    )
+    if early is not None:
+        return early
 
     gap_type = derive_figure_gap_type(qa_flags, cons_flags)
     # 硬性 fail: duplicate 或几何性 flag (blank/clipped)
@@ -151,15 +180,101 @@ def render_gate_decision(
     else:
         action = "finalize"
 
+    return _gate_decision(
+        action, effective_verdict, gap_type, directive, flags, attempt, max_attempts
+    )
+
+
+def _gate_chain_unavailable(image_path, attempt, max_attempts) -> dict[str, Any]:
+    """门禁链不可用时的降级判定."""
     return {
-        "action": action,
-        "verdict": effective_verdict,
-        "gap_type": gap_type,
-        "directive": directive,
-        "flags": flags,
+        "action": "degrade",
+        "verdict": "fail",
+        "gap_type": "none",
+        "directive": "visual gate chain unavailable (QA/consistency backend missing)",
+        "flags": [],
         "attempt": attempt,
         "max_attempts": max_attempts,
+        "image_path": str(image_path),
     }
+
+
+def _gate_available() -> bool:
+    """T-BCSE-14 空间可组合: 门禁依赖 QA + 一致性, 链不完整时自动降级."""
+    try:
+        from huginn.security.visual_chain import gate_available
+
+        return gate_available()
+    except Exception:
+        logger.debug("visualize_gate: space-composition check failed", exc_info=True)
+        return True
+
+
+def _check_figure(path, expected, index, extractor, qa_figure, consistency_verdict):
+    """跑 QA + 一致性校验."""
+    qa = qa_figure(path)
+    cons = (
+        consistency_verdict(path, expected, index=index, extractor=extractor)
+        if (expected or index is not None)
+        else None
+    )
+    return qa, cons
+
+
+def _track_intermediate(revertible, path) -> None:
+    # 重渲染产生的中间产物登记逆: 整体回滚时删除, 避免残留废弃图.
+    if revertible is not None:
+        p = Path(path)
+        revertible.track(lambda: p.unlink(missing_ok=True))
+
+
+def _retry_once(current: Path, decision, render_fn, revertible) -> Path | None:
+    """尝试一次重渲染; 无法产生新图返回 None."""
+    try:
+        new_path = render_fn(decision["directive"])
+    except Exception:
+        logger.debug("visualize_gate: render_fn failed", exc_info=True)
+        return None
+    if not new_path or Path(new_path) == current:
+        return None  # 未产生新图 → 停止, 避免死循环
+    _track_intermediate(revertible, current)  # 旧图将被新图取代, 登记为可逆中间产物
+    return Path(new_path)
+
+
+def _make_checker(expected, index, extractor, qa_figure, consistency_verdict):
+    """绑定校验参数, 返回单参路径检查函数."""
+
+    def check(path):
+        return _check_figure(
+            path, expected, index, extractor, qa_figure, consistency_verdict
+        )
+
+    return check
+
+
+def _refine_loop(
+    current: Path,
+    decision: dict[str, Any],
+    qa: dict[str, Any],
+    cons: dict[str, Any] | None,
+    check,
+    render_fn,
+    revertible,
+    max_attempts: int,
+) -> dict[str, Any]:
+    """重渲染精修循环; 返回带 image_path 的最终 decision."""
+    while decision["action"] == "retry" and render_fn is not None:
+        new_current = _retry_once(current, decision, render_fn, revertible)
+        if new_current is None:
+            break
+        current = new_current
+        qa, cons = check(current)
+        decision = render_gate_decision(qa, cons, decision["attempt"] + 1, max_attempts)
+    # 已到 retry 但无法再重渲染 (无 render_fn / 未产生新图): 转降级, 不滞留 retry
+    if decision["action"] == "retry":
+        decision = render_gate_decision(qa, cons, max_attempts, max_attempts)
+    decision["image_path"] = str(current)
+    return decision
 
 
 def run_figure_gate(
@@ -195,59 +310,14 @@ def run_figure_gate(
 
     # T-BCSE-14 空间可组合: 门禁依赖 QA + 一致性, 链不完整时自动降级,
     # 不再跑无依据的门禁判定 (声明即保证, 见 huginn/security/visual_chain.py).
-    try:
-        from huginn.security.visual_chain import gate_available
+    if not _gate_available():
+        return _gate_chain_unavailable(image_path, attempt, max_attempts)
 
-        if not gate_available():
-            return {
-                "action": "degrade",
-                "verdict": "fail",
-                "gap_type": "none",
-                "directive": "visual gate chain unavailable (QA/consistency backend missing)",
-                "flags": [],
-                "attempt": attempt,
-                "max_attempts": max_attempts,
-                "image_path": str(image_path),
-            }
-    except Exception:
-        logger.debug("visualize_gate: space-composition check failed", exc_info=True)
-
-    def _track_intermediate(path: str | Path) -> None:
-        # 重渲染产生的中间产物登记逆: 整体回滚时删除, 避免残留废弃图.
-        if revertible is not None:
-            p = Path(path)
-            revertible.track(lambda: p.unlink(missing_ok=True))
-
-    def _check(path: str | Path) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        qa = qa_figure(path)
-        cons = (
-            consistency_verdict(path, expected, index=index, extractor=extractor)
-            if (expected or index is not None)
-            else None
-        )
-        return qa, cons
-
-    qa, cons = _check(image_path)
+    qa, cons = _check_figure(
+        image_path, expected, index, extractor, qa_figure, consistency_verdict
+    )
     decision = render_gate_decision(qa, cons, attempt, max_attempts)
-    current = Path(image_path)
-    while decision["action"] == "retry" and render_fn is not None:
-        try:
-            new_path = render_fn(decision["directive"])
-        except Exception:
-            logger.debug("visualize_gate: render_fn failed", exc_info=True)
-            break
-        if not new_path or Path(new_path) == current:
-            break  # 未产生新图 → 停止, 避免死循环
-        _track_intermediate(current)  # 旧图将被新图取代, 登记为可逆中间产物
-        current = Path(new_path)
-        qa, cons = _check(current)
-        decision = render_gate_decision(
-            qa, cons, decision["attempt"] + 1, max_attempts
-        )
-    # 已到 retry 但无法再重渲染 (无 render_fn / 未产生新图): 转降级, 不滞留 retry
-    if decision["action"] == "retry":
-        decision = render_gate_decision(
-            qa, cons, max_attempts, max_attempts
-        )
-    decision["image_path"] = str(current)
-    return decision
+    check = _make_checker(expected, index, extractor, qa_figure, consistency_verdict)
+    return _refine_loop(
+        Path(image_path), decision, qa, cons, check, render_fn, revertible, max_attempts
+    )

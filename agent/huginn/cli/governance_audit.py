@@ -175,24 +175,21 @@ def discover_governance_tests(agent_root: Path) -> list[str]:
     return sorted(found)
 
 
-def _parse_guard_steps(text: str) -> list[tuple[str, str]]:
-    """从 ci.yml 文本抽出 (step_name, test_path). 优先 yaml, 退化行扫描."""
-    try:
-        import yaml  # 可选依赖: 有则精确, 无则退化
+def _parse_guard_steps_yaml(data: dict) -> list[tuple[str, str]]:
+    """yaml 主路径: 逐 job/step 抽 pytest run 里的 tests/*.py 路径."""
+    out: list[tuple[str, str]] = []
+    for job in (data.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            run = step.get("run") or ""
+            if "pytest" in run:
+                m = _TEST_PATH_RE.search(run)
+                if m:
+                    out.append((step.get("name") or "", m.group(0)))
+    return out
 
-        data = yaml.safe_load(text) or {}
-        out: list[tuple[str, str]] = []
-        for job in (data.get("jobs") or {}).values():
-            for step in (job or {}).get("steps") or []:
-                run = step.get("run") or ""
-                if "pytest" in run:
-                    m = _TEST_PATH_RE.search(run)
-                    if m:
-                        out.append((step.get("name") or "", m.group(0)))
-        if out:
-            return out
-    except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
-        logger.debug("yaml 解析 ci.yml 失败, 退化为行扫描", exc_info=True)
+
+def _parse_guard_steps_lines(text: str) -> list[tuple[str, str]]:
+    """行扫描退化路径: 从 ci.yml 文本抽 (step_name, test_path)."""
     # 行扫描退化: 每个 `- ` 列表项起一个 step 块, 块 = 该行 + 缩进**更深**的续行;
     # 遇到缩进 ≤ 破折号缩进的非空行即收尾 (即下一个 `- ` 步骤或上一层 job 键)。
     # 关键是**按缩进收边**, 否则 job 级注释 (可能同时出现 pytest 与 tests/*.py 字样)
@@ -230,6 +227,19 @@ def _parse_guard_steps(text: str) -> list[tuple[str, str]]:
             if mp:
                 out.append((name, mp.group(0)))
     return out
+
+
+def _parse_guard_steps(text: str) -> list[tuple[str, str]]:
+    """从 ci.yml 文本抽出 (step_name, test_path). 优先 yaml, 退化行扫描."""
+    try:
+        import yaml  # 可选依赖: 有则精确, 无则退化
+
+        out = _parse_guard_steps_yaml(yaml.safe_load(text) or {})
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
+        logger.debug("yaml 解析 ci.yml 失败, 退化为行扫描", exc_info=True)
+    return _parse_guard_steps_lines(text)
 
 
 def _parse_step_names(text: str) -> list[str]:
@@ -272,7 +282,8 @@ def _read_workflow_texts(agent_root: Path) -> dict[str, str]:
         return {}
     files = [*wf_dir.glob("*.yml"), *wf_dir.glob("*.yaml")]
     return {
-        p.name: p.read_text(encoding="utf-8") for p in sorted(files, key=lambda q: q.name)
+        p.name: p.read_text(encoding="utf-8")
+        for p in sorted(files, key=lambda q: q.name)
     }
 
 
@@ -439,7 +450,9 @@ def _parse_precommit_hooks(text: str) -> list[tuple[str, str]]:
         if out:
             return out
     except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
-        logger.debug("yaml 解析 .pre-commit-config.yaml 失败, 退化为行扫描", exc_info=True)
+        logger.debug(
+            "yaml 解析 .pre-commit-config.yaml 失败, 退化为行扫描", exc_info=True
+        )
     # 行扫描退化: 记住最近的 `- id:`, 只从 `entry:` 字段 (含其多行续行) 抽 tests/*.py.
     # **字段感知**: 显式跳过 `files:` 等其它字段行 —— 否则当 `files:` 写成裸路径
     # (`^agent/tests/x\.py$`) 时会被误当 entry 引用, 与 yaml 主路径分叉 (幻影门).
@@ -487,7 +500,9 @@ def _parse_precommit_files(text: str) -> dict[str, str]:
         if out:
             return out
     except Exception:  # noqa: BLE001 — yaml 缺失/解析失败则退化为行扫描
-        logger.debug("yaml 解析 .pre-commit-config.yaml 失败, 退化为行扫描", exc_info=True)
+        logger.debug(
+            "yaml 解析 .pre-commit-config.yaml 失败, 退化为行扫描", exc_info=True
+        )
     hid = ""
     for line in text.splitlines():
         s = line.strip()
@@ -508,29 +523,124 @@ def _parse_precommit_files(text: str) -> dict[str, str]:
 # 由工作流 step 承载 (非 pytest 测试文件), 删/改名即静默缩小治理面 —— 旧台账完全看不见.
 # 这里登记每门的 (工作流文件, step 名, 类别); 台账只读 + 判存在, 硬判定在元门禁里.
 ENGINEER_GATE_SPECS: tuple[dict, ...] = (
-    {"id": "lint_ruff", "workflow": "ci.yml", "kind": "lint", "step": "Run ruff check (gating)"},
-    {"id": "pip_audit", "workflow": "ci.yml", "kind": "supply-chain", "step": "Dependency vulnerability scan"},
-    {"id": "npm_audit", "workflow": "ci.yml", "kind": "supply-chain", "step": "npm dependency vulnerability scan"},
-    {"id": "bandit_sast", "workflow": "ci.yml", "kind": "sast", "step": "SAST scan with bandit"},
-    {"id": "lock_drift", "workflow": "ci.yml", "kind": "supply-chain", "step": "Dependency lock drift guard"},
-    {"id": "gitleaks", "workflow": "ci.yml", "kind": "secret", "step": "Secret scan with gitleaks"},
+    {
+        "id": "lint_ruff",
+        "workflow": "ci.yml",
+        "kind": "lint",
+        "step": "Run ruff check (gating)",
+    },
+    {
+        "id": "pip_audit",
+        "workflow": "ci.yml",
+        "kind": "supply-chain",
+        "step": "Dependency vulnerability scan",
+    },
+    {
+        "id": "npm_audit",
+        "workflow": "ci.yml",
+        "kind": "supply-chain",
+        "step": "npm dependency vulnerability scan",
+    },
+    {
+        "id": "bandit_sast",
+        "workflow": "ci.yml",
+        "kind": "sast",
+        "step": "SAST scan with bandit",
+    },
+    {
+        "id": "lock_drift",
+        "workflow": "ci.yml",
+        "kind": "supply-chain",
+        "step": "Dependency lock drift guard",
+    },
+    {
+        "id": "gitleaks",
+        "workflow": "ci.yml",
+        "kind": "secret",
+        "step": "Secret scan with gitleaks",
+    },
     {"id": "cargo_check", "workflow": "ci.yml", "kind": "build", "step": "Cargo check"},
     {"id": "cargo_test", "workflow": "ci.yml", "kind": "test", "step": "Cargo test"},
-    {"id": "cargo_audit", "workflow": "ci.yml", "kind": "supply-chain", "step": "Cargo dependency vulnerability scan"},
-    {"id": "frontend_build", "workflow": "ci.yml", "kind": "build", "step": "Install and build"},
-    {"id": "frontend_unit", "workflow": "ci.yml", "kind": "test", "step": "Run vitest unit tests"},
-    {"id": "frontend_e2e", "workflow": "ci.yml", "kind": "test", "step": "Run frontend E2E (chromium)"},
-    {"id": "quickstart_smoke", "workflow": "audit-regression.yml", "kind": "smoke", "step": "Quickstart smoke test (G38)"},
-    {"id": "skill_audit", "workflow": "skill-audit.yml", "kind": "ratchet", "step": "Run skill library audit (gate)"},
-    {"id": "ultra_long_bench", "workflow": "stress-test.yml", "kind": "benchmark", "step": "Run ultra-long benchmark (gating)"},
+    {
+        "id": "cargo_audit",
+        "workflow": "ci.yml",
+        "kind": "supply-chain",
+        "step": "Cargo dependency vulnerability scan",
+    },
+    {
+        "id": "frontend_build",
+        "workflow": "ci.yml",
+        "kind": "build",
+        "step": "Install and build",
+    },
+    {
+        "id": "frontend_unit",
+        "workflow": "ci.yml",
+        "kind": "test",
+        "step": "Run vitest unit tests",
+    },
+    {
+        "id": "frontend_e2e",
+        "workflow": "ci.yml",
+        "kind": "test",
+        "step": "Run frontend E2E (chromium)",
+    },
+    {
+        "id": "quickstart_smoke",
+        "workflow": "audit-regression.yml",
+        "kind": "smoke",
+        "step": "Quickstart smoke test (G38)",
+    },
+    {
+        "id": "skill_audit",
+        "workflow": "skill-audit.yml",
+        "kind": "ratchet",
+        "step": "Run skill library audit (gate)",
+    },
+    {
+        "id": "ultra_long_bench",
+        "workflow": "stress-test.yml",
+        "kind": "benchmark",
+        "step": "Run ultra-long benchmark (gating)",
+    },
     # 交付/构建阻断门 (desktop.yml / release.yml): 整步删/改名会让交付产物失去可见产出,
     # 且它们是 release.yml 与 desktop.yml 里**未曾在旧登记表出现**的阻断步.
-    {"id": "desktop_rust_build", "workflow": "desktop.yml", "kind": "build", "step": "Build Rust CLI + sidecar"},
-    {"id": "desktop_frontend_typecheck", "workflow": "desktop.yml", "kind": "build", "step": "Type-check frontend"},
-    {"id": "desktop_tauri_build", "workflow": "desktop.yml", "kind": "build", "step": "Build Tauri desktop app"},
-    {"id": "release_rust_build", "workflow": "release.yml", "kind": "build", "step": "Build Rust CLI + sidecar"},
-    {"id": "release_frontend_typecheck", "workflow": "release.yml", "kind": "build", "step": "Type-check frontend"},
-    {"id": "release_tauri_build", "workflow": "release.yml", "kind": "build", "step": "Build Tauri desktop app"},
+    {
+        "id": "desktop_rust_build",
+        "workflow": "desktop.yml",
+        "kind": "build",
+        "step": "Build Rust CLI + sidecar",
+    },
+    {
+        "id": "desktop_frontend_typecheck",
+        "workflow": "desktop.yml",
+        "kind": "build",
+        "step": "Type-check frontend",
+    },
+    {
+        "id": "desktop_tauri_build",
+        "workflow": "desktop.yml",
+        "kind": "build",
+        "step": "Build Tauri desktop app",
+    },
+    {
+        "id": "release_rust_build",
+        "workflow": "release.yml",
+        "kind": "build",
+        "step": "Build Rust CLI + sidecar",
+    },
+    {
+        "id": "release_frontend_typecheck",
+        "workflow": "release.yml",
+        "kind": "build",
+        "step": "Type-check frontend",
+    },
+    {
+        "id": "release_tauri_build",
+        "workflow": "release.yml",
+        "kind": "build",
+        "step": "Build Tauri desktop app",
+    },
 )
 
 
@@ -786,11 +896,11 @@ CAPABILITY_SPECS: tuple[dict, ...] = (
 SUBSYSTEM_EXEMPT_FLAGS: frozenset[str] = frozenset(
     {
         # 微路由 / 单点 toggle (有模块, 无专属回归测试 —— 待补测试可升级为锚点)
-        "tool_call_router",       # agents/tool_call_router.py 重型工具 sanity check
-        "loop_detector",          # agents/loop_detector.py 对话循环检测
-        "context_router",         # runtime/context_router.py 信息路径稀疏化
-        "task_tool_router",       # runtime/task_tool_router.py task→工具子集路由
-        "bandit_mdp",             # autoloop/bandit.py + agent/bandit_controller.py
+        "tool_call_router",  # agents/tool_call_router.py 重型工具 sanity check
+        "loop_detector",  # agents/loop_detector.py 对话循环检测
+        "context_router",  # runtime/context_router.py 信息路径稀疏化
+        "task_tool_router",  # runtime/task_tool_router.py task→工具子集路由
+        "bandit_mdp",  # autoloop/bandit.py + agent/bandit_controller.py
         # 实验栅栏 (harness 家族, 默认关; 由 harness_evolution_spec 承载)
         "harness_workflow_evolution",
         "harness_ood_holdout",
@@ -826,7 +936,7 @@ SUBSYSTEM_EXEMPT_FLAGS: frozenset[str] = frozenset(
         "use_cognitive_map",
         "use_atomworld",
         "persistent_terminal",
-        "system_health_auto_fix",   # system_health 的熔断子档 (子系统见锚点 system_health)
+        "system_health_auto_fix",  # system_health 的熔断子档 (子系统见锚点 system_health)
         # 隐私档位 (PrivacyGuard 互斥三档 + 细粒度开关)
         "privacy_off",
         "privacy_redact",
@@ -987,12 +1097,16 @@ def _collect_cli_guards(agent_root: Path, workflows: dict[str, str]) -> list[dic
             seen.add(module)
             rel = module.replace(".", "/")
             exists = (agent_root / f"{rel}.py").exists() or (agent_root / rel).is_dir()
-            out.append({"module": module, "ci_step": name, "workflow": wf, "exists": exists})
+            out.append(
+                {"module": module, "ci_step": name, "workflow": wf, "exists": exists}
+            )
     out.sort(key=lambda g: g["module"])
     return out
 
 
-def _collect_precommit_gates(agent_root: Path, precommit_texts: dict[str, str]) -> list[dict]:
+def _collect_precommit_gates(
+    agent_root: Path, precommit_texts: dict[str, str]
+) -> list[dict]:
     """收集两份 `.pre-commit-config.yaml` 的本地门, 判引用测试存在 + `files:` 是否覆盖.
 
     按 (配置来源, hook_id, test) 去重 (同名文件的多个 selector 算一门). `files:` 过滤器
@@ -1763,6 +1877,70 @@ def _frozen_value(spec: dict, agent_root: Path) -> str:
     return "?"
 
 
+def _probe_workflow_metrics(probe: str, agent_root: Path) -> int:
+    """workflow_count / cli_guard_count / engineer_gate_count 三类工作流计数."""
+    workflows = _read_workflow_texts(agent_root)
+    if probe == "workflow_count":
+        return len(workflows)
+    if probe == "cli_guard_count":
+        return len(_collect_cli_guards(agent_root, workflows))
+    return len(_collect_engineer_gates(workflows))
+
+
+def _probe_guard_step_count(agent_root: Path) -> int:
+    """全部工作流里的**去重 pytest guard step 数** (arch 与非 arch 一视同仁).
+
+    与 audit() 的 fast-fail gate 集一致; 不调 audit() 以免 collect_budgets 递归.
+    """
+    tests: set[str] = set()
+    for text in _read_workflow_texts(agent_root).values():
+        tests |= {t for _, t in _parse_guard_steps(text)}
+    return len(tests)
+
+
+def _probe_regex_int_live(spec: dict, agent_root: Path) -> int | None:
+    """循环闸位/覆盖率下限: 从源码按 spec["pattern"] 抽活值 (第 1 捕获组)."""
+    path = agent_root / spec["path"]
+    if not path.is_file():
+        return None
+    m = re.search(spec["pattern"], path.read_text(encoding="utf-8"), re.M)
+    return int(m.group(1)) if m else None
+
+
+def _probe_path_metrics(spec: dict, probe: str, agent_root: Path) -> int | None:
+    """toml_list_len / regex_match_count: 从仓内文件抽列表长度或匹配数."""
+    base = agent_root.parent if spec.get("root") == "repo" else agent_root
+    path = base / spec["path"]
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    if probe == "regex_match_count":
+        return len(re.findall(spec["pattern"], text))
+    try:  # toml_list_len: 按 spec["key_path"] 逐层下钻取列表长度 (如 .gitleaks.toml allowlist.regexes)
+        import tomllib
+
+        node: object = tomllib.loads(text)
+    except Exception:  # noqa: BLE001 — 解析失败不拖垮台账
+        logger.debug("toml 解析 %s 失败", path, exc_info=True)
+        return None
+    for key in spec["key_path"]:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return len(node) if isinstance(node, list) else None
+
+
+def _probe_loop_cap_live_count(agent_root: Path, heavy: bool) -> int:
+    """循环闸位数下限: 可读到的 loop ceiling 项数 (棘轮)."""
+    return sum(
+        1
+        for s in BUDGET_SPECS
+        if s.get("group") == "loop"
+        and s.get("source") == "ceiling"
+        and isinstance(_probe_current(s, agent_root, heavy=heavy), int)
+    )
+
+
 def _probe_current(
     spec: dict, agent_root: Path, heavy: bool = False
 ) -> int | tuple[int, ...] | None:
@@ -1775,63 +1953,27 @@ def _probe_current(
     if probe == "arch_gate_count":
         return len(discover_arch_tests(agent_root))
     if probe in ("cli_guard_count", "engineer_gate_count", "workflow_count"):
-        workflows = _read_workflow_texts(agent_root)
-        if probe == "workflow_count":
-            return len(workflows)
-        if probe == "cli_guard_count":
-            return len(_collect_cli_guards(agent_root, workflows))
-        return len(_collect_engineer_gates(workflows))
+        return _probe_workflow_metrics(probe, agent_root)
     if probe == "guard_step_count":
-        # 全部工作流里的**去重 pytest guard step 数** (arch 与非 arch 一视同仁). 与 audit()
-        # 的 fast-fail gate 集一致; 不调 audit() 以免 collect_budgets 递归.
-        tests: set[str] = set()
-        for text in _read_workflow_texts(agent_root).values():
-            tests |= {t for _, t in _parse_guard_steps(text)}
-        return len(tests)
+        return _probe_guard_step_count(agent_root)
     if probe == "precommit_gate_count":
-        return len(_collect_precommit_gates(agent_root, _read_precommit_texts(agent_root)))
+        return len(
+            _collect_precommit_gates(agent_root, _read_precommit_texts(agent_root))
+        )
     if probe == "capability_count":
         return len(_collect_capabilities(agent_root))
     if probe == "prompt_segment_count":  # prompt 段声明清单条目数 (floor 棘轮)
         return len(_read_prompt_applies_to(agent_root))
-    if probe == "regex_int_live":  # 循环闸位/覆盖率下限: 从源码按 spec["pattern"] 抽活值 (第 1 捕获组)
-        path = agent_root / spec["path"]
-        if not path.is_file():
-            return None
-        m = re.search(spec["pattern"], path.read_text(encoding="utf-8"), re.M)
-        return int(m.group(1)) if m else None
+    if probe == "regex_int_live":
+        return _probe_regex_int_live(spec, agent_root)
     if probe == "workflow_step_total":  # 全部工作流命名 step 总数 (任意步骤增删都动它)
         return sum(
             len(_parse_step_names(t)) for t in _read_workflow_texts(agent_root).values()
         )
     if probe in ("toml_list_len", "regex_match_count"):
-        base = agent_root.parent if spec.get("root") == "repo" else agent_root
-        path = base / spec["path"]
-        if not path.is_file():
-            return None
-        text = path.read_text(encoding="utf-8")
-        if probe == "regex_match_count":
-            return len(re.findall(spec["pattern"], text))
-        try:  # toml_list_len: 按 spec["key_path"] 逐层下钻取列表长度 (如 .gitleaks.toml allowlist.regexes)
-            import tomllib
-
-            node: object = tomllib.loads(text)
-        except Exception:  # noqa: BLE001 — 解析失败不拖垮台账
-            logger.debug("toml 解析 %s 失败", path, exc_info=True)
-            return None
-        for key in spec["key_path"]:
-            if not isinstance(node, dict):
-                return None
-            node = node.get(key)
-        return len(node) if isinstance(node, list) else None
-    if probe == "loop_cap_live_count":  # 循环闸位数下限: 可读到的 loop ceiling 项数 (棘轮)
-        return sum(
-            1
-            for s in BUDGET_SPECS
-            if s.get("group") == "loop"
-            and s.get("source") == "ceiling"
-            and isinstance(_probe_current(s, agent_root, heavy=heavy), int)
-        )
+        return _probe_path_metrics(spec, probe, agent_root)
+    if probe == "loop_cap_live_count":  # 循环闸位数下限
+        return _probe_loop_cap_live_count(agent_root, heavy)
     if probe == "runtime_probe_live_count":  # 可运行性探针清单条目数 (floor 棘轮)
         path = agent_root / spec["path"]
         if not path.is_file():
@@ -1953,19 +2095,10 @@ def collect_budgets(agent_root: Path, heavy: bool = False) -> list[dict]:
     return out
 
 
-def audit(
-    agent_root: Path,
-    ci_text: str | None = None,
-    precommit_text: str | None = None,
-    heavy: bool = False,
-) -> dict:
-    """扫描一棵仓树, 返回治理门登记快照.
-
-    ``ci_text`` / ``precommit_text`` 显式给定时作为**单文件**合成输入, 不读盘 (供合成树
-    测试); 为 None 时遍历 ``<root>/../.github/workflows/*.yml`` **全部**工作流与仓根 +
-    ``<root>/`` 两份 ``.pre-commit-config.yaml`` (真实仓: agent_root=/repo/agent).
-    ``heavy=True`` 才在预算台账里跑重型探针 (见 ``collect_budgets``).
-    """
+def _audit_inputs(
+    agent_root: Path, ci_text: str | None, precommit_text: str | None
+) -> tuple[dict[str, str], dict[str, str]]:
+    """解析工作流与 precommit 输入源 (显式文本优先, 否则读盘)."""
     if ci_text is None:
         workflows = _read_workflow_texts(agent_root)
     else:
@@ -1974,7 +2107,13 @@ def audit(
         precommit_texts = _read_precommit_texts(agent_root)
     else:
         precommit_texts = {".pre-commit-config.yaml": precommit_text}
+    return workflows, precommit_texts
 
+
+def _audit_guard_gates(
+    agent_root: Path, workflows: dict[str, str]
+) -> tuple[dict[str, str], list[dict]]:
+    """工作流 pytest guard step → fast-fail 门表 (同一测试 first-wins 去重)."""
     guard_by_test: dict[str, str] = {}
     for text in workflows.values():
         for name, test in _parse_guard_steps(text):
@@ -1991,7 +2130,13 @@ def audit(
                 "exists": (agent_root / test).exists(),
             }
         )
+    return guard_by_test, gates
 
+
+def _audit_classify_unguarded(
+    agent_root: Path, guard_by_test: dict[str, str], gates: list[dict]
+) -> list[str]:
+    """未被工作流承载的治理门: FULL_SUITE_ONLY 入表, 其余记为孤儿门."""
     orphans: list[str] = []
     for test in discover_governance_tests(agent_root):
         if test in guard_by_test:
@@ -2008,24 +2153,39 @@ def audit(
             )
         else:
             orphans.append(test)
+    return orphans
 
-    gates.sort(key=lambda g: g["test"])
-    dangling = [
+
+def _audit_dangling_guards(gates: list[dict]) -> list[dict]:
+    """fast-fail 门指向仓内不存在的测试文件 = 悬空门."""
+    return [
         {"ci_step": g["ci_step"], "test": g["test"]}
         for g in gates
         if g["status"] == "fast-fail-guard" and not g["exists"]
     ]
 
-    # 非 pytest 形态的治理门 (CLI 自查 / 棘轮): `python -m huginn.<module>`, 跨**全部**
-    # 工作流按模块去重 (一个门多处调用只登记一次), module 映射到仓内 .py / 包目录判存在.
+
+def _audit_cli_surface(
+    agent_root: Path, workflows: dict[str, str]
+) -> tuple[list[dict], list[dict]]:
+    """非 pytest 形态的治理门 (CLI 自查 / 棘轮) 及其悬空项.
+
+    `python -m huginn.<module>`, 跨**全部**工作流按模块去重 (一个门多处调用只登记一次),
+    module 映射到仓内 .py / 包目录判存在.
+    """
     cli_guards = _collect_cli_guards(agent_root, workflows)
     dangling_cli = [
         {"ci_step": g["ci_step"], "module": g["module"]}
         for g in cli_guards
         if not g["exists"]
     ]
+    return cli_guards, dangling_cli
 
-    # 本地门 (仓根与 agent/ 两份 .pre-commit-config.yaml): 既不在工作流也不在台账, 故单列.
+
+def _audit_precommit_surface(
+    agent_root: Path, precommit_texts: dict[str, str]
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """本地门 (仓根与 agent/ 两份 .pre-commit-config.yaml): 既不在工作流也不在台账, 故单列."""
     precommit_gates = _collect_precommit_gates(agent_root, precommit_texts)
     dangling_precommit = [
         {"hook": g["hook"], "test": g["test"]}
@@ -2037,24 +2197,28 @@ def audit(
         for g in precommit_gates
         if not g.get("covered")
     ]
+    return precommit_gates, dangling_precommit, uncovered_precommit
 
-    # 工程门 (非 pytest 阻断门): 由工作流 step 承载, 判 step 名是否仍在对应工作流 ——
-    # step 删/改名即静默缩小治理面 (旧台账完全看不见).
+
+def _audit_engineer_surface(
+    workflows: dict[str, str],
+) -> tuple[list[dict], list[dict]]:
+    """工程门 (非 pytest 阻断门): 由工作流 step 承载, 判 step 名是否仍在对应工作流.
+
+    step 删/改名即静默缩小治理面 (旧台账完全看不见).
+    """
     engineer_gates = _collect_engineer_gates(workflows)
     dangling_engineer = [
         {"id": g["id"], "workflow": g["workflow"], "step": g["step"]}
         for g in engineer_gates
         if not g["exists"]
     ]
+    return engineer_gates, dangling_engineer
 
-    # 工作流触发器 (运行面): 门 step 存在 ≠ 门会运行. 触发规格 ①判在否/是否收窄,
-    # ②暴露未登记工作流 (须显式登记触发规格) 与未落地规格 (工作流文件被删/改名).
-    triggers = _collect_workflow_triggers(workflows)
 
-    # 能力锚点 (子系统级): 开关默认值未翻转 + 承载模块存在 + 不变量测试存在. 三者任一脱节
-    # = 该能力静默萎缩 (前面九形态的门存在性判据全绿也看不出).
-    capabilities = _collect_capabilities(agent_root)
-    capability_gaps = [
+def _audit_capability_gaps(capabilities: list[dict]) -> list[dict]:
+    """能力锚点脱节项: 开关默认值/承载模块/不变量测试任一缺失."""
+    return [
         {
             "id": c["id"],
             "name": c["name"],
@@ -2066,9 +2230,25 @@ def audit(
         if not c["flag_ok"] or c["missing_modules"] or c["missing_tests"]
     ]
 
-    # prompt 段生效面 (声明清单 vs 源文件 `_APPLIES_TO`): 段是输出规范的执行单元, 一个段
-    # 静默消失即规范萎缩. 门存在性/能力锚点判据都看不见 prompt 面.
-    prompt_segments = _collect_prompt_segments(agent_root)
+
+def _audit_static_surfaces(
+    agent_root: Path, workflows: dict[str, str], precommit_texts: dict[str, str]
+) -> dict:
+    """静态登记面: 工作流门表 / 孤儿门 / 悬空门 / CLI 门 / 本地门 / 工程门 / 触发器."""
+    guard_by_test, gates = _audit_guard_gates(agent_root, workflows)
+    orphans = _audit_classify_unguarded(agent_root, guard_by_test, gates)
+    gates.sort(key=lambda g: g["test"])
+    dangling = _audit_dangling_guards(gates)
+
+    cli_guards, dangling_cli = _audit_cli_surface(agent_root, workflows)
+    precommit_gates, dangling_precommit, uncovered_precommit = _audit_precommit_surface(
+        agent_root, precommit_texts
+    )
+    engineer_gates, dangling_engineer = _audit_engineer_surface(workflows)
+
+    # 工作流触发器 (运行面): 门 step 存在 ≠ 门会运行. 触发规格 ①判在否/是否收窄,
+    # ②暴露未登记工作流 (须显式登记触发规格) 与未落地规格 (工作流文件被删/改名).
+    triggers = _collect_workflow_triggers(workflows)
 
     return {
         "gates": gates,
@@ -2086,11 +2266,38 @@ def audit(
         "unregistered_workflows": triggers["unregistered_workflows"],
         "unchecked_workflows": triggers["unchecked_workflows"],
         "trigger_drift": triggers["trigger_drift"],
-        "capabilities": capabilities,
-        "capability_gaps": capability_gaps,
-        "prompt_segments": prompt_segments,
-        "budgets": collect_budgets(agent_root, heavy=heavy),
     }
+
+
+def audit(
+    agent_root: Path,
+    ci_text: str | None = None,
+    precommit_text: str | None = None,
+    heavy: bool = False,
+) -> dict:
+    """扫描一棵仓树, 返回治理门登记快照.
+
+    ``ci_text`` / ``precommit_text`` 显式给定时作为**单文件**合成输入, 不读盘 (供合成树
+    测试); 为 None 时遍历 ``<root>/../.github/workflows/*.yml`` **全部**工作流与仓根 +
+    ``<root>/`` 两份 ``.pre-commit-config.yaml`` (真实仓: agent_root=/repo/agent).
+    ``heavy=True`` 才在预算台账里跑重型探针 (见 ``collect_budgets``).
+    """
+    workflows, precommit_texts = _audit_inputs(agent_root, ci_text, precommit_text)
+    snapshot = _audit_static_surfaces(agent_root, workflows, precommit_texts)
+
+    # 能力锚点 (子系统级): 开关默认值未翻转 + 承载模块存在 + 不变量测试存在. 三者任一脱节
+    # = 该能力静默萎缩 (前面九形态的门存在性判据全绿也看不出).
+    capabilities = _collect_capabilities(agent_root)
+    snapshot["capabilities"] = capabilities
+    snapshot["capability_gaps"] = _audit_capability_gaps(capabilities)
+
+    # prompt 段生效面 (声明清单 vs 源文件 `_APPLIES_TO`): 段是输出规范的执行单元, 一个段
+    # 静默消失即规范萎缩. 门存在性/能力锚点判据都看不见 prompt 面.
+    snapshot["prompt_segments"] = _collect_prompt_segments(agent_root)
+
+    # 预算台账 (heavy=True 才跑重型探针).
+    snapshot["budgets"] = collect_budgets(agent_root, heavy=heavy)
+    return snapshot
 
 
 def build_gate_registry() -> dict:
@@ -2178,7 +2385,9 @@ def _ga_gates_section(reg: dict) -> list[str]:
         step = g["ci_step"] if g["ci_step"] else "—"
         if g["status"] == "fast-fail-guard" and not g["exists"]:
             step = f"{step} (悬空)"
-        lines.append(f"| `{g['test']}` | {'是' if g['arch'] else '否'} | `{g['status']}` | {step} |")
+        lines.append(
+            f"| `{g['test']}` | {'是' if g['arch'] else '否'} | `{g['status']}` | {step} |"
+        )
     lines.append("")
     return lines
 
@@ -2220,7 +2429,9 @@ def _ga_precommit_gates_section(reg: dict) -> list[str]:
     for g in reg["precommit_gates"]:
         mark = "是" if g["exists"] else "否 (悬空)"
         cov = "是" if g.get("covered") else "否 (漏匹配)"
-        lines.append(f"| `{g['source']}` | `{g['hook']}` | `{g['test']}` | {mark} | {cov} |")
+        lines.append(
+            f"| `{g['source']}` | `{g['hook']}` | `{g['test']}` | {mark} | {cov} |"
+        )
     lines.append("")
     return lines
 
@@ -2241,7 +2452,9 @@ def _ga_engineer_gates_section(reg: dict) -> list[str]:
     lines.append("|---|---|---|---|---|")
     for e in reg["engineer_gates"]:
         mark = "是" if e["exists"] else "否 (悬空)"
-        lines.append(f"| `{e['id']}` | `{e['workflow']}` | {e['kind']} | {e['step']} | {mark} |")
+        lines.append(
+            f"| `{e['id']}` | `{e['workflow']}` | {e['kind']} | {e['step']} | {mark} |"
+        )
     lines.append("")
     return lines
 
@@ -2261,7 +2474,9 @@ def _ga_capability_anchors_section(reg: dict) -> list[str]:
         "锚点退化为双判据: 只判承载模块/不变量测试存在, 依赖面另由 L0 探针 (runtime_probe) 守."
     )
     lines.append("")
-    lines.append("| 能力 | 开关 | 类型 | 期望默认 | 实际默认 | 默认一致 | 承载模块 | 不变量测试 |")
+    lines.append(
+        "| 能力 | 开关 | 类型 | 期望默认 | 实际默认 | 默认一致 | 承载模块 | 不变量测试 |"
+    )
     lines.append("|---|---|---|---|---|---|---|---|")
     for c in reg["capabilities"]:
         kind = {
@@ -2339,7 +2554,9 @@ def _ga_budgets_section(reg: dict) -> list[str]:
         "`full_suite` 型 (仅全量套件跑, 不在工作流 step 里)。"
     )
     lines.append("")
-    lines.extend(_ga_budget_rows([b for b in reg["budgets"] if b.get("group") != "loop"]))
+    lines.extend(
+        _ga_budget_rows([b for b in reg["budgets"] if b.get("group") != "loop"])
+    )
     lines.append("")
     return lines
 
@@ -2357,7 +2574,9 @@ def _ga_loop_caps_section(reg: dict) -> list[str]:
         "**模式=权威** 一行为闸位**数下限** (只减不增)。"
     )
     lines.append("")
-    lines.extend(_ga_budget_rows([b for b in reg["budgets"] if b.get("group") == "loop"]))
+    lines.extend(
+        _ga_budget_rows([b for b in reg["budgets"] if b.get("group") == "loop"])
+    )
     lines.append("")
     return lines
 
@@ -2366,7 +2585,10 @@ def _ga_gate_gap_lines(reg: dict) -> list[str]:
     """缺口区: 孤儿门/悬空门/本地门覆盖/悬空工程门."""
     lines: list[str] = []
     if reg["orphans"]:
-        lines.append(f"- 孤儿门 ({len(reg['orphans'])}): " + ", ".join(f"`{t}`" for t in reg["orphans"]))
+        lines.append(
+            f"- 孤儿门 ({len(reg['orphans'])}): "
+            + ", ".join(f"`{t}`" for t in reg["orphans"])
+        )
     else:
         lines.append("- 孤儿门 (0): 无")
     if reg["dangling"]:
@@ -2375,7 +2597,9 @@ def _ga_gate_gap_lines(reg: dict) -> list[str]:
     else:
         lines.append("- 悬空门 (0): 无")
     if reg["dangling_cli"]:
-        items = ", ".join(f"`{d['ci_step']}` → `{d['module']}`" for d in reg["dangling_cli"])
+        items = ", ".join(
+            f"`{d['ci_step']}` → `{d['module']}`" for d in reg["dangling_cli"]
+        )
         lines.append(f"- CLI 悬空门 ({len(reg['dangling_cli'])}): {items}")
     else:
         lines.append("- CLI 悬空门 (0): 无")
@@ -2452,9 +2676,7 @@ def _ga_capability_prompt_gap_lines(reg: dict) -> list[str]:
         lines.append("- prompt 段清单有、源里无 (0): 无")
     if ps["unregistered"]:
         items = ", ".join(f"`{n}`" for n in ps["unregistered"])
-        lines.append(
-            f"- prompt 段源里有、清单无 ({len(ps['unregistered'])}): {items}"
-        )
+        lines.append(f"- prompt 段源里有、清单无 ({len(ps['unregistered'])}): {items}")
     else:
         lines.append("- prompt 段源里有、清单无 (0): 无")
     return lines
@@ -2504,10 +2726,14 @@ def _capability_gap_desc(gap: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="低熵治理台账 (governance_audit)")
-    parser.add_argument("--out", default="", help="写 markdown 到文件 (缺省打印到 stdout)")
+    parser.add_argument(
+        "--out", default="", help="写 markdown 到文件 (缺省打印到 stdout)"
+    )
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument(
-        "--probe", action="store_true", help="额外跑重型探针 (遍历全仓, 较慢; 不入快速失败门)"
+        "--probe",
+        action="store_true",
+        help="额外跑重型探针 (遍历全仓, 较慢; 不入快速失败门)",
     )
     args = parser.parse_args(argv)
 

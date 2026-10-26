@@ -97,6 +97,163 @@ class OpenFoamToolInput(BaseModel):
     result_files: list[str] = Field(default_factory=list)
 
 
+_FV_SOLUTION_SIMPLE = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      fvSolution;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+solvers
+{
+    p
+    {
+        solver          GAMG;
+        tolerance       1e-07;
+        relTol          0.1;
+    }
+    U
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-08;
+        relTol          0.1;
+    }
+    k
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-08;
+        relTol          0.1;
+    }
+    omega
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-08;
+        relTol          0.1;
+    }
+}
+
+SIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+    consistent      yes;
+    residualControl
+    {
+        p               1e-5;
+        U               1e-5;
+    }
+}
+
+relaxationFactors
+{
+    fields
+    {
+        p               0.3;
+    }
+    equations
+    {
+        U               0.7;
+        k               0.7;
+        omega           0.7;
+    }
+}
+
+// ************************************************************************* //
+"""
+
+_FV_SOLUTION_TRANSIENT = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      fvSolution;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+solvers
+{
+    p
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-06;
+        relTol          0.05;
+    }
+    U
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-05;
+        relTol          0;
+    }
+}
+
+PISO
+{
+    nCorrectors     2;
+    nNonOrthogonalCorrectors 0;
+    pRefCell        0;
+    pRefValue       0;
+}
+
+// ************************************************************************* //
+"""
+
+_BLOCK_MESH_HEADER = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      blockMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+convertToMeters 1;
+
+vertices
+(
+"""
+
+_BLOCK_MESH_TAIL = """    inlet
+    {
+        type patch;
+        faces
+        (
+            (0 4 7 3)
+        );
+    }
+    outlet
+    {
+        type patch;
+        faces
+        (
+            (1 2 6 5)
+        );
+    }
+    walls
+    {
+        type wall;
+        faces
+        (
+            (0 1 5 4)
+            (3 7 6 2)
+            (0 3 2 1)
+            (4 5 6 7)
+        );
+    }
+);
+
+// ************************************************************************* //
+"""
+
+
 class OpenFoamTool(HuginnTool):
     """Generate and run OpenFOAM CFD cases."""
 
@@ -191,6 +348,11 @@ class OpenFoamTool(HuginnTool):
         constant_dir.mkdir(parents=True, exist_ok=True)
         zero_dir.mkdir(parents=True, exist_ok=True)
 
+        self._write_system_dicts(args, system_dir)
+        self._write_constant_dicts(args, constant_dir)
+        self._write_initial_fields(args, zero_dir)
+
+    def _write_system_dicts(self, args: OpenFoamToolInput, system_dir: Path) -> None:
         geom = args.geometry
         L = float(geom.get("length", 2.0))
         W = float(geom.get("width", 0.5))
@@ -221,6 +383,9 @@ class OpenFoamTool(HuginnTool):
             encoding="utf-8",
         )
 
+    def _write_constant_dicts(
+        self, args: OpenFoamToolInput, constant_dir: Path
+    ) -> None:
         # constant/transportProperties
         (constant_dir / "transportProperties").write_text(
             self._transport_properties(args),
@@ -234,6 +399,7 @@ class OpenFoamTool(HuginnTool):
                 encoding="utf-8",
             )
 
+    def _write_initial_fields(self, args: OpenFoamToolInput, zero_dir: Path) -> None:
         # Initial fields
         (zero_dir / "p").write_text(self._field_p(), encoding="utf-8")
         (zero_dir / "U").write_text(self._field_u(), encoding="utf-8")
@@ -328,131 +494,13 @@ snGradSchemes
 
     def _fv_solution(self, args: OpenFoamToolInput) -> str:
         if args.solver == "simpleFoam":
-            return """FoamFile
-{
-    version     2.0;
-    format      ascii;
-    class       dictionary;
-    location    "system";
-    object      fvSolution;
-}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-solvers
-{
-    p
-    {
-        solver          GAMG;
-        tolerance       1e-07;
-        relTol          0.1;
-    }
-    U
-    {
-        solver          smoothSolver;
-        smoother        symGaussSeidel;
-        tolerance       1e-08;
-        relTol          0.1;
-    }
-    k
-    {
-        solver          smoothSolver;
-        smoother        symGaussSeidel;
-        tolerance       1e-08;
-        relTol          0.1;
-    }
-    omega
-    {
-        solver          smoothSolver;
-        smoother        symGaussSeidel;
-        tolerance       1e-08;
-        relTol          0.1;
-    }
-}
-
-SIMPLE
-{
-    nNonOrthogonalCorrectors 0;
-    consistent      yes;
-    residualControl
-    {
-        p               1e-5;
-        U               1e-5;
-    }
-}
-
-relaxationFactors
-{
-    fields
-    {
-        p               0.3;
-    }
-    equations
-    {
-        U               0.7;
-        k               0.7;
-        omega           0.7;
-    }
-}
-
-// ************************************************************************* //
-"""
-        return """FoamFile
-{
-    version     2.0;
-    format      ascii;
-    class       dictionary;
-    location    "system";
-    object      fvSolution;
-}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-solvers
-{
-    p
-    {
-        solver          PCG;
-        preconditioner  DIC;
-        tolerance       1e-06;
-        relTol          0.05;
-    }
-    U
-    {
-        solver          smoothSolver;
-        smoother        symGaussSeidel;
-        tolerance       1e-05;
-        relTol          0;
-    }
-}
-
-PISO
-{
-    nCorrectors     2;
-    nNonOrthogonalCorrectors 0;
-    pRefCell        0;
-    pRefValue       0;
-}
-
-// ************************************************************************* //
-"""
+            return _FV_SOLUTION_SIMPLE
+        return _FV_SOLUTION_TRANSIENT
 
     def _block_mesh_dict(
         self, L: float, W: float, H: float, nx: int, ny: int, nz: int
     ) -> str:
-        return f"""FoamFile
-{{
-    version     2.0;
-    format      ascii;
-    class       dictionary;
-    location    "system";
-    object      blockMeshDict;
-}}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-convertToMeters 1;
-
-vertices
-(
-    (0 0 0)
+        body = f"""    (0 0 0)
     ({L} 0 0)
     ({L} {W} 0)
     (0 {W} 0)
@@ -473,37 +521,8 @@ edges
 
 boundary
 (
-    inlet
-    {{
-        type patch;
-        faces
-        (
-            (0 4 7 3)
-        );
-    }}
-    outlet
-    {{
-        type patch;
-        faces
-        (
-            (1 2 6 5)
-        );
-    }}
-    walls
-    {{
-        type wall;
-        faces
-        (
-            (0 1 5 4)
-            (3 7 6 2)
-            (0 3 2 1)
-            (4 5 6 7)
-        );
-    }}
-);
-
-// ************************************************************************* //
 """
+        return _BLOCK_MESH_HEADER + body + _BLOCK_MESH_TAIL
 
     def _transport_properties(self, args: OpenFoamToolInput) -> str:
         nu = args.transport_properties.get("nu", 1e-05)
@@ -729,21 +748,42 @@ boundaryField
         solver_cmd = self._openfoam_cmd(args.solver)
 
         if not block_mesh_cmd or not solver_cmd:
-            return ToolResult(
-                data={
-                    "case_dir": str(case_dir),
-                    "openfoam_available": False,
-                    "message": (
-                        "OpenFOAM executable not found. Case files exported; "
-                        "run manually with: blockMesh && " + args.solver
-                    ),
-                },
-                success=True,
-            )
+            return self._export_only_result(args, case_dir)
 
+        cfg = self._solver_sandbox_config()
+        log_path = case_dir / f"{args.solver}.log"
+
+        # Run blockMesh
+        bm_result = self._run_block_mesh(block_mesh_cmd, case_dir, cfg, log_path)
+        if bm_result.returncode != 0:
+            return self._block_mesh_failure_result(case_dir, log_path)
+
+        solver_result = self._run_solver(solver_cmd, case_dir, cfg, log_path)
+        data = self._solver_run_data(case_dir, log_path, solver_result.returncode)
+
+        self._attach_physics_audit(args, data)
+
+        return ToolResult(data=data, success=solver_result.returncode == 0)
+
+    def _export_only_result(
+        self, args: OpenFoamToolInput, case_dir: Path
+    ) -> ToolResult:
+        return ToolResult(
+            data={
+                "case_dir": str(case_dir),
+                "openfoam_available": False,
+                "message": (
+                    "OpenFOAM executable not found. Case files exported; "
+                    "run manually with: blockMesh && " + args.solver
+                ),
+            },
+            success=True,
+        )
+
+    def _solver_sandbox_config(self) -> Any:
         from huginn.security.sandbox import SandboxConfig
 
-        cfg = SandboxConfig(
+        return SandboxConfig(
             dry_run=False,
             allowed_executables=self.sandbox.config.allowed_executables
             | {
@@ -755,11 +795,16 @@ boundaryField
                 "potentialfoam",
             },
         )
-        log_path = case_dir / f"{args.solver}.log"
 
-        # Run blockMesh
+    def _run_block_mesh(
+        self,
+        block_mesh_cmd: str,
+        case_dir: Path,
+        cfg: Any,
+        log_path: Path,
+    ) -> Any:
         with open(log_path, "w", encoding="utf-8") as log_file:
-            bm_result = self.sandbox.run(
+            return self.sandbox.run(
                 [block_mesh_cmd],
                 cwd=case_dir,
                 config=cfg,
@@ -768,20 +813,16 @@ boundaryField
                 stderr=subprocess.STDOUT,
             )
 
-        if bm_result.returncode != 0:
-            return ToolResult(
-                data={
-                    "case_dir": str(case_dir),
-                    "openfoam_available": True,
-                    "log_path": str(log_path),
-                    "message": "blockMesh failed; see log.",
-                },
-                success=False,
-            )
-
+    def _run_solver(
+        self,
+        solver_cmd: str,
+        case_dir: Path,
+        cfg: Any,
+        log_path: Path,
+    ) -> Any:
         # Run solver
         with open(log_path, "a", encoding="utf-8") as log_file:
-            solver_result = self.sandbox.run(
+            return self.sandbox.run(
                 [solver_cmd],
                 cwd=case_dir,
                 config=cfg,
@@ -790,14 +831,28 @@ boundaryField
                 stderr=subprocess.STDOUT,
             )
 
+    def _block_mesh_failure_result(self, case_dir: Path, log_path: Path) -> ToolResult:
+        return ToolResult(
+            data={
+                "case_dir": str(case_dir),
+                "openfoam_available": True,
+                "log_path": str(log_path),
+                "message": "blockMesh failed; see log.",
+            },
+            success=False,
+        )
+
+    def _solver_run_data(
+        self, case_dir: Path, log_path: Path, returncode: int
+    ) -> dict[str, Any]:
         parsed = self._parse_log_file(log_path)
-        success = solver_result.returncode == 0
+        success = returncode == 0
         log_content = (
             log_path.read_text(encoding="utf-8", errors="ignore")
             if log_path.exists()
             else ""
         )
-        data = {
+        return {
             "case_dir": str(case_dir),
             "log_path": str(log_path),
             "openfoam_available": True,
@@ -810,6 +865,9 @@ boundaryField
             ),
         }
 
+    def _attach_physics_audit(
+        self, args: OpenFoamToolInput, data: dict[str, Any]
+    ) -> None:
         # Physics audit — Courant number, divergence, residuals, mesh quality
         try:
             from huginn.execution.physics_auditor import PhysicsAuditor
@@ -821,8 +879,6 @@ boundaryField
             data["physics_audit"] = audit_report.to_dict()
         except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
-
-        return ToolResult(data=data, success=success)
 
     def _set_fields(self, args: OpenFoamToolInput, case_dir: Path) -> ToolResult:
         """Write setFieldsDict and initial phase field from packing output."""
@@ -839,6 +895,26 @@ boundaryField
         (case_dir / "system").mkdir(parents=True, exist_ok=True)
         (case_dir / "0").mkdir(parents=True, exist_ok=True)
 
+        set_fields_path, field_path = self._write_set_fields_files(
+            args, case_dir, objects
+        )
+
+        setfields_cmd = self._openfoam_cmd("setFields")
+        ran_setfields, setfields_log = self._execute_set_fields(case_dir, setfields_cmd)
+
+        return self._set_fields_result(
+            case_dir,
+            objects,
+            set_fields_path,
+            field_path,
+            setfields_cmd,
+            ran_setfields,
+            setfields_log,
+        )
+
+    def _write_set_fields_files(
+        self, args: OpenFoamToolInput, case_dir: Path, objects: list[dict[str, Any]]
+    ) -> tuple[Path, Path]:
         set_fields_path = self._write_set_fields_dict(
             case_dir,
             args.field_name,
@@ -851,8 +927,11 @@ boundaryField
             args.field_name,
             args.default_value,
         )
+        return set_fields_path, field_path
 
-        setfields_cmd = self._openfoam_cmd("setFields")
+    def _execute_set_fields(
+        self, case_dir: Path, setfields_cmd: str | None
+    ) -> tuple[bool, str]:
         ran_setfields = False
         setfields_log = ""
         if setfields_cmd:
@@ -872,7 +951,18 @@ boundaryField
             )
             ran_setfields = result.success
             setfields_log = result.stdout + result.stderr
+        return ran_setfields, setfields_log
 
+    def _set_fields_result(
+        self,
+        case_dir: Path,
+        objects: list[dict[str, Any]],
+        set_fields_path: Path,
+        field_path: Path,
+        setfields_cmd: str | None,
+        ran_setfields: bool,
+        setfields_log: str,
+    ) -> ToolResult:
         return ToolResult(
             data={
                 "case_dir": str(case_dir),

@@ -16,17 +16,38 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 
 # 点群 → Laue 类映射，get_laue() 被移除后用它来还原符号
 _POINT_GROUP_TO_LAUE: dict[str, str] = {
-    "1": "-1", "-1": "-1",
-    "2": "2/m", "m": "2/m", "2/m": "2/m",
-    "222": "mmm", "mm2": "mmm", "mmm": "mmm",
-    "4": "4/m", "-4": "4/m", "4/m": "4/m",
-    "422": "4/mmm", "4mm": "4/mmm", "-42m": "4/mmm", "4/mmm": "4/mmm",
-    "3": "-3", "-3": "-3",
-    "32": "-3m", "3m": "-3m", "-3m": "-3m",
-    "6": "6/m", "-6": "6/m", "6/m": "6/m",
-    "622": "6/mmm", "6mm": "6/mmm", "-6m2": "6/mmm", "6/mmm": "6/mmm",
-    "23": "m-3", "m-3": "m-3",
-    "432": "m-3m", "-43m": "m-3m", "m-3m": "m-3m",
+    "1": "-1",
+    "-1": "-1",
+    "2": "2/m",
+    "m": "2/m",
+    "2/m": "2/m",
+    "222": "mmm",
+    "mm2": "mmm",
+    "mmm": "mmm",
+    "4": "4/m",
+    "-4": "4/m",
+    "4/m": "4/m",
+    "422": "4/mmm",
+    "4mm": "4/mmm",
+    "-42m": "4/mmm",
+    "4/mmm": "4/mmm",
+    "3": "-3",
+    "-3": "-3",
+    "32": "-3m",
+    "3m": "-3m",
+    "-3m": "-3m",
+    "6": "6/m",
+    "-6": "6/m",
+    "6/m": "6/m",
+    "622": "6/mmm",
+    "6mm": "6/mmm",
+    "-6m2": "6/mmm",
+    "6/mmm": "6/mmm",
+    "23": "m-3",
+    "m-3": "m-3",
+    "432": "m-3m",
+    "-43m": "m-3m",
+    "m-3m": "m-3m",
 }
 
 # Rough spin-only magnetic moment estimates for common transition metals
@@ -50,6 +71,150 @@ _MAGNETIC_MOMENTS: dict[str, float] = {
     "Eu": 3.0,
     "Ce": 1.0,
 }
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _verify_group_payload(
+    n: int,
+    is_group: bool,
+    has_identity: bool,
+    inverses_ok: bool,
+    closure_ok: bool,
+    missing_inverse: int | None,
+    closure_failure: tuple[int, int] | None,
+    check_n: int,
+) -> dict:
+    """组装 verify_group 的结果字典 (群公理检查结果 + 说明)."""
+    return {
+        "n_operations": n,
+        "is_group": is_group,
+        "has_identity": has_identity,
+        "inverses_ok": inverses_ok,
+        "closure_ok": closure_ok,
+        "missing_inverse_index": missing_inverse,
+        "closure_failure_pair": closure_failure,
+        "checked_pairs": check_n * check_n,
+        "note": (
+            "群公理验证通过 (单位元 + 逆元 + 封闭性)"
+            if is_group
+            else f"群公理验证失败: identity={has_identity}, "
+            f"inverses={inverses_ok}, closure={closure_ok}"
+        ),
+    }
+
+
+def _detect_subgroups(
+    tool, structure, current_spg: int, current_n_ops: int, index: int, spglib
+) -> dict[int, dict]:
+    """遍历对称性扰动变体, 用 spglib 识别降对称后的子群."""
+    import numpy as np
+
+    found: dict[int, dict] = {}
+    for name, perturbed in SymmetryTool._symmetry_reduced_variants(tool, structure):
+        cell = (
+            np.asarray(perturbed.lattice.matrix, dtype=float),
+            np.asarray(perturbed.frac_coords, dtype=float),
+            np.array([site.specie.Z for site in perturbed]),
+        )
+        ds = spglib.get_symmetry_dataset(cell, symprec=0.05)
+        if ds is None:
+            continue
+        sg_num = ds["number"]
+        if sg_num == current_spg:
+            continue
+        n_ops = len(ds["rotations"])
+        detected_index = current_n_ops / n_ops if n_ops else float("inf")
+
+        # Filter by requested index (skip filter when index <= 0)
+        if index > 0 and abs(detected_index - index) > 0.01:
+            continue
+
+        if sg_num not in found:
+            found[sg_num] = {
+                "number": sg_num,
+                "hermann_mauguin": ds["international"],
+                "n_operations": n_ops,
+                "index": round(detected_index, 3),
+                "method": name,
+            }
+    return found
+
+
+def _find_target_dataset(tool, structure, subgroup_number: int, spglib) -> dict | None:
+    """搜索能把对称性降到目标子群的扰动变体, 返回其 spglib dataset."""
+    import numpy as np
+
+    for _name, perturbed in SymmetryTool._symmetry_reduced_variants(tool, structure):
+        cell = (
+            np.asarray(perturbed.lattice.matrix, dtype=float),
+            np.asarray(perturbed.frac_coords, dtype=float),
+            np.array([site.specie.Z for site in perturbed]),
+        )
+        ds = spglib.get_symmetry_dataset(cell, symprec=0.05)
+        if ds is not None and ds["number"] == subgroup_number:
+            return ds
+    return None
+
+
+def _wyckoff_split_payload(orig_info: tuple, target_dataset: dict) -> dict:
+    """组装 wyckoff_split 的结果字典 (Wyckoff 字母分裂映射)."""
+    orig_spg, orig_sym, orig_wyckoffs = orig_info
+    new_wyckoffs = list(target_dataset["wyckoffs"])
+    new_spg = target_dataset["number"]
+    new_sym = target_dataset["international"]
+
+    # Map each original Wyckoff letter to the set of letters it
+    # becomes in the subgroup
+    splits: dict[str, set[str]] = {}
+    for orig_wy, new_wy in zip(orig_wyckoffs, new_wyckoffs):
+        splits.setdefault(orig_wy, set()).add(new_wy)
+
+    return {
+        "original_spacegroup": orig_spg,
+        "original_symbol": orig_sym,
+        "subgroup_spacegroup": new_spg,
+        "subgroup_symbol": new_sym,
+        "wyckoff_splits": {wy: sorted(new_wys) for wy, new_wys in splits.items()},
+        "original_wyckoffs": orig_wyckoffs,
+        "new_wyckoffs": new_wyckoffs,
+    }
+
+
+def _original_wyckoff_info(sga) -> tuple:
+    """取原结构的空间群号 / 符号 / Wyckoff 字母."""
+    orig_dataset = sga.get_symmetry_dataset()
+    return (
+        orig_dataset["number"],
+        orig_dataset["international"],
+        list(orig_dataset["wyckoffs"]),
+    )
+
+
+def _subgroup_not_found(subgroup_number: int) -> ToolResult:
+    """目标子群无法通过对称性扰动得到时的失败返回."""
+    return ToolResult(
+        data=None,
+        success=False,
+        error=(
+            f"Could not reduce structure to space group "
+            f"{subgroup_number} via symmetry reduction. Try a "
+            f"different subgroup or adjust perturbations."
+        ),
+    )
+
+
+def _lattice_params(lattice) -> dict:
+    """把晶格参数取成 dict, 供 Lattice.from_parameters 使用."""
+    return {
+        "a": lattice.a,
+        "b": lattice.b,
+        "c": lattice.c,
+        "alpha": lattice.alpha,
+        "beta": lattice.beta,
+        "gamma": lattice.gamma,
+    }
 
 
 class SymmetryToolInput(BaseModel):
@@ -103,7 +268,9 @@ class SymmetryTool(HuginnTool):
 
     name = "symmetry_tool"
     category = "sci"
-    profile = ToolProfile(phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION}))
+    profile = ToolProfile(
+        phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION})
+    )
     description = (
         "Analyze crystal symmetry: space group, point group, Wyckoff positions, "
         "symmetry operations, primitive/conventional cells, and high-symmetry "
@@ -129,11 +296,8 @@ class SymmetryTool(HuginnTool):
             )
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext | None = None
-    ) -> ToolResult:
-        input_data = SymmetryToolInput(**args)
-
+    def _prepare(self, input_data: SymmetryToolInput):
+        """导入 pymatgen, 读结构并构造 SpacegroupAnalyzer; 失败时返回失败的 ToolResult."""
         try:
             from pymatgen.core import Structure
             from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
@@ -165,6 +329,17 @@ class SymmetryTool(HuginnTool):
                 success=False,
                 error=f"SpacegroupAnalyzer failed: {e}. Try adjusting symprec.",
             )
+        return sga, structure
+
+    async def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
+        input_data = SymmetryToolInput(**args)
+
+        prepared = SymmetryTool._prepare(self, input_data)
+        if isinstance(prepared, ToolResult):
+            return prepared
+        sga, structure = prepared
 
         if input_data.action == "analyze":
             return self._analyze(sga, structure)
@@ -224,13 +399,21 @@ class SymmetryTool(HuginnTool):
                     "laue_class": laue,
                     "n_symmetry_operations": len(sga.get_symmetry_operations()),
                     "wyckoff_positions": wyckoff,
-                    "equivalent_atoms": equivalents.tolist() if hasattr(equivalents, "tolist") else list(equivalents),
+                    "equivalent_atoms": equivalents.tolist()
+                    if hasattr(equivalents, "tolist")
+                    else list(equivalents),
                     "unique_sites": [
                         {"atom_index": int(eq), "wyckoff": wy}
                         for eq, wy in unique_sites
                     ],
                     "n_atoms": len(structure),
-                    "n_equivalent_atoms": len(set(equivalents.tolist() if hasattr(equivalents, "tolist") else equivalents)),
+                    "n_equivalent_atoms": len(
+                        set(
+                            equivalents.tolist()
+                            if hasattr(equivalents, "tolist")
+                            else equivalents
+                        )
+                    ),
                 },
                 success=True,
             )
@@ -243,11 +426,13 @@ class SymmetryTool(HuginnTool):
             ops = sga.get_symmetry_operations()
             operations = []
             for i, op in enumerate(ops):
-                operations.append({
-                    "index": i,
-                    "rotation": op.rotation_matrix.tolist(),
-                    "translation": op.translation_vector.tolist(),
-                })
+                operations.append(
+                    {
+                        "index": i,
+                        "rotation": op.rotation_matrix.tolist(),
+                        "translation": op.translation_vector.tolist(),
+                    }
+                )
             return ToolResult(
                 data={
                     "n_operations": len(operations),
@@ -257,7 +442,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Failed to get operations: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Failed to get operations: {e}"
+            )
 
     def _verify_group(self, sga) -> ToolResult:
         """v8 SGP: 验证对称操作集合的群性质 (封闭性/逆元/单位元).
@@ -274,45 +461,47 @@ class SymmetryTool(HuginnTool):
             from sympy import eye
         except ImportError:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="sympy required for group verification (install: pip install sympy)",
             )
         try:
             ops = sga.get_symmetry_operations()
             if not ops:
-                return ToolResult(data=None, success=False, error="No symmetry operations found")
+                return ToolResult(
+                    data=None, success=False, error="No symmetry operations found"
+                )
             affines = self._affine_ops(ops)
-            n = len(affines)
             identity = eye(4)
-            # 1. 单位元检查
-            has_identity = any(identity == A for A in affines)
-            # 2. 逆元检查 — 每个操作有逆元在集合里
-            inverses_ok, missing_inverse = self._inverse_status(affines)
-            # 3. 封闭性检查 — 任意两操作的复合还在集合里 (mod 1 平移)
-            closure_ok, closure_failure, check_n = self._closure_status(
-                affines, identity
-            )
-            is_group = has_identity and inverses_ok and closure_ok
             return ToolResult(
-                data={
-                    "n_operations": n,
-                    "is_group": is_group,
-                    "has_identity": has_identity,
-                    "inverses_ok": inverses_ok,
-                    "closure_ok": closure_ok,
-                    "missing_inverse_index": missing_inverse,
-                    "closure_failure_pair": closure_failure,
-                    "checked_pairs": check_n * check_n,
-                    "note": (
-                        "群公理验证通过 (单位元 + 逆元 + 封闭性)" if is_group
-                        else f"群公理验证失败: identity={has_identity}, "
-                             f"inverses={inverses_ok}, closure={closure_ok}"
-                    ),
-                },
+                data=SymmetryTool._group_axioms(self, affines, identity),
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Group verification failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Group verification failed: {e}"
+            )
+
+    def _group_axioms(self, affines, identity) -> dict:
+        """检查群公理 (单位元/逆元/封闭性), 返回 verify_group 的结果字典."""
+        n = len(affines)
+        # 1. 单位元检查
+        has_identity = any(identity == A for A in affines)
+        # 2. 逆元检查 — 每个操作有逆元在集合里
+        inverses_ok, missing_inverse = self._inverse_status(affines)
+        # 3. 封闭性检查 — 任意两操作的复合还在集合里 (mod 1 平移)
+        closure_ok, closure_failure, check_n = self._closure_status(affines, identity)
+        is_group = has_identity and inverses_ok and closure_ok
+        return _verify_group_payload(
+            n,
+            is_group,
+            has_identity,
+            inverses_ok,
+            closure_ok,
+            missing_inverse,
+            closure_failure,
+            check_n,
+        )
 
     @staticmethod
     def _affine_ops(ops) -> list:
@@ -353,7 +542,9 @@ class SymmetryTool(HuginnTool):
             matrix[k, 3] = frac
         return matrix
 
-    def _closure_status(self, affines, identity) -> tuple[bool, tuple[int, int] | None, int]:
+    def _closure_status(
+        self, affines, identity
+    ) -> tuple[bool, tuple[int, int] | None, int]:
         """封闭性检查: 小群全检查, 大群随机采样 + 生成元阶检查 (B4/B8)."""
         n = len(affines)
         if n <= 24:
@@ -432,7 +623,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Failed to get primitive cell: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Failed to get primitive cell: {e}"
+            )
 
     def _conventional(self, sga) -> ToolResult:
         """Get the conventional standard cell."""
@@ -463,7 +656,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Failed to get conventional cell: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Failed to get conventional cell: {e}"
+            )
 
     def _kpath(self, sga, structure, density: int) -> ToolResult:
         """Generate high-symmetry k-point path for band structure calculations."""
@@ -488,10 +683,12 @@ class SymmetryTool(HuginnTool):
             segments = []
             current_segment = []
             for i, (kp, label) in enumerate(zip(kpoints, labels)):
-                current_segment.append({
-                    "coords": kp.tolist(),
-                    "label": label if label else None,
-                })
+                current_segment.append(
+                    {
+                        "coords": kp.tolist(),
+                        "label": label if label else None,
+                    }
+                )
                 if label and i > 0 and len(current_segment) > 1:
                     segments.append(current_segment)
                     current_segment = [current_segment[-1]]
@@ -510,7 +707,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Failed to generate k-path: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Failed to generate k-path: {e}"
+            )
 
     def _site_symmetry(self, sga, structure, site_index: int) -> ToolResult:
         """Get the site symmetry group for a specific atom."""
@@ -533,8 +732,12 @@ class SymmetryTool(HuginnTool):
                     "species": str(site.specie),
                     "frac_coords": site.frac_coords.tolist(),
                     "n_site_symmetry_ops": len(symm_ops),
-                    "wyckoff_letter": wyckoff[site_index] if site_index < len(wyckoff) else None,
-                    "equivalent_to": int(equivalents[site_index]) if site_index < len(equivalents) else None,
+                    "wyckoff_letter": wyckoff[site_index]
+                    if site_index < len(wyckoff)
+                    else None,
+                    "equivalent_to": int(equivalents[site_index])
+                    if site_index < len(equivalents)
+                    else None,
                     "site_symmetry_operations": [
                         {
                             "rotation": op.rotation_matrix.tolist(),
@@ -546,7 +749,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Site symmetry failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Site symmetry failed: {e}"
+            )
 
     def _irreducible(self, sga, density: int) -> ToolResult:
         """Get irreducible reciprocal space points (for Brillouin zone sampling)."""
@@ -575,7 +780,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Irreducible k-points failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Irreducible k-points failed: {e}"
+            )
 
     # ── Subgroup / supergroup analysis ────────────────────────────────
 
@@ -596,20 +803,14 @@ class SymmetryTool(HuginnTool):
 
         # Lattice stretches — break cubic / tetragonal / hexagonal equality
         for axis, delta in [("a", 0.02), ("b", -0.015), ("c", 0.025)]:
-            params = {
-                "a": lattice.a, "b": lattice.b, "c": lattice.c,
-                "alpha": lattice.alpha, "beta": lattice.beta, "gamma": lattice.gamma,
-            }
-            params[axis] *= (1 + delta)
+            params = _lattice_params(lattice)
+            params[axis] *= 1 + delta
             new_lat = Lattice.from_parameters(**params)
             variants.append((f"stretch_{axis}", Structure(new_lat, species, coords)))
 
         # Angular tilts — break higher-symmetry angle constraints
         for angle, delta in [("alpha", 1.5), ("beta", -2.0), ("gamma", 2.5)]:
-            params = {
-                "a": lattice.a, "b": lattice.b, "c": lattice.c,
-                "alpha": lattice.alpha, "beta": lattice.beta, "gamma": lattice.gamma,
-            }
+            params = _lattice_params(lattice)
             params[angle] += delta
             new_lat = Lattice.from_parameters(**params)
             variants.append((f"tilt_{angle}", Structure(new_lat, species, coords)))
@@ -633,7 +834,6 @@ class SymmetryTool(HuginnTool):
         gives the subgroup index.
         """
         try:
-            import numpy as np
             import spglib
 
             dataset = sga.get_symmetry_dataset()
@@ -641,34 +841,9 @@ class SymmetryTool(HuginnTool):
             current_sym = dataset["international"]
             current_n_ops = len(dataset["rotations"])
 
-            found: dict[int, dict] = {}
-            for name, perturbed in self._symmetry_reduced_variants(structure):
-                cell = (
-                    np.asarray(perturbed.lattice.matrix, dtype=float),
-                    np.asarray(perturbed.frac_coords, dtype=float),
-                    np.array([site.specie.Z for site in perturbed]),
-                )
-                ds = spglib.get_symmetry_dataset(cell, symprec=0.05)
-                if ds is None:
-                    continue
-                sg_num = ds["number"]
-                if sg_num == current_spg:
-                    continue
-                n_ops = len(ds["rotations"])
-                detected_index = current_n_ops / n_ops if n_ops else float("inf")
-
-                # Filter by requested index (skip filter when index <= 0)
-                if index > 0 and abs(detected_index - index) > 0.01:
-                    continue
-
-                if sg_num not in found:
-                    found[sg_num] = {
-                        "number": sg_num,
-                        "hermann_mauguin": ds["international"],
-                        "n_operations": n_ops,
-                        "index": round(detected_index, 3),
-                        "method": name,
-                    }
+            found = _detect_subgroups(
+                self, structure, current_spg, current_n_ops, index, spglib
+            )
 
             return ToolResult(
                 data={
@@ -681,7 +856,9 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Subgroup analysis failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Subgroup analysis failed: {e}"
+            )
 
     def _wyckoff_split(self, sga, structure, subgroup_number: int | None) -> ToolResult:
         """Show how Wyckoff positions split when going to a subgroup.
@@ -691,7 +868,6 @@ class SymmetryTool(HuginnTool):
         mapping.
         """
         try:
-            import numpy as np
             import spglib
 
             if subgroup_number is None:
@@ -701,61 +877,24 @@ class SymmetryTool(HuginnTool):
                     error="subgroup_number is required for wyckoff_split.",
                 )
 
-            orig_dataset = sga.get_symmetry_dataset()
-            orig_spg = orig_dataset["number"]
-            orig_sym = orig_dataset["international"]
-            orig_wyckoffs = list(orig_dataset["wyckoffs"])
+            orig_info = _original_wyckoff_info(sga)
 
             # Search for a perturbation that reduces symmetry to the target subgroup
-            target_dataset = None
-            for _name, perturbed in self._symmetry_reduced_variants(structure):
-                cell = (
-                    np.asarray(perturbed.lattice.matrix, dtype=float),
-                    np.asarray(perturbed.frac_coords, dtype=float),
-                    np.array([site.specie.Z for site in perturbed]),
-                )
-                ds = spglib.get_symmetry_dataset(cell, symprec=0.05)
-                if ds is not None and ds["number"] == subgroup_number:
-                    target_dataset = ds
-                    break
+            target_dataset = _find_target_dataset(
+                self, structure, subgroup_number, spglib
+            )
 
             if target_dataset is None:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=(
-                        f"Could not reduce structure to space group "
-                        f"{subgroup_number} via symmetry reduction. Try a "
-                        f"different subgroup or adjust perturbations."
-                    ),
-                )
-
-            new_wyckoffs = list(target_dataset["wyckoffs"])
-            new_spg = target_dataset["number"]
-            new_sym = target_dataset["international"]
-
-            # Map each original Wyckoff letter to the set of letters it
-            # becomes in the subgroup
-            splits: dict[str, set[str]] = {}
-            for orig_wy, new_wy in zip(orig_wyckoffs, new_wyckoffs):
-                splits.setdefault(orig_wy, set()).add(new_wy)
+                return _subgroup_not_found(subgroup_number)
 
             return ToolResult(
-                data={
-                    "original_spacegroup": orig_spg,
-                    "original_symbol": orig_sym,
-                    "subgroup_spacegroup": new_spg,
-                    "subgroup_symbol": new_sym,
-                    "wyckoff_splits": {
-                        wy: sorted(new_wys) for wy, new_wys in splits.items()
-                    },
-                    "original_wyckoffs": orig_wyckoffs,
-                    "new_wyckoffs": new_wyckoffs,
-                },
+                data=_wyckoff_split_payload(orig_info, target_dataset),
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Wyckoff split analysis failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Wyckoff split analysis failed: {e}"
+            )
 
     def _magnetic(self, sga, structure) -> ToolResult:
         """Check for potentially magnetic sites and estimate moments."""
@@ -766,12 +905,14 @@ class SymmetryTool(HuginnTool):
                 if element in _MAGNETIC_MOMENTS:
                     moment = _MAGNETIC_MOMENTS[element]
                     if moment > 0:
-                        magnetic_sites.append({
-                            "index": i,
-                            "element": element,
-                            "estimated_moment_muB": moment,
-                            "frac_coords": site.frac_coords.tolist(),
-                        })
+                        magnetic_sites.append(
+                            {
+                                "index": i,
+                                "element": element,
+                                "estimated_moment_muB": moment,
+                                "frac_coords": site.frac_coords.tolist(),
+                            }
+                        )
 
             return ToolResult(
                 data={
@@ -787,4 +928,6 @@ class SymmetryTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Magnetic analysis failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Magnetic analysis failed: {e}"
+            )

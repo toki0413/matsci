@@ -78,11 +78,17 @@ def _persist_config(cfg: HuginnConfig) -> None:
     for attr in ("base_url", "ollama_host"):
         val = getattr(cfg, attr, None)
         if val and not str(val).startswith(("http://", "https://", "ftp://")):
-            logger.warning("Rejecting suspicious %s=%r (not a URL), clearing", attr, val[:20])
+            logger.warning(
+                "Rejecting suspicious %s=%r (not a URL), clearing", attr, val[:20]
+            )
             setattr(cfg, attr, None if attr == "base_url" else "http://localhost:11434")
     for m in cfg.models:
-        if m.base_url and not str(m.base_url).startswith(("http://", "https://", "ftp://")):
-            logger.warning("Rejecting suspicious model.base_url=%r, clearing", str(m.base_url)[:20])
+        if m.base_url and not str(m.base_url).startswith(
+            ("http://", "https://", "ftp://")
+        ):
+            logger.warning(
+                "Rejecting suspicious model.base_url=%r, clearing", str(m.base_url)[:20]
+            )
             m.base_url = None
 
     target = _config_path()
@@ -119,6 +125,7 @@ def _model_to_dict(m: ModelConfig) -> dict[str, Any]:
     if m.credential_id:
         try:
             from huginn.security.credential_store import get_credential_store
+
             cred = get_credential_store().to_llm_info(m.credential_id)
             has_cred_key = bool(cred and cred.get("api_key"))
         except Exception:
@@ -196,25 +203,47 @@ async def get_config_endpoint() -> dict[str, Any]:
 
 # 兼容老前端的 POST /config: 单 provider 字段直接落到 env + 文件,
 # 不破坏现有 saveSettings() 调用链
-_ALLOWED_LEGACY_KEYS = frozenset({
-    "provider", "model", "api_key", "base_url", "ollama_host",
-    "persona", "persona_auto_route_threshold",
-    "rag_enabled", "team_mode_enabled", "max_concurrent_subagents",
-    "models", "agents",
-    "pet_name", "pet_personality",
-    "encrypt_config", "encryption_password", "encryption_key_file",
-    "privacy_redact_secrets", "privacy_block_on_secrets", "local_only_mode",
-    "max_tool_output_tokens", "context_budget_tokens", "pet_accessories",
-    # 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
-    "mp_api_key",
-    # OQMD 材料数据库 key (from_env 读 OQMD_API_KEY)
-    "oqmd_api_key",
-    # MinerU 文献解析 keys (逗号分隔) + 企微机器人 token
-    "mineru_api_keys", "wecom_token",
-    # 极限模式 + 分层 memory (前端 Settings "Advanced" tab)
-    "extreme_dispatch", "wm_summarize", "wm_token_budget",
-    "em_recall_top_k", "pm_c_min", "wm_summarize_every_n",
-})
+_ALLOWED_LEGACY_KEYS = frozenset(
+    {
+        "provider",
+        "model",
+        "api_key",
+        "base_url",
+        "ollama_host",
+        "persona",
+        "persona_auto_route_threshold",
+        "rag_enabled",
+        "team_mode_enabled",
+        "max_concurrent_subagents",
+        "models",
+        "agents",
+        "pet_name",
+        "pet_personality",
+        "encrypt_config",
+        "encryption_password",
+        "encryption_key_file",
+        "privacy_redact_secrets",
+        "privacy_block_on_secrets",
+        "local_only_mode",
+        "max_tool_output_tokens",
+        "context_budget_tokens",
+        "pet_accessories",
+        # 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
+        "mp_api_key",
+        # OQMD 材料数据库 key (from_env 读 OQMD_API_KEY)
+        "oqmd_api_key",
+        # MinerU 文献解析 keys (逗号分隔) + 企微机器人 token
+        "mineru_api_keys",
+        "wecom_token",
+        # 极限模式 + 分层 memory (前端 Settings "Advanced" tab)
+        "extreme_dispatch",
+        "wm_summarize",
+        "wm_token_budget",
+        "em_recall_top_k",
+        "pm_c_min",
+        "wm_summarize_every_n",
+    }
+)
 
 
 @router.post("/config", dependencies=[Depends(require_admin_key)])
@@ -262,9 +291,9 @@ async def _reconnect_matdb_with_key(mp_api_key: Any) -> None:
         logger.warning(f"mat-db MCP 重连失败(不影响配置保存): {e}")
 
 
-def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
-    """把老式 flat config 字段刷到环境变量, 给 from_env() 用。"""
-    mapping = {
+def _legacy_env_mapping() -> dict[str, str]:
+    """老式 flat config 字段 → 环境变量名。"""
+    return {
         "provider": "HUGINN_PROVIDER",
         "model": "HUGINN_MODEL",
         "api_key": "HUGINN_API_KEY",
@@ -296,19 +325,26 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         "wm_summarize_every_n": "HUGINN_WM_SUMMARIZE_EVERY_N",
     }
 
-    for key, env_name in mapping.items():
+
+def _apply_env_value(env_name: str, val: Any) -> None:
+    """把单个配置值写进环境变量; None / 空串表示清除。"""
+    if val is None or val == "":
+        os.environ.pop(env_name, None)
+        return
+    if isinstance(val, bool):
+        os.environ[env_name] = "true" if val else "false"
+    elif isinstance(val, dict | list):
+        os.environ[env_name] = json.dumps(val)
+    else:
+        os.environ[env_name] = str(val)
+
+
+def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
+    """把老式 flat config 字段刷到环境变量, 给 from_env() 用。"""
+    for key, env_name in _legacy_env_mapping().items():
         if key not in params:
             continue
-        val = params[key]
-        if val is None or val == "":
-            os.environ.pop(env_name, None)
-            continue
-        if isinstance(val, bool):
-            os.environ[env_name] = "true" if val else "false"
-        elif isinstance(val, dict | list):
-            os.environ[env_name] = json.dumps(val)
-        else:
-            os.environ[env_name] = str(val)
+        _apply_env_value(env_name, params[key])
 
     # models / agents 是 list, 单独走 JSON 序列化
     if "models" in params and params["models"] is not None:
@@ -338,7 +374,10 @@ async def add_model_config(params: dict[str, Any]) -> dict[str, Any]:
     cfg = _load_runtime_config()
     # alias 去重, 避免覆盖已有配置
     if any(m.alias == alias for m in cfg.models):
-        return {"success": False, "error": f"alias '{alias}' 已存在, 请换一个或用 PUT 更新"}
+        return {
+            "success": False,
+            "error": f"alias '{alias}' 已存在, 请换一个或用 PUT 更新",
+        }
 
     try:
         model = _build_model_config(params)
@@ -422,45 +461,63 @@ async def test_model_inline(params: dict[str, Any]) -> dict[str, Any]:
     return await _run_connectivity_test(model)
 
 
+def _build_probe_client(model: ModelConfig) -> Any:
+    """按 ModelConfig 建一个探测用客户端 (本地 provider 给占位 key)。"""
+    resolved_key = resolve_provider_key(model.provider, model.api_key)  # type: ignore[arg-type]
+    # 本地 provider 没 key 也得给个占位, 不然 ChatOpenAI 会拒
+    if not resolved_key and model.provider in ("ollama", "vllm", "local"):
+        resolved_key = "not-needed"
+
+    return create_langchain_model(
+        provider=model.provider,  # type: ignore[arg-type]
+        model_name=model.model,
+        api_key=resolved_key,
+        base_url=model.base_url,
+        temperature=0.0,
+        max_tokens=16,
+    )
+
+
+async def _invoke_probe(client: Any, model: ModelConfig) -> Any:
+    """发一条 "Hello" 做同步 invoke (放线程池), 10s 超时。"""
+    # 用 invoke 跑同步调用, 包到 to_thread 里避免阻塞事件循环
+    # 10s 超时: 够覆盖建连 + 一次小推理, 又不至于让用户等太久
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            client.invoke,
+            "Hello",
+            config=(
+                {"max_tokens": 16}
+                if model.provider
+                in ("openai", "vllm", "local", "deepseek", "openrouter")
+                else None
+            ),
+        ),
+        timeout=10.0,
+    )
+
+
+def _response_text(response: Any) -> str:
+    """取响应正文: 有 content 属性用 content, 纯字符串直接用。"""
+    if hasattr(response, "content"):
+        return str(response.content)
+    if isinstance(response, str):
+        return response
+    return ""
+
+
 async def _run_connectivity_test(model: ModelConfig) -> dict[str, Any]:
     """实际跑连通性: 建客户端 → 发 Hello → 测延迟。"""
     start = time.perf_counter()
     try:
-        resolved_key = resolve_provider_key(model.provider, model.api_key)  # type: ignore[arg-type]
-        # 本地 provider 没 key 也得给个占位, 不然 ChatOpenAI 会拒
-        if not resolved_key and model.provider in ("ollama", "vllm", "local"):
-            resolved_key = "not-needed"
-
-        client = create_langchain_model(
-            provider=model.provider,  # type: ignore[arg-type]
-            model_name=model.model,
-            api_key=resolved_key,
-            base_url=model.base_url,
-            temperature=0.0,
-            max_tokens=16,
-        )
-
-        # 用 invoke 跑同步调用, 包到 to_thread 里避免阻塞事件循环
-        # 10s 超时: 够覆盖建连 + 一次小推理, 又不至于让用户等太久
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.invoke,
-                "Hello",
-                config={"max_tokens": 16} if model.provider in ("openai", "vllm", "local", "deepseek", "openrouter") else None,
-            ),
-            timeout=10.0,
-        )
+        client = _build_probe_client(model)
+        response = await _invoke_probe(client, model)
         latency_ms = int((time.perf_counter() - start) * 1000)
-        text = ""
-        if hasattr(response, "content"):
-            text = str(response.content)
-        elif isinstance(response, str):
-            text = response
         return {
             "success": True,
             "latency_ms": latency_ms,
             "error": None,
-            "model_response": text[:200],
+            "model_response": _response_text(response)[:200],
         }
     except TimeoutError:
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -496,12 +553,30 @@ async def list_providers() -> dict[str, Any]:
     """列出支持的 provider + 默认 base_url + 是否需要 key。"""
     # 顺序固定, 前端展示更稳定
     order = [
-        "anthropic", "openai", "deepseek", "google-genai", "openrouter",
-        "nvidia", "ollama", "vllm", "local", "siliconflow",
-        "moonshot", "zhipu", "baichuan", "dashscope", "qianfan",
-        "doubao", "hunyuan", "minimax", "internlm",
-        "lm-studio", "llama-cpp", "sglang",
-        "openai-compatible", "default",
+        "anthropic",
+        "openai",
+        "deepseek",
+        "google-genai",
+        "openrouter",
+        "nvidia",
+        "ollama",
+        "vllm",
+        "local",
+        "siliconflow",
+        "moonshot",
+        "zhipu",
+        "baichuan",
+        "dashscope",
+        "qianfan",
+        "doubao",
+        "hunyuan",
+        "minimax",
+        "internlm",
+        "lm-studio",
+        "llama-cpp",
+        "sglang",
+        "openai-compatible",
+        "default",
     ]
     return {"providers": [_provider_info(p) for p in order], "count": len(order)}
 
@@ -509,27 +584,15 @@ async def list_providers() -> dict[str, Any]:
 # ── /config/local-models ────────────────────────────────────────
 
 
-@router.get("/config/local-models", dependencies=[Depends(require_admin_key)])
-async def discover_local_models(provider: str = "ollama", base_url: str = "") -> dict[str, Any]:
-    """探一下本地推理服务 (ollama/vllm/local) 上挂了哪些模型。
-
-    ollama 走 /api/tags, 其余 OpenAI 兼容服务走 /v1/models。5s 超时,
-    连不上就回 success=False + error, 不抛异常给前端。
-
-    只允许访问 loopback 地址, 防止 SSRF。
-    """
-    # 各 provider 的默认本地地址, 没传 base_url 时兜底
-    defaults = {
-        "ollama": "http://localhost:11434",
-        "vllm": "http://localhost:8000",
-        "local": "http://localhost:8000",
-    }
-    url = base_url or defaults.get(provider, "http://localhost:8000")
-
-    # SSRF 防护: 只允许 loopback / 链路本地地址
+def _local_url_block_reason(url: str) -> dict[str, Any] | None:
+    """SSRF 防护: 只允许 loopback / 链路本地 / .local 地址; 不允许则返回错误响应。"""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        return {"success": False, "models": [], "error": f"scheme '{parsed.scheme}' not allowed"}
+        return {
+            "success": False,
+            "models": [],
+            "error": f"scheme '{parsed.scheme}' not allowed",
+        }
     hostname = parsed.hostname or ""
     if not hostname:
         return {"success": False, "models": [], "error": "invalid URL: no hostname"}
@@ -549,24 +612,57 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
             "models": [],
             "error": f"blocked: '{hostname}' is not a loopback/local address — SSRF protection",
         }
+    return None
+
+
+def _fetch_local_model_names(provider: str, url: str) -> list[str]:
+    """拉本地推理服务的模型列表: ollama 走 /api/tags, 其余走 /v1/models。"""
+    if provider == "ollama":
+        api_url = f"{url.rstrip('/')}/api/tags"
+    else:
+        # vLLM 和其它 OpenAI 兼容服务都用 /v1/models
+        api_url = f"{url.rstrip('/')}/v1/models"
+
+    req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+
+    if provider == "ollama":
+        return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+    return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+
+
+@router.get("/config/local-models", dependencies=[Depends(require_admin_key)])
+async def discover_local_models(
+    provider: str = "ollama", base_url: str = ""
+) -> dict[str, Any]:
+    """探一下本地推理服务 (ollama/vllm/local) 上挂了哪些模型。
+
+    ollama 走 /api/tags, 其余 OpenAI 兼容服务走 /v1/models。5s 超时,
+    连不上就回 success=False + error, 不抛异常给前端。
+
+    只允许访问 loopback 地址, 防止 SSRF。
+    """
+    # 各 provider 的默认本地地址, 没传 base_url 时兜底
+    defaults = {
+        "ollama": "http://localhost:11434",
+        "vllm": "http://localhost:8000",
+        "local": "http://localhost:8000",
+    }
+    url = base_url or defaults.get(provider, "http://localhost:8000")
+
+    blocked = _local_url_block_reason(url)
+    if blocked is not None:
+        return blocked
 
     try:
-        if provider == "ollama":
-            api_url = f"{url.rstrip('/')}/api/tags"
-        else:
-            # vLLM 和其它 OpenAI 兼容服务都用 /v1/models
-            api_url = f"{url.rstrip('/')}/v1/models"
-
-        req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-
-        if provider == "ollama":
-            models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-        else:
-            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
-
-        return {"success": True, "models": models, "provider": provider, "base_url": url}
+        models = _fetch_local_model_names(provider, url)
+        return {
+            "success": True,
+            "models": models,
+            "provider": provider,
+            "base_url": url,
+        }
     except Exception as e:
         # 不回传完整异常信息, 避免泄露内部路径
         return {"success": False, "models": [], "error": type(e).__name__}
@@ -611,9 +707,8 @@ async def set_active_model(params: dict[str, Any]) -> dict[str, Any]:
     lead = next((a for a in cfg.agents if a.id == "lead"), None)
     if lead is None:
         from huginn.config import AgentProfileConfig
-        cfg.agents.append(
-            AgentProfileConfig(id="lead", name="Lead", model_alias=alias)
-        )
+
+        cfg.agents.append(AgentProfileConfig(id="lead", name="Lead", model_alias=alias))
     else:
         lead.model_alias = alias
 
@@ -636,8 +731,10 @@ async def set_active_model(params: dict[str, Any]) -> dict[str, Any]:
             agent.model = resolved
             runtime_applied = True
     except Exception:
-        logger.debug("runtime model hot-swap skipped (no live agent or resolve failed)",
-                     exc_info=True)
+        logger.debug(
+            "runtime model hot-swap skipped (no live agent or resolve failed)",
+            exc_info=True,
+        )
 
     return {"success": True, "active_alias": alias, "runtime_applied": runtime_applied}
 
@@ -663,8 +760,14 @@ async def get_model_caps() -> dict[str, Any]:
                 alias, model_name = m.alias, m.model
                 break
     if not model_name:
-        return {"active_alias": alias, "model": None, "vision": False,
-                "tools": False, "reasoning": False, "streaming": False}
+        return {
+            "active_alias": alias,
+            "model": None,
+            "vision": False,
+            "tools": False,
+            "reasoning": False,
+            "streaming": False,
+        }
 
     caps = get_model_capabilities(model_name)
     return {
@@ -690,8 +793,10 @@ async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     cfg.encryption_password = password
 
     # .enc 后缀走 EncryptedConfig 路径, save() 内部会识别
-    enc_path = target if str(target).endswith(".enc") else target.with_suffix(
-        target.suffix + ".enc"
+    enc_path = (
+        target
+        if str(target).endswith(".enc")
+        else target.with_suffix(target.suffix + ".enc")
     )
     try:
         cfg.save(enc_path, format="json")
@@ -935,7 +1040,9 @@ async def reset_circuit_endpoint(tool: str) -> dict[str, Any]:
         "tool": tool,
         "before": before["state"],
         "after": after["state"],
-        "note": "已重置" if before["state"] != "closed" or before["consecutive_failures"] > 0 else "本就为 closed, 无需重置",
+        "note": "已重置"
+        if before["state"] != "closed" or before["consecutive_failures"] > 0
+        else "本就为 closed, 无需重置",
     }
 
 
@@ -994,6 +1101,9 @@ async def set_privacy_level(params: dict[str, Any]) -> dict[str, Any]:
     level = params.get("level", "").strip()
     pg = PrivacyGuard.shared()
     if level not in pg.LEVELS:
-        return {"success": False, "error": f"未知级别: {level}. 可选: {list(pg.LEVELS)}"}
+        return {
+            "success": False,
+            "error": f"未知级别: {level}. 可选: {list(pg.LEVELS)}",
+        }
     pg.set_level(level)
     return {"success": True, "level": level, "description": pg.LEVELS[level]}

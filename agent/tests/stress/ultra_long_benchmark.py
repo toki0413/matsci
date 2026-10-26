@@ -3,6 +3,7 @@
 Runs extended-duration tests to detect memory leaks, race conditions, and
 degradation that only appears under sustained load.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,14 +14,22 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent.parent / ".test_cache"))
+os.environ.setdefault(
+    "HUGINN_CACHE_DIR", str(Path(__file__).parent.parent.parent / ".test_cache")
+)
 
 PASSED = 0
 FAILED = 0
 SKIPPED = 0
 
 
-def report(name: str, success: bool, detail: str = "", skipped: bool = False, critical: bool = False) -> None:
+def report(
+    name: str,
+    success: bool,
+    detail: str = "",
+    skipped: bool = False,
+    critical: bool = False,
+) -> None:
     global PASSED, FAILED, SKIPPED
     if skipped:
         SKIPPED += 1
@@ -39,12 +48,59 @@ def report(name: str, success: bool, detail: str = "", skipped: bool = False, cr
 def get_rss_mb() -> float:
     try:
         import psutil
+
         return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
     except ImportError:
         return 0.0
 
 
 # ── Test A: 5-minute memory leak detection ──────────────────────────
+
+
+async def _leak_workload(
+    sym_tool, num_tool, ctx, tmpdir, poscar_content, index
+) -> None:
+    p = tmpdir / f"struct_{index}.vasp"
+    p.write_text(poscar_content)
+    await sym_tool.call({"action": "analyze", "file_path": str(p)}, ctx)
+    p.unlink(missing_ok=True)
+
+    await num_tool.call(
+        {
+            "action": "ode",
+            "func": "-y[0]",
+            "y0": [1.0],
+            "t_span": [0, 5],
+            "t_eval": [j * 0.25 for j in range(21)],
+        },
+        ctx,
+    )
+
+
+def _leak_sample(rss_samples, t0, iterations) -> None:
+    gc.collect()
+    rss = get_rss_mb()
+    elapsed = time.time() - t0
+    rss_samples.append((elapsed, rss))
+    if iterations % 50 == 0:
+        print(f"    [{elapsed:.0f}s] iter={iterations} rss={rss:.1f}MB")
+
+
+def _report_leak(rss_samples, iterations) -> None:
+    if len(rss_samples) >= 5:
+        first_rss = rss_samples[0][1]
+        last_rss = rss_samples[-1][1]
+        delta = last_rss - first_rss
+        leak_threshold = 50.0
+        report(
+            "5min memory leak",
+            delta < leak_threshold,
+            f"start={first_rss:.1f}MB end={last_rss:.1f}MB delta={delta:+.1f}MB "
+            f"threshold={leak_threshold}MB iters={iterations}",
+        )
+    else:
+        report("5min memory leak", False, "insufficient samples", skipped=True)
+
 
 async def test_memory_leak_5min() -> None:
     print("\n[A] 5-Minute Memory Leak Detection")
@@ -53,7 +109,7 @@ async def test_memory_leak_5min() -> None:
     from huginn.tools.sci.symmetry_tool import SymmetryTool
 
     duration = 300  # 5 minutes
-    interval = 5    # check every 5 seconds
+    interval = 5  # check every 5 seconds
     tmpdir = Path(__file__).parent.parent.parent / "tmp_leak_test"
     tmpdir.mkdir(exist_ok=True)
     ctx = ToolContext(session_id="leak-test", workspace=str(tmpdir))
@@ -71,48 +127,58 @@ async def test_memory_leak_5min() -> None:
     print(f"  Running for {duration}s (sampling every {interval}s)...")
 
     while time.time() - t0 < duration:
-        p = tmpdir / f"struct_{iterations}.vasp"
-        p.write_text(poscar_content)
-        await sym_tool.call({"action": "analyze", "file_path": str(p)}, ctx)
-        p.unlink(missing_ok=True)
-
-        await num_tool.call({
-            "action": "ode",
-            "func": "-y[0]",
-            "y0": [1.0],
-            "t_span": [0, 5],
-            "t_eval": [j * 0.25 for j in range(21)],
-        }, ctx)
-
+        await _leak_workload(
+            sym_tool, num_tool, ctx, tmpdir, poscar_content, iterations
+        )
         iterations += 1
         if iterations % 10 == 0:
-            gc.collect()
-            rss = get_rss_mb()
-            elapsed = time.time() - t0
-            rss_samples.append((elapsed, rss))
-            if iterations % 50 == 0:
-                print(f"    [{elapsed:.0f}s] iter={iterations} rss={rss:.1f}MB")
+            _leak_sample(rss_samples, t0, iterations)
 
         await asyncio.sleep(0.1)
 
-    if len(rss_samples) >= 5:
-        first_rss = rss_samples[0][1]
-        last_rss = rss_samples[-1][1]
-        delta = last_rss - first_rss
-        leak_threshold = 50.0
-        report(
-            "5min memory leak",
-            delta < leak_threshold,
-            f"start={first_rss:.1f}MB end={last_rss:.1f}MB delta={delta:+.1f}MB threshold={leak_threshold}MB iters={iterations}",
-        )
-    else:
-        report("5min memory leak", False, "insufficient samples", skipped=True)
+    _report_leak(rss_samples, iterations)
 
     import shutil
+
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ── Test B: Campaign loop stability (20 iterations) ─────────────────
+
+
+async def _campaign_step(num_tool, ctx, i: int):
+    """Simulate a campaign step: solve → validate → refine.
+
+    Returns ``None`` on success, or an error string.
+    """
+    try:
+        r1 = await num_tool.call(
+            {
+                "action": "ode",
+                "func": f"-{0.1 * (i + 1)} * y[0]",
+                "y0": [1.0],
+                "t_span": [0, 10],
+                "t_eval": [j * 0.2 for j in range(51)],
+            },
+            ctx,
+        )
+    except Exception as e:
+        return f"iter {i}: exception: {e}"
+    if r1.success:
+        return None
+    return f"iter {i}: solve failed: {r1.error}"
+
+
+def _report_campaign(successes: int, n_iterations: int, errors: list[str]) -> None:
+    report(
+        "campaign 20 iterations",
+        successes == n_iterations,
+        f"successes={successes}/{n_iterations} errors={len(errors)}",
+    )
+    if errors:
+        for e in errors[:3]:
+            print(f"      ⚠ {e}")
+
 
 async def test_campaign_loop_stability() -> None:
     print("\n[B] Campaign Loop Stability (20 iterations)")
@@ -132,41 +198,28 @@ async def test_campaign_loop_stability() -> None:
     errors: list[str] = []
 
     for i in range(n_iterations):
-        try:
-            # Simulate a campaign step: solve → validate → refine
-            r1 = await num_tool.call({
-                "action": "ode",
-                "func": f"-{0.1 * (i + 1)} * y[0]",
-                "y0": [1.0],
-                "t_span": [0, 10],
-                "t_eval": [j * 0.2 for j in range(51)],
-            }, ctx)
-            if r1.success:
-                successes += 1
-            else:
-                errors.append(f"iter {i}: solve failed: {r1.error}")
-        except Exception as e:
-            errors.append(f"iter {i}: exception: {e}")
+        err = await _campaign_step(num_tool, ctx, i)
+        if err is None:
+            successes += 1
+        else:
+            errors.append(err)
 
         if (i + 1) % 5 == 0:
             gc.collect()
             rss = get_rss_mb()
-            print(f"    [iter {i+1}/{n_iterations}] successes={successes} rss={rss:.1f}MB")
+            print(
+                f"    [iter {i + 1}/{n_iterations}] successes={successes} rss={rss:.1f}MB"
+            )
 
-    report(
-        "campaign 20 iterations",
-        successes == n_iterations,
-        f"successes={successes}/{n_iterations} errors={len(errors)}",
-    )
-    if errors:
-        for e in errors[:3]:
-            print(f"      ⚠ {e}")
+    _report_campaign(successes, n_iterations, errors)
 
     import shutil
+
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ── Test C: Tool chain repetition (100 iterations) ──────────────────
+
 
 async def test_tool_chain_repetition() -> None:
     print("\n[C] Tool Chain Repetition (100 iterations)")
@@ -196,7 +249,9 @@ async def test_tool_chain_repetition() -> None:
 
         if (i + 1) % 20 == 0:
             gc.collect()
-            print(f"    [iter {i+1}/{n}] successes={successes} rss={get_rss_mb():.1f}MB")
+            print(
+                f"    [iter {i + 1}/{n}] successes={successes} rss={get_rss_mb():.1f}MB"
+            )
 
     elapsed = time.time() - t0
     avg_ms = elapsed / n * 1000
@@ -207,10 +262,12 @@ async def test_tool_chain_repetition() -> None:
     )
 
     import shutil
+
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ── Test D: Tool registry sustained access ──────────────────────────
+
 
 async def test_registry_sustained_access() -> None:
     print("\n[D] Tool Registry Sustained Access (500 reads)")
@@ -233,17 +290,18 @@ async def test_registry_sustained_access() -> None:
 
         if (i + 1) % 100 == 0:
             gc.collect()
-            print(f"    [iter {i+1}/{n}] errors={errors} rss={get_rss_mb():.1f}MB")
+            print(f"    [iter {i + 1}/{n}] errors={errors} rss={get_rss_mb():.1f}MB")
 
     elapsed = time.time() - t0
     report(
         "registry 500 reads",
         errors == 0,
-        f"tools={len(reg.list_tools())} errors={errors} total={elapsed:.1f}s avg={elapsed/n*1000:.1f}ms/read",
+        f"tools={len(reg.list_tools())} errors={errors} total={elapsed:.1f}s avg={elapsed / n * 1000:.1f}ms/read",
     )
 
 
 # ── Test E: Memory system sustained operation ───────────────────────
+
 
 async def test_memory_sustained() -> None:
     print("\n[E] Memory System Sustained Operation (200 ops)")
@@ -274,7 +332,9 @@ async def test_memory_sustained() -> None:
 
         if (i + 1) % 50 == 0:
             gc.collect()
-            print(f"    [iter {i+1}/{n}] successes={successes} rss={get_rss_mb():.1f}MB")
+            print(
+                f"    [iter {i + 1}/{n}] successes={successes} rss={get_rss_mb():.1f}MB"
+            )
 
     elapsed = time.time() - t0
     report(
@@ -285,6 +345,7 @@ async def test_memory_sustained() -> None:
 
 
 # ── Quick memory leak test (2-min) ──────────────────────────────────
+
 
 async def _quick_leak_test() -> None:
     """2-minute quick memory leak check."""
@@ -315,17 +376,21 @@ async def _quick_leak_test() -> None:
             gc.collect()
             rss = get_rss_mb()
             rss_samples.append(rss)
-            print(f"    [{time.time()-t0:.0f}s] iter={iters} rss={rss:.1f}MB")
+            print(f"    [{time.time() - t0:.0f}s] iter={iters} rss={rss:.1f}MB")
         await asyncio.sleep(0.05)
 
     if len(rss_samples) >= 3:
         delta = rss_samples[-1] - rss_samples[0]
-        report("2min memory leak", delta < 50.0,
-               f"start={rss_samples[0]:.1f}MB end={rss_samples[-1]:.1f}MB delta={delta:+.1f}MB iters={iters}")
+        report(
+            "2min memory leak",
+            delta < 50.0,
+            f"start={rss_samples[0]:.1f}MB end={rss_samples[-1]:.1f}MB delta={delta:+.1f}MB iters={iters}",
+        )
     else:
         report("2min memory leak", False, "insufficient data", skipped=True)
 
     import shutil
+
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 

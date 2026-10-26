@@ -20,6 +20,7 @@ import logging
 import sqlite3
 import tempfile
 import threading
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -34,9 +35,33 @@ logger = logging.getLogger(__name__)
 _SORRY_MARKERS = ("sorry", "admit", "by_contradiction_tactic", "exact sorry")
 
 # proof_script 白名单 import — 与 task_synthesizer 的 _JUDGE_ALLOWED_MODULES 逐字一致.
-_PROOF_ALLOWED_MODULES = frozenset({
-    "math", "statistics", "json", "re", "numpy", "pandas", "sympy", "scipy",
-})
+_PROOF_ALLOWED_MODULES = frozenset(
+    {
+        "math",
+        "statistics",
+        "json",
+        "re",
+        "numpy",
+        "pandas",
+        "sympy",
+        "scipy",
+    }
+)
+
+# proof_script 里禁用的内建调用 — 能绕过白名单拿回危险能力.
+_FORBIDDEN_CALLS = frozenset(
+    {
+        "__import__",
+        "eval",
+        "exec",
+        "compile",
+        "getattr",
+        "setattr",
+        "delattr",
+        "globals",
+        "locals",
+    }
+)
 
 
 @dataclass
@@ -54,6 +79,7 @@ class Conjecture:
         none = 完整证明; placeholder = 含 sorry 待填充;
         filled = 原 sorry 已被后续证明填充; impossible = 判定不可实现
     """
+
     id: str
     statement: str
     sympy_expr: str
@@ -63,6 +89,80 @@ class Conjecture:
     generation: int = 0
     parent_ids: list[str] = field(default_factory=list)
     sorry_status: str = "none"
+
+
+def _proof_ast_is_safe(tree: ast.Module) -> bool:
+    """第 2 层: import 白名单 + 禁 dunder + 禁危险内建调用."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] not in _PROOF_ALLOWED_MODULES:
+                    return False
+        elif isinstance(node, ast.ImportFrom) and (
+            (node.module or "").split(".")[0] not in _PROOF_ALLOWED_MODULES
+        ):
+            return False
+        # dunder 属性访问 (.__class__ / .__bases__ / .__subclasses__ /
+        # .__globals__ / .__getattribute__ ...) 是绕过白名单取回危险能力的
+        # 主要路径 — 一律拒绝. 正常 sympy 证明不靠 dunder 属性.
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr.startswith("__")
+            and node.attr.endswith("__")
+        ):
+            return False
+        # dunder 名称引用 (__builtins__ / __import__ ...) 同样拒绝.
+        if (
+            isinstance(node, ast.Name)
+            and node.id.startswith("__")
+            and node.id.endswith("__")
+        ):
+            return False
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in _FORBIDDEN_CALLS:
+                return False
+    return True
+
+
+def _exec_prove(tree: ast.Module) -> bool:
+    """第 3 层: exec proof_script, 要求 prove() 返回 True."""
+    safe_globals: dict[str, Any] = {"__builtins__": __builtins__}
+    try:
+        exec(compile(tree, "<proof>", "exec"), safe_globals)
+    except Exception:
+        return False
+    prove_fn = safe_globals.get("prove")
+    if not callable(prove_fn):
+        return False
+    try:
+        return prove_fn() is True
+    except Exception:
+        return False
+
+
+def _test_cases_pass(conj: Conjecture) -> bool:
+    """第 4 层: test_cases 全部通过 sympy_expr 数值验证."""
+    if not conj.test_cases:
+        return True
+    try:
+        from sympy import sympify
+
+        expr = sympify(conj.sympy_expr)
+    except Exception:
+        return False
+    for case in conj.test_cases:
+        try:
+            inputs = case.get("inputs", {})
+            expected = case.get("expected")
+            if expected is None:
+                return False
+            result = expr.subs(inputs)
+            if abs(float(result) - float(expected)) > 1e-6:
+                return False
+        except Exception:
+            return False
+    return True
 
 
 def verify_conjecture(conj: Conjecture) -> tuple[bool, str]:
@@ -84,8 +184,7 @@ def verify_conjecture(conj: Conjecture) -> tuple[bool, str]:
     """
     # 1. sorry 扫描 — 含 sorry 标记 placeholder, 不 reject
     proof_lower = conj.proof_script.lower()
-    has_sorry = any(marker in proof_lower for marker in _SORRY_MARKERS)
-    if has_sorry:
+    if any(marker in proof_lower for marker in _SORRY_MARKERS):
         logger.debug("conj %s placeholder: sorry marker in proof", conj.id)
         return (False, "placeholder")
 
@@ -94,66 +193,16 @@ def verify_conjecture(conj: Conjecture) -> tuple[bool, str]:
         tree = ast.parse(conj.proof_script)
     except SyntaxError:
         return (False, "none")
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top = alias.name.split(".")[0]
-                if top not in _PROOF_ALLOWED_MODULES:
-                    return (False, "none")
-        elif isinstance(node, ast.ImportFrom):
-            top = (node.module or "").split(".")[0]
-            if top not in _PROOF_ALLOWED_MODULES:
-                return (False, "none")
-        # dunder 属性访问 (.__class__ / .__bases__ / .__subclasses__ /
-        # .__globals__ / .__getattribute__ ...) 是绕过白名单取回危险能力的
-        # 主要路径 — 一律拒绝. 正常 sympy 证明不靠 dunder 属性.
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
-            return (False, "none")
-        # dunder 名称引用 (__builtins__ / __import__ ...) 同样拒绝.
-        if isinstance(node, ast.Name) and node.id.startswith("__") and node.id.endswith("__"):
-            return (False, "none")
-        if isinstance(node, ast.Call):
-            fn = node.func
-            if isinstance(fn, ast.Name) and fn.id in {
-                "__import__", "eval", "exec", "compile", "getattr",
-                "setattr", "delattr", "globals", "locals",
-            }:
-                return (False, "none")
+    if not _proof_ast_is_safe(tree):
+        return (False, "none")
 
     # 3. exec proof_script, 调 prove() 应返回 True
-    safe_globals: dict[str, Any] = {"__builtins__": __builtins__}
-    try:
-        exec(compile(tree, "<proof>", "exec"), safe_globals)
-    except Exception:
-        return (False, "none")
-    prove_fn = safe_globals.get("prove")
-    if not callable(prove_fn):
-        return (False, "none")
-    try:
-        if prove_fn() is not True:
-            return (False, "none")
-    except Exception:
+    if not _exec_prove(tree):
         return (False, "none")
 
     # 4. test_cases 数值验证 (sympy subs 后比对 expected)
-    if conj.test_cases:
-        try:
-            from sympy import sympify
-            expr = sympify(conj.sympy_expr)
-        except Exception:
-            return (False, "none")
-        for case in conj.test_cases:
-            try:
-                inputs = case.get("inputs", {})
-                expected = case.get("expected")
-                if expected is None:
-                    return (False, "none")
-                result = expr.subs(inputs)
-                if abs(float(result) - float(expected)) > 1e-6:
-                    return (False, "none")
-            except Exception:
-                return (False, "none")
+    if not _test_cases_pass(conj):
+        return (False, "none")
 
     return (True, "none")
 
@@ -161,6 +210,29 @@ def verify_conjecture(conj: Conjecture) -> tuple[bool, str]:
 def verify_conjecture_bool(conj: Conjecture) -> bool:
     """兼容包装: 老调用方要 bool. 返回 was_verified."""
     return verify_conjecture(conj)[0]
+
+
+def _score_population(
+    population: list[Conjecture],
+    fitness_fn: Any | None,
+    library: ConjectureLibrary | None,
+) -> list[Conjecture]:
+    """给一代 population 打分, 返回通过的; placeholder 顺手进 gaps 表."""
+    new_passed: list[Conjecture] = []
+    for conj in population:
+        was_verified, sorry_status = verify_conjecture(conj)
+        # 三维适应度: fitness_fn 传入则用, 否则二元
+        if fitness_fn is not None:
+            conj.fitness = fitness_fn(conj, was_verified, sorry_status)
+        else:
+            conj.fitness = 1.0 if was_verified else 0.0
+        conj.sorry_status = sorry_status
+        if conj.fitness > 0:
+            new_passed.append(conj)
+        elif sorry_status == "placeholder" and library is not None:
+            # v6 G48: sorry 位进 gaps 表而非淘汰
+            library.add_placeholder(conj)
+    return new_passed
 
 
 def evolve_conjectures(
@@ -173,55 +245,33 @@ def evolve_conjectures(
 ) -> list[Conjecture]:
     """进化环 — Conjecture Machines 风格.
 
-    初始: 从 seed 用 LLM 生成 n_variants 个变体 (gen 0)
-    每代:
-      1. verify_conjecture 验证每个变体
-      2. 通过的进 library, 失败的淘汰
-      3. 通过的变异 + 交叉生成下一代
-    终止: max_gen 或无新通过命题
-
-    v6 G48: sorry 位进 gaps 表而非淘汰. fitness_fn 可选, 传入则用三维适应度
-    (correctness / novelty / structure_preservation), 否则用二元 fitness.
-
-    返回所有验证通过的命题 (含初始 + 进化出来的).
-
-    ponytail: max_gen=10 是天花板 — 每代 LLM 调用 n_variants 次, 慢;
-    升级路径是并行 LLM + 接 lean_tool 当 verifier (LeanInterface).
+    初始从 seed 生成 n_variants 个变体 (gen 0); 每代 verify → 通过的进 library
+    → 变异交叉出下一代; max_gen 或无新通过命题即停.
+    v6 G48: sorry 位进 gaps 表而非淘汰. fitness_fn 可选 (三维适应度), 否则二元.
+    返回所有验证通过的命题.
+    ponytail: 每代 n_variants 次 LLM 调用较慢; 升级路径是并行 LLM + 接 lean_tool.
     """
     passed: list[Conjecture] = []
     population = _generate_variants(seed, n_variants, model=model, generation=0)
 
     for gen in range(max_gen):
-        new_passed: list[Conjecture] = []
-        for conj in population:
-            was_verified, sorry_status = verify_conjecture(conj)
-            # 三维适应度: fitness_fn 传入则用, 否则二元
-            if fitness_fn is not None:
-                conj.fitness = fitness_fn(conj, was_verified, sorry_status)
-            else:
-                conj.fitness = 1.0 if was_verified else 0.0
-            conj.sorry_status = sorry_status
-            if conj.fitness > 0:
-                new_passed.append(conj)
-            elif sorry_status == "placeholder" and library is not None:
-                # v6 G48: sorry 位进 gaps 表而非淘汰
-                library.add_placeholder(conj)
-
-        if new_passed:
-            passed.extend(new_passed)
-            if library is not None:
-                for conj in new_passed:
-                    library.add(conj)
-
-        # 没新通过的, 终止
+        new_passed = _score_population(population, fitness_fn, library)
         if not new_passed:
             logger.info("evolve stop at gen %d: no new pass", gen)
             break
 
+        passed.extend(new_passed)
+        if library is not None:
+            for conj in new_passed:
+                library.add(conj)
+
         # 下一代: 从 new_passed 变异 + 交叉
         if gen < max_gen - 1:
             population = _evolve_population(
-                new_passed, n_variants, model=model, generation=gen + 1,
+                new_passed,
+                n_variants,
+                model=model,
+                generation=gen + 1,
             )
         else:
             logger.info("evolve stop at gen %d: max_gen reached", gen)
@@ -230,7 +280,9 @@ def evolve_conjectures(
 
 
 def default_three_dim_fitness(
-    conj: Conjecture, was_verified: bool, sorry_status: str,
+    conj: Conjecture,
+    was_verified: bool,
+    sorry_status: str,
 ) -> float:
     """G48 三维适应度默认实现.
 
@@ -259,6 +311,54 @@ def default_three_dim_fitness(
     return correctness * 0.5 + novelty * 0.2 + structure * 0.3
 
 
+def _fill_one_gap(
+    library: ConjectureLibrary,
+    gap: dict[str, Any],
+    model: Any,
+) -> tuple[str, str, bool]:
+    """尝试填充一个 sorry gap, 返回 (conj_id, action, success)."""
+    conj_id = gap["conj_id"]
+    statement = gap["statement"] or ""
+    sympy_expr = gap["sympy_expr"] or ""
+    proof_script = gap["proof_script"] or ""
+
+    # model=None 走模板 (尝试简单替换 sorry)
+    if model is None or hasattr(model, "_mock_name"):
+        success, filled_proof, counterexample = _template_fill_sorry(
+            statement,
+            sympy_expr,
+            proof_script,
+        )
+    else:
+        try:
+            success, filled_proof, counterexample = _llm_fill_sorry(
+                statement,
+                sympy_expr,
+                proof_script,
+                model,
+            )
+        except Exception:
+            logger.debug("LLM fill_sorry failed for %s", conj_id, exc_info=True)
+            success, _filled_proof, counterexample = (
+                False,
+                "",
+                "LLM unavailable",
+            )
+
+    if success:
+        library.mark_filled(conj_id, filled_by="fill_sorry_gaps")
+        return (conj_id, "filled", True)
+    if counterexample:
+        library.mark_impossible(
+            conj_id,
+            counterexample=counterexample,
+            classification="unreachable",
+        )
+        return (conj_id, "impossible", False)
+    # 保留 placeholder
+    return (conj_id, "placeholder", False)
+
+
 def fill_sorry_gaps(
     library: ConjectureLibrary,
     model: Any = None,
@@ -279,75 +379,51 @@ def fill_sorry_gaps(
     if not gaps:
         return results
 
-    filled_count = 0
     for gap in gaps[:max_fill]:
-        conj_id = gap["conj_id"]
-        statement = gap["statement"] or ""
-        sympy_expr = gap["sympy_expr"] or ""
-        proof_script = gap["proof_script"] or ""
+        results.append(_fill_one_gap(library, gap, model))
 
-        # model=None 走模板 (尝试简单替换 sorry)
-        if model is None or hasattr(model, "_mock_name"):
-            success, filled_proof, counterexample = _template_fill_sorry(
-                statement, sympy_expr, proof_script,
-            )
-        else:
-            try:
-                success, filled_proof, counterexample = _llm_fill_sorry(
-                    statement, sympy_expr, proof_script, model,
-                )
-            except Exception:
-                logger.debug("LLM fill_sorry failed for %s", conj_id, exc_info=True)
-                success, _filled_proof, counterexample = (
-                    False, "", "LLM unavailable",
-                )
-
-        if success:
-            library.mark_filled(conj_id, filled_by="fill_sorry_gaps")
-            results.append((conj_id, "filled", True))
-            filled_count += 1
-        elif counterexample:
-            library.mark_impossible(
-                conj_id, counterexample=counterexample,
-                classification="unreachable",
-            )
-            results.append((conj_id, "impossible", False))
-        else:
-            # 保留 placeholder
-            results.append((conj_id, "placeholder", False))
-
+    filled_count = sum(1 for _cid, _action, ok in results if ok)
     logger.info(
-        "fill_sorry_gaps: %d/%d filled", filled_count, min(len(gaps), max_fill),
+        "fill_sorry_gaps: %d/%d filled",
+        filled_count,
+        min(len(gaps), max_fill),
     )
     return results
 
 
+# sorry 清洗规则: (正则, 替换) — 先删注释行, 再把 sorry/admit 词换成 True.
+_SORRY_SCRUB_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"#\s*(sorry|admit)[^\n]*", ""),
+    (r"\bsorry\b", "True"),
+    (r"\badmit\b", "True"),
+)
+
+
+def _strip_sorry_markers(proof_script: str) -> str:
+    """把 sorry / admit 注释行删掉, 词本身替换成 True."""
+    import re
+
+    cleaned = proof_script
+    for pattern, repl in _SORRY_SCRUB_PATTERNS:
+        cleaned = re.sub(pattern, repl, cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
 def _template_fill_sorry(
-    statement: str, sympy_expr: str, proof_script: str,
+    statement: str,
+    sympy_expr: str,
+    proof_script: str,
 ) -> tuple[bool, str, str]:
-    """模板填充 sorry — 测试用. 尝试用 sympy 直接验证 sympy_expr.
+    """模板填充 sorry — 测试用. 去掉 sorry 标记后用 sympy 重验.
 
-    成功返回 (True, filled_proof, "").
-    失败返回 (False, "", counterexample).
-
-    ponytail: 只处理最简单的 sorry 模式 (sorry 注释). 真实 LLM 路径在
-    _llm_fill_sorry. 升级路径是多 LLM 协作 (v7).
+    成功返回 (True, filled_proof, ""); 失败返回 (False, "", counterexample).
+    ponytail: 只处理最简单的 sorry 模式. 真实 LLM 路径在 _llm_fill_sorry.
     """
     # 检查 proof_script 里 sorry 是不是注释 — 模板尝试去掉 sorry 重跑
     if "sorry" not in proof_script.lower() and "admit" not in proof_script.lower():
         return (False, "", "no sorry marker found")
 
-    # 尝试简单策略: 把 sorry 注释行删掉, 看能否 prove
-    import re
-    cleaned = re.sub(
-        r"#\s*(sorry|admit)[^\n]*", "", proof_script, flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"\bsorry\b", "True", cleaned, flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"\badmit\b", "True", cleaned, flags=re.IGNORECASE,
-    )
+    cleaned = _strip_sorry_markers(proof_script)
 
     # 用 verify_conjecture 检查 cleaned 是否能过
     test_conj = Conjecture(
@@ -363,52 +439,60 @@ def _template_fill_sorry(
     return (False, "", "template fill failed: cleaned proof still invalid")
 
 
-def _llm_fill_sorry(
-    statement: str, sympy_expr: str, proof_script: str, model: Any,
-) -> tuple[bool, str, str]:
-    """LLM 填充 sorry — 给 LLM 看 sorry proof, 让它补完.
-
-    成功返回 (True, filled_proof, "").
-    失败返回 (False, "", counterexample_or_reason).
-    """
+def _invoke_model_sync(model: Any, messages: list[Any]) -> str:
+    """同步调用模型; 已在事件循环里时用 invoke, 否则 asyncio.run(ainvoke)."""
     import asyncio
 
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    messages = [
-        SystemMessage(content=(
-            "You are a proof filler. Given a conjecture with a sorry "
-            "(placeholder) in its proof script, complete the proof using "
-            "sympy. Output JSON: {\"proof_script\": \"...\", "
-            "\"counterexample\": \"...\"}. If you can complete the proof, "
-            "put it in proof_script and leave counterexample empty. If you "
-            "find the conjecture is false, put the counterexample in "
-            "counterexample and leave proof_script empty. No sorry/admit. "
-            "Only use: sympy, math, re, statistics, json."
-        )),
-        HumanMessage(content=(
-            f"Statement: {statement}\n"
-            f"Sympy expr: {sympy_expr}\n"
-            f"Proof script (with sorry):\n{proof_script}"
-        )),
-    ]
     try:
         asyncio.get_running_loop()
         text = model.invoke(messages)
     except RuntimeError:
         text = asyncio.run(model.ainvoke(messages))
-    text = str(text.content).strip()
+    return str(text.content).strip()
 
-    parsed = _parse_json_object(text)
-    if not parsed:
-        return (False, "", "LLM output not parseable")
 
-    filled_proof = parsed.get("proof_script", "")
+def _llm_fill_messages(
+    statement: str,
+    sympy_expr: str,
+    proof_script: str,
+) -> list[Any]:
+    """构造 sorry 填充的 prompt."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    return [
+        SystemMessage(
+            content=(
+                "You are a proof filler. Given a conjecture with a sorry "
+                "(placeholder) in its proof script, complete the proof using "
+                'sympy. Output JSON: {"proof_script": "...", '
+                '"counterexample": "..."}. If you can complete the proof, '
+                "put it in proof_script and leave counterexample empty. If you "
+                "find the conjecture is false, put the counterexample in "
+                "counterexample and leave proof_script empty. No sorry/admit. "
+                "Only use: sympy, math, re, statistics, json."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Statement: {statement}\n"
+                f"Sympy expr: {sympy_expr}\n"
+                f"Proof script (with sorry):\n{proof_script}"
+            )
+        ),
+    ]
+
+
+def _llm_fill_verdict(
+    statement: str,
+    sympy_expr: str,
+    parsed: dict[str, Any],
+) -> tuple[bool, str, str]:
+    """按 LLM 回执三态判定: 反例 / 缺 proof / 验证通过."""
     counterexample = parsed.get("counterexample", "")
-
     if counterexample:
         return (False, "", counterexample)
 
+    filled_proof = parsed.get("proof_script", "")
     if not filled_proof or "def prove" not in filled_proof:
         return (False, "", "LLM output missing proof_script")
 
@@ -425,7 +509,74 @@ def _llm_fill_sorry(
     return (False, "", "LLM filled proof failed verification")
 
 
+def _llm_fill_sorry(
+    statement: str,
+    sympy_expr: str,
+    proof_script: str,
+    model: Any,
+) -> tuple[bool, str, str]:
+    """LLM 填充 sorry — 给 LLM 看 sorry proof, 让它补完.
+
+    成功返回 (True, filled_proof, "").
+    失败返回 (False, "", counterexample_or_reason).
+    """
+    text = _invoke_model_sync(
+        model, _llm_fill_messages(statement, sympy_expr, proof_script)
+    )
+
+    parsed = _parse_json_object(text)
+    if not parsed:
+        return (False, "", "LLM output not parseable")
+
+    return _llm_fill_verdict(statement, sympy_expr, parsed)
+
+
 # ── LLM 生成 (model=None 走模板, 测试用) ───────────────────────────
+
+
+def _gen_variant_messages(seed: str, n: int) -> list[Any]:
+    """构造 conjecture 变体生成 prompt."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    return [
+        SystemMessage(
+            content=(
+                "You are a conjecture generator. "
+                "Given a seed statement, generate variants verifiable with sympy. "
+                "Output a JSON array of objects with keys: "
+                "statement, sympy_expr, test_cases (list of {inputs, expected}), "
+                "proof_script (Python def prove()->bool using sympy). "
+                "No sorry/admit. No markdown."
+            )
+        ),
+        HumanMessage(content=f"Seed: {seed}\nGenerate {n} variants."),
+    ]
+
+
+def _conjectures_from_payload(
+    parsed: list[dict[str, Any]],
+    generation: int,
+    parents: list[Conjecture] | None,
+) -> list[Conjecture]:
+    """把 LLM 回执 array 转成 Conjecture 列表 (跳过不合法条目)."""
+    parent_ids = [pp.id for pp in (parents or [])]
+    result: list[Conjecture] = []
+    for i, p in enumerate(parsed):
+        if not _validate_conjecture_payload(p):
+            continue
+        result.append(
+            Conjecture(
+                id=f"conj-gen{generation:02d}-{i:03d}",
+                statement=p["statement"],
+                sympy_expr=p["sympy_expr"],
+                test_cases=p.get("test_cases", []),
+                proof_script=p["proof_script"],
+                generation=generation,
+                parent_ids=parent_ids,
+            )
+        )
+    return result
+
 
 def _generate_variants(
     seed: str,
@@ -439,45 +590,12 @@ def _generate_variants(
         return _template_variants(seed, n, generation, parents)
 
     try:
-        import asyncio
-
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [
-            SystemMessage(content=(
-                "You are a conjecture generator. "
-                "Given a seed statement, generate variants verifiable with sympy. "
-                "Output a JSON array of objects with keys: "
-                "statement, sympy_expr, test_cases (list of {inputs, expected}), "
-                "proof_script (Python def prove()->bool using sympy). "
-                "No sorry/admit. No markdown."
-            )),
-            HumanMessage(content=f"Seed: {seed}\nGenerate {n} variants."),
-        ]
-        try:
-            asyncio.get_running_loop()
-            text = model.invoke(messages)
-        except RuntimeError:
-            text = asyncio.run(model.ainvoke(messages))
-        text = str(text.content).strip()
-
+        text = _invoke_model_sync(model, _gen_variant_messages(seed, n))
         parsed = _parse_json_array(text)
         if not parsed:
             return _template_variants(seed, n, generation, parents)
 
-        result: list[Conjecture] = []
-        for i, p in enumerate(parsed):
-            if not _validate_conjecture_payload(p):
-                continue
-            result.append(Conjecture(
-                id=f"conj-gen{generation:02d}-{i:03d}",
-                statement=p["statement"],
-                sympy_expr=p["sympy_expr"],
-                test_cases=p.get("test_cases", []),
-                proof_script=p["proof_script"],
-                generation=generation,
-                parent_ids=[pp.id for pp in (parents or [])],
-            ))
+        result = _conjectures_from_payload(parsed, generation, parents)
         return result if result else _template_variants(seed, n, generation, parents)
     except Exception:
         logger.debug("LLM variant gen failed, fallback to template", exc_info=True)
@@ -497,87 +615,113 @@ def _evolve_population(
         return _template_evolve(parents, n, generation)
     # LLM: 用 parents 作示例生成新变体
     seed = parents[0].statement
-    return _generate_variants(seed, n, model=model, generation=generation, parents=parents)
+    return _generate_variants(
+        seed, n, model=model, generation=generation, parents=parents
+    )
+
+
+def _tv_bulk_modulus(generation: int, parent_ids: list[str]) -> Conjecture:
+    """模板 0: 立方晶体 bulk modulus."""
+    return Conjecture(
+        id=f"conj-gen{generation:02d}-000",
+        statement="Bulk modulus of cubic crystal: B = (c11 + 2*c12) / 3",
+        sympy_expr="B",
+        test_cases=[{"inputs": {"B": 60.0}, "expected": 60.0}],
+        proof_script=(
+            "def prove():\n"
+            "    from sympy import symbols\n"
+            "    c11, c12 = symbols('c11 c12')\n"
+            "    B = (c11 + 2*c12) / 3\n"
+            "    val = B.subs({c11: 100, c12: 40})\n"
+            "    return abs(float(val) - 60.0) < 1e-6\n"
+        ),
+        generation=generation,
+        parent_ids=parent_ids,
+    )
+
+
+def _tv_voigt_hexagonal(generation: int, parent_ids: list[str]) -> Conjecture:
+    """模板 1: 六方晶体 Voigt bulk modulus 上界."""
+    return Conjecture(
+        id=f"conj-gen{generation:02d}-001",
+        statement=(
+            "Voigt bulk modulus upper bound hexagonal: "
+            "B = (2*c11 + c33 + 2*c12 + 4*c13) / 9"
+        ),
+        sympy_expr="B",
+        test_cases=[{"inputs": {"B": 257.78}, "expected": 257.78}],
+        proof_script=(
+            "def prove():\n"
+            "    from sympy import symbols\n"
+            "    c11, c12, c13, c33 = symbols('c11 c12 c13 c33')\n"
+            "    B = (2*c11 + c33 + 2*c12 + 4*c13) / 9\n"
+            "    # Mg hcp: c11=294, c12=98, c13=57, c33=348 -> B=257.78\n"
+            "    val = B.subs({c11: 294, c12: 98, c13: 57, c33: 348})\n"
+            "    return abs(float(val) - 257.78) < 0.1\n"
+        ),
+        generation=generation,
+        parent_ids=parent_ids,
+    )
+
+
+def _tv_shear_voigt(generation: int, parent_ids: list[str]) -> Conjecture:
+    """模板 2: 立方晶体 Voigt shear modulus."""
+    return Conjecture(
+        id=f"conj-gen{generation:02d}-002",
+        statement="Shear modulus Voigt cubic: G = (c11 - c12 + 3*c44) / 5",
+        sympy_expr="G",
+        test_cases=[{"inputs": {"G": 62.0}, "expected": 62.0}],
+        proof_script=(
+            "def prove():\n"
+            "    from sympy import symbols\n"
+            "    c11, c12, c44 = symbols('c11 c12 c44')\n"
+            "    G = (c11 - c12 + 3*c44) / 5\n"
+            "    val = G.subs({c11: 100, c12: 40, c44: 50})\n"
+            "    return abs(float(val) - 62.0) < 0.1\n"
+        ),
+        generation=generation,
+        parent_ids=parent_ids,
+    )
+
+
+# 模板命题工厂表 — 顺序即 id 后缀 000/001/002 的顺序.
+_TEMPLATE_BUILDERS: tuple[Callable[[int, list[str]], Conjecture], ...] = (
+    _tv_bulk_modulus,
+    _tv_voigt_hexagonal,
+    _tv_shear_voigt,
+)
 
 
 def _template_variants(
-    seed: str, n: int, generation: int, parents: list[Conjecture] | None,
+    seed: str,
+    n: int,
+    generation: int,
+    parents: list[Conjecture] | None,
 ) -> list[Conjecture]:
     """模板生成变体 — 测试用. 出几个已知正确的弹性力学命题."""
     parent_ids = [p.id for p in (parents or [])]
-
-    templates = [
-        Conjecture(
-            id=f"conj-gen{generation:02d}-000",
-            statement="Bulk modulus of cubic crystal: B = (c11 + 2*c12) / 3",
-            sympy_expr="B",
-            test_cases=[{"inputs": {"B": 60.0}, "expected": 60.0}],
-            proof_script=(
-                "def prove():\n"
-                "    from sympy import symbols\n"
-                "    c11, c12 = symbols('c11 c12')\n"
-                "    B = (c11 + 2*c12) / 3\n"
-                "    val = B.subs({c11: 100, c12: 40})\n"
-                "    return abs(float(val) - 60.0) < 1e-6\n"
-            ),
-            generation=generation,
-            parent_ids=parent_ids,
-        ),
-        Conjecture(
-            id=f"conj-gen{generation:02d}-001",
-            statement=(
-                "Voigt bulk modulus upper bound hexagonal: "
-                "B = (2*c11 + c33 + 2*c12 + 4*c13) / 9"
-            ),
-            sympy_expr="B",
-            test_cases=[{"inputs": {"B": 257.78}, "expected": 257.78}],
-            proof_script=(
-                "def prove():\n"
-                "    from sympy import symbols\n"
-                "    c11, c12, c13, c33 = symbols('c11 c12 c13 c33')\n"
-                "    B = (2*c11 + c33 + 2*c12 + 4*c13) / 9\n"
-                "    # Mg hcp: c11=294, c12=98, c13=57, c33=348 -> B=257.78\n"
-                "    val = B.subs({c11: 294, c12: 98, c13: 57, c33: 348})\n"
-                "    return abs(float(val) - 257.78) < 0.1\n"
-            ),
-            generation=generation,
-            parent_ids=parent_ids,
-        ),
-        Conjecture(
-            id=f"conj-gen{generation:02d}-002",
-            statement="Shear modulus Voigt cubic: G = (c11 - c12 + 3*c44) / 5",
-            sympy_expr="G",
-            test_cases=[{"inputs": {"G": 62.0}, "expected": 62.0}],
-            proof_script=(
-                "def prove():\n"
-                "    from sympy import symbols\n"
-                "    c11, c12, c44 = symbols('c11 c12 c44')\n"
-                "    G = (c11 - c12 + 3*c44) / 5\n"
-                "    val = G.subs({c11: 100, c12: 40, c44: 50})\n"
-                "    return abs(float(val) - 62.0) < 0.1\n"
-            ),
-            generation=generation,
-            parent_ids=parent_ids,
-        ),
-    ]
-    return templates[:n]
+    return [build(generation, parent_ids) for build in _TEMPLATE_BUILDERS][:n]
 
 
 def _template_evolve(
-    parents: list[Conjecture], n: int, generation: int,
+    parents: list[Conjecture],
+    n: int,
+    generation: int,
 ) -> list[Conjecture]:
     """模板进化: 复制 parents, 改 id/generation/parent_ids. 测试用."""
     result: list[Conjecture] = []
     for i, p in enumerate(parents[:n]):
-        result.append(Conjecture(
-            id=f"conj-gen{generation:02d}-{i:03d}",
-            statement=p.statement + " (variant)",
-            sympy_expr=p.sympy_expr,
-            test_cases=p.test_cases,
-            proof_script=p.proof_script,
-            generation=generation,
-            parent_ids=[p.id],
-        ))
+        result.append(
+            Conjecture(
+                id=f"conj-gen{generation:02d}-{i:03d}",
+                statement=p.statement + " (variant)",
+                sympy_expr=p.sympy_expr,
+                test_cases=p.test_cases,
+                proof_script=p.proof_script,
+                generation=generation,
+                parent_ids=[p.id],
+            )
+        )
     return result
 
 
@@ -622,7 +766,7 @@ _SORRY_CLASSIFICATION_PROMPT = (
     "- unexplored: genuine new territory, possible innovation seed\n"
     "- unreachable: physically impossible (conservation/dimensional violation)\n"
     "- known_limit: hits known theory boundary (out of applicability)\n"
-    "Output JSON: {\"classification\": \"...\", \"reason\": \"...\"}"
+    'Output JSON: {"classification": "...", "reason": "..."}'
 )
 
 
@@ -646,24 +790,19 @@ def classify_sorry(conj: Conjecture, model: Any = None) -> str:
 
 def _llm_classify_sorry(conj: Conjecture, model: Any) -> str:
     """LLM 分类 sorry. 失败抛异常让上层降级."""
-    import asyncio
-
     from langchain_core.messages import HumanMessage, SystemMessage
 
     messages = [
         SystemMessage(content=_SORRY_CLASSIFICATION_PROMPT),
-        HumanMessage(content=(
-            f"Statement: {conj.statement}\n"
-            f"Sympy expr: {conj.sympy_expr}\n"
-            f"Proof script (with sorry):\n{conj.proof_script}"
-        )),
+        HumanMessage(
+            content=(
+                f"Statement: {conj.statement}\n"
+                f"Sympy expr: {conj.sympy_expr}\n"
+                f"Proof script (with sorry):\n{conj.proof_script}"
+            )
+        ),
     ]
-    try:
-        asyncio.get_running_loop()
-        text = model.invoke(messages)
-    except RuntimeError:
-        text = asyncio.run(model.ainvoke(messages))
-    text = str(text.content).strip()
+    text = _invoke_model_sync(model, messages)
 
     parsed = _parse_json_object(text)
     cls = parsed.get("classification", "")
@@ -672,27 +811,58 @@ def _llm_classify_sorry(conj: Conjecture, model: Any) -> str:
     return _rule_classify_sorry(conj)
 
 
+# 规则分类关键词表: 顺序即优先级 (命中即返回), 都不命中则 unexplored.
+_RULE_CLASSIFY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "unreachable",
+        (
+            "conservation",
+            "守恒",
+            "dimensional",
+            "量纲",
+            "violate",
+            "违反",
+            "impossible",
+            "contradiction",
+            "矛盾",
+        ),
+    ),
+    (
+        "known_limit",
+        (
+            "limit",
+            "边界",
+            "boundary",
+            "applicability",
+            "适用",
+            "regime",
+            "asymptotic",
+            "近似",
+        ),
+    ),
+    (
+        "novel_variant",
+        (
+            "theorem",
+            "定律",
+            "law",
+            "formula",
+            "公式",
+            "variant",
+            "变式",
+            "extension",
+            "推广",
+        ),
+    ),
+)
+
+
 def _rule_classify_sorry(conj: Conjecture) -> str:
     """规则匹配分类. 关键词粗判, 没数据时兜底."""
     text = (conj.statement + " " + conj.proof_script).lower()
-    # unreachable: 守恒律 / 量纲 / 反例已显式提及
-    if any(k in text for k in (
-        "conservation", "守恒", "dimensional", "量纲", "violate", "违反",
-        "impossible", "contradiction", "矛盾",
-    )):
-        return "unreachable"
-    # known_limit: 适用范围 / 边界 / 极限
-    if any(k in text for k in (
-        "limit", "边界", "boundary", "applicability", "适用", "regime",
-        "asymptotic", "近似",
-    )):
-        return "known_limit"
-    # novel_variant: 已知定理名 / 标准方法名
-    if any(k in text for k in (
-        "theorem", "定律", "law", "formula", "公式", "variant", "变式",
-        "extension", "推广",
-    )):
-        return "novel_variant"
+    for classification, keywords in _RULE_CLASSIFY_KEYWORDS:
+        if any(k in text for k in keywords):
+            return classification
     # 默认: 新空白
     return "unexplored"
 
@@ -717,6 +887,7 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 
 
 # ── ConjectureLibrary: 累积验证通过的命题 ──────────────────────────
+
 
 class ConjectureLibrary:
     """SQLite + JSONL 双写累积验证通过的命题.
@@ -783,10 +954,16 @@ class ConjectureLibrary:
                         "(id, statement, sympy_expr, test_cases, proof_script, "
                         "fitness, generation, parent_ids) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (conj.id, conj.statement, conj.sympy_expr,
-                         json.dumps(conj.test_cases, ensure_ascii=False),
-                         conj.proof_script, conj.fitness, conj.generation,
-                         json.dumps(conj.parent_ids, ensure_ascii=False)),
+                        (
+                            conj.id,
+                            conj.statement,
+                            conj.sympy_expr,
+                            json.dumps(conj.test_cases, ensure_ascii=False),
+                            conj.proof_script,
+                            conj.fitness,
+                            conj.generation,
+                            json.dumps(conj.parent_ids, ensure_ascii=False),
+                        ),
                     )
                     conn.commit()
                 except sqlite3.IntegrityError:
@@ -823,7 +1000,9 @@ class ConjectureLibrary:
 
     # ── v6 G45: research gaps ─────────────────────────────────────
 
-    def add_placeholder(self, conj: Conjecture, classification: str | None = None) -> bool:
+    def add_placeholder(
+        self, conj: Conjecture, classification: str | None = None
+    ) -> bool:
         """把含 sorry 的命题登记为研究盲区. True=新增, False=已存在.
 
         classification 由 classify_sorry 给出 (novel_variant / unexplored /
@@ -836,8 +1015,13 @@ class ConjectureLibrary:
                     "(conj_id, statement, sympy_expr, proof_script, "
                     "status, classification) "
                     "VALUES (?, ?, ?, ?, 'placeholder', ?)",
-                    (conj.id, conj.statement, conj.sympy_expr,
-                     conj.proof_script, classification),
+                    (
+                        conj.id,
+                        conj.statement,
+                        conj.sympy_expr,
+                        conj.proof_script,
+                        classification,
+                    ),
                 )
                 conn.commit()
             except sqlite3.IntegrityError:
@@ -881,7 +1065,9 @@ class ConjectureLibrary:
             return cur.rowcount > 0
 
     def mark_impossible(
-        self, conj_id: str, counterexample: str | None = None,
+        self,
+        conj_id: str,
+        counterexample: str | None = None,
         classification: str | None = None,
     ) -> bool:
         """判定 sorry 位不可实现. counterexample 是反例说明. True=更新成功."""
@@ -909,7 +1095,9 @@ def _sc_verify_good_and_sorry() -> tuple[Conjecture, Conjecture]:
 
     # 2. verify 标记 sorry 为 placeholder (v6 G45: 不 reject, 标记)
     bad_sorry = Conjecture(
-        id="bad-sorry", statement="bad", sympy_expr="x",
+        id="bad-sorry",
+        statement="bad",
+        sympy_expr="x",
         proof_script="def prove():\n    # sorry\n    return True",
     )
     ok, status = verify_conjecture(bad_sorry)
@@ -917,18 +1105,23 @@ def _sc_verify_good_and_sorry() -> tuple[Conjecture, Conjecture]:
 
     # 3. verify 标记 admit 为 placeholder
     bad_admit = Conjecture(
-        id="bad-admit", statement="bad", sympy_expr="x",
+        id="bad-admit",
+        statement="bad",
+        sympy_expr="x",
         proof_script="def prove():\n    # admit\n    return True",
     )
     ok, status = verify_conjecture(bad_admit)
     assert ok is False and status == "placeholder"
     return good, bad_sorry
 
+
 def _sc_verify_rejects() -> None:
     """4-7: import os / return False / 无 prove / getattr 链全部拒绝."""
     # 4. verify 拒绝 import os — 真失败 (none)
     bad_import = Conjecture(
-        id="bad-import", statement="bad", sympy_expr="x",
+        id="bad-import",
+        statement="bad",
+        sympy_expr="x",
         proof_script="import os\n\ndef prove():\n    return True",
     )
     ok, status = verify_conjecture(bad_import)
@@ -936,7 +1129,9 @@ def _sc_verify_rejects() -> None:
 
     # 5. verify 拒绝 prove() 返回 False
     bad_false = Conjecture(
-        id="bad-false", statement="bad", sympy_expr="x",
+        id="bad-false",
+        statement="bad",
+        sympy_expr="x",
         proof_script="def prove():\n    return False",
     )
     ok, status = verify_conjecture(bad_false)
@@ -944,7 +1139,9 @@ def _sc_verify_rejects() -> None:
 
     # 6. verify 拒绝无 prove 函数
     bad_nofn = Conjecture(
-        id="bad-nofn", statement="bad", sympy_expr="x",
+        id="bad-nofn",
+        statement="bad",
+        sympy_expr="x",
         proof_script="x = 1",
     )
     ok, status = verify_conjecture(bad_nofn)
@@ -952,15 +1149,16 @@ def _sc_verify_rejects() -> None:
 
     # 7. verify 拒绝 getattr 链 (跟 G23 一致)
     bad_getattr = Conjecture(
-        id="bad-getattr", statement="bad", sympy_expr="x",
+        id="bad-getattr",
+        statement="bad",
+        sympy_expr="x",
         proof_script=(
-            "def prove():\n"
-            "    x = getattr(prove, '__name__')\n"
-            "    return True\n"
+            "def prove():\n    x = getattr(prove, '__name__')\n    return True\n"
         ),
     )
     ok, status = verify_conjecture(bad_getattr)
     assert ok is False and status == "none"
+
 
 def _sc_verify_bool_wrapper(good: Conjecture, bad_sorry: Conjecture) -> None:
     """8: verify_conjecture_bool 兼容包装."""
@@ -968,16 +1166,21 @@ def _sc_verify_bool_wrapper(good: Conjecture, bad_sorry: Conjecture) -> None:
     assert verify_conjecture_bool(good) is True
     assert verify_conjecture_bool(bad_sorry) is False
 
+
 def _sc_evolve_template() -> list[Conjecture]:
     """9: evolve_conjectures 模板模式跑通."""
     # 9. evolve_conjectures 模板模式跑通
     passed = evolve_conjectures(
-        "bulk modulus", n_variants=3, max_gen=2, model=None,
+        "bulk modulus",
+        n_variants=3,
+        max_gen=2,
+        model=None,
     )
     assert len(passed) > 0, "should have passed conjectures"
     assert all(c.fitness == 1.0 for c in passed)
     assert all(c.sorry_status == "none" for c in passed)
     return passed
+
 
 def _sc_library_accumulate(passed: list[Conjecture]) -> None:
     """10: ConjectureLibrary 累积 / 去重 / JSONL 落盘."""
@@ -1002,18 +1205,23 @@ def _sc_library_accumulate(passed: list[Conjecture]) -> None:
             lines = [_l for _l in f if _l.strip()]
         assert len(lines) == len(passed)
 
+
 def _sc_library_wiring() -> None:
     """11: evolve + library 联动 — 通过的进 library."""
     # 11. evolve + library 联动 — 通过的进 library
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
         passed3 = evolve_conjectures(
-            "elastic constant", n_variants=2, max_gen=2,
-            model=None, library=lib,
+            "elastic constant",
+            n_variants=2,
+            max_gen=2,
+            model=None,
+            library=lib,
         )
         assert lib.count() == len(passed3), (
             f"library {lib.count()} != passed {len(passed3)}"
         )
+
 
 def _sc_gaps_table() -> None:
     """12: conjecture_gaps 表 — sorry 命题进 gaps 而非淘汰."""
@@ -1022,7 +1230,8 @@ def _sc_gaps_table() -> None:
         lib = ConjectureLibrary(workspace=tmp)
         # 加一个 sorry 命题作为 placeholder
         sorry_conj = Conjecture(
-            id="sorry-001", statement="conservation law violates dimensional analysis",
+            id="sorry-001",
+            statement="conservation law violates dimensional analysis",
             sympy_expr="x",
             proof_script="def prove():\n    # sorry need conservation\n    return True",
         )
@@ -1048,47 +1257,57 @@ def _sc_gaps_table() -> None:
         assert filled_gaps[0]["filled_by"] == "conj-gen00-000"
         # mark_impossible (新 placeholder)
         sorry2 = Conjecture(
-            id="sorry-002", statement="percolation threshold boundary",
+            id="sorry-002",
+            statement="percolation threshold boundary",
             sympy_expr="y",
             proof_script="def prove():\n    # sorry\n    return True",
         )
         lib.add_placeholder(sorry2)
-        assert lib.mark_impossible("sorry-002", counterexample="z<0 violates phi_c>0") is True
+        assert (
+            lib.mark_impossible("sorry-002", counterexample="z<0 violates phi_c>0")
+            is True
+        )
         impossibles = lib.get_research_gaps(status="impossible")
         assert len(impossibles) == 1
         assert impossibles[0]["counterexample"] == "z<0 violates phi_c>0"
+
 
 def _sc_classify_sorry() -> None:
     """13: classify_sorry 规则分类."""
     # 13. v6 G45: classify_sorry 规则分类
     # unreachable: 含 conservation
     c_unreachable = Conjecture(
-        id="c1", statement="this violates conservation law",
+        id="c1",
+        statement="this violates conservation law",
         sympy_expr="x",
         proof_script="def prove():\n    # sorry\n    return True",
     )
     assert classify_sorry(c_unreachable) == "unreachable"
     # known_limit: 含 boundary
     c_limit = Conjecture(
-        id="c2", statement="hits the boundary of applicability",
+        id="c2",
+        statement="hits the boundary of applicability",
         sympy_expr="x",
         proof_script="def prove():\n    # sorry\n    return True",
     )
     assert classify_sorry(c_limit) == "known_limit"
     # novel_variant: 含 theorem
     c_variant = Conjecture(
-        id="c3", statement="extension of known theorem",
+        id="c3",
+        statement="extension of known theorem",
         sympy_expr="x",
         proof_script="def prove():\n    # sorry\n    return True",
     )
     assert classify_sorry(c_variant) == "novel_variant"
     # unexplored: 默认
     c_new = Conjecture(
-        id="c4", statement="some random new thing",
+        id="c4",
+        statement="some random new thing",
         sympy_expr="x",
         proof_script="def prove():\n    # sorry\n    return True",
     )
     assert classify_sorry(c_new) == "unexplored"
+
 
 def _sc_evolve_gaps_empty() -> None:
     """14: 模板变体无 sorry → gaps 表为空."""
@@ -1097,10 +1316,14 @@ def _sc_evolve_gaps_empty() -> None:
         lib = ConjectureLibrary(workspace=tmp)
         # 模板变体都是完整证明 (无 sorry), 所以 gaps 表为空
         evolve_conjectures(
-            "bulk modulus", n_variants=2, max_gen=1,
-            model=None, library=lib,
+            "bulk modulus",
+            n_variants=2,
+            max_gen=1,
+            model=None,
+            library=lib,
         )
         assert len(lib.get_research_gaps()) == 0, "template variants have no sorry"
+
 
 def _sc_fill_success() -> None:
     """15: fill_sorry_gaps 模板路径 — 填充成功."""
@@ -1135,6 +1358,7 @@ def _sc_fill_success() -> None:
         filled_gaps = lib.get_research_gaps(status="filled")
         assert len(filled_gaps) == 1
 
+
 def _sc_fill_failure() -> None:
     """16: fill_sorry_gaps 模板路径 — sorry 在 return 里."""
     # 16. v6 G48: fill_sorry_gaps 模板路径 — 填充失败 (sorry 在 return 里)
@@ -1145,11 +1369,7 @@ def _sc_fill_failure() -> None:
             id="fill-002",
             statement="some impossible claim",
             sympy_expr="x",
-            proof_script=(
-                "def prove():\n"
-                "    # sorry\n"
-                "    return sorry\n"
-            ),
+            proof_script=("def prove():\n    # sorry\n    return sorry\n"),
         )
         lib.add_placeholder(bad_sorry)
         results = fill_sorry_gaps(lib, model=None, max_fill=5)
@@ -1161,6 +1381,7 @@ def _sc_fill_failure() -> None:
             f"unexpected action: {action}"
         )
 
+
 def _sc_three_dim_fitness() -> None:
     """17: 三维适应度 default_three_dim_fitness."""
     # 17. v6 G48: 三维适应度 default_three_dim_fitness
@@ -1171,9 +1392,12 @@ def _sc_three_dim_fitness() -> None:
     assert fitness > 0.5, f"verified+none should score high, got {fitness}"
     # sorry 位 → 低分
     sorry_fitness = default_three_dim_fitness(
-        good2, was_verified=False, sorry_status="placeholder",
+        good2,
+        was_verified=False,
+        sorry_status="placeholder",
     )
     assert sorry_fitness < fitness, "placeholder should score lower than verified"
+
 
 def _sc_evolve_fitness_fn() -> None:
     """18: evolve 带 fitness_fn."""
@@ -1181,13 +1405,17 @@ def _sc_evolve_fitness_fn() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
         passed = evolve_conjectures(
-            "bulk modulus", n_variants=2, max_gen=1,
-            model=None, library=lib,
+            "bulk modulus",
+            n_variants=2,
+            max_gen=1,
+            model=None,
+            library=lib,
             fitness_fn=default_three_dim_fitness,
         )
         assert len(passed) > 0
         # 三维适应度应给通过命题非零分
         assert all(c.fitness > 0 for c in passed)
+
 
 def _sc_fill_empty() -> None:
     """19: fill_sorry_gaps 空 gaps 表."""
@@ -1196,6 +1424,7 @@ def _sc_fill_empty() -> None:
         lib = ConjectureLibrary(workspace=tmp)
         results = fill_sorry_gaps(lib, model=None, max_fill=5)
         assert results == []
+
 
 def _self_check() -> int:
     """assert-based demo: 验证 verify_conjecture + evolve + library + gaps + classify_sorry."""
@@ -1219,4 +1448,5 @@ def _self_check() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_self_check())

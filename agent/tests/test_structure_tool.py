@@ -29,6 +29,7 @@ def _ctx(workspace="/tmp"):
 
 # ── Input schema model_validator ─────────────────────────────────────────────
 
+
 class TestStructureToolInput:
     def test_batch_validate_requires_files(self):
         with pytest.raises(ValueError):
@@ -49,13 +50,18 @@ class TestStructureToolInput:
 
 # ── is_read_only ─────────────────────────────────────────────────────────────
 
+
 class TestReadOnly:
     def test_is_read_only_true(self):
         tool = StructureTool()
-        assert tool.is_read_only(StructureToolInput(action="read", file_path="/tmp/x")) is True
+        assert (
+            tool.is_read_only(StructureToolInput(action="read", file_path="/tmp/x"))
+            is True
+        )
 
 
 # ── _file_mtime / _local_to_output ───────────────────────────────────────────
+
 
 class TestHelpers:
     def test_file_mtime_exists(self, tmp_path):
@@ -68,8 +74,14 @@ class TestHelpers:
 
     def test_local_to_output_full(self):
         struct = {
-            "lattice_params": {"a": 5.4, "b": 5.4, "c": 5.4,
-                               "alpha": 90, "beta": 90, "gamma": 90},
+            "lattice_params": {
+                "a": 5.4,
+                "b": 5.4,
+                "c": 5.4,
+                "alpha": 90,
+                "beta": 90,
+                "gamma": 90,
+            },
             "atomic_positions": {"num_sites": 8},
             "formula_pretty": "Si",
             "space_group": "Fd-3m",
@@ -86,8 +98,14 @@ class TestHelpers:
         # lattice_params 必须 6 个全给 (pydantic 字段是 dict[str, float],
         # 缺 key 会塞 None 触发校验失败); 这里测的是 formula/num_atoms 缺省回退.
         struct = {
-            "lattice_params": {"a": 5.4, "b": 5.4, "c": 5.4,
-                               "alpha": 90, "beta": 90, "gamma": 90},
+            "lattice_params": {
+                "a": 5.4,
+                "b": 5.4,
+                "c": 5.4,
+                "alpha": 90,
+                "beta": 90,
+                "gamma": 90,
+            },
             "atomic_positions": {},
             "space_group": "Fm-3m",
         }
@@ -98,6 +116,7 @@ class TestHelpers:
 
 
 # ── validate_input ───────────────────────────────────────────────────────────
+
 
 class TestValidateInput:
     @pytest.mark.asyncio
@@ -174,6 +193,7 @@ class TestValidateInput:
 
 # ── call ─────────────────────────────────────────────────────────────────────
 
+
 class TestCall:
     @pytest.mark.asyncio
     async def test_call_local_db_hit(self):
@@ -210,9 +230,12 @@ class TestCall:
         # call() 里 batch_validate 走单独路径 (line 134), 不查本地库
         tool = StructureTool()
         with patch.object(tool, "_handle_batch_validate", new_callable=MagicMock) as m:
+
             async def fake(args, ctx):
-                return type("R", (), {"success": True,
-                                      "data": {"action": "batch_validate"}})()
+                return type(
+                    "R", (), {"success": True, "data": {"action": "batch_validate"}}
+                )()
+
             m.side_effect = fake
             result = await tool.call(
                 StructureToolInput(action="batch_validate", files=["a"]),
@@ -224,6 +247,7 @@ class TestCall:
 
 
 # ── batch_validate ───────────────────────────────────────────────────────────
+
 
 class TestBatchValidate:
     @pytest.mark.asyncio
@@ -250,10 +274,12 @@ class TestBatchValidate:
         missing = tmp_path / "missing.cif"
 
         with patch.object(tool, "_call_cached", new_callable=MagicMock) as m:
+
             async def fake_call(args, ctx):
                 if args.file_path == str(good):
                     return type("R", (), {"success": True, "data": {"formula": "Si"}})()
                 return type("R", (), {"success": False, "error": "boom"})()
+
             m.side_effect = fake_call
 
             result = await tool._handle_batch_validate(
@@ -282,9 +308,7 @@ class TestBatchValidate:
         with patch.object(tool, "_call_cached", new_callable=MagicMock) as m:
             m.side_effect = RuntimeError("parse exploded")
             result = await tool._handle_batch_validate(
-                StructureToolInput(
-                    action="batch_validate", files=[str(bad)]
-                ),
+                StructureToolInput(action="batch_validate", files=[str(bad)]),
                 _ctx(str(tmp_path)),
             )
         assert result.success
@@ -294,12 +318,10 @@ class TestBatchValidate:
 
 # ── _call_cached ─────────────────────────────────────────────────────────────
 
-def _fake_pymatgen(monkeypatch, **overrides):
-    """构造一个 fake pymatgen 模块, 用于覆盖主路径 import 成功分支.
 
-    所有 sys.modules 注入都经由 monkeypatch.setitem, 测试结束后自动恢复,
-    避免污染全局导入状态 (否则会泄漏到其他测试文件的真实 pymatgen 导入).
-    """
+def _fake_pymatgen_models():
+    """伪造 pymatgen.core.Structure 与其晶格, 返回 Structure 类."""
+
     class FakeLattice:
         a = b = c = 5.4
         alpha = beta = gamma = 90.0
@@ -317,12 +339,21 @@ def _fake_pymatgen(monkeypatch, **overrides):
         def from_file(path):
             return FakeStructure()
 
-    monkeypatch.setitem(sys.modules, "pymatgen", types.ModuleType("pymatgen"))
-    core_mod = types.ModuleType("pymatgen.core")
-    core_mod.Structure = overrides.get("Structure", FakeStructure)
-    monkeypatch.setitem(sys.modules, "pymatgen.core", core_mod)
+    return FakeStructure
+
+
+def _fake_pymatgen_analyzer(monkeypatch, overrides):
+    """按 overrides 注入 pymatgen.symmetry(.analyzer) 的三种状态."""
+
+    def _register(analyzer):
+        sga_mod = types.ModuleType("pymatgen.symmetry")
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
+        analyzer_mod = types.ModuleType("pymatgen.symmetry.analyzer")
+        analyzer_mod.SpacegroupAnalyzer = analyzer
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", analyzer_mod)
 
     if overrides.get("analyzer_success"):
+
         class FakeAnalyzer:
             def __init__(self, structure):
                 pass
@@ -330,28 +361,33 @@ def _fake_pymatgen(monkeypatch, **overrides):
             def get_space_group_symbol(self):
                 return "Fd-3m"
 
-        sga_mod = types.ModuleType("pymatgen.symmetry")
-        monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
-        analyzer_mod = types.ModuleType("pymatgen.symmetry.analyzer")
-        analyzer_mod.SpacegroupAnalyzer = FakeAnalyzer
-        monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", analyzer_mod)
+        _register(FakeAnalyzer)
     elif overrides.get("analyzer_error"):
-        sga_mod = types.ModuleType("pymatgen.symmetry")
-        monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
-        analyzer_mod = types.ModuleType("pymatgen.symmetry.analyzer")
 
         class BadAnalyzer:
             def __init__(self, structure):
                 raise RuntimeError("analyzer failed")
 
-        analyzer_mod.SpacegroupAnalyzer = BadAnalyzer
-        monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", analyzer_mod)
+        _register(BadAnalyzer)
     elif overrides.get("analyzer_import_error"):
         # SpacegroupAnalyzer import 失败 → 走 get_space_group_info fallback
         sga_mod = types.ModuleType("pymatgen.symmetry")
         monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
         # 让 analyzer 子模块 import 抛 ImportError (key 存在但值为 None)
         monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", None)
+
+
+def _fake_pymatgen(monkeypatch, **overrides):
+    """构造一个 fake pymatgen 模块, 用于覆盖主路径 import 成功分支.
+
+    所有 sys.modules 注入都经由 monkeypatch.setitem, 测试结束后自动恢复,
+    避免污染全局导入状态 (否则会泄漏到其他测试文件的真实 pymatgen 导入).
+    """
+    monkeypatch.setitem(sys.modules, "pymatgen", types.ModuleType("pymatgen"))
+    core_mod = types.ModuleType("pymatgen.core")
+    core_mod.Structure = overrides.get("Structure", _fake_pymatgen_models())
+    monkeypatch.setitem(sys.modules, "pymatgen.core", core_mod)
+    _fake_pymatgen_analyzer(monkeypatch, overrides)
 
 
 class TestCallCached:
@@ -504,10 +540,12 @@ class TestCallCached:
         f.write_text("x")
         # 让 Structure.from_file 抛异常 → 走 except 包装
         core_mod = types.ModuleType("pymatgen.core")
+
         class Boom:
             @staticmethod
             def from_file(path):
                 raise ValueError("bad file")
+
         core_mod.Structure = Boom
         monkeypatch.setitem(sys.modules, "pymatgen", types.ModuleType("pymatgen"))
         monkeypatch.setitem(sys.modules, "pymatgen.core", core_mod)

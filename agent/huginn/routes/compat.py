@@ -36,45 +36,50 @@ async def sandbox_execute(params: dict[str, Any]) -> dict[str, Any]:
     try:
         import subprocess
 
-        from huginn.security import SandboxConfig, SandboxExecutor
-
-        # Write code to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(code)
-            f.flush()
-            tmp_path = f.name
-
-        try:
-            sandbox = SandboxExecutor(
-                SandboxConfig(
-                    allowed_executables={"python", "python3"},
-                    default_timeout=min(float(timeout), 300.0),
-                    max_timeout=300.0,
-                    max_output_bytes=10 * 1024 * 1024,
-                )
-            )
-            started = time.perf_counter()
-            sb_result = sandbox.run(
-                ["python", tmp_path],
-                timeout=min(float(timeout), 300.0),
-            )
-            elapsed = time.perf_counter() - started
-            result = sb_result
-
-            return {
-                "success": result.returncode == 0,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode,
-                "execution_time": round(elapsed, 4),
-            }
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
+        return _execute_in_sandbox(code, timeout)
     except subprocess.TimeoutExpired:
         return {"success": False, "error": f"Execution timed out after {timeout}s"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _execute_in_sandbox(code: str, timeout: Any) -> dict[str, Any]:
+    """Write ``code`` to a temp file and run it under ``SandboxExecutor``."""
+    from huginn.security import SandboxConfig, SandboxExecutor
+
+    # Write code to temp file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(code)
+        f.flush()
+        tmp_path = f.name
+
+    try:
+        sandbox = SandboxExecutor(
+            SandboxConfig(
+                allowed_executables={"python", "python3"},
+                default_timeout=min(float(timeout), 300.0),
+                max_timeout=300.0,
+                max_output_bytes=10 * 1024 * 1024,
+            )
+        )
+        started = time.perf_counter()
+        sb_result = sandbox.run(
+            ["python", tmp_path],
+            timeout=min(float(timeout), 300.0),
+        )
+        elapsed = time.perf_counter() - started
+        result = sb_result
+
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+            "execution_time": round(elapsed, 4),
+        }
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
 
 
 # ── Analysis endpoints ──────────────────────────────────────────────
@@ -97,40 +102,53 @@ async def analyze_symmetry(params: dict[str, Any]) -> dict[str, Any]:
         cell = (lattice, positions, numbers)
         spacegroup = spglib.get_spacegroup(cell, symprec=symprec)
         symmetry_dataset = spglib.get_symmetry_dataset(cell, symprec=symprec)
-
-        result: dict[str, Any] = {
-            "spacegroup": spacegroup,
-            "international_symbol": symmetry_dataset.international if symmetry_dataset else None,
-            "hall_symbol": symmetry_dataset.hall if symmetry_dataset else None,
-            "number": symmetry_dataset.number if symmetry_dataset else None,
-            "pointgroup": symmetry_dataset.pointgroup if symmetry_dataset else None,
-            "crystal_system": _crystal_system(symmetry_dataset.number) if symmetry_dataset else None,
-        }
-
-        if symmetry_dataset:
-            result["equivalent_atoms"] = list(map(int, symmetry_dataset.equivalent_atoms))
-            result["rotations_count"] = len(symmetry_dataset.rotations)
-
-        return result
+        return _spglib_symmetry_result(spacegroup, symmetry_dataset)
 
     except ImportError:
         # Fallback: basic symmetry detection from lattice parameters
-        lat = np.array(lattice)
-        norms = np.linalg.norm(lat, axis=1)
-        angles = []
-        for i in range(3):
-            for j in range(i + 1, 3):
-                cos_angle = np.dot(lat[i], lat[j]) / (norms[i] * norms[j] + 1e-12)
-                angles.append(float(np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))))
+        return _lattice_symmetry_fallback(lattice)
 
-        system = _guess_crystal_system(norms, angles)
-        return {
-            "spacegroup": "unknown (spglib not installed)",
-            "crystal_system": system,
-            "lattice_norms": norms.tolist(),
-            "lattice_angles_deg": angles,
-            "note": "Install spglib for full symmetry analysis: pip install spglib",
-        }
+
+def _spglib_symmetry_result(spacegroup, symmetry_dataset) -> dict[str, Any]:
+    """Build the spglib symmetry response payload."""
+    result: dict[str, Any] = {
+        "spacegroup": spacegroup,
+        "international_symbol": symmetry_dataset.international
+        if symmetry_dataset
+        else None,
+        "hall_symbol": symmetry_dataset.hall if symmetry_dataset else None,
+        "number": symmetry_dataset.number if symmetry_dataset else None,
+        "pointgroup": symmetry_dataset.pointgroup if symmetry_dataset else None,
+        "crystal_system": _crystal_system(symmetry_dataset.number)
+        if symmetry_dataset
+        else None,
+    }
+
+    if symmetry_dataset:
+        result["equivalent_atoms"] = list(map(int, symmetry_dataset.equivalent_atoms))
+        result["rotations_count"] = len(symmetry_dataset.rotations)
+
+    return result
+
+
+def _lattice_symmetry_fallback(lattice) -> dict[str, Any]:
+    """Basic symmetry detection from lattice parameters without spglib."""
+    lat = np.array(lattice)
+    norms = np.linalg.norm(lat, axis=1)
+    angles = []
+    for i in range(3):
+        for j in range(i + 1, 3):
+            cos_angle = np.dot(lat[i], lat[j]) / (norms[i] * norms[j] + 1e-12)
+            angles.append(float(np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))))
+
+    system = _guess_crystal_system(norms, angles)
+    return {
+        "spacegroup": "unknown (spglib not installed)",
+        "crystal_system": system,
+        "lattice_norms": norms.tolist(),
+        "lattice_angles_deg": angles,
+        "note": "Install spglib for full symmetry analysis: pip install spglib",
+    }
 
 
 def _crystal_system(spg_number: int) -> str:
@@ -166,7 +184,11 @@ def _guess_crystal_system(norms: np.ndarray, angles: list[float]) -> str:
         return "tetragonal"
     if all_90:
         return "orthorhombic"
-    if abs(alpha - 90) < angle_tol and abs(beta - 90) < angle_tol and abs(gamma - 120) < angle_tol:
+    if (
+        abs(alpha - 90) < angle_tol
+        and abs(beta - 90) < angle_tol
+        and abs(gamma - 120) < angle_tol
+    ):
         return "hexagonal"
     return "triclinic"
 
@@ -193,18 +215,22 @@ async def analyze_spectral(params: dict[str, Any]) -> dict[str, Any]:
     peaks = []
     for idx in peak_indices:
         if magnitudes[idx] > 0.01 * np.max(magnitudes):
-            peaks.append({
-                "frequency": float(freqs[idx]),
-                "magnitude": float(magnitudes[idx]),
-            })
+            peaks.append(
+                {
+                    "frequency": float(freqs[idx]),
+                    "magnitude": float(magnitudes[idx]),
+                }
+            )
 
     return {
         "n_samples": n,
         "sample_rate": sample_rate,
         "frequency_range": [float(freqs[0]), float(freqs[-1])],
-        "dominant_frequency": float(freqs[np.argmax(magnitudes[1:]) + 1]) if n > 1 else 0.0,
+        "dominant_frequency": float(freqs[np.argmax(magnitudes[1:]) + 1])
+        if n > 1
+        else 0.0,
         "peaks": peaks,
-        "total_power": float(np.sum(magnitudes ** 2)),
+        "total_power": float(np.sum(magnitudes**2)),
         "mean": float(np.mean(signal)),
         "std": float(np.std(signal)),
     }
@@ -232,36 +258,59 @@ async def analyze_dynamics(params: dict[str, Any]) -> dict[str, Any]:
 
     # MSD (Mean Squared Displacement)
     if n_frames > 1:
-        displacements = frames - frames[0]
-        msd = np.mean(np.sum(displacements ** 2, axis=2), axis=1)
-        result["msd"] = msd.tolist()
-        # Diffusion coefficient estimate (Einstein relation: MSD = 6Dt in 3D)
-        times = np.arange(n_frames) * timestep
-        if n_frames > 2:
-            slope = np.polyfit(times[1:], msd[1:], 1)[0]
-            result["diffusion_coefficient_estimate"] = float(slope / 6.0)
+        result.update(_msd_metrics(frames, timestep))
 
     # RMSD between consecutive frames
     if n_frames > 1:
-        rmsd = []
-        for i in range(1, n_frames):
-            d = np.sqrt(np.mean(np.sum((frames[i] - frames[i - 1]) ** 2, axis=1)))
-            rmsd.append(float(d))
-        result["rmsd_consecutive_mean"] = float(np.mean(rmsd))
-        result["rmsd_consecutive_max"] = float(np.max(rmsd))
+        result.update(_rmsd_metrics(frames))
 
     # Kinetic energy estimate if masses provided
     if masses and n_frames > 1:
-        masses_arr = np.array(masses)
-        velocities = np.diff(frames, axis=0) / timestep
-        ke_frames = []
-        for v in velocities:
-            ke = 0.5 * np.sum(masses_arr[:, None] * v ** 2)
-            ke_frames.append(float(ke))
-        result["kinetic_energy_mean"] = float(np.mean(ke_frames))
-        result["kinetic_energy_std"] = float(np.std(ke_frames))
+        result.update(_kinetic_energy_metrics(frames, timestep, masses))
 
     return result
+
+
+def _msd_metrics(frames: np.ndarray, timestep: Any) -> dict[str, Any]:
+    """Mean squared displacement series and diffusion estimate."""
+    n_frames = frames.shape[0]
+    displacements = frames - frames[0]
+    msd = np.mean(np.sum(displacements**2, axis=2), axis=1)
+    values: dict[str, Any] = {"msd": msd.tolist()}
+    # Diffusion coefficient estimate (Einstein relation: MSD = 6Dt in 3D)
+    times = np.arange(n_frames) * timestep
+    if n_frames > 2:
+        slope = np.polyfit(times[1:], msd[1:], 1)[0]
+        values["diffusion_coefficient_estimate"] = float(slope / 6.0)
+    return values
+
+
+def _rmsd_metrics(frames: np.ndarray) -> dict[str, Any]:
+    """RMSD statistics between consecutive frames."""
+    rmsd = []
+    for i in range(1, frames.shape[0]):
+        d = np.sqrt(np.mean(np.sum((frames[i] - frames[i - 1]) ** 2, axis=1)))
+        rmsd.append(float(d))
+    return {
+        "rmsd_consecutive_mean": float(np.mean(rmsd)),
+        "rmsd_consecutive_max": float(np.max(rmsd)),
+    }
+
+
+def _kinetic_energy_metrics(
+    frames: np.ndarray, timestep: Any, masses: Any
+) -> dict[str, Any]:
+    """Kinetic energy mean and standard deviation over the trajectory."""
+    masses_arr = np.array(masses)
+    velocities = np.diff(frames, axis=0) / timestep
+    ke_frames = []
+    for v in velocities:
+        ke = 0.5 * np.sum(masses_arr[:, None] * v**2)
+        ke_frames.append(float(ke))
+    return {
+        "kinetic_energy_mean": float(np.mean(ke_frames)),
+        "kinetic_energy_std": float(np.std(ke_frames)),
+    }
 
 
 @router.post("/analyze/tda")
@@ -285,7 +334,9 @@ async def analyze_tda(params: dict[str, Any]) -> dict[str, Any]:
         persistence = simplex_tree.persistence(min_persistence=0.0)
         diagram = []
         for dim, (birth, death) in persistence:
-            diagram.append({"dimension": dim, "birth": float(birth), "death": float(death)})
+            diagram.append(
+                {"dimension": dim, "birth": float(birth), "death": float(death)}
+            )
         return {
             "n_points": n_points,
             "embedding_dimension": n_dim,
@@ -340,52 +391,16 @@ async def analyze_sindy(params: dict[str, Any]) -> dict[str, Any]:
 
     # Build library
     if library == "polynomial":
-        # Polynomial basis: 1, x, x^2, xy, ...
-        Theta = np.column_stack([
-            np.ones(n_samples),  # constant
-            X,  # linear
-        ])
-        feature_names = ["1"] + [f"x{i}" for i in range(n_vars)]
-        # Quadratic terms
-        for i in range(n_vars):
-            Theta = np.column_stack([Theta, X[:, i: i + 1] ** 2])
-            feature_names.append(f"x{i}^2")
-        for i in range(n_vars):
-            for j in range(i + 1, n_vars):
-                Theta = np.column_stack([Theta, (X[:, i] * X[:, j]).reshape(-1, 1)])
-                feature_names.append(f"x{i}*x{j}")
+        Theta, feature_names = _sindy_polynomial_library(X, n_samples, n_vars)
     else:
-        # Fourier basis
-        Theta = np.column_stack([np.ones(n_samples), X])
-        feature_names = ["1"] + [f"x{i}" for i in range(n_vars)]
-        for i in range(n_vars):
-            Theta = np.column_stack([Theta, np.sin(X[:, i: i + 1])])
-            feature_names.append(f"sin(x{i})")
-            Theta = np.column_stack([Theta, np.cos(X[:, i: i + 1])])
-            feature_names.append(f"cos(x{i})")
+        Theta, feature_names = _sindy_fourier_library(X, n_samples, n_vars)
 
     # Sparse regression: iterative thresholded least squares
     n_features = Theta.shape[1]
-    Xi = np.zeros((n_features, n_vars))
-    for k in range(n_vars):
-        xi = np.linalg.lstsq(Theta, dX[:, k], rcond=None)[0]
-        # Iterative thresholding
-        for _ in range(10):
-            small = np.abs(xi) < threshold
-            xi[small] = 0
-            if np.any(~small):
-                xi[~small] = np.linalg.lstsq(Theta[:, ~small], dX[:, k], rcond=None)[0]
-        Xi[:, k] = xi
+    Xi = _sindy_regress(Theta, dX, threshold)
 
     # Extract discovered equations
-    equations = []
-    for k in range(n_vars):
-        terms = []
-        for j in range(n_features):
-            if abs(Xi[j, k]) > 1e-10:
-                coeff = float(Xi[j, k])
-                terms.append(f"{coeff:+.4f}*{feature_names[j]}")
-        equations.append(" + ".join(terms) if terms else "0")
+    equations = _sindy_equations(Xi, feature_names)
 
     return {
         "n_samples": n_samples,
@@ -397,6 +412,76 @@ async def analyze_sindy(params: dict[str, Any]) -> dict[str, Any]:
         "threshold": threshold,
         "engine": "numpy_sindy",
     }
+
+
+def _sindy_polynomial_library(
+    X: np.ndarray, n_samples: int, n_vars: int
+) -> tuple[np.ndarray, list[str]]:
+    """Build the polynomial SINDy library and its feature names."""
+    # Polynomial basis: 1, x, x^2, xy, ...
+    Theta = np.column_stack(
+        [
+            np.ones(n_samples),  # constant
+            X,  # linear
+        ]
+    )
+    feature_names = ["1"] + [f"x{i}" for i in range(n_vars)]
+    # Quadratic terms
+    for i in range(n_vars):
+        Theta = np.column_stack([Theta, X[:, i : i + 1] ** 2])
+        feature_names.append(f"x{i}^2")
+    for i in range(n_vars):
+        for j in range(i + 1, n_vars):
+            Theta = np.column_stack([Theta, (X[:, i] * X[:, j]).reshape(-1, 1)])
+            feature_names.append(f"x{i}*x{j}")
+    return Theta, feature_names
+
+
+def _sindy_fourier_library(
+    X: np.ndarray, n_samples: int, n_vars: int
+) -> tuple[np.ndarray, list[str]]:
+    """Build the Fourier SINDy library and its feature names."""
+    # Fourier basis
+    Theta = np.column_stack([np.ones(n_samples), X])
+    feature_names = ["1"] + [f"x{i}" for i in range(n_vars)]
+    for i in range(n_vars):
+        Theta = np.column_stack([Theta, np.sin(X[:, i : i + 1])])
+        feature_names.append(f"sin(x{i})")
+        Theta = np.column_stack([Theta, np.cos(X[:, i : i + 1])])
+        feature_names.append(f"cos(x{i})")
+    return Theta, feature_names
+
+
+def _sindy_regress(Theta: np.ndarray, dX: np.ndarray, threshold: Any) -> np.ndarray:
+    """Iterative thresholded least squares for the SINDy coefficients."""
+    n_features = Theta.shape[1]
+    n_vars = dX.shape[1]
+    Xi = np.zeros((n_features, n_vars))
+    for k in range(n_vars):
+        xi = np.linalg.lstsq(Theta, dX[:, k], rcond=None)[0]
+        # Iterative thresholding
+        for _ in range(10):
+            small = np.abs(xi) < threshold
+            xi[small] = 0
+            if np.any(~small):
+                xi[~small] = np.linalg.lstsq(Theta[:, ~small], dX[:, k], rcond=None)[0]
+        Xi[:, k] = xi
+    return Xi
+
+
+def _sindy_equations(Xi: np.ndarray, feature_names: list[str]) -> list[str]:
+    """Render the discovered ODE right-hand sides."""
+    n_vars = Xi.shape[1]
+    n_features = Xi.shape[0]
+    equations = []
+    for k in range(n_vars):
+        terms = []
+        for j in range(n_features):
+            if abs(Xi[j, k]) > 1e-10:
+                coeff = float(Xi[j, k])
+                terms.append(f"{coeff:+.4f}*{feature_names[j]}")
+        equations.append(" + ".join(terms) if terms else "0")
+    return equations
 
 
 # ── Visualization endpoints ─────────────────────────────────────────
@@ -475,8 +560,7 @@ async def viz_persistence(params: dict[str, Any]) -> dict[str, Any]:
         }
 
     points = [
-        (p.get("dimension", 0), p.get("birth", 0), p.get("death", 0))
-        for p in diagram
+        (p.get("dimension", 0), p.get("birth", 0), p.get("death", 0)) for p in diagram
     ]
     by_dim: dict[int, list] = {}
     for dim, b, d in points:
@@ -516,7 +600,9 @@ async def viz_sindy(params: dict[str, Any]) -> dict[str, Any]:
 # ── Helpers ─────────────────────────────────────────────────────────
 
 
-def _ascii_plot(x: np.ndarray, y: np.ndarray, label: str, width: int = 60, height: int = 15) -> str:
+def _ascii_plot(
+    x: np.ndarray, y: np.ndarray, label: str, width: int = 60, height: int = 15
+) -> str:
     """Generate a simple ASCII line plot."""
     if len(x) == 0:
         return "(empty data)"
@@ -545,7 +631,9 @@ def _ascii_plot(x: np.ndarray, y: np.ndarray, label: str, width: int = 60, heigh
     return "\n".join(lines)
 
 
-def _ascii_phase(x: np.ndarray, y: np.ndarray, width: int = 40, height: int = 20) -> str:
+def _ascii_phase(
+    x: np.ndarray, y: np.ndarray, width: int = 40, height: int = 20
+) -> str:
     """Generate a simple ASCII phase portrait."""
     if len(x) == 0:
         return "(empty data)"

@@ -16,6 +16,7 @@
 核心原则: 门控只决定"是否自动用", 最坏结果是"少自动用一次", 而非"永久丢方向"。
 开关复用 harness_significance_gate / harness_ood_holdout (任一开启即生效)。
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,6 +33,38 @@ YELLOW = "yellow"
 RED = "red"
 
 
+def _decision(
+    config_id: str,
+    status: str,
+    adopt: bool,
+    reason: str,
+    sig: dict[str, Any] | None,
+    ood: dict[str, Any] | None,
+) -> AdoptionDecision:
+    """构造一条三级决策记录."""
+    return AdoptionDecision(
+        config_id=config_id,
+        status=status,
+        adopt=adopt,
+        reason=reason,
+        significance=sig,
+        ood=ood,
+    )
+
+
+def _ood_degraded(ood: dict[str, Any] | None, ood_pass: bool | None) -> bool:
+    """OOD 是否"明确退化"."""
+    # OOD"明确退化"by 数据充足时 degradation 超 tolerance; 样本不足不是退化
+    ood_degraded = False
+    if ood is not None:
+        ood_holdout_n = int(ood.get("holdout_n", 0))
+        ood_min = int(ood.get("min_per_split", 0)) or 3
+        ood_tol = float(ood.get("tolerance", 0.1))
+        if ood_pass is False and ood_holdout_n >= ood_min:
+            ood_degraded = float(ood.get("degradation", 0.0)) > ood_tol
+    return ood_degraded
+
+
 @dataclass
 class AdoptionDecision:
     """软门控对单个候选的采纳决策.
@@ -42,6 +75,7 @@ class AdoptionDecision:
     significance: H5 决策 dict (gate_decision().to_dict())
     ood:          H6 决策 dict (validate_ood().to_dict())
     """
+
     config_id: str
     status: str
     adopt: bool
@@ -104,28 +138,10 @@ class AdoptionGate:
             )
 
         # H5 显著性
-        sig: dict[str, Any] | None = None
-        try:
-            from huginn.harness.significance_gate import SignificanceGate
-
-            gd = SignificanceGate.get_instance().gate_decision(
-                config_id, alpha=alpha, min_samples=min_samples
-            )
-            sig = gd.to_dict()
-        except Exception:
-            logger.debug("adoption_gate: significance read failed", exc_info=True)
+        sig = AdoptionGate._read_significance(self, config_id, alpha, min_samples)
 
         # H6 OOD
-        ood: dict[str, Any] | None = None
-        try:
-            from huginn.harness.ood_holdout import OODHoldoutValidator
-
-            or_ = OODHoldoutValidator.get_instance().validate_ood(
-                config_id, tolerance=tolerance
-            )
-            ood = or_.to_dict()
-        except Exception:
-            logger.debug("adoption_gate: ood read failed", exc_info=True)
+        ood = AdoptionGate._read_ood(self, config_id, tolerance)
 
         # 门控数据完全不可用 → 不自动采纳但保留 (YELLOW), 防止门控本身成为漏洞
         if sig is None and ood is None:
@@ -138,60 +154,84 @@ class AdoptionGate:
                 ood=ood,
             )
 
+        return AdoptionGate._decide_with_data(self, config_id, sig, ood, min_samples)
+
+    def _read_significance(
+        self,
+        config_id: str,
+        alpha: float,
+        min_samples: int,
+    ) -> dict[str, Any] | None:
+        """读取 H5 显著性决策 (任何异常 → None)."""
+        sig: dict[str, Any] | None = None
+        try:
+            from huginn.harness.significance_gate import SignificanceGate
+
+            gd = SignificanceGate.get_instance().gate_decision(
+                config_id, alpha=alpha, min_samples=min_samples
+            )
+            sig = gd.to_dict()
+        except Exception:
+            logger.debug("adoption_gate: significance read failed", exc_info=True)
+        return sig
+
+    def _read_ood(self, config_id: str, tolerance: float) -> dict[str, Any] | None:
+        """读取 H6 OOD 决策 (任何异常 → None)."""
+        ood: dict[str, Any] | None = None
+        try:
+            from huginn.harness.ood_holdout import OODHoldoutValidator
+
+            or_ = OODHoldoutValidator.get_instance().validate_ood(
+                config_id, tolerance=tolerance
+            )
+            ood = or_.to_dict()
+        except Exception:
+            logger.debug("adoption_gate: ood read failed", exc_info=True)
+        return ood
+
+    def _decide_with_data(
+        self,
+        config_id: str,
+        sig: dict[str, Any] | None,
+        ood: dict[str, Any] | None,
+        min_samples: int,
+    ) -> AdoptionDecision:
+        """按 H5/H6 数据给出三级决策 (GREEN/RED/YELLOW)."""
         sig_pass = bool(sig.get("passed")) if sig else None
         sig_n = int(sig.get("n_samples", 0)) if sig else 0
         median_diff = float(sig.get("median_diff", 0.0)) if sig else 0.0
         ood_pass = bool(ood.get("passed")) if ood else None
-        # OOD"明确退化"by 数据充足时 degradation 超 tolerance; 样本不足不是退化
-        ood_degraded = False
-        if ood is not None:
-            ood_holdout_n = int(ood.get("holdout_n", 0))
-            ood_min = int(ood.get("min_per_split", 0)) or 3
-            ood_tol = float(ood.get("tolerance", 0.1))
-            if ood_pass is False and ood_holdout_n >= ood_min:
-                ood_degraded = float(ood.get("degradation", 0.0)) > ood_tol
+        ood_degraded = _ood_degraded(ood, ood_pass)
 
         # 显著负向 → RED
         if sig is not None and sig_n >= min_samples and median_diff < 0:
-            return AdoptionDecision(
-                config_id=config_id,
-                status=RED,
-                adopt=False,
-                reason=f"significantly worse (median_diff={median_diff:.3f})",
-                significance=sig,
-                ood=ood,
+            return _decision(
+                config_id,
+                RED,
+                False,
+                f"significantly worse (median_diff={median_diff:.3f})",
+                sig,
+                ood,
             )
 
         # OOD 数据充足且明确退化 → RED
         if sig is not None and sig_pass is True and ood_degraded:
-            return AdoptionDecision(
-                config_id=config_id,
-                status=RED,
-                adopt=False,
-                reason="significant but OOD degraded",
-                significance=sig,
-                ood=ood,
+            return _decision(
+                config_id, RED, False, "significant but OOD degraded", sig, ood
             )
 
         # 显著 且 OOD 通过(或样本不足未判死) → GREEN
         if sig_pass is True and ood_pass is not False:
-            return AdoptionDecision(
-                config_id=config_id,
-                status=GREEN,
-                adopt=True,
-                reason="significant and OOD ok",
-                significance=sig,
-                ood=ood,
-            )
+            return _decision(config_id, GREEN, True, "significant and OOD ok", sig, ood)
 
         # 其余 (样本不足 / OOD 未过但未显著负向) → YELLOW
-        return AdoptionDecision(
-            config_id=config_id,
-            status=YELLOW,
-            adopt=False,
-            reason="pending more evidence (insufficient or not decisive)",
-            significance=sig,
-            ood=ood,
+        return _decision(
+            config_id,
+            YELLOW,
+            False,
+            "pending more evidence (insufficient or not decisive)",
+            sig,
+            ood,
         )
 
     def should_adopt(self, config_id: str) -> bool:

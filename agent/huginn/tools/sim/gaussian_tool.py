@@ -51,6 +51,84 @@ def _parse_route_tokens(rest: str) -> dict[str, Any]:
     return params
 
 
+def _gaussian_parse_forces(content: str) -> list[list[float]]:
+    """取最后一个 force 块的原子受力."""
+    forces: list[list[float]] = []
+    force_blocks = re.findall(
+        r"Center\s+Atomic\s+Forces\s+\(Hartrees/Bohr\)\s*\n"
+        r"((?:\s*\d+\s+\d+\s+\S+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\n?)+)",
+        content,
+    )
+    if force_blocks:
+        for line in force_blocks[-1].strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 6:
+                with contextlib.suppress(ValueError):
+                    forces.append(
+                        [float(parts[-3]), float(parts[-2]), float(parts[-1])]
+                    )
+    return forces
+
+
+def _parse_log_core(result: dict[str, Any], content: str) -> None:
+    """解析能量 / 终止 / 收敛 / 受力."""
+    # SCF energy — last occurrence wins
+    scf_matches = re.findall(r"SCF Done:\s+E\([^)]+\)\s+=\s+(-?[\d.]+)", content)
+    if scf_matches:
+        result["energy"] = float(scf_matches[-1])
+
+    # normal termination
+    result["normal_termination"] = "Normal termination" in content
+
+    # optimization converged
+    result["optimization_completed"] = (
+        "Optimization completed" in content or "Stationary point found" in content
+    )
+    result["converged"] = result["optimization_completed"]
+
+    # forces — last force block
+    forces = _gaussian_parse_forces(content)
+    if forces:
+        result["forces"] = forces
+
+
+def _parse_log_extra(result: dict[str, Any], content: str) -> None:
+    """解析频率 / SCF 失败 / 电荷多重度."""
+    # frequencies (from freq calculations)
+    freq_matches = re.findall(r"Frequencies\s+--\s+(-?[\d.]+)", content)
+    if freq_matches:
+        result["frequencies"] = [float(f) for f in freq_matches]
+
+    # SCF convergence failure
+    if "Convergence failure" in content:
+        result["converged"] = False
+        result["scf_convergence_failure"] = True
+
+    # Charge and multiplicity — printed in the standard orientation section
+    charge_match = re.search(r"Charge\s*=\s*(-?\d+)", content)
+    if charge_match:
+        result["charge"] = int(charge_match.group(1))
+    mult_match = re.search(r"Multiplicity\s*=\s*(\d+)", content)
+    if mult_match:
+        result["multiplicity"] = int(mult_match.group(1))
+
+
+def _attach_gaussian_audit(
+    args: GaussianToolInput, parsed: dict[str, Any], data: dict[str, Any]
+) -> None:
+    """兜底补跑一次物理审计，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit(
+            "gaussian_tool", args.action, parsed, args.model_dump()
+        )
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
 class GaussianToolInput(BaseModel):
     action: Literal["sp", "opt", "freq", "parse"] = Field(
         ...,
@@ -71,11 +149,14 @@ class GaussianToolInput(BaseModel):
         description="Override route section keywords (e.g. {'scf': 'xqc'})",
     )
     max_auto_retries: int = Field(
-        default=2, ge=0, le=5,
+        default=2,
+        ge=0,
+        le=5,
         description="On failure, auto-diagnose + patch route and retry up to N times",
     )
     timeout: int = Field(
-        default=3600, ge=1,
+        default=3600,
+        ge=1,
         description="Max wall-clock seconds for a single Gaussian run",
     )
 
@@ -111,7 +192,7 @@ class GaussianTool(HuginnTool):
         ),
         degradation_chain=(
             "materials_database_tool",  # MGE: DFT → database lookup
-            "symbolic_math_tool",       # → analytical estimate
+            "symbolic_math_tool",  # → analytical estimate
         ),
         quality_tier="dft_hse",  # Gaussian = high-accuracy QC
     )
@@ -150,9 +231,7 @@ class GaussianTool(HuginnTool):
     ) -> ValidationResult:
         return await validate_working_dir(args, context)
 
-    async def call(
-        self, args: GaussianToolInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: GaussianToolInput, context: ToolContext) -> ToolResult:
         work_dir = Path(args.working_dir)
         if not work_dir.exists():
             return ToolResult(
@@ -181,6 +260,7 @@ class GaussianTool(HuginnTool):
         from huginn.tools.sim.executable_resolver import (
             resolve_executable,
         )
+
         resolution = resolve_executable("gaussian")
         if isinstance(resolution, str):
             self.gaussian_executable = resolution
@@ -189,7 +269,10 @@ class GaussianTool(HuginnTool):
             data=None,
             success=False,
             error=f"Gaussian executable not found. {resolution.install_hint}",
-            metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
+            metadata={
+                "needs_resolution": True,
+                "resolution_request": resolution.to_dict(),
+            },
         )
 
     # ── execution ──────────────────────────────────────────────────
@@ -208,83 +291,138 @@ class GaussianTool(HuginnTool):
         audit_report = None
 
         for attempt in range(args.max_auto_retries + 1):
-            cmd = [self.gaussian_executable, gjf_file.name]
-            try:
-                sb_result = self.sandbox.run(
-                    cmd, cwd=str(work_dir), timeout=args.timeout
-                )
-            except Exception as e:
-                return ToolResult(
-                    data=None, success=False, error=f"Gaussian execution failed: {e}"
-                )
-
-            rc = self._get_returncode(sb_result)
-            stderr = self._get_stderr(sb_result)
+            rc, stderr, failure = self._run_attempt(args, work_dir, gjf_file)
+            if failure is not None:
+                return failure
 
             # 判断这次跑完到底算成功还是失败:
             # - rc != 0 → 硬失败, stderr 诊断
             # - rc == 0 但 SCF 没收敛 / 优化没收敛 → 软失败, Gaussian 经常静默返回 0
-            error: str | None = None
-            soft_failure_msg = None
-            if rc != 0:
-                error = stderr or ""
-            else:
-                # returncode=0 不代表收敛了, 查 .log 的 SCF / 优化状态
-                parsed_now = self._parse_log(log_file) if log_file.exists() else {}
-                if parsed_now.get("scf_convergence_failure"):
-                    # SCF 没收敛, 任何 action 都是软失败
-                    error = "SCF did not converge — Convergence failure"
-                    soft_failure_msg = error
-                elif args.action in ("opt", "freq") and not parsed_now.get(
-                    "converged", False
-                ):
-                    # 优化没收敛, opt/freq 才查
-                    error = "Optimization did not converge"
-                    soft_failure_msg = error
-                # sp 只要有能量就算成功, 不查优化收敛
-                else:
-                    # SCF/opt 收敛了, 再过一遍物理审计,
-                    # 抓 imaginary freq / 能量异常之类的 "成功但不可信"
-                    try:
-                        from huginn.execution.physics_auditor import (
-                            PhysicsAuditor,
-                        )
-
-                        auditor = PhysicsAuditor()
-                        audit_report = auditor.audit(
-                            "gaussian_tool",
-                            args.action,
-                            parsed_now,
-                            args.model_dump(),
-                        )
-                        if audit_report.has_errors:
-                            errs = [
-                                f.message
-                                for f in audit_report.findings
-                                if f.severity == "error"
-                            ]
-                            error = f"Physics audit found errors: {errs}"
-                            soft_failure_msg = error
-                    except Exception:  # 防御: 审计异常不阻断重试流程
-                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+            error, soft_failure_msg, audit_report = self._classify_attempt(
+                args, log_file, rc, stderr
+            )
 
             if error is None:
                 break  # 真正成功
 
             # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
-            if attempt < args.max_auto_retries:
-                fixed = self._try_autofix(gjf_file, error)
-                if fixed:
-                    autoheal_log.append({
-                        "attempt": attempt + 1,
-                        "error": error[:300],
-                        "fixes_applied": fixed["fixes"],
-                        "reasoning": fixed["reasoning"],
-                    })
-                    continue
-                break  # nothing to fix or no more retries
-            break  # 重试耗尽
+            if not self._should_retry(args, gjf_file, attempt, error, autoheal_log):
+                break
 
+        return self._finalize_run(
+            args,
+            work_dir,
+            log_file,
+            rc,
+            stderr,
+            soft_failure_msg,
+            audit_report,
+            autoheal_log,
+        )
+
+    def _run_attempt(
+        self, args: GaussianToolInput, work_dir: Path, gjf_file: Path
+    ) -> tuple[int, str, ToolResult | None]:
+        """执行一次 Gaussian, 返回 (returncode, stderr, 异常结果)."""
+        cmd = [self.gaussian_executable, gjf_file.name]
+        try:
+            sb_result = self.sandbox.run(cmd, cwd=str(work_dir), timeout=args.timeout)
+        except Exception as e:
+            return (
+                -1,
+                "",
+                ToolResult(
+                    data=None, success=False, error=f"Gaussian execution failed: {e}"
+                ),
+            )
+        return self._get_returncode(sb_result), self._get_stderr(sb_result), None
+
+    def _should_retry(
+        self,
+        args: GaussianToolInput,
+        gjf_file: Path,
+        attempt: int,
+        error: str,
+        autoheal_log: list[dict[str, Any]],
+    ) -> bool:
+        """判断是否再进行一轮重试 (可自动修复时记录 autoheal)."""
+        if attempt >= args.max_auto_retries:
+            return False  # 重试耗尽
+        fixed = self._try_autofix(gjf_file, error)
+        if not fixed:
+            return False  # nothing to fix or no more retries
+        autoheal_log.append(
+            {
+                "attempt": attempt + 1,
+                "error": error[:300],
+                "fixes_applied": fixed["fixes"],
+                "reasoning": fixed["reasoning"],
+            }
+        )
+        return True
+
+    def _classify_attempt(
+        self, args: GaussianToolInput, log_file: Path, rc: int, stderr: str
+    ) -> tuple[str | None, str | None, Any]:
+        """判定本次运行是硬失败/软失败/成功, 返回 (error, 软失败原因, 审计)."""
+        error: str | None = None
+        soft_failure_msg: str | None = None
+        audit_report = None
+        if rc != 0:
+            error = stderr or ""
+        else:
+            # returncode=0 不代表收敛了, 查 .log 的 SCF / 优化状态
+            parsed_now = self._parse_log(log_file) if log_file.exists() else {}
+            if parsed_now.get("scf_convergence_failure"):
+                # SCF 没收敛, 任何 action 都是软失败
+                error = "SCF did not converge — Convergence failure"
+                soft_failure_msg = error
+            elif args.action in ("opt", "freq") and not parsed_now.get(
+                "converged", False
+            ):
+                # 优化没收敛, opt/freq 才查
+                error = "Optimization did not converge"
+                soft_failure_msg = error
+            # sp 只要有能量就算成功, 不查优化收敛
+            else:
+                # SCF/opt 收敛了, 再过一遍物理审计,
+                # 抓 imaginary freq / 能量异常之类的 "成功但不可信"
+                try:
+                    from huginn.execution.physics_auditor import (
+                        PhysicsAuditor,
+                    )
+
+                    auditor = PhysicsAuditor()
+                    audit_report = auditor.audit(
+                        "gaussian_tool",
+                        args.action,
+                        parsed_now,
+                        args.model_dump(),
+                    )
+                    if audit_report.has_errors:
+                        errs = [
+                            f.message
+                            for f in audit_report.findings
+                            if f.severity == "error"
+                        ]
+                        error = f"Physics audit found errors: {errs}"
+                        soft_failure_msg = error
+                except Exception:  # 防御: 审计异常不阻断重试流程
+                    logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+        return error, soft_failure_msg, audit_report
+
+    def _finalize_run(
+        self,
+        args: GaussianToolInput,
+        work_dir: Path,
+        log_file: Path,
+        rc: int,
+        stderr: str,
+        soft_failure_msg: str | None,
+        audit_report: Any,
+        autoheal_log: list[dict[str, Any]],
+    ) -> ToolResult:
+        """解析日志并组装最终结果."""
         # parse the log file
         parsed = self._parse_log(log_file) if log_file.exists() else {}
 
@@ -296,8 +434,7 @@ class GaussianTool(HuginnTool):
             converged=parsed.get("converged", False),
             forces=parsed.get("forces", []),
             output_files=[
-                f.name for f in work_dir.iterdir()
-                if f.suffix in [".log", ".chk"]
+                f.name for f in work_dir.iterdir() if f.suffix in [".log", ".chk"]
             ],
         )
 
@@ -310,16 +447,7 @@ class GaussianTool(HuginnTool):
         if audit_report is not None:
             data["physics_audit"] = audit_report.to_dict()
         else:
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "gaussian_tool", args.action, parsed, args.model_dump()
-                )
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_gaussian_audit(args, parsed, data)
 
         return ToolResult(
             data=data,
@@ -433,57 +561,8 @@ class GaussianTool(HuginnTool):
             result["parse_error"] = str(e)
             return result
 
-        # SCF energy — last occurrence wins
-        scf_matches = re.findall(
-            r"SCF Done:\s+E\([^)]+\)\s+=\s+(-?[\d.]+)", content
-        )
-        if scf_matches:
-            result["energy"] = float(scf_matches[-1])
-
-        # normal termination
-        result["normal_termination"] = "Normal termination" in content
-
-        # optimization converged
-        result["optimization_completed"] = (
-            "Optimization completed" in content
-            or "Stationary point found" in content
-        )
-        result["converged"] = result["optimization_completed"]
-
-        # forces — last force block
-        force_blocks = re.findall(
-            r"Center\s+Atomic\s+Forces\s+\(Hartrees/Bohr\)\s*\n"
-            r"((?:\s*\d+\s+\d+\s+\S+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\n?)+)",
-            content,
-        )
-        if force_blocks:
-            forces: list[list[float]] = []
-            for line in force_blocks[-1].strip().split("\n"):
-                parts = line.split()
-                if len(parts) >= 6:
-                    with contextlib.suppress(ValueError):
-                        forces.append([
-                            float(parts[-3]), float(parts[-2]), float(parts[-1])
-                        ])
-            result["forces"] = forces
-
-        # frequencies (from freq calculations)
-        freq_matches = re.findall(r"Frequencies\s+--\s+(-?[\d.]+)", content)
-        if freq_matches:
-            result["frequencies"] = [float(f) for f in freq_matches]
-
-        # SCF convergence failure
-        if "Convergence failure" in content:
-            result["converged"] = False
-            result["scf_convergence_failure"] = True
-
-        # Charge and multiplicity — printed in the standard orientation section
-        charge_match = re.search(r"Charge\s*=\s*(-?\d+)", content)
-        if charge_match:
-            result["charge"] = int(charge_match.group(1))
-        mult_match = re.search(r"Multiplicity\s*=\s*(\d+)", content)
-        if mult_match:
-            result["multiplicity"] = int(mult_match.group(1))
+        _parse_log_core(result, content)
+        _parse_log_extra(result, content)
 
         return result
 
@@ -522,9 +601,7 @@ class GaussianTool(HuginnTool):
         data["parsed"] = parsed
         return ToolResult(data=data, success=True)
 
-    def _mock_result(
-        self, args: GaussianToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _mock_result(self, args: GaussianToolInput, work_dir: Path) -> ToolResult:
         """Return synthetic results when Gaussian is not installed."""
         import random
 

@@ -1,4 +1,5 @@
 """应力-应变曲线场景: 弹性区虚线 + 屈服/极限/断裂三点标注."""
+
 from __future__ import annotations
 
 import logging
@@ -23,9 +24,7 @@ def stress_strain(args: ImageDesignInput) -> ToolResult:
     strain = np.array(get_param(args, "strain", []), dtype=float)
     stress = np.array(get_param(args, "stress", []), dtype=float)
     if strain.size == 0 or stress.size == 0:
-        return ToolResult(
-            data=None, success=False, error="strain / stress 不能为空"
-        )
+        return ToolResult(data=None, success=False, error="strain / stress 不能为空")
 
     yield_point = get_param(args, "yield_point", None)
     ultimate_point = get_param(args, "ultimate_point", None)
@@ -38,23 +37,58 @@ def stress_strain(args: ImageDesignInput) -> ToolResult:
     ax.plot(strain, stress, color=color, linewidth=2.5, label="Curve")
 
     # 弹性区虚线
-    if youngs_modulus is not None and strain.size > 1:
-        eps_elastic_max = 0.005
-        if yield_point:
-            eps_elastic_max = float(yield_point[0])
-        eps_line = np.linspace(0, eps_elastic_max, 50)
-        # E 给的是 GPa, stress 是 MPa
-        stress_line = eps_line * float(youngs_modulus) * 1000.0
-        ax.plot(
-            eps_line,
-            stress_line,
-            color="#FF5722",
-            linestyle="--",
-            linewidth=2,
-            label=f"E = {youngs_modulus} GPa",
-        )
+    _draw_elastic_line(ax, strain, youngs_modulus, yield_point)
 
     # 屈服 / 极限 / 断裂三点
+    annotations = _draw_point_annotations(
+        ax, strain, yield_point, ultimate_point, fracture_point
+    )
+
+    ax.set_xlabel("Strain", fontweight="bold")
+    ax.set_ylabel("Stress (MPa)", fontweight="bold")
+    ax.set_title(title, fontweight="bold")
+    ax.legend(loc="lower right", framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+
+    save_figure(fig, args.output_path)
+
+    summary = _stress_summary(strain, youngs_modulus, ultimate_point)
+    metadata = _stress_metadata(
+        strain, youngs_modulus, yield_point, ultimate_point, fracture_point, annotations
+    )
+    return ToolResult(
+        data={
+            "output_path": args.output_path,
+            "summary": summary,
+            "metadata": metadata,
+        }
+    )
+
+
+def _draw_elastic_line(ax, strain, youngs_modulus, yield_point) -> None:
+    """弹性区虚线."""
+    if not (youngs_modulus is not None and strain.size > 1):
+        return
+    eps_elastic_max = 0.005
+    if yield_point:
+        eps_elastic_max = float(yield_point[0])
+    eps_line = np.linspace(0, eps_elastic_max, 50)
+    # E 给的是 GPa, stress 是 MPa
+    stress_line = eps_line * float(youngs_modulus) * 1000.0
+    ax.plot(
+        eps_line,
+        stress_line,
+        color="#FF5722",
+        linestyle="--",
+        linewidth=2,
+        label=f"E = {youngs_modulus} GPa",
+    )
+
+
+def _draw_point_annotations(
+    ax, strain, yield_point, ultimate_point, fracture_point
+) -> list:
+    """屈服 / 极限 / 断裂三点, 返回标注列表."""
     annotations: list[dict[str, Any]] = []
     x_range = float(strain.max() - strain.min())
     for pt, lbl, c in [
@@ -84,22 +118,24 @@ def stress_strain(args: ImageDesignInput) -> ToolResult:
             arrowprops={"color": c, "arrowstyle": "->", "linewidth": 1.5},
         )
         annotations.append({"label": lbl, "strain": ex, "stress_MPa": sx})
+    return annotations
 
-    ax.set_xlabel("Strain", fontweight="bold")
-    ax.set_ylabel("Stress (MPa)", fontweight="bold")
-    ax.set_title(title, fontweight="bold")
-    ax.legend(loc="lower right", framealpha=0.9)
-    ax.grid(True, alpha=0.3)
 
-    save_figure(fig, args.output_path)
-
+def _stress_summary(strain, youngs_modulus, ultimate_point) -> str:
+    """summary 文本."""
     summary = f"应力-应变曲线: {strain.size} 点"
     if youngs_modulus is not None:
         summary += f", E={youngs_modulus} GPa"
     if ultimate_point:
         summary += f", UTS={ultimate_point[1]:.1f} MPa"
+    return summary
 
-    metadata = {
+
+def _stress_metadata(
+    strain, youngs_modulus, yield_point, ultimate_point, fracture_point, annotations
+) -> dict:
+    """metadata 字典."""
+    return {
         "action": "stress_strain",
         "n_points": int(strain.size),
         "youngs_modulus_GPa": (
@@ -110,10 +146,3 @@ def stress_strain(args: ImageDesignInput) -> ToolResult:
         "fracture_point": list(fracture_point) if fracture_point else None,
         "annotations": annotations,
     }
-    return ToolResult(
-        data={
-            "output_path": args.output_path,
-            "summary": summary,
-            "metadata": metadata,
-        }
-    )

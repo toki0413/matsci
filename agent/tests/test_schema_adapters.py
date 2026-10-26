@@ -28,67 +28,70 @@ from huginn.tools.schema_adapters import (
 # ── mock 数据: 模拟 registry.get_all_schemas() 的输出 ───────────────
 
 
+def _mock_search_literature_schema() -> dict:
+    """带 $defs / $ref / 嵌套 anyOf 的 schema, 用来验证 google 简化逻辑."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "search_literature",
+            "description": "Search materials science literature",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "search keywords"},
+                    "year": {
+                        # 嵌套 anyOf, google 要转成 oneOf
+                        "anyOf": [
+                            {"type": "integer"},
+                            {"type": "null"},
+                        ]
+                    },
+                },
+                "required": ["query"],
+                # Google 不支持 $defs / $ref
+                "$defs": {
+                    "Filter": {
+                        "type": "object",
+                        "properties": {"field": {"type": "string"}},
+                    }
+                },
+                "$ref": "#/$defs/Filter",
+            },
+        },
+        "destructive": False,
+        "read_only": True,
+        "metadata": ToolMetadata(is_read_only=True, requires_confirmation=False),
+    }
+
+
+def _mock_run_vasp_schema() -> dict:
+    """干净的最简 schema, 用来验证基本透传."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "run_vasp",
+            "description": "Submit a VASP calculation job",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "encut": {"type": "number", "description": "cutoff energy"},
+                },
+                "required": ["encut"],
+            },
+        },
+        "destructive": False,
+        "read_only": False,
+        "metadata": ToolMetadata(is_read_only=False, requires_confirmation=True),
+    }
+
+
 def _make_mock_schemas() -> list[dict]:
-    """造两份 OpenAI 格式的 schema, 带上 registry 会附加的内部字段。
+    """造两份 OpenAI 格式的 schema, 带上 registry 会附加的内部字段.
 
     第一份带 $defs / $ref / 嵌套 anyOf, 用来验证 google 简化逻辑;
     第二份是干净的最简 schema, 用来验证基本透传。
     """
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "search_literature",
-                "description": "Search materials science literature",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "search keywords"},
-                        "year": {
-                            # 嵌套 anyOf, google 要转成 oneOf
-                            "anyOf": [
-                                {"type": "integer"},
-                                {"type": "null"},
-                            ]
-                        },
-                    },
-                    "required": ["query"],
-                    # Google 不支持 $defs / $ref
-                    "$defs": {
-                        "Filter": {
-                            "type": "object",
-                            "properties": {"field": {"type": "string"}},
-                        }
-                    },
-                    "$ref": "#/$defs/Filter",
-                },
-            },
-            "destructive": False,
-            "read_only": True,
-            "metadata": ToolMetadata(
-                is_read_only=True, requires_confirmation=False
-            ),
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "run_vasp",
-                "description": "Submit a VASP calculation job",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "encut": {"type": "number", "description": "cutoff energy"},
-                    },
-                    "required": ["encut"],
-                },
-            },
-            "destructive": False,
-            "read_only": False,
-            "metadata": ToolMetadata(
-                is_read_only=False, requires_confirmation=True
-            ),
-        },
-    ]
+    return [_mock_search_literature_schema(), _mock_run_vasp_schema()]
 
 
 # ════════════════════════════════════════════════════════════════════

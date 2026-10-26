@@ -149,18 +149,25 @@ def test_uq_tool() -> None:
         return
 
     ctx = make_context()
-    result = asyncio.run(tool.call(
-        {
-            "action": "monte_carlo",
-            "expression": "E * epsilon",
-            "variables": [
-                {"name": "E", "distribution": "normal", "mean": 210.0, "std": 10.0},
-                {"name": "epsilon", "distribution": "normal", "mean": 0.001, "std": 0.0001},
-            ],
-            "n_samples": 5000,
-        },
-        ctx,
-    ))
+    result = asyncio.run(
+        tool.call(
+            {
+                "action": "monte_carlo",
+                "expression": "E * epsilon",
+                "variables": [
+                    {"name": "E", "distribution": "normal", "mean": 210.0, "std": 10.0},
+                    {
+                        "name": "epsilon",
+                        "distribution": "normal",
+                        "mean": 0.001,
+                        "std": 0.0001,
+                    },
+                ],
+                "n_samples": 5000,
+            },
+            ctx,
+        )
+    )
     print(f"  success: {result.success}")
     if result.success and result.data:
         d = result.data
@@ -170,17 +177,10 @@ def test_uq_tool() -> None:
         print(f"  error: {result.error}")
 
 
-def test_agent_flow_with_fake_model() -> None:
-    """Q5: End-to-end agent flow with a fake LLM."""
-    header("Q5: Agent flow - fake LLM, real tools")
+def _make_q5_model():
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
-    from langchain_core.tools import tool
-
-    from huginn.agent import HuginnAgent
-    from huginn.memory.longterm import LongTermMemory
-    from huginn.memory.manager import MemoryManager
 
     class FakeModel(BaseChatModel):
         responses: list[AIMessage]
@@ -201,30 +201,45 @@ def test_agent_flow_with_fake_model() -> None:
         def bind_tools(self, tools, **kwargs):
             return self
 
+    return FakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "lattice_energy", "args": {"a": 5.64}, "id": "tc1"},
+                ],
+            ),
+            AIMessage(
+                content="For NaCl with lattice constant a=5.64 Angstrom, the "
+                "simplified Madelung energy is approximately -0.447 eV per ion pair."
+            ),
+        ]
+    )
+
+
+def _make_q5_tool():
+    from langchain_core.tools import tool
+
     @tool
     def lattice_energy(a: float) -> float:
         """Compute Madelung energy for NaCl lattice (simplified)."""
         return -1.74756 * 1.44 / a
 
+    return lattice_energy
+
+
+def test_agent_flow_with_fake_model() -> None:
+    """Q5: End-to-end agent flow with a fake LLM."""
+    header("Q5: Agent flow - fake LLM, real tools")
+    from huginn.agent import HuginnAgent
+    from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+
     tmp = Path(tempfile.mkdtemp())
-    model = FakeModel(responses=[
-        AIMessage(
-            content="",
-            tool_calls=[{
-                "name": "lattice_energy",
-                "args": {"a": 5.64},
-                "id": "tc1",
-            }],
-        ),
-        AIMessage(
-            content="For NaCl with lattice constant a=5.64 Angstrom, the simplified "
-                    "Madelung energy is approximately -0.447 eV per ion pair."
-        ),
-    ])
     memory = MemoryManager(longterm=LongTermMemory(str(tmp / "mem.db")))
     agent = HuginnAgent(
-        model=model,
-        tools=[lattice_energy],
+        model=_make_q5_model(),
+        tools=[_make_q5_tool()],
         memory_manager=memory,
         checkpointer_path=str(tmp / "ckpt.sqlite"),
     )

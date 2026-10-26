@@ -1,4 +1,5 @@
 """显微结构标注场景: 圆/矩形/箭头/文字标注 + 比例尺."""
+
 from __future__ import annotations
 
 import logging
@@ -52,16 +53,8 @@ def microstructure_annotate(args: ImageDesignInput) -> ToolResult:
 
     save_figure(fig, args.output_path)
 
-    summary = (
-        f"显微图标注: 原图 {H}x{W} px, {n_annot} 个标注"
-        + (", 带比例尺" if scale_bar else "")
-    )
-    metadata = {
-        "action": "microstructure_annotate",
-        "image_shape": [int(H), int(W)],
-        "n_annotations": int(n_annot),
-        "scale_bar": scale_info,
-    }
+    summary = _micro_summary(H, W, n_annot, scale_bar)
+    metadata = _micro_metadata(H, W, n_annot, scale_info)
     return ToolResult(
         data={
             "output_path": args.output_path,
@@ -69,6 +62,23 @@ def microstructure_annotate(args: ImageDesignInput) -> ToolResult:
             "metadata": metadata,
         }
     )
+
+
+def _micro_summary(H: int, W: int, n_annot: int, scale_bar) -> str:
+    """summary 文本."""
+    return f"显微图标注: 原图 {H}x{W} px, {n_annot} 个标注" + (
+        ", 带比例尺" if scale_bar else ""
+    )
+
+
+def _micro_metadata(H: int, W: int, n_annot: int, scale_info) -> dict:
+    """metadata 字典."""
+    return {
+        "action": "microstructure_annotate",
+        "image_shape": [int(H), int(W)],
+        "n_annotations": int(n_annot),
+        "scale_bar": scale_info,
+    }
 
 
 def _draw_annotations(ax, annotations: list[dict], alpha: float) -> int:

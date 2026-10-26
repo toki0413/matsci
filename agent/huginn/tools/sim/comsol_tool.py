@@ -40,6 +40,139 @@ def _parse_table(lines: list[str]) -> tuple[list[str], list[dict[str, Any]]]:
     return header, rows
 
 
+def _build_bc_script(boundary_conditions: list[Any]) -> str:
+    """构建边界条件 Java 片段."""
+    bc_lines = []
+    for bc in boundary_conditions:
+        if bc.type == "fixed":
+            bc_lines.append(
+                f'model.physics("solid").feature().create("fix{bc_lines.__len__()}", "FixedConstraint", 2);'
+            )
+            bc_lines.append(
+                f'model.physics("solid").feature("fix{bc_lines.__len__() - 1}").selection().named("geom1_{bc.selection}");'
+            )
+        elif bc.type == "force":
+            val = bc.value if isinstance(bc.value, list) else [bc.value, 0.0, 0.0]
+            bc_lines.append(
+                f'model.physics("solid").feature().create("load{bc_lines.__len__()}", "BoundaryLoad", 2);'
+            )
+            bc_lines.append(
+                f'model.physics("solid").feature("load{bc_lines.__len__() - 1}").set("F", new String[][]{{"{val[0]}[N]", "{val[1]}[N]", "{val[2]}[N]"}});'
+            )
+    return "\n    ".join(bc_lines)
+
+
+def _attach_physics_audit(action: str, data: dict[str, Any]) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit("comsol_tool", action, data, {})
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _missing_executable_result(
+    script_path: Path, output_prefix: str, base_data: dict[str, Any]
+) -> ToolResult:
+    """COMSOL 未安装时返回可手动执行的脚本信息."""
+    return ToolResult(
+        data={
+            **base_data,
+            "comsol_available": False,
+            "stdout": "",
+            "stderr": "",
+            "message": (
+                "COMSOL executable not found. Generated script is available; "
+                "run it manually with: comsol batch -inputfile "
+                f"{script_path.name} -outputfile {output_prefix}.mph"
+            ),
+        },
+        success=True,
+    )
+
+
+def _comsol_batch_cmd(
+    comsol_executable: str, script_path: Path, mph_path: Path, work_dir: Path
+) -> list[str]:
+    """构造 comsol batch 命令行."""
+    return [
+        comsol_executable,
+        "batch",
+        "-inputfile",
+        str(script_path),
+        "-outputfile",
+        str(mph_path),
+        "-tmpdir",
+        str(work_dir),
+    ]
+
+
+def _solid_mechanics_template(
+    prefix: str,
+    work_dir: Path,
+    width: float,
+    height: float,
+    depth: float,
+    E: float,
+    nu: float,
+    rho: float,
+    bc_script: str,
+) -> str:
+    """渲染 solid mechanics 的 COMSOL Java 脚本."""
+    return f"""import com.comsol.model.*;
+import com.comsol.model.util.*;
+
+public class {prefix} {{
+  public static void main(String[] args) {{
+    Model model = ModelUtil.create("{prefix}");
+    model.modelPath("{work_dir.as_posix()}");
+
+    // Geometry
+    GeomSequence g = model.geom().create("geom1", 3);
+    g.feature().create("blk1", "Block");
+    g.feature("blk1").set("size", new String[]{{"{width}", "{height}", "{depth}"}});
+    g.run();
+
+    // Material
+    Material mat = model.material().create("mat1");
+    mat.set("E", "{E}[Pa]");
+    mat.set("nu", "{nu}");
+    mat.set("density", "{rho}[kg/m^3]");
+
+    // Physics
+    model.physics().create("solid", "SolidMechanics", "geom1");
+    {bc_script}
+
+""" + _solid_mesh_study_export(prefix, work_dir, height)
+
+
+def _solid_mesh_study_export(prefix: str, work_dir: Path, height: float) -> str:
+    """渲染 solid mechanics 脚本的 mesh/study/export 片段."""
+    return f"""    // Mesh
+    model.mesh().create("mesh1", "geom1");
+    model.mesh("mesh1").feature().create("size1", "Size");
+    model.mesh("mesh1").feature("size1").set("custom", "on");
+    model.mesh("mesh1").feature("size1").set("hmax", "{height / 5.0}");
+    model.mesh("mesh1").run();
+
+    // Study
+    Study study = model.study().create("std1");
+    study.create("stat", "Stationary");
+    study.run();
+
+    // Export results
+    model.result().export().create("plot1", "Image3D");
+    model.result().export("plot1").set("plotgroup", "pg1");
+    model.save("{work_dir.as_posix()}/{prefix}.mph");
+    System.out.println("COMSOL model saved to {work_dir.as_posix()}/{prefix}.mph");
+  }}
+}}
+"""
+
+
 class BoundaryCondition(BaseModel):
     type: Literal["fixed", "force", "pressure", "temperature", "velocity"] = Field(
         ..., description="Boundary condition type"
@@ -221,70 +354,11 @@ class ComsolTool(HuginnTool):
         nu = float(args.material.get("poissons_ratio", 0.3))
         rho = float(args.material.get("density", 7850.0))
 
-        bc_lines = []
-        for bc in args.boundary_conditions:
-            if bc.type == "fixed":
-                bc_lines.append(
-                    f'model.physics("solid").feature().create("fix{bc_lines.__len__()}", "FixedConstraint", 2);'
-                )
-                bc_lines.append(
-                    f'model.physics("solid").feature("fix{bc_lines.__len__()-1}").selection().named("geom1_{bc.selection}");'
-                )
-            elif bc.type == "force":
-                val = bc.value if isinstance(bc.value, list) else [bc.value, 0.0, 0.0]
-                bc_lines.append(
-                    f'model.physics("solid").feature().create("load{bc_lines.__len__()}", "BoundaryLoad", 2);'
-                )
-                bc_lines.append(
-                    f'model.physics("solid").feature("load{bc_lines.__len__()-1}").set("F", new String[][]{{"{val[0]}[N]", "{val[1]}[N]", "{val[2]}[N]"}});'
-                )
+        bc_script = _build_bc_script(args.boundary_conditions)
 
-        bc_script = "\n    ".join(bc_lines)
-
-        return f"""import com.comsol.model.*;
-import com.comsol.model.util.*;
-
-public class {prefix} {{
-  public static void main(String[] args) {{
-    Model model = ModelUtil.create("{prefix}");
-    model.modelPath("{work_dir.as_posix()}");
-
-    // Geometry
-    GeomSequence g = model.geom().create("geom1", 3);
-    g.feature().create("blk1", "Block");
-    g.feature("blk1").set("size", new String[]{{"{width}", "{height}", "{depth}"}});
-    g.run();
-
-    // Material
-    Material mat = model.material().create("mat1");
-    mat.set("E", "{E}[Pa]");
-    mat.set("nu", "{nu}");
-    mat.set("density", "{rho}[kg/m^3]");
-
-    // Physics
-    model.physics().create("solid", "SolidMechanics", "geom1");
-    {bc_script}
-
-    // Mesh
-    model.mesh().create("mesh1", "geom1");
-    model.mesh("mesh1").feature().create("size1", "Size");
-    model.mesh("mesh1").feature("size1").set("custom", "on");
-    model.mesh("mesh1").feature("size1").set("hmax", "{height / 5.0}");
-    model.mesh("mesh1").run();
-
-    // Study
-    Study study = model.study().create("std1");
-    study.create("stat", "Stationary");
-    study.run();
-
-    // Export results
-    model.result().export().create("plot1", "Image3D");
-    model.result().export("plot1").set("plotgroup", "pg1");
-    model.save("{work_dir.as_posix()}/{prefix}.mph");
-    System.out.println("COMSOL model saved to {work_dir.as_posix()}/{prefix}.mph");
-  }}
-}}
-"""
+        return _solid_mechanics_template(
+            prefix, work_dir, width, height, depth, E, nu, rho, bc_script
+        )
 
     def _generate_thermal_script(
         self, args: ComsolToolInput, work_dir: Path, prefix: str
@@ -352,7 +426,9 @@ public class {prefix} {{
         script = self._generate_packing_import_script(prefix, objects)
         script_path.write_text(script, encoding="utf-8")
 
-        exec_result = self._execute_script(script_path, prefix, work_dir, action="import_packing")
+        exec_result = self._execute_script(
+            script_path, prefix, work_dir, action="import_packing"
+        )
         data = exec_result.data or {}
         data["script_path"] = str(script_path)
         data["objects_imported"] = len(objects)
@@ -399,41 +475,24 @@ public class {prefix} {{
         self, args: ComsolToolInput, work_dir: Path, script_path: Path
     ) -> ToolResult:
         """Run the generated COMSOL script via CLI, or fall back to script export."""
-        return self._execute_script(script_path, args.output_prefix, work_dir, action=args.action)
+        return self._execute_script(
+            script_path, args.output_prefix, work_dir, action=args.action
+        )
 
     def _execute_script(
-        self, script_path: Path, output_prefix: str, work_dir: Path,
+        self,
+        script_path: Path,
+        output_prefix: str,
+        work_dir: Path,
         action: str = "run",
     ) -> ToolResult:
         """Run an existing COMSOL Java script via CLI, or fall back to export."""
         base_data = {"script_path": str(script_path)}
         if not self.comsol_executable:
-            return ToolResult(
-                data={
-                    **base_data,
-                    "comsol_available": False,
-                    "stdout": "",
-                    "stderr": "",
-                    "message": (
-                        "COMSOL executable not found. Generated script is available; "
-                        "run it manually with: comsol batch -inputfile "
-                        f"{script_path.name} -outputfile {output_prefix}.mph"
-                    ),
-                },
-                success=True,
-            )
+            return _missing_executable_result(script_path, output_prefix, base_data)
 
         mph_path = work_dir / f"{output_prefix}.mph"
-        cmd = [
-            self.comsol_executable,
-            "batch",
-            "-inputfile",
-            str(script_path),
-            "-outputfile",
-            str(mph_path),
-            "-tmpdir",
-            str(work_dir),
-        ]
+        cmd = _comsol_batch_cmd(self.comsol_executable, script_path, mph_path, work_dir)
 
         cfg = SandboxConfig(
             dry_run=False,
@@ -457,14 +516,7 @@ public class {prefix} {{
         }
 
         # Physics audit — convergence, mesh quality, divergence, NaN/Inf
-        try:
-            from huginn.execution.physics_auditor import PhysicsAuditor
-
-            auditor = PhysicsAuditor()
-            audit_report = auditor.audit("comsol_tool", action, data, {})
-            data["physics_audit"] = audit_report.to_dict()
-        except Exception:  # 防御: 审计失败不阻断结果返回
-            logger.debug("audit failure can't block result delivery", exc_info=True)
+        _attach_physics_audit(action, data)
 
         return ToolResult(data=data, success=success)
 

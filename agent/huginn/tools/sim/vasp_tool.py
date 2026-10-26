@@ -93,10 +93,10 @@ class VaspToolInput(BaseModel):
     @model_validator(mode="after")
     def _check_action_fields(self) -> VaspToolInput:
         """不同 action 需要不同字段, 在 schema 层兜底, 别等 call() 才挂."""
-        if (self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos")) and not self.working_dir:
-                raise ValueError(
-                    f"action '{self.action}' requires 'working_dir'"
-                )
+        if (
+            self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos")
+        ) and not self.working_dir:
+            raise ValueError(f"action '{self.action}' requires 'working_dir'")
         if self.action == "submit_async" and not self.compute_action:
             raise ValueError(
                 "submit_async requires 'compute_action' (relax/scf/band/dos/md/phonon)"
@@ -113,6 +113,99 @@ class VaspToolOutput(BaseModel):
     converged: bool = False
     output_files: list[str] = []
     warnings: list[str] = []
+
+
+def _output_file_names(work_dir: Path) -> list[str]:
+    """列出工作目录下 OUTCAR / vasprun / CHG 输出文件名."""
+    return [
+        f.name
+        for f in work_dir.iterdir()
+        if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
+    ]
+
+
+def _attach_provenance(data: dict[str, Any], args: VaspToolInput) -> None:
+    """带上 provenance 快照, 事后能追溯参数/版本/环境."""
+    try:
+        from huginn.provenance import capture
+
+        data["provenance"] = capture(
+            "vasp_tool", args.model_dump(), output=dict(data)
+        ).to_dict()
+    except Exception:  # 防御: 溯源失败不阻断结果返回
+        logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+
+
+def _collect_ev_points(work_dir: Path, parse_outcar: Any) -> list[tuple[float, float]]:
+    """遍历子目录, 从每个 OUTCAR 收集 (volume, energy) 点."""
+    ev_points: list[tuple[float, float]] = []
+    for subdir in sorted(work_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        outcar = subdir / "OUTCAR"
+        if not outcar.exists():
+            continue
+        parsed = parse_outcar(outcar)
+        vol = parsed.get("volume")
+        en = parsed.get("energy")
+        if vol is not None and en is not None:
+            ev_points.append((float(vol), float(en)))
+    return ev_points
+
+
+def _vasprun_via_pymatgen(vasprun_path: Path, result: dict[str, Any]) -> bool:
+    """优先用 pymatgen 填 band_gap / efermi; 成功返回 True."""
+    try:
+        from pymatgen.io.vasp import Vasprun
+
+        vr = Vasprun(str(vasprun_path))
+        try:
+            gap, cbm, vbm = vr.eigenvalue_band_properties
+            result["band_gap"] = float(gap) if gap is not None else None
+            result["cbm"] = float(cbm) if cbm is not None else None
+            result["vbm"] = float(vbm) if vbm is not None else None
+        except Exception:  # 防御: 能带属性解析失败仅记录
+            logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
+        result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
+        result["parse_source"] = "pymatgen_vasprun"
+        return True
+    except Exception:  # 防御: Vasprun 失败回退 ElementTree
+        logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
+        return False
+
+
+def _vasprun_via_elementtree(vasprun_path: Path, result: dict[str, Any]) -> None:
+    """ElementTree 兜底解析 vasprun.xml (energy / forces / kpoints)."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        tree = ET.parse(vasprun_path)
+        root = tree.getroot()
+
+        # Find calculation/energy/i
+        for calc in root.findall(".//calculation"):
+            energy_elem = calc.find(".//energy/i[@name='e_wo_entrp']")
+            if energy_elem is not None and energy_elem.text:
+                result["energy_vasprun"] = float(energy_elem.text)
+
+            # Forces
+            varray = calc.find(".//varray[@name='forces']")
+            if varray is not None:
+                forces = []
+                for v in varray.findall("v"):
+                    forces.append([float(x) for x in v.text.split()])
+                result["forces_vasprun"] = forces
+            break  # Only first calc for quick parse
+
+        # K-points
+        kpoints = root.find(".//kpoints")
+        if kpoints is not None:
+            varray = kpoints.find("varray[@name='kpointlist']")
+            if varray is not None:
+                result["kpoint_count"] = len(varray.findall("v"))
+
+    except Exception as e:
+        result["parse_error"] = str(e)
 
 
 class VaspTool(HuginnTool):
@@ -192,7 +285,9 @@ class VaspTool(HuginnTool):
 
         if args.action == "eos":
             # eos 只需要 working_dir 存在, 不检查 POSCAR
-            vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
+            vr = HandleValidator.validate(
+                HandleType.FILE_PATH, args.working_dir, context
+            )
             if not vr.result:
                 return ValidationResult(
                     result=False,
@@ -210,7 +305,11 @@ class VaspTool(HuginnTool):
             )
         poscar = Path(args.working_dir) / "POSCAR"
         if not poscar.exists():
-            ws_poscar = Path(context.workspace) / args.working_dir / "POSCAR" if context.workspace else None
+            ws_poscar = (
+                Path(context.workspace) / args.working_dir / "POSCAR"
+                if context.workspace
+                else None
+            )
             if not (ws_poscar and ws_poscar.exists()):
                 return ValidationResult(
                     result=False,
@@ -273,8 +372,13 @@ class VaspTool(HuginnTool):
             )
             parsed = self._collect_parsed(args, work_dir)
             return self._build_result(
-                args, work_dir, result, soft_failure_msg, audit_report,
-                autoheal_log, parsed,
+                args,
+                work_dir,
+                result,
+                soft_failure_msg,
+                audit_report,
+                autoheal_log,
+                parsed,
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -287,8 +391,9 @@ class VaspTool(HuginnTool):
                 data=None, success=False, error=f"VASP execution failed: {e}"
             )
 
-    def _run_retry_loop(self, args: VaspToolInput, work_dir: Path,
-                        autoheal_log: list[dict[str, Any]]) -> tuple:
+    def _run_retry_loop(
+        self, args: VaspToolInput, work_dir: Path, autoheal_log: list[dict[str, Any]]
+    ) -> tuple:
         """跑 ``max_auto_retries+1`` 次, 硬/软失败都尝试自动修 INCAR.
 
         返回 ``(result, soft_failure_msg, audit_report)``.
@@ -331,8 +436,9 @@ class VaspTool(HuginnTool):
 
         return result, soft_failure_msg, audit_report
 
-    def _classify_attempt(self, args: VaspToolInput, work_dir: Path,
-                          result: Any, audit_report: Any) -> tuple:
+    def _classify_attempt(
+        self, args: VaspToolInput, work_dir: Path, result: Any, audit_report: Any
+    ) -> tuple:
         """判断这次跑完到底算成功还是失败.
 
         - returncode != 0 → 硬失败, 用 stderr 诊断
@@ -354,10 +460,7 @@ class VaspTool(HuginnTool):
             parsed_now.update(self._parse_vasprun_quick(vasprun_now))
         if not parsed_now.get("converged", True):
             # SCF 没收敛 (NELM 撑满), 软失败走重试
-            error = (
-                "SCF did not converge — "
-                "electronic convergence not reached (NELM)"
-            )
+            error = "SCF did not converge — electronic convergence not reached (NELM)"
             return error, error, audit_report
 
         # SCF 收敛了, 再过一遍物理审计,
@@ -365,8 +468,9 @@ class VaspTool(HuginnTool):
         audit_report, error = self._audit_parsed(args, parsed_now, audit_report)
         return error, (error if error else soft_failure_msg), audit_report
 
-    def _audit_parsed(self, args: VaspToolInput, parsed: dict,
-                      audit_report: Any) -> tuple:
+    def _audit_parsed(
+        self, args: VaspToolInput, parsed: dict, audit_report: Any
+    ) -> tuple:
         """跑物理审计; 审计自身异常不阻断重试流程."""
         try:
             from huginn.execution.physics_auditor import (
@@ -382,9 +486,7 @@ class VaspTool(HuginnTool):
             )
             if audit_report.has_errors:
                 errs = [
-                    f.message
-                    for f in audit_report.findings
-                    if f.severity == "error"
+                    f.message for f in audit_report.findings if f.severity == "error"
                 ]
                 return audit_report, f"Physics audit found errors: {errs}"
         except Exception:  # 防御: 审计异常不阻断重试流程
@@ -395,17 +497,23 @@ class VaspTool(HuginnTool):
         """读 OUTCAR + vasprun.xml 汇总解析结果."""
         outcar = work_dir / "OUTCAR"
         parsed = (
-            self._parse_outcar(outcar, action=args.action)
-            if outcar.exists() else {}
+            self._parse_outcar(outcar, action=args.action) if outcar.exists() else {}
         )
         vasprun = work_dir / "vasprun.xml"
         if vasprun.exists():
             parsed.update(self._parse_vasprun_quick(vasprun))
         return parsed
 
-    def _build_result(self, args: VaspToolInput, work_dir: Path, result: Any,
-                      soft_failure_msg: str | None, audit_report: Any,
-                      autoheal_log: list[dict[str, Any]], parsed: dict) -> ToolResult:
+    def _build_result(
+        self,
+        args: VaspToolInput,
+        work_dir: Path,
+        result: Any,
+        soft_failure_msg: str | None,
+        audit_report: Any,
+        autoheal_log: list[dict[str, Any]],
+        parsed: dict,
+    ) -> ToolResult:
         """组装最终 ToolResult (含审计 / provenance / 提示字段)."""
         # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
         ok = result.returncode == 0 and soft_failure_msg is None
@@ -413,11 +521,7 @@ class VaspTool(HuginnTool):
             status="completed" if ok else "failed",
             energy=parsed.get("energy"),
             converged=parsed.get("converged", False),
-            output_files=[
-                f.name
-                for f in work_dir.iterdir()
-                if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
-            ],
+            output_files=_output_file_names(work_dir),
         )
 
         data = output.model_dump()
@@ -435,14 +539,7 @@ class VaspTool(HuginnTool):
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         # 带上 provenance 快照, 事后能追溯参数/版本/环境
-        try:
-            from huginn.provenance import capture
-
-            data["provenance"] = capture(
-                "vasp_tool", args.model_dump(), output=dict(data)
-            ).to_dict()
-        except Exception:  # 防御: 溯源失败不阻断结果返回
-            logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+        _attach_provenance(data, args)
 
         # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
         data["uq_hint"] = self._uq_hint()
@@ -462,12 +559,16 @@ class VaspTool(HuginnTool):
             return audit_report.to_dict()
         from huginn.execution.physics_auditor import PhysicsAuditor
 
-        return PhysicsAuditor().audit(
-            "vasp_tool", args.action, parsed, args.model_dump()
-        ).to_dict()
+        return (
+            PhysicsAuditor()
+            .audit("vasp_tool", args.action, parsed, args.model_dump())
+            .to_dict()
+        )
 
     @staticmethod
-    def _result_error(ok: bool, result: Any, soft_failure_msg: str | None) -> str | None:
+    def _result_error(
+        ok: bool, result: Any, soft_failure_msg: str | None
+    ) -> str | None:
         """成功返回 None; 硬失败取 stderr 前 500 字; 软失败取软失败原因."""
         if ok:
             return None
@@ -655,26 +756,17 @@ class VaspTool(HuginnTool):
         work_dir = Path(args.working_dir)
         if not work_dir.exists():
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"Working directory not found: {work_dir}",
             )
 
-        ev_points: list[tuple[float, float]] = []
-        for subdir in sorted(work_dir.iterdir()):
-            if not subdir.is_dir():
-                continue
-            outcar = subdir / "OUTCAR"
-            if not outcar.exists():
-                continue
-            parsed = self._parse_outcar(outcar)
-            vol = parsed.get("volume")
-            en = parsed.get("energy")
-            if vol is not None and en is not None:
-                ev_points.append((float(vol), float(en)))
+        ev_points = _collect_ev_points(work_dir, self._parse_outcar)
 
         if len(ev_points) < 4:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"EOS fit needs ≥4 points with volume+energy, found {len(ev_points)}.",
             )
 
@@ -684,12 +776,14 @@ class VaspTool(HuginnTool):
         from huginn.tools.numerical_tool import NumericalTool
 
         num_tool = NumericalTool()
-        eos_result = await num_tool.call({
-            "action": "eos_fit",
-            "volumes": list(volumes),
-            "energies": list(energies),
-            "eos_type": args.eos_type or "birch_murnaghan",
-        })
+        eos_result = await num_tool.call(
+            {
+                "action": "eos_fit",
+                "volumes": list(volumes),
+                "energies": list(energies),
+                "eos_type": args.eos_type or "birch_murnaghan",
+            }
+        )
 
         return ToolResult(
             data={
@@ -733,7 +827,9 @@ class VaspTool(HuginnTool):
             except Exception:  # 防御: Rust 解析失败回退 Python 解析
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
-        return self._with_conservation(self._parse_outcar_python(outcar_path, action=action))
+        return self._with_conservation(
+            self._parse_outcar_python(outcar_path, action=action)
+        )
 
     def _with_conservation(self, result: dict[str, Any]) -> dict[str, Any]:
         """为解析结果附加守恒对账 (独立于 LLM 的机械不变量审计).
@@ -765,9 +861,7 @@ class VaspTool(HuginnTool):
             result.update(self._vasp_parse_run_params(content))
             result.update(self._vasp_parse_cell(content))
             result.update(self._vasp_parse_forces(content, result["forces"]))
-            result.update(
-                self._vasp_parse_moments(content, result["magnetic_moments"])
-            )
+            result.update(self._vasp_parse_moments(content, result["magnetic_moments"]))
             result.update(self._vasp_parse_efermi(content))
         except Exception as e:
             result["parse_error"] = str(e)
@@ -836,9 +930,7 @@ class VaspTool(HuginnTool):
 
         # Energy — pymatgen 已经填了就不覆盖
         if energy is None:
-            energy_matches = re.findall(
-                r"free  energy   TOTEN  =\s+([-\d.]+)", content
-            )
+            energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
             if energy_matches:
                 parsed["energy"] = float(energy_matches[-1])
 
@@ -907,9 +999,7 @@ class VaspTool(HuginnTool):
             parsed["volume"] = float(vol_match[-1])
         return parsed
 
-    def _vasp_parse_forces(
-        self, content: str, existing: list
-    ) -> dict[str, Any]:
+    def _vasp_parse_forces(self, content: str, existing: list) -> dict[str, Any]:
         """最终 TOTAL-FORCE 块 — pymatgen 已填就不覆盖."""
         if existing:
             return {}
@@ -938,9 +1028,7 @@ class VaspTool(HuginnTool):
                 )
         return {"forces": forces}
 
-    def _vasp_parse_moments(
-        self, content: str, existing: list
-    ) -> dict[str, Any]:
+    def _vasp_parse_moments(self, content: str, existing: list) -> dict[str, Any]:
         """磁矩 — pymatgen 已填就不覆盖."""
         if existing:
             return {}
@@ -966,56 +1054,13 @@ class VaspTool(HuginnTool):
 
     def _parse_vasprun_quick(self, vasprun_path: Path) -> dict[str, Any]:
         """Quick-parse vasprun.xml for structured data."""
-        import xml.etree.ElementTree as ET
-
         result = {"parse_source": "vasprun.xml"}
 
         # 优先用 pymatgen 拿 band gap / efermi, 失败落回 ElementTree
-        try:
-            from pymatgen.io.vasp import Vasprun
-
-            vr = Vasprun(str(vasprun_path))
-            try:
-                gap, cbm, vbm = vr.eigenvalue_band_properties
-                result["band_gap"] = float(gap) if gap is not None else None
-                result["cbm"] = float(cbm) if cbm is not None else None
-                result["vbm"] = float(vbm) if vbm is not None else None
-            except Exception:  # 防御: 能带属性解析失败仅记录
-                logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
-            result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
-            result["parse_source"] = "pymatgen_vasprun"
+        if _vasprun_via_pymatgen(vasprun_path, result):
             return result
-        except Exception:  # 防御: Vasprun 失败回退 ElementTree
-            logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
 
-        try:
-            tree = ET.parse(vasprun_path)
-            root = tree.getroot()
-
-            # Find calculation/energy/i
-            for calc in root.findall(".//calculation"):
-                energy_elem = calc.find(".//energy/i[@name='e_wo_entrp']")
-                if energy_elem is not None and energy_elem.text:
-                    result["energy_vasprun"] = float(energy_elem.text)
-
-                # Forces
-                varray = calc.find(".//varray[@name='forces']")
-                if varray is not None:
-                    forces = []
-                    for v in varray.findall("v"):
-                        forces.append([float(x) for x in v.text.split()])
-                    result["forces_vasprun"] = forces
-                break  # Only first calc for quick parse
-
-            # K-points
-            kpoints = root.find(".//kpoints")
-            if kpoints is not None:
-                varray = kpoints.find("varray[@name='kpointlist']")
-                if varray is not None:
-                    result["kpoint_count"] = len(varray.findall("v"))
-
-        except Exception as e:
-            result["parse_error"] = str(e)
+        _vasprun_via_elementtree(vasprun_path, result)
 
         return result
 
@@ -1109,7 +1154,9 @@ class VaspTool(HuginnTool):
             "note": (
                 "Pass this path as 'file_path' to xrd_sim_tool, descriptor_tool, "
                 "or symmetry_tool to analyze the DFT-optimized structure."
-            ) if contcar.exists() else (
+            )
+            if contcar.exists()
+            else (
                 "CONTCAR not found — VASP may not have completed a structural optimization."
             ),
         }

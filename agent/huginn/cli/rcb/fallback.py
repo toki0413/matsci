@@ -4,6 +4,7 @@
 agent 没写 report.md 时强制写, 仍不写就自动生成;
 images/ 没图时从 outputs/ 数据生成 fallback figures.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -24,6 +25,7 @@ def build_retry_budget(extra_budget: int | None) -> Any:
     if not extra_budget or extra_budget <= 0:
         return None
     from huginn.phases import BudgetSpec as _BS  # noqa: N814
+
     return _BS(
         max_calls=extra_budget,
         recursion_limit=max(250, extra_budget * 5),
@@ -58,33 +60,46 @@ async def step2_5_report_fallback(
             "Minimum: # Title, ## Methodology, ## Results (images/*.png), ## Discussion.\n"
             "Be HONEST. A short honest report beats no report. Write it NOW.",
             "step2.5",
-            tid=_step25_tid
+            tid=_step25_tid,
         )
     if not report_path.exists():
-        print("[fallback: auto-generating minimal report.md]", flush=True)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        # 方案 B: images/ 没图就用 outputs/ 数据生成 fallback figures.
-        _imgs_dir = ws / "report" / "images"
-        _imgs_dir.mkdir(parents=True, exist_ok=True)
-        _existing_imgs = list(_imgs_dir.glob("*.png")) if _imgs_dir.exists() else []
-        if not _existing_imgs:
-            _n_gen = generate_fallback_figures(ws, _imgs_dir)
-            if _n_gen > 0:
-                print(f"[fallback: generated {_n_gen} figures from outputs/]", flush=True)
-        _metrics_parts = []
-        for _p in (ws / "outputs").glob("*.json"):
-            with contextlib.suppress(Exception):
-                _metrics_parts.append(f"### {_p.name}\n```json\n{_p.read_text(encoding='utf-8')}\n```")
-        _metrics = "\n".join(_metrics_parts) or "None"
-        _imgs = "\n".join(f"![{p.name}](images/{p.name})" for p in _imgs_dir.glob("*.png")) or "None"
-        _code_dir = ws / "code"
-        _code = "\n".join(f"- `{p.name}`" for p in _code_dir.glob("*.py")) or "None" if _code_dir.exists() else "None"
-        report_path.write_text(
-            f"# Research Report (Auto-generated Fallback)\n\n"
-            f"## Methodology\nAgent did not write report.md; auto-generated from artifacts.\n\n"
-            f"### Code\n{_code}\n\n### Metrics\n{_metrics}\n\n## Results\n{_imgs}\n",
-            encoding="utf-8"
-        )
+        _write_fallback_report(ws, report_path)
+
+
+def _write_fallback_report(ws: Path, report_path: Path) -> None:
+    print("[fallback: auto-generating minimal report.md]", flush=True)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    # 方案 B: images/ 没图就用 outputs/ 数据生成 fallback figures.
+    _imgs_dir = ws / "report" / "images"
+    _imgs_dir.mkdir(parents=True, exist_ok=True)
+    _existing_imgs = list(_imgs_dir.glob("*.png")) if _imgs_dir.exists() else []
+    if not _existing_imgs:
+        _n_gen = generate_fallback_figures(ws, _imgs_dir)
+        if _n_gen > 0:
+            print(f"[fallback: generated {_n_gen} figures from outputs/]", flush=True)
+    _metrics_parts = []
+    for _p in (ws / "outputs").glob("*.json"):
+        with contextlib.suppress(Exception):
+            _metrics_parts.append(
+                f"### {_p.name}\n```json\n{_p.read_text(encoding='utf-8')}\n```"
+            )
+    _metrics = "\n".join(_metrics_parts) or "None"
+    _imgs = (
+        "\n".join(f"![{p.name}](images/{p.name})" for p in _imgs_dir.glob("*.png"))
+        or "None"
+    )
+    _code_dir = ws / "code"
+    _code = (
+        "\n".join(f"- `{p.name}`" for p in _code_dir.glob("*.py")) or "None"
+        if _code_dir.exists()
+        else "None"
+    )
+    report_path.write_text(
+        f"# Research Report (Auto-generated Fallback)\n\n"
+        f"## Methodology\nAgent did not write report.md; auto-generated from artifacts.\n\n"
+        f"### Code\n{_code}\n\n### Metrics\n{_metrics}\n\n## Results\n{_imgs}\n",
+        encoding="utf-8",
+    )
 
 
 _MAX_FALLBACK_FIGURES = 4
@@ -102,10 +117,13 @@ def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
     """
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        logger.debug("matplotlib not available, fallback figures skipped", exc_info=True)
+        logger.debug(
+            "matplotlib not available, fallback figures skipped", exc_info=True
+        )
         return 0
     _setup_figure_style(plt)
 
@@ -113,9 +131,7 @@ def generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
     if not outputs_dir.exists():
         return 0
 
-    n_gen = _render_json_figures(
-        outputs_dir, imgs_dir, plt, _MAX_FALLBACK_FIGURES
-    )
+    n_gen = _render_json_figures(outputs_dir, imgs_dir, plt, _MAX_FALLBACK_FIGURES)
     if n_gen < _MAX_FALLBACK_FIGURES:
         n_gen += _render_npy_figures(
             outputs_dir, imgs_dir, plt, _MAX_FALLBACK_FIGURES - n_gen
@@ -148,9 +164,7 @@ def _numeric_fields(d: Any) -> dict[str, float]:
     }
 
 
-def _bar_chart(
-    plt: Any, numeric: dict[str, float], title: str, out_path: Path
-) -> None:
+def _bar_chart(plt: Any, numeric: dict[str, float], title: str, out_path: Path) -> None:
     """Render the first 15 numeric fields as a bar chart."""
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.bar(list(numeric.keys())[:15], list(numeric.values())[:15])
@@ -232,9 +246,7 @@ def _render_json_figures(
     return n_gen
 
 
-def _render_npy_array(
-    plt: Any, arr: Any, np_p: Path, imgs_dir: Path
-) -> bool:
+def _render_npy_array(plt: Any, arr: Any, np_p: Path, imgs_dir: Path) -> bool:
     """Render one loaded array; returns True when a figure was written."""
     # 0-dim object array 通常是 dict (np.save(scalar_dict)) —
     # 当 metrics bar chart 处理. ponytail: 不区分 dict / scalar,
@@ -253,14 +265,10 @@ def _render_npy_array(
     if arr.dtype == object:
         return False
     if arr.ndim == 1:
-        _histogram(
-            plt, arr, np_p.stem, imgs_dir / f"fallback_{np_p.stem}_hist.png"
-        )
+        _histogram(plt, arr, np_p.stem, imgs_dir / f"fallback_{np_p.stem}_hist.png")
         return True
     if arr.ndim == 2 and arr.shape[1] >= 2:
-        _scatter_2d(
-            plt, arr, np_p.stem, imgs_dir / f"fallback_{np_p.stem}_scatter.png"
-        )
+        _scatter_2d(plt, arr, np_p.stem, imgs_dir / f"fallback_{np_p.stem}_scatter.png")
         return True
     return False
 
@@ -290,9 +298,7 @@ def _render_npy_figures(
     return n_gen
 
 
-def _columns_are_numeric(
-    rows: list[list[str]], xi: int, yi: int
-) -> bool:
+def _columns_are_numeric(rows: list[list[str]], xi: int, yi: int) -> bool:
     """True when the first 20 data rows parse as float in both columns."""
     checked = 0
     for r in rows[1:20]:
@@ -307,9 +313,7 @@ def _columns_are_numeric(
     return checked > 0
 
 
-def _find_numeric_pair(
-    header: list[str], rows: list[list[str]]
-) -> tuple[int, int]:
+def _find_numeric_pair(header: list[str], rows: list[list[str]]) -> tuple[int, int]:
     """找第一对都是数值的列对 (col_x, col_y).
 
     ponytail: O(cols^2 * rows) 但 cols/rows 都小, 零开销. 升级: pandas 自动 dtype 推断.
@@ -374,5 +378,3 @@ def _render_csv_figures(
             logger.debug("fallback csv figure skipped", exc_info=True)
             continue
     return n_gen
-
-

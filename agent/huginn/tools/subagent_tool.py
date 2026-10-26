@@ -60,6 +60,7 @@ def _belief_update_enabled() -> bool:
 # ponytail: 闭合解无新依赖. ceiling: 假设 obs noise 已知 (σ_o²), 实际需从
 # 数据估计. 升级路径: v2 学 surrogate, P3 用 neural process.
 
+
 def _gaussian_update(
     mu: float, sigma2: float, obs: float, obs_sigma2: float
 ) -> tuple[float, float]:
@@ -86,25 +87,102 @@ def _beta_update(
     return alpha + n_success, beta + n_fail
 
 
-def _gaussian_kl(
-    mu1: float, sigma2_1: float, mu2: float, sigma2_2: float
-) -> float:
+def _gaussian_kl(mu1: float, sigma2_1: float, mu2: float, sigma2_2: float) -> float:
     """KL(N1 || N2) — 冲突检测用. KL 大 = 两个 belief 严重不一致."""
     import math
+
     if sigma2_1 <= 0 or sigma2_2 <= 0:
         return 0.0
-    return (
-        0.5 * (
-            math.log(sigma2_2 / sigma2_1)
-            + (sigma2_1 + (mu1 - mu2) ** 2) / sigma2_2
-            - 1.0
-        )
+    return 0.5 * (
+        math.log(sigma2_2 / sigma2_1) + (sigma2_1 + (mu1 - mu2) ** 2) / sigma2_2 - 1.0
     )
 
 
-def _belief_merge(
-    results: list[dict], lww_fields: set[str]
-) -> dict[str, Any]:
+def _lww_pick(results: list[dict], field: str) -> tuple[Any, float]:
+    """LWW: 取 ts 最大的非空字段值 (ts 相同取后者)."""
+    best_val = None
+    best_ts = -1.0
+    for r in results:
+        if isinstance(r, dict) and r.get(field) is not None:
+            ts = float(r.get("ts", 0.0) or 0.0)
+            if ts >= best_ts:
+                best_ts = ts
+                best_val = r[field]
+    return best_val, best_ts
+
+
+def _merge_belief_gaussian(belief_results: list[dict], field: str) -> dict[str, Any]:
+    """Gaussian Bayesian merge: 第一个做 prior, 依次 update."""
+    # 用第一个做 prior, 依次 update
+    b0 = belief_results[0]["belief"][field]
+    mu = float(b0.get("mu", 0.0))
+    s2 = float(b0.get("sigma2", 0.0))
+    obs_s2 = float(b0.get("obs_sigma2", 100.0))
+    # M6: KL 冲突检测 — prior vs 每个 obs belief. KL 大说明两个 subagent
+    # 看到的是不同分布, Bayesian merge 会假性缩小 σ² 给出虚假自信.
+    # 不阻塞 merge, 只在 out 上标 _conflict 让调用方决策.
+    # ponytail: 阈值 1.0 nat 硬编码. 升级: 按 field 配置 / 自适应.
+    _max_kl = 0.0
+    for r in belief_results[1:]:
+        b = r["belief"][field]
+        o = float(b.get("mu", 0.0))  # 观测值 = 该 result 的 mu
+        os2 = float(b.get("obs_sigma2", obs_s2))
+        _kl = _gaussian_kl(mu, s2, o, os2)
+        if _kl > _max_kl:
+            _max_kl = _kl
+        mu, s2 = _gaussian_update(mu, s2, o, os2)
+    out: dict[str, Any] = {field: mu}  # point estimate = posterior mean
+    out[f"{field}_belief"] = {
+        "type": "gaussian",
+        "mu": mu,
+        "sigma2": s2,
+    }
+    if _max_kl > 1.0:
+        out[f"{field}_conflict"] = True
+        out[f"{field}_conflict_kl"] = _max_kl
+    try:
+        from huginn.routes.metrics import track_belief_update
+
+        track_belief_update("gaussian")
+    except Exception:
+        logger.debug("belief update metrics failed", exc_info=True)
+    return out
+
+
+def _merge_belief_beta(belief_results: list[dict], field: str) -> dict[str, Any]:
+    """Beta Bayesian merge: 第一个做 prior, 依次累加成功/失败数."""
+    b0 = belief_results[0]["belief"][field]
+    a = float(b0.get("alpha", 1.0))
+    b = float(b0.get("beta", 1.0))
+    for r in belief_results:
+        br = r["belief"][field]
+        ns = int(br.get("n_success", 0))
+        nf = int(br.get("n_fail", 0))
+        a, b = _beta_update(a, b, ns, nf)
+    out: dict[str, Any] = {field: a / (a + b)}  # point estimate = posterior mean
+    out[f"{field}_belief"] = {
+        "type": "beta",
+        "alpha": a,
+        "beta": b,
+    }
+    try:
+        from huginn.routes.metrics import track_belief_update
+
+        track_belief_update("beta")
+    except Exception:
+        logger.debug("belief update metrics failed", exc_info=True)
+    return out
+
+
+def _lww_into(out: dict[str, Any], results: list[dict], field: str) -> None:
+    """无 belief 时按 LWW 规则把 field / field_ts 写进 out."""
+    best_val, best_ts = _lww_pick(results, field)
+    if best_val is not None:
+        out[field] = best_val
+        out[f"{field}_ts"] = best_ts
+
+
+def _belief_merge(results: list[dict], lww_fields: set[str]) -> dict[str, Any]:
     """P2-6: Bayesian belief merge for LWW fields.
 
     每个 result 可带 "belief" 字段: {field: {"type": "gaussian"|"beta", ...}}.
@@ -129,96 +207,150 @@ def _belief_merge(
     for field in all_fields:
         # 收集所有带 belief 的 result
         belief_results = [
-            r for r in results
+            r
+            for r in results
             if isinstance(r, dict)
             and isinstance(r.get("belief"), dict)
             and isinstance(r["belief"].get(field), dict)
         ]
         if not belief_results:
             # 无 belief, 走 LWW
-            best_val = None
-            best_ts = -1.0
-            for r in results:
-                if isinstance(r, dict) and r.get(field) is not None:
-                    ts = float(r.get("ts", 0.0) or 0.0)
-                    if ts >= best_ts:
-                        best_ts = ts
-                        best_val = r[field]
-            if best_val is not None:
-                out[field] = best_val
-                out[f"{field}_ts"] = best_ts
+            _lww_into(out, results, field)
             continue
 
         # 按类型 update (第一个 result 的 belief type 为准, 混合类型跳过)
         btype = belief_results[0]["belief"][field].get("type")
         if btype == "gaussian":
-            # 用第一个做 prior, 依次 update
-            b0 = belief_results[0]["belief"][field]
-            mu = float(b0.get("mu", 0.0))
-            s2 = float(b0.get("sigma2", 0.0))
-            obs_s2 = float(b0.get("obs_sigma2", 100.0))
-            # M6: KL 冲突检测 — prior vs 每个 obs belief. KL 大说明两个 subagent
-            # 看到的是不同分布, Bayesian merge 会假性缩小 σ² 给出虚假自信.
-            # 不阻塞 merge, 只在 out 上标 _conflict 让调用方决策.
-            # ponytail: 阈值 1.0 nat 硬编码. 升级: 按 field 配置 / 自适应.
-            _max_kl = 0.0
-            for r in belief_results[1:]:
-                b = r["belief"][field]
-                o = float(b.get("mu", 0.0))  # 观测值 = 该 result 的 mu
-                os2 = float(b.get("obs_sigma2", obs_s2))
-                _kl = _gaussian_kl(mu, s2, o, os2)
-                if _kl > _max_kl:
-                    _max_kl = _kl
-                mu, s2 = _gaussian_update(mu, s2, o, os2)
-            out[field] = mu  # point estimate = posterior mean
-            out[f"{field}_belief"] = {
-                "type": "gaussian", "mu": mu, "sigma2": s2,
-            }
-            if _max_kl > 1.0:
-                out[f"{field}_conflict"] = True
-                out[f"{field}_conflict_kl"] = _max_kl
-            try:
-                from huginn.routes.metrics import track_belief_update
-                track_belief_update("gaussian")
-            except Exception:
-                logger.debug("belief update metrics failed", exc_info=True)
+            out.update(_merge_belief_gaussian(belief_results, field))
         elif btype == "beta":
-            b0 = belief_results[0]["belief"][field]
-            a = float(b0.get("alpha", 1.0))
-            b = float(b0.get("beta", 1.0))
-            for r in belief_results:
-                br = r["belief"][field]
-                ns = int(br.get("n_success", 0))
-                nf = int(br.get("n_fail", 0))
-                a, b = _beta_update(a, b, ns, nf)
-            out[field] = a / (a + b)  # point estimate = posterior mean
-            out[f"{field}_belief"] = {
-                "type": "beta", "alpha": a, "beta": b,
-            }
-            try:
-                from huginn.routes.metrics import track_belief_update
-                track_belief_update("beta")
-            except Exception:
-                logger.debug("belief update metrics failed", exc_info=True)
+            out.update(_merge_belief_beta(belief_results, field))
         else:
             # 未知 type, 回退 LWW
-            best_val = None
-            best_ts = -1.0
-            for r in results:
-                if isinstance(r, dict) and r.get(field) is not None:
-                    ts = float(r.get("ts", 0.0) or 0.0)
-                    if ts >= best_ts:
-                        best_ts = ts
-                        best_val = r[field]
-            if best_val is not None:
-                out[field] = best_val
-                out[f"{field}_ts"] = best_ts
+            _lww_into(out, results, field)
     return out
 
 
 def _content_hash(s: Any) -> str:
     """Stable hash for dedupe — G-Set 需要. 用 sha8 短摘要足够."""
     return hash_text(str(s), length=8)
+
+
+def _collect_all_keys(results: list[dict]) -> set[str]:
+    """收集所有字段名 (results 可能字段不一致, 全 union)."""
+    all_keys: set[str] = set()
+    for r in results:
+        if isinstance(r, dict):
+            all_keys.update(r.keys())
+    return all_keys
+
+
+def _merge_gset_fields(results: list[dict], all_keys: set[str]) -> dict[str, Any]:
+    """G-Set 字段: union + dedupe by content hash."""
+    gset_fields = {"findings", "evidence", "limitations", "tool_calls"}
+    out: dict[str, Any] = {}
+    for field in gset_fields:
+        if field not in all_keys:
+            continue
+        seen: dict[str, Any] = {}
+        for r in results:
+            items = r.get(field) or []
+            if not isinstance(items, list):
+                items = [items]
+            for it in items:
+                h = _content_hash(it)
+                if h not in seen:
+                    seen[h] = it
+        out[field] = list(seen.values())
+    return out
+
+
+def _merge_lww_fields(
+    results: list[dict], lww_fields: set[str], all_keys: set[str]
+) -> dict[str, Any]:
+    """LWW 字段: 任意单值字段, ts 大者胜."""
+    out: dict[str, Any] = {}
+    for field in lww_fields:
+        if field not in all_keys:
+            continue
+        best_val: Any = None
+        best_ts: float = -1.0
+        for r in results:
+            if field in r and r[field] is not None:
+                ts = float(r.get("ts", 0.0) or 0.0)
+                if ts >= best_ts:
+                    best_ts = ts
+                    best_val = r[field]
+        if best_val is not None:
+            out[field] = best_val
+            out[f"{field}_ts"] = best_ts
+    return out
+
+
+def _merge_summaries(results: list[dict]) -> str | None:
+    """summary: 拼接非空 (dedupe by hash)."""
+    seen_sum: dict[str, str] = {}
+    for r in results:
+        s = r.get("summary") if isinstance(r, dict) else None
+        if s and isinstance(s, str):
+            h = _content_hash(s)
+            if h not in seen_sum:
+                seen_sum[h] = s
+    if seen_sum:
+        return "\n---\n".join(seen_sum.values())
+    return None
+
+
+def _merge_errors(results: list[dict]) -> list[str]:
+    """errors: 收集所有非空 error (G-Set)."""
+    errs = [r.get("error") for r in results if isinstance(r, dict) and r.get("error")]
+    seen_err: dict[str, str] = {}
+    for e in errs:
+        h = _content_hash(e)
+        if h not in seen_err:
+            seen_err[h] = e
+    return list(seen_err.values())
+
+
+def _max_ts(results: list[dict]) -> float:
+    """输出本身的 ts = max(输入 ts), 让外层 LWW 判断正确."""
+    return max(
+        (float(r.get("ts", 0.0) or 0.0) for r in results if isinstance(r, dict)),
+        default=0.0,
+    )
+
+
+def _track_crdt_merge(n_sources: int) -> None:
+    """P1-2 metrics: 记录 CRDT merge 触发 + source 数 (跨 mode 共享)."""
+    try:
+        from huginn.routes.metrics import track_crdt_merge
+
+        track_crdt_merge(n_sources)
+    except Exception:
+        logger.debug("crdt merge metrics failed", exc_info=True)
+
+
+def _finish_merged(merged: dict[str, Any], results: list[dict]) -> dict:
+    """补齐 success / summary / errors / sources / ts 后返回."""
+    # success: OR-join (任一 True → True)
+    merged["success"] = any(
+        r.get("success", False) for r in results if isinstance(r, dict)
+    )
+
+    summary = _merge_summaries(results)
+    if summary is not None:
+        merged["summary"] = summary
+
+    errors = _merge_errors(results)
+    if errors:
+        merged["errors"] = errors
+
+    # 保留原始 results (审计/调试用), 但放末尾避免污染主 view
+    merged["sources"] = results
+    # 嵌套 merge 用: 输出本身的 ts = max(输入 ts), 让外层 LWW 判断正确.
+    # 不加这个的话 merge(merge(a, b), c) 里 merge(a, b) 的 ts 字段缺失,
+    # 外层 LWW 取不到正确 ts.
+    merged["ts"] = _max_ts(results)
+    return merged
 
 
 def _crdt_merge(results: list[dict]) -> dict:
@@ -240,20 +372,10 @@ def _crdt_merge(results: list[dict]) -> dict:
         return {"success": False, "error": "no results", "merged": True}
 
     # P1-2 metrics: 记录 CRDT merge 触发 + source 数 (跨 mode 共享)
-    try:
-        from huginn.routes.metrics import track_crdt_merge
-        track_crdt_merge(len(results))
-    except Exception:
-        logger.debug("crdt merge metrics failed", exc_info=True)
+    _track_crdt_merge(len(results))
 
-    # 收集所有字段名 (results 可能字段不一致, 全 union)
-    all_keys: set[str] = set()
-    for r in results:
-        if isinstance(r, dict):
-            all_keys.update(r.keys())
+    all_keys = _collect_all_keys(results)
 
-    # G-Set 字段: union + dedupe by content hash
-    gset_fields = {"findings", "evidence", "limitations", "tool_calls"}
     # LWW 字段: 任意单值字段, ts 大者胜
     # 默认 LWW 候选: best_value, best_encut, answer, conclusion
     lww_fields = {"best_value", "best_encut", "answer", "conclusion", "result"}
@@ -261,81 +383,78 @@ def _crdt_merge(results: list[dict]) -> dict:
     merged: dict[str, Any] = {"merged": True, "n_sources": len(results)}
 
     # G-Set 合并
-    for field in gset_fields:
-        if field not in all_keys:
-            continue
-        seen: dict[str, Any] = {}
-        for r in results:
-            items = r.get(field) or []
-            if not isinstance(items, list):
-                items = [items]
-            for it in items:
-                h = _content_hash(it)
-                if h not in seen:
-                    seen[h] = it
-        merged[field] = list(seen.values())
+    merged.update(_merge_gset_fields(results, all_keys))
 
     # LWW 合并 — P2-6: 有 belief 字段时走 Bayesian update, 否则 LWW.
     # _belief_merge 内部自动 fallback LWW, 这里只需 toggle on 时调它,
     # off 时直接走原 LWW 逻辑 (回归 P1-2 行为).
     if _belief_update_enabled():
-        belief_out = _belief_merge(results, lww_fields)
-        merged.update(belief_out)
+        merged.update(_belief_merge(results, lww_fields))
     else:
-        for field in lww_fields:
-            if field not in all_keys:
-                continue
-            best_val: Any = None
-            best_ts: float = -1.0
-            for r in results:
-                if field in r and r[field] is not None:
-                    ts = float(r.get("ts", 0.0) or 0.0)
-                    if ts >= best_ts:
-                        best_ts = ts
-                        best_val = r[field]
-            if best_val is not None:
-                merged[field] = best_val
-                merged[f"{field}_ts"] = best_ts
+        merged.update(_merge_lww_fields(results, lww_fields, all_keys))
 
-    # success: OR-join (任一 True → True)
-    merged["success"] = any(
-        r.get("success", False) for r in results if isinstance(r, dict)
-    )
+    return _finish_merged(merged, results)
 
-    # summary: 拼接非空 (dedupe by hash)
-    seen_sum: dict[str, str] = {}
-    for r in results:
-        s = r.get("summary") if isinstance(r, dict) else None
-        if s and isinstance(s, str):
-            h = _content_hash(s)
-            if h not in seen_sum:
-                seen_sum[h] = s
-    if seen_sum:
-        merged["summary"] = "\n---\n".join(seen_sum.values())
 
-    # errors: 收集所有非空 error (G-Set)
-    errs = [
-        r.get("error") for r in results
-        if isinstance(r, dict) and r.get("error")
+def _merge_context(args: SubagentToolInput, context: ToolContext) -> dict:
+    """把 ToolContext 的字段并进 dispatch context dict."""
+    dispatch_ctx = dict(args.context)
+    dispatch_ctx.setdefault("agent_factory", context.agent_factory)
+    dispatch_ctx.setdefault("session_id", context.session_id)
+    dispatch_ctx.setdefault("workspace", context.workspace)
+    # v7: 透传父 agent 的 approval_callback, 子 agent 调 ASK 工具 (vasp_tool 等) 才能拿到批准.
+    dispatch_ctx.setdefault("approval_callback", context.approval_callback)
+    return dispatch_ctx
+
+
+def _make_state_forwarder(spec_name: str):
+    """构造把子 agent 中间状态转发到 WS 的 progress 回调."""
+    # forward subagent intermediate states to the WS via progress_cb
+    from huginn.core_types import progress_cb
+
+    async def _on_state(state: dict) -> None:
+        cb = progress_cb.get()
+        if cb is None:
+            return
+        msgs = state.get("messages", [])
+        if not msgs:
+            return
+        last = msgs[-1]
+        # tool calls
+        if hasattr(last, "tool_calls") and last.tool_calls:
+            for tc in last.tool_calls:
+                await cb(
+                    {
+                        "type": "subagent_event",
+                        "event": "tool_call",
+                        "spec": spec_name,
+                        "tool": tc.get("name", "unknown"),
+                    }
+                )
+        # assistant text (truncated)
+        elif hasattr(last, "content") and last.content:
+            text = last.content if isinstance(last.content, str) else str(last.content)
+            if len(text) > 200:
+                text = text[:200] + "..."
+            await cb(
+                {
+                    "type": "subagent_event",
+                    "event": "text",
+                    "spec": spec_name,
+                    "text": text,
+                }
+            )
+
+    return _on_state
+
+
+def _parallel_coros(
+    dispatch: Any, tasks: list[dict], ctx: dict, depth: int
+) -> list[Any]:
+    """按 tasks 顺序构造 dispatch 协程列表 (gather 前用)."""
+    return [
+        dispatch.dispatch(t["spec_name"], t["task"], ctx, _depth=depth) for t in tasks
     ]
-    if errs:
-        seen_err: dict[str, str] = {}
-        for e in errs:
-            h = _content_hash(e)
-            if h not in seen_err:
-                seen_err[h] = e
-        merged["errors"] = list(seen_err.values())
-
-    # 保留原始 results (审计/调试用), 但放末尾避免污染主 view
-    merged["sources"] = results
-    # 嵌套 merge 用: 输出本身的 ts = max(输入 ts), 让外层 LWW 判断正确.
-    # 不加这个的话 merge(merge(a, b), c) 里 merge(a, b) 的 ts 字段缺失,
-    # 外层 LWW 取不到正确 ts.
-    merged["ts"] = max(
-        (float(r.get("ts", 0.0) or 0.0) for r in results if isinstance(r, dict)),
-        default=0.0,
-    )
-    return merged
 
 
 class SubagentToolInput(BaseModel):
@@ -459,53 +578,23 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             return self._missing_field("task")
 
         # 把 ToolContext 的字段并进 dispatch context dict
-        dispatch_ctx = dict(args.context)
-        dispatch_ctx.setdefault("agent_factory", context.agent_factory)
-        dispatch_ctx.setdefault("session_id", context.session_id)
-        dispatch_ctx.setdefault("workspace", context.workspace)
-        # v7: 透传父 agent 的 approval_callback, 子 agent 调 ASK 工具 (vasp_tool 等) 才能拿到批准.
-        dispatch_ctx.setdefault("approval_callback", context.approval_callback)
+        dispatch_ctx = _merge_context(args, context)
 
         # G1: 从 contextvar 读当前递归深度, 透传给 dispatch 守卫.
         # 主 agent 这里读到 0, 子 agent 那里读到 1+.
         from huginn.agents.subagent import _current_depth
+
         _depth = _current_depth.get()
 
         # forward subagent intermediate states to the WS via progress_cb
-        from huginn.core_types import progress_cb
-
-        async def _on_state(state: dict) -> None:
-            cb = progress_cb.get()
-            if cb is None:
-                return
-            msgs = state.get("messages", [])
-            if not msgs:
-                return
-            last = msgs[-1]
-            # tool calls
-            if hasattr(last, "tool_calls") and last.tool_calls:
-                for tc in last.tool_calls:
-                    await cb({
-                        "type": "subagent_event",
-                        "event": "tool_call",
-                        "spec": args.spec_name,
-                        "tool": tc.get("name", "unknown"),
-                    })
-            # assistant text (truncated)
-            elif hasattr(last, "content") and last.content:
-                text = last.content if isinstance(last.content, str) else str(last.content)
-                if len(text) > 200:
-                    text = text[:200] + "..."
-                await cb({
-                    "type": "subagent_event",
-                    "event": "text",
-                    "spec": args.spec_name,
-                    "text": text,
-                })
+        _on_state = _make_state_forwarder(args.spec_name)
 
         result = await self._dispatch.dispatch(
-            args.spec_name, args.task, dispatch_ctx,
-            on_state=_on_state, _depth=_depth,
+            args.spec_name,
+            args.task,
+            dispatch_ctx,
+            on_state=_on_state,
+            _depth=_depth,
         )
 
         out = SubagentToolOutput(
@@ -529,7 +618,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         if len(args.tasks) > 4:
             return ToolResult(
                 data=SubagentToolOutput(
-                    success=False, action="dispatch_parallel",
+                    success=False,
+                    action="dispatch_parallel",
                     error=f"tasks 最多 4 个, got {len(args.tasks)}",
                 ).model_dump(),
                 success=False,
@@ -540,7 +630,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             if "spec_name" not in t or "task" not in t:
                 return ToolResult(
                     data=SubagentToolOutput(
-                        success=False, action="dispatch_parallel",
+                        success=False,
+                        action="dispatch_parallel",
                         error=f"tasks[{i}] 缺 spec_name 或 task",
                     ).model_dump(),
                     success=False,
@@ -559,6 +650,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         dispatch_ctx.setdefault("approval_callback", context.approval_callback)
         # G1: 从 contextvar 读递归深度 (跟 _dispatch_subagent 一致)
         from huginn.agents.subagent import _current_depth
+
         return dispatch_ctx, _current_depth.get()
 
     async def _dp_gather(self, coros: list) -> list[dict]:
@@ -589,6 +681,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             _prov_reg = None
             try:
                 from huginn.provenance.registry import ProvenanceRegistry
+
                 _prov_reg = ProvenanceRegistry.shared()
             except Exception:
                 logger.debug("provenance registry init failed", exc_info=True)
@@ -606,14 +699,18 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         except ValueError as e:
             return ToolResult(
                 data=SubagentToolOutput(
-                    success=False, action="dispatch_parallel", error=f"DAG 错误: {e}",
+                    success=False,
+                    action="dispatch_parallel",
+                    error=f"DAG 错误: {e}",
                 ).model_dump(),
                 success=False,
                 error=str(e),
             ), []
         return None, dag.parallel_layers()
 
-    def _dp_make_result(self, results: list[dict], layers: list | None = None) -> ToolResult:
+    def _dp_make_result(
+        self, results: list[dict], layers: list | None = None
+    ) -> ToolResult:
         """组装 ToolResult; 多结果时按 CRDT 半格 join."""
         data: dict[str, Any] = {"action": "dispatch_parallel", "results": results}
         # P1-2: CRDT 合并 — 半格 join, 字段级无冲突.
@@ -635,7 +732,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             return None
         return ToolResult(
             data=SubagentToolOutput(
-                success=False, action="dispatch_parallel",
+                success=False,
+                action="dispatch_parallel",
                 error="DAG-aware dispatch 需开启极限模式 (HUGINN_EXTREME_DISPATCH=1)",
             ).model_dump(),
             success=False,
@@ -659,12 +757,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
 
         # 无 dependencies: 全并行
         if not args.dependencies:
-            coros = [
-                self._dispatch.dispatch(
-                    t["spec_name"], t["task"], dispatch_ctx, _depth=_depth,
-                )
-                for t in args.tasks
-            ]
+            coros = _parallel_coros(self._dispatch, args.tasks, dispatch_ctx, _depth)
             return self._dp_make_result(await self._dp_gather(coros))
 
         # 有 dependencies: DAG 分层调度 (极限模式才开)
@@ -679,14 +772,9 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         id_to_task = dict(zip(task_ids, args.tasks))
         all_results: list[dict] = []
         for layer in layers:
-            coros = [
-                self._dispatch.dispatch(
-                    id_to_task[tid]["spec_name"],
-                    id_to_task[tid]["task"],
-                    dispatch_ctx, _depth=_depth,
-                )
-                for tid in layer
-            ]
+            coros = _parallel_coros(
+                self._dispatch, [id_to_task[tid] for tid in layer], dispatch_ctx, _depth
+            )
             all_results.extend(await self._dp_gather(coros))
         return self._dp_make_result(all_results, layers)
 
@@ -706,6 +794,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
 
 # ── self-check ────────────────────────────────────────────────────────────
 # P1-2 验证: CRDT 半格三公理 + 字段级合并. `python -m huginn.tools.subagent_tool` 跑.
+
 
 def _selfcheck() -> None:
     """assert-based demo: CRDT 半格三公理 + 字段级合并 + Bayesian belief."""
@@ -748,9 +837,13 @@ def _sc_crdt_gset() -> None:
     r_b = {"findings": ["kpoints=4x4x4"], "evidence": ["ref2", "ref3"], "success": True}
     m33 = _crdt_merge([r_a, r_b])
     ev_set = set(m33["evidence"])
-    assert ev_set == {"ref1", "ref2", "ref3"}, f"G-Set union 应无 dup: {m33['evidence']}"
+    assert ev_set == {"ref1", "ref2", "ref3"}, (
+        f"G-Set union 应无 dup: {m33['evidence']}"
+    )
     f_set = set(m33["findings"])
-    assert f_set == {"encut=520 OK", "kpoints=4x4x4"}, f"findings union: {m33['findings']}"
+    assert f_set == {"encut=520 OK", "kpoints=4x4x4"}, (
+        f"findings union: {m33['findings']}"
+    )
     print("33. CRDT G-Set union (evidence + findings, dedupe) OK")
 
 
@@ -763,15 +856,35 @@ def _sc_crdt_lww() -> None:
     assert m34["best_value_ts"] == 200.0
     # 交换顺序也应取 ts 大者
     m34b = _crdt_merge([r_new, r_old])
-    assert m34b["best_value"] == 572, f"交换律: LWW 应仍取 572: {m34b.get('best_value')}"
+    assert m34b["best_value"] == 572, (
+        f"交换律: LWW 应仍取 572: {m34b.get('best_value')}"
+    )
     print("34. CRDT LWW-Register (ts 大者胜 + 交换律) OK")
 
 
 def _sc_crdt_axioms() -> None:
     """35. 半格三公理 — 交换 / 结合 / 幂等."""
-    r1 = {"findings": ["a"], "evidence": ["e1"], "best_value": 1, "ts": 1.0, "success": True}
-    r2 = {"findings": ["b"], "evidence": ["e2"], "best_value": 2, "ts": 2.0, "success": False}
-    r3 = {"findings": ["c"], "evidence": ["e3"], "best_value": 3, "ts": 3.0, "success": True}
+    r1 = {
+        "findings": ["a"],
+        "evidence": ["e1"],
+        "best_value": 1,
+        "ts": 1.0,
+        "success": True,
+    }
+    r2 = {
+        "findings": ["b"],
+        "evidence": ["e2"],
+        "best_value": 2,
+        "ts": 2.0,
+        "success": False,
+    }
+    r3 = {
+        "findings": ["c"],
+        "evidence": ["e3"],
+        "best_value": 3,
+        "ts": 3.0,
+        "success": True,
+    }
     m_ab = _sc_canon(_crdt_merge([r1, r2]))
     m_ba = _sc_canon(_crdt_merge([r2, r1]))
     assert m_ab == m_ba, f"交换律失败:\n{m_ab}\n{m_ba}"
@@ -790,13 +903,19 @@ def _sc_crdt_axioms() -> None:
 def _sc_crdt_integration() -> None:
     """36. 整合 — 4 subagent, 2 失败 2 成功, mixed fields."""
     r_s1 = {
-        "findings": ["encut=572 OK"], "evidence": ["conv1"],
-        "best_encut": 572, "ts": 100.0, "success": True,
+        "findings": ["encut=572 OK"],
+        "evidence": ["conv1"],
+        "best_encut": 572,
+        "ts": 100.0,
+        "success": True,
         "summary": "subagent A: encut=572",
     }
     r_s2 = {
-        "findings": ["encut=572 OK"], "evidence": ["conv2"],  # 重复 finding
-        "best_encut": 520, "ts": 200.0, "success": True,
+        "findings": ["encut=572 OK"],
+        "evidence": ["conv2"],  # 重复 finding
+        "best_encut": 520,
+        "ts": 200.0,
+        "success": True,
         "summary": "subagent B: encut=520 (later)",
     }
     r_f1 = {"success": False, "error": "OOM", "ts": 150.0}
@@ -845,7 +964,9 @@ def _sc_belief_fallback() -> None:
     r44a = {"best_value": 520, "ts": 100.0}
     r44b = {"best_value": 572, "ts": 200.0}
     m44 = _belief_merge([r44a, r44b], {"best_value"})
-    assert m44["best_value"] == 572, f"无 belief 应 LWW 取 ts=200: {m44.get('best_value')}"
+    assert m44["best_value"] == 572, (
+        f"无 belief 应 LWW 取 ts=200: {m44.get('best_value')}"
+    )
     assert m44["best_value_ts"] == 200.0
     print("44. belief_merge 无 belief → fallback LWW OK")
 
@@ -853,12 +974,28 @@ def _sc_belief_fallback() -> None:
 def _sc_gaussian_belief_pair() -> tuple[dict, dict]:
     """45/46b/47 共用的 Gaussian belief 输入对 (μ=520 vs μ=572)."""
     r45a = {
-        "best_encut": 520, "ts": 100.0,
-        "belief": {"best_encut": {"type": "gaussian", "mu": 520, "sigma2": 400, "obs_sigma2": 100}},
+        "best_encut": 520,
+        "ts": 100.0,
+        "belief": {
+            "best_encut": {
+                "type": "gaussian",
+                "mu": 520,
+                "sigma2": 400,
+                "obs_sigma2": 100,
+            }
+        },
     }
     r45b = {
-        "best_encut": 572, "ts": 200.0,
-        "belief": {"best_encut": {"type": "gaussian", "mu": 572, "sigma2": 100, "obs_sigma2": 100}},
+        "best_encut": 572,
+        "ts": 200.0,
+        "belief": {
+            "best_encut": {
+                "type": "gaussian",
+                "mu": 572,
+                "sigma2": 100,
+                "obs_sigma2": 100,
+            }
+        },
     }
     return r45a, r45b
 
@@ -879,16 +1016,34 @@ def _sc_belief_gaussian_merge() -> None:
 def _sc_belief_beta_merge() -> None:
     """45b. Beta belief merge (Beta(1,1)+5s4f → Beta(6,5))."""
     r45c = {
-        "success_rate": 0.5, "ts": 1.0,
-        "belief": {"success_rate": {"type": "beta", "alpha": 1, "beta": 1, "n_success": 3, "n_fail": 1}},
+        "success_rate": 0.5,
+        "ts": 1.0,
+        "belief": {
+            "success_rate": {
+                "type": "beta",
+                "alpha": 1,
+                "beta": 1,
+                "n_success": 3,
+                "n_fail": 1,
+            }
+        },
     }
     r45d = {
-        "success_rate": 0.7, "ts": 2.0,
-        "belief": {"success_rate": {"type": "beta", "alpha": 1, "beta": 1, "n_success": 2, "n_fail": 3}},
+        "success_rate": 0.7,
+        "ts": 2.0,
+        "belief": {
+            "success_rate": {
+                "type": "beta",
+                "alpha": 1,
+                "beta": 1,
+                "n_success": 2,
+                "n_fail": 3,
+            }
+        },
     }
     m45b = _belief_merge([r45c, r45d], {"success_rate"})
     # Beta(1,1) + (3s+2s, 1f+3f) = Beta(6, 5), mean = 6/11 ≈ 0.545
-    assert abs(m45b["success_rate"] - 6/11) < 0.001, (
+    assert abs(m45b["success_rate"] - 6 / 11) < 0.001, (
         f"Beta merge mean 应 ≈ 0.545, got {m45b.get('success_rate')}"
     )
     assert m45b["success_rate_belief"]["alpha"] == 6.0
@@ -910,28 +1065,49 @@ def _sc_belief_conflict_high() -> None:
     r45a, r45b = _sc_gaussian_belief_pair()
     # r45a (mu=520) vs r45b (mu=572): KL(520,100,572,100) ≈ 13.5 > 1.0 → 标冲突
     m46b = _belief_merge([r45a, r45b], {"best_encut"})
-    assert m46b.get("best_encut_conflict") is True, \
+    assert m46b.get("best_encut_conflict") is True, (
         f"高 KL 应触发 _conflict, got {m46b.get('best_encut_conflict')}"
-    assert m46b.get("best_encut_conflict_kl", 0) > 1.0, \
+    )
+    assert m46b.get("best_encut_conflict_kl", 0) > 1.0, (
         f"_conflict_kl 应 > 1.0, got {m46b.get('best_encut_conflict_kl')}"
+    )
     # 仍输出 merge 结果 (不阻塞), 调用方决定是否走 LLM 仲裁
     assert "best_encut_belief" in m46b, "冲突时仍应输出 belief"
-    print(f"46b. M6 _belief_merge KL 冲突标记 (kl={m46b['best_encut_conflict_kl']:.2f} > 1.0) OK")
+    print(
+        f"46b. M6 _belief_merge KL 冲突标记 (kl={m46b['best_encut_conflict_kl']:.2f} > 1.0) OK"
+    )
 
 
 def _sc_belief_conflict_low() -> None:
     """46c. M6: 低 KL (mu 接近) → 不标冲突."""
     r46c_a = {
-        "best_encut": 520, "ts": 100.0,
-        "belief": {"best_encut": {"type": "gaussian", "mu": 520, "sigma2": 100, "obs_sigma2": 100}},
+        "best_encut": 520,
+        "ts": 100.0,
+        "belief": {
+            "best_encut": {
+                "type": "gaussian",
+                "mu": 520,
+                "sigma2": 100,
+                "obs_sigma2": 100,
+            }
+        },
     }
     r46c_b = {
-        "best_encut": 521, "ts": 200.0,
-        "belief": {"best_encut": {"type": "gaussian", "mu": 521, "sigma2": 100, "obs_sigma2": 100}},
+        "best_encut": 521,
+        "ts": 200.0,
+        "belief": {
+            "best_encut": {
+                "type": "gaussian",
+                "mu": 521,
+                "sigma2": 100,
+                "obs_sigma2": 100,
+            }
+        },
     }
     m46c = _belief_merge([r46c_a, r46c_b], {"best_encut"})
-    assert m46c.get("best_encut_conflict") is not True, \
+    assert m46c.get("best_encut_conflict") is not True, (
         f"低 KL 不应触发 _conflict, got {m46c.get('best_encut_conflict')}"
+    )
     assert "best_encut_conflict_kl" not in m46c, "低 KL 不应输出 _conflict_kl"
     print("46c. M6 _belief_merge 低 KL 不标冲突 OK")
 

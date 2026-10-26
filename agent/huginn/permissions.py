@@ -31,9 +31,9 @@ except ImportError:
 
 DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
     r"git\s+push\s+.*--force",  # git push --force
-    r"git\s+push\s+.*-f\b",     # git push -f
-    r"git\s+reset\s+--hard",    # git reset --hard
-    r"git\s+clean\s+-fd",       # git clean -fd
+    r"git\s+push\s+.*-f\b",  # git push -f
+    r"git\s+reset\s+--hard",  # git reset --hard
+    r"git\s+clean\s+-fd",  # git clean -fd
 ]
 
 # Read-only tool names — SSE chat 路径用来区分“可 auto_approve”和“需 ASK”.
@@ -41,18 +41,29 @@ DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
 # 必须用**注册名** (`file_read_tool`/`grep`/`glob`) —— 早期写成 `read_file`/`ls`/
 # `cat`/`search` 这类短名, 与注册表对不上, `set_mode()` 永不命中, 只读工具在
 # sidecar 路径实际仍走 ASK (MECE 审计记的"允许表死项").
-READ_ONLY_TOOLS: frozenset[str] = frozenset({
-    "file_read_tool", "grep", "glob",
-})
+READ_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "file_read_tool",
+        "grep",
+        "glob",
+    }
+)
 
 # Write / exec tool names — 显式标记, SSE 路径下不 auto_approve.
 # 与 READ_ONLY_TOOLS 一起被 `routes/interaction.py::chat_stream` 消费:
 # 对两张表的并集按 `is_read_only_tool` 分类 —— 只读放行, 其余强制 ASK.
-WRITE_EXEC_TOOLS: frozenset[str] = frozenset({
-    "file_write_tool", "file_edit_tool", "multi_edit_tool", "notebook_edit_tool",
-    "bash_tool", "code_tool",
-    "vasp_tool", "lammps_tool",
-})
+WRITE_EXEC_TOOLS: frozenset[str] = frozenset(
+    {
+        "file_write_tool",
+        "file_edit_tool",
+        "multi_edit_tool",
+        "notebook_edit_tool",
+        "bash_tool",
+        "code_tool",
+        "vasp_tool",
+        "lammps_tool",
+    }
+)
 
 
 def is_read_only_tool(tool_name: str) -> bool:
@@ -104,6 +115,7 @@ def autoloop_auto_approve() -> bool:
     (``rm -rf /`` 等) 仍由 adapter 先于该放行判定拦下, 不受此开关影响.
     """
     return env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE")
+
 
 # Default permission rules for material science tools
 # Note: science_* tools (science-skills bridge) are auto-approved via wildcard
@@ -285,7 +297,9 @@ class PermissionChecker:
     def __init__(self, config: PermissionConfig | None = None):
         self.config = config or PermissionConfig()
 
-    def _check_dangerous(self, tool_name: str, args: dict | None = None) -> tuple[bool, str | None]:
+    def _check_dangerous(
+        self, tool_name: str, args: dict | None = None
+    ) -> tuple[bool, str | None]:
         """检查工具参数是否命中危险模式.
 
         返回 (is_dangerous, matched_pattern). matched_pattern 是命中的正则字符串,
@@ -311,7 +325,9 @@ class PermissionChecker:
 
         return False, None
 
-    def _check_path_rules(self, args: dict | None, tool_name: str = "") -> PermissionMode | None:
+    def _check_path_rules(
+        self, args: dict | None, tool_name: str = ""
+    ) -> PermissionMode | None:
         """Match file path from tool args against path_rules (first match wins).
 
         Looks for common path field names in args: file_path, path, working_dir.
@@ -324,23 +340,7 @@ class PermissionChecker:
         """
         if not args:
             return None
-        if self.config.sandbox_mode:
-            # 默认硬底线在前, 用户 path_rules 在后 -- first match wins, 默认项优先.
-            effective_rules = list(_DEFAULT_SANDBOX_PATH_RULES) + list(self.config.path_rules)
-            # env var HUGINN_SANDBOX_BLOCKED_PATHS: 逗号分隔路径, 只能追加 DENY.
-            for _p in os.environ.get("HUGINN_SANDBOX_BLOCKED_PATHS", "").split(","):
-                _p = _p.strip()
-                if _p:
-                    effective_rules.append((_p, PermissionMode.DENY))
-            # 自检: 默认项是硬底线, 不能被移除. 用户只能追加, 不能放宽.
-            _default_paths = {p for p, _ in _DEFAULT_SANDBOX_PATH_RULES}
-            _effective_paths = {
-                r[1] if len(r) == 3 else r[0] for r in effective_rules
-            }
-            assert _default_paths.issubset(_effective_paths), \
-                "Sandbox default path rules removed -- defaults are a hard floor"
-        else:
-            effective_rules = self.config.path_rules
+        effective_rules = self._effective_path_rules()
         if not effective_rules:
             return None
         # extract path from common field names
@@ -360,6 +360,27 @@ class PermissionChecker:
             if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(basename, pattern):
                 return mode
         return None
+
+    def _effective_path_rules(self) -> list[tuple]:
+        """构建生效路径规则 (sandbox_mode 时注入默认硬底线)."""
+        if not self.config.sandbox_mode:
+            return self.config.path_rules
+        # 默认硬底线在前, 用户 path_rules 在后 -- first match wins, 默认项优先.
+        effective_rules = list(_DEFAULT_SANDBOX_PATH_RULES) + list(
+            self.config.path_rules
+        )
+        # env var HUGINN_SANDBOX_BLOCKED_PATHS: 逗号分隔路径, 只能追加 DENY.
+        for _p in os.environ.get("HUGINN_SANDBOX_BLOCKED_PATHS", "").split(","):
+            _p = _p.strip()
+            if _p:
+                effective_rules.append((_p, PermissionMode.DENY))
+        # 自检: 默认项是硬底线, 不能被移除. 用户只能追加, 不能放宽.
+        _default_paths = {p for p, _ in _DEFAULT_SANDBOX_PATH_RULES}
+        _effective_paths = {r[1] if len(r) == 3 else r[0] for r in effective_rules}
+        assert _default_paths.issubset(_effective_paths), (
+            "Sandbox default path rules removed -- defaults are a hard floor"
+        )
+        return effective_rules
 
     async def check(
         self,
@@ -382,39 +403,14 @@ class PermissionChecker:
         matched: list[str] = []
 
         # 阶段1: 危险命令 — 必须放在 get_mode() 之前, 否则 yolo 会直接放行.
-        is_dangerous, matched_pat = self._check_dangerous(tool_name, args)
-        if is_dangerous:
-            matched.append(f"dangerous:{matched_pat}")
-            reason = (
-                f"Tool '{tool_name}' matches dangerous pattern '{matched_pat}' — "
-                "requires explicit approval even in auto-approve mode"
-            )
-            return PermissionResult(
-                mode=PermissionMode.ASK,
-                reason=reason,
-                risk_level=RiskLevel.CRITICAL,
-                matched_rules=matched,
-            )
+        dangerous_result = self._dangerous_result(tool_name, args, matched)
+        if dangerous_result is not None:
+            return dangerous_result
 
         # 阶段2: 路径规则 (工具×路径矩阵 / 通用路径)
-        path_mode = self._check_path_rules(args, tool_name)
-        if path_mode is not None:
-            if path_mode == PermissionMode.DENY:
-                return PermissionResult(
-                    mode=PermissionMode.DENY,
-                    reason="Path blocked by path-level rule",
-                    risk_level=RiskLevel.CRITICAL,
-                    matched_rules=["path:deny"],
-                )
-            if path_mode == PermissionMode.ASK:
-                return PermissionResult(
-                    mode=PermissionMode.ASK,
-                    reason="Path requires approval by path-level rule",
-                    risk_level=RiskLevel.MEDIUM,
-                    matched_rules=["path:ask"],
-                )
-            # AUTO — fall through (path 命中但放行)
-            matched.append("path:auto")
+        path_result = self._path_result(args, tool_name, matched)
+        if path_result is not None:
+            return path_result
 
         # 阶段3: 工具基础规则 → mode + 风险推断
         mode = self.config.get_mode(tool_name)
@@ -422,7 +418,69 @@ class PermissionChecker:
         matched.append(f"tool:{tool_name}:{mode.value}")
 
         # 阶段4: 成本分级 — 放行工具超预算 → 升 ASK, 风险升 HIGH
+        # 阶段5: 信任自适应 — trust 高放行 medium 以下, 低强制 ASK (high/critical 不浮动)
         cost_hours = self._extract_cost(cost_estimate)
+        mode, risk = self._apply_cost_and_trust(
+            mode, risk, cost_hours, session_id, matched
+        )
+
+        return PermissionChecker._build_result(
+            tool_name, mode, risk, cost_hours, is_destructive, matched
+        )
+
+    def _dangerous_result(
+        self, tool_name: str, args: dict | None, matched: list[str]
+    ) -> PermissionResult | None:
+        """阶段1: 危险命令判定."""
+        is_dangerous, matched_pat = self._check_dangerous(tool_name, args)
+        if not is_dangerous:
+            return None
+        matched.append(f"dangerous:{matched_pat}")
+        reason = (
+            f"Tool '{tool_name}' matches dangerous pattern '{matched_pat}' — "
+            "requires explicit approval even in auto-approve mode"
+        )
+        return PermissionResult(
+            mode=PermissionMode.ASK,
+            reason=reason,
+            risk_level=RiskLevel.CRITICAL,
+            matched_rules=matched,
+        )
+
+    def _path_result(
+        self, args: dict | None, tool_name: str, matched: list[str]
+    ) -> PermissionResult | None:
+        """阶段2: 路径规则判定."""
+        path_mode = self._check_path_rules(args, tool_name)
+        if path_mode is None:
+            return None
+        if path_mode == PermissionMode.DENY:
+            return PermissionResult(
+                mode=PermissionMode.DENY,
+                reason="Path blocked by path-level rule",
+                risk_level=RiskLevel.CRITICAL,
+                matched_rules=["path:deny"],
+            )
+        if path_mode == PermissionMode.ASK:
+            return PermissionResult(
+                mode=PermissionMode.ASK,
+                reason="Path requires approval by path-level rule",
+                risk_level=RiskLevel.MEDIUM,
+                matched_rules=["path:ask"],
+            )
+        # AUTO — fall through (path 命中但放行)
+        matched.append("path:auto")
+        return None
+
+    def _apply_cost_and_trust(
+        self,
+        mode: PermissionMode,
+        risk: RiskLevel,
+        cost_hours: float | None,
+        session_id: str,
+        matched: list[str],
+    ) -> tuple[PermissionMode, RiskLevel]:
+        """阶段4+5: 成本分级与信任自适应."""
         budget = self.config.cost_budget_hours
         if cost_hours is not None and budget is not None and cost_hours > budget:
             matched.append(f"cost:{cost_hours:.1f}>{budget}")
@@ -431,16 +489,34 @@ class PermissionChecker:
             if risk not in (RiskLevel.HIGH, RiskLevel.CRITICAL):
                 risk = RiskLevel.HIGH
 
-        # 阶段5: 信任自适应 — trust 高放行 medium 以下, 低强制 ASK (high/critical 不浮动)
         if self.config.trust_adaptive:
             trust = _get_trust(session_id)
-            if mode == PermissionMode.AUTO and risk in (RiskLevel.MEDIUM, RiskLevel.HIGH) and trust < 0.3:
+            if (
+                mode == PermissionMode.AUTO
+                and risk in (RiskLevel.MEDIUM, RiskLevel.HIGH)
+                and trust < 0.3
+            ):
                 matched.append(f"trust:{trust:.2f}<0.3")
                 mode = PermissionMode.ASK
-            elif mode == PermissionMode.ASK and risk in (RiskLevel.LOW, RiskLevel.MEDIUM) and trust > 0.7:
+            elif (
+                mode == PermissionMode.ASK
+                and risk in (RiskLevel.LOW, RiskLevel.MEDIUM)
+                and trust > 0.7
+            ):
                 matched.append(f"trust:{trust:.2f}>0.7")
                 mode = PermissionMode.AUTO
+        return mode, risk
 
+    @staticmethod
+    def _build_result(
+        tool_name: str,
+        mode: PermissionMode,
+        risk: RiskLevel,
+        cost_hours: float | None,
+        is_destructive: bool,
+        matched: list[str],
+    ) -> PermissionResult:
+        """按最终 mode 组装 PermissionResult."""
         if mode == PermissionMode.DENY:
             return PermissionResult(
                 mode=PermissionMode.DENY,
@@ -509,20 +585,17 @@ class StandingRulesStore:
 
     def __init__(self) -> None:
         import threading
+
         self._lock = threading.Lock()
         # session_id → {(tool_name, target_pattern)}
         self._rules: dict[str, set[tuple[str, str]]] = {}
 
-    def grant(
-        self, session_id: str, tool_name: str, target_pattern: str = "*"
-    ) -> None:
+    def grant(self, session_id: str, tool_name: str, target_pattern: str = "*") -> None:
         """记录一条 standing rule. target_pattern 支持 fnmatch."""
         with self._lock:
             self._rules.setdefault(session_id, set()).add((tool_name, target_pattern))
 
-    def is_granted(
-        self, session_id: str, tool_name: str, target: str = "*"
-    ) -> bool:
+    def is_granted(self, session_id: str, tool_name: str, target: str = "*") -> bool:
         """检查是否命中 standing rule. target 做 fnmatch 匹配."""
         with self._lock:
             rules = self._rules.get(session_id, set())
@@ -564,6 +637,7 @@ def _get_lock():
     global _singleton_lock
     if _singleton_lock is None:
         import threading
+
         _singleton_lock = threading.Lock()
     return _singleton_lock
 

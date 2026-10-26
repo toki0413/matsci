@@ -147,9 +147,7 @@ def _msg_to_text(msg: Any) -> str:
 
 def _check_tables(conn: sqlite3.Connection) -> list[str]:
     """看库里实际有哪些表。"""
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     return [r[0] for r in rows]
 
 
@@ -185,30 +183,35 @@ def _list_threads(db_path: Path) -> list[dict]:
             """
         ).fetchall()
 
-        results: list[dict] = []
-        for thread_id, latest_cp, cp_count in rows:
-            created = _uuid_to_datetime(latest_cp) if latest_cp else None
-            preview = ""
-            if latest_cp:
-                meta_row = conn.execute(
-                    "SELECT metadata FROM checkpoints "
-                    "WHERE thread_id = ? AND checkpoint_id = ? AND checkpoint_ns = '' "
-                    "LIMIT 1",
-                    (thread_id, latest_cp),
-                ).fetchone()
-                if meta_row:
-                    preview = _extract_preview(meta_row[0])
-            results.append(
-                {
-                    "thread_id": thread_id,
-                    "created": created,
-                    "messages": cp_count,
-                    "preview": preview,
-                }
-            )
+        results: list[dict] = [
+            _thread_row_to_dict(conn, thread_id, latest_cp, cp_count)
+            for thread_id, latest_cp, cp_count in rows
+        ]
         return results
     finally:
         conn.close()
+
+
+def _thread_row_to_dict(
+    conn: sqlite3.Connection, thread_id, latest_cp, cp_count
+) -> dict:
+    created = _uuid_to_datetime(latest_cp) if latest_cp else None
+    preview = ""
+    if latest_cp:
+        meta_row = conn.execute(
+            "SELECT metadata FROM checkpoints "
+            "WHERE thread_id = ? AND checkpoint_id = ? AND checkpoint_ns = '' "
+            "LIMIT 1",
+            (thread_id, latest_cp),
+        ).fetchone()
+        if meta_row:
+            preview = _extract_preview(meta_row[0])
+    return {
+        "thread_id": thread_id,
+        "created": created,
+        "messages": cp_count,
+        "preview": preview,
+    }
 
 
 def _format_dt(dt: datetime | None) -> str:
@@ -269,10 +272,21 @@ def show_session(ctx: CliContext, thread_id: str) -> None:
 
     info = match[0]
     ctx.console.print(f"[bold cyan]Thread ID:[/bold cyan]     {thread_id}")
-    ctx.console.print(f"[bold green]Created:[/bold green]       {_format_dt(info['created'])}")
+    ctx.console.print(
+        f"[bold green]Created:[/bold green]       {_format_dt(info['created'])}"
+    )
     ctx.console.print(f"[bold]Checkpoints:[/bold]     {info['messages']}")
 
     # 拿最近一条 checkpoint 的完整信息
+    _show_latest_checkpoint(ctx, db_path, thread_id)
+
+    # 尝试用 LangGraph saver 反序列化, 拿到真实的消息条数
+    msg_count = _try_count_messages(db_path, thread_id)
+    if msg_count is not None:
+        ctx.console.print(f"[bold]Messages:[/bold]          {msg_count}")
+
+
+def _show_latest_checkpoint(ctx: CliContext, db_path: Path, thread_id: str) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
         row = conn.execute(
@@ -300,11 +314,6 @@ def show_session(ctx: CliContext, thread_id: str) -> None:
                 )
             except (json.JSONDecodeError, UnicodeDecodeError):
                 ctx.console.print("[dim](metadata 不可读)[/dim]")
-
-    # 尝试用 LangGraph saver 反序列化, 拿到真实的消息条数
-    msg_count = _try_count_messages(db_path, thread_id)
-    if msg_count is not None:
-        ctx.console.print(f"[bold]Messages:[/bold]          {msg_count}")
 
 
 def _decode_typed_messages(saver: Any, messages: Any) -> list | None:
@@ -382,15 +391,11 @@ def delete_session(ctx: CliContext, thread_id: str) -> None:
             return
 
         # 跟 SqliteSaver 的清表逻辑一致, checkpoints + writes 两张表都删
-        cur = conn.execute(
-            "DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,)
-        )
+        cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
         deleted_cp = cur.rowcount
         deleted_w = 0
         if "writes" in tables:
-            cur = conn.execute(
-                "DELETE FROM writes WHERE thread_id = ?", (thread_id,)
-            )
+            cur = conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
             deleted_w = cur.rowcount
         conn.commit()
     finally:

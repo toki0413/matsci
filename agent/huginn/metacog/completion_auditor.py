@@ -86,7 +86,11 @@ def parse_unexplored_declaration(text: str) -> int:
     stripped = text.strip()
 
     # ponytail: 只认"已充分探索"这一个豁免短语. 别的同义词以后真出问题再加.
-    if stripped == "已充分探索" or stripped.lower() in ("fully explored", "n/a", "none"):
+    if stripped == "已充分探索" or stripped.lower() in (
+        "fully explored",
+        "n/a",
+        "none",
+    ):
         return 0
 
     # markdown 列表项优先
@@ -102,6 +106,61 @@ def parse_unexplored_declaration(text: str) -> int:
     # ponytail: 单次 split, 不去重, 上限 99 防恶意输入
     chunks = [c.strip() for c in stripped.replace("\n", ";").split(";") if c.strip()]
     return min(len(chunks), 99)
+
+
+def _find_equivalence_traps(
+    auditor, candidate_finding, original_problem, reduction_chain
+) -> list[str]:
+    traps: list[str] = []
+    if candidate_finding.strip():
+        verdict: EquivalenceVerdict = auditor.audit(
+            candidate_finding=candidate_finding,
+            original_problem=original_problem,
+            reduction_chain=reduction_chain,
+        )
+        if verdict.is_equivalent_renaming:
+            trap_desc = (
+                f"{verdict.trap_category} -> {verdict.reduction_target}"
+                if verdict.reduction_target
+                else verdict.trap_category
+            )
+            traps.append(trap_desc)
+    return traps
+
+
+def _effort_floor(
+    detector, iteration, families_explored, live_components, total_iterations
+):
+    status = detector.check(
+        iteration=iteration,
+        families_explored=families_explored,
+        live_components=live_components,
+        total_iterations=total_iterations,
+    )
+    blocked, deficit_msg = detector.should_block_return(status)
+    return not blocked, status.deficits() if blocked else []
+
+
+def _recall_historical(original_problem, candidate_finding, provenance_snapshot):
+    historical = recall_audit_context(
+        category="subgoal",
+        query=original_problem or candidate_finding,
+        limit=10,
+    )
+    if provenance_snapshot:
+        historical = _merge_provenance(historical, provenance_snapshot)
+    return historical
+
+
+def _merge_provenance(historical, provenance_snapshot):
+    if isinstance(historical, list):
+        historical = list(historical)
+        historical.extend(provenance_snapshot)
+    elif isinstance(historical, dict):
+        historical["provenance"] = provenance_snapshot
+    else:
+        historical = list(provenance_snapshot)
+    return historical
 
 
 class CompletionAuditor:
@@ -150,53 +209,25 @@ class CompletionAuditor:
         供根 agent 对比当前探索与历史工具产出. 不传则不影响现有行为.
         """
         # 1. 努力下限 (PrematureConvergenceDetector)
-        status = self._detector.check(
-            iteration=iteration,
-            families_explored=families_explored,
-            live_components=live_components,
-            total_iterations=total_iterations,
+        effort_floor_passed, effort_deficits = _effort_floor(
+            self._detector,
+            iteration,
+            families_explored,
+            live_components,
+            total_iterations,
         )
-        blocked, deficit_msg = self._detector.should_block_return(status)
-        effort_floor_passed = not blocked
-        effort_deficits = status.deficits() if blocked else []
-
         # 2. 等价性陷阱 (EquivalenceAuditor) — 只在 agent 真的提交了发现时才审
-        traps: list[str] = []
-        if candidate_finding.strip():
-            verdict: EquivalenceVerdict = self._auditor.audit(
-                candidate_finding=candidate_finding,
-                original_problem=original_problem,
-                reduction_chain=reduction_chain,
-            )
-            if verdict.is_equivalent_renaming:
-                trap_desc = (
-                    f"{verdict.trap_category} -> {verdict.reduction_target}"
-                    if verdict.reduction_target
-                    else verdict.trap_category
-                )
-                traps.append(trap_desc)
-
+        traps = _find_equivalence_traps(
+            self._auditor, candidate_finding, original_problem, reduction_chain
+        )
         # 3. 不完整性自白
         unexplored_count = parse_unexplored_declaration(unexplored_declaration)
-
         # recall 历史子目标探索, 给根 agent 提供对比上下文 (不影响 is_complete 判定)
         # ponytail: 只挂到 historical_context, 不参与四层检查. 升级路径: 命中过深时计入 deficit.
-        historical = recall_audit_context(
-            category="subgoal",
-            query=original_problem or candidate_finding,
-            limit=10,
-        )
-
         # ponytail: provenance_snapshot 可选, 不破坏现有调用; 升级路径是 audit 自动拉 ProvenanceRegistry.recent_entries()
-        if provenance_snapshot:
-            if isinstance(historical, list):
-                historical = list(historical)
-                historical.extend(provenance_snapshot)
-            elif isinstance(historical, dict):
-                historical["provenance"] = provenance_snapshot
-            else:
-                historical = list(provenance_snapshot)
-
+        historical = _recall_historical(
+            original_problem, candidate_finding, provenance_snapshot
+        )
         return CompletionChecklist(
             effort_floor_passed=effort_floor_passed,
             effort_deficits=effort_deficits,
@@ -211,6 +242,7 @@ class CompletionAuditor:
 
 # ── 自检 ─────────────────────────────────────────────────────────
 
+
 def _sc_parse_unexplored() -> None:
     """parse_unexplored_declaration: 空/空白/已充分探索/n-a + 三种分隔."""
     assert parse_unexplored_declaration("") == 0, "空文本应返回 0"
@@ -220,7 +252,9 @@ def _sc_parse_unexplored() -> None:
 
     # markdown 列表
     md = "UNEXPLORED:\n- 高压相图\n- 缺陷容忍度\n- 动力学路径"
-    assert parse_unexplored_declaration(md) == 3, f"应数出 3 条, got {parse_unexplored_declaration(md)}"
+    assert parse_unexplored_declaration(md) == 3, (
+        f"应数出 3 条, got {parse_unexplored_declaration(md)}"
+    )
 
     # 分号分隔
     semi = "高压相图; 缺陷容忍度; 动力学路径"
@@ -257,7 +291,9 @@ def _sc_checklist() -> None:
     # 有等价陷阱
     trap = CompletionChecklist(
         effort_floor_passed=True,
-        equivalence_traps_remaining=["property_reduction -> formation_energy_prediction"],
+        equivalence_traps_remaining=[
+            "property_reduction -> formation_energy_prediction"
+        ],
         unexplored_count=1,
     )
     assert not trap.is_complete
@@ -284,7 +320,10 @@ def _sc_audit_pass(auditor) -> None:
     """场景 A/G: 全过 + 无 candidate_finding 跳过等价审计."""
     # 场景 A: 全过 — 后期迭代, 多方法族, 有自白, 无陷阱, 无否决
     ok = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        iteration=9,
+        families_explored=4,
+        live_components=2,
+        total_iterations=9,
         candidate_finding="我们用主动学习找到了相场边界",
         original_problem="找相场边界",
         reduction_chain="",
@@ -297,7 +336,10 @@ def _sc_audit_pass(auditor) -> None:
 
     # 场景 G: 无 candidate_finding → 跳过等价审计, 不应报陷阱
     no_candidate = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        iteration=9,
+        families_explored=4,
+        live_components=2,
+        total_iterations=9,
         candidate_finding="",
         original_problem="",
         unexplored_declaration="- 高压相图",
@@ -310,7 +352,10 @@ def _sc_audit_effort_and_traps(auditor) -> None:
     """场景 B/C: 努力下限未过 + 等价陷阱命中."""
     # 场景 B: 努力下限未过 — 早期迭代, 单方法族
     early = auditor.audit(
-        iteration=0, families_explored=1, live_components=1, total_iterations=9,
+        iteration=0,
+        families_explored=1,
+        live_components=1,
+        total_iterations=9,
         candidate_finding="我们解决了稳定性预测",
         original_problem="预测材料稳定性",
         unexplored_declaration="- 还有高压相图没看",
@@ -322,7 +367,10 @@ def _sc_audit_effort_and_traps(auditor) -> None:
 
     # 场景 C: 等价陷阱命中 — 性质归约
     trapped = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        iteration=9,
+        families_explored=4,
+        live_components=2,
+        total_iterations=9,
         candidate_finding="我们解决了稳定性预测问题",
         original_problem="预测材料稳定性",
         reduction_chain="通过形成能预测间接得到稳定性",
@@ -338,7 +386,10 @@ def _sc_audit_confession_and_veto(auditor) -> None:
     """场景 D/E/F: 缺自白 / 假自白 / 对抗否决."""
     # 场景 D: 缺自白
     no_confession = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        iteration=9,
+        families_explored=4,
+        live_components=2,
+        total_iterations=9,
         candidate_finding="主动学习找相场边界",
         original_problem="找相场边界",
         unexplored_declaration="",
@@ -349,7 +400,10 @@ def _sc_audit_confession_and_veto(auditor) -> None:
 
     # 场景 E: 自白只有"已充分探索" → 仍算缺自白
     lazy_confession = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        iteration=9,
+        families_explored=4,
+        live_components=2,
+        total_iterations=9,
         candidate_finding="主动学习找相场边界",
         original_problem="找相场边界",
         unexplored_declaration="已充分探索",
@@ -359,7 +413,10 @@ def _sc_audit_confession_and_veto(auditor) -> None:
 
     # 场景 F: 对抗否决
     vetoed = auditor.audit(
-        iteration=9, families_explored=4, live_components=2, total_iterations=9,
+        iteration=9,
+        families_explored=4,
+        live_components=2,
+        total_iterations=9,
         candidate_finding="主动学习找相场边界",
         original_problem="找相场边界",
         unexplored_declaration="- 高压相图",
@@ -375,7 +432,10 @@ def _sc_audit_confession_and_veto(auditor) -> None:
 def _sc_audit_multi_failure(auditor) -> None:
     """场景 H: 多重失败 — block_reason 应拼多条."""
     multi = auditor.audit(
-        iteration=0, families_explored=1, live_components=1, total_iterations=9,
+        iteration=0,
+        families_explored=1,
+        live_components=1,
+        total_iterations=9,
         candidate_finding="我们解决了稳定性预测问题",
         original_problem="预测材料稳定性",
         reduction_chain="通过形成能预测间接得到稳定性",

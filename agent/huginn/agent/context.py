@@ -13,6 +13,21 @@ from huginn.utils.prompt_cache import PromptCacheBuilder
 logger = logging.getLogger(__name__)
 
 
+def _tool_belief_bonus(name: str) -> float:
+    """SkillEvolutionLayer 信念加成: 高置信度工具小幅提分."""
+    try:
+        from huginn.skills.evolution import SkillEvolutionLayer
+
+        layer = SkillEvolutionLayer.shared()
+        beliefs = layer.get_tool_beliefs(name)
+        if beliefs:
+            avg_conf = sum(b.confidence for b in beliefs) / len(beliefs)
+            return avg_conf * 0.5
+    except Exception:  # 非致命: skill evolution 信念不可用则忽略
+        logger.debug("skill evolution beliefs unavailable", exc_info=True)
+    return 0.0
+
+
 def _capability_note() -> str:
     """能力面汇总块: 逻辑单一来源在 runtime_probe.capability_note, 此处只做导入隔离.
 
@@ -79,8 +94,11 @@ def _esp_prompt_segments(ctx: Any, base: str) -> str:
         from huginn.plugins.prompt_segments import render_prompt_segments_for_path
 
         _declared = render_prompt_segments_for_path(
-            "main", getattr(ctx, "_mode", "chat"), "execute",
-            "s0_blank", ctx.system_prompt,
+            "main",
+            getattr(ctx, "_mode", "chat"),
+            "execute",
+            "s0_blank",
+            ctx.system_prompt,
         )
         if _declared:
             base += "\n\n" + _declared
@@ -102,9 +120,8 @@ def _esp_workspace_context(ctx: Any, base: str) -> str:
             base = f"{base}\n\n# Environment\n" + "\n".join(ctx_lines)
         user_ctx = get_user_context(str(workspace))
         if user_ctx:
-            base = (
-                f"{base}\n\n# Project Context\n"
-                + "\n".join(f"{k}: {v}" for k, v in user_ctx.items())
+            base = f"{base}\n\n# Project Context\n" + "\n".join(
+                f"{k}: {v}" for k, v in user_ctx.items()
             )
         agents_md = load_agents_md(str(workspace))
         if agents_md:
@@ -201,7 +218,9 @@ def _esp_csm_prompt(ctx: Any, base: str) -> str | None:
         if built and len(built) > len(base) * 0.5:
             return built
     except Exception:  # 非致命: prompt_builder 委托失败则回落 base
-        logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
+        logger.debug(
+            "prompt_builder delegation failed, fallback to base", exc_info=True
+        )
     return None
 
 
@@ -218,15 +237,21 @@ class ContextMixin:
 
     # Heavy simulation tools filtered out in chat mode.
     _EXPENSIVE_TOOL_NAMES: set[str] = {
-        "vasp_tool", "lammps_tool", "cp2k_tool", "transolver_tool",
+        "vasp_tool",
+        "lammps_tool",
+        "cp2k_tool",
+        "transolver_tool",
     }
 
     # Tools that stay visible regardless of query relevance.
     # 用**注册名**: 早期写的 `memory_tool`/`search_tool`/`knowledge_search` 与注册表
     # 对不上, 检索时这几个"常驻"工具其实没常驻 (MECE 审计记的允许表死项).
     _ALWAYS_ON_TOOLS: set[str] = {
-        "remember", "recall", "rag_tool",
-        "structure_tool", "web_search_tool",
+        "remember",
+        "recall",
+        "rag_tool",
+        "structure_tool",
+        "web_search_tool",
     }
 
     # Above this tool count, switch to query-aware retrieval.
@@ -273,9 +298,7 @@ class ContextMixin:
         tools = list(self.langchain_tools)
 
         if self._mode == "chat":
-            tools = [
-                t for t in tools if t.name not in self._EXPENSIVE_TOOL_NAMES
-            ]
+            tools = [t for t in tools if t.name not in self._EXPENSIVE_TOOL_NAMES]
 
         phase_tools = self._phase_manager.tool_filter()
         if phase_tools is not None:
@@ -292,7 +315,9 @@ class ContextMixin:
         return tools
 
     def _retrieve_relevant_tools(
-        self, tools: list[Any], query: str,
+        self,
+        tools: list[Any],
+        query: str,
     ) -> list[Any]:
         """Keyword-based tool retrieval — keep top-K by relevance score.
 
@@ -303,11 +328,40 @@ class ContextMixin:
         query_lower = query.lower()
         # 分词: 空格 + 常见标点
         keywords = {
-            w for w in query_lower.replace(",", " ").replace(".", " ")
-            .replace("?", " ").replace("/", " ").split()
+            w
+            for w in query_lower.replace(",", " ")
+            .replace(".", " ")
+            .replace("?", " ")
+            .replace("/", " ")
+            .split()
             if len(w) > 2
         }
 
+        scored, always_on = ContextMixin._score_tools(
+            self, tools, keywords, query_lower
+        )
+
+        # 按分数降序, 取 top-K, 加上 always-on
+        scored.sort(key=lambda x: -x[0])
+        top_k = self._TOOL_RETRIEVAL_TOP_K - len(always_on)
+        retrieved = [t for _, t in scored[: max(0, top_k)]]
+
+        result = always_on + retrieved
+        if len(result) < len(tools):
+            logger.debug(
+                "tool retrieval: %d → %d (query: %s)",
+                len(tools),
+                len(result),
+                query[:60],
+            )
+        return result
+
+    def _score_tools(
+        self,
+        tools: list[Any],
+        keywords: set[str],
+        query_lower: str,
+    ) -> tuple[list[tuple[float, Any]], list[Any]]:
         scored: list[tuple[float, Any]] = []
         always_on: list[Any] = []
 
@@ -326,32 +380,12 @@ class ContextMixin:
                 continue
 
             score = sum(1 for kw in keywords if kw in blob)
-
-            # SkillEvolutionLayer 信念加成: 高置信度工具小幅提分
-            try:
-                from huginn.skills.evolution import SkillEvolutionLayer
-                layer = SkillEvolutionLayer.shared()
-                beliefs = layer.get_tool_beliefs(name)
-                if beliefs:
-                    avg_conf = sum(b.confidence for b in beliefs) / len(beliefs)
-                    score += avg_conf * 0.5
-            except Exception:  # 非致命: skill evolution 信念不可用则忽略
-                logger.debug("skill evolution beliefs unavailable", exc_info=True)
+            bonus = _tool_belief_bonus(name)
+            if bonus:
+                score += bonus
 
             scored.append((score, t))
-
-        # 按分数降序, 取 top-K, 加上 always-on
-        scored.sort(key=lambda x: -x[0])
-        top_k = self._TOOL_RETRIEVAL_TOP_K - len(always_on)
-        retrieved = [t for _, t in scored[:max(0, top_k)]]
-
-        result = always_on + retrieved
-        if len(result) < len(tools):
-            logger.debug(
-                "tool retrieval: %d → %d (query: %s)",
-                len(tools), len(result), query[:60],
-            )
-        return result
+        return scored, always_on
 
     def _tool_names_for_validation(self) -> set[str]:
         """Collect all visible tool names for ToolNameValidationHook."""
@@ -455,6 +489,7 @@ class ContextMixin:
         """
         if self._tool_description_text is None:
             import json as _json
+
             parts = []
             for t in self._effective_tools():
                 args_schema = getattr(t, "args_schema", None)

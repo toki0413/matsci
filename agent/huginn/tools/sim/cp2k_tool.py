@@ -22,6 +22,94 @@ from huginn.tools.base import HuginnTool, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _cp2k_coord_lines(species: list[str], positions: list[Any]) -> list[str]:
+    """渲染 &COORD 段中的原子坐标行."""
+    coords = []
+    for elem, pos in zip(species, positions):
+        coords.append(f"  {elem:<4} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
+    return coords
+
+
+def _cp2k_input_lines(args: Any, prefix: str, cell: list[Any], units: str) -> list[str]:
+    """渲染 CP2K 输入文件主体行 (到 &COORD UNIT 为止)."""
+    return [
+        "&GLOBAL",
+        f"  PROJECT {prefix}",
+        f"  RUN_TYPE {args.run_type}",
+        "  PRINT_LEVEL MEDIUM",
+        "&END GLOBAL",
+        "",
+        "&FORCE_EVAL",
+        "  METHOD Quickstep",
+        "  &DFT",
+        f"    BASIS_SET_FILE_NAME {args.basis_set_file}",
+        f"    POTENTIAL_FILE_NAME {args.potential_file}",
+        "    &QS",
+        "      EPS_DEFAULT 1.0E-12",
+        "    &END QS",
+        "    &MGRID",
+        f"      CUTOFF {args.cutoff}",
+        f"      REL_CUTOFF {args.rel_cutoff}",
+        "    &END MGRID",
+        "    &XC",
+        "      &XC_FUNCTIONAL",
+        f"        &{args.method} T",
+        "        &END",
+        "      &END XC_FUNCTIONAL",
+        "    &END XC",
+        "    &SCF",
+        f"      EPS_SCF {args.scf_eps}",
+        f"      MAX_SCF {args.max_scf}",
+        "    &END SCF",
+        "  &END DFT",
+        "  &SUBSYS",
+        "    &CELL",
+        f"      A {cell[0][0]:.8f} {cell[0][1]:.8f} {cell[0][2]:.8f}",
+        f"      B {cell[1][0]:.8f} {cell[1][1]:.8f} {cell[1][2]:.8f}",
+        f"      C {cell[2][0]:.8f} {cell[2][1]:.8f} {cell[2][2]:.8f}",
+        "      PERIODIC XYZ",
+        "    &END CELL",
+        "    &COORD",
+        f"      UNIT {units}",
+    ]
+
+
+_CP2K_MD_MOTION_LINES: list[str] = [
+    "",
+    "&MOTION",
+    "  &MD",
+    "    ENSEMBLE NVT",
+    "    TEMPERATURE 300.0",
+    "    TIMESTEP 1.0",
+    "    STEPS 100",
+    "    &THERMOSTAT",
+    "      TYPE NOSE",
+    "      &NOSE",
+    "        LENGTH 3",
+    "        YOSHIDA 3",
+    "        TIMECON 100.0",
+    "        MTS 2",
+    "      &END NOSE",
+    "    &END THERMOSTAT",
+    "  &END MD",
+    "&END MOTION",
+]
+
+
+def _attach_cp2k_audit(args: Any, parsed: dict[str, Any], data: dict[str, Any]) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit(
+            "cp2k_tool", args.run_type, parsed, args.model_dump()
+        )
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
 def _cp2k_parse_energy(lines: list[str]) -> float | None:
     """扫描 total energy 行, 取最后一个像总能 (负值或 >1) 的数."""
     energy: float | None = None
@@ -42,11 +130,7 @@ def _cp2k_parse_forces(lines: list[str]) -> list[list[float]]:
     in_forces = False
     force_block: list[list[float]] = []
     for line in lines:
-        if (
-            "ATOMIC FORCES in" in line
-            or "FORCES" in line
-            and "atom" in line.lower()
-        ):
+        if "ATOMIC FORCES in" in line or "FORCES" in line and "atom" in line.lower():
             in_forces = True
             force_block = []
             continue
@@ -191,51 +275,8 @@ class Cp2kTool(HuginnTool):
         cell = args.structure.get("cell", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         units = args.structure.get("units", "ANGSTROM")
 
-        coords = []
-        for elem, pos in zip(species, positions):
-            coords.append(f"  {elem:<4} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
-
-        lines = [
-            "&GLOBAL",
-            f"  PROJECT {prefix}",
-            f"  RUN_TYPE {args.run_type}",
-            "  PRINT_LEVEL MEDIUM",
-            "&END GLOBAL",
-            "",
-            "&FORCE_EVAL",
-            "  METHOD Quickstep",
-            "  &DFT",
-            f"    BASIS_SET_FILE_NAME {args.basis_set_file}",
-            f"    POTENTIAL_FILE_NAME {args.potential_file}",
-            "    &QS",
-            "      EPS_DEFAULT 1.0E-12",
-            "    &END QS",
-            "    &MGRID",
-            f"      CUTOFF {args.cutoff}",
-            f"      REL_CUTOFF {args.rel_cutoff}",
-            "    &END MGRID",
-            "    &XC",
-            "      &XC_FUNCTIONAL",
-            f"        &{args.method} T",
-            "        &END",
-            "      &END XC_FUNCTIONAL",
-            "    &END XC",
-            "    &SCF",
-            f"      EPS_SCF {args.scf_eps}",
-            f"      MAX_SCF {args.max_scf}",
-            "    &END SCF",
-            "  &END DFT",
-            "  &SUBSYS",
-            "    &CELL",
-            f"      A {cell[0][0]:.8f} {cell[0][1]:.8f} {cell[0][2]:.8f}",
-            f"      B {cell[1][0]:.8f} {cell[1][1]:.8f} {cell[1][2]:.8f}",
-            f"      C {cell[2][0]:.8f} {cell[2][1]:.8f} {cell[2][2]:.8f}",
-            "      PERIODIC XYZ",
-            "    &END CELL",
-            "    &COORD",
-            f"      UNIT {units}",
-        ]
-        lines.extend(coords)
+        lines = _cp2k_input_lines(args, prefix, cell, units)
+        lines.extend(_cp2k_coord_lines(species, positions))
         lines.extend(
             [
                 "    &END COORD",
@@ -249,28 +290,7 @@ class Cp2kTool(HuginnTool):
         )
 
         if args.run_type == "MD":
-            lines.extend(
-                [
-                    "",
-                    "&MOTION",
-                    "  &MD",
-                    "    ENSEMBLE NVT",
-                    "    TEMPERATURE 300.0",
-                    "    TIMESTEP 1.0",
-                    "    STEPS 100",
-                    "    &THERMOSTAT",
-                    "      TYPE NOSE",
-                    "      &NOSE",
-                    "        LENGTH 3",
-                    "        YOSHIDA 3",
-                    "        TIMECON 100.0",
-                    "        MTS 2",
-                    "      &END NOSE",
-                    "    &END THERMOSTAT",
-                    "  &END MD",
-                    "&END MOTION",
-                ]
-            )
+            lines.extend(_CP2K_MD_MOTION_LINES)
 
         input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return input_path
@@ -312,16 +332,7 @@ class Cp2kTool(HuginnTool):
         }
 
         # Physics audit — CP2K shares DFT energy/convergence semantics with VASP
-        try:
-            from huginn.execution.physics_auditor import PhysicsAuditor
-
-            auditor = PhysicsAuditor()
-            audit_report = auditor.audit(
-                "cp2k_tool", args.run_type, parsed, args.model_dump()
-            )
-            data["physics_audit"] = audit_report.to_dict()
-        except Exception:  # 防御: 审计失败不阻断结果返回
-            logger.debug("audit failure can't block result delivery", exc_info=True)
+        _attach_cp2k_audit(args, parsed, data)
 
         return ToolResult(
             data=data,

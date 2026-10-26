@@ -26,7 +26,9 @@ from tests.fixtures.fake_llm import make_callable_llm
 # Full-cycle autoloop 跑 7 个 phase, 本地 ~230s. CI runner --timeout=120 会杀.
 # 跟 test_chat_loop 同款: HUGINN_CI=1 时 skip, 本地照跑.
 _skip_ci = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
-pytestmark = pytest.mark.skipif(_skip_ci, reason="autoloop full cycle too slow on CI runner")
+pytestmark = pytest.mark.skipif(
+    _skip_ci, reason="autoloop full cycle too slow on CI runner"
+)
 
 # ── shared helpers (trimmed from test_autoloop_e2e) ───────────────
 
@@ -54,6 +56,7 @@ def _make_stage_llm(plan_fn=None):
 
     *plan_fn* lets the caller override the plan response (for gate tests).
     """
+
     def respond(prompt: str) -> str:
         low = prompt.lower()
 
@@ -103,9 +106,15 @@ async def _noop_maybe_clarify(self, *a, **kw):
 
 def _stub_heavy_calls(monkeypatch, fake_llm):
     monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda settings: fake_llm)
-    monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner())
-    monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda *a, **kw: MagicMock())
-    monkeypatch.setattr("huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr(
+        "huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner()
+    )
+    monkeypatch.setattr(
+        "huginn.autoloop.engine.CoderRunner", lambda *a, **kw: MagicMock()
+    )
+    monkeypatch.setattr(
+        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock()
+    )
     monkeypatch.setattr(
         "huginn.agents.speculator.on_turn_start",
         lambda *a, **kw: {"hint": "", "predictions": []},
@@ -113,7 +122,9 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
     )
     # ponytail: KB 第一次懒加载会 seed_knowledge_base 跑 ONNX 嵌入,
     # CI 首次冷启动 > 120s timeout. _build_kb_text 已处理 None, 直接跳过.
-    monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
+    monkeypatch.setattr(
+        "huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None
+    )
     # KG 单例从 conjecture.get_kg 懒加载到 ~/.huginn, CI 上会真写文件污染 home.
     # get_kg 返回 None 时 _persist_to_kg/_fetch_domain_context 都安全跳过.
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
@@ -186,7 +197,14 @@ class TestAutoloopFullCycle:
         assert isinstance(result, AutoloopResult)
         names = [p.name for p in result.phases]
         # 6 stages 全跑完 + report
-        for expected in ("hypothesize", "plan", "execute", "validate", "learn", "report"):
+        for expected in (
+            "hypothesize",
+            "plan",
+            "execute",
+            "validate",
+            "learn",
+            "report",
+        ):
             assert expected in names, f"缺 {expected}, 实际 {names}"
         assert len(names) >= 7, f"phase 数 < 7, 实际 {names}"
         for phase in result.phases:
@@ -200,23 +218,48 @@ class TestAutoloopFullCycle:
 # ── 2. phase gate: invalid plan → rejected → retry ────────────────
 
 
+def _gate_retry_plan_fn():
+    """First plan has an empty description (gate blocks), later plans succeed."""
+    plan_calls = [0]
+
+    def plan_fn():
+        plan_calls[0] += 1
+        if plan_calls[0] == 1:
+            # empty string → _parse_plan gives description="" → gate blocks
+            return ""
+        return "MODE: coder\nDESCRIPTION: Add a convergence check to the script."
+
+    return plan_fn
+
+
+def _assert_gate_retry_phases(result) -> None:
+    # First plan was blocked (empty description), second succeeded — so we
+    # should see at least 2 plan attempts.
+    plan_phases = [p for p in result.phases if p.name == "plan"]
+    assert len(plan_phases) >= 2, (
+        f"expected >= 2 plan phases (gate retry), got {len(plan_phases)}"
+    )
+
+    # First plan had empty description (gate blocked it)
+    assert plan_phases[0].result["description"] == ""
+
+    # A later plan had a real description and the pipeline continued
+    assert plan_phases[-1].result["description"] != ""
+
+    # Execute phase exists (pipeline got past the gate on retry)
+    execute_phases = [p for p in result.phases if p.name == "execute"]
+    assert len(execute_phases) >= 1
+
+    # Report still ran
+    report_phases = [p for p in result.phases if p.name == "report"]
+    assert len(report_phases) >= 1
+
+
 class TestAutoloopPhaseGate:
     @pytest.mark.asyncio
     async def test_gate_blocks_then_retries(self, tmp_path, monkeypatch):
         """First plan has empty description → gate blocks → second plan passes."""
-        plan_calls = [0]
-
-        def plan_fn():
-            plan_calls[0] += 1
-            if plan_calls[0] == 1:
-                # empty string → _parse_plan gives description="" → gate blocks
-                return ""
-            return (
-                "MODE: coder\n"
-                "DESCRIPTION: Add a convergence check to the script."
-            )
-
-        fake_llm = _make_stage_llm(plan_fn=plan_fn)
+        fake_llm = _make_stage_llm(plan_fn=_gate_retry_plan_fn())
         engine, _ = _make_engine(tmp_path, fake_llm, monkeypatch)
 
         (tmp_path / "test_smoke.py").write_text(
@@ -234,28 +277,7 @@ class TestAutoloopPhaseGate:
         finally:
             _restore_gate(gate_state)
 
-        # First plan was blocked (empty description), second succeeded.
-        # So we should see more than 7 phases (at least 2 plan attempts).
-        plan_phases = [p for p in result.phases if p.name == "plan"]
-        assert len(plan_phases) >= 2, (
-            f"expected >= 2 plan phases (gate retry), got {len(plan_phases)}"
-        )
-
-        # First plan had empty description (gate blocked it)
-        first_plan = plan_phases[0].result
-        assert first_plan["description"] == ""
-
-        # A later plan had a real description and the pipeline continued
-        last_plan = plan_phases[-1].result
-        assert last_plan["description"] != ""
-
-        # Execute phase exists (pipeline got past the gate on retry)
-        execute_phases = [p for p in result.phases if p.name == "execute"]
-        assert len(execute_phases) >= 1
-
-        # Report still ran
-        report_phases = [p for p in result.phases if p.name == "report"]
-        assert len(report_phases) >= 1
+        _assert_gate_retry_phases(result)
 
 
 # ── 3. budget exhaustion: max_iterations limit → stops ─────────────
@@ -289,7 +311,9 @@ class TestAutoloopBudgetExhaustion:
         assert len(actions) == 2, f"max_iter=2 应该 2 actions, 实际 {names}"
 
     @pytest.mark.asyncio
-    async def test_progressive_budget_rejects_expensive_mode(self, tmp_path, monkeypatch):
+    async def test_progressive_budget_rejects_expensive_mode(
+        self, tmp_path, monkeypatch
+    ):
         """Workflow mode is rejected at medium tier (iteration 11+).
 
         ponytail: We don't run 11 full iterations (too slow). Instead we

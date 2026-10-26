@@ -44,6 +44,55 @@ def _modules(root: Path, prefix: str) -> dict[str, Path]:
     return mods
 
 
+def _pkg_of(mod: str, known: set[str]) -> str:
+    """相对 import 的基准: 包自身 (有子模块) 或父包."""
+    if any(k.startswith(mod + ".") for k in known):
+        return mod
+    return mod.rsplit(".", 1)[0] if "." in mod else mod
+
+
+def _base_of(mod: str, level: int, module: str | None, known: set[str]) -> str:
+    up = _pkg_of(mod, known).split(".")
+    if level > 1:
+        up = up[: len(up) - (level - 1)]
+    base = ".".join(up)
+    if module:
+        base = f"{base}.{module}" if base else module
+    return base
+
+
+def _collect_imports(node: ast.AST, mod: str, known: set[str], out: list[str]) -> None:
+    """深度优先收集 ``node`` 下 import-time 执行的 import 目标."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            continue  # 延迟 import: 断环手段, 不算边
+        if isinstance(child, ast.If) and "TYPE_CHECKING" in ast.dump(child.test):
+            continue  # 永不执行
+        if isinstance(child, ast.Import):
+            out.extend(a.name for a in child.names)
+        elif isinstance(child, ast.ImportFrom):
+            if child.level:
+                b = _base_of(mod, child.level, child.module, known)
+                if b:
+                    out.extend([b, *[f"{b}.{a.name}" for a in child.names]])
+            elif child.module:
+                out.extend(
+                    [child.module, *[f"{child.module}.{a.name}" for a in child.names]]
+                )
+        _collect_imports(child, mod, known, out)
+
+
+def _module_imports(path: Path, mod: str, known: set[str]) -> list[str]:
+    """解析单个模块文件, 按源码顺序返回其 import-time 依赖目标."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    except (SyntaxError, ValueError):
+        return []
+    targets: list[str] = []
+    _collect_imports(tree, mod, known, targets)
+    return targets
+
+
 def _edges(mods: dict[str, Path], prefix: str) -> dict[str, set[str]]:
     """模块级 **import-time** 依赖图的边 (只保留指向本包内已知模块的 import).
 
@@ -57,50 +106,9 @@ def _edges(mods: dict[str, Path], prefix: str) -> dict[str, set[str]]:
     ~45 倍 (181/14 → 真实 0). 现在只测"import 时会炸/需要固定顺序"的真环.
     """
     known = set(mods)
-
-    def pkg_of(mod: str) -> str:
-        # 相对 import 的基准: 包自身 (有子模块) 或父包.
-        if any(k.startswith(mod + ".") for k in known):
-            return mod
-        return mod.rsplit(".", 1)[0] if "." in mod else mod
-
-    def base_of(mod: str, level: int, module: str | None) -> str:
-        up = pkg_of(mod).split(".")
-        if level > 1:
-            up = up[: len(up) - (level - 1)]
-        base = ".".join(up)
-        if module:
-            base = f"{base}.{module}" if base else module
-        return base
-
-    def collect(node: ast.AST, out: list[str]) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-                continue  # 延迟 import: 断环手段, 不算边
-            if isinstance(child, ast.If) and "TYPE_CHECKING" in ast.dump(child.test):
-                continue  # 永不执行
-            if isinstance(child, ast.Import):
-                out.extend(a.name for a in child.names)
-            elif isinstance(child, ast.ImportFrom):
-                if child.level:
-                    b = base_of(mod, child.level, child.module)
-                    if b:
-                        out.extend([b, *[f"{b}.{a.name}" for a in child.names]])
-                elif child.module:
-                    out.extend(
-                        [child.module, *[f"{child.module}.{a.name}" for a in child.names]]
-                    )
-            collect(child, out)
-
     edges: dict[str, set[str]] = {m: set() for m in mods}
     for mod, path in mods.items():
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
-        except (SyntaxError, ValueError):
-            continue
-        targets: list[str] = []
-        collect(tree, targets)
-        for t in targets:
+        for t in _module_imports(path, mod, known):
             if t.startswith(prefix) and t in known and t != mod:
                 edges[mod].add(t)
     return edges

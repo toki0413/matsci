@@ -31,7 +31,9 @@ _BATCH_VALIDATE_CONCURRENCY = 5
 
 
 class StructureToolInput(BaseModel):
-    action: Literal["read", "analyze", "convert", "compare", "batch_validate"] = Field(...)
+    action: Literal["read", "analyze", "convert", "compare", "batch_validate"] = Field(
+        ...
+    )
     file_path: str | None = Field(
         default=None,
         description="Path to structure file (POSCAR, CIF, XYZ, etc.)",
@@ -58,9 +60,7 @@ class StructureToolInput(BaseModel):
                 )
         else:
             if not self.file_path:
-                raise ValueError(
-                    f"action '{self.action}' requires 'file_path'"
-                )
+                raise ValueError(f"action '{self.action}' requires 'file_path'")
         return self
 
 
@@ -120,6 +120,57 @@ def _basic_structure_info(path: Path) -> StructureToolOutput:
     return output
 
 
+def _dedupe_files(files: list[str]) -> list[str]:
+    """去重保序, 同一个文件验两遍没意义."""
+    seen: set[str] = set()
+    unique_files: list[str] = []
+    for f in files:
+        if f not in seen:
+            seen.add(f)
+            unique_files.append(f)
+    return unique_files
+
+
+async def _validate_one_structure(tool, file_path: str, context, sem) -> dict[str, Any]:
+    """验单个文件: 走 _call_cached 复用 mtime 缓存."""
+    single_args = StructureToolInput(action="read", file_path=file_path)
+    async with sem:
+        try:
+            result = await tool._call_cached(single_args, context)
+        except Exception as exc:
+            return {
+                "file": file_path,
+                "valid": False,
+                "info": None,
+                "error": str(exc),
+            }
+    if not result.success:
+        return {
+            "file": file_path,
+            "valid": False,
+            "info": None,
+            "error": result.error or "unknown error",
+        }
+    return {
+        "file": file_path,
+        "valid": True,
+        "info": result.data,
+        "error": None,
+    }
+
+
+def _batch_validate_data(per_file: list[dict[str, Any]]) -> dict[str, Any]:
+    """汇总 per-file 结果."""
+    valid_count = sum(1 for r in per_file if r["valid"])
+    return {
+        "action": "batch_validate",
+        "total": len(per_file),
+        "valid": valid_count,
+        "invalid": len(per_file) - valid_count,
+        "results": per_file,
+    }
+
+
 class StructureTool(HuginnTool):
     """Tool for reading and analyzing crystal structures."""
 
@@ -165,7 +216,9 @@ class StructureTool(HuginnTool):
                 error_code=404,
             )
         if args.reference_path:
-            vr2 = HandleValidator.validate(HandleType.FILE_PATH, args.reference_path, context)
+            vr2 = HandleValidator.validate(
+                HandleType.FILE_PATH, args.reference_path, context
+            )
             if not vr2.result:
                 return ValidationResult(
                     result=False,
@@ -217,60 +270,17 @@ class StructureTool(HuginnTool):
                 error="batch_validate requires non-empty 'files' list",
             )
 
-        # 去重保序, 同一个文件验两遍没意义
-        seen: set[str] = set()
-        unique_files: list[str] = []
-        for f in files:
-            if f not in seen:
-                seen.add(f)
-                unique_files.append(f)
-
+        unique_files = _dedupe_files(files)
         sem = asyncio.Semaphore(_BATCH_VALIDATE_CONCURRENCY)
-
-        async def _validate_one(file_path: str) -> dict[str, Any]:
-            """验单个文件: 走 _call_cached 复用 mtime 缓存."""
-            single_args = StructureToolInput(action="read", file_path=file_path)
-            async with sem:
-                try:
-                    result = await self._call_cached(single_args, context)
-                except Exception as exc:
-                    return {
-                        "file": file_path,
-                        "valid": False,
-                        "info": None,
-                        "error": str(exc),
-                    }
-            if not result.success:
-                return {
-                    "file": file_path,
-                    "valid": False,
-                    "info": None,
-                    "error": result.error or "unknown error",
-                }
-            return {
-                "file": file_path,
-                "valid": True,
-                "info": result.data,
-                "error": None,
-            }
 
         # 并发跑所有文件, 单个挂掉不影响其它
         per_file = await asyncio.gather(
-            *[_validate_one(f) for f in unique_files]
+            *[_validate_one_structure(self, f, context, sem) for f in unique_files]
         )
-
-        valid_count = sum(1 for r in per_file if r["valid"])
-        data = {
-            "action": "batch_validate",
-            "total": len(per_file),
-            "valid": valid_count,
-            "invalid": len(per_file) - valid_count,
-            "results": per_file,
-        }
         # 整体 success=True: 即使部分文件无效, batch 本身跑成功了,
         # 调用方应该看 per-file 的 valid 字段判断. success=False 留给
         # batch 本身挂掉的场景 (上面已经 early return 了).
-        return ToolResult(data=data, success=True)
+        return ToolResult(data=_batch_validate_data(per_file), success=True)
 
     @cacheable(
         ttl_seconds=24 * 3600,

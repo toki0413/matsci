@@ -1,4 +1,5 @@
 """RCB Step 3 对抗审计 — 依赖 rcb_utils / rcb_critique / rcb_fork_merge."""
+
 from __future__ import annotations
 
 import contextlib
@@ -58,24 +59,86 @@ async def _step3_adversarial(
     触发 Step3→Step2 reverse 1-simplex 让 agent 回 execute 重跑. 最多 2 次
     (spec §"回退次数上限"), 超过写 directive_rejections.jsonl 强制 finalize.
     """
+    report_path, checklist, final_verdict = await _step3_first_pass(
+        ws, model, agent, checklist, evals_history, stream_chat_fn, rcb_csm_advance_fn
+    )
+
+    retry_ctx = (persona, kb, mem_mgr, evals_history)
+    final_verdict = await _run_retry_stage(
+        ws, model, checklist, report_path, stream_chat_fn, retry_ctx, final_verdict
+    )
+
+    fin_ctx = (persona_name, task_id, cross_task_store)
+    return await _finalize_step3(
+        ws, checklist, final_verdict, mem_mgr, stream_chat_fn, fin_ctx
+    )
+
+
+async def _step3_first_pass(
+    ws: Path,
+    model: Any,
+    agent: Any,
+    checklist: str,
+    evals_history: list,
+    stream_chat_fn: Any,
+    rcb_csm_advance_fn: Any,
+) -> tuple[Path, str, str | None]:
+    """首轮: object/meta 双层 critique + execute."""
+    (
+        report_path,
+        checklist,
+        final_verdict,
+        external_critique_block,
+    ) = await _critique_step3(
+        ws, model, agent, checklist, evals_history, rcb_csm_advance_fn
+    )
+
+    await _run_step3_execute(
+        ws, stream_chat_fn, _build_step3_prompt(external_critique_block)
+    )
+    return report_path, checklist, final_verdict
+
+
+async def _critique_step3(
+    ws: Path,
+    model: Any,
+    agent: Any,
+    checklist: str,
+    evals_history: list,
+    rcb_csm_advance_fn: Any,
+) -> tuple[Path, str, str | None, str]:
+    """首轮: 打印头 + CSM 推进 + 对象层 critique + meta 层触发."""
     print("\n=== Step 3: Adversarial Self-Critique ===\n", flush=True)
     rcb_csm_advance_fn("tool_failure", {"reason": "adversarial critique — find gaps"})
 
     report_path = ws / "report" / "report.md"
-    checklist, object_verdict, external_critique_block, final_verdict = (
-        await _run_object_critique(ws, model, checklist, evals_history, report_path)
-    )
+    (
+        checklist,
+        object_verdict,
+        external_critique_block,
+        final_verdict,
+    ) = await _run_object_critique(ws, model, checklist, evals_history, report_path)
 
     # Layer 2 — meta mode: 触发 CSM 进 S6_FEEDBACK → S7_SELF_MODIFY
     _trigger_meta_feedback(agent, object_verdict, external_critique_block)
+    return report_path, checklist, final_verdict, external_critique_block
 
-    await _run_step3_execute(ws, stream_chat_fn, _build_step3_prompt(external_critique_block))
 
-    # v14 Task 8: Step3→Step2 回退通道 (拓扑许可动力学)
+async def _run_retry_stage(
+    ws: Path,
+    model: Any,
+    checklist: str,
+    report_path: Path,
+    stream_chat_fn: Any,
+    retry_ctx: tuple,
+    initial_verdict: str | None,
+) -> str | None:
+    """v14 Task 8: Step3→Step2 回退通道 (拓扑许可动力学)."""
     # 重新 critique 看 agent 修没修好; 仍 fix_needed + β_1>0 + gap 类型匹配
     # 则发 step3_retry 让 agent 回 execute 模式重跑. 硬上限 2 次.
+    persona, kb, mem_mgr, evals_history = retry_ctx
     xretry_path = _prepare_cross_retry_path(ws)
-    final_verdict = await _run_step3_retry_loop(
+    return await _run_step3_retry_loop(
         ws=ws,
         model=model,
         checklist=checklist,
@@ -86,9 +149,20 @@ async def _step3_adversarial(
         mem_mgr=mem_mgr,
         evals_history=evals_history,
         xretry_path=xretry_path,
-        initial_verdict=final_verdict,
+        initial_verdict=initial_verdict,
     )
 
+
+async def _finalize_step3(
+    ws: Path,
+    checklist: str,
+    final_verdict: str | None,
+    mem_mgr: Any,
+    stream_chat_fn: Any,
+    fin_ctx: tuple,
+) -> str | None:
+    """收尾: evidence manifest + learn 回流 + 盲重构验证."""
+    persona_name, task_id, cross_task_store = fin_ctx
     # 生成 evidence manifest 用于复现性审计.
     _write_evidence_manifest(ws)
 
@@ -124,21 +198,37 @@ async def _run_object_critique(
     返回 (可能被追加信号的 checklist, object_verdict, 外部 critique 文本, verdict).
     """
     if not (report_path.exists() and checklist):
-        print("[adversarial_critique: skipped — report.md or checklist missing]", flush=True)
+        print(
+            "[adversarial_critique: skipped — report.md or checklist missing]",
+            flush=True,
+        )
         return checklist, None, "", None
     try:
         report_text = report_path.read_text(encoding="utf-8")
-        print(f"[adversarial_critique: reading {len(report_text)} chars of report.md]", flush=True)
+        print(
+            f"[adversarial_critique: reading {len(report_text)} chars of report.md]",
+            flush=True,
+        )
         checklist = _inject_repro_gate(report_text, ws, checklist)
         checklist = _inject_step2_signals(ws, checklist)
         checklist = _inject_uncertainty_signals(evals_history, checklist)
         object_verdict = await adversarial_critique(
-            model, report_text, checklist, mode="object",
+            model,
+            report_text,
+            checklist,
+            mode="object",
         )
         object_verdict = _apply_metric_recompute(object_verdict, report_text, ws)
         external_critique_block = format_critique_for_agent(object_verdict)
-        print(f"[adversarial_critique: verdict={object_verdict.get('overall_verdict', '?')}]", flush=True)
-        final_verdict = object_verdict.get("overall_verdict", "fix_needed") if object_verdict else None
+        print(
+            f"[adversarial_critique: verdict={object_verdict.get('overall_verdict', '?')}]",
+            flush=True,
+        )
+        final_verdict = (
+            object_verdict.get("overall_verdict", "fix_needed")
+            if object_verdict
+            else None
+        )
         return checklist, object_verdict, external_critique_block, final_verdict
     except Exception as e:
         print(f"[adversarial_critique: skipped due to error: {e}]", flush=True)
@@ -161,6 +251,7 @@ async def _run_step3_execute(ws: Path, stream_chat_fn: Any, step3_prompt: str) -
         await stream_chat_fn(step3_prompt, "step3", tid=_step3_tid, fresh_history=True)
     except Exception as _e:
         import traceback as _tb
+
         print(f"[step3] stream_chat_fn failed: {_e}\n{_tb.format_exc()}", flush=True)
 
 
@@ -169,6 +260,7 @@ def _inject_repro_gate(report_text: str, ws: Path, checklist: str) -> str:
     # ponytail: _reproduction_gate 内部已抽 sci-notation (|exp|>=3), 不重复抽取.
     try:
         from huginn.cli.rcb_fork_merge import _reproduction_gate
+
         _repro_ok, _repro_note = _reproduction_gate(report_text, ws / "outputs")
         if not _repro_ok:
             # gate 是粗筛 advisory, 不是 veto. v21 死在 veto: agent 写
@@ -178,7 +270,10 @@ def _inject_repro_gate(report_text: str, ws: Path, checklist: str) -> str:
             # 本就抓不到, 作为硬 veto 会系统性误杀非能量类论文.
             # 注入 note 让 LLM critique 判断, 不跳过.
             print(f"[Step3] repro gate advisory: {_repro_note}", flush=True)
-            checklist = checklist + f"\n\n## 复现性门禁 (advisory, 非否决)\n{_repro_note}\n请结合 outputs/ 产物完整性综合判断, 勿仅凭门禁结果打分.\n"
+            checklist = (
+                checklist
+                + f"\n\n## 复现性门禁 (advisory, 非否决)\n{_repro_note}\n请结合 outputs/ 产物完整性综合判断, 勿仅凭门禁结果打分.\n"
+            )
     except Exception as _e:
         print(f"[Step3] repro gate skipped: {_e}", flush=True)
     return checklist
@@ -222,13 +317,19 @@ def _inject_uncertainty_signals(evals_history: list, checklist: str) -> str:
     """P2 check: 误差建模缺失信号注入 critique."""
     try:
         from huginn.metacog.step_evaluator import check_uncertainty_propagation
+
         _unc_issues = check_uncertainty_propagation(evals_history)
         if _unc_issues:
             _unc_block = "\n\n## 误差建模缺失 (P2 check)\n"
             for iss in _unc_issues:
-                _unc_block += f"- step {iss['step_id']}: {iss['issue']} — {iss['detail']}\n"
+                _unc_block += (
+                    f"- step {iss['step_id']}: {iss['issue']} — {iss['detail']}\n"
+                )
             checklist = checklist + _unc_block
-            print(f"[P2: {len(_unc_issues)} uncertainty issue(s) injected to critique]", flush=True)
+            print(
+                f"[P2: {len(_unc_issues)} uncertainty issue(s) injected to critique]",
+                flush=True,
+            )
     except Exception as _ue:
         print(f"[P2 uncertainty check skipped: {_ue}]", flush=True)
     return checklist
@@ -242,82 +343,105 @@ def _apply_metric_recompute(object_verdict: dict, report_text: str, ws: Path) ->
             object_verdict.setdefault("recomputed_red_flags", []).extend(recomputed)
             if object_verdict.get("overall_verdict") == "pass":
                 object_verdict["overall_verdict"] = "fix_needed"
-            print(f"[G28: {len(recomputed)} metric claim(s) mismatch recomputed values]", flush=True)
+            print(
+                f"[G28: {len(recomputed)} metric claim(s) mismatch recomputed values]",
+                flush=True,
+            )
     except Exception as e:
         print(f"[G28: recompute skipped: {e}]", flush=True)
     return object_verdict
 
 
-def _trigger_meta_feedback(agent: Any, object_verdict: dict | None,
-                           external_critique_block: str) -> None:
+def _trigger_meta_feedback(
+    agent: Any, object_verdict: dict | None, external_critique_block: str
+) -> None:
     """Layer 2 — meta mode: 触发 CSM 进 S6_FEEDBACK → S7_SELF_MODIFY."""
     try:
         from huginn.cognitive_engine import CognitiveState, TransitionSignal
+
         csm = getattr(agent, "_csm", None)
         if csm is None or object_verdict is None:
             return
         verdict_flag = object_verdict.get("overall_verdict", "fix_needed")
         sig = "tool_failure" if verdict_flag != "pass" else "tool_success"
-        new_state = csm.transition(TransitionSignal(sig, {
-            "objective": "step3_critique",
-            "result_summary": f"object_verdict={verdict_flag}",
-        }))
+        new_state = csm.transition(
+            TransitionSignal(
+                sig,
+                {
+                    "objective": "step3_critique",
+                    "result_summary": f"object_verdict={verdict_flag}",
+                },
+            )
+        )
         if new_state == CognitiveState.S6_FEEDBACK and verdict_flag != "pass":
-            csm.transition(TransitionSignal("gap_found", {
-                "gap": external_critique_block[:200] or "step3 object critique red flags",
-            }))
+            csm.transition(
+                TransitionSignal(
+                    "gap_found",
+                    {
+                        "gap": external_critique_block[:200]
+                        or "step3 object critique red flags",
+                    },
+                )
+            )
     except Exception:
         logger.debug("Step 3 CSM S6/S7 trigger failed", exc_info=True)
 
 
+_STEP3_BASE_PROMPT = (
+    "ADVERSARIAL SELF-CRITIQUE. You are now a SKEPTICAL REVIEWER who wants to score this report LOW. "
+    "Do NOT be lenient with yourself.\n\n"
+    "## A. Sanity Check (do this FIRST — catches fabricated/impossible results)\n"
+    "Read your report/report.md. Extract EVERY quantitative claim (MAE, R², accuracy, loss, etc.).\n"
+    "RECOMPUTE each claim via an independent computation path — do NOT trust your own previous text. "
+    "Call validate_tool (numerical cross-check) or symbolic_math_tool (closed-form re-derivation) "
+    "or code_tool (re-run the metric on outputs/ artifacts) for each claimed number. "
+    "P1-B3 hard rule: a claim that you cannot recompute independently is FABRICATED, treat it as 0. "
+    "Build a table: | Metric | Claimed | Recomputed (independent path) | Tool used | Match? |\n"
+    "If Claimed != Recomputed (>1% deviation), that is a RED FLAG — fix the number in report.md. "
+    "If ANY recomputed metric is BETTER than the paper's baseline, that is also a RED FLAG.\n"
+    "Investigate why: data leakage? wrong train/test split? simplified geometry? fabricated?\n"
+    "Fix the bug, or honestly document the discrepancy. "
+    "Implausibly good results get ZERO from reviewers.\n\n"
+    "## B. Substitution Audit (catches silent methodology downgrade)\n"
+    "List every [EXACT] component from your Step 1 checklist.\n"
+    "For each, answer honestly: did I implement it AS-SPECIFIED, or did I substitute a simpler alternative?\n"
+    "  - Substituted WITHOUT trying the real implementation → FAILURE. Implement it now.\n"
+    "  - Substituted AFTER ≥2 genuine failed attempts → document the attempts with error messages.\n"
+    "  'I used Random Forest instead of VAE because VAE is hard' is NOT acceptable.\n"
+    "  'I used GCNConv instead of CGCNNConv because it was easier' is NOT acceptable.\n\n"
+    "## C. Coverage Check\n"
+    "List checklist items COVERED (with evidence from report) vs MISSING/WEAK.\n\n"
+    "## D. Visual Self-Check (if report has figures)\n"
+    "For each figure in report/images/, call image_analysis tool with action='compare_to_target' "
+    "and parameters={'target_path': <corresponding paper target image>, 'candidate_paths': [<your figure>]}. "
+    "The target image is in the task's target_study/images/ directory. "
+    "If CV similarity < 40, regenerate the figure. If 40-70, improve it. If > 70, keep it.\n"
+    "Do NOT blindly regenerate figures that already match the paper.\n\n"
+    "## E. Fix & Rewrite (SURGICAL, not full rewrite)\n"
+    "For each gap found in A/B/C:\n"
+    "  - Missing metric → compute it now (run code_tool)\n"
+    "  - Missing [EXACT] component → implement it (push through, try ≥2 approaches before giving up)\n"
+    "  - Implausible result → fix the bug or document honestly why it's off\n"
+    "CRITICAL RULE: Only modify the SPECIFIC sections/numbers that critique flagged as problematic. "
+    "DO NOT touch numbers, tables, or sections that were NOT flagged. "
+    "DO NOT regenerate figures that passed visual self-check (D). "
+    "Preserve all correct results. A surgical edit beats a full rewrite — full rewrites risk "
+    "breaking numbers that were already correct.\n"
+    "Update report/report.md with: surgical fixes to flagged gaps + baseline comparison table + "
+    "honest Limitations section (only for items where you tried ≥2 approaches and genuinely failed).\n"
+    "Use file_write_tool for the update."
+)
+
+
 def _build_step3_prompt(external_critique_block: str) -> str:
     """构造对抗自检 prompt (sanity / substitution / coverage / visual / fix 五段)."""
-    step3_prompt = (
-        "ADVERSARIAL SELF-CRITIQUE. You are now a SKEPTICAL REVIEWER who wants to score this report LOW. "
-        "Do NOT be lenient with yourself.\n\n"
-        "## A. Sanity Check (do this FIRST — catches fabricated/impossible results)\n"
-        "Read your report/report.md. Extract EVERY quantitative claim (MAE, R², accuracy, loss, etc.).\n"
-        "RECOMPUTE each claim via an independent computation path — do NOT trust your own previous text. "
-        "Call validate_tool (numerical cross-check) or symbolic_math_tool (closed-form re-derivation) "
-        "or code_tool (re-run the metric on outputs/ artifacts) for each claimed number. "
-        "P1-B3 hard rule: a claim that you cannot recompute independently is FABRICATED, treat it as 0. "
-        "Build a table: | Metric | Claimed | Recomputed (independent path) | Tool used | Match? |\n"
-        "If Claimed != Recomputed (>1% deviation), that is a RED FLAG — fix the number in report.md. "
-        "If ANY recomputed metric is BETTER than the paper's baseline, that is also a RED FLAG.\n"
-        "Investigate why: data leakage? wrong train/test split? simplified geometry? fabricated?\n"
-        "Fix the bug, or honestly document the discrepancy. "
-        "Implausibly good results get ZERO from reviewers.\n\n"
-        "## B. Substitution Audit (catches silent methodology downgrade)\n"
-        "List every [EXACT] component from your Step 1 checklist.\n"
-        "For each, answer honestly: did I implement it AS-SPECIFIED, or did I substitute a simpler alternative?\n"
-        "  - Substituted WITHOUT trying the real implementation → FAILURE. Implement it now.\n"
-        "  - Substituted AFTER ≥2 genuine failed attempts → document the attempts with error messages.\n"
-        "  'I used Random Forest instead of VAE because VAE is hard' is NOT acceptable.\n"
-        "  'I used GCNConv instead of CGCNNConv because it was easier' is NOT acceptable.\n\n"
-        "## C. Coverage Check\n"
-        "List checklist items COVERED (with evidence from report) vs MISSING/WEAK.\n\n"
-        "## D. Visual Self-Check (if report has figures)\n"
-        "For each figure in report/images/, call image_analysis tool with action='compare_to_target' "
-        "and parameters={'target_path': <corresponding paper target image>, 'candidate_paths': [<your figure>]}. "
-        "The target image is in the task's target_study/images/ directory. "
-        "If CV similarity < 40, regenerate the figure. If 40-70, improve it. If > 70, keep it.\n"
-        "Do NOT blindly regenerate figures that already match the paper.\n\n"
-        "## E. Fix & Rewrite (SURGICAL, not full rewrite)\n"
-        "For each gap found in A/B/C:\n"
-        "  - Missing metric → compute it now (run code_tool)\n"
-        "  - Missing [EXACT] component → implement it (push through, try ≥2 approaches before giving up)\n"
-        "  - Implausible result → fix the bug or document honestly why it's off\n"
-        "CRITICAL RULE: Only modify the SPECIFIC sections/numbers that critique flagged as problematic. "
-        "DO NOT touch numbers, tables, or sections that were NOT flagged. "
-        "DO NOT regenerate figures that passed visual self-check (D). "
-        "Preserve all correct results. A surgical edit beats a full rewrite — full rewrites risk "
-        "breaking numbers that were already correct.\n"
-        "Update report/report.md with: surgical fixes to flagged gaps + baseline comparison table + "
-        "honest Limitations section (only for items where you tried ≥2 approaches and genuinely failed).\n"
-        "Use file_write_tool for the update."
-    )
+    step3_prompt = _STEP3_BASE_PROMPT
     if external_critique_block:
-        step3_prompt = external_critique_block + "\n\n## Now act on the critique above:\n" + step3_prompt
+        step3_prompt = (
+            external_critique_block
+            + "\n\n## Now act on the critique above:\n"
+            + step3_prompt
+        )
     return step3_prompt
 
 
@@ -351,7 +475,10 @@ def _step3_deadline_expired() -> bool:
         logger.debug("best-effort op failed", exc_info=True)
         return False
     if _remaining < 600:
-        print(f"[step3_retry: deadline in {_remaining:.0f}s, skip retry → score", flush=True)
+        print(
+            f"[step3_retry: deadline in {_remaining:.0f}s, skip retry → score",
+            flush=True,
+        )
         return True
     return False
 
@@ -374,91 +501,199 @@ async def _run_step3_retry_loop(
     _retry_count = 0
     _final_verdict = initial_verdict
     _trace_task_id_s3 = _infer_task_id_from_workspace(ws.name)
+    _prompt_kwargs = {
+        "persona": persona,
+        "kb": kb,
+        "mem_mgr": mem_mgr,
+        "evals_history": evals_history,
+        "xretry_path": xretry_path,
+        "trace_task_id": _trace_task_id_s3,
+    }
     while True:
         if not report_path.exists() or not checklist:
             break
         if _step3_deadline_expired():
             break
-        try:
-            _retry_report = report_path.read_text(encoding="utf-8")
-            _retry_verdict_dict = await adversarial_critique(
-                model, _retry_report, checklist, mode="object",
-            )
-        except Exception as _e:
-            print(f"[step3_retry: re-critique failed: {_e}]", flush=True)
+        _recritique = await _recritique_step3(model, checklist, report_path)
+        if _recritique is None:
             break
-
-        _retry_verdict = _retry_verdict_dict.get("overall_verdict", "fix_needed")
-        _final_verdict = _retry_verdict  # 重审后的最新 verdict 覆盖首次 verdict
-        _retry_gap = _derive_gap_type(_retry_verdict_dict)
-        _retry_beta_1 = _infer_beta_1_simple(ws)
-
-        if not _should_retry_execute(_retry_verdict, _retry_beta_1, _retry_gap):
-            print(f"[step3_retry: verdict={_retry_verdict}, gap={_retry_gap}, no retry]",
-                  flush=True)
-            break
-
-        if _retry_count >= 2:
-            await _finalize_after_retry_limit(
-                ws=ws,
-                retry_count=_retry_count,
-                gap=_retry_gap,
-                verdict=_retry_verdict,
-                stream_chat_fn=stream_chat_fn,
-            )
-            break
-
-        _retry_count += 1
-        _critique_summary = format_critique_for_agent(_retry_verdict_dict)[:500]
-        _retry_execute_prompt = _build_retry_execute_prompt(
-            ws=ws,
-            verdict=_retry_verdict,
-            gap=_retry_gap,
-            critique_summary=_critique_summary,
-            report=_retry_report,
-            retry_count=_retry_count,
-            persona=persona,
-            kb=kb,
-            mem_mgr=mem_mgr,
-            evals_history=evals_history,
-            xretry_path=xretry_path,
-        )
-        _write_retry_trace(
+        _retry_report, _verdict_dict = _recritique
+        _verdict, _retry_count, _done = await _step3_retry_round(
             ws,
-            trace_task_id=_trace_task_id_s3,
-            retry_count=_retry_count,
-            critique_summary=_critique_summary,
-            verdict=_retry_verdict,
-            gap=_retry_gap,
-            beta_1=_retry_beta_1,
+            stream_chat_fn,
+            report_path,
+            _prompt_kwargs,
+            _retry_count,
+            _retry_report,
+            _verdict_dict,
         )
-        print(f"[step3_retry: attempt {_retry_count}/2, gap={_retry_gap}]", flush=True)
-        # fresh thread per retry — 避免同 _step3_tid 累积消息超限.
-        # 每次重试都是独立 thread + 结构化 state injection (上方构造).
-        # fresh_history=True: 不拉 ConversationTree 历史, 避免 Step 2 的
-        # 1M+ tokens 累积. retry prompt 已注入 PMK/KB/state/critique 全部 state.
-        _retry_tid = f"rcb_{ws.name}_step3_retry{_retry_count}"
-        try:
-            # A4: Step-3 verdict≠pass 追加专用 50 次预算 — 路线图 P1-A4 / 05 报告 R4.
-            # retry 本就是 fix_needed 时回退执行, 但默认用 agent 全局 max_tool_calls
-            # (150/300) — Step 2 已烧光, retry 没预算等于空跑. 专用 50 次预算池
-            # 让 agent 真有资源修 gap. ponytail: BudgetSpec 在 _stream_chat 内构造,
-            # 失败不影响 agent 全局配置.
-            await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid,
-                                 fresh_history=True, extra_budget=50)
-        except Exception as _e:
-            print(f"[step3_retry {_retry_count}] stream_chat_fn failed: {_e}", flush=True)
+        _final_verdict = _verdict
+        if _done:
             break
-        _log_cross_retry(
-            xretry_path,
-            retry_count=_retry_count,
-            gap=_retry_gap,
-            critique_summary=_critique_summary,
-            report_before=_retry_report,
-            report_path=report_path,
-        )
-        # loop continues — re-critique next iteration
     return _final_verdict
+
+
+async def _recritique_step3(
+    model: Any, checklist: str, report_path: Path
+) -> tuple[str, dict] | None:
+    """重审 report; 失败打印并返回 None."""
+    try:
+        _retry_report = report_path.read_text(encoding="utf-8")
+        _verdict_dict = await adversarial_critique(
+            model,
+            _retry_report,
+            checklist,
+            mode="object",
+        )
+    except Exception as _e:
+        print(f"[step3_retry: re-critique failed: {_e}]", flush=True)
+        return None
+    return _retry_report, _verdict_dict
+
+
+async def _step3_retry_round(
+    ws: Path,
+    stream_chat_fn: Any,
+    report_path: Path,
+    prompt_kwargs: dict[str, Any],
+    retry_count: int,
+    retry_report: str,
+    verdict_dict: dict,
+) -> tuple[str, int, bool]:
+    """判定 + 执行一次回退; 返回 (verdict, retry_count, 循环是否结束)."""
+    _retry_verdict = verdict_dict.get("overall_verdict", "fix_needed")
+    _retry_gap = _derive_gap_type(verdict_dict)
+    _retry_beta_1 = _infer_beta_1_simple(ws)
+
+    if not _should_retry_execute(_retry_verdict, _retry_beta_1, _retry_gap):
+        print(
+            f"[step3_retry: verdict={_retry_verdict}, gap={_retry_gap}, no retry]",
+            flush=True,
+        )
+        return _retry_verdict, retry_count, True
+
+    if retry_count >= 2:
+        await _finalize_after_retry_limit(
+            ws=ws,
+            retry_count=retry_count,
+            gap=_retry_gap,
+            verdict=_retry_verdict,
+            stream_chat_fn=stream_chat_fn,
+        )
+        return _retry_verdict, retry_count, True
+
+    retry_count += 1
+    _critique_summary = format_critique_for_agent(verdict_dict)[:500]
+    _ok = await _attempt_step3_retry(
+        ws,
+        stream_chat_fn,
+        report_path,
+        prompt_kwargs,
+        retry_count,
+        retry_report,
+        _retry_verdict,
+        _retry_gap,
+        _critique_summary,
+        _retry_beta_1,
+    )
+    return _retry_verdict, retry_count, not _ok
+
+
+async def _attempt_step3_retry(
+    ws: Path,
+    stream_chat_fn: Any,
+    report_path: Path,
+    prompt_kwargs: dict[str, Any],
+    retry_count: int,
+    retry_report: str,
+    verdict: str,
+    gap: str,
+    critique_summary: str,
+    beta_1: int,
+) -> bool:
+    """构造 retry prompt + 写 trace + 执行 + 记 cross-retry; 返回是否成功."""
+    _retry_execute_prompt = _build_step3_retry_prompt(
+        ws, prompt_kwargs, verdict, gap, critique_summary, retry_report, retry_count
+    )
+    _write_retry_trace(
+        ws,
+        trace_task_id=prompt_kwargs["trace_task_id"],
+        retry_count=retry_count,
+        critique_summary=critique_summary,
+        verdict=verdict,
+        gap=gap,
+        beta_1=beta_1,
+    )
+    print(f"[step3_retry: attempt {retry_count}/2, gap={gap}]", flush=True)
+    if not await _stream_step3_retry(
+        ws,
+        stream_chat_fn,
+        _retry_execute_prompt,
+        retry_count,
+    ):
+        return False
+    _log_cross_retry(
+        prompt_kwargs["xretry_path"],
+        retry_count=retry_count,
+        gap=gap,
+        critique_summary=critique_summary,
+        report_before=retry_report,
+        report_path=report_path,
+    )
+    return True
+
+
+def _build_step3_retry_prompt(
+    ws: Path,
+    prompt_kwargs: dict[str, Any],
+    verdict: str,
+    gap: str,
+    critique_summary: str,
+    retry_report: str,
+    retry_count: int,
+) -> str:
+    """组装 step3 retry 的执行 prompt (注入 PMK/KB/state/critique)."""
+    return _build_retry_execute_prompt(
+        ws=ws,
+        verdict=verdict,
+        gap=gap,
+        critique_summary=critique_summary,
+        report=retry_report,
+        retry_count=retry_count,
+        persona=prompt_kwargs["persona"],
+        kb=prompt_kwargs["kb"],
+        mem_mgr=prompt_kwargs["mem_mgr"],
+        evals_history=prompt_kwargs["evals_history"],
+        xretry_path=prompt_kwargs["xretry_path"],
+    )
+
+
+async def _stream_step3_retry(
+    ws: Path, stream_chat_fn: Any, retry_execute_prompt: str, retry_count: int
+) -> bool:
+    """fresh thread 跑一次回退执行; 失败返回 False."""
+    # fresh thread per retry — 避免同 _step3_tid 累积消息超限.
+    # 每次重试都是独立 thread + 结构化 state injection (上方构造).
+    # fresh_history=True: 不拉 ConversationTree 历史, 避免 Step 2 的
+    # 1M+ tokens 累积. retry prompt 已注入 PMK/KB/state/critique 全部 state.
+    _retry_tid = f"rcb_{ws.name}_step3_retry{retry_count}"
+    try:
+        # A4: Step-3 verdict≠pass 追加专用 50 次预算 — 路线图 P1-A4 / 05 报告 R4.
+        # retry 本就是 fix_needed 时回退执行, 但默认用 agent 全局 max_tool_calls
+        # (150/300) — Step 2 已烧光, retry 没预算等于空跑. 专用 50 次预算池
+        # 让 agent 真有资源修 gap. ponytail: BudgetSpec 在 _stream_chat 内构造,
+        # 失败不影响 agent 全局配置.
+        await stream_chat_fn(
+            retry_execute_prompt,
+            "step3_retry",
+            tid=_retry_tid,
+            fresh_history=True,
+            extra_budget=50,
+        )
+    except Exception as _e:
+        print(f"[step3_retry {retry_count}] stream_chat_fn failed: {_e}", flush=True)
+        return False
+    return True
 
 
 async def _finalize_after_retry_limit(
@@ -494,8 +729,9 @@ async def _finalize_after_retry_limit(
     # 之前用 _step3_tid 会累积 step3 + step3_retry 历史 → 1.6M tokens 超限.
     _finalize_tid = f"rcb_{ws.name}_step3_finalize"
     try:
-        await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_finalize_tid,
-                             fresh_history=True)
+        await stream_chat_fn(
+            _finalize_prompt, "step3_finalize", tid=_finalize_tid, fresh_history=True
+        )
     except Exception as _e:
         print(f"[step3_finalize] stream_chat_fn failed: {_e}", flush=True)
 
@@ -527,6 +763,7 @@ def _build_pmk_block(
     _kb_recall = ""
     try:
         from huginn.autoloop.cognitive_loop import build_pmk_state
+
         _last_eval = evals_history[-1] if evals_history else None
         _pmk = build_pmk_state(persona, _last_eval, kb, mem_mgr=mem_mgr)
         if _pmk:
@@ -539,10 +776,14 @@ def _build_pmk_block(
         if kb is not None and retry_gap:
             _hits = kb.query(retry_gap, top_k=2)
             if _hits:
-                _kb_recall = "### KB 专业召回 (按 gap 关键词)\n" + " ".join(
-                    str(h.get("content", "") if isinstance(h, dict) else h)[:300]
-                    for h in _hits[:2]
-                ) + "\n\n"
+                _kb_recall = (
+                    "### KB 专业召回 (按 gap 关键词)\n"
+                    + " ".join(
+                        str(h.get("content", "") if isinstance(h, dict) else h)[:300]
+                        for h in _hits[:2]
+                    )
+                    + "\n\n"
+                )
     except Exception as _e:
         print(f"[step3_retry PMK/KB injection skipped: {_e}]", flush=True)
     return _pmk_block, _kb_recall
@@ -565,13 +806,17 @@ def _scan_state_checkpoint(ws: Path) -> str:
                     _rel = _fp.relative_to(ws).as_posix()
                     _sz = _fp.stat().st_size
                     _unit = "B" if _sz < 1024 else ("KB" if _sz < 1048576 else "MB")
-                    _sz_str = f"{_sz/1024:.1f}KB" if _unit == "KB" else (
-                        f"{_sz/1048576:.1f}MB" if _unit == "MB" else f"{_sz}B")
+                    _sz_str = (
+                        f"{_sz / 1024:.1f}KB"
+                        if _unit == "KB"
+                        else (f"{_sz / 1048576:.1f}MB" if _unit == "MB" else f"{_sz}B")
+                    )
                     _ckpt_files.append(f"  - {_rel} ({_sz_str})")
         if _ckpt_files:
             _state_ckpt = (
                 "### State Checkpoint (Step 2 已生成, 可复用 — 不要从头跑)\n"
-                + "\n".join(_ckpt_files[:25]) + "\n\n"
+                + "\n".join(_ckpt_files[:25])
+                + "\n\n"
             )
     except Exception:
         logger.debug("state checkpoint scan skipped", exc_info=True)
@@ -595,8 +840,8 @@ def _build_cross_retry_block(xretry_path: Path) -> str:
                 _xretry_block = "### Cross-Retry Memory (避免重蹈覆辙)\n"
                 for _xr in _xretry_entries:
                     _xretry_block += (
-                        f"- Retry {_xr.get('retry','?')}: gap={_xr.get('gap','?')}, "
-                        f"changed +{_xr.get('added_lines',0)}/-{_xr.get('removed_lines',0)} lines, "
+                        f"- Retry {_xr.get('retry', '?')}: gap={_xr.get('gap', '?')}, "
+                        f"changed +{_xr.get('added_lines', 0)}/-{_xr.get('removed_lines', 0)} lines, "
                         f"verdict_after=still_fix_needed\n"
                     )
                 _xretry_block += (
@@ -701,6 +946,7 @@ def _log_cross_retry(
     # retry1 改了 +X/-Y 行, retry2 看到后试不同策略 (不重蹈覆辙).
     try:
         import difflib as _dl
+
         _report_after_retry = (
             report_path.read_text(encoding="utf-8") if report_path.exists() else ""
         )
@@ -709,8 +955,12 @@ def _log_cross_retry(
             _report_after_retry.splitlines(),
             lineterm="",
         )
-        _added = sum(1 for _l in _diff if _l.startswith("+") and not _l.startswith("+++"))
-        _removed = sum(1 for _l in _diff if _l.startswith("-") and not _l.startswith("---"))
+        _added = sum(
+            1 for _l in _diff if _l.startswith("+") and not _l.startswith("+++")
+        )
+        _removed = sum(
+            1 for _l in _diff if _l.startswith("-") and not _l.startswith("---")
+        )
         _xentry = {
             "retry": retry_count,
             "gap": gap,
@@ -731,10 +981,13 @@ def _write_evidence_manifest(ws: Path) -> None:
     # ponytail: generate_evidence_manifest 只返 dict 不落盘, 这里写 manifest.json.
     try:
         from huginn.bench.evidence_manifest import generate_evidence_manifest
+
         _manifest = generate_evidence_manifest(ws)
         _manifest_path = ws / "outputs" / "manifest.json"
         _manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        _manifest_path.write_text(json.dumps(_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        _manifest_path.write_text(
+            json.dumps(_manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         print(f"[Step3] manifest.json generated at {_manifest_path}", flush=True)
     except Exception as _e:
         print(f"[Step3] manifest generation failed: {_e}", flush=True)
@@ -753,6 +1006,7 @@ def _run_learn_from_rcb(
     """P4 Task 24: 接 autoloop _learn — 写 long-term memory + cross_task_store."""
     try:
         from huginn.autoloop.cognitive_loop import learn_from_rcb
+
         _learn_hyp = ""
         _report_path_final = ws / "report" / "report.md"
         if _report_path_final.exists():
@@ -793,19 +1047,22 @@ async def _run_blind_reconstruct_verify(
         if _br_report_path.exists():
             _br_statement = _br_report_path.read_text(encoding="utf-8")
         # 只对 pass 的 verdict 做盲重构 (fix_needed 已知有问题, 不必再验)
-        if not (_br_statement and final_verdict == "pass" and stream_chat_fn is not None):
+        if not (
+            _br_statement and final_verdict == "pass" and stream_chat_fn is not None
+        ):
             return True
         _br_prompt = (
             "Independently derive whether this report's conclusions hold, "
             "from first principles. Do NOT assume any prior proof. "
-            "Output JSON: {\"holds\": true/false, \"confidence\": 0.0-1.0, "
-            "\"derivation\": \"...\"}\n\n"
+            'Output JSON: {"holds": true/false, "confidence": 0.0-1.0, '
+            '"derivation": "..."}\n\n'
             f"Report:\n{_br_statement[:2000]}"
         )
         _br_response = await stream_chat_fn(_br_prompt, "blind_reconstruct")
         _br_holds = False
         if _br_response:
             import json as _br_json
+
             try:
                 _br_parsed = _br_json.loads(_br_response)
                 _br_holds = bool(_br_parsed.get("holds", False))

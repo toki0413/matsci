@@ -79,6 +79,91 @@ def is_non_deterministic(tool_name: str) -> bool:
     return any(marker in name for marker in NON_DETERMINISTIC_TOOL_MARKERS)
 
 
+def _diff_add(diffs: list[dict[str, Any]], field: str, **kw: Any) -> None:
+    if len(diffs) < _MAX_DIFFS:
+        diffs.append({"field": field, **kw})
+
+
+def _diff_dict(
+    a: dict[Any, Any],
+    b: dict[Any, Any],
+    path: str,
+    diffs: list[dict[str, Any]],
+    tolerance: float,
+    atol: float,
+) -> None:
+    for key in sorted(set(a) | set(b), key=str):
+        if key not in a:
+            _diff_add(
+                diffs,
+                f"{path}.{key}",
+                recorded=None,
+                rerun=b[key],
+                reason="missing_in_recorded",
+            )
+        elif key not in b:
+            _diff_add(
+                diffs,
+                f"{path}.{key}",
+                recorded=a[key],
+                rerun=None,
+                reason="missing_in_rerun",
+            )
+        else:
+            _diff_walk(a[key], b[key], f"{path}.{key}", diffs, tolerance, atol)
+
+
+def _diff_seq(
+    a: Any,
+    b: Any,
+    path: str,
+    diffs: list[dict[str, Any]],
+    tolerance: float,
+    atol: float,
+) -> None:
+    if len(a) != len(b):
+        _diff_add(
+            diffs,
+            path,
+            recorded_len=len(a),
+            rerun_len=len(b),
+            reason="length_mismatch",
+        )
+    for i in range(min(len(a), len(b))):
+        _diff_walk(a[i], b[i], f"{path}[{i}]", diffs, tolerance, atol)
+
+
+def _diff_walk(
+    a: Any,
+    b: Any,
+    path: str,
+    diffs: list[dict[str, Any]],
+    tolerance: float,
+    atol: float,
+) -> None:
+    # bool 是 int 子类, 先单独判, 不让 True == 1 混进数值判据
+    a_bool, b_bool = isinstance(a, bool), isinstance(b, bool)
+    if a_bool or b_bool:
+        if not (a_bool and b_bool) or a != b:
+            _diff_add(diffs, path, recorded=a, rerun=b, reason="bool_mismatch")
+        return
+    if isinstance(a, int | float) and isinstance(b, int | float):
+        delta = abs(a - b)
+        if delta <= atol or delta <= tolerance * max(abs(a), abs(b)):
+            return
+        rel = delta / max(abs(a), abs(b)) if max(abs(a), abs(b)) > 0 else None
+        _diff_add(diffs, path, recorded=a, rerun=b, rel_err=rel)
+        return
+    if isinstance(a, dict) and isinstance(b, dict):
+        _diff_dict(a, b, path, diffs, tolerance, atol)
+        return
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        _diff_seq(a, b, path, diffs, tolerance, atol)
+        return
+    if a != b or type(a) is not type(b):
+        _diff_add(diffs, path, recorded=a, rerun=b, reason="value_mismatch")
+
+
 def numeric_diff(
     recorded: Any,
     rerun: Any,
@@ -97,47 +182,7 @@ def numeric_diff(
     - 类型不同: 报 type_mismatch (bool 不算 int).
     """
     diffs: list[dict[str, Any]] = []
-
-    def _add(field: str, **kw: Any) -> None:
-        if len(diffs) < _MAX_DIFFS:
-            diffs.append({"field": field, **kw})
-
-    def _walk(a: Any, b: Any, path: str) -> None:
-        # bool 是 int 子类, 先单独判, 不让 True == 1 混进数值判据
-        a_bool, b_bool = isinstance(a, bool), isinstance(b, bool)
-        if a_bool or b_bool:
-            if not (a_bool and b_bool) or a != b:
-                _add(path, recorded=a, rerun=b, reason="bool_mismatch")
-            return
-        if isinstance(a, int | float) and isinstance(b, int | float):
-            delta = abs(a - b)
-            if delta <= atol or delta <= tolerance * max(abs(a), abs(b)):
-                return
-            rel = delta / max(abs(a), abs(b)) if max(abs(a), abs(b)) > 0 else None
-            _add(path, recorded=a, rerun=b, rel_err=rel)
-            return
-        if isinstance(a, dict) and isinstance(b, dict):
-            for key in sorted(set(a) | set(b), key=str):
-                if key not in a:
-                    _add(f"{path}.{key}", recorded=None, rerun=b[key],
-                         reason="missing_in_recorded")
-                elif key not in b:
-                    _add(f"{path}.{key}", recorded=a[key], rerun=None,
-                         reason="missing_in_rerun")
-                else:
-                    _walk(a[key], b[key], f"{path}.{key}")
-            return
-        if isinstance(a, list | tuple) and isinstance(b, list | tuple):
-            if len(a) != len(b):
-                _add(path, recorded_len=len(a), rerun_len=len(b),
-                     reason="length_mismatch")
-            for i in range(min(len(a), len(b))):
-                _walk(a[i], b[i], f"{path}[{i}]")
-            return
-        if a != b or type(a) is not type(b):
-            _add(path, recorded=a, rerun=b, reason="value_mismatch")
-
-    _walk(recorded, rerun, prefix or "result")
+    _diff_walk(recorded, rerun, prefix or "result", diffs, tolerance, atol)
     return diffs
 
 
@@ -160,9 +205,7 @@ def registry_runner(tool_name: str, input_params: dict[str, Any]) -> Any:
         args = tool.input_schema(**input_params)
     except Exception as exc:
         raise RuntimeError(f"input_params 不合法: {exc}") from exc
-    context = ToolContext(
-        session_id=f"reproduce:{tool_name}", workspace=os.getcwd()
-    )
+    context = ToolContext(session_id=f"reproduce:{tool_name}", workspace=os.getcwd())
     result = asyncio.run(tool.call(args, context))
     if not result.success:
         raise RuntimeError(f"rerun failed: {result.error}")
@@ -181,6 +224,108 @@ def _rerun_output_hash(
             "provenance flag disabled — output hash 不可用 (hash 口径比对无法进行)"
         )
     return snap.output_hash
+
+
+def _reproduce_base(snapshot: dict[str, Any], tolerance: float) -> dict[str, Any]:
+    """构造报告骨架 (status 默认 error, 后续分支覆盖)."""
+    return {
+        "tool_name": snapshot.get("tool_name") or snapshot.get("tool") or "",
+        "status": "error",
+        "mode": None,
+        "n_diffs": 0,
+        "diffs": [],
+        "tolerance": tolerance,
+        "random_seed": snapshot.get("random_seed"),
+    }
+
+
+def _field_diff_report(
+    out: dict[str, Any],
+    reference_output: Any,
+    rerun_output: Any,
+    tolerance: float,
+    atol: float,
+) -> dict[str, Any]:
+    """逐字段 diff 口径报告."""
+    out["mode"] = "field_diff"
+    diffs = numeric_diff(reference_output, rerun_output, tolerance=tolerance, atol=atol)
+    out["diffs"] = diffs
+    out["n_diffs"] = len(diffs)
+    out["diffs_truncated"] = len(diffs) >= _MAX_DIFFS
+    out["status"] = "reproduced" if not diffs else "drifted"
+    return out
+
+
+def _hash_diff_report(
+    out: dict[str, Any],
+    recorded_hash: str,
+    tool_name: str,
+    input_params: dict[str, Any],
+    rerun_output: Any,
+) -> dict[str, Any]:
+    """output_hash 口径报告 (快照无逐字段值时退化)."""
+    out["mode"] = "hash"
+    try:
+        new_hash = _rerun_output_hash(tool_name, input_params, rerun_output)
+    except Exception as exc:
+        out["error"] = str(exc)
+        return out
+    if new_hash == recorded_hash:
+        out["status"] = "reproduced"
+        return out
+    out["status"] = "drifted"
+    out["diffs"] = [
+        {
+            "field": "output_hash",
+            "recorded": recorded_hash,
+            "rerun": new_hash,
+            "reason": "hash_mismatch (快照未存逐字段值, 只能给 hash 级比对)",
+        }
+    ]
+    out["n_diffs"] = 1
+    return out
+
+
+def _reproduce_compare(
+    out: dict[str, Any],
+    snapshot: dict[str, Any],
+    tool_name: str,
+    input_params: dict[str, Any],
+    rerun_output: Any,
+    reference_output: Any,
+    tolerance: float,
+    atol: float,
+) -> dict[str, Any]:
+    """参考输出口径: 显式 reference > 快照内嵌 output > output_hash."""
+    if reference_output is None:
+        reference_output = snapshot.get("output")
+    if reference_output is not None:
+        return _field_diff_report(out, reference_output, rerun_output, tolerance, atol)
+
+    recorded_hash = snapshot.get("output_hash") or ""
+    if recorded_hash:
+        return _hash_diff_report(
+            out, recorded_hash, tool_name, input_params, rerun_output
+        )
+
+    out["error"] = "快照既无逐字段输出 (output) 也无 output_hash, 没有可比对的参考结果"
+    return out
+
+
+def _reproduce_guard(out: dict[str, Any], tool_name: str) -> dict[str, Any] | None:
+    """前置判据: tool_name 缺失 / LLM 参与步骤 → 直接返回报告 (不做 diff)."""
+    if not tool_name:
+        out["error"] = "snapshot 缺 tool_name, 无从重跑"
+        return out
+
+    if is_non_deterministic(tool_name):
+        out["status"] = "not_reproducible"
+        out["reason"] = (
+            "LLM 参与步骤 (命中 NON_DETERMINISTIC_TOOL_MARKERS), 同输入不保证同输出, "
+            "显式跳过 diff —— 诚实报告'不可复现', 不谎称一致"
+        )
+        return out
+    return None
 
 
 def reproduce_snapshot(
@@ -206,27 +351,11 @@ def reproduce_snapshot(
         {"tool_name", "status", "mode", "n_diffs", "diffs", "tolerance", ...}
         status ∈ reproduced | drifted | not_reproducible | error.
     """
-    tool_name = snapshot.get("tool_name") or snapshot.get("tool") or ""
-    out: dict[str, Any] = {
-        "tool_name": tool_name,
-        "status": "error",
-        "mode": None,
-        "n_diffs": 0,
-        "diffs": [],
-        "tolerance": tolerance,
-        "random_seed": snapshot.get("random_seed"),
-    }
-    if not tool_name:
-        out["error"] = "snapshot 缺 tool_name, 无从重跑"
-        return out
-
-    if is_non_deterministic(tool_name):
-        out["status"] = "not_reproducible"
-        out["reason"] = (
-            "LLM 参与步骤 (命中 NON_DETERMINISTIC_TOOL_MARKERS), 同输入不保证同输出, "
-            "显式跳过 diff —— 诚实报告'不可复现', 不谎称一致"
-        )
-        return out
+    out = _reproduce_base(snapshot, tolerance)
+    tool_name = out["tool_name"]
+    guard = _reproduce_guard(out, tool_name)
+    if guard is not None:
+        return guard
 
     input_params = dict(snapshot.get("input_params") or {})
     try:
@@ -235,47 +364,16 @@ def reproduce_snapshot(
         out["error"] = f"rerun failed: {type(exc).__name__}: {exc}"
         return out
 
-    # 参考输出口径: 显式 reference > 快照内嵌 output > output_hash
-    if reference_output is None:
-        reference_output = snapshot.get("output")
-    if reference_output is not None:
-        out["mode"] = "field_diff"
-        diffs = numeric_diff(
-            reference_output, rerun_output, tolerance=tolerance, atol=atol
-        )
-        out["diffs"] = diffs
-        out["n_diffs"] = len(diffs)
-        out["diffs_truncated"] = len(diffs) >= _MAX_DIFFS
-        out["status"] = "reproduced" if not diffs else "drifted"
-        return out
-
-    recorded_hash = snapshot.get("output_hash") or ""
-    if recorded_hash:
-        out["mode"] = "hash"
-        try:
-            new_hash = _rerun_output_hash(tool_name, input_params, rerun_output)
-        except Exception as exc:
-            out["error"] = str(exc)
-            return out
-        if new_hash == recorded_hash:
-            out["status"] = "reproduced"
-        else:
-            out["status"] = "drifted"
-            out["diffs"] = [
-                {
-                    "field": "output_hash",
-                    "recorded": recorded_hash,
-                    "rerun": new_hash,
-                    "reason": "hash_mismatch (快照未存逐字段值, 只能给 hash 级比对)",
-                }
-            ]
-            out["n_diffs"] = 1
-        return out
-
-    out["error"] = (
-        "快照既无逐字段输出 (output) 也无 output_hash, 没有可比对的参考结果"
+    return _reproduce_compare(
+        out,
+        snapshot,
+        tool_name,
+        input_params,
+        rerun_output,
+        reference_output,
+        tolerance,
+        atol,
     )
-    return out
 
 
 def reproduce_record(
@@ -290,9 +388,7 @@ def reproduce_record(
     (reproduced < drifted < not_reproducible/error 视为需关注).
     """
     chain = list(record.get("tool_chain") or [])
-    results = [
-        reproduce_snapshot(s, runner=runner, tolerance=tolerance) for s in chain
-    ]
+    results = [reproduce_snapshot(s, runner=runner, tolerance=tolerance) for s in chain]
     counts: dict[str, int] = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
@@ -301,7 +397,6 @@ def reproduce_record(
         "n_snapshots": len(chain),
         "results": results,
         "counts": counts,
-        "all_reproduced": bool(results) and all(
-            r["status"] == "reproduced" for r in results
-        ),
+        "all_reproduced": bool(results)
+        and all(r["status"] == "reproduced" for r in results),
     }

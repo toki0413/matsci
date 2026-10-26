@@ -118,44 +118,43 @@ class GraphQuery:
             if self._graph.number_of_nodes() < 5:
                 return self.neighborhood(seeds, depth=depth, top_k=top_k)
 
-            communities = nx.community.greedy_modularity_communities(
-                self._graph
-            )
-            seed_communities: set[int] = set()
-            for node in seeds:
-                for i, comm in enumerate(communities):
-                    if node in comm:
-                        seed_communities.add(i)
-                        break
-
-            relevant_nodes: set[str] = set()
-            for i in seed_communities:
-                relevant_nodes.update(communities[i])
-
-            # Always keep direct neighbors of seed nodes so we don't
-            # miss tightly-linked facts that community detection grouped
-            # into a different partition.
-            for node in seeds:
-                relevant_nodes.update(self._graph.successors(node))
-                relevant_nodes.update(self._graph.predecessors(node))
-
-            if len(relevant_nodes) > top_k:
-                scored = [
-                    (self._graph.nodes[n].get("confidence", 0.0), n)
-                    for n in relevant_nodes
-                ]
-                scored.sort(reverse=True)
-                relevant_nodes = {n for _, n in scored[:top_k]}
+            relevant_nodes = GraphQuery._relevant_community_nodes(self, seeds, top_k)
 
             sub = self._graph.subgraph(relevant_nodes)
             return {
-                "nodes": [
-                    {"id": n, **self._graph.nodes[n]} for n in sub.nodes()
-                ],
+                "nodes": [{"id": n, **self._graph.nodes[n]} for n in sub.nodes()],
                 "edges": [
-                    {"source": u, "target": v, **d}
-                    for u, v, d in sub.edges(data=True)
+                    {"source": u, "target": v, **d} for u, v, d in sub.edges(data=True)
                 ],
             }
         except Exception:
             return self.neighborhood(seeds, depth=depth, top_k=top_k)
+
+    def _relevant_community_nodes(self, seeds: list[str], top_k: int) -> set[str]:
+        """Seed 所在社区 + 直接邻居的节点集合, 超过 top_k 时按 confidence 截断."""
+        communities = nx.community.greedy_modularity_communities(self._graph)
+        seed_communities: set[int] = set()
+        for node in seeds:
+            for i, comm in enumerate(communities):
+                if node in comm:
+                    seed_communities.add(i)
+                    break
+
+        relevant_nodes: set[str] = set()
+        for i in seed_communities:
+            relevant_nodes.update(communities[i])
+
+        # Always keep direct neighbors of seed nodes so we don't
+        # miss tightly-linked facts that community detection grouped
+        # into a different partition.
+        for node in seeds:
+            relevant_nodes.update(self._graph.successors(node))
+            relevant_nodes.update(self._graph.predecessors(node))
+
+        if len(relevant_nodes) > top_k:
+            scored = [
+                (self._graph.nodes[n].get("confidence", 0.0), n) for n in relevant_nodes
+            ]
+            scored.sort(reverse=True)
+            relevant_nodes = {n for _, n in scored[:top_k]}
+        return relevant_nodes

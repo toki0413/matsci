@@ -24,6 +24,7 @@ if str(_AGENT_DIR) not in sys.path:
 def _make_test_frames(n_frames: int = 5, n_atoms: int = 100, seed: int = 42):
     """构造测试帧: 原子做扩散运动 (前 32 个原子位移大, 后面位移小)."""
     import random
+
     random.seed(seed)
     frames = []
     for fi in range(n_frames):
@@ -34,11 +35,19 @@ def _make_test_frames(n_frames: int = 5, n_atoms: int = 100, seed: int = 42):
             x = base_disp * fi + random.uniform(-0.5, 0.5)
             y = random.uniform(-0.5, 0.5)
             z = random.uniform(-0.5, 0.5)
-            atoms.append({
-                "x": x, "y": y, "z": z,
-                "xu": x, "yu": y, "zu": z,  # unwrapped
-                "vx": 0.1, "vy": 0.0, "vz": 0.0,
-            })
+            atoms.append(
+                {
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "xu": x,
+                    "yu": y,
+                    "zu": z,  # unwrapped
+                    "vx": 0.1,
+                    "vy": 0.0,
+                    "vz": 0.0,
+                }
+            )
         frames.append({"atoms": atoms, "timestep": fi * 100})
     return frames
 
@@ -46,6 +55,7 @@ def _make_test_frames(n_frames: int = 5, n_atoms: int = 100, seed: int = 42):
 def _check_van_hove_compute():
     """S1: _compute_van_hove 算 G_s(r,t), top-K=32 采样."""
     from huginn.tools.sim.lammps_tool import LammpsTool
+
     tool = LammpsTool.__new__(LammpsTool)
     frames = _make_test_frames(n_frames=5, n_atoms=100)
 
@@ -70,6 +80,7 @@ def _check_van_hove_compute():
 def _check_f_q_t_compute():
     """S1: _compute_F_q_t 算中间散射函数, 默认 3 个 q 值."""
     from huginn.tools.sim.lammps_tool import LammpsTool
+
     tool = LammpsTool.__new__(LammpsTool)
     frames = _make_test_frames(n_frames=5, n_atoms=100)
 
@@ -92,9 +103,63 @@ def _check_f_q_t_compute():
     print("[ok] S1 _compute_F_q_t 中间散射函数")
 
 
+def _van_hove_triples(vh) -> list:
+    data = []
+    for entry in vh:
+        _t = entry["timestep"]
+        for _r, _gs in zip(entry["r"], entry["G_s"]):
+            data.append((_t, _r, _gs))
+    return data
+
+
+def _f_q_t_triples(fqt) -> list:
+    data = []
+    for entry in fqt:
+        _t = entry["timestep"]
+        for _q, _f in zip(entry["q_values"], entry["F"]):
+            data.append((_t, _q, _f))
+    return data
+
+
+def _spatio_temporal_series(vh_data, fqt_data) -> list:
+    """构造 _physical_timeseries 模拟注册."""
+    return [
+        {
+            "name": "van_hove_G_s",
+            "unit": "1/Å³",
+            "data": vh_data,
+            "meaning": "van Hove self-part",
+            "source": "lammps",
+            "spatial": True,
+        },
+        {
+            "name": "F_q_t",
+            "unit": "1",
+            "data": fqt_data,
+            "meaning": "intermediate scattering function",
+            "source": "lammps",
+            "spatial": True,
+        },
+    ]
+
+
+def _assert_registered_series(ts_list) -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    # _extract_timeseries 能识别
+    _result = {"_physical_timeseries": ts_list}
+    _extracted = AutoloopEngine._extract_timeseries(_result)
+    assert _extracted == ts_list, "extract 应识别 _physical_timeseries key"
+
+    # 三元组 data 格式验证
+    assert len(_extracted[0]["data"][0]) == 3, "van_hove data 应是 (t, r, G_s) 三元组"
+    assert len(_extracted[1]["data"][0]) == 3, "F_q_t data 应是 (t, q, F) 三元组"
+    assert _extracted[0].get("spatial") is True, "van_hove 应标 spatial=True"
+    assert _extracted[1].get("spatial") is True, "F_q_t 应标 spatial=True"
+
+
 def _check_lammps_registers_spatio_temporal():
     """S1: lammps_tool 把 van_hove + F_q_t 注册到 _physical_timeseries, spatial=True."""
-    from huginn.autoloop.engine import AutoloopEngine
     from huginn.tools.sim.lammps_tool import LammpsTool
 
     tool = LammpsTool.__new__(LammpsTool)
@@ -105,56 +170,31 @@ def _check_lammps_registers_spatio_temporal():
     _fqt = tool._compute_F_q_t(frames)
     assert _vh and _fqt, "van_hove + F_q_t 都应非空"
 
-    # 构造 _physical_timeseries 模拟注册
-    _vh_data = []
-    for entry in _vh:
-        _t = entry["timestep"]
-        for _r, _gs in zip(entry["r"], entry["G_s"]):
-            _vh_data.append((_t, _r, _gs))
-    _fqt_data = []
-    for entry in _fqt:
-        _t = entry["timestep"]
-        for _q, _f in zip(entry["q_values"], entry["F"]):
-            _fqt_data.append((_t, _q, _f))
-
-    _ts_list = [
-        {"name": "van_hove_G_s", "unit": "1/Å³", "data": _vh_data,
-         "meaning": "van Hove self-part", "source": "lammps", "spatial": True},
-        {"name": "F_q_t", "unit": "1", "data": _fqt_data,
-         "meaning": "intermediate scattering function", "source": "lammps", "spatial": True},
-    ]
-
-    # _extract_timeseries 能识别
-    _result = {"_physical_timeseries": _ts_list}
-    _extracted = AutoloopEngine._extract_timeseries(_result)
-    assert _extracted == _ts_list, "extract 应识别 _physical_timeseries key"
-
-    # 三元组 data 格式验证
-    assert len(_extracted[0]["data"][0]) == 3, "van_hove data 应是 (t, r, G_s) 三元组"
-    assert len(_extracted[1]["data"][0]) == 3, "F_q_t data 应是 (t, q, F) 三元组"
-    assert _extracted[0].get("spatial") is True, "van_hove 应标 spatial=True"
-    assert _extracted[1].get("spatial") is True, "F_q_t 应标 spatial=True"
+    _ts_list = _spatio_temporal_series(_van_hove_triples(_vh), _f_q_t_triples(_fqt))
+    _assert_registered_series(_ts_list)
 
     print("[ok] S1 lammps_tool 注册 van_hove + F_q_t (spatial=True, 三元组)")
 
 
-def _check_format_timeseries_spatial():
-    """S1: _format_timeseries_context 三元组分支 — peak_drift + v_decay."""
-    from huginn.autoloop.engine import AutoloopEngine
-    eng = AutoloopEngine.__new__(AutoloopEngine)
-
-    # van_hove 三元组: 模拟峰位漂移
-    eng._physical_timeseries = [{
-        "name": "van_hove_G_s",
-        "unit": "1/Å³",
-        "data": [
-            (0, 1.0, 0.5), (0, 2.0, 0.8), (0, 3.0, 0.3),  # t=0 峰位 r=2.0
-            (100, 1.0, 0.2), (100, 2.5, 0.6), (100, 3.5, 0.4),  # t=100 峰位 r=2.5
-        ],
-        "meaning": "van Hove self-part",
-        "source": "lammps",
-        "spatial": True,
-    }]
+def _check_van_hove_peak_drift(eng) -> None:
+    """van_hove 三元组: 模拟峰位漂移."""
+    eng._physical_timeseries = [
+        {
+            "name": "van_hove_G_s",
+            "unit": "1/Å³",
+            "data": [
+                (0, 1.0, 0.5),
+                (0, 2.0, 0.8),
+                (0, 3.0, 0.3),  # t=0 峰位 r=2.0
+                (100, 1.0, 0.2),
+                (100, 2.5, 0.6),
+                (100, 3.5, 0.4),  # t=100 峰位 r=2.5
+            ],
+            "meaning": "van Hove self-part",
+            "source": "lammps",
+            "spatial": True,
+        }
+    ]
     out = eng._format_timeseries_context()
     assert "van_hove_G_s" in out, "应包含 name"
     assert "spatio-temporal" in out, "应标记 spatio-temporal"
@@ -165,36 +205,66 @@ def _check_format_timeseries_spatial():
     assert "2t" in out, f"应有 2 个时间帧: {out}"
     assert "3r" in out, f"应有 3 个 r bin: {out}"
 
-    # F_q_t 三元组
-    eng._physical_timeseries = [{
-        "name": "F_q_t",
-        "unit": "1",
-        "data": [
-            (0, 0.5, 1.0), (0, 1.0, 1.0), (0, 2.0, 1.0),
-            (100, 0.5, 0.7), (100, 1.0, 0.5), (100, 2.0, 0.2),
-        ],
-        "meaning": "intermediate scattering function",
-        "source": "lammps",
-        "spatial": True,
-    }]
+
+def _check_f_q_t_peak_decay(eng) -> None:
+    """F_q_t 三元组."""
+    eng._physical_timeseries = [
+        {
+            "name": "F_q_t",
+            "unit": "1",
+            "data": [
+                (0, 0.5, 1.0),
+                (0, 1.0, 1.0),
+                (0, 2.0, 1.0),
+                (100, 0.5, 0.7),
+                (100, 1.0, 0.5),
+                (100, 2.0, 0.2),
+            ],
+            "meaning": "intermediate scattering function",
+            "source": "lammps",
+            "spatial": True,
+        }
+    ]
     out = eng._format_timeseries_context()
     assert "F_q_t" in out
     assert "spatio-temporal" in out
     # F 从 1.0 衰减到 0.7/0.5/0.2, peak 应衰减
     assert "v_decay" in out
 
-    # 混合: 二元组 + 三元组
+
+def _check_mixed_two_and_three_tuple(eng) -> None:
+    """混合: 二元组 + 三元组."""
     eng._physical_timeseries = [
-        {"name": "VACF", "unit": "Å²/ps²",
-         "data": [(0, 1.0), (100, 0.5)],
-         "meaning": "vacf", "source": "lammps"},
-        {"name": "van_hove_G_s", "unit": "1/Å³",
-         "data": [(0, 1.0, 0.5), (0, 2.0, 0.8), (100, 1.0, 0.2), (100, 2.5, 0.6)],
-         "meaning": "vh", "source": "lammps", "spatial": True},
+        {
+            "name": "VACF",
+            "unit": "Å²/ps²",
+            "data": [(0, 1.0), (100, 0.5)],
+            "meaning": "vacf",
+            "source": "lammps",
+        },
+        {
+            "name": "van_hove_G_s",
+            "unit": "1/Å³",
+            "data": [(0, 1.0, 0.5), (0, 2.0, 0.8), (100, 1.0, 0.2), (100, 2.5, 0.6)],
+            "meaning": "vh",
+            "source": "lammps",
+            "spatial": True,
+        },
     ]
     out = eng._format_timeseries_context()
     assert "VACF" in out and "decaying" in out, "二元组分支应正常"
     assert "van_hove_G_s" in out and "spatio-temporal" in out, "三元组分支应正常"
+
+
+def _check_format_timeseries_spatial():
+    """S1: _format_timeseries_context 三元组分支 — peak_drift + v_decay."""
+    from huginn.autoloop.engine import AutoloopEngine
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+
+    _check_van_hove_peak_drift(eng)
+    _check_f_q_t_peak_decay(eng)
+    _check_mixed_two_and_three_tuple(eng)
 
     print("[ok] S1 _format_timeseries_context 三元组分支 (peak_drift + v_decay)")
 
@@ -235,13 +305,19 @@ def _check_describe_image_sequence():
 
         # 单帧: 走 describe_image 原路径
         out_single = describe_image_sequence([str(p1)], "test")
-        assert out_single["tier"] in ("tier0_none", "tier1_classic_ocr",
-                                       "tier2_paddleocr", "tier3_deepseek_ocr",
-                                       "error"), f"单帧应走原路径: {out_single['tier']}"
+        assert out_single["tier"] in (
+            "tier0_none",
+            "tier1_classic_ocr",
+            "tier2_paddleocr",
+            "tier3_deepseek_ocr",
+            "error",
+        ), f"单帧应走原路径: {out_single['tier']}"
 
         # 多帧
         out = describe_image_sequence([str(p1), str(p2), str(p3)], "test")
-        assert out["tier"] == "multi_frame_sequence", f"多图应走 multi_frame_sequence: {out['tier']}"
+        assert out["tier"] == "multi_frame_sequence", (
+            f"多图应走 multi_frame_sequence: {out['tier']}"
+        )
         assert out["n_frames"] == 3
         assert len(out["per_frame"]) == 3
         # 帧间一致性结构

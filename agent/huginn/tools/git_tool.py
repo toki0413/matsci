@@ -73,17 +73,137 @@ _register_git_compensators()
 
 
 class GitToolInput(BaseModel):
-    action: Literal["status", "diff", "log", "add", "commit", "branch_create", "checkout"] = Field(default="status")
+    action: Literal[
+        "status", "diff", "log", "add", "commit", "branch_create", "checkout"
+    ] = Field(default="status")
     working_dir: str | None = Field(default=None)
     max_lines: int = Field(default=200, ge=1)
     # write-action params
-    paths: list[str] | None = Field(default=None, description="Files to stage (action=add). None = stage all.")
-    message: str | None = Field(default=None, description="Commit message (action=commit).")
-    branch: str | None = Field(default=None, description="Branch name (action=branch_create/checkout).")
+    paths: list[str] | None = Field(
+        default=None, description="Files to stage (action=add). None = stage all."
+    )
+    message: str | None = Field(
+        default=None, description="Commit message (action=commit)."
+    )
+    branch: str | None = Field(
+        default=None, description="Branch name (action=branch_create/checkout)."
+    )
 
 
 _READ_ACTIONS = {"status", "diff", "log"}
 _WRITE_ACTIONS = {"add", "commit", "branch_create", "checkout"}
+
+
+async def _write_permission_result(
+    context: ToolContext | None,
+    args: dict[str, Any],
+    input_data: GitToolInput,
+    cmd: list[str],
+) -> ToolResult | None:
+    """写动作过权限; ASK 返回审批预览, DENY 返回拒绝, 通过返回 None."""
+    perm_config = (
+        context.config
+        if context is not None and isinstance(context.config, PermissionConfig)
+        else PermissionConfig()
+    )
+    checker = PermissionChecker(perm_config)
+    perm_result = await checker.check(
+        "git_tool",
+        is_destructive=True,
+        args=args,
+    )
+    if perm_result.mode == PermissionMode.ASK:
+        return ToolResult(
+            data={
+                "dry_run": True,
+                "needs_approval": True,
+                "action": input_data.action,
+                "command": " ".join(cmd),
+                "reason": perm_result.reason,
+                "message": f"Git {input_data.action} requires approval — no changes made.",
+            },
+            success=True,
+        )
+    if perm_result.mode == PermissionMode.DENY:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=perm_result.reason
+            or f"Git {input_data.action} denied by permission policy.",
+        )
+    return None
+
+
+def _capture_prev_state(work_dir: Path, action: str) -> tuple[str | None, str | None]:
+    """写动作执行前捕获前状态 (供补偿逆撤销)."""
+    prev_hash: str | None = None
+    prev_ref: str | None = None
+    if action in ("commit", "add", "branch_create", "checkout"):
+        prev_hash = _git(str(work_dir), "rev-parse", "HEAD") or None
+        prev_ref = _git(str(work_dir), "rev-parse", "--abbrev-ref", "HEAD")
+        if prev_ref == "HEAD":
+            prev_ref = prev_hash  # detached HEAD → 回到该 commit
+    return prev_hash, prev_ref
+
+
+def _register_revertible(
+    context: ToolContext | None,
+    action: str,
+    work_dir: Path,
+    prev_hash: str | None,
+    prev_ref: str | None,
+) -> None:
+    """RevertibleEffect (Cordis): 写操作成功后, 把补偿逆登记进调用方的 RevertibleContext."""
+    if context is None or context.revertible is None:
+        return
+    rv = context.revertible
+    if action == "commit":
+        rv.compensate("git_commit", {"work_dir": str(work_dir), "prev_hash": prev_hash})
+    elif action in ("branch_create", "checkout"):
+        rv.compensate("git_checkout", {"work_dir": str(work_dir), "prev_ref": prev_ref})
+    elif action == "add":
+        rv.compensate("git_add", {"work_dir": str(work_dir)})
+
+
+def _run_git_command(
+    cmd: list[str], work_dir: Path, input_data: GitToolInput
+) -> ToolResult:
+    """执行 git 命令并组装结果."""
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(work_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30.0,
+        )
+        output_lines = (result.stdout + result.stderr).splitlines()
+        truncated = len(output_lines) > input_data.max_lines
+        output = "\n".join(output_lines[: input_data.max_lines])
+        # Read actions always succeed at the tool level — git's non-zero
+        # exit (e.g. "not a git repository") is captured output, not a
+        # tool failure. Write actions propagate the exit code as success.
+        is_read = input_data.action in _READ_ACTIONS
+        success = True if is_read else result.returncode == 0
+
+        return ToolResult(
+            data={
+                "action": input_data.action,
+                "command": " ".join(cmd),
+                "output": output,
+                "truncated": truncated,
+                "returncode": result.returncode,
+                "message": f"Git {input_data.action} {'completed' if result.returncode == 0 else 'failed'}.",
+            },
+            success=success,
+            error=None
+            if success
+            else f"Git {input_data.action} failed (exit {result.returncode}): {result.stderr.strip()[:200]}",
+        )
+    except Exception as e:
+        return ToolResult(data=None, success=False, error=f"Git tool failed: {e}")
 
 
 class GitTool(HuginnTool):
@@ -107,7 +227,9 @@ class GitTool(HuginnTool):
     ) -> ToolResult:
         input_data = GitToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
+            Path(input_data.working_dir)
+            if input_data.working_dir
+            else self.default_work_dir()
         )
 
         # ── 构造命令 ──
@@ -121,90 +243,23 @@ class GitTool(HuginnTool):
 
         # ── 写动作过权限 ──
         if input_data.action in _WRITE_ACTIONS:
-            perm_config = (
-                context.config
-                if context is not None and isinstance(context.config, PermissionConfig)
-                else PermissionConfig()
-            )
-            checker = PermissionChecker(perm_config)
-            perm_result = await checker.check(
-                "git_tool",
-                is_destructive=True,
-                args=args,
-            )
-            if perm_result.mode == PermissionMode.ASK:
-                return ToolResult(
-                    data={
-                        "dry_run": True,
-                        "needs_approval": True,
-                        "action": input_data.action,
-                        "command": " ".join(cmd),
-                        "reason": perm_result.reason,
-                        "message": f"Git {input_data.action} requires approval — no changes made.",
-                    },
-                    success=True,
-                )
-            if perm_result.mode == PermissionMode.DENY:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=perm_result.reason or f"Git {input_data.action} denied by permission policy.",
-                )
+            early = await _write_permission_result(context, args, input_data, cmd)
+            if early is not None:
+                return early
 
         # ── 写动作执行前捕获前状态 (供补偿逆撤销) ──
-        prev_hash: str | None = None
-        prev_ref: str | None = None
-        if input_data.action in ("commit", "add", "branch_create", "checkout"):
-            prev_hash = _git(str(work_dir), "rev-parse", "HEAD") or None
-            prev_ref = _git(str(work_dir), "rev-parse", "--abbrev-ref", "HEAD")
-            if prev_ref == "HEAD":
-                prev_ref = prev_hash  # detached HEAD → 回到该 commit
+        prev_hash, prev_ref = _capture_prev_state(work_dir, input_data.action)
 
         # ── 执行 ──
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(work_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30.0,
-            )
-            output_lines = (result.stdout + result.stderr).splitlines()
-            truncated = len(output_lines) > input_data.max_lines
-            output = "\n".join(output_lines[: input_data.max_lines])
-            # Read actions always succeed at the tool level — git's non-zero
-            # exit (e.g. "not a git repository") is captured output, not a
-            # tool failure. Write actions propagate the exit code as success.
-            is_read = input_data.action in _READ_ACTIONS
-            success = True if is_read else result.returncode == 0
+        result = _run_git_command(cmd, work_dir, input_data)
 
-            # RevertibleEffect (Cordis): 写操作成功后, 把补偿逆登记进
-            # 调用方的 RevertibleContext, 上层 workflow/沙箱统一回滚.
-            if success and not is_read and context is not None and context.revertible is not None:
-                rv = context.revertible
-                if input_data.action == "commit":
-                    rv.compensate("git_commit", {"work_dir": str(work_dir), "prev_hash": prev_hash})
-                elif input_data.action in ("branch_create", "checkout"):
-                    rv.compensate("git_checkout", {"work_dir": str(work_dir), "prev_ref": prev_ref})
-                elif input_data.action == "add":
-                    rv.compensate("git_add", {"work_dir": str(work_dir)})
-
-            return ToolResult(
-                data={
-                    "action": input_data.action,
-                    "command": " ".join(cmd),
-                    "output": output,
-                    "truncated": truncated,
-                    "returncode": result.returncode,
-                    "message": f"Git {input_data.action} {'completed' if result.returncode == 0 else 'failed'}.",
-                },
-                success=success,
-                error=None if success else f"Git {input_data.action} failed (exit {result.returncode}): {result.stderr.strip()[:200]}",
+        # RevertibleEffect (Cordis): 写操作成功后, 把补偿逆登记进
+        # 调用方的 RevertibleContext, 上层 workflow/沙箱统一回滚.
+        if result.success and input_data.action not in _READ_ACTIONS:
+            _register_revertible(
+                context, input_data.action, work_dir, prev_hash, prev_ref
             )
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Git tool failed: {e}")
+        return result
 
 
 def _build_cmd(input_data: GitToolInput) -> list[str] | None:

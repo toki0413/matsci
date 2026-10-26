@@ -40,6 +40,27 @@ class CharacterizationInput(BaseModel):
     )
 
 
+def _pdf_envelope(r, *params):
+    out = np.zeros_like(r)
+    for i in range(0, len(params), 4):
+        a, mu, sigma, damp = params[i : i + 4]
+        out += a * np.exp(-damp * r) * np.exp(-0.5 * ((r - mu) / sigma) ** 2)
+    return out
+
+
+def _gaussian(x, a, mu, sigma, bg):
+    return bg + a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+
+def _multi_gaussian(x, *params):
+    bg = params[-1]
+    out = np.full_like(x, bg, dtype=float)
+    for i in range(0, len(params) - 1, 3):
+        a, mu, sigma = params[i : i + 3]
+        out += a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+    return out
+
+
 class CharacterizationTool(HuginnTool):
     """Analyze XRD, spectroscopy, PDF, microscopy, XPS, NMR, and MS data."""
 
@@ -142,7 +163,9 @@ class CharacterizationTool(HuginnTool):
         # 给 agent 一个链式调用 xrd_sim_tool.index_peaks 的提示，避免两个工具各自孤立
         peak_positions = [round(p["2theta"], 4) for p in results]
         data["auto_indexing_hint"] = {
-            "peaks": [{"two_theta": p["2theta"], "intensity": p["intensity"]} for p in results],
+            "peaks": [
+                {"two_theta": p["2theta"], "intensity": p["intensity"]} for p in results
+            ],
             "peak_positions": peak_positions,
             "next_action": (
                 f"检测到 {len(results)} 个峰，可调用 xrd_sim_tool 的 index_peaks "
@@ -201,13 +224,6 @@ class CharacterizationTool(HuginnTool):
             raise RuntimeError(
                 "PDF fitting requires scipy. Install: pip install scipy"
             ) from exc
-
-        def _pdf_envelope(r, *params):
-            out = np.zeros_like(r)
-            for i in range(0, len(params), 4):
-                a, mu, sigma, damp = params[i : i + 4]
-                out += a * np.exp(-damp * r) * np.exp(-0.5 * ((r - mu) / sigma) ** 2)
-            return out
 
         peaks, _ = find_peaks(y, distance=5)
         chosen = sorted(peaks, key=lambda i: y[i], reverse=True)[:n_peaks]
@@ -305,17 +321,6 @@ class CharacterizationTool(HuginnTool):
             raise RuntimeError(
                 "XPS peak fitting requires scipy. Install: pip install scipy"
             ) from exc
-
-        def _gaussian(x, a, mu, sigma, bg):
-            return bg + a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-
-        def _multi_gaussian(x, *params):
-            bg = params[-1]
-            out = np.full_like(x, bg, dtype=float)
-            for i in range(0, len(params) - 1, 3):
-                a, mu, sigma = params[i : i + 3]
-                out += a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-            return out
 
         peaks, _ = find_peaks(y, distance=5)
         chosen = sorted(peaks, key=lambda i: y[i], reverse=True)[:n_peaks]

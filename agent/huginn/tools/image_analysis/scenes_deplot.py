@@ -4,6 +4,7 @@
 模块导入时只用 find_spec 探测依赖是否在, 真正的重 import 放到调用时,
 避免拖慢 image_analysis 包的整体加载.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -53,6 +54,7 @@ def _to_markdown_table(text: str) -> str:
         else:
             # 3 个以上连续空格当列分隔
             import re
+
             cells = [c.strip() for c in re.split(r"\s{3,}", ln)]
         cells = [c for c in cells if c != ""]
         if cells:
@@ -81,7 +83,10 @@ def _load_deplot():
 
     with _deplot_lock:
         # Double-check after acquiring lock
-        if _deplot_cache["processor"] is not None and _deplot_cache["model"] is not None:
+        if (
+            _deplot_cache["processor"] is not None
+            and _deplot_cache["model"] is not None
+        ):
             return _deplot_cache["processor"], _deplot_cache["model"]
 
         import torch  # noqa: F401  torch 要先 import, transformers 推理依赖它
@@ -95,28 +100,72 @@ def _load_deplot():
         return processor, model
 
 
+def _unavailable_result() -> ToolResult:
+    """依赖不全时的降级结果: 告诉用户怎么装, 不报错."""
+    missing = []
+    if not _HAS_TORCH:
+        missing.append("torch")
+    if not _HAS_TRANSFORMERS:
+        missing.append("transformers")
+    data = {
+        "summary": (
+            f"DePlot 不可用: 缺少依赖 ({', '.join(missing)}). "
+            f"安装后即可使用: pip install {' '.join(missing)}"
+        ),
+        "available": False,
+        "missing_dependencies": missing,
+        "model_id": _DEPLOT_MODEL_ID,
+        "install_hint": f"pip install {' '.join(missing)}",
+    }
+    return ToolResult(data=data)
+
+
+def _success_data(raw_text: str) -> dict:
+    """把 DePlot 原始输出整理成 data (Markdown + 行列数粗估)."""
+    markdown_table = _to_markdown_table(raw_text)
+    # 行列数粗估一下, 方便上层判断
+    n_rows = max(raw_text.count("\n") + 1, 1)
+    n_cols = 0
+    for ln in raw_text.splitlines():
+        if "\t" in ln:
+            n_cols = max(n_cols, len(ln.split("\t")))
+
+    summary = f"DePlot 图表转表格: 成功转换, 约 {n_rows} 行 (Markdown 表格已生成)"
+    return {
+        "summary": summary,
+        "available": True,
+        "model_id": _DEPLOT_MODEL_ID,
+        "raw_text": raw_text.strip(),
+        "markdown_table": markdown_table,
+        "estimated_rows": n_rows,
+        "estimated_columns": n_cols
+        or (markdown_table.count("---") if markdown_table else 0),
+    }
+
+
+def _failure_result(exc: Exception) -> ToolResult:
+    """推理失败时降级成可读的提示."""
+    logger.warning("DePlot 推理失败: %s", exc, exc_info=True)
+    data = {
+        "summary": f"DePlot 推理失败: {exc}",
+        "available": True,
+        "model_id": _DEPLOT_MODEL_ID,
+        "error": str(exc),
+        "install_hint": (
+            "首次使用会从 HuggingFace 下载 google/deplot 模型, "
+            "确保网络可达且有足够磁盘空间."
+        ),
+    }
+    return ToolResult(data=data)
+
+
 def deplot_chart(args: ImageAnalysisInput) -> ToolResult:
     """把图表图片转成结构化表格 (Markdown)."""
     image_path = args.image_path
 
     # 没装 transformers / torch, 直接告诉用户怎么装, 不报错
     if not _DEPLOT_AVAILABLE:
-        missing = []
-        if not _HAS_TORCH:
-            missing.append("torch")
-        if not _HAS_TRANSFORMERS:
-            missing.append("transformers")
-        data = {
-            "summary": (
-                f"DePlot 不可用: 缺少依赖 ({', '.join(missing)}). "
-                f"安装后即可使用: pip install {' '.join(missing)}"
-            ),
-            "available": False,
-            "missing_dependencies": missing,
-            "model_id": _DEPLOT_MODEL_ID,
-            "install_hint": f"pip install {' '.join(missing)}",
-        }
-        return ToolResult(data=data)
+        return _unavailable_result()
 
     # 真正加载模型 + 推理, 任何异常都降级成可读的提示
     try:
@@ -130,38 +179,6 @@ def deplot_chart(args: ImageAnalysisInput) -> ToolResult:
         generated_ids = model.generate(**inputs, max_new_tokens=max_tokens)
         raw_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
-        markdown_table = _to_markdown_table(raw_text)
-        # 行列数粗估一下, 方便上层判断
-        n_rows = max(raw_text.count("\n") + 1, 1)
-        n_cols = 0
-        for ln in raw_text.splitlines():
-            if "\t" in ln:
-                n_cols = max(n_cols, len(ln.split("\t")))
-
-        summary = (
-            f"DePlot 图表转表格: 成功转换, 约 {n_rows} 行 "
-            f"(Markdown 表格已生成)"
-        )
-        data = {
-            "summary": summary,
-            "available": True,
-            "model_id": _DEPLOT_MODEL_ID,
-            "raw_text": raw_text.strip(),
-            "markdown_table": markdown_table,
-            "estimated_rows": n_rows,
-            "estimated_columns": n_cols or (markdown_table.count("---") if markdown_table else 0),
-        }
-        return ToolResult(data=data)
+        return ToolResult(data=_success_data(raw_text))
     except Exception as exc:
-        logger.warning("DePlot 推理失败: %s", exc, exc_info=True)
-        data = {
-            "summary": f"DePlot 推理失败: {exc}",
-            "available": True,
-            "model_id": _DEPLOT_MODEL_ID,
-            "error": str(exc),
-            "install_hint": (
-                "首次使用会从 HuggingFace 下载 google/deplot 模型, "
-                "确保网络可达且有足够磁盘空间."
-            ),
-        }
-        return ToolResult(data=data)
+        return _failure_result(exc)

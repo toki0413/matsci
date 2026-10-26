@@ -34,6 +34,58 @@ _ORCA_KEYWORD_MAP = {
 }
 
 
+def _attach_orca_audit(
+    args: OrcaToolInput, parsed: dict[str, Any], data: dict[str, Any]
+) -> None:
+    """兜底补跑一次物理审计，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit(
+            "orca_tool", args.action, parsed, args.model_dump()
+        )
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _parse_out_energy(result: dict[str, Any], content: str) -> None:
+    """能量: 优先 FINAL SINGLE POINT ENERGY, 否则回退 Total Energy."""
+    sp_matches = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?[\d.]+)", content)
+    if sp_matches:
+        result["energy"] = float(sp_matches[-1])
+        return
+
+    # also try "Total Energy" for older ORCA versions
+    te_matches = re.findall(r"Total Energy\s*:\s*(-?[\d.]+)", content)
+    if te_matches:
+        result["energy"] = float(te_matches[-1])
+
+
+def _parse_out_frequencies(result: dict[str, Any], content: str) -> None:
+    """振动频率解析."""
+    re.findall(
+        r"VIBRATIONAL FREQUENCIES.*?(?:\n.*?)*?(-?[\d.]+)\s*cm",
+        content,
+        re.IGNORECASE,
+    )
+    # simpler: grab lines like "  0:  0.00 cm"
+    freq_lines = re.findall(r"^\s*\d+:\s+(-?[\d.]+)\s*cm", content, re.MULTILINE)
+    if freq_lines:
+        result["frequencies"] = [float(f) for f in freq_lines]
+
+
+def _parse_out_charge(result: dict[str, Any], content: str) -> None:
+    """电荷与多重度解析."""
+    charge_match = re.search(r"Charge\s*[:=]\s*(-?\d+)", content, re.IGNORECASE)
+    if charge_match:
+        result["charge"] = int(charge_match.group(1))
+    mult_match = re.search(r"Multiplicity\s*[:=]\s*(\d+)", content, re.IGNORECASE)
+    if mult_match:
+        result["multiplicity"] = int(mult_match.group(1))
+
+
 class OrcaToolInput(BaseModel):
     action: Literal["sp", "opt", "freq", "parse"] = Field(
         ...,
@@ -54,11 +106,14 @@ class OrcaToolInput(BaseModel):
         description="Override ORCA input keywords (e.g. {'scf_conv': 'tight'})",
     )
     max_auto_retries: int = Field(
-        default=2, ge=0, le=5,
+        default=2,
+        ge=0,
+        le=5,
         description="On failure, auto-diagnose + patch input and retry up to N times",
     )
     timeout: int = Field(
-        default=3600, ge=1,
+        default=3600,
+        ge=1,
         description="Max wall-clock seconds for a single ORCA run",
     )
 
@@ -125,9 +180,7 @@ class OrcaTool(HuginnTool):
     ) -> ValidationResult:
         return await validate_working_dir(args, context)
 
-    async def call(
-        self, args: OrcaToolInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: OrcaToolInput, context: ToolContext) -> ToolResult:
         work_dir = Path(args.working_dir)
         if not work_dir.exists():
             return ToolResult(
@@ -156,6 +209,7 @@ class OrcaTool(HuginnTool):
         from huginn.tools.sim.executable_resolver import (
             resolve_executable,
         )
+
         resolution = resolve_executable("orca")
         if isinstance(resolution, str):
             self.orca_executable = resolution
@@ -164,7 +218,10 @@ class OrcaTool(HuginnTool):
             data=None,
             success=False,
             error=f"ORCA executable not found. {resolution.install_hint}",
-            metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
+            metadata={
+                "needs_resolution": True,
+                "resolution_request": resolution.to_dict(),
+            },
         )
 
     # ── execution ──────────────────────────────────────────────────
@@ -183,84 +240,146 @@ class OrcaTool(HuginnTool):
         audit_report = None
 
         for attempt in range(args.max_auto_retries + 1):
-            cmd = [self.orca_executable, inp_file.name]
-            try:
-                sb_result = self.sandbox.run(
-                    cmd, cwd=str(work_dir), timeout=args.timeout
-                )
-            except Exception as e:
-                return ToolResult(
-                    data=None, success=False, error=f"ORCA execution failed: {e}"
-                )
-
-            rc = self._get_returncode(sb_result)
-            stderr = self._get_stderr(sb_result)
+            rc, stderr, failure = self._run_attempt(args, work_dir, inp_file)
+            if failure is not None:
+                return failure
 
             # 判断这次跑完到底算成功还是失败:
             # - rc != 0 → 硬失败, stderr 诊断
             # - rc == 0 但优化没收敛 / 没拿到能量 → 软失败, ORCA 也会静默返回 0
-            error: str | None = None
-            soft_failure_msg = None
-            if rc != 0:
-                error = stderr or ""
-            else:
-                # returncode=0 不代表收敛了, 查 .out 的优化 / SCF 状态
-                parsed_now = self._parse_out(out_file) if out_file.exists() else {}
-                if args.action == "opt" and not parsed_now.get("converged", False):
-                    # 优化没收敛: 没出现 OPTIMIZATION HAS CONVERGED
-                    error = "Optimization did not converge — OPTIMIZATION HAS NOT CONVERGED"
-                    soft_failure_msg = error
-                elif parsed_now.get("energy") is None:
-                    # 没拿到 FINAL SINGLE POINT ENERGY, SCF 大概率没收敛
-                    error = "SCF not converged — no FINAL SINGLE POINT ENERGY"
-                    soft_failure_msg = error
-                else:
-                    # SCF 收敛且能量拿到了, 过物理审计抓 "成功但不可信"
-                    try:
-                        from huginn.execution.physics_auditor import (
-                            PhysicsAuditor,
-                        )
-
-                        auditor = PhysicsAuditor()
-                        audit_report = auditor.audit(
-                            "orca_tool",
-                            args.action,
-                            parsed_now,
-                            args.model_dump(),
-                        )
-                        if audit_report.has_errors:
-                            errs = [
-                                f.message
-                                for f in audit_report.findings
-                                if f.severity == "error"
-                            ]
-                            error = f"Physics audit found errors: {errs}"
-                            soft_failure_msg = error
-                    except Exception:  # 防御: 审计异常不阻断重试流程
-                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+            error, soft_failure_msg, audit_report = self._classify_attempt(
+                args, out_file, rc, stderr, audit_report
+            )
 
             if error is None:
                 break  # 真正成功
 
-            if attempt < args.max_auto_retries:
-                # 硬失败时把 .out 尾部也带上, 帮 autofix 匹配错误模式
-                err_text = error or ""
-                if out_file.exists():
-                    err_text += "\n" + out_file.read_text(
-                        encoding="utf-8", errors="ignore"
-                    )[-2000:]
-                fixed = self._try_autofix(inp_file, err_text)
-                if fixed:
-                    autoheal_log.append({
-                        "attempt": attempt + 1,
-                        "error": err_text[:300],
-                        "fixes_applied": fixed["fixes"],
-                        "reasoning": fixed["reasoning"],
-                    })
-                    continue
+            if not self._should_retry(
+                args, inp_file, out_file, attempt, error, autoheal_log
+            ):
                 break
-            break  # 重试耗尽
 
+        return self._finalize_run(
+            args,
+            work_dir,
+            out_file,
+            rc,
+            stderr,
+            soft_failure_msg,
+            audit_report,
+            autoheal_log,
+        )
+
+    def _run_attempt(
+        self, args: OrcaToolInput, work_dir: Path, inp_file: Path
+    ) -> tuple[int, str, ToolResult | None]:
+        """执行一次 ORCA, 返回 (returncode, stderr, 异常结果)."""
+        cmd = [self.orca_executable, inp_file.name]
+        try:
+            sb_result = self.sandbox.run(cmd, cwd=str(work_dir), timeout=args.timeout)
+        except Exception as e:
+            return (
+                -1,
+                "",
+                ToolResult(
+                    data=None, success=False, error=f"ORCA execution failed: {e}"
+                ),
+            )
+        return self._get_returncode(sb_result), self._get_stderr(sb_result), None
+
+    def _should_retry(
+        self,
+        args: OrcaToolInput,
+        inp_file: Path,
+        out_file: Path,
+        attempt: int,
+        error: str,
+        autoheal_log: list[dict[str, Any]],
+    ) -> bool:
+        """判断是否再进行一轮重试 (可自动修复时记录 autoheal)."""
+        if attempt >= args.max_auto_retries:
+            return False  # 重试耗尽
+        # 硬失败时把 .out 尾部也带上, 帮 autofix 匹配错误模式
+        err_text = error or ""
+        if out_file.exists():
+            err_text += (
+                "\n" + out_file.read_text(encoding="utf-8", errors="ignore")[-2000:]
+            )
+        fixed = self._try_autofix(inp_file, err_text)
+        if not fixed:
+            return False
+        autoheal_log.append(
+            {
+                "attempt": attempt + 1,
+                "error": err_text[:300],
+                "fixes_applied": fixed["fixes"],
+                "reasoning": fixed["reasoning"],
+            }
+        )
+        return True
+
+    def _classify_attempt(
+        self,
+        args: OrcaToolInput,
+        out_file: Path,
+        rc: int,
+        stderr: str,
+        audit_report: Any,
+    ) -> tuple[str | None, str | None, Any]:
+        """判定本次运行是硬失败/软失败/成功, 返回 (error, 软失败原因, 审计)."""
+        error: str | None = None
+        soft_failure_msg: str | None = None
+        if rc != 0:
+            error = stderr or ""
+        else:
+            # returncode=0 不代表收敛了, 查 .out 的优化 / SCF 状态
+            parsed_now = self._parse_out(out_file) if out_file.exists() else {}
+            if args.action == "opt" and not parsed_now.get("converged", False):
+                # 优化没收敛: 没出现 OPTIMIZATION HAS CONVERGED
+                error = "Optimization did not converge — OPTIMIZATION HAS NOT CONVERGED"
+                soft_failure_msg = error
+            elif parsed_now.get("energy") is None:
+                # 没拿到 FINAL SINGLE POINT ENERGY, SCF 大概率没收敛
+                error = "SCF not converged — no FINAL SINGLE POINT ENERGY"
+                soft_failure_msg = error
+            else:
+                # SCF 收敛且能量拿到了, 过物理审计抓 "成功但不可信"
+                try:
+                    from huginn.execution.physics_auditor import (
+                        PhysicsAuditor,
+                    )
+
+                    auditor = PhysicsAuditor()
+                    audit_report = auditor.audit(
+                        "orca_tool",
+                        args.action,
+                        parsed_now,
+                        args.model_dump(),
+                    )
+                    if audit_report.has_errors:
+                        errs = [
+                            f.message
+                            for f in audit_report.findings
+                            if f.severity == "error"
+                        ]
+                        error = f"Physics audit found errors: {errs}"
+                        soft_failure_msg = error
+                except Exception:  # 防御: 审计异常不阻断重试流程
+                    logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+        return error, soft_failure_msg, audit_report
+
+    def _finalize_run(
+        self,
+        args: OrcaToolInput,
+        work_dir: Path,
+        out_file: Path,
+        rc: int,
+        stderr: str,
+        soft_failure_msg: str | None,
+        audit_report: Any,
+        autoheal_log: list[dict[str, Any]],
+    ) -> ToolResult:
+        """解析输出并组装最终结果."""
         parsed = self._parse_out(out_file) if out_file.exists() else {}
 
         # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 优化没收敛)
@@ -271,8 +390,7 @@ class OrcaTool(HuginnTool):
             converged=parsed.get("converged", False),
             optimization_steps=parsed.get("optimization_steps", 0),
             output_files=[
-                f.name for f in work_dir.iterdir()
-                if f.suffix in [".out", ".gbw"]
+                f.name for f in work_dir.iterdir() if f.suffix in [".out", ".gbw"]
             ],
         )
 
@@ -285,16 +403,7 @@ class OrcaTool(HuginnTool):
         if audit_report is not None:
             data["physics_audit"] = audit_report.to_dict()
         else:
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "orca_tool", args.action, parsed, args.model_dump()
-                )
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_orca_audit(args, parsed, data)
 
         return ToolResult(
             data=data,
@@ -316,7 +425,8 @@ class OrcaTool(HuginnTool):
 
             # keep only keys we know how to write into the input
             applicable = {
-                k: v for k, v in fixed.items()
+                k: v
+                for k, v in fixed.items()
                 if k in _ORCA_KEYWORD_MAP and _ORCA_KEYWORD_MAP[k]
             }
             if not applicable:
@@ -433,20 +543,7 @@ class OrcaTool(HuginnTool):
             result["parse_error"] = str(e)
             return result
 
-        # Final single point energy — last occurrence
-        sp_matches = re.findall(
-            r"FINAL SINGLE POINT ENERGY\s+(-?[\d.]+)", content
-        )
-        if sp_matches:
-            result["energy"] = float(sp_matches[-1])
-
-        # also try "Total Energy" for older ORCA versions
-        if result["energy"] is None:
-            te_matches = re.findall(
-                r"Total Energy\s*:\s*(-?[\d.]+)", content
-            )
-            if te_matches:
-                result["energy"] = float(te_matches[-1])
+        _parse_out_energy(result, content)
 
         # optimization converged
         result["converged"] = "OPTIMIZATION HAS CONVERGED" in content.upper()
@@ -456,23 +553,8 @@ class OrcaTool(HuginnTool):
             "Geometry Optimization Cycle"
         ) + content.count("GEOMETRY OPTIMIZATION CYCLE")
 
-        # frequencies
-        re.findall(r"VIBRATIONAL FREQUENCIES.*?(?:\n.*?)*?(-?[\d.]+)\s*cm",
-                                  content, re.IGNORECASE)
-        # simpler: grab lines like "  0:  0.00 cm"
-        freq_lines = re.findall(r"^\s*\d+:\s+(-?[\d.]+)\s*cm", content, re.MULTILINE)
-        if freq_lines:
-            result["frequencies"] = [float(f) for f in freq_lines]
-
-        # Charge and multiplicity
-        charge_match = re.search(r"Charge\s*[:=]\s*(-?\d+)", content, re.IGNORECASE)
-        if charge_match:
-            result["charge"] = int(charge_match.group(1))
-        mult_match = re.search(
-            r"Multiplicity\s*[:=]\s*(\d+)", content, re.IGNORECASE
-        )
-        if mult_match:
-            result["multiplicity"] = int(mult_match.group(1))
+        _parse_out_frequencies(result, content)
+        _parse_out_charge(result, content)
 
         return result
 
@@ -509,9 +591,7 @@ class OrcaTool(HuginnTool):
         data["parsed"] = parsed
         return ToolResult(data=data, success=True)
 
-    def _mock_result(
-        self, args: OrcaToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _mock_result(self, args: OrcaToolInput, work_dir: Path) -> ToolResult:
         """Return synthetic results when ORCA is not installed."""
         import random
 

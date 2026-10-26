@@ -89,13 +89,15 @@ def _se_detect_axes(arr: Any) -> tuple[dict[str, Any], list[int], Any]:
     import numpy as np
 
     h, w = arr.shape
-    left_strip = arr[:, :max(3, w // 20)]
-    bottom_strip = arr[-max(3, h // 20):, :]
+    left_strip = arr[:, : max(3, w // 20)]
+    bottom_strip = arr[-max(3, h // 20) :, :]
     y_axis_dark = float(left_strip.mean())
     x_axis_dark = float(bottom_strip.mean())
     bg_level = float(arr.mean())
     axes: dict[str, Any] = {
-        "axis_detected": bool(y_axis_dark < bg_level - 10 or x_axis_dark < bg_level - 10)
+        "axis_detected": bool(
+            y_axis_dark < bg_level - 10 or x_axis_dark < bg_level - 10
+        )
     }
 
     col_max = arr.max(axis=0).astype(float)
@@ -132,8 +134,10 @@ def _se_calibrate_axes(
     """OCR 轴标定 (仅在疑似图表时尝试, 降延迟); 失败返回 None."""
     looks_like_chart = bool(
         peaks
-        or "xrd" in name_hint or "diffraction" in name_hint
-        or "band" in name_hint or "dos" in name_hint
+        or "xrd" in name_hint
+        or "diffraction" in name_hint
+        or "band" in name_hint
+        or "dos" in name_hint
     )
     if not looks_like_chart:
         return None
@@ -153,6 +157,36 @@ def _se_geometry(w: int, h: int) -> tuple[int, int, int, int]:
     return int(w * 0.10), int(w * 0.95), int(h * 0.10), int(h * 0.90)
 
 
+def _se_ocr_2theta(
+    peaks: list[int],
+    geo: tuple[int, int, int, int],
+    calibrated: tuple[float, float, float, float],
+) -> list[float]:
+    """用 OCR 轴标定把峰列映射到 2θ (取绘图区中线处的 x 数据坐标)."""
+    from huginn.tools.image_analysis.scenes_plot_extract import _pixel_to_data
+
+    x_left, x_right, y_top, y_bottom = geo
+    x_min, x_max, y_min, y_max = calibrated
+    mid_y = float(y_top + (y_bottom - y_top) / 2)
+    return [
+        _pixel_to_data(
+            px,
+            mid_y,
+            x_left,
+            y_top,
+            x_right,
+            y_bottom,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            "linear",
+            "linear",
+        )[0]
+        for px in peaks
+    ]
+
+
 def _se_extract_xrd(
     peaks: list[int],
     calibrated: tuple[float, float, float, float] | None,
@@ -167,17 +201,8 @@ def _se_extract_xrd(
     if not peaks:
         return out
 
-    x_left, x_right, y_top, y_bottom = geo
     if calibrated:
-        from huginn.tools.image_analysis.scenes_plot_extract import _pixel_to_data
-
-        x_min, x_max, y_min, y_max = calibrated
-        mid_y = float(y_top + (y_bottom - y_top) / 2)
-        estimated_2theta = [
-            _pixel_to_data(px, mid_y, x_left, y_top, x_right, y_bottom,
-                           x_min, x_max, y_min, y_max, "linear", "linear")[0]
-            for px in peaks
-        ]
+        estimated_2theta = _se_ocr_2theta(peaks, geo, calibrated)
         out["axis_calibration"] = "ocr"
     else:
         estimated_2theta = [10 + (px / w) * 80 for px in peaks]
@@ -224,8 +249,20 @@ def _se_extract_band_gap(
         x_min, x_max, y_min, y_max = calibrated
         mid_x = float(x_left + (x_right - x_left) / 2)
         gap_energies = [
-            _pixel_to_data(mid_x, g, x_left, y_top, x_right, y_bottom,
-                           x_min, x_max, y_min, y_max, "linear", "linear")[1]
+            _pixel_to_data(
+                mid_x,
+                g,
+                x_left,
+                y_top,
+                x_right,
+                y_bottom,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                "linear",
+                "linear",
+            )[1]
             for g in gaps
         ]
         out["axis_calibration"] = "ocr"
@@ -267,8 +304,19 @@ def _se_extract_dense_curve(
             x_min, x_max, y_min, y_max = 0.0, 1.0, 0.0, 1.0
         x_left, x_right, y_top, y_bottom = geo
         dense = _extract_single_curve(
-            rgb, target, 40.0, x_left, y_top, x_right, y_bottom,
-            x_min, x_max, y_min, y_max, "linear", "linear",
+            rgb,
+            target,
+            40.0,
+            x_left,
+            y_top,
+            x_right,
+            y_bottom,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            "linear",
+            "linear",
         )
         if dense:
             return {"data_curve": dense, "n_data_points": len(dense)}
@@ -350,6 +398,14 @@ def _format_symbols_structured(chart_data: dict[str, Any]) -> dict[str, Any]:
         "axis_detected": chart_data.get("axis_detected", False),
     }
 
+    _se_passthrough_fields(result, chart_data)
+    result["self_check"] = _se_self_check(chart_data, confidence, result)
+
+    return result
+
+
+def _se_passthrough_fields(result: dict[str, Any], chart_data: dict[str, Any]) -> None:
+    """结构化字段直接透传 + 密集曲线降采样, 原地写入 result."""
     # 结构化字段直接透传, agent 能精确引用
     for key in (
         "peak_positions_px",
@@ -370,24 +426,27 @@ def _format_symbols_structured(chart_data: dict[str, Any]) -> dict[str, Any]:
         step = max(1, len(curve) // 60)
         result["data_curve_sample"] = curve[::step][:60]
 
-    # self_check: Nullmax 启发 — 让红队/PhaseGate 能判断视觉估算可信度
-    result["self_check"] = {
+
+def _se_self_check(
+    chart_data: dict[str, Any], confidence: float, result: dict[str, Any]
+) -> dict[str, Any]:
+    """self_check: Nullmax 启发 — 让红队/PhaseGate 能判断视觉估算可信度."""
+    self_check: dict[str, Any] = {
         "extraction_confidence": confidence,
         "caveats": [],
     }
     if confidence < 0.3:
-        result["self_check"]["caveats"].append("low_confidence: 图像质量差或峰不清晰, 估算不可靠")
+        self_check["caveats"].append("low_confidence: 图像质量差或峰不清晰, 估算不可靠")
     if not result.get("axis_detected"):
-        result["self_check"]["caveats"].append("no_axis: 未检测到坐标轴, 可能不是标准图表")
+        self_check["caveats"].append("no_axis: 未检测到坐标轴, 可能不是标准图表")
     if result.get("n_peaks", 0) == 0:
-        result["self_check"]["caveats"].append("no_peaks: 未检测到峰, 数据提取可能失败")
+        self_check["caveats"].append("no_peaks: 未检测到峰, 数据提取可能失败")
     cal = chart_data.get("axis_calibration")
     if cal and cal.startswith("fallback"):
-        result["self_check"]["caveats"].append(
+        self_check["caveats"].append(
             f"axis_calibration: 轴范围来自默认假设 ({cal}), 数值为粗估而非精确测量"
         )
-
-    return result
+    return self_check
 
 
 def visual_to_symbols_structured(image_path: str | Path) -> dict[str, Any]:
@@ -418,9 +477,12 @@ def _guess_chart_type(p: Path, arr: Any) -> str:
     try:
         import numpy as np
         from scipy.ndimage import sobel
+
         sx = sobel(arr, axis=0)
         sy = sobel(arr, axis=1)
-        edge_density = float((np.hypot(sx, sy) > 50).sum()) / (arr.shape[0] * arr.shape[1])
+        edge_density = float((np.hypot(sx, sy) > 50).sum()) / (
+            arr.shape[0] * arr.shape[1]
+        )
         if edge_density > 0.15:
             return "likely_plot_or_microscopy_busy"
         if edge_density < 0.05:
@@ -436,7 +498,9 @@ def _format_symbols_text(chart_data: dict[str, Any]) -> str:
     if "error" in chart_data:
         return f"[VISUAL→SYMBOLS] extraction failed: {chart_data.get('error', '?')}"
 
-    parts: list[str] = [f"[VISUAL→SYMBOLS] type={chart_data.get('image_type', 'unknown')}"]
+    parts: list[str] = [
+        f"[VISUAL→SYMBOLS] type={chart_data.get('image_type', 'unknown')}"
+    ]
 
     if chart_data.get("analysis_type") == "XRD":
         d_spacings = chart_data.get("estimated_d_spacing_A", [])
@@ -444,7 +508,7 @@ def _format_symbols_text(chart_data: dict[str, Any]) -> str:
         intens = chart_data.get("peak_intensities", [])
         for i, (t, d) in enumerate(zip(two_thetas, d_spacings)):
             intensity = intens[i] if i < len(intens) else 0.0
-            parts.append(f"  peak_{i+1}: 2θ={t}°, d={d}Å, I≈{intensity:.2f}")
+            parts.append(f"  peak_{i + 1}: 2θ={t}°, d={d}Å, I≈{intensity:.2f}")
         if d_spacings:
             parts.append("  → [SUGGESTION] Compare d-spacings with ICDD card database")
             parts.append("  → [SUGGESTION] Identify crystal phase from peak positions")

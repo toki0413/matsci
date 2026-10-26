@@ -12,6 +12,7 @@ Layout:
   <workspace>/.huginn/engine_state/<run_id>.json       — EngineState
   <workspace>/.huginn/hypothesis_graph_<run_id>.json   — HypothesisGraph snapshot
 """
+
 from __future__ import annotations
 
 import json
@@ -59,15 +60,19 @@ def latest_run_id(workspace: str | Path) -> str | None:
         return None
     try:
         candidates = sorted(
-            d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True,
+            d.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
         )
         if not candidates:
             return None
         return candidates[0].stem
     except Exception:
         import logging
+
         logging.getLogger(__name__).debug(
-            "latest_run_id scan failed (non-fatal)", exc_info=True,
+            "latest_run_id scan failed (non-fatal)",
+            exc_info=True,
         )
         return None
 
@@ -179,7 +184,9 @@ def _engine_state_path(workspace: str | Path, run_id: str) -> Path:
 
 
 def _hypothesis_graph_path(workspace: str | Path, run_id: str) -> Path:
-    return Path(workspace).resolve() / HUGINN_DIR_NAME / f"hypothesis_graph_{run_id}.json"
+    return (
+        Path(workspace).resolve() / HUGINN_DIR_NAME / f"hypothesis_graph_{run_id}.json"
+    )
 
 
 def _snapshot_engine(engine: Any, run_id: str) -> EngineState:
@@ -219,46 +226,60 @@ def save_engine_state(
         return None
     try:
         state = _snapshot_engine(engine, run_id)
-        # P1: Structure Cognitive Map — flag on 时从 tool registry 拉活跃 map.
-        # 跟 hypothesis_graph 同范式: try/except, 失败不阻塞 engine_state save.
-        if FeatureFlags.shared().is_enabled("use_cognitive_map"):
-            try:
-                from huginn.tools import structure_cognitive_map_tool as _cm
-                state.cognitive_maps = {
-                    mid: m.to_engine_state_dict() for mid, m in _cm._MAPS.items()
-                }
-            except Exception:
-                import logging
-                logging.getLogger(__name__).debug(
-                    "cognitive_maps serialization failed (non-fatal)", exc_info=True,
-                )
+        _attach_cognitive_maps(state)
         # MCMC 多链状态 — 跟 cognitive_maps 同范式, 单独从 engine 拉
         state._mcmc_chains = getattr(engine, "_mcmc_chains", {})
         atomic_write_json(_engine_state_path(workspace, run_id), asdict(state))
         # hypothesis_graph 同步落盘 — refuted/supported 状态跨 session 必须保留.
         # graph.save 自己处理 flag off (返 None) 和异常 (返 None).
-        graph = getattr(engine, "hypothesis_graph", None)
-        if graph is not None and hasattr(graph, "save"):
-            try:
-                graph.save(_hypothesis_graph_path(workspace, run_id))
-            except Exception:
-                # graph save 失败不阻塞 engine_state save — engine_state 自身可独立恢复
-                import logging
-                logging.getLogger(__name__).debug(
-                    "hypothesis_graph.save failed (non-fatal)", exc_info=True,
-                )
+        _save_hypothesis_graph(engine, workspace, run_id)
         return state
     except Exception:
         import logging
+
         logging.getLogger(__name__).warning(
-            "save_engine_state failed for run_id=%s", run_id, exc_info=True,
+            "save_engine_state failed for run_id=%s",
+            run_id,
+            exc_info=True,
         )
         return None
 
 
-def load_engine_state(
-    run_id: str, workspace: str | Path
-) -> EngineState | None:
+def _attach_cognitive_maps(state: EngineState) -> None:
+    # P1: Structure Cognitive Map — flag on 时从 tool registry 拉活跃 map.
+    # 跟 hypothesis_graph 同范式: try/except, 失败不阻塞 engine_state save.
+    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
+        try:
+            from huginn.tools import structure_cognitive_map_tool as _cm
+
+            state.cognitive_maps = {
+                mid: m.to_engine_state_dict() for mid, m in _cm._MAPS.items()
+            }
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "cognitive_maps serialization failed (non-fatal)",
+                exc_info=True,
+            )
+
+
+def _save_hypothesis_graph(engine: Any, workspace: str | Path, run_id: str) -> None:
+    graph = getattr(engine, "hypothesis_graph", None)
+    if graph is not None and hasattr(graph, "save"):
+        try:
+            graph.save(_hypothesis_graph_path(workspace, run_id))
+        except Exception:
+            # graph save 失败不阻塞 engine_state save — engine_state 自身可独立恢复
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "hypothesis_graph.save failed (non-fatal)",
+                exc_info=True,
+            )
+
+
+def load_engine_state(run_id: str, workspace: str | Path) -> EngineState | None:
     """读 <workspace>/.huginn/engine_state/<run_id>.json 反序列化.
 
     文件不存在 / flag off / 解析失败均返回 None.
@@ -272,43 +293,50 @@ def load_engine_state(
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        # 字段缺失时用 dataclass 默认值, 兼容旧格式 (新增字段不破老 snapshot)
-        defaults = EngineState()
-        kwargs = {f: data.get(f, getattr(defaults, f)) for f in _ENGINE_FIELDS}
-        # cognitive_maps 不在 _ENGINE_FIELDS 里 (不是 engine 实例属性), 单独读.
-        kwargs["cognitive_maps"] = data.get("cognitive_maps", {})
-        # _mcmc_chains: JSON 把 int key 变 str, 这里转回来.
-        # 每链的 rng_state 也要 list → tuple (跟顶层 _mcmc_rng_state 同问题).
-        _raw_chains = data.get("_mcmc_chains", {})
-        _chains_out: dict[int, dict] = {}
-        for k, v in _raw_chains.items():
-            cid = int(k)
-            if isinstance(v, dict):
-                _rng = v.get("rng_state")
-                if isinstance(_rng, list) and len(_rng) == 3:
-                    v["rng_state"] = (int(_rng[0]), tuple(_rng[1]), _rng[2])
-            _chains_out[cid] = v
-        kwargs["_mcmc_chains"] = _chains_out
-        # _mcmc_rng_state: random.getstate() 返回 tuple, JSON round-trip 变 list.
-        # random.setstate() 只吃 tuple, 不转回会抛 TypeError.
-        _raw_rng = kwargs.get("_mcmc_rng_state")
-        if isinstance(_raw_rng, list) and len(_raw_rng) == 3:
-            kwargs["_mcmc_rng_state"] = (
-                int(_raw_rng[0]),
-                tuple(_raw_rng[1]),
-                _raw_rng[2],
-            )
-        kwargs["run_id"] = data.get("run_id", run_id)
-        kwargs["saved_at"] = data.get("saved_at", 0.0)
-        kwargs["trace_id"] = data.get("trace_id", "")
-        kwargs["signals"] = data.get("signals", {})
-        return EngineState(**kwargs)
+        return _build_engine_state(data, run_id)
     except Exception:
         import logging
+
         logging.getLogger(__name__).warning(
-            "load_engine_state failed for run_id=%s", run_id, exc_info=True,
+            "load_engine_state failed for run_id=%s",
+            run_id,
+            exc_info=True,
         )
         return None
+
+
+def _build_engine_state(data: dict, run_id: str) -> EngineState:
+    # 字段缺失时用 dataclass 默认值, 兼容旧格式 (新增字段不破老 snapshot)
+    defaults = EngineState()
+    kwargs = {f: data.get(f, getattr(defaults, f)) for f in _ENGINE_FIELDS}
+    # cognitive_maps 不在 _ENGINE_FIELDS 里 (不是 engine 实例属性), 单独读.
+    kwargs["cognitive_maps"] = data.get("cognitive_maps", {})
+    # _mcmc_chains: JSON 把 int key 变 str, 这里转回来.
+    # 每链的 rng_state 也要 list → tuple (跟顶层 _mcmc_rng_state 同问题).
+    _raw_chains = data.get("_mcmc_chains", {})
+    _chains_out: dict[int, dict] = {}
+    for k, v in _raw_chains.items():
+        cid = int(k)
+        if isinstance(v, dict):
+            _rng = v.get("rng_state")
+            if isinstance(_rng, list) and len(_rng) == 3:
+                v["rng_state"] = (int(_rng[0]), tuple(_rng[1]), _rng[2])
+        _chains_out[cid] = v
+    kwargs["_mcmc_chains"] = _chains_out
+    # _mcmc_rng_state: random.getstate() 返回 tuple, JSON round-trip 变 list.
+    # random.setstate() 只吃 tuple, 不转回会抛 TypeError.
+    _raw_rng = kwargs.get("_mcmc_rng_state")
+    if isinstance(_raw_rng, list) and len(_raw_rng) == 3:
+        kwargs["_mcmc_rng_state"] = (
+            int(_raw_rng[0]),
+            tuple(_raw_rng[1]),
+            _raw_rng[2],
+        )
+    kwargs["run_id"] = data.get("run_id", run_id)
+    kwargs["saved_at"] = data.get("saved_at", 0.0)
+    kwargs["trace_id"] = data.get("trace_id", "")
+    kwargs["signals"] = data.get("signals", {})
+    return EngineState(**kwargs)
 
 
 def apply_state_to_engine(state: EngineState, engine: Any) -> None:
@@ -323,8 +351,10 @@ def apply_state_to_engine(state: EngineState, engine: Any) -> None:
         except Exception:
             # 某些字段可能是 property / read-only, 跳过不阻塞其他字段
             import logging
+
             logging.getLogger(__name__).debug(
-                "apply_state_to_engine setattr %s failed (non-fatal)", f,
+                "apply_state_to_engine setattr %s failed (non-fatal)",
+                f,
                 exc_info=True,
             )
     # _mcmc_chains 不在 _ENGINE_FIELDS 里 (跟 cognitive_maps 同范式单独处理),
@@ -333,6 +363,7 @@ def apply_state_to_engine(state: EngineState, engine: Any) -> None:
         engine._mcmc_chains = getattr(state, "_mcmc_chains", {})
     except Exception:
         import logging
+
         logging.getLogger(__name__).debug(
             "apply_state_to_engine setattr _mcmc_chains failed (non-fatal)",
             exc_info=True,
@@ -346,6 +377,7 @@ def apply_state_to_engine(state: EngineState, engine: Any) -> None:
             engine.signals = EngineSignals.from_snapshot(state.signals)
         except Exception:
             import logging
+
             logging.getLogger(__name__).debug(
                 "apply_state_to_engine signals restore failed (non-fatal)",
                 exc_info=True,
@@ -417,7 +449,9 @@ def _es_scenario1(ws, eng) -> None:
     assert loaded._budget_rejects == {"tier1": 2}
     assert loaded._budget_degraded is True
     # QW1: 视觉记忆字段 round-trip
-    assert loaded._visual_primitives_history == ["[band] peak=<point>[500,800]</point>(2.5)"]
+    assert loaded._visual_primitives_history == [
+        "[band] peak=<point>[500,800]</point>(2.5)"
+    ]
     assert loaded._image_embeddings == {"img_001": [0.1, 0.2, 0.3]}
     assert loaded.run_id == "loop_abc123"
     assert loaded.saved_at == saved.saved_at
@@ -461,8 +495,9 @@ def _es_scenario4(ws, eng) -> None:
     assert flag_off_saved is None, "flag off should return None from save"
     flag_off_loaded = load_engine_state("loop_off", ws)
     assert flag_off_loaded is None, "flag off should return None from load"
-    assert not _engine_state_path(ws, "loop_off").exists(), \
+    assert not _engine_state_path(ws, "loop_off").exists(), (
         "flag off should not write file"
+    )
     print("4. flag off no-op OK")
 
 
@@ -505,9 +540,9 @@ def _es_scenario7(ws, eng) -> None:
     assert loaded_mcmc._mcmc_accept_count == 17
     assert loaded_mcmc._mcmc_step_count == 100
     # int key 经 JSON round-trip 后仍是 int (load 时转回)
-    assert loaded_mcmc._mcmc_chains == {
-        0: {"current": "h0"}, 1: {"current": "h1"}}, \
+    assert loaded_mcmc._mcmc_chains == {0: {"current": "h0"}, 1: {"current": "h1"}}, (
         f"mcmc_chains int key broken: {loaded_mcmc._mcmc_chains}"
+    )
     # apply_state_to_engine 写回 _mcmc_chains
     eng4 = _FakeEngine()
     apply_state_to_engine(loaded_mcmc, eng4)

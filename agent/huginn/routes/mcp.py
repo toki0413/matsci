@@ -58,6 +58,68 @@ async def discover_mcp_servers() -> dict[str, Any]:
     return {"servers": found}
 
 
+def _ensure_mcp_manager():
+    """确保 context 上挂着 MCPClientManager."""
+    mgr = get_context().mcp_manager
+    if mgr is None:
+        from huginn.mcp_client import MCPClientManager
+
+        mgr = MCPClientManager()
+        get_context().mcp_manager = mgr
+    return mgr
+
+
+async def _connect_and_register(
+    mgr, name: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """按 transport 建连并注册工具; SSE 缺 url 时直接返回错误响应."""
+    from huginn.mcp_client import MCPServerConfig
+    from huginn.tools.mcp_adapter import register_mcp_prompts, register_mcp_tools
+
+    transport = params.get("transport", "stdio")
+
+    if transport == "sse":
+        # SSE spawns no local process, so the command whitelist doesn't
+        # apply — we just need a reachable URL.
+        url = params.get("url")
+        if not url:
+            return {
+                "success": False,
+                "error": "url is required for SSE transport",
+            }
+        await mgr.connect(
+            MCPServerConfig(name=name, command="", args=[], transport="sse", url=url)
+        )
+    else:
+        command = params.get("command", "python")
+        args = params.get("args", [])
+        env = params.get("env")
+
+        # 命令白名单收敛到 mcp_client 单一配置点, 与 config/.mcp.json/CLI 共用,
+        # 避免每处各写一份. 非法命令由 validate_mcp_command 抛 ValueError,
+        # 下方统一捕获并回显当前白名单.
+        from huginn.mcp_client import validate_mcp_command
+
+        await mgr.connect(
+            MCPServerConfig(
+                name=name,
+                command=validate_mcp_command(command),
+                args=args,
+                env=env,
+            )
+        )
+
+    registered = register_mcp_tools(mgr, server_name=name)
+    # Prompts are optional; failure to list them shouldn't sink the connect.
+    with contextlib.suppress(Exception):
+        await register_mcp_prompts(mgr, server_name=name)
+    return {
+        "success": True,
+        "server": name,
+        "tools": [{"name": t.name, "description": t.description} for t in registered],
+    }
+
+
 @router.post("/mcp/servers/connect")
 async def connect_mcp_server(
     params: dict[str, Any], _admin: str = Depends(require_admin)
@@ -66,66 +128,14 @@ async def connect_mcp_server(
 
     Requires admin authentication to prevent arbitrary command execution.
     """
-    if get_context().mcp_manager is None:
-        from huginn.mcp_client import MCPClientManager
-
-        get_context().mcp_manager = MCPClientManager()
+    mgr = _ensure_mcp_manager()
 
     name = params.get("name", "")
     if not name:
         return {"success": False, "error": "name is required"}
 
-    transport = params.get("transport", "stdio")
-
     try:
-        from huginn.mcp_client import MCPServerConfig
-        from huginn.tools.mcp_adapter import register_mcp_prompts, register_mcp_tools
-
-        if transport == "sse":
-            # SSE spawns no local process, so the command whitelist doesn't
-            # apply — we just need a reachable URL.
-            url = params.get("url")
-            if not url:
-                return {
-                    "success": False,
-                    "error": "url is required for SSE transport",
-                }
-            await get_context().mcp_manager.connect(
-                MCPServerConfig(
-                    name=name, command="", args=[], transport="sse", url=url
-                )
-            )
-        else:
-            command = params.get("command", "python")
-            args = params.get("args", [])
-            env = params.get("env")
-
-            # 命令白名单收敛到 mcp_client 单一配置点, 与 config/.mcp.json/CLI 共用,
-            # 避免每处各写一份. 非法命令由 validate_mcp_command 抛 ValueError,
-            # 下方统一捕获并回显当前白名单.
-            from huginn.mcp_client import validate_mcp_command
-
-            await get_context().mcp_manager.connect(
-                MCPServerConfig(
-                    name=name,
-                    command=validate_mcp_command(command),
-                    args=args,
-                    env=env,
-                )
-            )
-
-        registered = register_mcp_tools(get_context().mcp_manager, server_name=name)
-        # Prompts are optional; failure to list them shouldn't sink the connect.
-        with contextlib.suppress(Exception):
-            await register_mcp_prompts(get_context().mcp_manager, server_name=name)
-        return {
-            "success": True,
-            "server": name,
-            "tools": [
-                {"name": t.name, "description": t.description}
-                for t in registered
-            ],
-        }
+        return await _connect_and_register(mgr, name, params)
     except Exception as e:
         logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
@@ -196,9 +206,7 @@ async def reconnect_mcp_server(name: str) -> dict[str, Any]:
 
 
 @router.post("/mcp/tools/{tool_name}/call", dependencies=[Depends(require_admin)])
-async def call_mcp_tool(
-    tool_name: str, args: dict[str, Any]
-) -> dict[str, Any]:
+async def call_mcp_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """直接调用 MCP 工具, 带 session expiry 检测和自动重连.
 
     用 call_tool_with_retry 替代裸 call_tool, 连续失败或 session
@@ -253,9 +261,7 @@ async def connect_mcp_batch(
         )
         return {
             "success": True,
-            "connected": [
-                {"name": name, "ok": ok} for name, ok in results.items()
-            ],
+            "connected": [{"name": name, "ok": ok} for name, ok in results.items()],
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

@@ -419,22 +419,113 @@ SCENARIO_TOOL_BUNDLES: dict[str, dict[str, Any]] = {
 # 用中文/英文关键词覆盖最常见的说法. LLM 不可用时也能撑住.
 # 关键词尽量用单字词或短词组, 避免 "优化结构" 这种被空格/标点断开的写法漏匹配.
 _KEYWORD_FALLBACK: list[tuple[list[str], str]] = [
-    (["结构优化", "优化结构", "晶体结构", "弛豫", "relax", "structure optimization"], "dft_structure_optimization"),
-    (["能带", "band", "dos", "电子结构", "electronic structure"], "dft_band_calculation"),
-    (["aimd", "ab initio md", "第一性原理分子动力学", "从头分子动力学"], "aimd_simulation"),
-    (["defect", "缺陷", "vacancy", "空位", "substitution", "替位", "interstitial", "间隙"], "defect_calculation"),
-    (["训练势函数", "mlp", "ml potential", "机器学习势", "nep", "snap", "gap ", "ace ", "train potential"], "ml_potential_training"),
+    (
+        ["结构优化", "优化结构", "晶体结构", "弛豫", "relax", "structure optimization"],
+        "dft_structure_optimization",
+    ),
+    (
+        ["能带", "band", "dos", "电子结构", "electronic structure"],
+        "dft_band_calculation",
+    ),
+    (
+        ["aimd", "ab initio md", "第一性原理分子动力学", "从头分子动力学"],
+        "aimd_simulation",
+    ),
+    (
+        [
+            "defect",
+            "缺陷",
+            "vacancy",
+            "空位",
+            "substitution",
+            "替位",
+            "interstitial",
+            "间隙",
+        ],
+        "defect_calculation",
+    ),
+    (
+        [
+            "训练势函数",
+            "mlp",
+            "ml potential",
+            "机器学习势",
+            "nep",
+            "snap",
+            "gap ",
+            "ace ",
+            "train potential",
+        ],
+        "ml_potential_training",
+    ),
     (["文献", "literature", "综述", "review paper", "调研"], "literature_review"),
-    (["审稿", "paper review", "review my paper", "审查", "预审", "manuscript"], "paper_review"),
+    (
+        ["审稿", "paper review", "review my paper", "审查", "预审", "manuscript"],
+        "paper_review",
+    ),
     (["假设", "hypothesis", "research idea", "科学问题"], "hypothesis_generation"),
-    (["筛选材料", "screening materials", "材料筛选", "screen candidates"], "materials_screening"),
-    (["力学", "mechanical", "弹性", "elastic", "应力", "stress", "应变", "strain", "硬度", "hardness"], "mechanical_properties"),
+    (
+        ["筛选材料", "screening materials", "材料筛选", "screen candidates"],
+        "materials_screening",
+    ),
+    (
+        [
+            "力学",
+            "mechanical",
+            "弹性",
+            "elastic",
+            "应力",
+            "stress",
+            "应变",
+            "strain",
+            "硬度",
+            "hardness",
+        ],
+        "mechanical_properties",
+    ),
     (["高通量", "high throughput", "htvs", "大规模筛选"], "high_throughput_screening"),
     (["合成", "synthesis", "实验设计", "doe", "next experiment"], "synthesis_planning"),
-    (["等离子体", "plasma", "pic", "mhd", "鞘层", "sheath", "弧等离子", "arc plasma", "电弧"], "plasma_simulation"),
-    (["聚变", "fusion", "tokamak", "托卡马克", "等离子体材料", "plasma facing"], "fusion_plasma_analysis"),
-    (["反应路径", "reaction pathway", "mep", "最小能量路径", "过渡态", "transition state", "neb"], "reaction_pathway"),
-    (["扩散势垒", "diffusion barrier", "扩散路径", "diffusion pathway", "migration barrier", "扩散能垒"], "diffusion_barrier"),
+    (
+        [
+            "等离子体",
+            "plasma",
+            "pic",
+            "mhd",
+            "鞘层",
+            "sheath",
+            "弧等离子",
+            "arc plasma",
+            "电弧",
+        ],
+        "plasma_simulation",
+    ),
+    (
+        ["聚变", "fusion", "tokamak", "托卡马克", "等离子体材料", "plasma facing"],
+        "fusion_plasma_analysis",
+    ),
+    (
+        [
+            "反应路径",
+            "reaction pathway",
+            "mep",
+            "最小能量路径",
+            "过渡态",
+            "transition state",
+            "neb",
+        ],
+        "reaction_pathway",
+    ),
+    (
+        [
+            "扩散势垒",
+            "diffusion barrier",
+            "扩散路径",
+            "diffusion pathway",
+            "migration barrier",
+            "扩散能垒",
+        ],
+        "diffusion_barrier",
+    ),
 ]
 
 
@@ -504,9 +595,7 @@ class ScenarioTool(HuginnTool):
     # 只做 LLM 匹配 + 查表, 不写文件, 不跑计算
     read_only = True
 
-    async def call(
-        self, args: ScenarioToolInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: ScenarioToolInput, context: ToolContext) -> ToolResult:
         # predict action: 走 IntentSpeculator, 纯预测不阻塞
         if args.action == "predict":
             return await self._handle_predict(args, context)
@@ -519,7 +608,35 @@ class ScenarioTool(HuginnTool):
                 error="scenario 不能为空",
             )
 
-        # 1. 先用 LLM 匹配 scenario_type
+        # 1-2. 先用 LLM 匹配, 失败退关键词兜底
+        match, failure = await self._resolve_scenario(scenario_text, context)
+        if failure is not None:
+            return failure
+        scenario_type = match["scenario_type"]
+
+        # 3. 查表拿工具 bundle
+        bundle = SCENARIO_TOOL_BUNDLES[scenario_type]
+        data: dict[str, Any] = {
+            "scenario_type": scenario_type,
+            "recommended_tools": list(bundle["recommended_tools"]),
+            "tool_chain": list(bundle["tool_chain"]),
+            "workflow_template": bundle["workflow_template"],
+            "rationale": bundle["rationale"],
+            # 匹配元信息, 方便 debug / 上层决策
+            "match_info": {
+                "source": match["source"],
+                "confidence": match["confidence"],
+                "match_rationale": match["rationale"],
+            },
+            # 列出全部可用场景, 给 LLM 一个备选菜单
+            "available_scenarios": list(SCENARIO_TOOL_BUNDLES.keys()),
+        }
+        return ToolResult(data=data, success=True)
+
+    async def _resolve_scenario(
+        self, scenario_text: str, context: ToolContext
+    ) -> tuple[dict[str, Any] | None, ToolResult | None]:
+        """LLM 匹配 scenario_type, 不行就关键词兜底; 失败返回 (None, 错误)."""
         scenario_type: str | None = None
         match_rationale: str = ""
         match_confidence: float = 0.0
@@ -548,7 +665,7 @@ class ScenarioTool(HuginnTool):
                 match_confidence = 0.6  # 兜底匹配给个中等置信度
                 match_rationale = "关键词兜底匹配"
             else:
-                return ToolResult(
+                return None, ToolResult(
                     data=None,
                     success=False,
                     error=(
@@ -557,24 +674,12 @@ class ScenarioTool(HuginnTool):
                     ),
                 )
 
-        # 3. 查表拿工具 bundle
-        bundle = SCENARIO_TOOL_BUNDLES[scenario_type]
-        data: dict[str, Any] = {
+        return {
             "scenario_type": scenario_type,
-            "recommended_tools": list(bundle["recommended_tools"]),
-            "tool_chain": list(bundle["tool_chain"]),
-            "workflow_template": bundle["workflow_template"],
-            "rationale": bundle["rationale"],
-            # 匹配元信息, 方便 debug / 上层决策
-            "match_info": {
-                "source": match_source,
-                "confidence": match_confidence,
-                "match_rationale": match_rationale,
-            },
-            # 列出全部可用场景, 给 LLM 一个备选菜单
-            "available_scenarios": list(SCENARIO_TOOL_BUNDLES.keys()),
-        }
-        return ToolResult(data=data, success=True)
+            "source": match_source,
+            "confidence": match_confidence,
+            "rationale": match_rationale,
+        }, None
 
     # ------------------------------------------------------------------ helpers
 

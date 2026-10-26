@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 def _eval_num_in_output(output: str, expected: float, tol: float) -> tuple[bool, str]:
     """从 agent 输出里提取数值, 容差匹配. 不再依赖前 N 字符截断."""
     import re
+
     # 匹配带小数/科学计数法的数值
     nums = [float(x) for x in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", output)]
     if not nums:
@@ -45,12 +46,23 @@ def _is_numeric_task(task: BenchmarkTask) -> bool:
       升级路径: BenchmarkTask 加 expects_numeric 显式字段.
     """
     import inspect
+
     try:
         src = inspect.getsource(task.evaluator)
         return "_eval_num" in src or "_num_close" in src
     except (TypeError, OSError):
         logger.debug("best-effort op failed", exc_info=True)
         return False
+
+
+def _build_b1_retry_prompt(prompt: str) -> str:
+    """构造 B1 重试 prompt: 要求 agent 用计算工具而非猜测."""
+    return (
+        prompt + "\n\n[B1 GATE] Your previous answer was numeric but you did not "
+        "call any computation tool (code_tool / symbolic_math_tool / bash_tool). "
+        "You MUST compute, not guess. Re-solve this problem by calling a "
+        "computation tool to derive the numeric answer, then state the final answer."
+    )
 
 
 DEFAULT_TASKS: list[BenchmarkTask] = [
@@ -220,7 +232,12 @@ DEFAULT_TASKS: list[BenchmarkTask] = [
         id="knowledge-nacl-structure",
         category="knowledge",
         prompt="NaCl 晶体的晶格结构是什么? 回答英文 (Rock Salt/Fluorite/Zinc Blende/Diamond).",
-        evaluator=lambda out: ("rock salt" in out.lower() or "rocksalt" in out.lower() or "nacl" in out.lower()[:10], "应为 Rock Salt"),
+        evaluator=lambda out: (
+            "rock salt" in out.lower()
+            or "rocksalt" in out.lower()
+            or "nacl" in out.lower()[:10],
+            "应为 Rock Salt",
+        ),
         tags=["knowledge", "crystal"],
         requires_api_key=True,
         reference="NaCl 是 Rock Salt 结构 (FCC, 空间群 Fm-3m)",
@@ -250,13 +267,17 @@ def _eval_gov_block() -> tuple[bool, str]:
     """Governance blocks dangerous actions without structure context."""
     try:
         from huginn.ontology.actions import get_action_type
+
         at = get_action_type("run_dft")
         if not at:
             return False, "run_dft action type not registered"
         # No structure provided — should be blocked
         allowed, reasons = at.can_execute({})
         if allowed:
-            return False, "run_dft allowed without structure — preconditions not working"
+            return (
+                False,
+                "run_dft allowed without structure — preconditions not working",
+            )
         return True, f"correctly blocked: {reasons[0]}"
     except Exception as e:
         return False, f"governance eval error: {e}"
@@ -265,6 +286,7 @@ def _eval_gov_block() -> tuple[bool, str]:
 def _eval_clarify_regex() -> tuple[bool, str]:
     """Clarification regex doesn't false-positive on 'direct or indirect'."""
     import re
+
     pattern = re.compile(
         r"\beither\s+\w+\s+or\b|\bwhich\b.*\bbetter\b|\bvs\.?\b|\boption\s+[A-C]\b",
         re.IGNORECASE,
@@ -291,6 +313,7 @@ def _eval_phase_adapter() -> tuple[bool, str]:
     """Phase adapter maps autoloop ↔ ResearchPhase correctly."""
     try:
         from huginn.phases import ResearchPhase, autoloop_to_phase, phase_to_autoloop
+
         assert autoloop_to_phase("perceive") == ResearchPhase.LITERATURE
         assert autoloop_to_phase("hypothesize") == ResearchPhase.HYPOTHESIS
         assert autoloop_to_phase("plan") == ResearchPhase.PLANNING
@@ -308,17 +331,26 @@ def _eval_ontology_pred() -> tuple[bool, str]:
     """Action predictability score reflects constraint violations."""
     try:
         from huginn.ontology.actions import get_action_type
+
         at = get_action_type("run_dft")
         if not at:
             return False, "run_dft not found"
         # With good context — high predictability
-        good_ctx = {"energy": -10.5, "max_force": 0.005, "structure": "Si", "encut": 400}
+        good_ctx = {
+            "energy": -10.5,
+            "max_force": 0.005,
+            "structure": "Si",
+            "encut": 400,
+        }
         p_good = at.predictability(good_ctx)
         # With bad context — low predictability (energy positive, force huge)
         bad_ctx = {"energy": 5.0, "max_force": 2.0, "structure": "Si", "encut": 400}
         p_bad = at.predictability(bad_ctx)
         if p_good <= p_bad:
-            return False, f"predictability not lower for bad ctx: {p_good:.2f} vs {p_bad:.2f}"
+            return (
+                False,
+                f"predictability not lower for bad ctx: {p_good:.2f} vs {p_bad:.2f}",
+            )
         return True, f"predictability: good={p_good:.2f}, bad={p_bad:.2f}"
     except Exception as e:
         return False, f"ontology error: {e}"
@@ -328,17 +360,24 @@ def _eval_task_state() -> tuple[bool, str]:
     """TaskStateTracker records steps and generates context block."""
     try:
         from huginn.memory.task_state import get_tracker
+
         tracker = get_tracker()
         test_tid = "bench-test-thread"
         # clean up any leftover state from previous runs
         import os
+
         f = tracker.state_dir / f"{test_tid}.json"
         if f.exists():
             os.remove(f)
         tracker._cache.pop(test_tid, None)
 
-        tracker.record_step(test_tid, action="test action", tool="test_tool",
-                            result="test result", findings="test finding")
+        tracker.record_step(
+            test_tid,
+            action="test action",
+            tool="test_tool",
+            result="test result",
+            findings="test finding",
+        )
         state = tracker.get(test_tid)
         if not state.steps:
             return False, "no steps recorded"
@@ -360,6 +399,7 @@ def _eval_kg_feedback() -> tuple[bool, str]:
     """KG feedback bridge module imports and function exists."""
     try:
         from huginn.validation.kg_feedback import write_validation_to_kg
+
         # Just verify it's callable — full test requires a running KG
         result = write_validation_to_kg([], material="Si")
         if result != 0:
@@ -421,92 +461,23 @@ class BenchmarkRunner:
         started = datetime.datetime.now().isoformat()
         register_all_tools()
 
-        results: list[TaskResult] = []
-        passed = failed = skipped = unreliable = 0
-
-        for task in self.tasks:
-            if categories and task.category not in categories:
-                continue
-            if task.requires_api_key and not self._has_api_key():
-                skipped += 1
-                results.append(
-                    TaskResult(
-                        task_id=task.id,
-                        category=task.category,
-                        passed=False,
-                        reason="skipped: no API key configured",
-                        output="",
-                        visual_capability_tag=task.visual_capability_tag,
-                    )
-                )
-                continue
-
-            result = self._run_task(task)
-            # B3: 传递 visual_capability_tag 到 result
-            result.visual_capability_tag = task.visual_capability_tag
-
-            # B2: re-ask consistency — 跑第二次, strict judge 比对
-            if re_ask and task.prompt and task.requires_api_key:
-                from dataclasses import replace
-                task2 = replace(task, prompt=task.prompt + " ")
-                result2 = self._run_task(task2)
-                if not self._check_re_ask_consistency(task.prompt, result.output, result2.output):
-                    result.unreliable = True
-                    unreliable += 1
-                    results.append(result)
-                    # unreliable 不计入 passed/failed 分母
-                    continue
-
-            results.append(result)
-            if result.passed:
-                passed += 1
-            else:
-                failed += 1
+        results, passed, failed, skipped, unreliable = self._run_tasks(
+            categories, re_ask
+        )
 
         finished = datetime.datetime.now().isoformat()
         # B2: pass_rate 分母排除 unreliable
-        reliable_count = len(results) - unreliable
-        total_time = sum(r.exec_time_seconds + r.eval_time_seconds for r in results)
-        metrics = {
-            "pass_rate": passed / reliable_count if reliable_count > 0 else 0.0,
-            "avg_task_time_seconds": total_time / len(results) if results else 0.0,
-            "unreliable_rate": unreliable / len(results) if results else 0.0,
-        }
-
+        metrics, reliable_count = self._build_metrics(results, passed, unreliable)
         # B3: visual_capability_tag 分组统计
         visual_failure_summary = self._summarize_by_visual_tag(results)
 
-        evolution_report = None
-        if evolve:
-            from huginn.evolution.engine import EvolutionEngine
-
-            # 无参构造: 用默认全局 logger, rules 写到 ~/.huginn/logs/evolution_rules.json
-            # 跟 agent 运行时读同一份, 避免 bench 产出的 rules 被孤立
-            engine = EvolutionEngine()
-            evolution_report = engine.run_full_evolution_cycle()
+        evolution_report = self._run_evolution() if evolve else None
 
         # 落 memory (可选). memory 故障不能拖死 bench, 静默吞掉.
         if self.memory_manager is not None:
-            try:
-                summary = (
-                    f"bench run_id={run_id} passed={passed}/{reliable_count} "
-                    f"pass_rate={metrics['pass_rate']:.2%} evolve={evolve} "
-                    f"unreliable={unreliable}"
-                )
-                if hasattr(self.memory_manager, "remember"):
-                    self.memory_manager.remember(
-                        content=summary,
-                        category="benchmark_run_summary",
-                        importance=0.8,
-                    )
-                elif hasattr(self.memory_manager, "store"):
-                    self.memory_manager.store(
-                        content=summary,
-                        category="benchmark_run_summary",
-                        importance=0.8,
-                    )
-            except Exception:
-                logger.debug("benchmark run summary memory store skipped", exc_info=True)
+            self._store_run_summary(
+                run_id, passed, reliable_count, metrics, evolve, unreliable
+            )
 
         return BenchmarkReport(
             run_id=run_id,
@@ -523,6 +494,121 @@ class BenchmarkRunner:
             visual_failure_summary=visual_failure_summary,
         )
 
+    @staticmethod
+    def _skipped_result(task: BenchmarkTask) -> TaskResult:
+        """构造无 API key 时的 skipped 结果."""
+        return TaskResult(
+            task_id=task.id,
+            category=task.category,
+            passed=False,
+            reason="skipped: no API key configured",
+            output="",
+            visual_capability_tag=task.visual_capability_tag,
+        )
+
+    def _execute_task(
+        self, task: BenchmarkTask, re_ask: bool
+    ) -> tuple[TaskResult, bool]:
+        """跑单个 task; re_ask 时跑第二次并比对, 返回 (result, 是否 unreliable)."""
+        result = self._run_task(task)
+        # B3: 传递 visual_capability_tag 到 result
+        result.visual_capability_tag = task.visual_capability_tag
+
+        # B2: re-ask consistency — 跑第二次, strict judge 比对
+        if re_ask and task.prompt and task.requires_api_key:
+            from dataclasses import replace
+
+            task2 = replace(task, prompt=task.prompt + " ")
+            result2 = self._run_task(task2)
+            if not self._check_re_ask_consistency(
+                task.prompt, result.output, result2.output
+            ):
+                result.unreliable = True
+                return result, True
+        return result, False
+
+    def _run_tasks(
+        self, categories: list[str] | None, re_ask: bool
+    ) -> tuple[list[TaskResult], int, int, int, int]:
+        """遍历所有 task 并汇总 (results, passed, failed, skipped, unreliable)."""
+        results: list[TaskResult] = []
+        passed = failed = skipped = unreliable = 0
+
+        for task in self.tasks:
+            if categories and task.category not in categories:
+                continue
+            if task.requires_api_key and not self._has_api_key():
+                skipped += 1
+                results.append(self._skipped_result(task))
+                continue
+
+            result, is_unreliable = self._execute_task(task, re_ask)
+            results.append(result)
+            if is_unreliable:
+                # unreliable 不计入 passed/failed 分母
+                unreliable += 1
+            elif result.passed:
+                passed += 1
+            else:
+                failed += 1
+        return results, passed, failed, skipped, unreliable
+
+    @staticmethod
+    def _build_metrics(
+        results: list[TaskResult], passed: int, unreliable: int
+    ) -> tuple[dict[str, float], int]:
+        """计算 pass_rate / avg_task_time / unreliable_rate, 返回 (metrics, 可靠数)."""
+        # B2: pass_rate 分母排除 unreliable
+        reliable_count = len(results) - unreliable
+        total_time = sum(r.exec_time_seconds + r.eval_time_seconds for r in results)
+        metrics = {
+            "pass_rate": passed / reliable_count if reliable_count > 0 else 0.0,
+            "avg_task_time_seconds": total_time / len(results) if results else 0.0,
+            "unreliable_rate": unreliable / len(results) if results else 0.0,
+        }
+        return metrics, reliable_count
+
+    @staticmethod
+    def _run_evolution() -> Any:
+        """触发一次完整自进化周期."""
+        from huginn.evolution.engine import EvolutionEngine
+
+        # 无参构造: 用默认全局 logger, rules 写到 ~/.huginn/logs/evolution_rules.json
+        # 跟 agent 运行时读同一份, 避免 bench 产出的 rules 被孤立
+        engine = EvolutionEngine()
+        return engine.run_full_evolution_cycle()
+
+    def _store_run_summary(
+        self,
+        run_id: str,
+        passed: int,
+        reliable_count: int,
+        metrics: dict[str, float],
+        evolve: bool,
+        unreliable: int,
+    ) -> None:
+        """把本次 bench 摘要写进 memory; 任何异常都静默吞掉."""
+        try:
+            summary = (
+                f"bench run_id={run_id} passed={passed}/{reliable_count} "
+                f"pass_rate={metrics['pass_rate']:.2%} evolve={evolve} "
+                f"unreliable={unreliable}"
+            )
+            if hasattr(self.memory_manager, "remember"):
+                self.memory_manager.remember(
+                    content=summary,
+                    category="benchmark_run_summary",
+                    importance=0.8,
+                )
+            elif hasattr(self.memory_manager, "store"):
+                self.memory_manager.store(
+                    content=summary,
+                    category="benchmark_run_summary",
+                    importance=0.8,
+                )
+        except Exception:
+            logger.debug("benchmark run summary memory store skipped", exc_info=True)
+
     def _check_re_ask_consistency(
         self, task_prompt: str, output1: str, output2: str
     ) -> bool:
@@ -535,6 +621,7 @@ class BenchmarkRunner:
         if output1.strip() == output2.strip():
             return True
         from .llm_judge import judge_task
+
         rubric = judge_task(
             task_prompt=task_prompt,
             agent_output=output1,
@@ -544,6 +631,7 @@ class BenchmarkRunner:
         if rubric.reason.startswith(("无 API key", "judge 调用失败")):
             # fallback: 去除首尾空格和标点后比较
             import re as _re
+
             norm1 = _re.sub(r"[\s,.]+", "", output1).lower()
             norm2 = _re.sub(r"[\s,.]+", "", output2).lower()
             return norm1 == norm2
@@ -577,25 +665,7 @@ class BenchmarkRunner:
 
     def _run_task(self, task: BenchmarkTask) -> TaskResult:
         start = time.time()
-        output = ""
-        tool_names: set[str] = set()
-        # Structural tests (no prompt) skip LLM — evaluator runs directly
-        if not task.prompt:
-            output = "[structural test]"
-        else:
-            try:
-                # 直接 asyncio.run: _agent_chat 内部 asyncio.timeout 取消协程后,
-                # asyncio.run 传播 TimeoutError, 无 ThreadPoolExecutor.shutdown 阻塞.
-                # 之前用线程池包裹, shutdown(wait=True) 在超时后仍等线程清理, 实测
-                # 180s 超时任务拖到 608s. _run_task 是同步方法不在 event loop 里, 直接跑.
-                output, tool_names = asyncio.run(
-                    self._agent_chat(task.prompt, timeout=task.timeout_seconds)
-                )
-            except TimeoutError:
-                output = f"[timeout: agent 超过 {task.timeout_seconds}s 未响应]"
-            except Exception as exc:
-                output = f"Error: {exc}"
-
+        output, tool_names = self._collect_output(task)
         elapsed = time.time() - start
         result = task.evaluate(output)
         result.exec_time_seconds = elapsed
@@ -604,47 +674,13 @@ class BenchmarkRunner:
         # ponytail: 用 inspect.getsource 判断 evaluator 是否数值型 (含 _eval_num/_num_close).
         #   ceiling: 启发式, lambda 闭包源码可能匹配不上. 升级路径: BenchmarkTask 加 expects_numeric 字段.
         if task.prompt and not result.passed and _is_numeric_task(task):
-            compute_tools = {"code_tool", "symbolic_math_tool", "bash_tool",
-                             "python_repl", "symbolic_math", "calculator"}
-            if not (tool_names & compute_tools):
-                # 打回一次注入 "You must compute, not guess"
-                retry_prompt = (
-                    task.prompt
-                    + "\n\n[B1 GATE] Your previous answer was numeric but you did not "
-                    "call any computation tool (code_tool / symbolic_math_tool / bash_tool). "
-                    "You MUST compute, not guess. Re-solve this problem by calling a "
-                    "computation tool to derive the numeric answer, then state the final answer."
-                )
-                try:
-                    retry_output, retry_tools = asyncio.run(
-                        self._agent_chat(retry_prompt, timeout=task.timeout_seconds)
-                    )
-                    if retry_output and retry_output.strip() != output.strip():
-                        retry_result = task.evaluate(retry_output)
-                        retry_result.exec_time_seconds = elapsed
-                        # 重跑后用了计算工具 + 评分通过 → 采纳 retry
-                        if retry_result.passed or (retry_tools & compute_tools):
-                            result = retry_result
-                            output = retry_output
-                            tool_names = retry_tools
-                        # 重跑仍 fail + 仍无计算工具 → 标记 B1 FAIL
-                        if not result.passed and not (tool_names & compute_tools):
-                            result.reason += " [B1: numeric answer without computation tool — FAIL]"
-                            result.passed = False
-                except (TimeoutError, Exception) as _b1_exc:
-                    # B1 retry 失败不阻塞, 保留原 result
-                    logger.debug("best-effort op failed", exc_info=True)
+            result, output, tool_names = self._b1_retry(
+                task, result, output, tool_names, elapsed
+            )
 
         # LLM judge: regex 评分低时触发二次评审 (对标 PaperBench SimpleJudge)
         if task.prompt and task.reference is not None:
-            from .llm_judge import judge_with_regex_fallback
-            result = judge_with_regex_fallback(
-                task_prompt=task.prompt,
-                agent_output=output,
-                regex_result=result,
-                reference=task.reference,
-                is_code_task=task.is_code_task,
-            )
+            result = self._judge_with_fallback(task, output, result)
 
         self.logger.log_conversation(
             session_id=f"bench-{task.id}",
@@ -654,30 +690,121 @@ class BenchmarkRunner:
         )
         return result
 
-    async def _agent_chat(self, prompt: str, timeout: float = 120.0) -> tuple[str, set[str]]:
+    def _collect_output(self, task: BenchmarkTask) -> tuple[str, set[str]]:
+        """跑 agent 拿到输出与工具名; 无 prompt 的结构性测试直接短路."""
+        output = ""
+        tool_names: set[str] = set()
+        # Structural tests (no prompt) skip LLM — evaluator runs directly
+        if not task.prompt:
+            return "[structural test]", tool_names
+        try:
+            # 直接 asyncio.run: _agent_chat 内部 asyncio.timeout 取消协程后,
+            # asyncio.run 传播 TimeoutError, 无 ThreadPoolExecutor.shutdown 阻塞.
+            # 之前用线程池包裹, shutdown(wait=True) 在超时后仍等线程清理, 实测
+            # 180s 超时任务拖到 608s. _run_task 是同步方法不在 event loop 里, 直接跑.
+            output, tool_names = asyncio.run(
+                self._agent_chat(task.prompt, timeout=task.timeout_seconds)
+            )
+        except TimeoutError:
+            output = f"[timeout: agent 超过 {task.timeout_seconds}s 未响应]"
+        except Exception as exc:
+            output = f"Error: {exc}"
+        return output, tool_names
+
+    def _b1_retry(
+        self,
+        task: BenchmarkTask,
+        result: TaskResult,
+        output: str,
+        tool_names: set[str],
+        elapsed: float,
+    ) -> tuple[TaskResult, str, set[str]]:
+        """B1: 无计算工具时打回一次, 要求 agent 用工具算而非猜."""
+        compute_tools = {
+            "code_tool",
+            "symbolic_math_tool",
+            "bash_tool",
+            "python_repl",
+            "symbolic_math",
+            "calculator",
+        }
+        if tool_names & compute_tools:
+            return result, output, tool_names
+
+        # 打回一次注入 "You must compute, not guess"
+        retry_prompt = _build_b1_retry_prompt(task.prompt)
+        try:
+            retry_output, retry_tools = asyncio.run(
+                self._agent_chat(retry_prompt, timeout=task.timeout_seconds)
+            )
+            if retry_output and retry_output.strip() != output.strip():
+                retry_result = task.evaluate(retry_output)
+                retry_result.exec_time_seconds = elapsed
+                # 重跑后用了计算工具 + 评分通过 → 采纳 retry
+                if retry_result.passed or (retry_tools & compute_tools):
+                    result = retry_result
+                    output = retry_output
+                    tool_names = retry_tools
+                # 重跑仍 fail + 仍无计算工具 → 标记 B1 FAIL
+                if not result.passed and not (tool_names & compute_tools):
+                    result.reason += (
+                        " [B1: numeric answer without computation tool — FAIL]"
+                    )
+                    result.passed = False
+        except (TimeoutError, Exception):
+            # B1 retry 失败不阻塞, 保留原 result
+            logger.debug("best-effort op failed", exc_info=True)
+        return result, output, tool_names
+
+    @staticmethod
+    def _judge_with_fallback(
+        task: BenchmarkTask, output: str, result: TaskResult
+    ) -> TaskResult:
+        """regex 评分未过时用 LLM judge 二次评审."""
+        from .llm_judge import judge_with_regex_fallback
+
+        return judge_with_regex_fallback(
+            task_prompt=task.prompt,
+            agent_output=output,
+            regex_result=result,
+            reference=task.reference,
+            is_code_task=task.is_code_task,
+        )
+
+    async def _agent_chat(
+        self, prompt: str, timeout: float = 120.0
+    ) -> tuple[str, set[str]]:
         """Send a single prompt to HuginnAgent and return (final text, tool_names used).
 
         timeout: asyncio 层面超时, 超时后取消协程 (不只是 ThreadPoolExecutor 等待).
         B1: 收集 tool_names 给 _run_task 做数值 gate 判定.
         """
+        agent = self._build_bench_agent(self._resolve_model())
+        self._shuffle_tool_order(agent, prompt)
+        return await self._collect_stream(agent, prompt, timeout)
+
+    def _resolve_model(self) -> Any:
+        """从 ModelRegistry 解析出要用的 model; 无配置则报错."""
         registry = ModelRegistry.from_config(self.config)
         alias = registry.default_alias()
         if alias:
-            model = registry.resolve(alias)
-        elif self.config.provider and self.config.provider != "default":
-            model = registry.resolve(
+            return registry.resolve(alias)
+        if self.config.provider and self.config.provider != "default":
+            return registry.resolve(
                 f"{self.config.provider}/{self.config.model or 'auto'}"
             )
-        else:
-            raise RuntimeError(
-                "No model configured. Set HUGINN_PROVIDER and HUGINN_API_KEY."
-            )
+        raise RuntimeError(
+            "No model configured. Set HUGINN_PROVIDER and HUGINN_API_KEY."
+        )
 
+    @staticmethod
+    def _build_bench_system_prompt() -> str:
+        """构建 bench 专用 system prompt: 完整推导 + 简洁答案."""
         from huginn.prompts import MATH_DEPTH_GUIDE
 
         # 第二轮 80% 的 prompt (已验证最优), 只加一句验证约束.
         # concise 是数学之美: 答案简洁, 但推导必须完整.
-        bench_system_prompt = (
+        return (
             "You are a scientific research assistant solving challenging "
             "physics/chemistry/materials problems. Take your time and reason "
             "thoroughly.\n\n"
@@ -696,9 +823,11 @@ class BenchmarkRunner:
             "Conciseness is for the final answer, not the derivation\n"
         ) + MATH_DEPTH_GUIDE
 
+    def _build_bench_agent(self, model: Any) -> HuginnAgent:
+        """构造 bench 用 HuginnAgent 并注册工具."""
         agent = HuginnAgent(
             model=model,
-            system_prompt=bench_system_prompt,
+            system_prompt=self._build_bench_system_prompt(),
             memory_manager=None,
             max_tool_output_tokens=self.config.max_tool_output_tokens,
             context_budget_tokens=self.config.context_budget_tokens,
@@ -707,8 +836,11 @@ class BenchmarkRunner:
             max_tool_calls_per_tool=8,
         )
         agent.register_tools_from_registry()
+        return agent
 
-        # Inkling 启发: 打乱工具顺序, 防 agent 对工具位置过拟合.
+    @staticmethod
+    def _shuffle_tool_order(agent: HuginnAgent, prompt: str) -> None:
+        """Inkling 启发: 打乱工具顺序, 防 agent 对工具位置过拟合."""
         # 每 task 用不同 seed, 保证顺序不同但可复现.
         # ponytail: 只在 bench 层做, 生产 run() 不受影响.
         from .tool_randomization import randomize_tool_order
@@ -718,6 +850,11 @@ class BenchmarkRunner:
         )
         agent._invalidate_tool_description_cache()
 
+    @staticmethod
+    async def _collect_stream(
+        agent: HuginnAgent, prompt: str, timeout: float
+    ) -> tuple[str, set[str]]:
+        """消费 agent.chat 流, 收集最终文本与工具名."""
         final = ""
         tool_names_used: set[str] = set()
         # ponytail: asyncio.timeout (3.11+) 取消协程, 避免 agent 工具循环卡死时
@@ -726,22 +863,31 @@ class BenchmarkRunner:
         async with asyncio.timeout(timeout):
             async for chunk in agent.chat(prompt):
                 msgs = chunk.get("messages", [])
-                for msg in msgs:
-                    # B1: 收集 tool names — AIMessage.tool_calls + ToolMessage.name
-                    tcs = getattr(msg, "tool_calls", None) or []
-                    for tc in tcs:
-                        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
-                        if name:
-                            tool_names_used.add(name)
-                    tname = getattr(msg, "name", None)
-                    if tname and tname != "HuginnAgent":
-                        tool_names_used.add(tname)
+                BenchmarkRunner._collect_tool_names(msgs, tool_names_used)
                 if msgs:
                     last = msgs[-1]
                     content = getattr(last, "content", "")
                     if content:
                         final = str(content)
         return final, tool_names_used
+
+    @staticmethod
+    def _collect_tool_names(msgs: list[Any], tool_names_used: set[str]) -> None:
+        """从消息里收集 tool_calls / name 对应的工具名."""
+        for msg in msgs:
+            # B1: 收集 tool names — AIMessage.tool_calls + ToolMessage.name
+            tcs = getattr(msg, "tool_calls", None) or []
+            for tc in tcs:
+                name = (
+                    tc.get("name")
+                    if isinstance(tc, dict)
+                    else getattr(tc, "name", None)
+                )
+                if name:
+                    tool_names_used.add(name)
+            tname = getattr(msg, "name", None)
+            if tname and tname != "HuginnAgent":
+                tool_names_used.add(tname)
 
     def save_report(self, report: BenchmarkReport, path: str | Path) -> None:
         """Save a benchmark report to a JSON file."""
@@ -781,21 +927,14 @@ class BenchmarkRunner:
 # ── self-check ─────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """B2+B3 selfcheck: re-ask consistency + visual tag 分组统计.
-
-    ponytail: mock runner 验 _check_re_ask_consistency + _summarize_by_visual_tag.
-    不调真 LLM, 不跑真 agent.
-    ceiling: 没验 _run_task 真路径 (需真 agent + API key), 见 acceptance test.
-    """
+def _selfcheck_re_ask(runner: BenchmarkRunner) -> None:
+    """B2: re-ask consistency self-test."""
     import os
 
-    # 构造最小 runner (不调 __init__, 避免 HuginnConfig.from_env 副作用)
-    runner = BenchmarkRunner.__new__(BenchmarkRunner)
-
     # B2.1: 两次输出完全相同 → consistent
-    assert runner._check_re_ask_consistency("test", "16", "16") is True, \
+    assert runner._check_re_ask_consistency("test", "16", "16") is True, (
         "相同输出应 consistent"
+    )
     print("1. re-ask same output → consistent OK")
 
     # B2.2: 两次输出不同 + 无 API key → fallback 字符串比较
@@ -817,43 +956,79 @@ def _selfcheck() -> None:
         if orig_key2:
             os.environ["HUGINN_API_KEY"] = orig_key2
 
+
+def _visual_result(
+    task_id: str,
+    category: str,
+    passed: bool,
+    tag: str,
+    unreliable: bool = False,
+) -> TaskResult:
+    """构造 selfcheck 用最小 TaskResult (reason/output 留空)."""
+    return TaskResult(
+        task_id=task_id,
+        category=category,
+        passed=passed,
+        reason="",
+        output="",
+        visual_capability_tag=tag,
+        unreliable=unreliable,
+    )
+
+
+def _selfcheck_visual_tags(runner: BenchmarkRunner) -> None:
+    """B3: visual_capability_tag 分组统计 self-test."""
     # B3.1: visual_capability_tag 分组统计
-    from .task import TaskResult
     mock_results = [
-        TaskResult(task_id="t1", category="vis", passed=True, reason="", output="",
-           visual_capability_tag="count"),
-        TaskResult(task_id="t2", category="vis", passed=False, reason="", output="",
-           visual_capability_tag="count"),
-        TaskResult(task_id="t3", category="vis", passed=False, reason="", output="",
-           visual_capability_tag="hallu", unreliable=True),
-        TaskResult(task_id="t4", category="vis", passed=True, reason="", output="",
-           visual_capability_tag="depth"),
-        TaskResult(task_id="t5", category="math", passed=True, reason="", output="",
-           visual_capability_tag="none"),  # none 不进 summary
+        _visual_result("t1", "vis", True, "count"),
+        _visual_result("t2", "vis", False, "count"),
+        _visual_result("t3", "vis", False, "hallu", unreliable=True),
+        _visual_result("t4", "vis", True, "depth"),
+        _visual_result("t5", "math", True, "none"),  # none 不进 summary
     ]
     summary = runner._summarize_by_visual_tag(mock_results)
     assert "count" in summary, f"count tag 应在 summary: {summary}"
-    assert summary["count"] == {"passed": 1, "failed": 1, "unreliable": 0}, summary["count"]
-    assert summary["hallu"] == {"passed": 0, "failed": 0, "unreliable": 1}, summary["hallu"]
-    assert summary["depth"] == {"passed": 1, "failed": 0, "unreliable": 0}, summary["depth"]
+    assert summary["count"] == {
+        "passed": 1,
+        "failed": 1,
+        "unreliable": 0,
+    }, summary["count"]
+    assert summary["hallu"] == {
+        "passed": 0,
+        "failed": 0,
+        "unreliable": 1,
+    }, summary["hallu"]
+    assert summary["depth"] == {
+        "passed": 1,
+        "failed": 0,
+        "unreliable": 0,
+    }, summary["depth"]
     assert "none" not in summary, "none tag 不应进 summary"
     print(f"3. visual tag 分组统计: {summary} OK")
 
     # B3.2: 全 none tag → 空 summary
-    all_none = [TaskResult(task_id="t1", category="math", passed=True, reason="", output="")]
+    all_none = [_visual_result("t1", "math", True, "")]
     empty_summary = runner._summarize_by_visual_tag(all_none)
     assert empty_summary == {}, f"全 none 应空 summary: {empty_summary}"
     print("4. all none tag → empty summary OK")
 
+
+def _selfcheck() -> None:
+    """B2+B3 selfcheck: re-ask consistency + visual tag 分组统计.
+
+    ponytail: mock runner 验 _check_re_ask_consistency + _summarize_by_visual_tag.
+    不调真 LLM, 不跑真 agent.
+    ceiling: 没验 _run_task 真路径 (需真 agent + API key), 见 acceptance test.
+    """
+    # 构造最小 runner (不调 __init__, 避免 HuginnConfig.from_env 副作用)
+    runner = BenchmarkRunner.__new__(BenchmarkRunner)
+    _selfcheck_re_ask(runner)
+    _selfcheck_visual_tags(runner)
     print("runner B2+B3 selfcheck OK")
 
 
-def _selfcheck_b1() -> int:
-    """B1 self-check: 验证 _is_numeric_task 启发式 + B1 retry 骨架.
-
-    ponytail: 不调真 agent, 只验启发式判断 + retry prompt 构造逻辑.
-      ceiling: 没验 retry 真路径 (需真 agent + API key).
-    """
+def _b1_check_numeric_detection() -> None:
+    """B1.1+B1.2: _is_numeric_task 启发式判断."""
     # 1. _is_numeric_task 对数值 task 返回 True
     num_task = BenchmarkTask(
         id="num-test",
@@ -866,6 +1041,7 @@ def _selfcheck_b1() -> int:
 
     # 2. _is_numeric_task 对非数值 task 返回 False
     from .task import contains_any
+
     kw_task = BenchmarkTask(
         id="kw-test",
         category="text",
@@ -875,31 +1051,56 @@ def _selfcheck_b1() -> int:
     assert _is_numeric_task(kw_task) is False, "关键词 task 不应识别为 numeric"
     print("[CHECK B1.2] non-numeric task rejected OK")
 
-    # 3. compute_tools 集合非空 + 包含 code_tool
-    compute_tools = {"code_tool", "symbolic_math_tool", "bash_tool",
-                     "python_repl", "symbolic_math", "calculator"}
+
+def _b1_check_compute_tools() -> set[str]:
+    """B1.3: compute_tools 集合非空 + 包含 code_tool."""
+    compute_tools = {
+        "code_tool",
+        "symbolic_math_tool",
+        "bash_tool",
+        "python_repl",
+        "symbolic_math",
+        "calculator",
+    }
     assert "code_tool" in compute_tools
     assert len(compute_tools) >= 4
     print("[CHECK B1.3] compute_tools set OK")
+    return compute_tools
 
-    # 4. B1 retry prompt 构造 (不调真 agent, 只验字符串)
-    retry_prompt = (
-        num_task.prompt
-        + "\n\n[B1 GATE] Your previous answer was numeric but you did not "
-        "call any computation tool (code_tool / symbolic_math_tool / bash_tool). "
-        "You MUST compute, not guess. Re-solve this problem by calling a "
-        "computation tool to derive the numeric answer, then state the final answer."
+
+def _b1_check_retry_prompt() -> None:
+    """B1.4: B1 retry prompt 构造 (不调真 agent, 只验字符串)."""
+    num_task = BenchmarkTask(
+        id="num-test",
+        category="math",
+        prompt="What is 2+2?",
+        evaluator=lambda out: _eval_num_in_output(out, 4, 0.1),
     )
+    retry_prompt = _build_b1_retry_prompt(num_task.prompt)
     assert "[B1 GATE]" in retry_prompt
     assert "compute, not guess" in retry_prompt
     assert num_task.prompt in retry_prompt
     print("[CHECK B1.4] retry prompt construction OK")
 
-    # 5. tool_names 拦截逻辑: 空 set → 触发; 含 code_tool → 不触发
+
+def _b1_check_interception(compute_tools: set[str]) -> None:
+    """B1.5: tool_names 拦截逻辑: 空 set → 触发; 含 code_tool → 不触发."""
     assert not (set() & compute_tools), "空 tool_names 应触发 B1"
-    assert ({"code_tool"} & compute_tools), "含 code_tool 不应触发 B1"
+    assert {"code_tool"} & compute_tools, "含 code_tool 不应触发 B1"
     assert not ({"web_search_tool"} & compute_tools), "web_search 不算计算工具"
     print("[CHECK B1.5] tool_names interception logic OK")
+
+
+def _selfcheck_b1() -> int:
+    """B1 self-check: 验证 _is_numeric_task 启发式 + B1 retry 骨架.
+
+    ponytail: 不调真 agent, 只验启发式判断 + retry prompt 构造逻辑.
+      ceiling: 没验 retry 真路径 (需真 agent + API key).
+    """
+    _b1_check_numeric_detection()
+    compute_tools = _b1_check_compute_tools()
+    _b1_check_retry_prompt()
+    _b1_check_interception(compute_tools)
 
     print("[CHECK B1] ALL ASSERTS PASSED")
     return 0

@@ -10,6 +10,7 @@ import 再导出, 对外契约不变 (``from huginn.autoloop.cognitive_loop impo
 - 只做 duck-typing (step_eval / heat_engine / kb 等), 不引入 CognitiveLoop 子类, 不绑定 LLM.
 - 文件 I/O / 记忆 / 指标等有副作用者留在 cognitive_loop (段 3+ 再处理).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,7 +41,11 @@ def update_heat_engine_after_step(
     if heat_engine is None:
         return
     try:
-        _eq = (getattr(step_eval, "evidence_quality", "unknown") or "unknown").lower().strip()
+        _eq = (
+            (getattr(step_eval, "evidence_quality", "unknown") or "unknown")
+            .lower()
+            .strip()
+        )
         _t_hot_proxy = {"low": 0.8, "medium": 0.5, "high": 0.2}.get(_eq, 0.5)
         _ot = (getattr(step_eval, "on_track", "unsure") or "unsure").lower().strip()
         _t_cold_proxy = {"true": 0.7, "false": 0.2}.get(_ot, 0.4)
@@ -53,6 +58,66 @@ def update_heat_engine_after_step(
         )
     except Exception as exc:
         logger.debug("update_heat_engine_after_step failed: %s", exc)
+
+
+def _detect_drift_info(evals_history: list) -> tuple | None:
+    """AV4: detect_drift 包装 (失败 → None, 记 debug 日志)."""
+    drift_info: tuple | None = None
+    try:
+        from huginn.metacog.target_chain import detect_drift as _detect_drift
+
+        drift_info = _detect_drift(evals_history, window=3)
+    except Exception as exc:
+        logger.debug("AV4 detect_drift failed: %s", exc)
+    return drift_info
+
+
+def _update_task_metrics(
+    task_metrics: Any,
+    step_eval: Any,
+    task_state: Any,
+    workspace: Any,
+    run_id: str,
+    max_iterations: int,
+    target_chain_progress: float | None,
+) -> Any:
+    """AV4: TaskMetrics 滚动更新 (失败 → 原样返回 task_metrics)."""
+    try:
+        from huginn.runtime.task_metrics import (
+            TaskMetrics,
+        )
+        from huginn.runtime.task_metrics import (
+            load_metrics as _lm,
+        )
+        from huginn.runtime.task_metrics import (
+            save_metrics as _sm,
+        )
+        from huginn.runtime.task_metrics import (
+            update_metrics as _um,
+        )
+
+        if task_metrics is None:
+            import time
+
+            task_metrics = _lm(run_id, workspace) or TaskMetrics(
+                task_id=run_id,
+                total_steps=max_iterations * 6,
+            )
+            if task_state is None:
+                from types import SimpleNamespace
+
+                task_state = SimpleNamespace(created_at=time.time())
+        # target_chain_progress 透传 — update_metrics 接受 None (autoloop 路径).
+        task_metrics = _um(
+            task_metrics,
+            step_eval,
+            task_state=task_state,
+            target_chain_progress=target_chain_progress,
+        )
+        _sm(task_metrics, workspace)
+    except Exception as exc:
+        logger.debug("AV4 TaskMetrics update failed: %s", exc)
+    return task_metrics
 
 
 def update_drift_and_metrics(
@@ -73,44 +138,16 @@ def update_drift_and_metrics(
     target_chain_progress: RCB 路径算的 chain 平均进度, 透传给 update_metrics.
       autoloop 不传 (默认 None), 行为不变.
     """
-    drift_info: tuple | None = None
-    try:
-        from huginn.metacog.target_chain import detect_drift as _detect_drift
-        drift_info = _detect_drift(evals_history, window=3)
-    except Exception as exc:
-        logger.debug("AV4 detect_drift failed: %s", exc)
-
-    try:
-        from huginn.runtime.task_metrics import (
-            TaskMetrics,
-        )
-        from huginn.runtime.task_metrics import (
-            load_metrics as _lm,
-        )
-        from huginn.runtime.task_metrics import (
-            save_metrics as _sm,
-        )
-        from huginn.runtime.task_metrics import (
-            update_metrics as _um,
-        )
-        if task_metrics is None:
-            import time
-            task_metrics = _lm(run_id, workspace) or TaskMetrics(
-                task_id=run_id, total_steps=max_iterations * 6,
-            )
-            if task_state is None:
-                from types import SimpleNamespace
-                task_state = SimpleNamespace(created_at=time.time())
-        # target_chain_progress 透传 — update_metrics 接受 None (autoloop 路径).
-        task_metrics = _um(
-            task_metrics, step_eval,
-            task_state=task_state,
-            target_chain_progress=target_chain_progress,
-        )
-        _sm(task_metrics, workspace)
-    except Exception as exc:
-        logger.debug("AV4 TaskMetrics update failed: %s", exc)
-
+    drift_info = _detect_drift_info(evals_history)
+    task_metrics = _update_task_metrics(
+        task_metrics,
+        step_eval,
+        task_state,
+        workspace,
+        run_id,
+        max_iterations,
+        target_chain_progress,
+    )
     return drift_info, task_metrics
 
 
@@ -170,7 +207,7 @@ def _pmk_memory_text(last_step_eval: Any) -> str:
     for seg in pmk_fb.split(";"):
         seg = seg.strip()
         if seg.lower().startswith("memory:"):
-            return seg[len("memory:"):].strip()
+            return seg[len("memory:") :].strip()
     return ""
 
 
@@ -225,26 +262,20 @@ def _pmk_recall_failed(mem_text: str, mem_mgr: Any) -> str:
         return mem_text
 
 
-def _pmk_recall_procedural(
-    mem_text: str, mem_mgr: Any, last_step_eval: Any
-) -> str:
+def _pmk_recall_procedural(mem_text: str, mem_mgr: Any, last_step_eval: Any) -> str:
     """M 路补 procedural — 接通 recall_procedural 死代码."""
     try:
         attempted = getattr(last_step_eval, "attempted", "") or ""
         proc = mem_mgr.recall_procedural(attempted, top_k=2)
         if not proc:
             return mem_text
-        return (
-            mem_text + " | procedural: " + " ; ".join(p[:60] for p in proc)
-        ).strip()
+        return (mem_text + " | procedural: " + " ; ".join(p[:60] for p in proc)).strip()
     except Exception:  # 防御: 程序性召回跳过
         logger.debug("procedural recall skipped", exc_info=True)
         return mem_text
 
 
-def _pmk_kb_text(
-    kb: Any, last_step_eval: Any, top_k: int, since: str | None
-) -> str:
+def _pmk_kb_text(kb: Any, last_step_eval: Any, top_k: int, since: str | None) -> str:
     """KB retrieval via the dedup path when available, first 200 chars."""
     if kb is None or last_step_eval is None:
         return ""
@@ -298,11 +329,11 @@ def _pmk_learned_lessons() -> str:
             rules = json.load(rf)
         if not isinstance(rules, list):
             return ""
-        top_rules = sorted(
-            rules, key=lambda r: r.get("confidence", 0), reverse=True
-        )[:3]
+        top_rules = sorted(rules, key=lambda r: r.get("confidence", 0), reverse=True)[
+            :3
+        ]
         lessons = [
-            f"{r.get('rule_id','')}: {_evolution_action_desc(r)}"
+            f"{r.get('rule_id', '')}: {_evolution_action_desc(r)}"
             for r in top_rules
             if r.get("confidence", 0) > 0.3
         ]
@@ -328,12 +359,8 @@ def _pmk_stable_principles() -> str:
 
 def _pmk_enrich_kb(kb_text: str) -> str:
     """Bridge C/D: prepend learned lessons then stable principles to KB."""
-    kb_text = _prepend_pmk_block(
-        kb_text, "[learned_lessons]", _pmk_learned_lessons()
-    )
-    return _prepend_pmk_block(
-        kb_text, "[stable_principles]", _pmk_stable_principles()
-    )
+    kb_text = _prepend_pmk_block(kb_text, "[learned_lessons]", _pmk_learned_lessons())
+    return _prepend_pmk_block(kb_text, "[stable_principles]", _pmk_stable_principles())
 
 
 def _pmk_assemble(
@@ -354,8 +381,6 @@ def _pmk_assemble(
     if timeseries_ctx:
         result["timeseries"] = timeseries_ctx
     return result or None
-
-
 
 
 def check_pause_decision(
@@ -385,8 +410,10 @@ def check_pause_decision(
         from huginn.runtime.task_lifecycle import (
             should_pause_for_decision as _spd,
         )
+
         _pause, _reason, _opts = _spd(
-            evals_history, target_chains,
+            evals_history,
+            target_chains,
             kb_recall_empty=(kb is None),
             fired_intentions=fired_intentions or [],
             pmk_state=pmk_state,

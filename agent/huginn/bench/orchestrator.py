@@ -37,12 +37,14 @@ CONTINUE_MSG = (
 
 # ── Deliverable spec ──────────────────────────────────────────
 
+
 @dataclass
 class DeliverableSpec:
     """benchmark 交付物定义: 一组 (名称, glob 模式) 检查项.
 
     空集 = 完成. ponytail: 不用 YAML plan + ProgressTracker, set 检查够用.
     """
+
     checks: list[tuple[str, str]]  # (描述, 相对 workspace 的 glob 模式)
 
     def missing(self, workspace: Path) -> set[str]:
@@ -58,32 +60,41 @@ class DeliverableSpec:
 
 
 # 预定义的 benchmark deliverable specs
-PAPERBENCH_DELIVERABLES = DeliverableSpec(checks=[
-    ("submission/reproduce.sh",   "submission/reproduce.sh"),
-    ("submission/*.py",            "submission/*.py"),
-    ("submission/outputs/*.json", "submission/outputs/*.json"),
-])
+PAPERBENCH_DELIVERABLES = DeliverableSpec(
+    checks=[
+        ("submission/reproduce.sh", "submission/reproduce.sh"),
+        ("submission/*.py", "submission/*.py"),
+        ("submission/outputs/*.json", "submission/outputs/*.json"),
+    ]
+)
 
-RCB_DELIVERABLES = DeliverableSpec(checks=[
-    ("report/report.md",     "report/report.md"),
-    ("report/images/*.png",  "report/images/*.png"),
-])
+RCB_DELIVERABLES = DeliverableSpec(
+    checks=[
+        ("report/report.md", "report/report.md"),
+        ("report/images/*.png", "report/images/*.png"),
+    ]
+)
 
-MLE_DELIVERABLES = DeliverableSpec(checks=[
-    ("submission/submission.csv", "submission/submission.csv"),
-    ("submission/*.py",           "submission/*.py"),
-])
+MLE_DELIVERABLES = DeliverableSpec(
+    checks=[
+        ("submission/submission.csv", "submission/submission.csv"),
+        ("submission/*.py", "submission/*.py"),
+    ]
+)
 
-SAB_DELIVERABLES = DeliverableSpec(checks=[
-    ("pred_*.py",  "pred_*.py"),
-    # P0-3: 删 pred_*.txt — SAB 任务从未要求, 之前强制 agent 造无意义文件.
-])
+SAB_DELIVERABLES = DeliverableSpec(
+    checks=[
+        ("pred_*.py", "pred_*.py"),
+        # P0-3: 删 pred_*.txt — SAB 任务从未要求, 之前强制 agent 造无意义文件.
+    ]
+)
 
 # HLE 无 deliverable 检查 (单题问答), Orchestrator 退化为单次 chat
 HLE_DELIVERABLES = DeliverableSpec(checks=[])
 
 
 # ── 三档分流 prompt ───────────────────────────────────────────
+
 
 def _triage_prompt(missing: set[str]) -> str:
     """advisory: 提示缺失交付物, 让 LLM 自己决定最小可行实现."""
@@ -112,6 +123,7 @@ def _execution_prompt() -> str:
 
 
 # ── Orchestrator ──────────────────────────────────────────────
+
 
 class BenchmarkOrchestrator:
     """通用 benchmark 编排器: while 循环 + 三档分流 + phase-aware budget.
@@ -169,6 +181,7 @@ class BenchmarkOrchestrator:
           升级路径: 改用 auto_vacuum = INCREMENTAL, 在线增量回收.
         """
         import os as _os
+
         _path = _os.environ.get("HUGINN_CHECKPOINTER_PATH")
         if not _path or not _os.path.exists(_path):
             return
@@ -176,9 +189,7 @@ class BenchmarkOrchestrator:
         self.checkpoint_size_mb = round(_size / (1024 * 1024), 2)
         if self.checkpoint_size_mb <= 100:
             return
-        self._log(
-            f"Checkpoint {self.checkpoint_size_mb}MB > 100MB limit, VACUUM..."
-        )
+        self._log(f"Checkpoint {self.checkpoint_size_mb}MB > 100MB limit, VACUUM...")
         _ckpt = getattr(self.agent, "checkpointer", None)
         _conn = getattr(_ckpt, "conn", None) or getattr(_ckpt, "_conn", None)
         if _conn is None:
@@ -187,9 +198,7 @@ class BenchmarkOrchestrator:
         try:
             _conn.execute("VACUUM")
             self.vacuum_triggered = True
-            self.checkpoint_size_mb = round(
-                _os.path.getsize(_path) / (1024 * 1024), 2
-            )
+            self.checkpoint_size_mb = round(_os.path.getsize(_path) / (1024 * 1024), 2)
             self._log(f"VACUUM done: {self.checkpoint_size_mb}MB")
         except Exception as _e:
             self._log(f"VACUUM failed: {_e}")
@@ -213,6 +222,7 @@ class BenchmarkOrchestrator:
             return False
         # deliverable 全齐, 跑 sanity gate. 结果缓存到 self._last_sanity.
         from huginn.runtime.sanity_gate import check_sanity
+
         self._last_sanity = check_sanity(self.workspace)
         return bool(self._last_sanity["passed"])
 
@@ -271,8 +281,9 @@ class BenchmarkOrchestrator:
             self._log(f"checkpoint size enforcement failed: {_e}")
         return final
 
-    def _consume_chunk(self, chunk, final: str, tool_count: int,
-                       made_tool_call: bool) -> tuple[str, int, bool]:
+    def _consume_chunk(
+        self, chunk, final: str, tool_count: int, made_tool_call: bool
+    ) -> tuple[str, int, bool]:
         """把一条 chat() chunk 折进 run 的可观测计数."""
         msgs = chunk.get("messages", []) if isinstance(chunk, dict) else []
         if msgs:
@@ -343,85 +354,125 @@ class BenchmarkOrchestrator:
         checks = self.deliverable_spec.checks
         code_pats = [p for _, p in checks if p.endswith((".py", ".sh"))]
         output_pats = [
-            p for _, p in checks
+            p
+            for _, p in checks
             if any(k in p for k in ("outputs", ".json", ".png", ".csv", "report.md"))
         ]
         if not code_pats or not output_pats:
             return False
         ws = Path(self.workspace)
         has_code = any(list(ws.glob(p)) for p in code_pats)
-        has_output_missing = any(
-            not list(ws.glob(p)) for p in output_pats
-        )
+        has_output_missing = any(not list(ws.glob(p)) for p in output_pats)
         return has_code and has_output_missing
 
 
 # ── self-check ────────────────────────────────────────────────
 
+
 def _self_check() -> int:
     """assert-based demo: 验证 DeliverableSpec / _triage_prompt / _execution_prompt."""
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
 
-        # 场景 1: 空 workspace -> 缺 3 件
-        m = PAPERBENCH_DELIVERABLES.missing(ws)
-        assert m == {"submission/reproduce.sh", "submission/*.py", "submission/outputs/*.json"}, m
-        assert "Missing deliverables" in _triage_prompt(m)
-
-        # 场景 2: 部分 (reproduce.sh + .py, 无 outputs) -> 缺 1 件
-        sub = ws / "submission"
-        sub.mkdir()
-        (sub / "reproduce.sh").write_text("python train.py")
-        (sub / "train.py").write_text("print('hi')")
-        m = PAPERBENCH_DELIVERABLES.missing(ws)
-        assert m == {"submission/outputs/*.json"}, m
-        assert "NEVER executed" in _execution_prompt()
-
-        # 场景 3: 全齐 -> 空集
-        (sub / "outputs").mkdir()
-        (sub / "outputs" / "loss.json").write_text('{"loss":[1.0]}')
-        m = PAPERBENCH_DELIVERABLES.missing(ws)
-        assert m == set(), m
-
-        # 场景 4: HLE 无 deliverable -> 永远空集 (Orchestrator 退化为单次 chat)
-        assert HLE_DELIVERABLES.missing(ws) == set()
-
-        # 场景 5: [断层6] sanity gate 集成 — deliverable 全齐但 sanity fail
-        # 验证 _is_done 返回 False, _last_sanity 缓存 fix_prompt 可读
-        import json as _json
-        out = sub / "outputs"
-        # 写两个 final_loss 16 位精度重复的 json (sanity_gate test 3 同款)
-        (out / "r1.json").write_text(_json.dumps({"final_loss": 3.306041717529297, "training_time": 100.0}))
-        (out / "r2.json").write_text(_json.dumps({"final_loss": 3.306041717529297, "training_time": 200.0}))
-        orch = BenchmarkOrchestrator(
-            agent=None, workspace=ws,
-            deliverable_spec=PAPERBENCH_DELIVERABLES,
-            max_total_calls=530, tag="TEST",
-        )
-        assert orch._is_done(0) is False, "sanity fail 时 _is_done 应返回 False"
-        assert orch._last_sanity is not None
-        assert orch._last_sanity["passed"] is False
-        assert "float_dedup" in orch._last_sanity["reason"], orch._last_sanity["reason"]
-        assert "SANITY GATE FAIL" in orch._last_sanity["fix_prompt"]
-
-        # 场景 6: sanity pass (真实 loss + 训练时间 + 单调曲线)
-        (out / "r1.json").write_text(_json.dumps({
-            "final_loss": 0.5, "training_time": 100.0, "loss_curve": [1.0, 0.8, 0.6, 0.5],
-        }))
-        (out / "r2.json").write_text(_json.dumps({
-            "final_loss": 0.3, "training_time": 200.0, "loss_curve": [1.0, 0.7, 0.5, 0.3],
-        }))
-        orch2 = BenchmarkOrchestrator(
-            agent=None, workspace=ws,
-            deliverable_spec=PAPERBENCH_DELIVERABLES,
-            max_total_calls=530, tag="TEST",
-        )
-        assert orch2._is_done(0) is True, "sanity pass 时 _is_done 应返回 True"
-        assert orch2._last_sanity["passed"] is True
+        sub = _self_check_deliverables(ws)
+        _self_check_sanity_gate(ws, sub)
 
     print("[ORCH] self-check OK")
     return 0
+
+
+def _self_check_deliverables(ws: Path) -> Path:
+    # 场景 1: 空 workspace -> 缺 3 件
+    m = PAPERBENCH_DELIVERABLES.missing(ws)
+    assert m == {
+        "submission/reproduce.sh",
+        "submission/*.py",
+        "submission/outputs/*.json",
+    }, m
+    assert "Missing deliverables" in _triage_prompt(m)
+
+    # 场景 2: 部分 (reproduce.sh + .py, 无 outputs) -> 缺 1 件
+    sub = ws / "submission"
+    sub.mkdir()
+    (sub / "reproduce.sh").write_text("python train.py")
+    (sub / "train.py").write_text("print('hi')")
+    m = PAPERBENCH_DELIVERABLES.missing(ws)
+    assert m == {"submission/outputs/*.json"}, m
+    assert "NEVER executed" in _execution_prompt()
+
+    # 场景 3: 全齐 -> 空集
+    (sub / "outputs").mkdir()
+    (sub / "outputs" / "loss.json").write_text('{"loss":[1.0]}')
+    m = PAPERBENCH_DELIVERABLES.missing(ws)
+    assert m == set(), m
+
+    # 场景 4: HLE 无 deliverable -> 永远空集 (Orchestrator 退化为单次 chat)
+    assert HLE_DELIVERABLES.missing(ws) == set()
+    return sub
+
+
+def _self_check_sanity_gate(ws: Path, sub: Path) -> None:
+    # 场景 5: [断层6] sanity gate 集成 — deliverable 全齐但 sanity fail
+    # 验证 _is_done 返回 False, _last_sanity 缓存 fix_prompt 可读
+    import json as _json
+
+    out = sub / "outputs"
+    # 写两个 final_loss 16 位精度重复的 json (sanity_gate test 3 同款)
+    (out / "r1.json").write_text(
+        _json.dumps({"final_loss": 3.306041717529297, "training_time": 100.0})
+    )
+    (out / "r2.json").write_text(
+        _json.dumps({"final_loss": 3.306041717529297, "training_time": 200.0})
+    )
+    orch = BenchmarkOrchestrator(
+        agent=None,
+        workspace=ws,
+        deliverable_spec=PAPERBENCH_DELIVERABLES,
+        max_total_calls=530,
+        tag="TEST",
+    )
+    assert orch._is_done(0) is False, "sanity fail 时 _is_done 应返回 False"
+    assert orch._last_sanity is not None
+    assert orch._last_sanity["passed"] is False
+    assert "float_dedup" in orch._last_sanity["reason"], orch._last_sanity["reason"]
+    assert "SANITY GATE FAIL" in orch._last_sanity["fix_prompt"]
+
+    _self_check_sanity_pass(ws, out)
+
+
+def _self_check_sanity_pass(ws: Path, out: Path) -> None:
+    import json as _json
+
+    # 场景 6: sanity pass (真实 loss + 训练时间 + 单调曲线)
+    (out / "r1.json").write_text(
+        _json.dumps(
+            {
+                "final_loss": 0.5,
+                "training_time": 100.0,
+                "loss_curve": [1.0, 0.8, 0.6, 0.5],
+            }
+        )
+    )
+    (out / "r2.json").write_text(
+        _json.dumps(
+            {
+                "final_loss": 0.3,
+                "training_time": 200.0,
+                "loss_curve": [1.0, 0.7, 0.5, 0.3],
+            }
+        )
+    )
+    orch2 = BenchmarkOrchestrator(
+        agent=None,
+        workspace=ws,
+        deliverable_spec=PAPERBENCH_DELIVERABLES,
+        max_total_calls=530,
+        tag="TEST",
+    )
+    assert orch2._is_done(0) is True, "sanity pass 时 _is_done 应返回 True"
+    assert orch2._last_sanity["passed"] is True
 
 
 def _c2_self_check() -> int:
@@ -436,9 +487,7 @@ def _c2_self_check() -> int:
     ponytail: 临时 SQLite 文件模拟 checkpointer. ceiling: 不验真 VACUUM
       在 SqliteSaver 上的副作用, 只验调用路径.
     """
-    import gc
     import os
-    import sqlite3
     import tempfile
 
     # 假 agent: orchestrator 从 agent.checkpointer 拿 checkpointer, 再从
@@ -449,68 +498,17 @@ def _c2_self_check() -> int:
             self.checkpointer = self
             self.conn = conn
 
-    # 1. 字段初值 (无 conn)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-        orch = BenchmarkOrchestrator(
-            agent=_FakeAgent(None), workspace=tmp,
-            deliverable_spec=HLE_DELIVERABLES, tag="C2",
-        )
-        assert orch.checkpoint_size_mb == 0.0
-        assert orch.vacuum_triggered is False
-        print("[CHECK C2.1] fields initialized OK")
+        _c2_check_fields(tmp, _FakeAgent)
 
-        # 2. 小文件 (<100MB) 不触发 VACUUM
-        small = os.path.join(tmp, "small.sqlite")
-        with open(small, "wb") as f:
-            f.write(b"\x00" * (1024 * 1024))  # 1MB
-        os.environ["HUGINN_CHECKPOINTER_PATH"] = small
-        orch._enforce_checkpoint_size_limit()
-        assert orch.checkpoint_size_mb >= 1.0, orch.checkpoint_size_mb
-        assert orch.checkpoint_size_mb < 100, orch.checkpoint_size_mb
-        assert orch.vacuum_triggered is False
-        print(f"[CHECK C2.2] small file ({orch.checkpoint_size_mb}MB) no VACUUM OK")
-
-    # 3. 大文件 (>100MB) 触发 VACUUM — 独立临时目录避免 Windows 文件锁
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-        big = os.path.join(tmp, "big.sqlite")
-        conn = sqlite3.connect(big)
-        conn.execute("CREATE TABLE t (x BLOB)")
-        # 写 101MB 数据 (1 行 1MB × 101 行)
-        chunk = b"x" * (1024 * 1024)
-        for _ in range(101):
-            conn.execute("INSERT INTO t VALUES (?)", (chunk,))
-        conn.commit()
-        _size_before = os.path.getsize(big) / (1024 * 1024)
-        assert _size_before > 100, f"setup failed: {_size_before}MB"
+        _c2_check_small(tmp, _FakeAgent)
 
-        orch2 = BenchmarkOrchestrator(
-            agent=_FakeAgent(conn), workspace=tmp,
-            deliverable_spec=HLE_DELIVERABLES, tag="C2",
-        )
-        os.environ["HUGINN_CHECKPOINTER_PATH"] = big
-        orch2._enforce_checkpoint_size_limit()
-        assert orch2.vacuum_triggered is True, "大文件应触发 VACUUM"
-        print(
-            f"[CHECK C2.3] big file ({_size_before:.1f}MB -> "
-            f"{orch2.checkpoint_size_mb}MB) VACUUM triggered OK"
-        )
-        conn.close()
-        gc.collect()  # 释放 Windows 文件句柄
-
-    # 4. 无 conn 优雅降级
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-        big2 = os.path.join(tmp, "big2.sqlite")
-        with open(big2, "wb") as f:
-            f.write(b"\x00" * (101 * 1024 * 1024))  # 101MB 假文件
-        os.environ["HUGINN_CHECKPOINTER_PATH"] = big2
-        orch3 = BenchmarkOrchestrator(
-            agent=_FakeAgent(None), workspace=tmp,
-            deliverable_spec=HLE_DELIVERABLES, tag="C2",
-        )
-        orch3._enforce_checkpoint_size_limit()
-        assert orch3.checkpoint_size_mb > 100
-        assert orch3.vacuum_triggered is False
-        print("[CHECK C2.4] no-conn graceful degradation OK")
+        _c2_check_big(tmp, _FakeAgent)
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        _c2_check_no_conn(tmp, _FakeAgent)
 
     # 清环境变量
     os.environ.pop("HUGINN_CHECKPOINTER_PATH", None)
@@ -518,8 +516,97 @@ def _c2_self_check() -> int:
     return 0
 
 
+def _c2_check_fields(tmp: str, fake_agent: type) -> None:
+    # 1. 字段初值 (无 conn)
+    orch = BenchmarkOrchestrator(
+        agent=fake_agent(None),
+        workspace=tmp,
+        deliverable_spec=HLE_DELIVERABLES,
+        tag="C2",
+    )
+    assert orch.checkpoint_size_mb == 0.0
+    assert orch.vacuum_triggered is False
+    print("[CHECK C2.1] fields initialized OK")
+
+
+def _c2_check_small(tmp: str, fake_agent: type) -> None:
+    import os
+
+    # 2. 小文件 (<100MB) 不触发 VACUUM
+    small = os.path.join(tmp, "small.sqlite")
+    with open(small, "wb") as f:
+        f.write(b"\x00" * (1024 * 1024))  # 1MB
+    os.environ["HUGINN_CHECKPOINTER_PATH"] = small
+    orch = BenchmarkOrchestrator(
+        agent=fake_agent(None),
+        workspace=tmp,
+        deliverable_spec=HLE_DELIVERABLES,
+        tag="C2",
+    )
+    orch._enforce_checkpoint_size_limit()
+    assert orch.checkpoint_size_mb >= 1.0, orch.checkpoint_size_mb
+    assert orch.checkpoint_size_mb < 100, orch.checkpoint_size_mb
+    assert orch.vacuum_triggered is False
+    print(f"[CHECK C2.2] small file ({orch.checkpoint_size_mb}MB) no VACUUM OK")
+
+
+def _c2_check_big(tmp: str, fake_agent: type) -> None:
+    import gc
+    import os
+    import sqlite3
+
+    # 3. 大文件 (>100MB) 触发 VACUUM — 独立临时目录避免 Windows 文件锁
+    big = os.path.join(tmp, "big.sqlite")
+    conn = sqlite3.connect(big)
+    conn.execute("CREATE TABLE t (x BLOB)")
+    # 写 101MB 数据 (1 行 1MB × 101 行)
+    chunk = b"x" * (1024 * 1024)
+    for _ in range(101):
+        conn.execute("INSERT INTO t VALUES (?)", (chunk,))
+    conn.commit()
+    _size_before = os.path.getsize(big) / (1024 * 1024)
+    assert _size_before > 100, f"setup failed: {_size_before}MB"
+
+    orch2 = BenchmarkOrchestrator(
+        agent=fake_agent(conn),
+        workspace=tmp,
+        deliverable_spec=HLE_DELIVERABLES,
+        tag="C2",
+    )
+    os.environ["HUGINN_CHECKPOINTER_PATH"] = big
+    orch2._enforce_checkpoint_size_limit()
+    assert orch2.vacuum_triggered is True, "大文件应触发 VACUUM"
+    print(
+        f"[CHECK C2.3] big file ({_size_before:.1f}MB -> "
+        f"{orch2.checkpoint_size_mb}MB) VACUUM triggered OK"
+    )
+    conn.close()
+    gc.collect()  # 释放 Windows 文件句柄
+
+
+def _c2_check_no_conn(tmp: str, fake_agent: type) -> None:
+    import os
+
+    # 4. 无 conn 优雅降级
+    big2 = os.path.join(tmp, "big2.sqlite")
+    with open(big2, "wb") as f:
+        f.write(b"\x00" * (101 * 1024 * 1024))  # 101MB 假文件
+    os.environ["HUGINN_CHECKPOINTER_PATH"] = big2
+    orch3 = BenchmarkOrchestrator(
+        agent=fake_agent(None),
+        workspace=tmp,
+        deliverable_spec=HLE_DELIVERABLES,
+        tag="C2",
+    )
+    orch3._enforce_checkpoint_size_limit()
+    assert orch3.checkpoint_size_mb > 100
+    assert orch3.vacuum_triggered is False
+    print("[CHECK C2.4] no-conn graceful degradation OK")
+
+
 if __name__ == "__main__":
     import sys
+
     if "--self-check-c2" in sys.argv:
         sys.exit(_c2_self_check())
     sys.exit(_self_check())

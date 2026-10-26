@@ -66,7 +66,6 @@ def _is_heavy_task(input_data) -> tuple[bool, str]:
     return False, ""
 
 
-
 class CodeToolInput(BaseModel):
     action: Literal["execute", "analyze", "generate"] = Field(default="execute")
     code: str = Field(..., description="Code snippet to execute or analyze")
@@ -84,13 +83,16 @@ class CodeToolInput(BaseModel):
         default=None, description="Variable to serialize and return"
     )
     timeout: float = Field(
-        default=60.0, gt=0, le=1800, description="Execution timeout in seconds (max 1800 for training runs)"
+        default=60.0,
+        gt=0,
+        le=1800,
+        description="Execution timeout in seconds (max 1800 for training runs)",
     )
     self_check: str | None = Field(
         default=None,
         description="Optional assert-based check code run AFTER main code succeeds. "
         "Use to verify rubric requirements: 'assert tok.value_embed(torch.tensor([1.0])).shape[0]==d_value'. "
-        "Failure returns success=False with the AssertionError message."
+        "Failure returns success=False with the AssertionError message.",
     )
 
 
@@ -116,7 +118,9 @@ class CodeTool(HuginnTool):
     ) -> ToolResult:
         input_data = CodeToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
+            Path(input_data.working_dir)
+            if input_data.working_dir
+            else self.default_work_dir()
         )
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,9 +134,12 @@ class CodeTool(HuginnTool):
                 from huginn.tools.persistent_terminal import (
                     resolve_persistent_terminal_flag,
                 )
+
                 if resolve_persistent_terminal_flag(None):
                     dispatched = _dispatch_to_support_persistent(
-                        input_data.code, context, reason,
+                        input_data.code,
+                        context,
+                        reason,
                     )
                     if dispatched is not None:
                         return dispatched
@@ -151,7 +158,9 @@ class CodeTool(HuginnTool):
             return self._execute(input_data, work_dir, context=context)
         except Exception as e:
             return ToolResult(
-                data=None, success=False, error=f"Code tool failed: {e}",
+                data=None,
+                success=False,
+                error=f"Code tool failed: {e}",
                 error_kind=ErrorKind.FATAL,
             )
 
@@ -240,7 +249,9 @@ class CodeTool(HuginnTool):
             executor = get_executor()
         except SandboxError as exc:
             return None, ToolResult(
-                data=None, success=False, error=f"Execution blocked: {exc}",
+                data=None,
+                success=False,
+                error=f"Execution blocked: {exc}",
                 error_kind=ErrorKind.DENIED,
             )
         return executor, None
@@ -440,7 +451,8 @@ class CodeTool(HuginnTool):
                 cwd=work_dir,
                 config=SandboxConfig(
                     dry_run=False,
-                    allowed_executables=self.sandbox.config.allowed_executables | {"python"},
+                    allowed_executables=self.sandbox.config.allowed_executables
+                    | {"python"},
                     default_timeout=30.0,
                 ),
                 capture_output=True,
@@ -451,9 +463,9 @@ class CodeTool(HuginnTool):
                 if line.startswith("__SELFCHECK_PASS__"):
                     return None
                 if line.startswith("__SELFCHECK_FAIL__"):
-                    return line[len("__SELFCHECK_FAIL__:"):]
+                    return line[len("__SELFCHECK_FAIL__:") :]
                 if line.startswith("__SELFCHECK_ERROR__"):
-                    return line[len("__SELFCHECK_ERROR__:"):]
+                    return line[len("__SELFCHECK_ERROR__:") :]
             return f"self-check produced no marker. stdout: {r.stdout[:500]}"
         except Exception as e:
             return f"self-check execution error: {e}"
@@ -566,9 +578,20 @@ def _dispatch_to_support(
         )
         return None
 
-    # v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 code 作为 proxy).
-    # ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 code 当 claim proxy.
-    # 升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
+    _apply_h1_consistency(result, code, context)
+
+    # 给结果打标, 让 rcb_runner 主循环写 curl trace entry
+    result.metadata["dispatched_to_support"] = True
+    result.metadata["dispatch_reason"] = reason
+    return result
+
+
+def _apply_h1_consistency(result: ToolResult, code: str, context: ToolContext) -> None:
+    """v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 code 作为 proxy).
+
+    ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 code 当 claim proxy.
+    升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
+    """
     if result.success and isinstance(result.data, dict):
         finding = result.data.get("summary")
         if finding:
@@ -576,6 +599,7 @@ def _dispatch_to_support(
                 _check_finding_consistency,
                 _write_support_rejection,
             )
+
             h1_zero, h1_reason = _check_finding_consistency(finding, code)
             result.metadata["h1_status"] = "zero" if h1_zero else "nonzero"
             result.metadata["h1_reason"] = h1_reason
@@ -590,11 +614,6 @@ def _dispatch_to_support(
                 }
                 result.metadata["h1_obstruction"] = True
                 result.metadata["rejection_reason"] = h1_reason
-
-    # 给结果打标, 让 rcb_runner 主循环写 curl trace entry
-    result.metadata["dispatched_to_support"] = True
-    result.metadata["dispatch_reason"] = reason
-    return result
 
 
 def _dispatch_to_support_persistent(
@@ -612,24 +631,12 @@ def _dispatch_to_support_persistent(
     升级路径: 跑 SubagentDispatch dispatch 而非裸 code, 让 Support subagent
     生成结构化 finding. 当前先跑裸 code, code 自己负责 print finding JSON.
     """
-    workspace = None
-    if context is not None and getattr(context, "workspace", None):
-        workspace = str(context.workspace)
-    elif context is not None and getattr(context, "session_id", None):
-        # session_id 通常映射到 workspace/<session_id>/, 兜底用 cwd
-        workspace = str(Path.cwd())
+    workspace = _resolve_support_workspace(context)
 
     try:
-        from huginn.tools.persistent_terminal import get_default_terminal
-
-        terminal = get_default_terminal()
-        # -u 强制 stdout/stderr unbuffered, 非 PTY 模式下也能读到 print 输出
-        cmd = [sys.executable, "-u", "-c", code]
-        session_id = terminal.start(cmd, cwd=workspace)
+        session_id = _start_persistent_session(code, workspace)
     except Exception as exc:
-        logger.warning(
-            "PersistentTerminal dispatch failed, falling back: %s", exc
-        )
+        logger.warning("PersistentTerminal dispatch failed, falling back: %s", exc)
         return None
 
     result = ToolResult(
@@ -651,11 +658,28 @@ def _dispatch_to_support_persistent(
     return result
 
 
-def self_check_v14_task9() -> None:
-    """v14 Task 9: 重活识别 self-check.
+def _resolve_support_workspace(context: ToolContext | None) -> str | None:
+    """解析 Support session 的 workspace (session_id 兜底用 cwd)."""
+    if context is not None and getattr(context, "workspace", None):
+        return str(context.workspace)
+    if context is not None and getattr(context, "session_id", None):
+        # session_id 通常映射到 workspace/<session_id>/, 兜底用 cwd
+        return str(Path.cwd())
+    return None
 
-    不调真实 SubagentTool (要 agent_factory), 只验 _is_heavy_task 判据.
-    """
+
+def _start_persistent_session(code: str, workspace: str | None) -> str:
+    """启动 persistent terminal session, 返回 session_id."""
+    from huginn.tools.persistent_terminal import get_default_terminal
+
+    terminal = get_default_terminal()
+    # -u 强制 stdout/stderr unbuffered, 非 PTY 模式下也能读到 print 输出
+    cmd = [sys.executable, "-u", "-c", code]
+    return terminal.start(cmd, cwd=workspace)
+
+
+def _check_heavy_size_and_pdf() -> None:
+    """验证行长 / PDF 判据."""
     # 250 行代码 → 重活
     long_code = "\n".join(f"x{i} = {i}" for i in range(250))
     inp = type("In", (), {"code": long_code, "timeout": 30})()
@@ -675,9 +699,14 @@ def self_check_v14_task9() -> None:
     is_heavy, reason = _is_heavy_task(inp)
     assert is_heavy and "PDF" in reason, f"PDF 解析应识别为重活, got {reason}"
 
+
+def _check_heavy_csv_and_timeout() -> None:
+    """验证 CSV / timeout 判据."""
     # 大 CSV 无 chunksize → 重活
     inp = type(
-        "In", (), {"code": "import pandas as pd\ndf = pd.read_csv('big.csv')", "timeout": 30}
+        "In",
+        (),
+        {"code": "import pandas as pd\ndf = pd.read_csv('big.csv')", "timeout": 30},
     )()
     is_heavy, reason = _is_heavy_task(inp)
     assert is_heavy and "CSV" in reason, f"大 CSV 应识别为重活, got {reason}"
@@ -686,7 +715,10 @@ def self_check_v14_task9() -> None:
     inp = type(
         "In",
         (),
-        {"code": "import pandas as pd\nfor c in pd.read_csv('big.csv', chunksize=1000):\n  pass", "timeout": 30},
+        {
+            "code": "import pandas as pd\nfor c in pd.read_csv('big.csv', chunksize=1000):\n  pass",
+            "timeout": 30,
+        },
     )()
     is_heavy, _ = _is_heavy_task(inp)
     assert not is_heavy, "chunksize 不应识别为重活"
@@ -701,6 +733,14 @@ def self_check_v14_task9() -> None:
     is_heavy, _ = _is_heavy_task(inp)
     assert not is_heavy, "短代码不应识别为重活"
 
+
+def self_check_v14_task9() -> None:
+    """v14 Task 9: 重活识别 self-check.
+
+    不调真实 SubagentTool (要 agent_factory), 只验 _is_heavy_task 判据.
+    """
+    _check_heavy_size_and_pdf()
+    _check_heavy_csv_and_timeout()
     print("[CHECK v14 Task 9] heavy task detection OK")
 
 

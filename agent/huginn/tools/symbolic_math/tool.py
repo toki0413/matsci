@@ -13,7 +13,6 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
-
 class SymbolicMathInput(BaseModel):
     action: str = Field(
         ...,
@@ -97,13 +96,15 @@ class SymbolicMathTool(HuginnTool):
     category = "sci"
     profile = ToolProfile(
         cost_tier="light",
-        phases=frozenset({
-            ResearchPhase.LITERATURE,
-            ResearchPhase.HYPOTHESIS,
-            ResearchPhase.PLANNING,
-            ResearchPhase.VALIDATION,
-            ResearchPhase.REPORTING,
-        }),
+        phases=frozenset(
+            {
+                ResearchPhase.LITERATURE,
+                ResearchPhase.HYPOTHESIS,
+                ResearchPhase.PLANNING,
+                ResearchPhase.VALIDATION,
+                ResearchPhase.REPORTING,
+            }
+        ),
     )
     description = (
         "Perform symbolic mathematics using SymPy: differentiation, integration, "
@@ -119,107 +120,8 @@ class SymbolicMathTool(HuginnTool):
         action = args.action.lower()
 
         try:
-            if action in ("differentiate", "derivative"):
-                from .calculus import differentiate
-                return differentiate(args)
-            if action == "integrate":
-                from .calculus import integrate
-                return integrate(args)
-            if action == "solve":
-                from .algebra import solve
-                return solve(args)
-            if action == "simplify":
-                from .calculus import simplify
-                return simplify(args)
-            if action == "taylor":
-                from .calculus import taylor
-                return taylor(args)
-            if action == "eigenvalue":
-                from .algebra import eigenvalue
-                return eigenvalue(args)
-            if action == "constitutive":
-                from .fem import constitutive
-                return constitutive(args)
-            if action == "weak_form":
-                from .fem import weak_form
-                return weak_form(args)
-            if action == "series":
-                from .calculus import series
-                return series(args)
-            if action == "tensor_ops":
-                from .tensor import tensor_ops
-                return tensor_ops(args)
-            if action == "tensor_calculus":
-                from .tensor import tensor_calculus
-                return tensor_calculus(args)
-            if action == "dimensional_analysis":
-                from .physics import dimensional_analysis
-                return dimensional_analysis(args)
-            if action == "linear_algebra":
-                from .algebra import linear_algebra
-                return linear_algebra(args)
-            if action == "dft":
-                from .physics import dft
-                result = dft(args)
-                return self._augment_with_kb_constants(result, context, "dft")
-            if action == "thermodynamics":
-                from .physics import thermodynamics
-                result = thermodynamics(args)
-                return self._augment_with_kb_constants(result, context, "thermodynamics")
-            if action == "probability":
-                from .physics import probability
-                return probability(args)
-            if action == "unified":
-                from .physics import unified
-                return unified(args)
-            if action == "pde_classify":
-                from .pde import classify
-                return classify(args)
-            if action == "pde_separation":
-                from .pde import separation
-                return separation(args)
-            if action == "pde_characteristics":
-                from .pde import characteristics
-                return characteristics(args)
-            if action == "pde_discretize":
-                from .pde import discretize
-                return discretize(args)
-            if action == "euler_lagrange":
-                from .variational import euler_lagrange
-                return euler_lagrange(args)
-            if action == "functional_derivative":
-                from .variational import functional_derivative
-                return functional_derivative(args)
-            if action == "isoperimetric":
-                from .variational import isoperimetric
-                return isoperimetric(args)
-            if action == "noether":
-                from .variational import noether
-                return noether(args)
-            if action == "diffgeo_metric":
-                from .diffgeo import metric
-                return metric(args)
-            if action == "diffgeo_geodesic":
-                from .diffgeo import geodesic
-                return geodesic(args)
-            if action == "diffgeo_curvature":
-                from .diffgeo import curvature
-                return curvature(args)
-            if action == "diffgeo_lie_derivative":
-                from .diffgeo import lie_derivative
-                return lie_derivative(args)
-            if action == "diffgeo_connection":
-                from .diffgeo import connection
-                return connection(args)
-            if action == "derive":
-                # derive 是 EL 方程的别名: 从拉氏量推导运动方程
-                from .variational import euler_lagrange
-                return euler_lagrange(args)
-
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown action: {args.action}",
+            return _dispatch_symbolic_action(
+                action, args, context, self._augment_with_kb_constants
             )
         except Exception as e:
             return ToolResult(
@@ -260,3 +162,191 @@ class SymbolicMathTool(HuginnTool):
         except Exception:
             logger.debug("augment with kb constants failed", exc_info=True)
         return result
+
+
+def _dispatch_calculus(action: str, args: SymbolicMathInput) -> ToolResult | None:
+    """calculus 类 action 分派."""
+    if action in ("differentiate", "derivative"):
+        from .calculus import differentiate
+
+        return differentiate(args)
+    if action == "integrate":
+        from .calculus import integrate
+
+        return integrate(args)
+    if action == "simplify":
+        from .calculus import simplify
+
+        return simplify(args)
+    if action == "taylor":
+        from .calculus import taylor
+
+        return taylor(args)
+    if action == "series":
+        from .calculus import series
+
+        return series(args)
+    return None
+
+
+def _dispatch_algebra_fem(action: str, args: SymbolicMathInput) -> ToolResult | None:
+    """algebra / fem / tensor / linear_algebra 分派."""
+    if action == "solve":
+        from .algebra import solve
+
+        return solve(args)
+    if action == "eigenvalue":
+        from .algebra import eigenvalue
+
+        return eigenvalue(args)
+    if action == "constitutive":
+        from .fem import constitutive
+
+        return constitutive(args)
+    if action == "weak_form":
+        from .fem import weak_form
+
+        return weak_form(args)
+    if action == "tensor_ops":
+        from .tensor import tensor_ops
+
+        return tensor_ops(args)
+    if action == "tensor_calculus":
+        from .tensor import tensor_calculus
+
+        return tensor_calculus(args)
+    if action == "linear_algebra":
+        from .algebra import linear_algebra
+
+        return linear_algebra(args)
+    return None
+
+
+def _dispatch_physics(
+    action: str, args: SymbolicMathInput, context: ToolContext, augment
+) -> ToolResult | None:
+    """dimensional_analysis / dft / thermodynamics / probability / unified 分派."""
+    if action == "dimensional_analysis":
+        from .physics import dimensional_analysis
+
+        return dimensional_analysis(args)
+    if action == "dft":
+        from .physics import dft
+
+        result = dft(args)
+        return augment(result, context, "dft")
+    if action == "thermodynamics":
+        from .physics import thermodynamics
+
+        result = thermodynamics(args)
+        return augment(result, context, "thermodynamics")
+    if action == "probability":
+        from .physics import probability
+
+        return probability(args)
+    if action == "unified":
+        from .physics import unified
+
+        return unified(args)
+    return None
+
+
+def _dispatch_pde(action: str, args: SymbolicMathInput) -> ToolResult | None:
+    """PDE 类 action 分派."""
+    if action == "pde_classify":
+        from .pde import classify
+
+        return classify(args)
+    if action == "pde_separation":
+        from .pde import separation
+
+        return separation(args)
+    if action == "pde_characteristics":
+        from .pde import characteristics
+
+        return characteristics(args)
+    if action == "pde_discretize":
+        from .pde import discretize
+
+        return discretize(args)
+    return None
+
+
+def _dispatch_variational(action: str, args: SymbolicMathInput) -> ToolResult | None:
+    """变分类 action 分派."""
+    if action == "euler_lagrange":
+        from .variational import euler_lagrange
+
+        return euler_lagrange(args)
+    if action == "functional_derivative":
+        from .variational import functional_derivative
+
+        return functional_derivative(args)
+    if action == "isoperimetric":
+        from .variational import isoperimetric
+
+        return isoperimetric(args)
+    if action == "noether":
+        from .variational import noether
+
+        return noether(args)
+    if action == "derive":
+        # derive 是 EL 方程的别名: 从拉氏量推导运动方程
+        from .variational import euler_lagrange
+
+        return euler_lagrange(args)
+    return None
+
+
+def _dispatch_diffgeo(action: str, args: SymbolicMathInput) -> ToolResult | None:
+    """微分几何类 action 分派."""
+    if action == "diffgeo_metric":
+        from .diffgeo import metric
+
+        return metric(args)
+    if action == "diffgeo_geodesic":
+        from .diffgeo import geodesic
+
+        return geodesic(args)
+    if action == "diffgeo_curvature":
+        from .diffgeo import curvature
+
+        return curvature(args)
+    if action == "diffgeo_lie_derivative":
+        from .diffgeo import lie_derivative
+
+        return lie_derivative(args)
+    if action == "diffgeo_connection":
+        from .diffgeo import connection
+
+        return connection(args)
+    return None
+
+
+def _dispatch_symbolic_action(
+    action: str, args: SymbolicMathInput, context: ToolContext, augment
+) -> ToolResult:
+    """按 action 分派到各子模块 (保持 lazy import)."""
+    result = _dispatch_calculus(action, args)
+    if result is not None:
+        return result
+    result = _dispatch_algebra_fem(action, args)
+    if result is not None:
+        return result
+    result = _dispatch_physics(action, args, context, augment)
+    if result is not None:
+        return result
+    result = _dispatch_pde(action, args)
+    if result is not None:
+        return result
+    result = _dispatch_variational(action, args)
+    if result is not None:
+        return result
+    result = _dispatch_diffgeo(action, args)
+    if result is not None:
+        return result
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"Unknown action: {args.action}",
+    )

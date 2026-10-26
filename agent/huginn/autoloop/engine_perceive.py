@@ -27,6 +27,18 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _pm_traj_advice(match: dict[str, Any]) -> str:
+    """由轨迹命中结果构造 advisory 文本块."""
+    return (
+        f"### Trajectory Match (PM layer)\n"
+        f"Current phase sequence matches history[{match['history_id']}] "
+        f"(similarity={match['similarity']:.2f}). "
+        f"Suggested next step: {match.get('next_step', '?')}. "
+        f"This is advisory — ignore if context differs.\n"
+        f"### End Trajectory Match"
+    )
+
+
 class EnginePerceive:
     """perceive 阶段方法族: 感知工作区 + 上下文块拼装.
 
@@ -55,6 +67,7 @@ class EnginePerceive:
         """
         try:
             from huginn.interaction.inbox import get_inbox_store
+
             store = get_inbox_store()
             if store is None:
                 return
@@ -62,7 +75,8 @@ class EnginePerceive:
             if expired:
                 logger.debug(
                     "inbox expire_pending dropped %d timed-out items (iter=%d)",
-                    expired, self._iteration,
+                    expired,
+                    self._iteration,
                 )
         except Exception:  # 防御: 收件箱过期清理失败忽略
             logger.debug("_maybe_expire_inbox failed (non-fatal)", exc_info=True)
@@ -139,6 +153,7 @@ class EnginePerceive:
             return ""
         # 按需注入: 非知识类 query 跳过 KB 检索, 省 token 和注意力
         from huginn.context_builder import should_inject_kb
+
         if not should_inject_kb(query):
             return ""
         kb = self._get_kb()
@@ -157,6 +172,7 @@ class EnginePerceive:
             # C1: 走共享 format_kb_chunks — 跟 ContextBuilder 同一路径, 含
             # image_ref + KB→memory cross-ref. 之前 engine 版没这俩, 是双路径漂移.
             from huginn.context_builder import format_kb_chunks
+
             recall_fn = None
             mem = getattr(self, "memory", None)
             if mem is not None:
@@ -297,11 +313,14 @@ class EnginePerceive:
         try:
             from huginn.autoloop.engine import _autoloop_meta_trace_inject_enabled
         except ImportError:
+
             def _autoloop_meta_trace_inject_enabled():
                 return False  # type: ignore[return-value]
+
         if _autoloop_meta_trace_inject_enabled():
             try:
                 from huginn.context_builder import load_meta_trace_text
+
                 ws = getattr(self, "workspace", None)
                 if ws is not None:
                     trace_text = load_meta_trace_text(str(ws), last_n=5)
@@ -311,6 +330,38 @@ class EnginePerceive:
                 logger.debug("meta_trace inject failed", exc_info=True)
 
         return "\n\n".join(parts) if parts else ""
+
+    def _match_traj_advice(self) -> str:
+        """匹配历史轨迹并返回 advisory 文本; 未命中/无历史返回空串."""
+        from huginn.knowledge.trajectory_pattern import trajectory_match
+
+        current = getattr(self, "_current_run_phases", [])
+        history = getattr(self, "_traj_history", None)
+        if history is None:
+            # 懒加载历史轨迹 (跟 _check_stuck 共用)
+            try:
+                history = self._load_trajectory_action_history(limit=20)
+                self._traj_history = history
+            except Exception:  # 防御: 尽力读取当前轨迹失败返回空
+                logger.debug("best-effort op failed", exc_info=True)
+                return ""
+        if len(current) < 2 or not history:
+            return ""
+        match = trajectory_match(current, history, min_similarity=0.4)
+        if match is None:
+            self._last_traj_match_doc_id = None
+            self._last_traj_match_run_id = None
+            return ""
+        # C3 闭环: 记下 run_id 供 _learn 反查 KB doc_id 调 update_pattern_confidence.
+        # _traj_run_ids 是 _load_trajectory_action_history 填充的平行数组,
+        # history_id 是它的索引.
+        hid = match.get("history_id")
+        self._last_traj_match_doc_id = hid
+        run_ids = getattr(self, "_traj_run_ids", [])
+        self._last_traj_match_run_id = (
+            run_ids[hid] if hid is not None and hid < len(run_ids) else None
+        )
+        return _pm_traj_advice(match)
 
     def _build_pm_text(self) -> str:
         """C2: PM 层 trajectory_match 召回 — 当前 phase 序列是否是某历史轨迹的 prefix.
@@ -327,46 +378,12 @@ class EnginePerceive:
         # 短程任务仍需 HUGINN_EXTREME_DISPATCH=1 才开 (省计算).
         _max_iter = getattr(self, "_max_iterations", 10)
         from huginn.feature_flags import FeatureFlags
+
         _extreme = FeatureFlags.shared().is_enabled("extreme_dispatch")
         if not (_extreme or _max_iter >= 20):
             return ""
         try:
-            from huginn.knowledge.trajectory_pattern import trajectory_match
-            current = getattr(self, "_current_run_phases", [])
-            history = getattr(self, "_traj_history", None)
-            if history is None:
-                # 懒加载历史轨迹 (跟 _check_stuck 共用)
-                try:
-                    history = self._load_trajectory_action_history(limit=20)
-                    self._traj_history = history
-                except Exception:  # 防御: 尽力读取当前轨迹失败返回空
-                    logger.debug("best-effort op failed", exc_info=True)
-                    return ""
-            if len(current) < 2 or not history:
-                return ""
-            match = trajectory_match(current, history, min_similarity=0.4)
-            if match is None:
-                self._last_traj_match_doc_id = None
-                self._last_traj_match_run_id = None
-                return ""
-            # C3 闭环: 记下 run_id 供 _learn 反查 KB doc_id 调 update_pattern_confidence.
-            # _traj_run_ids 是 _load_trajectory_action_history 填充的平行数组,
-            # history_id 是它的索引.
-            hid = match.get("history_id")
-            self._last_traj_match_doc_id = hid
-            run_ids = getattr(self, "_traj_run_ids", [])
-            self._last_traj_match_run_id = (
-                run_ids[hid] if hid is not None and hid < len(run_ids) else None
-            )
-            advice = (
-                f"### Trajectory Match (PM layer)\n"
-                f"Current phase sequence matches history[{match['history_id']}] "
-                f"(similarity={match['similarity']:.2f}). "
-                f"Suggested next step: {match.get('next_step', '?')}. "
-                f"This is advisory — ignore if context differs.\n"
-                f"### End Trajectory Match"
-            )
-            return advice
+            return EnginePerceive._match_traj_advice(self)
         except Exception:  # 防御: 轨迹匹配失败复位并返回空
             self._last_traj_match_doc_id = None
             self._last_traj_match_run_id = None
@@ -392,6 +409,7 @@ class EnginePerceive:
             return self._target_chains
         try:
             from huginn.metacog.target_chain import build_target_chains
+
             kb = self._get_kb()
             model = getattr(self, "model", None)
             if model is None:
@@ -421,6 +439,7 @@ class EnginePerceive:
         if tc:
             try:
                 from huginn.metacog.target_chain import format_target_chain_text
+
                 step = getattr(self, "_iteration", 0) or 0
                 tc_text = format_target_chain_text(tc, step)
                 if tc_text:
@@ -436,6 +455,7 @@ class EnginePerceive:
                     fired = mem.recall_prospective({"current_step": step})
                     if fired:
                         from huginn.context_builder import ContextBuilder
+
                         # 用 ContextBuilder 的格式化逻辑, 跟 rcb_runner 同源.
                         # ponytail: __new__ 绕过 __init__, 只用 build_prospective_text.
                         _ctx = ContextBuilder.__new__(ContextBuilder)
@@ -446,6 +466,55 @@ class EnginePerceive:
                     logger.debug("prospective inject failed", exc_info=True)
 
         return "\n\n".join(p for p in parts if p)
+
+    def _apply_cognitive_state(self, context: dict[str, Any], cog: Any) -> None:
+        """L3/L4: 语义对齐 + 认知整合, 把冲突和推荐动作塞进 context."""
+        if cog.conflicts:
+            context["semantic_conflicts"] = [
+                {"sources": [c.source_a, c.source_b], "description": c.description}
+                for c in cog.conflicts
+            ]
+        if cog.recommended_actions:
+            context["recommended_actions"] = cog.recommended_actions
+        if cog.recommended_tools:
+            context["recommended_tools"] = cog.recommended_tools
+        if cog.simulation_converged is not None:
+            context["simulation_converged"] = cog.simulation_converged
+
+    def _route_perception_signals(self, cog: Any) -> None:
+        """G10/F14: perception 信号经 SignalHub 路由成 TransitionSignal.
+
+        ponytail: engine 无 csm 引用，走 _pending_signals 解耦；升级路径是 engine 注入 csm 直接 transition
+        """
+        try:
+            from huginn.metacog.signal_hub import SignalHub
+
+            hub = SignalHub.shared()
+            if getattr(cog, "errors_present", False):
+                sig = hub.route("perception_error", {"errors_present": True})
+                if sig is not None:
+                    self._pending_signals.append(sig)
+            if getattr(cog, "conflicts", None):
+                sig = hub.route(
+                    "perception_conflict",
+                    {
+                        "conflicts": [
+                            {
+                                "sources": [c.source_a, c.source_b],
+                                "description": c.description,
+                            }
+                            for c in cog.conflicts
+                        ],
+                    },
+                )
+                if sig is not None:
+                    self._pending_signals.append(sig)
+            if getattr(cog, "simulation_converged", None) is True:
+                sig = hub.route("perception_converged", {"converged": True})
+                if sig is not None:
+                    self._pending_signals.append(sig)
+        except Exception:  # 防御: 感知信号构造失败不阻断
+            logger.debug("perception 信号构造失败, 不阻断 _perceive", exc_info=True)
 
     def _perceive(self) -> dict[str, Any] | None:
         """Perceive the workspace using the multi-modal perception layer.
@@ -468,41 +537,8 @@ class EnginePerceive:
         # L3/L4: 语义对齐 + 认知整合, 把冲突和推荐动作塞进 context
         try:
             cog = perception.get_cognitive_state()
-            if cog.conflicts:
-                context["semantic_conflicts"] = [
-                    {"sources": [c.source_a, c.source_b], "description": c.description}
-                    for c in cog.conflicts
-                ]
-            if cog.recommended_actions:
-                context["recommended_actions"] = cog.recommended_actions
-            if cog.recommended_tools:
-                context["recommended_tools"] = cog.recommended_tools
-            if cog.simulation_converged is not None:
-                context["simulation_converged"] = cog.simulation_converged
-            # G10/F14: perception 信号经 SignalHub 路由成 TransitionSignal.
-            # ponytail: engine 无 csm 引用，走 _pending_signals 解耦；升级路径是 engine 注入 csm 直接 transition
-            try:
-                from huginn.metacog.signal_hub import SignalHub
-                hub = SignalHub.shared()
-                if getattr(cog, "errors_present", False):
-                    sig = hub.route("perception_error", {"errors_present": True})
-                    if sig is not None:
-                        self._pending_signals.append(sig)
-                if getattr(cog, "conflicts", None):
-                    sig = hub.route("perception_conflict", {
-                        "conflicts": [
-                            {"sources": [c.source_a, c.source_b], "description": c.description}
-                            for c in cog.conflicts
-                        ],
-                    })
-                    if sig is not None:
-                        self._pending_signals.append(sig)
-                if getattr(cog, "simulation_converged", None) is True:
-                    sig = hub.route("perception_converged", {"converged": True})
-                    if sig is not None:
-                        self._pending_signals.append(sig)
-            except Exception:  # 防御: 感知信号构造失败不阻断
-                logger.debug("perception 信号构造失败, 不阻断 _perceive", exc_info=True)
+            EnginePerceive._apply_cognitive_state(self, context, cog)
+            EnginePerceive._route_perception_signals(self, cog)
         except Exception:  # 防御: 认知整合失败不阻断
             logger.debug("L3/L4 cognitive integration 失败", exc_info=True)
         return context

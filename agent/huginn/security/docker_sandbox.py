@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 try:  # pragma: no cover - 看环境
     import docker  # type: ignore[import-untyped]
     from docker.errors import APIError  # type: ignore[import-untyped]
+
     _DOCKER_IMPORT_OK = True
     _DOCKER_IMPORT_ERR: str | None = None
 except Exception as e:  # pragma: no cover - 看环境
@@ -44,9 +45,9 @@ except Exception as e:  # pragma: no cover - 看环境
 # 升级路径: profile 从 env var 读, 或按 tool constraint_scope 自动选.
 _PROFILES: dict[str, tuple[str, str, str | None, float]] = {
     # profile: (memory, cpu_str, disk_tmpfs, timeout_s)
-    "light":    ("2g",  "2.0", None,   3600.0),    # 绘图/数据分析/cif 解析
-    "standard": ("8g",  "4.0", "20g", 21600.0),    # 中等 VASP/LAMMPS/ML 推理
-    "heavy":    ("16g", "8.0", "50g", 172800.0),   # 大体系 DFT/长 MD/finetune
+    "light": ("2g", "2.0", None, 3600.0),  # 绘图/数据分析/cif 解析
+    "standard": ("8g", "4.0", "20g", 21600.0),  # 中等 VASP/LAMMPS/ML 推理
+    "heavy": ("16g", "8.0", "50g", 172800.0),  # 大体系 DFT/长 MD/finetune
 }
 
 
@@ -68,6 +69,19 @@ def _resolve_profile(
     disk = explicit_disk if explicit_disk is not None else p[2]
     timeout = explicit_timeout if explicit_timeout is not None else p[3]
     return mem, cpu_str, disk, timeout
+
+
+def _connect_docker_client() -> tuple[Any, str | None]:
+    """尝试连上 Docker daemon; 失败时返回 (None, 原因)."""
+    if _DOCKER_IMPORT_OK:
+        try:
+            client = docker.from_env()  # type: ignore[union-attr]
+            # ping 一下 daemon，确认真的连上了
+            client.ping()
+            return client, None
+        except Exception as e:
+            return None, f"{type(e).__name__}: {e}"
+    return None, _DOCKER_IMPORT_ERR
 
 
 class DockerSandboxExecutor:
@@ -95,7 +109,11 @@ class DockerSandboxExecutor:
         # profile 优先, 显式参数覆盖 profile 对应字段.
         # ponytail: 老代码传 memory_limit="2g" 仍工作 — _resolve_profile 走 None 路径.
         _mem, _cpu_str, _disk, _timeout = _resolve_profile(
-            profile, memory_limit, cpu_limit, disk_limit, timeout,
+            profile,
+            memory_limit,
+            cpu_limit,
+            disk_limit,
+            timeout,
         )
         self.image = image
         self.work_dir = work_dir
@@ -115,18 +133,7 @@ class DockerSandboxExecutor:
         self.profile = profile or "light"
 
         # 没装 SDK 也要能构造，run() 时再降级
-        self._client: Any = None
-        self._client_err: str | None = None
-        if _DOCKER_IMPORT_OK:
-            try:
-                self._client = docker.from_env()  # type: ignore[union-attr]
-                # ping 一下 daemon，确认真的连上了
-                self._client.ping()
-            except Exception as e:
-                self._client = None
-                self._client_err = f"{type(e).__name__}: {e}"
-        else:
-            self._client_err = _DOCKER_IMPORT_ERR
+        self._client, self._client_err = _connect_docker_client()
 
         # 降级用的软沙箱
         self._fallback = SandboxExecutor(self.config)
@@ -173,7 +180,9 @@ class DockerSandboxExecutor:
         - 输出截断与 SandboxExecutor 一致
         """
         # 不可用就直接走软沙箱，别让上层感知到差异
-        unavailable = self._ds_unavailable_result(self, cmd, cwd, timeout, capture_output, text, env, kwargs)
+        unavailable = self._ds_unavailable_result(
+            self, cmd, cwd, timeout, capture_output, text, env, kwargs
+        )
         if unavailable is not None:
             return unavailable
         # 复用软沙箱的校验逻辑（白名单、cwd 限制）
@@ -184,24 +193,56 @@ class DockerSandboxExecutor:
         dry_run = self._ds_dry_run(self, cmd)
         if dry_run is not None:
             return dry_run
-        volumes, tmpfs, nano_cpus = self._ds_build_spec(self, host_dir)
-        container, api_error, needs_fallback = self._ds_start_container(
-            self, cmd, volumes, tmpfs, nano_cpus, env,
+        return DockerSandboxExecutor._ds_execute(
+            self, cmd, cwd, timeout, capture_output, text, env, kwargs, host_dir
+        )
+
+    @staticmethod
+    def _ds_execute(
+        exe: DockerSandboxExecutor,
+        cmd: list[str],
+        cwd: str | Path | None,
+        timeout: float,
+        capture_output: bool,
+        text: bool,
+        env: dict[str, str] | None,
+        kwargs: dict[str, Any],
+        host_dir: str,
+    ) -> SandboxResult:
+        """容器执行阶段: 装配参数 → 启动 → 轮询 → 收尾; 失败时降级软沙箱."""
+        volumes, tmpfs, nano_cpus = DockerSandboxExecutor._ds_build_spec(exe, host_dir)
+        container, api_error, needs_fallback = (
+            DockerSandboxExecutor._ds_start_container(
+                exe,
+                cmd,
+                volumes,
+                tmpfs,
+                nano_cpus,
+                env,
+            )
         )
         if api_error is not None:
             return api_error
         if needs_fallback:
             # 创建容器就崩了，老老实实回软沙箱
-            return self._ds_fallback_run(self, cmd, cwd, timeout, capture_output, text, env, kwargs)
+            return DockerSandboxExecutor._ds_fallback_run(
+                exe, cmd, cwd, timeout, capture_output, text, env, kwargs
+            )
         # 轮询容器状态；超时直接 kill
-        deadline_expired, needs_fallback = self._ds_wait_container(container, timeout)
+        deadline_expired, needs_fallback = DockerSandboxExecutor._ds_wait_container(
+            container, timeout
+        )
         if needs_fallback:
             # 轮询崩了，helper 已清理容器，回软沙箱
-            return self._ds_fallback_run(self, cmd, cwd, timeout, capture_output, text, env, kwargs)
+            return DockerSandboxExecutor._ds_fallback_run(
+                exe, cmd, cwd, timeout, capture_output, text, env, kwargs
+            )
         # 抓 logs / 退出码 / 清理容器，再封装结果
-        stdout_bytes, stderr_bytes, returncode = self._ds_collect_output(container)
-        return self._ds_make_result(
-            self, cmd, deadline_expired, returncode, stdout_bytes, stderr_bytes,
+        stdout_bytes, stderr_bytes, returncode = (
+            DockerSandboxExecutor._ds_collect_output(container)
+        )
+        return DockerSandboxExecutor._ds_make_result(
+            exe, cmd, deadline_expired, returncode, stdout_bytes, stderr_bytes
         )
 
     # ------------------------------------------------------------------
@@ -257,7 +298,8 @@ class DockerSandboxExecutor:
 
     @staticmethod
     def _ds_check_policy(
-        exe: DockerSandboxExecutor, cmd: list[str],
+        exe: DockerSandboxExecutor,
+        cmd: list[str],
     ) -> SandboxResult | None:
         """复用软沙箱的命令校验（白名单、deny 规则）；违规时返回 blocked 结果。"""
         try:
@@ -283,9 +325,7 @@ class DockerSandboxExecutor:
     ) -> tuple[str, float]:
         """算出宿主挂载目录与最终超时（含 max_timeout 截断）。"""
         valid_cwd = exe._fallback._validate_cwd(cwd, config=exe.config)
-        host_dir = str(valid_cwd) if valid_cwd else (
-            exe.mount_root or os.getcwd()
-        )
+        host_dir = str(valid_cwd) if valid_cwd else (exe.mount_root or os.getcwd())
         if timeout is None:
             timeout = exe.default_timeout
         timeout = min(float(timeout), exe.config.max_timeout)
@@ -293,7 +333,8 @@ class DockerSandboxExecutor:
 
     @staticmethod
     def _ds_dry_run(
-        exe: DockerSandboxExecutor, cmd: list[str],
+        exe: DockerSandboxExecutor,
+        cmd: list[str],
     ) -> SandboxResult | None:
         """dry_run 时只回显将要执行的命令，否则返回 None。"""
         if not exe.config.dry_run:
@@ -301,7 +342,8 @@ class DockerSandboxExecutor:
         return SandboxResult(
             success=True,
             returncode=0,
-            stdout=f"[dry-run] Would run in docker container '{exe.image}': " + " ".join(cmd),
+            stdout=f"[dry-run] Would run in docker container '{exe.image}': "
+            + " ".join(cmd),
             stderr="",
             command=cmd,
             dry_run=True,
@@ -309,11 +351,15 @@ class DockerSandboxExecutor:
 
     @staticmethod
     def _ds_build_spec(
-        exe: DockerSandboxExecutor, host_dir: str,
+        exe: DockerSandboxExecutor,
+        host_dir: str,
     ) -> tuple[dict[str, Any], dict[str, str], int]:
         """容器参数装配: 卷挂载、CPU 纳秒配额、tmpfs 磁盘配额。"""
         volumes = {
-            host_dir: {"bind": exe.work_dir, "mode": "rw" if not exe.read_only else "ro"},
+            host_dir: {
+                "bind": exe.work_dir,
+                "mode": "rw" if not exe.read_only else "ro",
+            },
         }
 
         # nano_cpus 用整数纳秒表达 CPU 配额，docker SDK 接受这个参数
@@ -362,14 +408,18 @@ class DockerSandboxExecutor:
                 run_kwargs["tmpfs"] = tmpfs
             container = exe._client.containers.run(**run_kwargs)
         except APIError as e:
-            return None, SandboxResult(
-                success=False,
-                returncode=-1,
-                stdout="",
-                stderr=f"docker API error: {e}",
-                command=cmd,
-                dry_run=False,
-            ), False
+            return (
+                None,
+                SandboxResult(
+                    success=False,
+                    returncode=-1,
+                    stdout="",
+                    stderr=f"docker API error: {e}",
+                    command=cmd,
+                    dry_run=False,
+                ),
+                False,
+            )
         except Exception:
             return None, None, True
         return container, None, False
@@ -442,7 +492,9 @@ class DockerSandboxExecutor:
         """超时修正 + 解码 + 截断，封装成 SandboxResult。"""
         if deadline_expired:
             returncode = -1
-            stderr_bytes = (stderr_bytes or b"") + b"\n[sandbox] container killed on timeout"
+            stderr_bytes = (
+                stderr_bytes or b""
+            ) + b"\n[sandbox] container killed on timeout"
 
         success = (returncode == 0) and not deadline_expired
 
@@ -490,7 +542,9 @@ if __name__ == "__main__":
     assert exe_s.memory_limit == "8g", f"standard mem: {exe_s.memory_limit}"
     assert exe_s.cpu_limit == 4.0, f"standard cpu: {exe_s.cpu_limit}"
     assert exe_s.disk_limit == "20g", f"standard disk: {exe_s.disk_limit}"
-    assert exe_s.default_timeout == 21600.0, f"standard timeout: {exe_s.default_timeout}"
+    assert exe_s.default_timeout == 21600.0, (
+        f"standard timeout: {exe_s.default_timeout}"
+    )
 
     # 3. heavy → 16g/8cpu/50g tmpfs/48h
     exe_h = DockerSandboxExecutor(profile="heavy")

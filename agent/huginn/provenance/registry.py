@@ -136,9 +136,13 @@ class ProvenanceEntry:
             parameters=json.loads(row["parameters"] or "{}"),
             file_format=row["file_format"] or "",
             key_properties=json.loads(row["key_properties"] or "{}"),
-            snapshot_step_id=row["snapshot_step_id"] if "snapshot_step_id" in keys else None,
+            snapshot_step_id=row["snapshot_step_id"]
+            if "snapshot_step_id" in keys
+            else None,
             reverted=bool(row["reverted"]) if "reverted" in keys else False,
-            random_seed=row["random_seed"] if "random_seed" in keys and row["random_seed"] is not None else None,
+            random_seed=row["random_seed"]
+            if "random_seed" in keys and row["random_seed"] is not None
+            else None,
         )
 
 
@@ -192,7 +196,9 @@ class _ProvenanceStore:
         if "snapshot_step_id" not in existing:
             self._conn.execute("ALTER TABLE entries ADD COLUMN snapshot_step_id TEXT")
         if "reverted" not in existing:
-            self._conn.execute("ALTER TABLE entries ADD COLUMN reverted INTEGER DEFAULT 0")
+            self._conn.execute(
+                "ALTER TABLE entries ADD COLUMN reverted INTEGER DEFAULT 0"
+            )
         if "random_seed" not in existing:
             self._conn.execute("ALTER TABLE entries ADD COLUMN random_seed INTEGER")
 
@@ -344,7 +350,9 @@ class _ProvenanceStore:
             self._conn.commit()
             return cur.rowcount
 
-    def get_events_since(self, since_id: int = 0, limit: int = 100) -> list[ProvenanceEntry]:
+    def get_events_since(
+        self, since_id: int = 0, limit: int = 100
+    ) -> list[ProvenanceEntry]:
         """Event sourcing: fetch all events after a given id."""
         with self._lock:
             cur = self._conn.execute(
@@ -366,9 +374,7 @@ class _ProvenanceStore:
 
     def get_event_by_id(self, event_id: int) -> ProvenanceEntry | None:
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT * FROM entries WHERE id = ?", (event_id,)
-            )
+            cur = self._conn.execute("SELECT * FROM entries WHERE id = ?", (event_id,))
             row = cur.fetchone()
             return ProvenanceEntry.from_row(row) if row else None
 
@@ -395,8 +401,7 @@ class _ProvenanceStore:
         """返回 target_id 之后未回滚的事件 id (倒序, 供 mark_reverted 用)."""
         with self._lock:
             cur = self._conn.execute(
-                "SELECT id FROM entries WHERE id > ? AND reverted = 0 "
-                "ORDER BY id DESC",
+                "SELECT id FROM entries WHERE id > ? AND reverted = 0 ORDER BY id DESC",
                 (target_id,),
             )
             return [r[0] for r in cur.fetchall()]
@@ -449,7 +454,10 @@ class ProvenanceRegistry:
                     len(self._entries),
                 )
         except Exception:
-            logger.warning("SQLite provenance store init failed, running in-memory only", exc_info=True)
+            logger.warning(
+                "SQLite provenance store init failed, running in-memory only",
+                exc_info=True,
+            )
             self._store = None
 
     @classmethod
@@ -476,22 +484,11 @@ class ProvenanceRegistry:
             expected_version: 调用方读过的版本号; 不匹配则抛 VersionConflict.
         """
         # 乐观并发: 版本号变了说明有其他写入插队
-        if expected_version is not None and self._store is not None:
-            current = self._store.get_max_id()
-            if current != expected_version:
-                raise VersionConflict(
-                    f"Expected version {expected_version}, got {current}"
-                )
+        ProvenanceRegistry._check_expected_version(self, expected_version)
 
         # auto-extract seed from parameters if not explicitly provided
         # many tools pass seed in parameters dict (gp_tool, packing_tool, etc.)
-        _seed = None
-        if parameters:
-            for k in ("seed", "random_seed", "rng_seed"):
-                v = parameters.get(k)
-                if v is not None and isinstance(v, int | float):
-                    _seed = int(v)
-                    break
+        _seed = _extract_seed(parameters)
 
         entry = ProvenanceEntry(
             file_path=file_path,
@@ -506,15 +503,7 @@ class ProvenanceRegistry:
         )
 
         # 写内存 (热路径)
-        self._entries.append(entry)
-        self._by_path[file_path] = entry
-        self._by_tool.setdefault(produced_by, []).append(entry)
-
-        # 内存缓存上限, FIFO 淘汰最旧的
-        if len(self._entries) > _MEM_CACHE_LIMIT:
-            self._entries.pop(0)
-            # 不删 by_path, 让查询仍能命中 (虽然不在 list 里)
-            # ponytail: 不精确清理 by_tool list, 热路径查询不受影响
+        ProvenanceRegistry._cache_entry(self, entry)
 
         # 写 SQLite (持久化)
         if self._store is not None:
@@ -524,6 +513,25 @@ class ProvenanceRegistry:
                 logger.debug("SQLite save failed (non-fatal)", exc_info=True)
 
         return entry
+
+    def _check_expected_version(self, expected_version: int | None) -> None:
+        if expected_version is not None and self._store is not None:
+            current = self._store.get_max_id()
+            if current != expected_version:
+                raise VersionConflict(
+                    f"Expected version {expected_version}, got {current}"
+                )
+
+    def _cache_entry(self, entry: ProvenanceEntry) -> None:
+        self._entries.append(entry)
+        self._by_path[entry.file_path] = entry
+        self._by_tool.setdefault(entry.produced_by, []).append(entry)
+
+        # 内存缓存上限, FIFO 淘汰最旧的
+        if len(self._entries) > _MEM_CACHE_LIMIT:
+            self._entries.pop(0)
+            # 不删 by_path, 让查询仍能命中 (虽然不在 list 里)
+            # ponytail: 不精确清理 by_tool list, 热路径查询不受影响
 
     def find_by_path(self, path: str) -> ProvenanceEntry | None:
         # 先查内存
@@ -566,7 +574,9 @@ class ProvenanceRegistry:
         # 内存扫描
         results = []
         for e in self._entries:
-            if key in e.key_properties and (value is None or e.key_properties[key] == value):
+            if key in e.key_properties and (
+                value is None or e.key_properties[key] == value
+            ):
                 results.append(e)
         if results:
             return results
@@ -668,7 +678,9 @@ class ProvenanceRegistry:
                 props = " | " + ", ".join(
                     f"{k}={v}" for k, v in e.key_properties.items()
                 )
-            lines.append(f"  - {e.file_path} ({e.file_format or '?'}) by {e.produced_by}{props}")
+            lines.append(
+                f"  - {e.file_path} ({e.file_format or '?'}) by {e.produced_by}{props}"
+            )
         return "\n".join(lines)
 
     # 技能版本清单的固定标识: 一条 provenance 记录存全部激活技能的 {name: version}.
@@ -692,7 +704,11 @@ class ProvenanceRegistry:
 
     def load_skills_snapshot(self) -> dict[str, str]:
         """取最近一次技能版本快照; 无记录返回空 dict."""
-        entry = self._store.find_by_path(self._SKILLS_MANIFEST_PATH) if self._store else self._by_path.get(self._SKILLS_MANIFEST_PATH)
+        entry = (
+            self._store.find_by_path(self._SKILLS_MANIFEST_PATH)
+            if self._store
+            else self._by_path.get(self._SKILLS_MANIFEST_PATH)
+        )
         if entry is None:
             return {}
         return dict(entry.key_properties.get("skills") or {})
@@ -702,7 +718,9 @@ class ProvenanceRegistry:
         if self._store is not None:
             deleted = self._store.cleanup_old(days)
             if deleted > 0:
-                logger.info("Cleaned up %d provenance entries older than %d days", deleted, days)
+                logger.info(
+                    "Cleaned up %d provenance entries older than %d days", deleted, days
+                )
             return deleted
         return 0
 
@@ -727,7 +745,7 @@ class ProvenanceRegistry:
             # Memory-only fallback
             if tool:
                 return [e for e in self._entries if e.produced_by == tool][:limit]
-            return self._entries[since_id:since_id + limit]
+            return self._entries[since_id : since_id + limit]
         if tool:
             return self._store.get_events_by_tool(tool, limit)
         return self._store.get_events_since(since_id, limit)
@@ -772,7 +790,9 @@ class ProvenanceRegistry:
 
         logger.info(
             "rollback_to(%d): %d paths, %d snapshot reverts",
-            target_id, len(reverted_paths), len(snap_step_ids),
+            target_id,
+            len(reverted_paths),
+            len(snap_step_ids),
         )
         return reverted_paths
 
@@ -802,6 +822,108 @@ class ProvenanceRegistry:
         return self._store.get_max_id()
 
 
+def _extract_seed(parameters: dict[str, Any] | None) -> int | None:
+    """从 parameters 里自动提取随机种子, 没传就返回 None."""
+    _seed = None
+    if parameters:
+        for k in ("seed", "random_seed", "rng_seed"):
+            v = parameters.get(k)
+            if v is not None and isinstance(v, int | float):
+                _seed = int(v)
+                break
+    return _seed
+
+
+def _extract_input_files(tool_input: dict[str, Any]) -> list[str]:
+    input_files: list[str] = []
+    for key in ("file_path", "working_dir", "poscar_path", "structure_file"):
+        val = tool_input.get(key)
+        if val and isinstance(val, str):
+            input_files.append(val)
+    return input_files
+
+
+def _extract_output_paths(result: dict[str, Any]) -> list[str]:
+    output_paths: list[str] = []
+    for key in (
+        "output_file",
+        "outcar_path",
+        "trajectory_file",
+        "file_path",
+        "saved_to",
+    ):
+        val = result.get(key)
+        if val and isinstance(val, str):
+            output_paths.append(val)
+    return output_paths
+
+
+def _extract_key_props(result: dict[str, Any]) -> dict[str, Any]:
+    key_props: dict[str, Any] = {}
+    for key in (
+        "energy",
+        "total_energy",
+        "free_energy",
+        "E0",
+        "band_gap",
+        "lattice_constant",
+        "converged",
+        "forces_max",
+        "stress_max",
+        "pressure",
+        "spacegroup",
+        "volume",
+        "density",
+        "n_atoms",
+        "formula",
+    ):
+        val = result.get(key)
+        if val is not None:
+            key_props[key] = val
+    return key_props
+
+
+def _extract_params(tool_input: dict[str, Any]) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    for key in (
+        "action",
+        "encut",
+        "ediff",
+        "kpoints",
+        "functional",
+        "basis_set",
+        "method",
+    ):
+        val = tool_input.get(key)
+        if val is not None:
+            params[key] = val
+    return params
+
+
+def _infer_file_format(result: dict[str, Any], output_paths: list[str]) -> str:
+    fmt = ""
+    for key in ("file_format", "format"):
+        val = result.get(key)
+        if val:
+            fmt = str(val)
+            break
+    if not fmt and output_paths:
+        ext = Path(output_paths[0]).suffix.lstrip(".").lower()
+        fmt = ext
+    return fmt
+
+
+def _consume_snapshot_step_id() -> str | None:
+    snap_step_id: str | None = None
+    try:
+        from huginn.snapshot.integration import consume_last_snapshot_step_id
+
+        snap_step_id = consume_last_snapshot_step_id()
+    except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
+    return snap_step_id
+
+
 def register_tool_output(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -812,82 +934,55 @@ def register_tool_output(
     在 ToolAdapter._run_post_checks 里调用.
     """
     try:
-        reg = ProvenanceRegistry.shared()
-
-        # 从 snapshot integration 拿 step_id, 建立 provenance↔snapshot 双向链
-        snap_step_id: str | None = None
-        try:
-            from huginn.snapshot.integration import consume_last_snapshot_step_id
-            snap_step_id = consume_last_snapshot_step_id()
-        except ImportError:
-            logger.debug("best-effort op failed", exc_info=True)
-
-        # 从 tool_input 提取输入文件
-        input_files: list[str] = []
-        for key in ("file_path", "working_dir", "poscar_path", "structure_file"):
-            val = tool_input.get(key)
-            if val and isinstance(val, str):
-                input_files.append(val)
-
-        # 从 tool_output 提取产出文件和关键属性
-        if not isinstance(tool_output, dict):
-            return
-
-        result = tool_output.get("result", tool_output)
-        if not isinstance(result, dict):
-            return
-
-        # 提取文件路径
-        output_paths: list[str] = []
-        for key in ("output_file", "outcar_path", "trajectory_file", "file_path", "saved_to"):
-            val = result.get(key)
-            if val and isinstance(val, str):
-                output_paths.append(val)
-
-        # 提取关键属性
-        key_props: dict[str, Any] = {}
-        for key in (
-            "energy", "total_energy", "free_energy", "E0",
-            "band_gap", "lattice_constant", "converged",
-            "forces_max", "stress_max", "pressure",
-            "spacegroup", "volume", "density",
-            "n_atoms", "formula",
-        ):
-            val = result.get(key)
-            if val is not None:
-                key_props[key] = val
-
-        # 提取参数
-        params: dict[str, Any] = {}
-        for key in ("action", "encut", "ediff", "kpoints", "functional", "basis_set", "method"):
-            val = tool_input.get(key)
-            if val is not None:
-                params[key] = val
-
-        # 推断文件格式
-        fmt = ""
-        for key in ("file_format", "format"):
-            val = result.get(key)
-            if val:
-                fmt = str(val)
-                break
-        if not fmt and output_paths:
-            ext = Path(output_paths[0]).suffix.lstrip(".").lower()
-            fmt = ext
-
-        # 注册每个产出文件
-        for path in output_paths:
-            reg.register(
-                file_path=path,
-                produced_by=tool_name,
-                input_files=input_files,
-                parameters=params,
-                file_format=fmt,
-                key_properties=key_props,
-                snapshot_step_id=snap_step_id,
-            )
+        _do_register_tool_output(tool_name, tool_input, tool_output)
     except Exception:
         logger.debug("register_tool_output failed (non-fatal)", exc_info=True)
+
+
+def _do_register_tool_output(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    tool_output: Any,
+) -> None:
+    reg = ProvenanceRegistry.shared()
+
+    # 从 snapshot integration 拿 step_id, 建立 provenance↔snapshot 双向链
+    snap_step_id = _consume_snapshot_step_id()
+
+    # 从 tool_input 提取输入文件
+    input_files = _extract_input_files(tool_input)
+
+    # 从 tool_output 提取产出文件和关键属性
+    if not isinstance(tool_output, dict):
+        return
+
+    result = tool_output.get("result", tool_output)
+    if not isinstance(result, dict):
+        return
+
+    # 提取文件路径
+    output_paths = _extract_output_paths(result)
+
+    # 提取关键属性
+    key_props = _extract_key_props(result)
+
+    # 提取参数
+    params = _extract_params(tool_input)
+
+    # 推断文件格式
+    fmt = _infer_file_format(result, output_paths)
+
+    # 注册每个产出文件
+    for path in output_paths:
+        reg.register(
+            file_path=path,
+            produced_by=tool_name,
+            input_files=input_files,
+            parameters=params,
+            file_format=fmt,
+            key_properties=key_props,
+            snapshot_step_id=snap_step_id,
+        )
 
 
 def _selfcheck_skills_snapshot() -> None:
@@ -905,7 +1000,10 @@ def _selfcheck_skills_snapshot() -> None:
     )
     # 空快照不应写记录, 也不应清掉最近一次快照
     assert reg.snapshot_skills({}) is None
-    assert reg.load_skills_snapshot() == {"standard_dft": "1.2.0", "happy_figure": "0.4.0"}
+    assert reg.load_skills_snapshot() == {
+        "standard_dft": "1.2.0",
+        "happy_figure": "0.4.0",
+    }
     print(f"OK: 技能版本快照 round-trip, {len(loaded)} 个技能")
 
 

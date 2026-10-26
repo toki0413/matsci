@@ -31,10 +31,10 @@ from typing import Any, Literal
 # ── 四族分类 ──────────────────────────────────────────────────
 
 Family = Literal[
-    "combinatorial",   # 超图/MetaGraph — 无向下闭包, 建模自由
-    "topological",     # 单纯复形/CW — 有闭包, 有同调/Hodge/Betti
-    "factorization",   # 因子图/多层/时间 — 分解/层/时间
-    "semantic",        # 知识图/Petri — 语义/逻辑
+    "combinatorial",  # 超图/MetaGraph — 无向下闭包, 建模自由
+    "topological",  # 单纯复形/CW — 有闭包, 有同调/Hodge/Betti
+    "factorization",  # 因子图/多层/时间 — 分解/层/时间
+    "semantic",  # 知识图/Petri — 语义/逻辑
 ]
 
 
@@ -58,6 +58,29 @@ class FamilyVerdict:
         }
 
 
+def _topological_requirement_verdict(
+    need_topological_invariants: bool,
+    need_orthogonal_decomposition: bool,
+) -> FamilyVerdict | None:
+    """显式需求导向的族判定: 需要 Hodge/同调 → topological (需闭包)."""
+    if need_orthogonal_decomposition:
+        return FamilyVerdict(
+            family="topological",
+            reason="需要 Hodge 正交分解 (梯度/旋度/调和), 只有单纯复形给三分量",
+            needs_closure=True,
+            upgrade_hint="若数据不足以支撑闭包, 退化到超图 + 启发式调和检测",
+        )
+
+    if need_topological_invariants:
+        return FamilyVerdict(
+            family="topological",
+            reason="需要 Betti 数/同调群, 强制向下闭包 (单纯复形)",
+            needs_closure=True,
+            upgrade_hint="孔隙/力链等物理连通 → 闭包自然成立; 化学反应 → 用超图",
+        )
+    return None
+
+
 def classify_system(
     interactions: list[set[str]],
     need_topological_invariants: bool = False,
@@ -79,21 +102,11 @@ def classify_system(
 
     ponytail: 判据是启发式, 不是定理. 真实物理系统可能混合多族.
     """
-    if need_orthogonal_decomposition:
-        return FamilyVerdict(
-            family="topological",
-            reason="需要 Hodge 正交分解 (梯度/旋度/调和), 只有单纯复形给三分量",
-            needs_closure=True,
-            upgrade_hint="若数据不足以支撑闭包, 退化到超图 + 启发式调和检测",
-        )
-
-    if need_topological_invariants:
-        return FamilyVerdict(
-            family="topological",
-            reason="需要 Betti 数/同调群, 强制向下闭包 (单纯复形)",
-            needs_closure=True,
-            upgrade_hint="孔隙/力链等物理连通 → 闭包自然成立; 化学反应 → 用超图",
-        )
+    verdict = _topological_requirement_verdict(
+        need_topological_invariants, need_orthogonal_decomposition
+    )
+    if verdict is not None:
+        return verdict
 
     # 检查交互是否自然多路 (任一交互 size>2)
     max_size = max((len(s) for s in interactions), default=0)
@@ -115,6 +128,7 @@ def classify_system(
 
 
 # ── 向下闭包判据 ──────────────────────────────────────────────
+
 
 @dataclass
 class ClosureCheck:
@@ -177,6 +191,7 @@ def needs_downward_closure(
 
 # ── Hodge 签名 (等价性审计用) ─────────────────────────────────
 
+
 @dataclass
 class HodgeSignature:
     """假设/证据网络的近似 Hodge 签名.
@@ -213,8 +228,7 @@ class HodgeSignature:
         entropy_diff = abs(self.degree_entropy - other.degree_entropy)
         if entropy_diff > 0.3:
             return True, (
-                f"度熵差异 {entropy_diff:.2f} > 0.3 → 证据分布结构不同 → "
-                f"非换名归约"
+                f"度熵差异 {entropy_diff:.2f} > 0.3 → 证据分布结构不同 → 非换名归约"
             )
         if self.has_harmonic != other.has_harmonic:
             return True, (
@@ -222,6 +236,45 @@ class HodgeSignature:
                 f"拓扑环结构不同 → 非换名归约"
             )
         return False, "签名相似, 可能等价, 需更深判断"
+
+
+def _connected_components(nodes: list[str], edges: list[tuple[str, str]]) -> int:
+    """连通分量数 (Union-Find, 不引 networkx)."""
+    parent = {n: n for n in nodes}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b in edges:
+        if a in parent and b in parent:
+            union(a, b)
+
+    return len({find(n) for n in nodes})
+
+
+def _degree_entropy(edges: list[tuple[str, str]]) -> float:
+    """度分布熵: -Σ p(d) log2 p(d), p(d)=度数 d 的节点占比."""
+    import math
+    from collections import Counter
+
+    degree = Counter()
+    for a, b in edges:
+        degree[a] += 1
+        degree[b] += 1
+    if degree:
+        total = sum(degree.values())
+        entropy = -sum((c / total) * math.log2(c / total) for c in degree.values())
+    else:
+        entropy = 0.0
+    return entropy
 
 
 def hodge_signature(
@@ -246,43 +299,13 @@ def hodge_signature(
         return HodgeSignature(0, 0, 0, 0.0, False)
 
     # 连通分量 (Union-Find, 不引 networkx)
-    parent = {n: n for n in nodes}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for a, b in edges:
-        if a in parent and b in parent:
-            union(a, b)
-
-    components = len({find(n) for n in nodes})
+    components = _connected_components(nodes, edges)
     beta1 = n_e - n_v + components
     if beta1 < 0:
         beta1 = 0  # 森的 β₁=0
 
     # 度分布熵
-    import math
-    from collections import Counter
-    degree = Counter()
-    for a, b in edges:
-        degree[a] += 1
-        degree[b] += 1
-    if degree:
-        total = sum(degree.values())
-        entropy = -sum(
-            (c / total) * math.log2(c / total)
-            for c in degree.values()
-        )
-    else:
-        entropy = 0.0
+    entropy = _degree_entropy(edges)
 
     return HodgeSignature(
         n_vertices=n_v,
@@ -294,6 +317,7 @@ def hodge_signature(
 
 
 # ── 拓扑许可动力学 ────────────────────────────────────────────
+
 
 @dataclass
 class TopologyPermit:
@@ -317,13 +341,95 @@ class TopologyPermit:
         }
 
 
+def _betti_numbers(nodes: list[str], edges: list[tuple[str, str]]) -> tuple[int, int]:
+    """近似 Betti 数 (β₀=连通分量数, β₁=独立环数)."""
+    sig = hodge_signature(nodes, edges)
+    # β₀ = 连通分量数 = n_vertices - n_edges + beta1 (欧拉示性数反推)
+    # 但更直接: β₀ = 连通分量数, 重新算
+    beta0 = _connected_components(nodes, edges)
+    beta1 = sig.beta1_approx
+    return beta0, beta1
+
+
+def _permit_synchronization(beta0: int, beta1: int) -> TopologyPermit:
+    """同步需要 β₁ > 0 (拓扑环允许同步模式)."""
+    if beta1 > 0:
+        return TopologyPermit(
+            permitted=True,
+            reason=f"β₁={beta1} > 0, 拓扑环允许同步模式",
+            beta0=beta0,
+            beta1=beta1,
+        )
+    return TopologyPermit(
+        permitted=False,
+        reason="β₁=0, 无拓扑环, 同步模式不可能 (无论耦合强度)",
+        beta0=beta0,
+        beta1=beta1,
+        required_change="引入环结构 (新增反馈边) 使 β₁ > 0",
+    )
+
+
+def _permit_circulation(beta0: int, beta1: int) -> TopologyPermit:
+    """环流需要独立环."""
+    if beta1 > 0:
+        return TopologyPermit(
+            permitted=True,
+            reason=f"β₁={beta1} > 0, 独立环允许环流模式",
+            beta0=beta0,
+            beta1=beta1,
+        )
+    return TopologyPermit(
+        permitted=False,
+        reason="β₁=0, 无独立环, 环流不可能 (标准扩散模型已足够)",
+        beta0=beta0,
+        beta1=beta1,
+        required_change="若物理确有环流, 需补反馈边; 否则用标准 Fick 扩散",
+    )
+
+
+def _permit_percolation(beta0: int, beta1: int) -> TopologyPermit:
+    """渗流: β₀>1 (多连通, 部分渗流) 或 β₀=1 (全连通, 完全渗流)."""
+    if beta0 >= 1:
+        status = "全连通" if beta0 == 1 else f"{beta0} 个连通分量"
+        return TopologyPermit(
+            permitted=True,
+            reason=f"β₀={beta0} ({status}), 渗流可能",
+            beta0=beta0,
+            beta1=beta1,
+        )
+    return TopologyPermit(
+        permitted=False,
+        reason="β₀=0, 无节点, 渗流无意义",
+        beta0=beta0,
+        beta1=beta1,
+    )
+
+
+def _permit_global_consistency(beta0: int, beta1: int) -> TopologyPermit:
+    """全局一致: 层粘合 H¹=0, 近似用 β₁=0 (无拓扑障碍)."""
+    if beta1 == 0:
+        return TopologyPermit(
+            permitted=True,
+            reason="β₁=0, 无拓扑障碍, 局部模型可全局粘合 (H¹≈0)",
+            beta0=beta0,
+            beta1=beta1,
+        )
+    return TopologyPermit(
+        permitted=False,
+        reason=f"β₁={beta1} > 0, 存在拓扑障碍, 局部模型无法一致粘合 (H¹≠0)",
+        beta0=beta0,
+        beta1=beta1,
+        required_change="修正局部模型使粘合条件一致, 或显式处理障碍",
+    )
+
+
 def topology_permits(
     nodes: list[str],
     edges: list[tuple[str, str]],
     target_mode: Literal[
-        "synchronization",    # 同步: 需要 β₁ > 0 (拓扑环)
-        "percolation",         # 渗流: 需要 β₀ > 1 (多连通分量) 或 β₀=1 全连通
-        "circulation",         # 环流: 需要 β₁ > 0 (独立环)
+        "synchronization",  # 同步: 需要 β₁ > 0 (拓扑环)
+        "percolation",  # 渗流: 需要 β₀ > 1 (多连通分量) 或 β₀=1 全连通
+        "circulation",  # 环流: 需要 β₁ > 0 (独立环)
         "global_consistency",  # 全局一致: 需要层粘合 H¹=0
     ],
 ) -> TopologyPermit:
@@ -341,98 +447,31 @@ def topology_permits(
     ponytail: 用图论近似 Betti 数, 不是真实同调. 升级: 接 gudhi.
     ponytail: "拓扑许可动力学"定理对 Kuramoto 成立, 推广到任意 PDE 是假设.
     """
-    sig = hodge_signature(nodes, edges)
-    # β₀ = 连通分量数 = n_vertices - n_edges + beta1 (欧拉示性数反推)
-    # 但更直接: β₀ = 连通分量数, 重新算
-    parent = {n: n for n in nodes}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for a, b in edges:
-        if a in parent and b in parent:
-            union(a, b)
-
-    beta0 = len({find(n) for n in nodes}) if nodes else 0
-    beta1 = sig.beta1_approx
+    beta0, beta1 = _betti_numbers(nodes, edges)
 
     if target_mode == "synchronization":
-        # 同步需要 β₁ > 0 (拓扑环允许同步模式)
-        if beta1 > 0:
-            return TopologyPermit(
-                permitted=True,
-                reason=f"β₁={beta1} > 0, 拓扑环允许同步模式",
-                beta0=beta0, beta1=beta1,
-            )
-        return TopologyPermit(
-            permitted=False,
-            reason="β₁=0, 无拓扑环, 同步模式不可能 (无论耦合强度)",
-            beta0=beta0, beta1=beta1,
-            required_change="引入环结构 (新增反馈边) 使 β₁ > 0",
-        )
+        return _permit_synchronization(beta0, beta1)
 
     if target_mode == "circulation":
-        # 环流需要独立环
-        if beta1 > 0:
-            return TopologyPermit(
-                permitted=True,
-                reason=f"β₁={beta1} > 0, 独立环允许环流模式",
-                beta0=beta0, beta1=beta1,
-            )
-        return TopologyPermit(
-            permitted=False,
-            reason="β₁=0, 无独立环, 环流不可能 (标准扩散模型已足够)",
-            beta0=beta0, beta1=beta1,
-            required_change="若物理确有环流, 需补反馈边; 否则用标准 Fick 扩散",
-        )
+        return _permit_circulation(beta0, beta1)
 
     if target_mode == "percolation":
-        # 渗流: β₀>1 (多连通, 部分渗流) 或 β₀=1 (全连通, 完全渗流)
-        if beta0 >= 1:
-            status = "全连通" if beta0 == 1 else f"{beta0} 个连通分量"
-            return TopologyPermit(
-                permitted=True,
-                reason=f"β₀={beta0} ({status}), 渗流可能",
-                beta0=beta0, beta1=beta1,
-            )
-        return TopologyPermit(
-            permitted=False,
-            reason="β₀=0, 无节点, 渗流无意义",
-            beta0=beta0, beta1=beta1,
-        )
+        return _permit_percolation(beta0, beta1)
 
     if target_mode == "global_consistency":
-        # 全局一致: 层粘合 H¹=0, 近似用 β₁=0 (无拓扑障碍)
-        if beta1 == 0:
-            return TopologyPermit(
-                permitted=True,
-                reason="β₁=0, 无拓扑障碍, 局部模型可全局粘合 (H¹≈0)",
-                beta0=beta0, beta1=beta1,
-            )
-        return TopologyPermit(
-            permitted=False,
-            reason=f"β₁={beta1} > 0, 存在拓扑障碍, 局部模型无法一致粘合 (H¹≠0)",
-            beta0=beta0, beta1=beta1,
-            required_change="修正局部模型使粘合条件一致, 或显式处理障碍",
-        )
+        return _permit_global_consistency(beta0, beta1)
 
     # 不该到这里
     return TopologyPermit(
         permitted=False,
         reason=f"未知 target_mode: {target_mode}",
-        beta0=beta0, beta1=beta1,
+        beta0=beta0,
+        beta1=beta1,
     )
 
 
 # ── 层粘合障碍检测 ────────────────────────────────────────────
+
 
 @dataclass
 class GluingObstruction:
@@ -493,6 +532,7 @@ def gluing_obstruction(
 
 # ── 综合诊断 (给 red_team / equivalence_auditor 用) ────────────
 
+
 @dataclass
 class TopologyDiagnosis:
     """一次完整拓扑诊断的结果."""
@@ -523,7 +563,10 @@ def diagnose(
     need_orthogonal_decomposition: bool = False,
     nodes: list[str] | None = None,
     edges: list[tuple[str, str]] | None = None,
-    target_mode: Literal["synchronization", "percolation", "circulation", "global_consistency"] | None = None,
+    target_mode: Literal[
+        "synchronization", "percolation", "circulation", "global_consistency"
+    ]
+    | None = None,
     local_models: list[dict[str, Any]] | None = None,
     overlap_pairs: list[tuple[int, int]] | None = None,
 ) -> TopologyDiagnosis:
@@ -536,7 +579,9 @@ def diagnose(
     )
     clo = needs_downward_closure(interactions, physical_connectivity)
     sig = hodge_signature(nodes, edges) if nodes else None
-    perm = topology_permits(nodes, edges, target_mode) if (nodes and target_mode) else None
+    perm = (
+        topology_permits(nodes, edges, target_mode) if (nodes and target_mode) else None
+    )
     glu = gluing_obstruction(local_models, overlap_pairs) if local_models else None
 
     parts = [f"[族] {fam.family}: {fam.reason}"]
@@ -566,6 +611,15 @@ def diagnose(
 
 
 def _selfcheck() -> None:
+    _sc_classify_and_closure()
+    _sc_signature()
+    _sc_permits()
+    _sc_gluing_and_diagnose()
+
+    print("topology_lens selfcheck OK")
+
+
+def _sc_classify_and_closure() -> None:
     # 1. 化学反应 → combinatorial, 无闭包
     rxn = [{"C3S", "H2O", "C-S-H", "CH"}]
     v = classify_system(rxn)
@@ -580,6 +634,8 @@ def _selfcheck() -> None:
     c2 = needs_downward_closure(pore, physical_connectivity=True)
     assert c2.needs_closure and c2.natural, "孔隙闭包应自然成立"
 
+
+def _sc_signature() -> None:
     # 3. Hodge 签名: 三角形 (有环) vs 树 (无环)
     tri = hodge_signature(["a", "b", "c"], [("a", "b"), ("b", "c"), ("a", "c")])
     assert tri.beta1_approx == 1, f"三角形 β₁ 应=1, got {tri.beta1_approx}"
@@ -593,13 +649,21 @@ def _selfcheck() -> None:
     assert diff, "环与树拓扑不同, 应检出差异"
     assert "β₁" in reason
 
+
+def _sc_permits() -> None:
     # 5. 拓扑许可: 环允许同步, 树不允许
-    p_sync_tri = topology_permits(["a", "b", "c"], [("a", "b"), ("b", "c"), ("a", "c")], "synchronization")
+    p_sync_tri = topology_permits(
+        ["a", "b", "c"], [("a", "b"), ("b", "c"), ("a", "c")], "synchronization"
+    )
     assert p_sync_tri.permitted, "环应允许同步"
-    p_sync_tree = topology_permits(["a", "b", "c"], [("a", "b"), ("b", "c")], "synchronization")
+    p_sync_tree = topology_permits(
+        ["a", "b", "c"], [("a", "b"), ("b", "c")], "synchronization"
+    )
     assert not p_sync_tree.permitted, "树不应允许同步"
     assert "β₁=0" in p_sync_tree.reason
 
+
+def _sc_gluing_and_diagnose() -> None:
     # 6. 粘合障碍: 双向一致 → 可粘合
     models = [
         {"consistent_with": [1]},
@@ -624,8 +688,6 @@ def _selfcheck() -> None:
     )
     assert d.permit and d.permit.permitted, "三角环应允许同步"
     assert "族" in d.advisory and "闭包" in d.advisory
-
-    print("topology_lens selfcheck OK")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ Supports login, click, scroll, input, form filling, and information extraction.
 Prefers connecting to a remote browser service (via ws_endpoint or browser_url);
 falls back to local Playwright launch, then mock mode.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,30 +47,85 @@ class BrowserAction(StrEnum):
     WAIT = "wait"
     CLOSE = "close"
 
+
 class BrowserToolInput(BaseModel):
     action: BrowserAction = Field(...)
     url: str | None = Field(default=None, description="URL to navigate to")
     selector: str | None = Field(default=None, description="CSS selector for element")
     text: str | None = Field(default=None, description="Text to type or value to fill")
-    form_data: dict[str, str] = Field(default_factory=dict, description="Form field -> value mapping")
-    credentials: dict[str, str] = Field(default_factory=dict, description="Login credentials (username, password)")
+    form_data: dict[str, str] = Field(
+        default_factory=dict, description="Form field -> value mapping"
+    )
+    credentials: dict[str, str] = Field(
+        default_factory=dict, description="Login credentials (username, password)"
+    )
     direction: Literal["up", "down", "left", "right"] = Field(default="down")
     scroll_amount: int = Field(default=500, description="Pixels to scroll")
-    extract_selector: str | None = Field(default=None, description="CSS selector for elements to extract")
-    extract_attributes: list[str] = Field(default_factory=list, description="Attributes to extract")
+    extract_selector: str | None = Field(
+        default=None, description="CSS selector for elements to extract"
+    )
+    extract_attributes: list[str] = Field(
+        default_factory=list, description="Attributes to extract"
+    )
     wait_ms: int = Field(default=1000, ge=0, le=30000)
     timeout_ms: int = Field(default=30000, ge=1000, le=120000)
     headless: bool = Field(default=True)
     ws_endpoint: str | None = Field(
         default=None,
         description="WebSocket endpoint for remote Playwright browser (e.g. ws://remote-host:3000). "
-                    "Falls back to BROWSER_WS_ENDPOINT env var, then local launch.",
+        "Falls back to BROWSER_WS_ENDPOINT env var, then local launch.",
     )
     browser_url: str | None = Field(
         default=None,
         description="Remote Selenium WebDriver URL (e.g. http://selenium-hub:4444/wd/hub). "
-                    "Falls back to SELENIUM_REMOTE_URL env var.",
+        "Falls back to SELENIUM_REMOTE_URL env var.",
     )
+
+
+_PW_STATE_JS = """() => {
+    const interactive = [];
+    const els = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]');
+    for (let i = 0; i < els.length && i < 50; i++) {
+        const el = els[i];
+        const tag = el.tagName.toLowerCase();
+        const text = (el.innerText || el.value || el.placeholder || '').trim().substring(0, 80);
+        const id = el.id || '';
+        const cls = el.className || '';
+        const href = el.href || '';
+        const type = el.type || '';
+        let selector = '';
+        if (id) selector = '#' + id;
+        else if (cls) selector = tag + '.' + cls.split(' ')[0];
+        else selector = tag;
+        interactive.push({
+            index: i, tag, text, selector,
+            is_link: tag === 'a',
+            is_input: ['input','textarea','select'].includes(tag),
+            is_button: tag === 'button' || type === 'submit',
+            href: href ? href.substring(0, 100) : '',
+        });
+    }
+    return {url: location.href, title: document.title, interactive};
+}"""
+
+
+def _format_interactive_lines(interactive) -> list[str]:
+    # 生成索引化文本输出 (token 高效)
+    lines = []
+    for item in interactive:
+        tag = item["tag"]
+        text = item["text"]
+        idx = item["index"]
+        hint = ""
+        if item["is_link"]:
+            hint = f" → {item['href']}"
+        elif item["is_input"]:
+            hint = " [input]"
+        elif item["is_button"]:
+            hint = " [button]"
+        lines.append(f"[{idx}] <{tag}> {text}{hint}")
+    return lines
+
 
 class BrowserTool(HuginnTool):
     """Automate browser interactions: navigate, click, type, fill forms, extract data."""
@@ -87,26 +143,59 @@ class BrowserTool(HuginnTool):
         self._context = None
         self._pw = None
         self._driver = None  # Selenium WebDriver
-        self._connection_mode: str = "none"  # remote_playwright | remote_selenium | local | mock
+        self._connection_mode: str = (
+            "none"  # remote_playwright | remote_selenium | local | mock
+        )
 
-    async def validate_input(self, args: BrowserToolInput, context: ToolContext) -> ValidationResult:
+    async def validate_input(
+        self, args: BrowserToolInput, context: ToolContext
+    ) -> ValidationResult:
         if args.action == BrowserAction.NAVIGATE and not args.url:
-            return ValidationResult(result=False, message="URL required for navigate", error_code=400)
-        if args.action in (BrowserAction.CLICK, BrowserAction.TYPE) and not args.selector:
-            return ValidationResult(result=False, message=f"Selector required for {args.action.value}", error_code=400)
+            return ValidationResult(
+                result=False, message="URL required for navigate", error_code=400
+            )
+        if (
+            args.action in (BrowserAction.CLICK, BrowserAction.TYPE)
+            and not args.selector
+        ):
+            return ValidationResult(
+                result=False,
+                message=f"Selector required for {args.action.value}",
+                error_code=400,
+            )
         if args.action == BrowserAction.TYPE and not args.text:
-            return ValidationResult(result=False, message="Text required for type action", error_code=400)
+            return ValidationResult(
+                result=False, message="Text required for type action", error_code=400
+            )
         if args.action == BrowserAction.LOGIN:
             if not args.url:
-                return ValidationResult(result=False, message="URL required for login", error_code=400)
-            if not args.credentials.get("username") or not args.credentials.get("password"):
-                return ValidationResult(result=False, message="Username and password required for login", error_code=400)
+                return ValidationResult(
+                    result=False, message="URL required for login", error_code=400
+                )
+            if not args.credentials.get("username") or not args.credentials.get(
+                "password"
+            ):
+                return ValidationResult(
+                    result=False,
+                    message="Username and password required for login",
+                    error_code=400,
+                )
         if args.action == BrowserAction.FILL_FORM and not args.form_data:
-            return ValidationResult(result=False, message="form_data required for fill_form", error_code=400)
+            return ValidationResult(
+                result=False, message="form_data required for fill_form", error_code=400
+            )
         if args.url and not args.url.startswith(("http://", "https://")):
-            return ValidationResult(result=False, message="URL must start with http:// or https://", error_code=400)
+            return ValidationResult(
+                result=False,
+                message="URL must start with http:// or https://",
+                error_code=400,
+            )
         if args.ws_endpoint and not args.ws_endpoint.startswith(("ws://", "wss://")):
-            return ValidationResult(result=False, message="ws_endpoint must start with ws:// or wss://", error_code=400)
+            return ValidationResult(
+                result=False,
+                message="ws_endpoint must start with ws:// or wss://",
+                error_code=400,
+            )
         return ValidationResult(result=True)
 
     def _resolve_ws_endpoint(self, args: BrowserToolInput) -> str | None:
@@ -117,46 +206,56 @@ class BrowserTool(HuginnTool):
         """Resolve Selenium remote URL: arg > env var > None."""
         return args.browser_url or os.environ.get("SELENIUM_REMOTE_URL")
 
-    async def _ensure_browser(self, args: BrowserToolInput) -> bool:
-        """Ensure browser is available. Priority: remote Playwright > remote Selenium > local > mock."""
-        if self._page is not None or self._driver is not None:
+    async def _try_remote_playwright(
+        self, args: BrowserToolInput, ws_endpoint: str
+    ) -> bool:
+        try:
+            from playwright.async_api import async_playwright
+
+            self._pw = await async_playwright().start()
+            self._browser = await self._pw.chromium.connect(ws_endpoint)
+            self._context = (
+                self._browser.contexts[0]
+                if self._browser.contexts
+                else await self._browser.new_context()
+            )
+            self._page = (
+                self._context.pages[0]
+                if self._context.pages
+                else await self._context.new_page()
+            )
+            self._connection_mode = "remote_playwright"
             return True
+        except Exception:
+            self._pw = None
+            self._browser = None
+            return False
 
-        # 1. Remote Playwright via WebSocket
-        ws_endpoint = self._resolve_ws_endpoint(args)
-        if ws_endpoint:
-            try:
-                from playwright.async_api import async_playwright
-                self._pw = await async_playwright().start()
-                self._browser = await self._pw.chromium.connect(ws_endpoint)
-                self._context = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
-                self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
-                self._connection_mode = "remote_playwright"
-                return True
-            except Exception:
-                self._pw = None
-                self._browser = None
+    async def _try_remote_selenium(
+        self, args: BrowserToolInput, selenium_url: str
+    ) -> bool:
+        try:
+            from selenium import webdriver
 
-        # 2. Remote Selenium WebDriver
-        selenium_url = self._resolve_selenium_url(args)
-        if selenium_url:
-            try:
-                from selenium import webdriver
-                options = webdriver.ChromeOptions()
-                if args.headless:
-                    options.add_argument("--headless")
-                self._driver = webdriver.Remote(command_executor=selenium_url, options=options)
-                self._connection_mode = "remote_selenium"
-                return True
-            except Exception:
-                self._driver = None
+            options = webdriver.ChromeOptions()
+            if args.headless:
+                options.add_argument("--headless")
+            self._driver = webdriver.Remote(
+                command_executor=selenium_url, options=options
+            )
+            self._connection_mode = "remote_selenium"
+            return True
+        except Exception:
+            self._driver = None
+            return False
 
-        # 3. Local Playwright launch
+    async def _try_local_playwright(self, args: BrowserToolInput) -> bool:
         # 注意: 只 catch ImportError 会漏掉浏览器二进制缺失的情况
         # playwright python 包装了, 但 chromium 浏览器没装时会抛 FileNotFoundError
         # 必须用 Exception 兜底, 让它降级到 mock 模式而不是炸飞整个 agent
         try:
             from playwright.async_api import async_playwright
+
             self._pw = await async_playwright().start()
             self._browser = await self._pw.chromium.launch(headless=args.headless)
             self._context = await self._browser.new_context(
@@ -170,6 +269,30 @@ class BrowserTool(HuginnTool):
             # playwright 没装 / chromium 没下载 / 启动失败 —— 都降级到 mock
             self._pw = None
             self._browser = None
+            return False
+
+    async def _ensure_browser(self, args: BrowserToolInput) -> bool:
+        """Ensure browser is available. Priority: remote Playwright > remote Selenium > local > mock."""
+        if self._page is not None or self._driver is not None:
+            return True
+
+        # 1. Remote Playwright via WebSocket
+        ws_endpoint = self._resolve_ws_endpoint(args)
+        if ws_endpoint and await BrowserTool._try_remote_playwright(
+            self, args, ws_endpoint
+        ):
+            return True
+
+        # 2. Remote Selenium WebDriver
+        selenium_url = self._resolve_selenium_url(args)
+        if selenium_url and await BrowserTool._try_remote_selenium(
+            self, args, selenium_url
+        ):
+            return True
+
+        # 3. Local Playwright launch
+        if await BrowserTool._try_local_playwright(self, args):
+            return True
 
         # 4. Mock mode
         self._connection_mode = "mock"
@@ -189,9 +312,23 @@ class BrowserTool(HuginnTool):
         BrowserAction.CLOSE: "_pw_close",
     }
 
-    _USERNAME_SELECTORS = ['input[name="username"]', 'input[type="email"]', '#username', 'input[name="user"]']
-    _PASSWORD_SELECTORS = ['input[name="password"]', 'input[type="password"]', '#password']
-    _SUBMIT_SELECTORS = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")']
+    _USERNAME_SELECTORS = [
+        'input[name="username"]',
+        'input[type="email"]',
+        "#username",
+        'input[name="user"]',
+    ]
+    _PASSWORD_SELECTORS = [
+        'input[name="password"]',
+        'input[type="password"]',
+        "#password",
+    ]
+    _SUBMIT_SELECTORS = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:has-text("Login")',
+        'button:has-text("Sign in")',
+    ]
 
     async def call(self, args: BrowserToolInput, context: ToolContext) -> ToolResult:
         has_browser = await self._ensure_browser(args)
@@ -206,7 +343,9 @@ class BrowserTool(HuginnTool):
         # Playwright path
         handler_name = self._PW_HANDLERS.get(args.action)
         if handler_name is None:
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         try:
             return await getattr(self, handler_name)(args)
         except Exception as e:
@@ -215,33 +354,80 @@ class BrowserTool(HuginnTool):
     async def _pw_navigate(self, args: BrowserToolInput) -> ToolResult:
         await self._page.goto(args.url, timeout=args.timeout_ms)
         title = await self._page.title()
-        return ToolResult(data={"status": "navigated", "url": args.url, "title": title, "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "navigated",
+                "url": args.url,
+                "title": title,
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_click(self, args: BrowserToolInput) -> ToolResult:
         await self._page.click(args.selector, timeout=args.timeout_ms)
-        return ToolResult(data={"status": "clicked", "selector": args.selector, "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "clicked",
+                "selector": args.selector,
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_type(self, args: BrowserToolInput) -> ToolResult:
         await self._page.fill(args.selector, "", timeout=args.timeout_ms)
         await self._page.type(args.selector, args.text, delay=50)
-        return ToolResult(data={"status": "typed", "selector": args.selector, "length": len(args.text), "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "typed",
+                "selector": args.selector,
+                "length": len(args.text),
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_fill_form(self, args: BrowserToolInput) -> ToolResult:
         filled = []
         for sel, val in args.form_data.items():
             await self._page.fill(sel, val, timeout=args.timeout_ms)
             filled.append(sel)
-        return ToolResult(data={"status": "form_filled", "fields": filled, "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "form_filled",
+                "fields": filled,
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_scroll(self, args: BrowserToolInput) -> ToolResult:
         await self._page.evaluate(_scroll_js(args.direction, args.scroll_amount))
-        return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "scrolled",
+                "direction": args.direction,
+                "amount": args.scroll_amount,
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_screenshot(self, args: BrowserToolInput) -> ToolResult:
         screenshot_bytes = await self._page.screenshot(full_page=True)
         import base64
+
         b64 = base64.b64encode(screenshot_bytes).decode()
-        return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(screenshot_bytes), "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "screenshot",
+                "image_base64": b64[:100] + "...",
+                "size_bytes": len(screenshot_bytes),
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_extract(self, args: BrowserToolInput) -> ToolResult:
         if args.extract_selector:
@@ -256,53 +442,32 @@ class BrowserTool(HuginnTool):
                     item["text"] = await el.inner_text()
                     item["tag"] = await el.evaluate("el => el.tagName")
                 extracted.append(item)
-            return ToolResult(data={"status": "extracted", "count": len(extracted), "elements": extracted, "mode": self._connection_mode}, success=True)
+            return ToolResult(
+                data={
+                    "status": "extracted",
+                    "count": len(extracted),
+                    "elements": extracted,
+                    "mode": self._connection_mode,
+                },
+                success=True,
+            )
         content = await self._page.content()
-        return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "extracted",
+                "content_length": len(content),
+                "content_preview": content[:500],
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_state(self, args: BrowserToolInput) -> ToolResult:
         # 索引化页面状态 (BrowserAct 风格)
         # 返回可交互元素的索引列表, agent 用 click(index) / type(index) 操作
-        js_state = """() => {
-            const interactive = [];
-            const els = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]');
-            for (let i = 0; i < els.length && i < 50; i++) {
-                const el = els[i];
-                const tag = el.tagName.toLowerCase();
-                const text = (el.innerText || el.value || el.placeholder || '').trim().substring(0, 80);
-                const id = el.id || '';
-                const cls = el.className || '';
-                const href = el.href || '';
-                const type = el.type || '';
-                let selector = '';
-                if (id) selector = '#' + id;
-                else if (cls) selector = tag + '.' + cls.split(' ')[0];
-                else selector = tag;
-                interactive.push({
-                    index: i, tag, text, selector,
-                    is_link: tag === 'a',
-                    is_input: ['input','textarea','select'].includes(tag),
-                    is_button: tag === 'button' || type === 'submit',
-                    href: href ? href.substring(0, 100) : '',
-                });
-            }
-            return {url: location.href, title: document.title, interactive};
-        }"""
-        state = await self._page.evaluate(js_state)
+        state = await self._page.evaluate(_PW_STATE_JS)
         # 生成索引化文本输出 (token 高效)
-        lines = []
-        for item in state.get("interactive", []):
-            tag = item["tag"]
-            text = item["text"]
-            idx = item["index"]
-            hint = ""
-            if item["is_link"]:
-                hint = f" → {item['href']}"
-            elif item["is_input"]:
-                hint = " [input]"
-            elif item["is_button"]:
-                hint = " [button]"
-            lines.append(f"[{idx}] <{tag}> {text}{hint}")
+        lines = _format_interactive_lines(state.get("interactive", []))
         return ToolResult(
             data={
                 "status": "state",
@@ -325,7 +490,15 @@ class BrowserTool(HuginnTool):
         await self._click_first(self._SUBMIT_SELECTORS)
         await asyncio.sleep(1)
         title = await self._page.title()
-        return ToolResult(data={"status": "login_attempted", "url": args.url, "title": title, "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "login_attempted",
+                "url": args.url,
+                "title": title,
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _fill_first(self, selectors: list[str], value: str) -> None:
         for sel in selectors:
@@ -347,11 +520,20 @@ class BrowserTool(HuginnTool):
 
     async def _pw_wait(self, args: BrowserToolInput) -> ToolResult:
         await asyncio.sleep(args.wait_ms / 1000)
-        return ToolResult(data={"status": "waited", "ms": args.wait_ms, "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={
+                "status": "waited",
+                "ms": args.wait_ms,
+                "mode": self._connection_mode,
+            },
+            success=True,
+        )
 
     async def _pw_close(self, args: BrowserToolInput) -> ToolResult:
         await self._close_all()
-        return ToolResult(data={"status": "closed", "mode": self._connection_mode}, success=True)
+        return ToolResult(
+            data={"status": "closed", "mode": self._connection_mode}, success=True
+        )
 
     _SELENIUM_HANDLERS = {
         BrowserAction.NAVIGATE: "_sel_navigate",
@@ -373,7 +555,9 @@ class BrowserTool(HuginnTool):
         """Execute actions via Selenium WebDriver."""
         handler_name = self._SELENIUM_HANDLERS.get(args.action)
         if handler_name is None:
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         try:
             return await getattr(self, handler_name)(args)
         except Exception as e:
@@ -381,10 +565,12 @@ class BrowserTool(HuginnTool):
 
     def _sel_find(self, selector: str):
         from selenium.webdriver.common.by import By
+
         return self._driver.find_element(By.CSS_SELECTOR, selector)
 
     def _sel_find_all(self, selector: str):
         from selenium.webdriver.common.by import By
+
         return self._driver.find_elements(By.CSS_SELECTOR, selector)
 
     def _sel_type_first(self, selectors: list[str], value: str) -> None:
@@ -401,17 +587,40 @@ class BrowserTool(HuginnTool):
     async def _sel_navigate(self, args: BrowserToolInput) -> ToolResult:
         driver = self._driver
         driver.get(args.url)
-        return ToolResult(data={"status": "navigated", "url": args.url, "title": driver.title, "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "navigated",
+                "url": args.url,
+                "title": driver.title,
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_click(self, args: BrowserToolInput) -> ToolResult:
         self._sel_find(args.selector).click()
-        return ToolResult(data={"status": "clicked", "selector": args.selector, "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "clicked",
+                "selector": args.selector,
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_type(self, args: BrowserToolInput) -> ToolResult:
         el = self._sel_find(args.selector)
         el.clear()
         el.send_keys(args.text)
-        return ToolResult(data={"status": "typed", "selector": args.selector, "length": len(args.text), "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "typed",
+                "selector": args.selector,
+                "length": len(args.text),
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_fill_form(self, args: BrowserToolInput) -> ToolResult:
         filled = []
@@ -420,15 +629,34 @@ class BrowserTool(HuginnTool):
             el.clear()
             el.send_keys(val)
             filled.append(sel)
-        return ToolResult(data={"status": "form_filled", "fields": filled, "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={"status": "form_filled", "fields": filled, "mode": self._SEL_MODE},
+            success=True,
+        )
 
     async def _sel_scroll(self, args: BrowserToolInput) -> ToolResult:
         self._driver.execute_script(_scroll_js(args.direction, args.scroll_amount))
-        return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "scrolled",
+                "direction": args.direction,
+                "amount": args.scroll_amount,
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_screenshot(self, args: BrowserToolInput) -> ToolResult:
         b64 = self._driver.get_screenshot_as_base64()
-        return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(b64), "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "screenshot",
+                "image_base64": b64[:100] + "...",
+                "size_bytes": len(b64),
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_extract(self, args: BrowserToolInput) -> ToolResult:
         if args.extract_selector:
@@ -443,9 +671,25 @@ class BrowserTool(HuginnTool):
                     item["text"] = el.text
                     item["tag"] = el.tag_name
                 extracted.append(item)
-            return ToolResult(data={"status": "extracted", "count": len(extracted), "elements": extracted, "mode": self._SEL_MODE}, success=True)
+            return ToolResult(
+                data={
+                    "status": "extracted",
+                    "count": len(extracted),
+                    "elements": extracted,
+                    "mode": self._SEL_MODE,
+                },
+                success=True,
+            )
         content = self._driver.page_source
-        return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "extracted",
+                "content_length": len(content),
+                "content_preview": content[:500],
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_login(self, args: BrowserToolInput) -> ToolResult:
         driver = self._driver
@@ -460,15 +704,28 @@ class BrowserTool(HuginnTool):
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
         await asyncio.sleep(1)
-        return ToolResult(data={"status": "login_attempted", "url": args.url, "title": driver.title, "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={
+                "status": "login_attempted",
+                "url": args.url,
+                "title": driver.title,
+                "mode": self._SEL_MODE,
+            },
+            success=True,
+        )
 
     async def _sel_wait(self, args: BrowserToolInput) -> ToolResult:
         await asyncio.sleep(args.wait_ms / 1000)
-        return ToolResult(data={"status": "waited", "ms": args.wait_ms, "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={"status": "waited", "ms": args.wait_ms, "mode": self._SEL_MODE},
+            success=True,
+        )
 
     async def _sel_close(self, args: BrowserToolInput) -> ToolResult:
         await self._close_all()
-        return ToolResult(data={"status": "closed", "mode": self._SEL_MODE}, success=True)
+        return ToolResult(
+            data={"status": "closed", "mode": self._SEL_MODE}, success=True
+        )
 
     async def _close_all(self):
         """Close all browser resources."""
@@ -501,14 +758,22 @@ class BrowserTool(HuginnTool):
             "action": args.action.value,
             "mode": "mock",
             "note": "No browser backend available. Options: "
-                    "(1) Set BROWSER_WS_ENDPOINT for remote Playwright, "
-                    "(2) Set SELENIUM_REMOTE_URL for remote Selenium, "
-                    "(3) Install Playwright locally: pip install playwright && playwright install chromium",
+            "(1) Set BROWSER_WS_ENDPOINT for remote Playwright, "
+            "(2) Set SELENIUM_REMOTE_URL for remote Selenium, "
+            "(3) Install Playwright locally: pip install playwright && playwright install chromium",
         }
         if args.action == BrowserAction.NAVIGATE:
             mock_data.update({"url": args.url, "title": "Mock Page Title"})
         elif args.action == BrowserAction.EXTRACT:
-            mock_data.update({"elements": [{"text": "Mock element 1"}, {"text": "Mock element 2"}], "count": 2})
+            mock_data.update(
+                {
+                    "elements": [
+                        {"text": "Mock element 1"},
+                        {"text": "Mock element 2"},
+                    ],
+                    "count": 2,
+                }
+            )
         elif args.action == BrowserAction.LOGIN:
             mock_data.update({"login_url": args.url, "login_status": "mock_success"})
         elif args.action == BrowserAction.FILL_FORM:

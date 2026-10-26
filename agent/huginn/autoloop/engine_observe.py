@@ -72,44 +72,46 @@ class EngineObserve:
         setattr(self.engine, name, value)
 
     #: EngineObserve 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
-    _OWN_ATTRS: frozenset[str] = frozenset({
-        "_compress_block",
-        "_scan_block_conflicts",
-        "_get_prompt_budget",
-        "_files_jaccard",
-        "_is_related_chain",
-        "_apply_block_patches",
-        "_trim_to_budget",
-        "_persona_system_prompt",
-        "_build_curiosity_block",
-        "_build_world_model_block",
-        "_build_world_catalog_block",
-        "_matching_domains",
-        "_build_metacog_imagery_block",
-        "_imagery_value",
-        "_pick_imagery_spec",
-        "_build_skill_context_block",
-        "_episodic_replay",
-        "_build_episodic_replay_block",
-        "_build_pmk_block",
-        "_format_pmk_fallback",
-        "_write_pmk_conflict_to_episodic",
-        "_ensure_hypo_manifold",
-        "_build_hypothesis_prompt",
-        "_get_metacog_auditor",
-        "_get_metacog_block_registry",
-        "_get_metacog_method_registry",
-        "_get_metacog_convergence_detector",
-        "_get_metacog_completion_auditor",
-        "trigger_isomorphic_anomaly_hypothesis",
-        "trigger_alignment_surprise_hypothesis",
-        "_metacog_check_effort_floor",
-        "_metacog_check_completion",
-        "_metacog_check_topology_collapse",
-        "_metacog_component_representatives",
-        "_metacog_dominant_family",
-        "_extract_lucid_prereqs",
-    })
+    _OWN_ATTRS: frozenset[str] = frozenset(
+        {
+            "_compress_block",
+            "_scan_block_conflicts",
+            "_get_prompt_budget",
+            "_files_jaccard",
+            "_is_related_chain",
+            "_apply_block_patches",
+            "_trim_to_budget",
+            "_persona_system_prompt",
+            "_build_curiosity_block",
+            "_build_world_model_block",
+            "_build_world_catalog_block",
+            "_matching_domains",
+            "_build_metacog_imagery_block",
+            "_imagery_value",
+            "_pick_imagery_spec",
+            "_build_skill_context_block",
+            "_episodic_replay",
+            "_build_episodic_replay_block",
+            "_build_pmk_block",
+            "_format_pmk_fallback",
+            "_write_pmk_conflict_to_episodic",
+            "_ensure_hypo_manifold",
+            "_build_hypothesis_prompt",
+            "_get_metacog_auditor",
+            "_get_metacog_block_registry",
+            "_get_metacog_method_registry",
+            "_get_metacog_convergence_detector",
+            "_get_metacog_completion_auditor",
+            "trigger_isomorphic_anomaly_hypothesis",
+            "trigger_alignment_surprise_hypothesis",
+            "_metacog_check_effort_floor",
+            "_metacog_check_completion",
+            "_metacog_check_topology_collapse",
+            "_metacog_component_representatives",
+            "_metacog_dominant_family",
+            "_extract_lucid_prereqs",
+        }
+    )
 
     # 上下文预算: 防止 prompt block 累积超过 token 上限.
     # 优先级: body > math > kg > visual > kb > mem > pm > hint > skill > composite > pipeline
@@ -189,6 +191,7 @@ LUCID review (mandatory after generating hypothesis):
         # ponytail: 属性名前缀不一致 (如 "band gap" vs "the band gap") 会导致漏检,
         # 但对 <10 blocks 的 prompt 场景足够; 如需精确匹配可改用 NER 提取属性名
         from huginn.autoloop.engine import _PROP_RE
+
         prop_values: dict[str, dict[str, str]] = {}
         for name, text in blocks:
             if not text:
@@ -217,6 +220,7 @@ LUCID review (mandatory after generating hypothesis):
     def _get_prompt_budget(self, phase: str | None) -> int:
         """按 phase 取 prompt budget. env 覆盖优先, dict 次之, fallback _PROMPT_BUDGET."""
         import os
+
         if phase:
             env_key = f"HUGINN_PROMPT_BUDGET_{phase.upper()}"
             env_val = os.environ.get(env_key)
@@ -240,7 +244,9 @@ LUCID review (mandatory after generating hypothesis):
             return 0.0
         return len(sa & sb) / len(union)
 
-    def _is_related_chain(self, current_files: list[str], threshold: float = 0.3) -> bool:
+    def _is_related_chain(
+        self, current_files: list[str], threshold: float = 0.3
+    ) -> bool:
         """当前任务是否延续上一轮相同文件面 (相关任务链)?
 
         P21/dsh-router-standard: 相关任务链 (同文件演化: 写→修→扩→修) 中
@@ -269,6 +275,7 @@ LUCID review (mandatory after generating hypothesis):
         apply_patches 返回签名. 升级路径: apply_patches 返回 (blocks, ids).
         """
         from huginn.harness.prompt_patch import PromptPatchStore, apply_patches
+
         # P21/dsh: 相关任务链中 prompt 引导为负资产 — 降级不应用 patch.
         # _build_hypothesis_prompt 顶部已算好 self._related_chain.
         if getattr(self, "_related_chain", False):
@@ -288,21 +295,7 @@ LUCID review (mandatory after generating hypothesis):
             return new_blocks
         try:
             store = PromptPatchStore.get_instance()
-            patches = [
-                p for p in store.list_patches(phase=phase)
-                if p.alpha / max(1, p.alpha + p.beta) >= 0.5
-            ]
-            by_block: dict[str, Any] = {}
-            for p in patches:
-                cur = by_block.get(p.block_name)
-                if cur is None or (
-                    p.alpha / max(1, p.alpha + p.beta)
-                    > cur.alpha / max(1, cur.alpha + cur.beta)
-                ):
-                    by_block[p.block_name] = p
-            applied_ids = [p.id for p in by_block.values()]
-            if applied_ids:
-                self._last_applied_patches = (phase, applied_ids)
+            _track_applied_patch_ids(self, phase, store)
         except Exception:  # 防御: 已应用补丁记录失败忽略
             logger.debug("_apply_block_patches: track applied fail", exc_info=True)
         return new_blocks
@@ -331,43 +324,20 @@ LUCID review (mandatory after generating hypothesis):
             return "".join(v for _, v in kept)
 
         # Pass 1: 截断低优先级 block 到 300 字符
-        for i in range(len(kept) - 1, -1, -1):
-            if total <= budget:
-                break
-            name, text = kept[i]
-            if name == "body":  # body 永远不压缩
-                continue
-            compressed = self._compress_block(name, text, 1)
-            total -= len(text) - len(compressed)
-            kept[i] = (name, compressed)
+        total = _compress_low_priority_blocks(self, kept, total, budget, 1)
 
         if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 2: 压缩成一行摘要
-        for i in range(len(kept) - 1, -1, -1):
-            if total <= budget:
-                break
-            name, text = kept[i]
-            if name == "body":
-                continue
-            compressed = self._compress_block(name, text, 2)
-            total -= len(text) - len(compressed)
-            kept[i] = (name, compressed)
+        total = _compress_low_priority_blocks(self, kept, total, budget, 2)
 
         if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 3: 从最低优先级开始删除
         # skill/composite 受保护 — skills 引用保留系统: 可截断可摘要, 但不可清空
-        for i in range(len(kept) - 1, -1, -1):
-            if total <= budget:
-                break
-            name, text = kept[i]
-            if name in ("body", "skill", "composite"):
-                continue
-            total -= len(text)
-            kept[i] = (name, "")
+        _drop_low_priority_blocks(kept, total, budget)
 
         return "".join(v for _, v in kept)
 
@@ -404,6 +374,7 @@ LUCID review (mandatory after generating hypothesis):
         ceiling: self_model 按 (dimension, hyp_type) 聚合, 关键词命中粗.
         """
         from huginn.feature_flags import FeatureFlags
+
         if not FeatureFlags.shared().is_enabled("curiosity_hint"):
             return ""
         _mem = getattr(self, "memory", None)
@@ -446,6 +417,7 @@ LUCID review (mandatory after generating hypothesis):
         开关统一走 FeatureFlags (默认 on), 兼容旧 env HUGINN_WORLD_MODEL.
         """
         from huginn.feature_flags import FeatureFlags
+
         if not FeatureFlags.shared().is_enabled("world_model"):
             return ""
         blocks: list[str] = []
@@ -480,7 +452,8 @@ LUCID review (mandatory after generating hypothesis):
             _lines.append(f"  - (sim={_score:.2f}) {_content}")
         blocks.append(
             "\n[WORLD MODEL] 历史相似实验结果 (懒路预测, 仅供参考, 无外推):\n"
-            + "\n".join(_lines) + "\n"
+            + "\n".join(_lines)
+            + "\n"
         )
         return "\n\n".join(blocks)
 
@@ -560,7 +533,9 @@ LUCID review (mandatory after generating hypothesis):
         try:
             from huginn.metacog import mental_imagery
         except Exception:  # 防御: 视觉模块不可用跳过想象块
-            logger.debug("metacog mental_imagery unavailable, skip imagery block", exc_info=True)
+            logger.debug(
+                "metacog mental_imagery unavailable, skip imagery block", exc_info=True
+            )
             return ""
 
         spec = self._pick_imagery_spec(context)
@@ -575,22 +550,7 @@ LUCID review (mandatory after generating hypothesis):
         if not out.get("sketch_image_bytes"):
             return ""
         _verify = out.get("verify") or {}
-        _v = {k: self._imagery_value(v) for k, v in _verify.items() if not k.startswith("error")}
-        _v_lines = "".join(
-            f"    {k}: {val}\n" for k, val in _v.items() if val is not None
-        )
-        if not _v_lines:
-            return ""
-        _verified = bool(_verify.get("verified"))
-        _status = "passed, sketch is internally consistent" if _verified else "returned a sketch (verify advisory)"
-        return (
-            "\n### Spatiotemporal Sketch (mental_imagery)\n"
-            "A synthetic spatial structure was imagined and verified "
-            "(numpy synthesis, advisory — not from the real environment):\n"
-            f"  spec: {out.get('spec', '')}\n"
-            f"  verify: {_status}\n"
-            f"{_v_lines}"
-        )
+        return _format_imagery_block(out, _verify)
 
     @staticmethod
     def _imagery_value(v: Any) -> Any:
@@ -601,6 +561,7 @@ LUCID review (mandatory after generating hypothesis):
             _t = type(v).__module__
             if _t == "numpy" or "numpy" in str(_t):
                 import numpy as np
+
                 if isinstance(v, np.generic):
                     return v.item()
                 if isinstance(v, np.ndarray):
@@ -647,6 +608,7 @@ LUCID review (mandatory after generating hypothesis):
             return ""
         try:
             from huginn.skills.evolution import SkillEvolutionLayer
+
             return SkillEvolutionLayer.shared().get_skill_context()
         except Exception:  # 防御: 技能上下文注入失败返回空
             logger.debug("skill context injection failed", exc_info=True)
@@ -665,6 +627,7 @@ LUCID review (mandatory after generating hypothesis):
                 try:
                     from huginn.metacog.episodic_index import EpisodicIndexStore
                     from huginn.metacog.episodic_replay import EpisodicReplay
+
                     run_id = getattr(self, "_run_id", None) or "default"
                     store = EpisodicIndexStore(self.workspace, str(run_id))
                     if store.build() == 0:
@@ -726,20 +689,8 @@ LUCID review (mandatory after generating hypothesis):
             from huginn.autoloop.cognitive_loop import build_pmk_state
             from huginn.runtime.task_lifecycle import _check_pmk_consistency
 
-            # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
-            persona_obj = None
-            with contextlib.suppress(Exception):
-                persona_obj = self._get_persona_manager().get("default")
-
-            last_eval = self._evals_history[-1] if self._evals_history else None
-            kb = self._get_kb()
-            since = getattr(self, "_run_start_iso", None)
-
-            pmk_state = build_pmk_state(
-                persona_obj, last_eval, kb,
-                since=since,
-                mem_mgr=getattr(self, "memory", None),
-                timeseries_ctx=self._format_timeseries_context() or None,
+            persona_obj, last_eval, kb, pmk_state = _gather_pmk_state(
+                self, build_pmk_state
             )
             if not pmk_state:
                 return ""
@@ -753,56 +704,12 @@ LUCID review (mandatory after generating hypothesis):
             cur_iter = getattr(self, "_iteration", 0)
             if cur_iter != getattr(self, "_pmk_side_effect_iter", -1):
                 if is_inconsistent:
-                    conflict_hint = f"[PMK CONFLICT] {reason[:200]}"
-                    self._speculator_hint = (
-                        (self._speculator_hint + f"\n{conflict_hint}\n").strip()
-                        if self._speculator_hint else f"{conflict_hint}\n"
-                    )
-                    logger.info("PMK conflict detected: %s", reason[:100])
-                    self._write_pmk_conflict_to_episodic(pmk_state, reason)
-                    # 桥 B: PMK 冲突 → evolution 触发. 把冲突作为一种"认知失败"
-                    # 喂给 evolution logger, 让 get_failure_patterns 能提取 PMK
-                    # 冲突模式 (≥2 次同类冲突就生成 heuristic 规则). 失败非致命,
-                    # 不破坏现有 pause 路径. ponytail: 复用 _get_evolution 懒加载.
-                    try:
-                        _evo = self._get_evolution()
-                        _evo.logger.log_tool_call(
-                            session_id=f"pmk_{cur_iter}",
-                            tool_name="pmk_conflict",
-                            tool_input={
-                                "reason": reason[:200],
-                                "pmk_state": {k: v[:100] for k, v in pmk_state.items()},
-                            },
-                            result=None,
-                            error=reason[:300],
-                        )
-                        _evo.evolve_from_failures()
-                    except Exception:  # 防御: PMK 演化桥失败忽略
-                        logger.debug(
-                            "PMK → evolution bridge failed (non-fatal)",
-                            exc_info=True,
-                        )
+                    _apply_pmk_conflict_side_effects(self, pmk_state, reason, cur_iter)
                 self._pmk_side_effect_iter = cur_iter
 
-            # 格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
-            # build_pmk_text 不读 self 实例状态, 用 __new__ 绕过 __init__ (跟
-            # selfcheck 同模式). ponytail: build_pmk_text 内部再查一次一致性
-            # (只 3 路, 不含 timeseries), 标签可能跟上面的 is_inconsistent 略有
-            # 出入 — 接受, 不重写 build_pmk_text. 升级路径: 给它加 timeseries 参数.
-            try:
-                from huginn.context_builder import ContextBuilder
-                ctx = ContextBuilder.__new__(ContextBuilder)
-                pmk_text = ctx.build_pmk_text(
-                    persona=persona_obj,
-                    last_step_evaluation=last_eval,
-                    kb=kb,
-                )
-                if not pmk_text:
-                    pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
-            except Exception:  # 防御: PMK 文本构建失败用回退
-                pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
-
-            return pmk_text
+            return _format_pmk_text(
+                self, persona_obj, last_eval, kb, pmk_state, is_inconsistent
+            )
 
         except Exception:  # 防御: PMK 块失败返回空
             logger.debug("PMK block failed (non-fatal)", exc_info=True)
@@ -841,6 +748,7 @@ LUCID review (mandatory after generating hypothesis):
             writer = getattr(self, "_episodic_writer", None)
             if writer is None:
                 from huginn.memory.episodic_shard import EpisodicShardWriter
+
                 writer = EpisodicShardWriter(
                     workspace=self.workspace,
                     task_id=str(getattr(self, "_run_id", None) or "default"),
@@ -849,7 +757,9 @@ LUCID review (mandatory after generating hypothesis):
             writer.append(iter_n, entry)
             logger.debug("PMK conflict written to episodic shard")
         except Exception:  # 防御: PMK 冲突写失败忽略
-            logger.debug("PMK conflict write to episodic failed (non-fatal)", exc_info=True)
+            logger.debug(
+                "PMK conflict write to episodic failed (non-fatal)", exc_info=True
+            )
 
     def _ensure_hypo_manifold(self, context: dict[str, Any]) -> Any:
         """E2-1: 通用假设流形懒加载 + seed, 让 core 主循环可用.
@@ -868,7 +778,9 @@ LUCID review (mandatory after generating hypothesis):
             )
 
             text_pool = " ".join(
-                str(v) for v in (context or {}).values() if isinstance(v, str | int | float)
+                str(v)
+                for v in (context or {}).values()
+                if isinstance(v, str | int | float)
             )
             targets = extract_numeric_targets(text_pool)
             manifold = HypothesisManifold()
@@ -878,12 +790,14 @@ LUCID review (mandatory after generating hypothesis):
                 ("h_null", "No signal / null baseline", 0.0, 1),
             ):
                 with contextlib.suppress(ValueError):
-                    manifold.add(Hypothesis(
-                        h_id=hid,
-                        description=desc,
-                        predictions={k: v * scale for k, v in targets.items()},
-                        n_params=n,
-                    ))
+                    manifold.add(
+                        Hypothesis(
+                            h_id=hid,
+                            description=desc,
+                            predictions={k: v * scale for k, v in targets.items()},
+                            n_params=n,
+                        )
+                    )
             self._hypo_manifold = manifold
         except Exception:  # 防御: 假设流形初始化失败置空
             logger.debug("hypo manifold init failed (non-fatal)", exc_info=True)
@@ -1000,17 +914,27 @@ Hypothesis:"""
         # episodic replay: 回溯最相似的成功/失败情境, 复用方法或避免同样的失败
         replay_block = self._build_episodic_replay_block(context)
         if replay_block:
-            hint_block = (hint_block + f"\n### Episodic Replay\n{replay_block}") if hint_block else f"\n### Episodic Replay\n{replay_block}"
+            hint_block = (
+                (hint_block + f"\n### Episodic Replay\n{replay_block}")
+                if hint_block
+                else f"\n### Episodic Replay\n{replay_block}"
+            )
         # PMK 三路立场 + 一致性标签 (HUGINN_PMK_INJECT off 或全空时返空串, 不影响 prompt)
         pmk_block = self._build_pmk_block(context)
         if pmk_block:
-            hint_block = (hint_block + f"\n### PMK\n{pmk_block}") if hint_block else f"\n### PMK\n{pmk_block}"
+            hint_block = (
+                (hint_block + f"\n### PMK\n{pmk_block}")
+                if hint_block
+                else f"\n### PMK\n{pmk_block}"
+            )
         # P1 Task 6: curiosity bonus — self_model 里预测不准的簇, 喂给 hypothesize
         # 让 agent 主动 seek "哪类问题我长期搞不定", 而非等 stagnation 才 escape.
         # toggle HUGINN_CURIOSITY_HINT 默认 off, off 时 _build_curiosity_block 返空.
         curiosity_block = self._build_curiosity_block()
         if curiosity_block:
-            hint_block = (hint_block + curiosity_block) if hint_block else curiosity_block
+            hint_block = (
+                (hint_block + curiosity_block) if hint_block else curiosity_block
+            )
             self._emit_curiosity_trace()
         _posterior = self._build_posterior_guided_block(context)
         if _posterior:
@@ -1024,7 +948,8 @@ Hypothesis:"""
         #   事件走 campaign.control_trace, fail-open (测试替身无事件通道时静默).
         logger.warning(
             "control_trace name=curiosity_hint iteration=%s evidence=%s action=%s",
-            getattr(self, "_iteration", 0), "injected_into_hypothesis_prompt",
+            getattr(self, "_iteration", 0),
+            "injected_into_hypothesis_prompt",
             "advisory_hint",
         )
         with contextlib.suppress(Exception):
@@ -1050,6 +975,7 @@ Hypothesis:"""
                 _build_posterior_guided_hint,
                 extract_observations,
             )
+
             _obs = extract_observations(text_pool)
             if _manifold is None or not _obs:
                 return ""
@@ -1058,8 +984,7 @@ Hypothesis:"""
             # 补充 abductive_inference (argmax) 的贪婪盲区. 无 MCMC 状态时
             # 传 None, _build_posterior_guided_hint 内部跳过, 行为不变.
             _mcmc_cur = getattr(self, "_mcmc_current", None)
-            _pg = _build_posterior_guided_hint(
-                _manifold, _obs, mcmc_current=_mcmc_cur)
+            _pg = _build_posterior_guided_hint(_manifold, _obs, mcmc_current=_mcmc_cur)
             return f"\n### Posterior-guided\n{_pg}" if _pg else ""
         except Exception:  # 防御: 后验提示注入失败跳过
             logger.debug("posterior hint injection skipped (non-fatal)", exc_info=True)
@@ -1089,7 +1014,9 @@ Hypothesis:"""
             _prev = _cur
             _rng = getattr(self, "_mcmc_rng", None)
             _next_h, _next_logp = manifold.mcmc_step(
-                obs, _cur, rng=_rng,
+                obs,
+                _cur,
+                rng=_rng,
                 cached_log_p_current=getattr(self, "_mcmc_cached_log_p", None),
                 **self._mcmc_step_kwargs(),
             )
@@ -1109,7 +1036,8 @@ Hypothesis:"""
         return {
             "temperature": strength_temperature(_st) if _sched else 1.0,
             "global_proposal_prob": (
-                strength_global_proposal_prob(_st) if _sched else 0.3),
+                strength_global_proposal_prob(_st) if _sched else 0.3
+            ),
             # Gramian 谱预条件: 沿假设空间高可控/高信息主轴提议,
             # 抑制各向同性随机游走. 数据不足自动退化, 默认开.
             "gramian_enabled": os.environ.get("HUGINN_MCMC_GRAMIAN", "1") == "1",
@@ -1119,11 +1047,13 @@ Hypothesis:"""
             "anchor_lambda": (
                 float(os.environ.get("HUGINN_MCMC_ANCHOR_LAMBDA", "0.1"))
                 if os.environ.get("HUGINN_MCMC_ANCHOR", "1") == "1"
-                else 0.0),
+                else 0.0
+            ),
         }
 
     def _build_knowledge_blocks(
-        self, query: str,
+        self,
+        query: str,
     ) -> tuple[str, str, str, str, str]:
         """kb / kg / mem / pm / metacog 五路检索块 (各带换行包裹)."""
         # 三路检索共用一个 query — 从 context 提取有意义的检索词,
@@ -1158,6 +1088,7 @@ Hypothesis:"""
         # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
         try:
             from huginn.memory.longterm import load_stable_principles
+
             _principles = load_stable_principles()[:5]
         except Exception:  # 防御: 原则加载失败用空表
             _principles = []
@@ -1184,6 +1115,7 @@ Hypothesis:"""
     def _build_math_block(self, context: dict[str, Any]) -> str:
         ctx_blob = json.dumps(context, ensure_ascii=False).lower()
         from huginn.autoloop.engine import _MATH_SIGNALS
+
         return (
             self._MATH_DEPTH_PROMPT_BLOCK
             if not getattr(self, "_related_chain", False)
@@ -1213,7 +1145,8 @@ Hypothesis:"""
                 top_k=3,
                 # settings 可能未初始化 (__new__ 建的空引擎), 容错取默认 0
                 phys_gain=getattr(
-                    getattr(self, "settings", None), "phys_steering_gain", 0.0),
+                    getattr(self, "settings", None), "phys_steering_gain", 0.0
+                ),
             )
             if not _frontier:
                 return ""
@@ -1223,7 +1156,8 @@ Hypothesis:"""
                 _lines.append(f"- [{nd.id}] {_stmt}")
             return (
                 "\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
-                + "\n".join(_lines) + "\n"
+                + "\n".join(_lines)
+                + "\n"
                 "Consider testing one of these before generating a new hypothesis.\n"
             )
         except Exception:  # 防御: 排序注入失败跳过
@@ -1238,13 +1172,13 @@ Hypothesis:"""
         proved_block = ""
         try:
             from huginn.autoloop.hypothesis_loop import HypothesisGraph
+
             _ws = str(self.workspace) if hasattr(self, "workspace") else None
             _failed_txt = HypothesisGraph.load_failed(_ws)
             if _failed_txt:
                 _failed_lines = _failed_txt.strip().split("\n")[:40]
                 failed_block = (
-                    "\n### Dead Routes (FAILED.md)\n"
-                    + "\n".join(_failed_lines) + "\n"
+                    "\n### Dead Routes (FAILED.md)\n" + "\n".join(_failed_lines) + "\n"
                     "Do NOT re-attempt these unless the Reopen-if condition is met.\n"
                 )
             _proved_txt = HypothesisGraph.load_proved(_ws)
@@ -1252,7 +1186,8 @@ Hypothesis:"""
                 _proved_lines = _proved_txt.strip().split("\n")[:40]
                 proved_block = (
                     "\n### Verified Results (PROVED.md)\n"
-                    + "\n".join(_proved_lines) + "\n"
+                    + "\n".join(_proved_lines)
+                    + "\n"
                     "These are already established — build on them.\n"
                 )
         except Exception:  # 防御: 死路/已验证注入失败跳过
@@ -1367,7 +1302,9 @@ Hypothesis:"""
                 + "\nConsider these structural signals when generating hypotheses.\n"
             )
         except Exception:  # 防御: 拓扑洞察注入失败跳过
-            logger.debug("topology insight injection skipped (non-fatal)", exc_info=True)
+            logger.debug(
+                "topology insight injection skipped (non-fatal)", exc_info=True
+            )
             return ""
 
     @staticmethod
@@ -1420,7 +1357,9 @@ Hypothesis:"""
                 map_blind_spots_to_hint,
             )
         except Exception:  # 防御: 盲点映射器不可用跳过
-            logger.debug("blind_spot_mapper unavailable, skip blind spot block", exc_info=True)
+            logger.debug(
+                "blind_spot_mapper unavailable, skip blind spot block", exc_info=True
+            )
             return ""
         _bs_mem = getattr(self, "memory", None)
         if _bs_mem is None or not hasattr(_bs_mem, "longterm"):
@@ -1437,14 +1376,13 @@ Hypothesis:"""
         return (
             "\n### Blind Spots (advisory, from self-model)\n"
             "你在这些方向从未成功过, 视为高优先盲点, 生成假设时优先"
-            "绕过/换路线, 而非硬刚:\n"
-            + _bs_hint
-            + "\n"
+            "绕过/换路线, 而非硬刚:\n" + _bs_hint + "\n"
         )
 
     @staticmethod
     def _collect_confirmed_blind_spots(
-        _bs_sm: dict[str, Any], BlindSpot: Any,
+        _bs_sm: dict[str, Any],
+        BlindSpot: Any,
     ) -> list[Any]:
         _blind: list[Any] = []
         for _key, _v in _bs_sm.items():
@@ -1454,17 +1392,17 @@ Hypothesis:"""
             _n = _succ + _fail
             # 确认失败 (从未成功) 且样本足够 → "blind" 档 (高优先盲点)
             if isinstance(_rate, int | float) and _rate == 0 and _n >= 3:
-                _blind.append(BlindSpot(
-                    skill=str(_key),
-                    why_blind=(
-                        f"persona '{_v.get('dimension', _key)}' "
-                        f"历史成功率 0 (n={_n})"
-                    ),
-                    priority="high",
-                ))
+                _blind.append(
+                    BlindSpot(
+                        skill=str(_key),
+                        why_blind=(
+                            f"persona '{_v.get('dimension', _key)}' "
+                            f"历史成功率 0 (n={_n})"
+                        ),
+                        priority="high",
+                    )
+                )
         return _blind
-
-
 
     # ── 元认知层辅助 ────────────────────────────────────────────────
     # 懒加载 metacog 组件, 避免循环 import 和测试 mock 复杂度.
@@ -1516,7 +1454,8 @@ Hypothesis:"""
     # 调 _hypothesize 生成解释差异的新 hypothesis. ponytail: hypothesis_generator
     # 不可用 (无 model / _hypothesize 失败) 只 log warn 不 fatal.
     async def trigger_isomorphic_anomaly_hypothesis(
-        self, anomaly_pairs: list[tuple[str, str]],
+        self,
+        anomaly_pairs: list[tuple[str, str]],
     ) -> list[str]:
         """同构不同性异常 → 触发新 hypothesis 生成.
 
@@ -1532,7 +1471,9 @@ Hypothesis:"""
         for h_a, h_b in anomaly_pairs:
             logger.warning(
                 "isomorphic anomaly: structure matches but haptic differs "
-                "(%s vs %s) — triggering new hypothesis", h_a, h_b,
+                "(%s vs %s) — triggering new hypothesis",
+                h_a,
+                h_b,
             )
             ctx = {
                 "summary": (
@@ -1552,7 +1493,10 @@ Hypothesis:"""
             except Exception:  # 防御: 假设生成器不可用仅记录
                 logger.warning(
                     "hypothesis_generator unavailable for anomaly %s/%s, "
-                    "log only (non-fatal)", h_a, h_b, exc_info=True,
+                    "log only (non-fatal)",
+                    h_a,
+                    h_b,
+                    exc_info=True,
                 )
         return generated
 
@@ -1561,7 +1505,8 @@ Hypothesis:"""
     # 生成解释差异的新 hypothesis. ponytail: hypothesis_generator 不可用
     # (无 model / _hypothesize 失败) 只 log warn 不 fatal.
     async def trigger_alignment_surprise_hypothesis(
-        self, surprise_findings: list[tuple[str, float]],
+        self,
+        surprise_findings: list[tuple[str, float]],
     ) -> list[str]:
         """对齐 surprise → 触发新 hypothesis 生成.
 
@@ -1578,7 +1523,8 @@ Hypothesis:"""
             logger.warning(
                 "surprise detected: score=%.2f on %s — "
                 "structure-haptic alignment violated, triggering new hypothesis",
-                score, h_id,
+                score,
+                h_id,
             )
             ctx = {
                 "summary": (
@@ -1600,7 +1546,10 @@ Hypothesis:"""
             except Exception:  # 防御: 假设生成器不可用仅记录
                 logger.warning(
                     "hypothesis_generator unavailable for surprise %s (score=%.2f), "
-                    "log only (non-fatal)", h_id, score, exc_info=True,
+                    "log only (non-fatal)",
+                    h_id,
+                    score,
+                    exc_info=True,
                 )
         return generated
 
@@ -1637,15 +1586,8 @@ Hypothesis:"""
 
             # 从最近一次 LLM 原始输出提取 UNEXPLORED: 块
             # ponytail: 字符串切片, 不上正则. 升级路径: 结构化 schema.
-            unexplored = ""
             raw = getattr(self, "_last_raw_hypothesis", "") or ""
-            if "UNEXPLORED:" in raw:
-                unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
-                # 截到下一个大写标记或结尾, 避免把后续块都吞进来
-                for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
-                    if marker in unexplored:
-                        unexplored = unexplored.split(marker)[0].strip()
-                        break
+            unexplored = _extract_unexplored_declaration(raw)
 
             checklist = auditor.audit(
                 iteration=self._iteration,
@@ -1706,7 +1648,9 @@ Hypothesis:"""
                                 ),
                             )
                     except Exception:  # 防御: 阻塞注册失败忽略
-                        logger.debug("block_registry register skipped (non-fatal)", exc_info=True)
+                        logger.debug(
+                            "block_registry register skipped (non-fatal)", exc_info=True
+                        )
                 if self._speculator_hint:
                     self._speculator_hint = f"{self._speculator_hint}\n{hint}"
                 else:
@@ -1779,3 +1723,197 @@ Hypothesis:"""
                 val = m.group(1).split("\n")[0].strip().rstrip(".。")
                 result[key] = val[:300]  # 长度限制, 防异常输入
         return result
+
+
+# ── _apply_block_patches / _trim_to_budget 的模块级辅助 ──────────────────
+
+
+def _track_applied_patch_ids(host: Any, phase: str, store: Any) -> None:
+    """重算 by_block, 记录实际应用的 patch ids 供 _learn 更新 Beta."""
+    patches = [
+        p
+        for p in store.list_patches(phase=phase)
+        if p.alpha / max(1, p.alpha + p.beta) >= 0.5
+    ]
+    by_block: dict[str, Any] = {}
+    for p in patches:
+        cur = by_block.get(p.block_name)
+        if cur is None or (
+            p.alpha / max(1, p.alpha + p.beta)
+            > cur.alpha / max(1, cur.alpha + cur.beta)
+        ):
+            by_block[p.block_name] = p
+    applied_ids = [p.id for p in by_block.values()]
+    if applied_ids:
+        host._last_applied_patches = (phase, applied_ids)
+
+
+def _compress_low_priority_blocks(
+    host: Any,
+    kept: list[tuple[str, str]],
+    total: int,
+    budget: int,
+    level: int,
+) -> int:
+    """从最低优先级开始压缩非 body block, 返回压缩后的总长度."""
+    for i in range(len(kept) - 1, -1, -1):
+        if total <= budget:
+            break
+        name, text = kept[i]
+        if name == "body":  # body 永远不压缩
+            continue
+        compressed = EngineObserve._compress_block(name, text, level)
+        total -= len(text) - len(compressed)
+        kept[i] = (name, compressed)
+    return total
+
+
+def _drop_low_priority_blocks(
+    kept: list[tuple[str, str]], total: int, budget: int
+) -> None:
+    """从最低优先级开始清空非保护 block (原地修改 kept)."""
+    for i in range(len(kept) - 1, -1, -1):
+        if total <= budget:
+            break
+        name, text = kept[i]
+        if name in ("body", "skill", "composite"):
+            continue
+        total -= len(text)
+        kept[i] = (name, "")
+
+
+# ── _build_pmk_block 的模块级辅助 ─────────────────────────────────────────
+
+
+def _gather_pmk_state(host: Any, build_pmk_state: Any) -> tuple[Any, Any, Any, dict]:
+    """收集 persona/eval/kb, 构建 PMK state."""
+    # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
+    persona_obj = None
+    with contextlib.suppress(Exception):
+        persona_obj = host._get_persona_manager().get("default")
+
+    last_eval = host._evals_history[-1] if host._evals_history else None
+    kb = host._get_kb()
+    since = getattr(host, "_run_start_iso", None)
+
+    pmk_state = build_pmk_state(
+        persona_obj,
+        last_eval,
+        kb,
+        since=since,
+        mem_mgr=getattr(host, "memory", None),
+        timeseries_ctx=host._format_timeseries_context() or None,
+    )
+    return persona_obj, last_eval, kb, pmk_state
+
+
+def _apply_pmk_conflict_side_effects(
+    host: Any, pmk_state: dict, reason: str, cur_iter: int
+) -> None:
+    """INCONSISTENT 时追加 abductive hint + 写回 episodic shard + 触发 evolution."""
+    conflict_hint = f"[PMK CONFLICT] {reason[:200]}"
+    host._speculator_hint = (
+        (host._speculator_hint + f"\n{conflict_hint}\n").strip()
+        if host._speculator_hint
+        else f"{conflict_hint}\n"
+    )
+    logger.info("PMK conflict detected: %s", reason[:100])
+    host._write_pmk_conflict_to_episodic(pmk_state, reason)
+    # 桥 B: PMK 冲突 → evolution 触发. 把冲突作为一种"认知失败"
+    # 喂给 evolution logger, 让 get_failure_patterns 能提取 PMK
+    # 冲突模式 (≥2 次同类冲突就生成 heuristic 规则). 失败非致命,
+    # 不破坏现有 pause 路径. ponytail: 复用 _get_evolution 懒加载.
+    try:
+        _evo = host._get_evolution()
+        _evo.logger.log_tool_call(
+            session_id=f"pmk_{cur_iter}",
+            tool_name="pmk_conflict",
+            tool_input={
+                "reason": reason[:200],
+                "pmk_state": {k: v[:100] for k, v in pmk_state.items()},
+            },
+            result=None,
+            error=reason[:300],
+        )
+        _evo.evolve_from_failures()
+    except Exception:  # 防御: PMK 演化桥失败忽略
+        logger.debug(
+            "PMK → evolution bridge failed (non-fatal)",
+            exc_info=True,
+        )
+
+
+def _format_pmk_text(
+    host: Any,
+    persona_obj: Any,
+    last_eval: Any,
+    kb: Any,
+    pmk_state: dict,
+    is_inconsistent: bool,
+) -> str:
+    """格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
+
+    build_pmk_text 不读 self 实例状态, 用 __new__ 绕过 __init__ (跟
+    selfcheck 同模式). ponytail: build_pmk_text 内部再查一次一致性
+    (只 3 路, 不含 timeseries), 标签可能跟上面的 is_inconsistent 略有
+    出入 — 接受, 不重写 build_pmk_text. 升级路径: 给它加 timeseries 参数.
+    """
+    try:
+        from huginn.context_builder import ContextBuilder
+
+        ctx = ContextBuilder.__new__(ContextBuilder)
+        pmk_text = ctx.build_pmk_text(
+            persona=persona_obj,
+            last_step_evaluation=last_eval,
+            kb=kb,
+        )
+        if not pmk_text:
+            pmk_text = host._format_pmk_fallback(pmk_state, is_inconsistent)
+    except Exception:  # 防御: PMK 文本构建失败用回退
+        pmk_text = host._format_pmk_fallback(pmk_state, is_inconsistent)
+    return pmk_text
+
+
+# ── _metacog_check_completion 的模块级辅助 ────────────────────────────────
+
+
+def _extract_unexplored_declaration(raw: str) -> str:
+    """从 LLM 原始输出提取 UNEXPLORED: 块 (到下一个大写标记或结尾)."""
+    if "UNEXPLORED:" not in raw:
+        return ""
+    unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
+    # 截到下一个大写标记或结尾, 避免把后续块都吞进来
+    for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
+        if marker in unexplored:
+            unexplored = unexplored.split(marker)[0].strip()
+            break
+    return unexplored
+
+
+# ── _build_metacog_imagery_block 的模块级辅助 ─────────────────────────────
+
+
+def _format_imagery_block(out: dict, verify: dict) -> str:
+    """把 sketch→verify 结果格式化成 prompt block (无有效 verify 值返空)."""
+    _v = {
+        k: EngineObserve._imagery_value(v)
+        for k, v in verify.items()
+        if not k.startswith("error")
+    }
+    _v_lines = "".join(f"    {k}: {val}\n" for k, val in _v.items() if val is not None)
+    if not _v_lines:
+        return ""
+    _verified = bool(verify.get("verified"))
+    _status = (
+        "passed, sketch is internally consistent"
+        if _verified
+        else "returned a sketch (verify advisory)"
+    )
+    return (
+        "\n### Spatiotemporal Sketch (mental_imagery)\n"
+        "A synthetic spatial structure was imagined and verified "
+        "(numpy synthesis, advisory — not from the real environment):\n"
+        f"  spec: {out.get('spec', '')}\n"
+        f"  verify: {_status}\n"
+        f"{_v_lines}"
+    )

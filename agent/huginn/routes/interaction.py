@@ -83,7 +83,9 @@ async def _stream_agent_chat(
         # agent.chat 是 async generator, 每轮 yield 一个 state
         async for state in agent.chat(message, thread_id=thread_id):
             # 命中中断就停
-            if _handle_interrupt_event(interrupt_mgr.check_interrupt(thread_id), interceptor):
+            if _handle_interrupt_event(
+                interrupt_mgr.check_interrupt(thread_id), interceptor
+            ):
                 return
             # 暂停态: 阻塞到 resume
             await interrupt_mgr.wait_if_paused(thread_id)
@@ -96,6 +98,56 @@ async def _stream_agent_chat(
 
 
 # ── 实时反馈: SSE 流式 chat ──────────────────────────────────────
+
+
+async def _run_agent_stream(
+    agent_id: str,
+    req: ChatRequest,
+    message: str,
+    thread_id: str,
+    interceptor,
+    interrupt_mgr,
+) -> None:
+    """后台跑 agent, 把事件喂给 interceptor."""
+    try:
+        if message:
+            # 走跟 /chat 一样的 factory 路径, 拿到 agent 后调 chat()
+            factory = get_agent_factory()
+            agent = factory.create(
+                agent_id,
+                thread_id=thread_id,
+                thinking=req.thinking,
+                max_tokens=req.max_tokens,
+            )
+            # sidecar serve 模式: 只读工具直放, 写/执行工具强制 ASK.
+            # 名单与判定都取自 permissions.py 单一来源 (见
+            # apply_sse_read_only_policy), 这里不各自硬编码工具名 —— 早期写的是
+            # read_file/file_write 这类短名, 与注册表对不上, set_mode 永不命中,
+            # 只读工具实际仍走 ASK (MECE 审计记的"允许表死项").
+            # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
+            # 会被拦下要求确认, 不受 auto_approve 影响.
+            apply_sse_read_only_policy(agent._permission_config)
+            await _stream_agent_chat(
+                agent, message, thread_id, interceptor, interrupt_mgr
+            )
+        else:
+            interceptor.on_error("empty message")
+    except Exception as exc:
+        logger.error("unexpected error", exc_info=True)
+        interceptor.on_error(f"server error: {exc}")
+
+
+async def _sse_stream(interceptor, task: asyncio.Task) -> Any:
+    """SSE 生成器: 把 interceptor 的事件流吐出去."""
+    try:
+        async for chunk in interceptor.to_event_stream():
+            yield chunk
+    finally:
+        # SSE 客户端断开时把后台任务也取消, 避免 agent 白跑
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 @router.post("/agents/{agent_id}/chat/stream")
@@ -130,52 +182,13 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
     # 进来就清掉历史残留干预, 避免上一轮的 pause 还挂着
     interrupt_mgr.clear_interrupt(thread_id)
 
-    async def _run_agent() -> None:
-        """后台跑 agent, 把事件喂给 interceptor."""
-        try:
-            if message:
-                # 走跟 /chat 一样的 factory 路径, 拿到 agent 后调 chat()
-                factory = get_agent_factory()
-                agent = factory.create(
-                    agent_id,
-                    thread_id=thread_id,
-                    thinking=req.thinking,
-                    max_tokens=req.max_tokens,
-                )
-                # sidecar serve 模式: 只读工具直放, 写/执行工具强制 ASK.
-                # 名单与判定都取自 permissions.py 单一来源 (见
-                # apply_sse_read_only_policy), 这里不各自硬编码工具名 —— 早期写的是
-                # read_file/file_write 这类短名, 与注册表对不上, set_mode 永不命中,
-                # 只读工具实际仍走 ASK (MECE 审计记的"允许表死项").
-                # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
-                # 会被拦下要求确认, 不受 auto_approve 影响.
-                apply_sse_read_only_policy(agent._permission_config)
-                await _stream_agent_chat(
-                    agent, message, thread_id, interceptor, interrupt_mgr
-                )
-            else:
-                interceptor.on_error("empty message")
-        except Exception as exc:
-            logger.error("unexpected error", exc_info=True)
-            interceptor.on_error(f"server error: {exc}")
-
     # 后台任务: 跑 agent, 不阻塞 SSE 流的产出
-    task = asyncio.create_task(_run_agent())
-
-    async def _sse() -> Any:
-        """SSE 生成器: 把 interceptor 的事件流吐出去."""
-        try:
-            async for chunk in interceptor.to_event_stream():
-                yield chunk
-        finally:
-            # SSE 客户端断开时把后台任务也取消, 避免 agent 白跑
-            if not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+    task = asyncio.create_task(
+        _run_agent_stream(agent_id, req, message, thread_id, interceptor, interrupt_mgr)
+    )
 
     return StreamingResponse(
-        _sse(),
+        _sse_stream(interceptor, task),
         media_type="text/event-stream",
         headers={
             # 关闭 nginx 的 buffer, 否则 SSE 会被攒一批再发, 延迟很大
@@ -280,6 +293,7 @@ async def list_inbox(
     from dataclasses import asdict
 
     from huginn.interaction.inbox import get_inbox_store
+
     store = get_inbox_store()
     items = store.list(session_id=session_id, state=state)
     return {"success": True, "count": len(items), "items": [asdict(i) for i in items]}
@@ -295,6 +309,7 @@ async def resolve_inbox_item(item_id: str, params: dict[str, Any]) -> dict[str, 
     if not resolution:
         return {"success": False, "error": "resolution is required"}
     from huginn.interaction.inbox import get_inbox_store
+
     store = get_inbox_store()
     ok = store.resolve(item_id, resolution)
     return {"success": ok, "item_id": item_id}

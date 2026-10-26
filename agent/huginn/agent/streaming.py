@@ -3014,7 +3014,7 @@ if __name__ == "__main__":
     if "--self-check-c1" in _sys.argv:
         _sys.exit(_c1_self_check())
 
-    async def _test_watchdog():
+    async def _watchdog_case_normal():
         # 1. 正常流: chunks 及时到达, watchdog 不触发
         async def _fast_stream():
             for i in range(5):
@@ -3026,6 +3026,7 @@ if __name__ == "__main__":
             results.append(item)
         assert results == [0, 1, 2, 3, 4], f"watchdog mangled normal stream: {results}"
 
+    async def _watchdog_case_timeout():
         # 2. 超时流: chunks 间隔超过 idle_timeout → asyncio.TimeoutError
         async def _slow_stream():
             yield "first"
@@ -3041,6 +3042,7 @@ if __name__ == "__main__":
             timed_out = True
         assert timed_out, "watchdog failed to raise TimeoutError on idle stream"
 
+    async def _watchdog_case_empty():
         # 3. 空流: 立即结束, 不超时
         async def _empty_stream():
             return
@@ -3053,6 +3055,7 @@ if __name__ == "__main__":
             f"empty stream should yield nothing: {empty_results}"
         )
 
+    async def _watchdog_case_one_then_slow():
         # 4. 单 chunk 后超时: 第一个 chunk 透传, 第二个超时
         async def _one_then_slow():
             yield "fast"
@@ -3069,6 +3072,7 @@ if __name__ == "__main__":
             logger.debug("best-effort op failed", exc_info=True)
         assert seen == ["fast"], f"first chunk not yielded before timeout: {seen}"
 
+    async def _watchdog_case_trickle():
         # 5. D7 补漏: 总时长封顶挡涓流 (chunk 间隔 < idle, 整体超 total)
         async def _trickle():
             for i in range(100):
@@ -3096,6 +3100,13 @@ if __name__ == "__main__":
             if len(_all) >= 5:
                 break
         assert _all == [0, 1, 2, 3, 4], f"None total_timeout changed behaviour: {_all}"
+
+    async def _test_watchdog():
+        await _watchdog_case_normal()
+        await _watchdog_case_timeout()
+        await _watchdog_case_empty()
+        await _watchdog_case_one_then_slow()
+        await _watchdog_case_trickle()
 
     asyncio.run(_test_watchdog())
 

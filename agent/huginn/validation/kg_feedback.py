@@ -79,36 +79,63 @@ def _write_result_constraints(
         if kg.has_node(node_id):
             continue
 
-        kg.add_node(
+        _add_constraint_node(
+            kg,
             node_id,
-            entity_type=entity_type.FACT,
-            label=constraint_label,
-            properties={
-                "type": "validation_constraint",
-                "source": name,
-                "message": message,
-                "severity": severity,
-                "material": material or "",
-                "tool": tool_name or "",
-            },
+            constraint_label,
+            message,
+            severity,
+            name,
+            material,
+            tool_name,
+            entity_type,
+            relation,
         )
         created += 1
-
-        if material:
-            _link_if_present(
-                kg,
-                node_id,
-                f"{entity_type.COMPOUND}:{material}",
-                relation.VALIDATES,
-            )
-        if tool_name:
-            _link_if_present(
-                kg,
-                node_id,
-                f"{entity_type.TOOL}:{tool_name}",
-                relation.RELATED_TO,
-            )
     return created
+
+
+def _add_constraint_node(
+    kg: Any,
+    node_id: str,
+    constraint_label: str,
+    message: str,
+    severity: str,
+    name: str,
+    material: str | None,
+    tool_name: str | None,
+    entity_type: Any,
+    relation: Any,
+) -> None:
+    """写入约束节点, 并按 material/tool 连边."""
+    kg.add_node(
+        node_id,
+        entity_type=entity_type.FACT,
+        label=constraint_label,
+        properties={
+            "type": "validation_constraint",
+            "source": name,
+            "message": message,
+            "severity": severity,
+            "material": material or "",
+            "tool": tool_name or "",
+        },
+    )
+
+    if material:
+        _link_if_present(
+            kg,
+            node_id,
+            f"{entity_type.COMPOUND}:{material}",
+            relation.VALIDATES,
+        )
+    if tool_name:
+        _link_if_present(
+            kg,
+            node_id,
+            f"{entity_type.TOOL}:{tool_name}",
+            relation.RELATED_TO,
+        )
 
 
 def _link_if_present(kg: Any, src: str, dst: str, relation: Any) -> None:
@@ -126,6 +153,7 @@ def _get_project_kg() -> Any | None:
     """Get the project knowledge graph from the current context."""
     try:
         from huginn.server_core import get_context
+
         ctx = get_context()
         kg = getattr(ctx, "knowledge_graph", None)
         if kg is not None:

@@ -19,34 +19,41 @@ import pytest
 from huginn.persistence.state_store import SqliteStore
 
 
+def _write_with_lock_retry(store, key: str, value: dict) -> None:
+    # 多进程同时写同一 SQLite 文件时, 即使 busy_timeout 也可能偶发
+    # OperationalError(database is locked) (重负载/IO 抖动). 有界重试
+    # 兜底, 保证并发写测试不因瞬态锁 flake.
+    for _ in range(5):
+        try:
+            store[key] = value
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            time.sleep(0.05)
+    raise RuntimeError(f"lock retry exhausted for {key}")
+
+
+def _dump_worker_error() -> None:
+    # spawn 子进程的 stderr 默认继承父进程, 把异常打出来便于诊断偶发失败.
+    # 同时若设置了 HUGINN_MP_ERRFILE, 额外落盘, 方便全量套件跑完后再查看
+    # (pytest 的 summary 只截断显示尾部, 子进程 traceback 会被吞掉).
+    traceback.print_exc()
+    errfile = os.environ.get("HUGINN_MP_ERRFILE")
+    if errfile:
+        with open(errfile, "a") as f:
+            f.write(traceback.format_exc())
+            f.write("\n")
+
+
 def _worker_write(db: str, table: str, start: int, count: int) -> None:
     store = SqliteStore(table, path=db)
     try:
         for i in range(count):
             key = f"k-{start + i}"
-            # 多进程同时写同一 SQLite 文件时, 即使 busy_timeout 也可能偶发
-            # OperationalError(database is locked) (重负载/IO 抖动). 有界重试
-            # 兜底, 保证并发写测试不因瞬态锁 flake.
-            for _ in range(5):
-                try:
-                    store[key] = {"proc": start, "i": i}
-                    break
-                except sqlite3.OperationalError as exc:
-                    if "locked" not in str(exc).lower():
-                        raise
-                    time.sleep(0.05)
-            else:
-                raise RuntimeError(f"lock retry exhausted for {key}")
+            _write_with_lock_retry(store, key, {"proc": start, "i": i})
     except BaseException:
-        # spawn 子进程的 stderr 默认继承父进程, 把异常打出来便于诊断偶发失败.
-        # 同时若设置了 HUGINN_MP_ERRFILE, 额外落盘, 方便全量套件跑完后再查看
-        # (pytest 的 summary 只截断显示尾部, 子进程 traceback 会被吞掉).
-        traceback.print_exc()
-        errfile = os.environ.get("HUGINN_MP_ERRFILE")
-        if errfile:
-            with open(errfile, "a") as f:
-                f.write(traceback.format_exc())
-                f.write("\n")
+        _dump_worker_error()
         raise
     finally:
         store.close()
@@ -87,9 +94,7 @@ def test_multiprocess_isolation_by_table(db_path: Path) -> None:
     from huginn.persistence.state_store import encode_checkpoint
 
     threads = SqliteStore("t_threads", path=db_path)
-    checkpoints = SqliteStore(
-        "t_checkpoints", path=db_path, encode=encode_checkpoint
-    )
+    checkpoints = SqliteStore("t_checkpoints", path=db_path, encode=encode_checkpoint)
     try:
         threads["sess"] = {"label": "thread"}
         checkpoints["cp"] = (Path("/tmp/x"), {"state": "ok"})

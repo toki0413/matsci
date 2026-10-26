@@ -9,6 +9,7 @@ research context that would otherwise be lost.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -26,7 +27,9 @@ _PROTECTED_ROLES = {"system"}
 _THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 
 
-def _has_thinking_blocks(msg: Any, block_types: set[str] | frozenset[str] | None = None) -> bool:
+def _has_thinking_blocks(
+    msg: Any, block_types: set[str] | frozenset[str] | None = None
+) -> bool:
     """检查消息 content 是否含 thinking / redacted_thinking 块.
 
     Anthropic extended thinking 响应的 AIMessage.content 是 list[dict],
@@ -40,7 +43,11 @@ def _has_thinking_blocks(msg: Any, block_types: set[str] | frozenset[str] | None
         from huginn.plugins.compaction_policy import never_trim_block_types
 
         block_types = never_trim_block_types()
-    content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+    content = (
+        getattr(msg, "content", None)
+        if not isinstance(msg, dict)
+        else msg.get("content")
+    )
     if not isinstance(content, list):
         return False
     for block in content:
@@ -114,6 +121,24 @@ def compact_messages(
         return messages
 
     # 分离 root messages — 这部分永不被 drop, 也不被 tool clearing 影响
+    root_indices = _collect_root_indices(messages, keep_root_n, root_content_markers)
+    root_messages, body_messages = _split_root_body(messages, root_indices)
+
+    # Tool result clearing: 超 TTL 的工具消息 content 替换为摘要标记
+    # 保留消息存在性 (顺序/引用不断), 只清大块输出
+    body_messages = _apply_tool_result_ttl(body_messages, tool_result_ttl, keep_last_n)
+
+    body_messages = _trim_body_to_budget(body_messages, budget_tokens, keep_last_n)
+
+    return root_messages + body_messages
+
+
+def _collect_root_indices(
+    messages: list[Any],
+    keep_root_n: int,
+    root_content_markers: list[str] | None,
+) -> set[int]:
+    """收集永不被 drop 的 root message 下标 (位置 ∪ 内容 marker ∪ thinking 块)."""
     # F3: 双路标 root — 位置 (keep_root_n) ∪ 内容 marker (root_content_markers)
     # A3.3: 含 thinking/redacted_thinking 块的 AIMessage 也进 root — 丢 signature 会 400.
     # 内容 marker 与"永不裁剪 block type"均可由 compaction 策略插件扩展 (并集).
@@ -143,16 +168,26 @@ def compact_messages(
             continue
         if _has_thinking_blocks(m, never_trim):
             root_indices.add(i)
+    return root_indices
 
+
+def _split_root_body(
+    messages: list[Any], root_indices: set[int]
+) -> tuple[list[Any], list[Any]]:
+    """按 root 下标把消息拆成 (root_messages, body_messages)."""
     if root_indices:
         root_messages = [m for i, m in enumerate(messages) if i in root_indices]
         body_messages = [m for i, m in enumerate(messages) if i not in root_indices]
     else:
         root_messages = []
         body_messages = list(messages)
+    return root_messages, body_messages
 
-    # Tool result clearing: 超 TTL 的工具消息 content 替换为摘要标记
-    # 保留消息存在性 (顺序/引用不断), 只清大块输出
+
+def _apply_tool_result_ttl(
+    body_messages: list[Any], tool_result_ttl: int, keep_last_n: int
+) -> list[Any]:
+    """超 TTL 的历史 tool 消息 content 替换为摘要标记."""
     if tool_result_ttl > 0 and len(body_messages) > tool_result_ttl + keep_last_n:
         cleared = []
         cutoff = len(body_messages) - tool_result_ttl
@@ -160,11 +195,19 @@ def compact_messages(
             role = _msg_role(m)
             if i < cutoff and role == "tool":
                 # 历史 tool 消息: 替换 content 为摘要标记, 不动 metadata
-                cleared.append(_replace_tool_content(m, "[cleared: tool result over TTL]"))
+                cleared.append(
+                    _replace_tool_content(m, "[cleared: tool result over TTL]")
+                )
             else:
                 cleared.append(m)
         body_messages = cleared
+    return body_messages
 
+
+def _trim_body_to_budget(
+    body_messages: list[Any], budget_tokens: int, keep_last_n: int
+) -> list[Any]:
+    """从头丢弃 body 消息直到 token 预算内, 保留最后 keep_last_n 条."""
     # Token counts per message — computed once so we don't rescan the
     # whole list on every iteration (the old pop-and-recount loop was O(n^2)).
     per_msg_tokens = [
@@ -172,7 +215,7 @@ def compact_messages(
     ]
     total = sum(per_msg_tokens)
     if total <= budget_tokens:
-        return root_messages + body_messages
+        return body_messages
 
     # Walk from the front, subtracting each message's tokens, until we're
     # under budget or we'd dip below keep_last_n.
@@ -185,10 +228,13 @@ def compact_messages(
     # tool_call 原子性: 保留区不能以孤儿 ToolMessage 开头 — 它的 AIMessage
     # 刚被丢掉, 留着会让 DeepSeek/OpenAI 400 (tool response without call).
     # 可能越过 keep_last_n, 但 API  correctness 优先.
-    while drop_count < len(body_messages) and _msg_role(body_messages[drop_count]) == "tool":
+    while (
+        drop_count < len(body_messages)
+        and _msg_role(body_messages[drop_count]) == "tool"
+    ):
         drop_count += 1
 
-    return root_messages + body_messages[drop_count:]
+    return body_messages[drop_count:]
 
 
 def _replace_tool_content(msg: Any, new_content: str) -> Any:
@@ -239,30 +285,71 @@ _SUMMARY_TOKEN_CAP = 2000
 # Keywords that mark a message as high-value for scientific context retention.
 # Messages containing these get a higher survival score during compaction.
 _VALUE_KEYWORDS = (
-    "energy", "bandgap", "band gap", "converged", "convergence",
-    "encut", "k-points", "kpoints", "ediff", "ediffg",
-    "spacegroup", "space group", "lattice", "a =", "b =", "c =",
-    "alpha =", "beta =", "gamma =",
-    "elastic", "bulk modulus", "shear modulus",
-    "dos", "pdos", " fermi",
-    "force", "stress", "pressure",
-    "negative", "positive", "stable", "unstable",
-    "isotropic", "anisotropic",
-    "epsilon", "dielectric",
-    "homo", "lumo",
-    "refractive", "extinction",
+    "energy",
+    "bandgap",
+    "band gap",
+    "converged",
+    "convergence",
+    "encut",
+    "k-points",
+    "kpoints",
+    "ediff",
+    "ediffg",
+    "spacegroup",
+    "space group",
+    "lattice",
+    "a =",
+    "b =",
+    "c =",
+    "alpha =",
+    "beta =",
+    "gamma =",
+    "elastic",
+    "bulk modulus",
+    "shear modulus",
+    "dos",
+    "pdos",
+    " fermi",
+    "force",
+    "stress",
+    "pressure",
+    "negative",
+    "positive",
+    "stable",
+    "unstable",
+    "isotropic",
+    "anisotropic",
+    "epsilon",
+    "dielectric",
+    "homo",
+    "lumo",
+    "refractive",
+    "extinction",
     "sold solubility",
-    "formation energy", "cohesive energy",
-    "defect", "vacancy", "interstitial",
-    "doping", "substitution",
+    "formation energy",
+    "cohesive energy",
+    "defect",
+    "vacancy",
+    "interstitial",
+    "doping",
+    "substitution",
 )
 
 # Messages matching these patterns are low-value (safe to summarize first)
 _LOW_VALUE_PATTERNS = (
-    "debug", "traceback", "warning:", "[debug]",
-    "elapsed time", "wall time", "cpu time",
-    "loading", "importing", "initializing",
-    "progress:", "step ", "iteration ",
+    "debug",
+    "traceback",
+    "warning:",
+    "[debug]",
+    "elapsed time",
+    "wall time",
+    "cpu time",
+    "loading",
+    "importing",
+    "initializing",
+    "progress:",
+    "step ",
+    "iteration ",
 )
 
 
@@ -385,7 +472,9 @@ def _ctx_partition_protected(
     from huginn.plugins.compaction_policy import protected_roles
 
     protected_roles_set = protected_roles()
-    to_summarize = [m for m in summarize_zone if _msg_role(m) not in protected_roles_set]
+    to_summarize = [
+        m for m in summarize_zone if _msg_role(m) not in protected_roles_set
+    ]
     protected = [m for m in summarize_zone if _msg_role(m) in protected_roles_set]
     return to_summarize, protected
 
@@ -456,7 +545,10 @@ def _ctx_assemble_compacted(
 ) -> list[Any]:
     """Assemble [protected] + [summary] + [keep_zone] and enforce the budget."""
     compacted = protected + [summary_msg] + keep_zone
-    if estimate_message_tokens(compacted) > budget_tokens and len(compacted) > keep_last_n:
+    if (
+        estimate_message_tokens(compacted) > budget_tokens
+        and len(compacted) > keep_last_n
+    ):
         compacted = compact_messages(compacted, budget_tokens, keep_last_n)
     return compacted
 
@@ -528,7 +620,10 @@ def _ctx_insert_attachment(
     # 插在 summary 之后, keep_zone 之前
     compacted = protected + [summary_msg, attachment_msg] + keep_zone
     # 重新检查 budget (附件很小, 通常不影响)
-    if estimate_message_tokens(compacted) > budget_tokens and len(compacted) > keep_last_n:
+    if (
+        estimate_message_tokens(compacted) > budget_tokens
+        and len(compacted) > keep_last_n
+    ):
         compacted = compact_messages(compacted, budget_tokens, keep_last_n)
     return compacted
 
@@ -560,8 +655,25 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
     full_text = "\n".join(tool_texts)
 
     # 1. 活跃文件 — 从 tool 调用参数和输出中提取路径
-    import re
+    lines.extend(_extract_attachment_files(full_text))
 
+    # 2. 关键数值 — 从 tool result 中提取
+    lines.extend(_extract_attachment_values(full_text))
+
+    # 3. 已验证结论 — 从 validation 消息中提取
+    lines.extend(_extract_attachment_validation(full_text))
+
+    # 4. 离线产物 — 磁盘卸载的文件路径
+    lines.extend(_extract_attachment_artifacts(full_text))
+
+    # 5. P0: Force re-read FAILED.md / PROVED.md durable state.
+    lines.extend(_extract_attachment_durable_state())
+
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _extract_attachment_files(full_text: str) -> list[str]:
+    """1. 活跃文件 — 从 tool 调用参数和输出中提取路径."""
     file_patterns = [
         r'"file_path"\s*:\s*"([^"]+\.(?:poscar|vasp|incar|outcar|cfg|data|lammps|cif|xyz|json|csv))"',
         r'"working_dir"\s*:\s*"([^"]+)"',
@@ -572,12 +684,16 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
     for pattern in file_patterns:
         for m in re.finditer(pattern, full_text, re.IGNORECASE):
             files.add(m.group(1))
-    if files:
-        lines.append("### Active files:")
-        for f in sorted(files)[:15]:  # 上限 15 个, 避免膨胀
-            lines.append(f"  - {f}")
+    if not files:
+        return []
+    lines = ["### Active files:"]
+    for f in sorted(files)[:15]:  # 上限 15 个, 避免膨胀
+        lines.append(f"  - {f}")
+    return lines
 
-    # 2. 关键数值 — 从 tool result 中提取
+
+def _extract_attachment_values(full_text: str) -> list[str]:
+    """2. 关键数值 — 从 tool result 中提取."""
     numeric_patterns = {
         "energy": r'"(?:total_energy|energy|E0|free_energy)"\s*:\s*(-?[\d.]+)',
         "band_gap": r'"band_gap"\s*:\s*(-?[\d.]+)',
@@ -593,34 +709,49 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
             # 去重, 保留最后 3 个值 (最新的)
             unique = list(dict.fromkeys(matches))[-3:]
             key_values[name] = unique
-    if key_values:
-        lines.append("### Key values (last seen):")
-        for name, values in key_values.items():
-            lines.append(f"  {name}: {', '.join(values)}")
+    if not key_values:
+        return []
+    lines = ["### Key values (last seen):"]
+    for name, values in key_values.items():
+        lines.append(f"  {name}: {', '.join(values)}")
+    return lines
 
-    # 3. 已验证结论 — 从 validation 消息中提取
-    if "tests_passed" in full_text:
-        # 提取 tests_passed 周围的上下文
-        idx = full_text.rfind("tests_passed")
-        if idx >= 0:
-            snippet = full_text[max(0, idx - 200) : idx + 200]
-            lines.append("### Validation result (last seen):")
-            lines.append(f"  {snippet.strip()[:400]}")
 
-    # 4. 离线产物 — 磁盘卸载的文件路径
+def _extract_attachment_validation(full_text: str) -> list[str]:
+    """3. 已验证结论 — 从 validation 消息中提取."""
+    if "tests_passed" not in full_text:
+        return []
+    # 提取 tests_passed 周围的上下文
+    idx = full_text.rfind("tests_passed")
+    if idx < 0:
+        return []
+    snippet = full_text[max(0, idx - 200) : idx + 200]
+    return ["### Validation result (last seen):", f"  {snippet.strip()[:400]}"]
+
+
+def _extract_attachment_artifacts(full_text: str) -> list[str]:
+    """4. 离线产物 — 磁盘卸载的文件路径."""
     artifact_matches = re.findall(r'_artifact_path.*?["\s:]+([^"\s]+\.txt)', full_text)
-    if artifact_matches:
-        lines.append("### Offloaded artifacts:")
-        for a in artifact_matches[-5:]:  # 保留最近 5 个
-            lines.append(f"  - {a}")
+    if not artifact_matches:
+        return []
+    lines = ["### Offloaded artifacts:"]
+    for a in artifact_matches[-5:]:  # 保留最近 5 个
+        lines.append(f"  - {a}")
+    return lines
 
-    # 5. P0: Force re-read FAILED.md / PROVED.md durable state.
+
+def _extract_attachment_durable_state() -> list[str]:
+    """5. P0: Force re-read FAILED.md / PROVED.md durable state."""
+    lines: list[str] = []
     # context 压缩后 agent 必须知道哪些路死透 / 哪些已过审, 不重试死路.
     # ponytail: 从 cwd/.huginn 读, 不传 workspace 避免改函数签名. 升级: 传 workspace.
     try:
         from pathlib import Path as _P5  # noqa: N814
-        for _name, _label in (("FAILED.md", "Dead Routes (do NOT re-attempt)"),
-                              ("PROVED.md", "Verified Results (build on these)")):
+
+        for _name, _label in (
+            ("FAILED.md", "Dead Routes (do NOT re-attempt)"),
+            ("PROVED.md", "Verified Results (build on these)"),
+        ):
             _p5 = _P5(HUGINN_DIR_NAME) / _name
             if _p5.exists():
                 _txt5 = _p5.read_text(encoding="utf-8").strip()
@@ -630,8 +761,7 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
                     lines.extend(f"  {_l}" for _l in _lines5)
     except Exception:
         logger.debug("context enrichment file read failed", exc_info=True)
-
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return lines
 
 
 if __name__ == "__main__":
@@ -691,20 +821,28 @@ if __name__ == "__main__":
     answered = {
         getattr(m, "tool_call_id", None) for m in out3 if _msg_role(m) == "tool"
     }
-    called = {
-        tc["id"] for m in out3 if isinstance(m, AIMessage) for tc in m.tool_calls
-    }
-    assert answered <= called, f"orphan tool ids {answered - called} in {[_msg_role(m) for m in out3]}"
+    called = {tc["id"] for m in out3 if isinstance(m, AIMessage) for tc in m.tool_calls}
+    assert answered <= called, (
+        f"orphan tool ids {answered - called} in {[_msg_role(m) for m in out3]}"
+    )
 
     # A3.3: thinking block 保护 — 含 thinking/redacted_thinking 块的 AIMessage 永不裁剪.
-    thinking_ai = AIMessage(content=[
-        {"type": "thinking", "thinking": "let me reason...", "signature": "sig_abc"},
-        {"type": "text", "text": "the answer is 42"},
-    ])
-    redacted_ai = AIMessage(content=[
-        {"type": "redacted_thinking", "data": "encrypted_blob"},
-        {"type": "text", "text": "result"},
-    ])
+    thinking_ai = AIMessage(
+        content=[
+            {
+                "type": "thinking",
+                "thinking": "let me reason...",
+                "signature": "sig_abc",
+            },
+            {"type": "text", "text": "the answer is 42"},
+        ]
+    )
+    redacted_ai = AIMessage(
+        content=[
+            {"type": "redacted_thinking", "data": "encrypted_blob"},
+            {"type": "text", "text": "result"},
+        ]
+    )
     plain_ai = AIMessage(content="just text, no thinking")
     # _has_thinking_blocks
     assert _has_thinking_blocks(thinking_ai) is True
@@ -712,8 +850,18 @@ if __name__ == "__main__":
     assert _has_thinking_blocks(plain_ai) is False
     assert _has_thinking_blocks(HumanMessage(content="user msg")) is False
     assert _has_thinking_blocks({"role": "assistant", "content": "string"}) is False
-    assert _has_thinking_blocks({"role": "assistant", "content": [{"type": "text", "text": "hi"}]}) is False
-    assert _has_thinking_blocks({"role": "assistant", "content": [{"type": "thinking", "thinking": "x"}]}) is True
+    assert (
+        _has_thinking_blocks(
+            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}
+        )
+        is False
+    )
+    assert (
+        _has_thinking_blocks(
+            {"role": "assistant", "content": [{"type": "thinking", "thinking": "x"}]}
+        )
+        is True
+    )
 
     # compact_messages: thinking block 消息在极小 budget 下仍被保留
     msgs4 = [
@@ -724,9 +872,9 @@ if __name__ == "__main__":
     ]
     out4 = compact_messages(msgs4, budget_tokens=10, keep_last_n=1, tool_result_ttl=0)
     # thinking_ai 必须在结果里 (signature 不能丢)
-    assert any(
-        _has_thinking_blocks(m) for m in out4
-    ), f"thinking block AIMessage was dropped: {[_msg_role(m) for m in out4]}"
+    assert any(_has_thinking_blocks(m) for m in out4), (
+        f"thinking block AIMessage was dropped: {[_msg_role(m) for m in out4]}"
+    )
     # redacted_thinking 同理
     msgs5 = [
         HumanMessage(content="task"),
@@ -735,8 +883,8 @@ if __name__ == "__main__":
         HumanMessage(content="q"),
     ]
     out5 = compact_messages(msgs5, budget_tokens=10, keep_last_n=1, tool_result_ttl=0)
-    assert any(
-        _has_thinking_blocks(m) for m in out5
-    ), f"redacted_thinking block AIMessage was dropped: {[_msg_role(m) for m in out5]}"
+    assert any(_has_thinking_blocks(m) for m in out5), (
+        f"redacted_thinking block AIMessage was dropped: {[_msg_role(m) for m in out5]}"
+    )
 
     print("context self-check OK (5 cases, A3.3 thinking block protection verified)")

@@ -44,6 +44,7 @@ def _bind_test_client(app_client):
     yield
     client = None
 
+
 # WS 路由挂在 /v1 前缀下 (include_v1_routes), 但 root compat 也保留了 /ws/agent
 WS_PATH = "/ws/agent"
 
@@ -51,6 +52,7 @@ _HEADERS = {"X-HUGINN-API-KEY": "test-key"}
 
 
 # ─── 公共 fixture ────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def _no_rate_limit():
@@ -67,6 +69,7 @@ def _no_rate_limit():
 
 # ─── WS mock 基础设施 (复用 test_ws_integration 的思路) ──────────────
 
+
 class _MockModel:
     """够用的 chat model mock。"""
 
@@ -76,6 +79,7 @@ class _MockModel:
     async def ainvoke(self, prompt: str, **kw: Any):
         class _R:
             content = self.plan_text
+
         return _R()
 
 
@@ -153,6 +157,7 @@ def _drain(ws, max_msgs: int = 32) -> list[dict]:
 #  1. 后端服务故障模拟
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestBackendServiceFailure:
     """后端依赖挂了, API 不能跟着崩。"""
 
@@ -224,8 +229,8 @@ class TestBackendServiceFailure:
 #  2. WebSocket 连接韧性
 # ═══════════════════════════════════════════════════════════════════
 
-class TestWebSocketResilience:
 
+class TestWebSocketResilience:
     def test_ws_server_disconnect_client_receives_close(self, ws_harness):
         """服务端主动断连后, 客户端应收到 close frame 而非无限等待。"""
         with client.websocket_connect(WS_PATH, headers=_HEADERS) as ws:
@@ -284,8 +289,8 @@ class TestWebSocketResilience:
 #  3. SQLite 故障恢复
 # ═══════════════════════════════════════════════════════════════════
 
-class TestSQLiteFailureRecovery:
 
+class TestSQLiteFailureRecovery:
     def test_database_locked_handled_gracefully(self, tmp_path):
         """模拟 SQLite 'database is locked', 验证不会 crash。"""
         db_path = tmp_path / "test_locked.db"
@@ -345,8 +350,8 @@ class TestSQLiteFailureRecovery:
 #  4. 文件系统故障
 # ═══════════════════════════════════════════════════════════════════
 
-class TestFileSystemFailure:
 
+class TestFileSystemFailure:
     def test_write_to_nonexistent_dir_handled(self, tmp_path):
         """写入不存在的目录, 应返回错误而非 crash。"""
         nonexistent = tmp_path / "no_such_dir" / "subdir" / "file.txt"
@@ -384,8 +389,8 @@ class TestFileSystemFailure:
 #  5. 网络超时模拟
 # ═══════════════════════════════════════════════════════════════════
 
-class TestNetworkTimeout:
 
+class TestNetworkTimeout:
     def test_http_client_timeout_propagates(self, monkeypatch):
         """模拟 httpx 超时, 验证错误正确传播。"""
         import httpx
@@ -427,6 +432,7 @@ class TestNetworkTimeout:
 
     def test_async_timeout_does_not_hang(self):
         """asyncio.wait_for 超时后任务应被取消, 不会泄漏。"""
+
         async def _slow():
             await asyncio.sleep(100)
             return "done"
@@ -445,10 +451,11 @@ class TestNetworkTimeout:
 #  6. 资源耗尽场景
 # ═══════════════════════════════════════════════════════════════════
 
-class TestResourceExhaustion:
 
+class TestResourceExhaustion:
     def test_memory_error_handled_gracefully(self, monkeypatch):
         """模拟 MemoryError, 验证不会导致进程 crash。"""
+
         # 验证 Python 能正确捕获 MemoryError
         # 真正的 MemoryError 不好模拟, 用 mock 验证错误处理逻辑
         def _raise_oom():
@@ -522,9 +529,37 @@ class TestResourceExhaustion:
 #  7. 并发冲突
 # ═══════════════════════════════════════════════════════════════════
 
-class TestConcurrencyConflict:
 
-    def test_concurrent_checkpoint_accept_reject_consistency(self, monkeypatch, tmp_path):
+def _concurrent_checkpoint_call(cp_id: str, action: str, results, errors) -> None:
+    try:
+        results[action] = client.post(
+            f"/checkpoints/{cp_id}/{action}", headers=_HEADERS
+        )
+    except Exception as e:
+        errors[action] = e
+
+
+def _assert_checkpoint_conflict(results, errors) -> None:
+    # 两个都不应抛异常
+    assert errors["accept"] is None, f"accept 抛异常: {errors['accept']}"
+    assert errors["reject"] is None, f"reject 抛异常: {errors['reject']}"
+
+    # 至少一个应该成功 (success=True), 另一个应该报告 not found
+    bodies = []
+    for key in ("accept", "reject"):
+        r = results[key]
+        if r is not None:
+            bodies.append(r.json())
+
+    # 至少有一个成功
+    successes = [b for b in bodies if b.get("success")]
+    assert len(successes) >= 1, "至少应该有一个操作成功"
+
+
+class TestConcurrencyConflict:
+    def test_concurrent_checkpoint_accept_reject_consistency(
+        self, monkeypatch, tmp_path
+    ):
         """同一 checkpoint 被并发 accept 和 reject, 只应有一个成功。"""
         from huginn.server_core import _checkpoints, _state_lock
 
@@ -533,49 +568,26 @@ class TestConcurrencyConflict:
         test_dir.mkdir()
         (test_dir / "a.txt").write_text("hello")
 
-        snapshot = {"a.txt": "hello"}
         cp_id = "test_cp_concurrent"
         with _state_lock:
-            _checkpoints[cp_id] = (test_dir, snapshot)
+            _checkpoints[cp_id] = (test_dir, {"a.txt": "hello"})
 
         results = {"accept": None, "reject": None}
         errors = {"accept": None, "reject": None}
 
-        def _do_accept():
-            try:
-                r = client.post(f"/checkpoints/{cp_id}/accept", headers=_HEADERS)
-                results["accept"] = r
-            except Exception as e:
-                errors["accept"] = e
+        threads = [
+            threading.Thread(
+                target=_concurrent_checkpoint_call,
+                args=(cp_id, action, results, errors),
+            )
+            for action in ("accept", "reject")
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
 
-        def _do_reject():
-            try:
-                r = client.post(f"/checkpoints/{cp_id}/reject", headers=_HEADERS)
-                results["reject"] = r
-            except Exception as e:
-                errors["reject"] = e
-
-        t1 = threading.Thread(target=_do_accept)
-        t2 = threading.Thread(target=_do_reject)
-        t1.start()
-        t2.start()
-        t1.join(timeout=5)
-        t2.join(timeout=5)
-
-        # 两个都不应抛异常
-        assert errors["accept"] is None, f"accept 抛异常: {errors['accept']}"
-        assert errors["reject"] is None, f"reject 抛异常: {errors['reject']}"
-
-        # 至少一个应该成功 (success=True), 另一个应该报告 not found
-        bodies = []
-        for key in ("accept", "reject"):
-            r = results[key]
-            if r is not None:
-                bodies.append(r.json())
-
-        # 至少有一个成功
-        successes = [b for b in bodies if b.get("success")]
-        assert len(successes) >= 1, "至少应该有一个操作成功"
+        _assert_checkpoint_conflict(results, errors)
 
         # 清理: 确保 checkpoint 已被删除
         with _state_lock:
@@ -595,9 +607,7 @@ class TestConcurrencyConflict:
             # 模拟 config 路由内部的写入: 加锁后原子写
             with lock:
                 current = config_file.read_text()
-                config_file.write_text(
-                    f'[chat]\nprovider = "{provider_val}"\n'
-                )
+                config_file.write_text(f'[chat]\nprovider = "{provider_val}"\n')
                 write_count += 1
 
         threads = [
@@ -639,6 +649,7 @@ class TestConcurrencyConflict:
 # ═══════════════════════════════════════════════════════════════════
 #  补充: 全局异常处理验证
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestGlobalExceptionSafety:
     """验证全局异常处理器兜底, 确保未知异常不暴露 traceback。"""

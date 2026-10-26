@@ -35,6 +35,139 @@ _CAPTION_RE = re.compile(
 )
 
 
+def _nougat_element(nougat_md: str) -> DocumentElement:
+    return DocumentElement(
+        element_id="nougat_full",
+        element_type=ElementType.TEXT,
+        content=nougat_md,
+        page=0,
+        bbox=BBox(0, 0, 0, 0),
+        metadata={"source": "nougat", "full_document": True},
+    )
+
+
+def _page_elements(
+    extractor: PDFElementExtractor, page, page_idx: int
+) -> list[DocumentElement]:
+    rect = page.rect
+    page_w, page_h = rect.width, rect.height
+
+    page_elements: list[DocumentElement] = []
+    page_elements.extend(extractor._extract_text_blocks(page, page_idx, page_w, page_h))
+    page_elements.extend(extractor._extract_figures(page, page_idx))
+    page_elements.extend(extractor._extract_tables(page, page_idx))
+
+    # reading order: top-to-bottom, left-to-right within a row.
+    # fitz origin is top-left so smaller y1 == higher on page.
+    page_elements.sort(key=lambda e: (e.bbox.y1, e.bbox.x1))
+    return page_elements
+
+
+def _text_block_element(
+    block, page_idx: int, text_idx: int, page_w: float, page_h: float
+) -> DocumentElement | None:
+    """Rebuild one fitz text block into a DocumentElement (None when blank)."""
+    bbox = block.get("bbox") or [0, 0, 0, 0]
+
+    # rebuild the text line-by-line so we keep the visual line breaks
+    lines: list[str] = []
+    font_sizes: list[float] = []
+    for line in block.get("lines", []):
+        spans = line.get("spans", [])
+        line_text = "".join(span.get("text", "") for span in spans)
+        for span in spans:
+            size = span.get("size")
+            if size:
+                font_sizes.append(float(size))
+        if line_text.strip():
+            lines.append(line_text)
+
+    text = "\n".join(lines).strip()
+    if not text:
+        return None
+
+    avg_font = sum(font_sizes) / len(font_sizes) if font_sizes else 0.0
+    return DocumentElement(
+        element_id=f"p{page_idx}_text_{text_idx}",
+        element_type=ElementType.TEXT,
+        content=text,
+        page=page_idx,
+        bbox=BBox(bbox[0], bbox[1], bbox[2], bbox[3]),
+        metadata={
+            "page_w": page_w,
+            "page_h": page_h,
+            "avg_font_size": round(avg_font, 2),
+        },
+    )
+
+
+def _figure_image(doc, xref) -> tuple[bytes, str] | None:
+    """Pull the image bytes + extension through the parent doc."""
+    try:
+        img = doc.extract_image(xref)
+        img_bytes = img.get("image")
+        ext = img.get("ext", "png")
+    except Exception as exc:
+        logger.debug("extract_image xref=%s failed: %s", xref, exc)
+        return None
+    if not img_bytes:
+        return None
+    return img_bytes, ext
+
+
+def _write_figure(
+    fig_dir: Path,
+    img_bytes: bytes,
+    page_idx: int,
+    fig_idx: int,
+    counter: int,
+    ext: str,
+) -> Path | None:
+    """Spill image bytes to disk so downstream vision stages can mmap it."""
+    out_name = f"p{page_idx}_fig_{fig_idx}_{counter}.{ext}"
+    out_path = fig_dir / out_name
+    try:
+        out_path.write_bytes(img_bytes)
+    except Exception as exc:
+        logger.debug("failed to write figure %s: %s", out_path, exc)
+        return None
+    return out_path
+
+
+def _image_bbox(page, rects) -> BBox:
+    if rects:
+        r = rects[0]
+        return BBox(r.x0, r.y0, r.x1, r.y1)
+    # no placement info -- span the whole page as a fallback
+    return BBox(0, 0, page.rect.width, page.rect.height)
+
+
+def _camelot_table_element(
+    tbl, page_idx: int, table_idx: int, page_h: float
+) -> DocumentElement | None:
+    df = getattr(tbl, "df", None)
+    if df is None or df.empty:
+        return None
+    try:
+        content = df.to_markdown(index=False)
+    except Exception:
+        content = df.to_csv(index=False)
+
+    bbox = PDFElementExtractor._camelot_bbox(tbl, page_h)
+    return DocumentElement(
+        element_id=f"p{page_idx}_table_{table_idx}",
+        element_type=ElementType.TABLE,
+        content=content,
+        page=page_idx,
+        bbox=bbox,
+        metadata={
+            "engine": "camelot",
+            "rows": int(df.shape[0]),
+            "cols": int(df.shape[1]),
+        },
+    )
+
+
 class PDFElementExtractor:
     """Extract structured elements from a PDF file.
 
@@ -92,36 +225,14 @@ class PDFElementExtractor:
         self._pdf_path = pdf_path
         try:
             for page_idx, page in enumerate(doc):
-                rect = page.rect
-                page_w, page_h = rect.width, rect.height
-
-                page_elements: list[DocumentElement] = []
-                page_elements.extend(
-                    self._extract_text_blocks(page, page_idx, page_w, page_h)
-                )
-                page_elements.extend(self._extract_figures(page, page_idx))
-                page_elements.extend(self._extract_tables(page, page_idx))
-
-                # reading order: top-to-bottom, left-to-right within a row.
-                # fitz origin is top-left so smaller y1 == higher on page.
-                page_elements.sort(key=lambda e: (e.bbox.y1, e.bbox.x1))
-                all_elements.extend(page_elements)
+                all_elements.extend(_page_elements(self, page, page_idx))
 
             all_elements = self._detect_captions(all_elements)
 
             # Optional: fold in Nougat's structured Markdown when configured.
             nougat_md = self._try_nougat(pdf_path.read_bytes())
             if nougat_md:
-                all_elements.append(
-                    DocumentElement(
-                        element_id="nougat_full",
-                        element_type=ElementType.TEXT,
-                        content=nougat_md,
-                        page=0,
-                        bbox=BBox(0, 0, 0, 0),
-                        metadata={"source": "nougat", "full_document": True},
-                    )
-                )
+                all_elements.append(_nougat_element(nougat_md))
         finally:
             with contextlib.suppress(Exception):
                 doc.close()
@@ -156,40 +267,10 @@ class PDFElementExtractor:
             # type 0 == text, type 1 == image block (handled by _extract_figures)
             if block.get("type", 0) != 0:
                 continue
-            bbox = block.get("bbox") or [0, 0, 0, 0]
-
-            # rebuild the text line-by-line so we keep the visual line breaks
-            lines: list[str] = []
-            font_sizes: list[float] = []
-            for line in block.get("lines", []):
-                spans = line.get("spans", [])
-                line_text = "".join(span.get("text", "") for span in spans)
-                for span in spans:
-                    size = span.get("size")
-                    if size:
-                        font_sizes.append(float(size))
-                if line_text.strip():
-                    lines.append(line_text)
-
-            text = "\n".join(lines).strip()
-            if not text:
+            element = _text_block_element(block, page_idx, text_idx, page_w, page_h)
+            if element is None:
                 continue
-
-            avg_font = sum(font_sizes) / len(font_sizes) if font_sizes else 0.0
-            elements.append(
-                DocumentElement(
-                    element_id=f"p{page_idx}_text_{text_idx}",
-                    element_type=ElementType.TEXT,
-                    content=text,
-                    page=page_idx,
-                    bbox=BBox(bbox[0], bbox[1], bbox[2], bbox[3]),
-                    metadata={
-                        "page_w": page_w,
-                        "page_h": page_h,
-                        "avg_font_size": round(avg_font, 2),
-                    },
-                )
-            )
+            elements.append(element)
             text_idx += 1
 
         return elements
@@ -221,32 +302,18 @@ class PDFElementExtractor:
                 rects = []
 
             # pull the actual bytes through the parent doc
-            try:
-                img = self._doc.extract_image(xref)
-                img_bytes = img.get("image")
-                ext = img.get("ext", "png")
-            except Exception as exc:
-                logger.debug("extract_image xref=%s failed: %s", xref, exc)
+            image = _figure_image(self._doc, xref)
+            if image is None:
                 continue
-            if not img_bytes:
-                continue
+            img_bytes, ext = image
 
-            # spill to disk so downstream vision stages can mmap it
             self._fig_counter += 1
-            out_name = f"p{page_idx}_fig_{fig_idx}_{self._fig_counter}.{ext}"
-            out_path = self._fig_dir / out_name
-            try:
-                out_path.write_bytes(img_bytes)
-            except Exception as exc:
-                logger.debug("failed to write figure %s: %s", out_path, exc)
+            out_path = _write_figure(
+                self._fig_dir, img_bytes, page_idx, fig_idx, self._fig_counter, ext
+            )
+            if out_path is None:
                 continue
-
-            if rects:
-                r = rects[0]
-                bbox = BBox(r.x0, r.y0, r.x1, r.y1)
-            else:
-                # no placement info -- span the whole page as a fallback
-                bbox = BBox(0, 0, page.rect.width, page.rect.height)
+            bbox = _image_bbox(page, rects)
 
             elements.append(
                 DocumentElement(
@@ -288,9 +355,7 @@ class PDFElementExtractor:
 
         try:
             # camelot numbers pages from 1
-            table_list = camelot.read_pdf(
-                str(self._pdf_path), pages=str(page_idx + 1)
-            )
+            table_list = camelot.read_pdf(str(self._pdf_path), pages=str(page_idx + 1))
         except Exception as exc:
             logger.debug("camelot.read_pdf failed on page %d: %s", page_idx, exc)
             return []
@@ -306,29 +371,10 @@ class PDFElementExtractor:
 
         elements: list[DocumentElement] = []
         for i, tbl in enumerate(table_list):
-            df = getattr(tbl, "df", None)
-            if df is None or df.empty:
+            element = _camelot_table_element(tbl, page_idx, i, page_h)
+            if element is None:
                 continue
-            try:
-                content = df.to_markdown(index=False)
-            except Exception:
-                content = df.to_csv(index=False)
-
-            bbox = self._camelot_bbox(tbl, page_h)
-            elements.append(
-                DocumentElement(
-                    element_id=f"p{page_idx}_table_{i}",
-                    element_type=ElementType.TABLE,
-                    content=content,
-                    page=page_idx,
-                    bbox=bbox,
-                    metadata={
-                        "engine": "camelot",
-                        "rows": int(df.shape[0]),
-                        "cols": int(df.shape[1]),
-                    },
-                )
-            )
+            elements.append(element)
         return elements
 
     @staticmethod
@@ -484,9 +530,12 @@ class PDFElementExtractor:
             # remember what kind of caption this is so the caption_of
             # edge builder in M4 can match it to a figure/table later
             head = el.content.lstrip().lower()
-            if head.startswith("图") or head.startswith("fig") or head.startswith(
-                "scheme"
-            ) or head.startswith("chart"):
+            if (
+                head.startswith("图")
+                or head.startswith("fig")
+                or head.startswith("scheme")
+                or head.startswith("chart")
+            ):
                 el.metadata["caption_kind"] = "figure"
             elif head.startswith("表") or head.startswith("tab"):
                 el.metadata["caption_kind"] = "table"

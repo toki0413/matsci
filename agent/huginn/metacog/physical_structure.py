@@ -44,6 +44,7 @@ class PhysicalStructure:
         构造相对表示 (cosine similarity 向量), 对角度保持变换不变.
         e.g. {"active_site": ["Pt", "Pd", "Ni", "Cu"]}
     """
+
     relation_type: str
     relation_expr: str
     implementor_slots: dict[str, str] = field(default_factory=dict)
@@ -62,6 +63,7 @@ class StructureMapping:
     is_isomorphic: validate_structure_preservation 的结果
     violation_detail: 若不保持, 违反的约束列表
     """
+
     source: PhysicalStructure
     target: PhysicalStructure
     slot_replacements: dict[str, str]
@@ -84,7 +86,7 @@ CATALYTIC_GEOMETRY = PhysicalStructure(
     ),
     implementor_slots={
         "active_site": "M",  # 金属活性位点
-        "adsorbate": "X",    # 吸附物
+        "adsorbate": "X",  # 吸附物
     },
     constraints=[
         # 吸附距离物理上下界
@@ -224,6 +226,81 @@ PREDEFINED_STRUCTURES: dict[str, PhysicalStructure] = {
 
 # ── G46 同构验证 — sympy + 物理约束库 ──────────────────────────────
 
+
+def _check_relation_type(mapping: StructureMapping) -> bool:
+    # 1. relation_type 必须一致
+    if mapping.source.relation_type != mapping.target.relation_type:
+        mapping.violation_detail.append(
+            f"relation_type mismatch: {mapping.source.relation_type} "
+            f"-> {mapping.target.relation_type}"
+        )
+        mapping.is_isomorphic = False
+        return False
+    return True
+
+
+def _check_expr_parseable(mapping: StructureMapping) -> bool:
+    # 2. relation_expr 可解析 (sympy 形式合法)
+    try:
+        from sympy import sympify
+
+        sympify(mapping.target.relation_expr)
+    except Exception as e:
+        mapping.violation_detail.append(f"target relation_expr sympify failed: {e}")
+        mapping.is_isomorphic = False
+        return False
+    return True
+
+
+def _check_constraints_parseable(mapping: StructureMapping) -> bool:
+    # 3. constraints 全部可解析 (不违反 — 当前实现者值未定时只检查可解析)
+    #    ponytail: 真正的数值验证需要实现者值代入, 留给 v7 DFT 升级.
+    #    v6 只验证约束表达式本身合法, 防止 LLM 生成垃圾约束.
+    from sympy import sympify
+
+    for c in mapping.target.constraints:
+        try:
+            sympify(c)
+        except Exception as e:
+            mapping.violation_detail.append(f"constraint sympify failed: {c} ({e})")
+            mapping.is_isomorphic = False
+            return False
+    return True
+
+
+def _check_slot_consistency(mapping: StructureMapping) -> bool:
+    # 4. 槽位一致性 — 源和目标的槽位名集合必须相同 (结构位置不变)
+    src_slots = set(mapping.source.implementor_slots.keys())
+    tgt_slots = set(mapping.target.implementor_slots.keys())
+    if src_slots != tgt_slots:
+        missing = src_slots - tgt_slots
+        extra = tgt_slots - src_slots
+        if missing:
+            mapping.violation_detail.append(f"missing slots in target: {missing}")
+        if extra:
+            mapping.violation_detail.append(f"extra slots in target: {extra}")
+        mapping.is_isomorphic = False
+        return False
+    return True
+
+
+def _check_nontrivial(mapping: StructureMapping) -> bool:
+    # 5. 至少一个槽位的实现者不同 (否则不算替换, 是平凡映射)
+    #    ponytail: 平凡映射技术上同构, 但研究上无意义 — 标记为 violation
+    #    让上游知道. 升级路径是返回 (is_isomorphic, is_trivial) 元组.
+    src_slots = set(mapping.source.implementor_slots.keys())
+    diff_count = sum(
+        1
+        for k in src_slots
+        if mapping.source.implementor_slots[k] != mapping.target.implementor_slots[k]
+    )
+    if diff_count == 0:
+        mapping.violation_detail.append("trivial mapping: no slot replacement")
+        mapping.is_isomorphic = False
+        return False
+    return True
+
+
 def validate_structure_preservation(mapping: StructureMapping) -> bool:
     """验证结构关系在实现者替换后是否保持 (同构即等价).
 
@@ -240,62 +317,15 @@ def validate_structure_preservation(mapping: StructureMapping) -> bool:
     """
     mapping.violation_detail = []
 
-    # 1. relation_type 必须一致
-    if mapping.source.relation_type != mapping.target.relation_type:
-        mapping.violation_detail.append(
-            f"relation_type mismatch: {mapping.source.relation_type} "
-            f"-> {mapping.target.relation_type}"
-        )
-        mapping.is_isomorphic = False
+    if not _check_relation_type(mapping):
         return False
-
-    # 2. relation_expr 可解析 (sympy 形式合法)
-    try:
-        from sympy import sympify
-        sympify(mapping.target.relation_expr)
-    except Exception as e:
-        mapping.violation_detail.append(
-            f"target relation_expr sympify failed: {e}"
-        )
-        mapping.is_isomorphic = False
+    if not _check_expr_parseable(mapping):
         return False
-
-    # 3. constraints 全部可解析 (不违反 — 当前实现者值未定时只检查可解析)
-    #    ponytail: 真正的数值验证需要实现者值代入, 留给 v7 DFT 升级.
-    #    v6 只验证约束表达式本身合法, 防止 LLM 生成垃圾约束.
-    for c in mapping.target.constraints:
-        try:
-            sympify(c)
-        except Exception as e:
-            mapping.violation_detail.append(
-                f"constraint sympify failed: {c} ({e})"
-            )
-            mapping.is_isomorphic = False
-            return False
-
-    # 4. 槽位一致性 — 源和目标的槽位名集合必须相同 (结构位置不变)
-    src_slots = set(mapping.source.implementor_slots.keys())
-    tgt_slots = set(mapping.target.implementor_slots.keys())
-    if src_slots != tgt_slots:
-        missing = src_slots - tgt_slots
-        extra = tgt_slots - src_slots
-        if missing:
-            mapping.violation_detail.append(f"missing slots in target: {missing}")
-        if extra:
-            mapping.violation_detail.append(f"extra slots in target: {extra}")
-        mapping.is_isomorphic = False
+    if not _check_constraints_parseable(mapping):
         return False
-
-    # 5. 至少一个槽位的实现者不同 (否则不算替换, 是平凡映射)
-    #    ponytail: 平凡映射技术上同构, 但研究上无意义 — 标记为 violation
-    #    让上游知道. 升级路径是返回 (is_isomorphic, is_trivial) 元组.
-    diff_count = sum(
-        1 for k in src_slots
-        if mapping.source.implementor_slots[k] != mapping.target.implementor_slots[k]
-    )
-    if diff_count == 0:
-        mapping.violation_detail.append("trivial mapping: no slot replacement")
-        mapping.is_isomorphic = False
+    if not _check_slot_consistency(mapping):
+        return False
+    if not _check_nontrivial(mapping):
         return False
 
     mapping.is_isomorphic = True
@@ -309,6 +339,7 @@ def validate_structure_preservation(mapping: StructureMapping) -> bool:
 # 与用户哲学的对应: 角度保持 = 同构即等价; 相对关系先于绝对坐标 = 结构先于对象;
 # encoder 可替换 decoder 不变 = 锁定结构关系允许不同实现者填充.
 # G46 sympy 验证是符号层, G58 加几何层.
+
 
 def compute_relative_representation(
     embeddings: dict[str, Any],
@@ -335,7 +366,7 @@ def compute_relative_representation(
         raise ValueError(f"anchors not in embeddings: {missing}")
 
     E = np.array([embeddings[n] for n in impl_names], dtype=float)  # N×d
-    A = np.array([embeddings[a] for a in anchors], dtype=float)     # K×d
+    A = np.array([embeddings[a] for a in anchors], dtype=float)  # K×d
     # cosine similarity: 单位化后内积
     E_norm = E / (np.linalg.norm(E, axis=1, keepdims=True) + 1e-12)
     A_norm = A / (np.linalg.norm(A, axis=1, keepdims=True) + 1e-12)
@@ -392,6 +423,49 @@ def compute_and_validate_relative(
 # 类型) 填充这些位置. AI 进入的 "自然界未探索的解空间" 实质上是同一抽象物理
 # 结构的非同源实现空间.
 
+
+def _resolve_pools(
+    structure: PhysicalStructure,
+    slots: list[str],
+    candidate_pools: dict[str, list[str]] | None,
+    max_per_slot: int,
+) -> dict[str, list[str]]:
+    # 候选池: 优先用 caller 传的, 否则用 relative_anchors
+    pools: dict[str, list[str]] = candidate_pools or {}
+    for slot in slots:
+        if slot not in pools or not pools[slot]:
+            # 用 relative_anchors 作候选池
+            anchor_list = structure.relative_anchors.get(slot, [])
+            # 当前实现者不算候选 (平凡映射)
+            current = structure.implementor_slots[slot]
+            pools[slot] = [a for a in anchor_list if a != current][:max_per_slot]
+            # 没候选就保留当前 (该槽位不替换)
+            if not pools[slot]:
+                pools[slot] = [current]
+        else:
+            current = structure.implementor_slots[slot]
+            pools[slot] = [c for c in pools[slot] if c != current][:max_per_slot]
+            if not pools[slot]:
+                pools[slot] = [current]
+    return pools
+
+
+def _enumerate_combinations(
+    structure: PhysicalStructure, keys: list[str], pools: dict[str, list[str]]
+) -> list[dict[str, str]]:
+    import itertools
+
+    # 笛卡尔积 — 每个组合是一组实现者替换
+    value_lists = [pools[k] for k in keys]
+    combinations: list[dict[str, str]] = []
+    for combo in itertools.product(*value_lists):
+        combo_dict = dict(zip(keys, combo))
+        # 至少一个槽位替换了才算非平凡
+        if any(combo_dict[k] != structure.implementor_slots[k] for k in keys):
+            combinations.append(combo_dict)
+    return combinations
+
+
 def enumerate_implementors(
     structure: PhysicalStructure,
     candidate_pools: dict[str, list[str]] | None = None,
@@ -413,42 +487,12 @@ def enumerate_implementors(
     ponytail 上限: max_per_slot=10 + 5 槽位 = 10^5 = 100k 组合,
     实际跑要靠 LLM/约束剪枝, 这里只给骨架.
     """
-    import itertools
-
     slots = list(structure.implementor_slots.keys())
     if not slots:
         return []
 
-    # 候选池: 优先用 caller 传的, 否则用 relative_anchors
-    pools: dict[str, list[str]] = candidate_pools or {}
-    for slot in slots:
-        if slot not in pools or not pools[slot]:
-            # 用 relative_anchors 作候选池
-            anchor_list = structure.relative_anchors.get(slot, [])
-            # 当前实现者不算候选 (平凡映射)
-            current = structure.implementor_slots[slot]
-            pools[slot] = [a for a in anchor_list if a != current][:max_per_slot]
-            # 没候选就保留当前 (该槽位不替换)
-            if not pools[slot]:
-                pools[slot] = [current]
-        else:
-            current = structure.implementor_slots[slot]
-            pools[slot] = [c for c in pools[slot] if c != current][:max_per_slot]
-            if not pools[slot]:
-                pools[slot] = [current]
-
-    # 笛卡尔积 — 每个组合是一组实现者替换
-    keys = slots
-    value_lists = [pools[k] for k in keys]
-    combinations: list[dict[str, str]] = []
-    for combo in itertools.product(*value_lists):
-        combo_dict = dict(zip(keys, combo))
-        # 至少一个槽位替换了才算非平凡
-        if any(
-            combo_dict[k] != structure.implementor_slots[k] for k in keys
-        ):
-            combinations.append(combo_dict)
-    return combinations
+    pools = _resolve_pools(structure, slots, candidate_pools, max_per_slot)
+    return _enumerate_combinations(structure, slots, pools)
 
 
 def classify_implementation_gap(
@@ -485,6 +529,7 @@ def classify_implementation_gap(
 
 # ── self-check ────────────────────────────────────────────────────
 
+
 def _sc_verify_predefined_structures() -> None:
     """1. 5 类预定义结构都存在."""
     assert len(PREDEFINED_STRUCTURES) == 5
@@ -507,7 +552,8 @@ def _sc_build_isomorphic_mapping() -> PhysicalStructure:
         constraints=src.constraints,
     )
     mapping = StructureMapping(
-        source=src, target=tgt,
+        source=src,
+        target=tgt,
         slot_replacements={"active_site": "Pt -> Pd", "adsorbate": "X -> O"},
         is_isomorphic=False,
     )
@@ -571,6 +617,7 @@ def _sc_verify_unparseable_constraints(src: PhysicalStructure) -> None:
 # ── G58: 相对结构同构测试 ──────────────────────────────────────
 # 用 mock embedding 验证: 旋转保持角度 → 同构; 扰动破坏角度 → 非同构
 
+
 def _sc_check_relative_representation() -> dict[str, Any]:
     """G58 夹具 + 7. 相对表示形状 N×K = 4×4."""
     import numpy as np
@@ -604,7 +651,10 @@ def _sc_verify_rotation_invariance(fixtures: dict[str, Any]) -> None:
     Q, _ = np.linalg.qr(rng.standard_normal((8, 8)))  # 正交矩阵 = 旋转/反射
     target_embeddings = {n: Q @ source_embeddings[n] for n in impl_names}
     is_iso, dist = compute_and_validate_relative(
-        source_embeddings, target_embeddings, fixtures["anchors"], tol=1e-6,
+        source_embeddings,
+        target_embeddings,
+        fixtures["anchors"],
+        tol=1e-6,
     )
     assert is_iso, f"rotation should preserve relative repr (dist={dist})"
     assert dist < 1e-6, f"rotation distance too large: {dist}"
@@ -620,7 +670,10 @@ def _sc_verify_perturbation_breaks_isomorphism(
         for n in fixtures["impl_names"]
     }
     is_iso2, dist2 = compute_and_validate_relative(
-        source_embeddings, perturbed_embeddings, fixtures["anchors"], tol=1e-3,
+        source_embeddings,
+        perturbed_embeddings,
+        fixtures["anchors"],
+        tol=1e-3,
     )
     assert not is_iso2, f"perturbation should break isomorphism (dist={dist2})"
     assert dist2 > 1e-3, f"perturbation distance too small: {dist2}"
@@ -630,7 +683,8 @@ def _sc_verify_missing_anchor_raises(fixtures: dict[str, Any]) -> None:
     """10. anchor 不在 embeddings 里 → ValueError."""
     try:
         compute_relative_representation(
-            fixtures["source_embeddings"], ["Pt", "nonexistent"],
+            fixtures["source_embeddings"],
+            ["Pt", "nonexistent"],
         )
         raise AssertionError("should raise ValueError for missing anchor")
     except ValueError:
@@ -642,18 +696,25 @@ def _sc_verify_shape_mismatch() -> None:
     import numpy as np
 
     is_iso3, dist3 = validate_relative_isomorphism(
-        np.zeros((4, 4)), np.zeros((3, 4)),
+        np.zeros((4, 4)),
+        np.zeros((3, 4)),
     )
     assert not is_iso3 and dist3 == float("inf")
 
 
 def _sc_verify_anchor_alignment() -> None:
     """12. G58 跟 G46 叠加: relative_anchors 非空时可做 relative 验证."""
-    assert CATALYTIC_GEOMETRY.relative_anchors["active_site"] == ["Pt", "Pd", "Ni", "Cu"]
+    assert CATALYTIC_GEOMETRY.relative_anchors["active_site"] == [
+        "Pt",
+        "Pd",
+        "Ni",
+        "Cu",
+    ]
     assert len(CATALYTIC_GEOMETRY.relative_anchors["adsorbate"]) == 4
 
 
 # ── G47: 解耦搜索测试 ──────────────────────────────────────────
+
 
 def _sc_verify_implementor_enumeration() -> None:
     """13. enumerate_implementors: 用 relative_anchors 枚举非平凡组合."""
@@ -666,10 +727,7 @@ def _sc_verify_implementor_enumeration() -> None:
     assert len(impls) == 16, f"expected 16 combinations, got {len(impls)}"
     # 每个组合至少一个槽位替换了
     for combo in impls:
-        assert any(
-            combo[k] != CATALYTIC_GEOMETRY.implementor_slots[k]
-            for k in combo
-        )
+        assert any(combo[k] != CATALYTIC_GEOMETRY.implementor_slots[k] for k in combo)
     # 结果是 dict[str, str]
     assert all(isinstance(c, dict) for c in impls)
     assert all(set(c.keys()) == {"active_site", "adsorbate"} for c in impls)
@@ -679,7 +737,7 @@ def _sc_verify_custom_candidate_pools() -> None:
     """14. enumerate_implementors: 自定义候选池."""
     custom_pools = {
         "active_site": ["Pt", "Pd"],  # 只用 2 个
-        "adsorbate": ["O"],            # 只用 1 个
+        "adsorbate": ["O"],  # 只用 1 个
     }
     impls2 = enumerate_implementors(CATALYTIC_GEOMETRY, candidate_pools=custom_pools)
     # 2 × 1 = 2 组合 (都非平凡, 因为当前是 M/X)
@@ -690,21 +748,41 @@ def _sc_verify_implementation_gap() -> None:
     """15. classify_implementation_gap: selected / unselected / impossible."""
     known = [{"active_site": "Pt", "adsorbate": "O"}]
     # selected: 匹配已知
-    assert classify_implementation_gap(
-        CATALYTIC_GEOMETRY, {"active_site": "Pt", "adsorbate": "O"}, known,
-    ) == "selected"
+    assert (
+        classify_implementation_gap(
+            CATALYTIC_GEOMETRY,
+            {"active_site": "Pt", "adsorbate": "O"},
+            known,
+        )
+        == "selected"
+    )
     # unselected: 不匹配但合法
-    assert classify_implementation_gap(
-        CATALYTIC_GEOMETRY, {"active_site": "Pd", "adsorbate": "H"}, known,
-    ) == "unselected"
+    assert (
+        classify_implementation_gap(
+            CATALYTIC_GEOMETRY,
+            {"active_site": "Pd", "adsorbate": "H"},
+            known,
+        )
+        == "unselected"
+    )
     # impossible: 空字符串
-    assert classify_implementation_gap(
-        CATALYTIC_GEOMETRY, {"active_site": "", "adsorbate": "O"}, known,
-    ) == "impossible"
+    assert (
+        classify_implementation_gap(
+            CATALYTIC_GEOMETRY,
+            {"active_site": "", "adsorbate": "O"},
+            known,
+        )
+        == "impossible"
+    )
     # impossible: 非字符串
-    assert classify_implementation_gap(
-        CATALYTIC_GEOMETRY, {"active_site": 123, "adsorbate": "O"}, known,
-    ) == "impossible"
+    assert (
+        classify_implementation_gap(
+            CATALYTIC_GEOMETRY,
+            {"active_site": 123, "adsorbate": "O"},
+            known,
+        )
+        == "impossible"
+    )
 
 
 def _sc_verify_empty_structure() -> None:
@@ -741,4 +819,5 @@ def _self_check() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_self_check())

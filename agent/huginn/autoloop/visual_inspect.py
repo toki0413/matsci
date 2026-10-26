@@ -77,6 +77,7 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
     try:
         import numpy as np
         from PIL import Image
+
         img1 = np.asarray(Image.open(io.BytesIO(img_bytes1)).convert("L"))
         img2 = np.asarray(Image.open(io.BytesIO(img_bytes2)).convert("L"))
         h1, _ = np.histogram(img1, bins=32, range=(0, 255))
@@ -88,6 +89,214 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
     except Exception:  # 防御: 检视失败返回零证据分
         logger.debug("best-effort op failed", exc_info=True)
         return 0.0
+
+
+def _parse_point_primitives(visual_ctx: str) -> list[dict[str, Any]]:
+    """解析 visual_ctx 里的 <point> 原语 (变体 1-3 双坐标 + 变体 5 单坐标)."""
+    primitives: list[dict[str, Any]] = []
+
+    # 变体 1-3: <point>[x,y]</point>(value) / =value / =value%
+    for m in re.finditer(
+        r"<point>\[(\d+),(\d+)\]</point>(?:\(([\d.\-eE]+)\)|=([\d.\-eE]+%?)|[\s]+([\d.\-eE]+))",
+        visual_ctx,
+    ):
+        px, py = int(m.group(1)), int(m.group(2))
+        val = m.group(3) or m.group(4) or m.group(5)
+        val_clean = val.rstrip("%") if val else None
+        primitives.append(
+            {
+                "coordinate": [px, py],
+                "value": float(val_clean) if val_clean else None,
+                "raw_value": val,
+            }
+        )
+
+    # 变体 5: key=<point>[y]</point>=value (单坐标)
+    for m in re.finditer(
+        r"(\w+)=<point>\[(\d+)\]</point>=([\d.\-eE]+%?)",
+        visual_ctx,
+    ):
+        key = m.group(1)
+        py = int(m.group(2))
+        val = m.group(3).rstrip("%")
+        primitives.append(
+            {
+                "coordinate": [0, py],  # 单坐标 x=0
+                "value": float(val) if val else None,
+                "raw_value": m.group(3),
+                "label": key,
+            }
+        )
+    return primitives
+
+
+def _nearest_context_line(visual_ctx: str, coord_str: str) -> str | None:
+    """找包含指定 point 原语的上下文行 (截断 200 字符)."""
+    for line in visual_ctx.split("\n"):
+        if coord_str in line:
+            return line.strip()[:200]
+    return None
+
+
+def _parse_visual_section_line(
+    line: str,
+) -> tuple[dict[str, Any], list[str]] | None:
+    """解析单行 section 头, 返回 (section dict, 新增 feature); 非 section 返回 None."""
+    sec_match = re.match(r"\[(\w+)\]", line)
+    if not sec_match:
+        return None
+    sec_name = sec_match.group(1)
+    sec: dict[str, Any] = {"name": sec_name, "raw": line[:200]}
+    features: list[str] = []
+
+    # trend
+    trend_m = re.search(r"trend=(\w+)", line)
+    if trend_m:
+        sec["trend"] = trend_m.group(1)
+        features.append(f"{sec_name}.trend={trend_m.group(1)}")
+
+    # peak / min
+    peak_m = re.search(r"peak=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", line)
+    if peak_m:
+        sec["peak"] = float(peak_m.group(1))
+    min_m = re.search(r"min=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", line)
+    if min_m:
+        sec["min"] = float(min_m.group(1))
+
+    # mean / std
+    mean_m = re.search(r"mean=([\d.\-eE]+)", line)
+    if mean_m:
+        sec["mean"] = float(mean_m.group(1))
+    std_m = re.search(r"std=([\d.\-eE]+)", line)
+    if std_m:
+        sec["std"] = float(std_m.group(1))
+
+    # anomalies (可能多个, 用逗号分隔)
+    anom_m = re.search(r"anomalies=([^,\n]+(?:,\s*[^,\n]+)*)", line)
+    if anom_m and anom_m.group(1).strip() != "none":
+        anom_str = anom_m.group(1)
+        anom_count = anom_str.count("<point>")
+        sec["anomaly_count"] = anom_count
+        if anom_count > 0:
+            features.append(f"{sec_name}.anomalies={anom_count}")
+    return sec, features
+
+
+def _visual_section_summary(sec: dict[str, Any]) -> str:
+    """拼单段 summary 行: 名称 + trend / range / 异常数."""
+    sec_name = sec["name"]
+    parts = [f"{sec_name}"]
+    if "trend" in sec:
+        parts.append(f"trend={sec['trend']}")
+    if "peak" in sec and "min" in sec:
+        parts.append(f"range=[{sec['min']:.4f}, {sec['peak']:.4f}]")
+    if "anomaly_count" in sec and sec["anomaly_count"] > 0:
+        parts.append(f"{sec['anomaly_count']} anomalies")
+    return ", ".join(parts)
+
+
+async def _invoke_image_tool(
+    img_tool: Any,
+    image_bytes: bytes,
+    action: str,
+    parameters: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """落临时文件后用正确 args 结构调用 image_analysis_tool, 返回其 data dict."""
+    import os as _os
+    import tempfile as _tempfile
+
+    from huginn.core_types import ToolContext
+
+    tmp = None
+    try:
+        fd, tmp = _tempfile.mkstemp(suffix=".png")
+        with _os.fdopen(fd, "wb") as f:
+            f.write(image_bytes)
+        args = {
+            "image_path": tmp,
+            "action": action,
+            "parameters": parameters or {},
+        }
+        ctx = ToolContext(session_id="visual_inspect", workspace=_tempfile.gettempdir())
+        result = await img_tool.call(args, ctx)
+        if result is None:
+            return None
+        if not getattr(result, "success", False):
+            logger.debug("image_analysis_tool %s returned not success", action)
+            return None
+        data = getattr(result, "data", None)
+        return data if isinstance(data, dict) else None
+    finally:
+        with contextlib.suppress(OSError):
+            if tmp is not None:
+                _os.unlink(tmp)
+
+
+async def _image_tool_annotation(
+    engine: VisualInspect, description: str, visual_base64: str
+) -> tuple[list[str], dict[str, Any] | None]:
+    """有图片时把整图送 image_analysis_tool 做结构化标注, 失败降级为空特征."""
+    features: list[str] = []
+    tool_output: dict[str, Any] | None = None
+    try:
+        import base64 as b64
+        import io as _io
+
+        from PIL import Image
+
+        img_data = b64.b64decode(visual_base64)
+        img = Image.open(_io.BytesIO(img_data))
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        scene = VisualInspect._pick_image_action(engine, description)
+        # 视觉验证闭环: 整图送 image_analysis_tool 做结构化标注.
+        res = await VisualInspect._call_image_analysis_tool(
+            engine, buf.getvalue(), scene, {"task_description": description}
+        )
+        if res:
+            tool_output = res
+            features.append(f"{scene}: tool analysis done")
+        else:
+            features.append(f"{scene}: tool returned no result")
+    except Exception as e:
+        features.append(f"tool_annotation_failed: {e}")
+    return features, tool_output
+
+
+def _compare_visual_diff(visual_ctx: str) -> dict[str, Any]:
+    """文本级差分: 解析 visual_ctx 里的峰值 / 最小值 / 异常计数."""
+    import re
+
+    peaks = re.findall(r"peak=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", visual_ctx)
+    mins = re.findall(r"min=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", visual_ctx)
+    anomalies = re.findall(r"anomalies=([^,\n]+)", visual_ctx)
+    diff: dict[str, Any] = {}
+    if peaks:
+        peak_vals = [float(p) for p in peaks if p]
+        diff["peak_range"] = [min(peak_vals), max(peak_vals)]
+        diff["peak_count"] = len(peak_vals)
+    if mins:
+        min_vals = [float(m) for m in mins if m]
+        diff["min_range"] = [min(min_vals), max(min_vals)]
+    if anomalies:
+        diff["anomaly_count"] = sum(
+            1 for a in anomalies if a.strip() and a.strip() != "none"
+        )
+    return diff
+
+
+def _compare_target(description: str) -> str | None:
+    """检查描述里有没有指定比较对象 (e.g. "compare band 3 and band 5")."""
+    import re
+
+    compare_match = re.search(
+        r"compare\s+(\w+\s*\d*)\s+(?:and|with|vs\.?)\s+(\w+\s*\d*)",
+        description,
+        re.IGNORECASE,
+    )
+    if not compare_match:
+        return None
+    return f"{compare_match.group(1).strip()} vs {compare_match.group(2).strip()}"
 
 
 class VisualInspect:
@@ -132,39 +341,13 @@ class VisualInspect:
          不让主循环被视觉分析带挂. 参照 smart_ingest._call_image_tool.
         """
         try:
-            from huginn.core_types import ToolContext
             from huginn.tools.registry import ToolRegistry
 
             img_tool = ToolRegistry.get("image_analysis_tool")
             if img_tool is None:
                 logger.debug("image_analysis_tool not registered, skip cv analysis")
                 return None
-            import os
-            import tempfile
-
-            tmp = None
-            try:
-                fd, tmp = tempfile.mkstemp(suffix=".png")
-                with os.fdopen(fd, "wb") as f:
-                    f.write(image_bytes)
-                args = {
-                    "image_path": tmp,
-                    "action": action,
-                    "parameters": parameters or {},
-                }
-                ctx = ToolContext(session_id="visual_inspect", workspace=tempfile.gettempdir())
-                result = await img_tool.call(args, ctx)
-                if result is None:
-                    return None
-                if not getattr(result, "success", False):
-                    logger.debug("image_analysis_tool %s returned not success", action)
-                    return None
-                data = getattr(result, "data", None)
-                return data if isinstance(data, dict) else None
-            finally:
-                with contextlib.suppress(OSError):
-                    if tmp is not None:
-                        os.unlink(tmp)
+            return await _invoke_image_tool(img_tool, image_bytes, action, parameters)
         except Exception as exc:
             logger.debug("image_analysis_tool call failed (non-fatal): %s", exc)
             return None
@@ -183,7 +366,9 @@ class VisualInspect:
         return "sem_analysis"
 
     async def _execute_visual_inspect(
-        self, description: str, context: dict[str, Any],
+        self,
+        description: str,
+        context: dict[str, Any],
         consistency_check: bool = False,
     ) -> dict[str, Any]:
         """Path C: 交互式视觉检查. 让 agent 主动调用视觉工具检查上一轮结果.
@@ -233,9 +418,8 @@ class VisualInspect:
         visual_ctx = getattr(self, "_last_visual_context", "")
         # _visual_base64 是 selfcheck 路径设的; 生产路径由 ToolAdapter 把工具
         # 产出的图表 base64 存到 _last_visual_base64, 这里 fallback 读取.
-        visual_base64 = (
-            getattr(self, "_visual_base64", "")
-            or getattr(self, "_last_visual_base64", "")
+        visual_base64 = getattr(self, "_visual_base64", "") or getattr(
+            self, "_last_visual_base64", ""
         )
         return visual_ctx, visual_base64
 
@@ -288,8 +472,11 @@ class VisualInspect:
         # 如果有 visual_base64, 调用 image_analysis_tool 做真正的区域分析
         if visual_base64:
             await self._zoom_analyze_region(
-                description, visual_base64, (x1, y1, x2, y2),
-                consistency_check, action_result,
+                description,
+                visual_base64,
+                (x1, y1, x2, y2),
+                consistency_check,
+                action_result,
             )
         return action_result
 
@@ -319,9 +506,7 @@ class VisualInspect:
             buf = io.BytesIO()
             cropped.save(buf, format="PNG")
             crop1_bytes = buf.getvalue()
-            action_result["cropped_image"] = (
-                b64.b64encode(crop1_bytes).decode()[:10000]
-            )
+            action_result["cropped_image"] = b64.b64encode(crop1_bytes).decode()[:10000]
             action_result["crop_size"] = [px2 - px1, py2 - py1]
 
             if consistency_check:
@@ -434,8 +619,6 @@ class VisualInspect:
         except Exception:  # 防御: 视觉增强失败跳过
             logger.debug("visual enrich skipped", exc_info=True)
 
-
-
     def _measure_nearest_primitive(
         self, x: int, y: int, visual_ctx: str
     ) -> dict[str, Any]:
@@ -452,41 +635,10 @@ class VisualInspect:
 
         返回最近点的坐标 + 数值 + 上下文. 无原语返回空 dict.
         """
-        import re
-
         if not visual_ctx:
             return {}
 
-        primitives: list[dict[str, Any]] = []
-
-        # 变体 1-3: <point>[x,y]</point>(value) / =value / =value%
-        for m in re.finditer(
-            r"<point>\[(\d+),(\d+)\]</point>(?:\(([\d.\-eE]+)\)|=([\d.\-eE]+%?)|[\s]+([\d.\-eE]+))",
-            visual_ctx,
-        ):
-            px, py = int(m.group(1)), int(m.group(2))
-            val = m.group(3) or m.group(4) or m.group(5)
-            val_clean = val.rstrip("%") if val else None
-            primitives.append({
-                "coordinate": [px, py],
-                "value": float(val_clean) if val_clean else None,
-                "raw_value": val,
-            })
-
-        # 变体 5: key=<point>[y]</point>=value (单坐标)
-        for m in re.finditer(
-            r"(\w+)=<point>\[(\d+)\]</point>=([\d.\-eE]+%?)",
-            visual_ctx,
-        ):
-            key = m.group(1)
-            py = int(m.group(2))
-            val = m.group(3).rstrip("%")
-            primitives.append({
-                "coordinate": [0, py],  # 单坐标 x=0
-                "value": float(val) if val else None,
-                "raw_value": m.group(3),
-                "label": key,
-            })
+        primitives = _parse_point_primitives(visual_ctx)
 
         if not primitives:
             return {}
@@ -499,17 +651,16 @@ class VisualInspect:
             d = (px - x) ** 2 + (py - y) ** 2
             if d < best_dist:
                 best_dist = d
-                best = {**p, "distance": int(best_dist ** 0.5)}
+                best = {**p, "distance": int(best_dist**0.5)}
 
         if best is None:
             return {}
 
         # 找上下文行 (含该 point 的行)
         coord_str = f"<point>[{best['coordinate'][0]},{best['coordinate'][1]}]</point>"
-        for line in visual_ctx.split("\n"):
-            if coord_str in line:
-                best["context"] = line.strip()[:200]
-                break
+        context = _nearest_context_line(visual_ctx, coord_str)
+        if context is not None:
+            best["context"] = context
         return best
 
     async def _annotate_visual_features(
@@ -528,28 +679,9 @@ class VisualInspect:
         tool_output: dict[str, Any] | None = None
         # 有图片 → 调 image_analysis_tool 做真正结构标注
         if visual_base64:
-            try:
-                import base64 as b64
-                import io as _io
-
-                from PIL import Image
-
-                img_data = b64.b64decode(visual_base64)
-                img = Image.open(_io.BytesIO(img_data))
-                buf = _io.BytesIO()
-                img.save(buf, format="PNG")
-                scene = self._pick_image_action(description)
-                # 视觉验证闭环: 整图送 image_analysis_tool 做结构化标注.
-                res = await self._call_image_analysis_tool(
-                    buf.getvalue(), scene, {"task_description": description}
-                )
-                if res:
-                    tool_output = res
-                    features.append(f"{scene}: tool analysis done")
-                else:
-                    features.append(f"{scene}: tool returned no result")
-            except Exception as e:
-                features.append(f"tool_annotation_failed: {e}")
+            features, tool_output = await _image_tool_annotation(
+                self, description, visual_base64
+            )
         # 文本特征提取 (B2 增强: 段落结构 + 趋势 + 异常聚类)
         if visual_ctx:
             structured = self._extract_text_visual_features(visual_ctx)
@@ -560,7 +692,9 @@ class VisualInspect:
                     tool_output = {"text_analysis": structured["summary"]}
                 else:
                     tool_output["text_analysis"] = structured["summary"]
-        note = "Annotated " + ", ".join(features[:5]) if features else "No features found"
+        note = (
+            "Annotated " + ", ".join(features[:5]) if features else "No features found"
+        )
         return {"note": note, "features": features, "tool_output": tool_output}
 
     def _extract_text_visual_features(self, visual_ctx: str) -> dict[str, Any]:
@@ -580,60 +714,19 @@ class VisualInspect:
             line = line.strip()
             if not line:
                 continue
-            # section 标题: [section_name] ...
-            sec_match = re.match(r"\[(\w+)\]", line)
-            if sec_match:
-                sec_name = sec_match.group(1)
-                sec: dict[str, Any] = {"name": sec_name, "raw": line[:200]}
-
-                # trend
-                trend_m = re.search(r"trend=(\w+)", line)
-                if trend_m:
-                    sec["trend"] = trend_m.group(1)
-                    features.append(f"{sec_name}.trend={trend_m.group(1)}")
-
-                # peak / min
-                peak_m = re.search(r"peak=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", line)
-                if peak_m:
-                    sec["peak"] = float(peak_m.group(1))
-                min_m = re.search(r"min=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", line)
-                if min_m:
-                    sec["min"] = float(min_m.group(1))
-
-                # mean / std
-                mean_m = re.search(r"mean=([\d.\-eE]+)", line)
-                if mean_m:
-                    sec["mean"] = float(mean_m.group(1))
-                std_m = re.search(r"std=([\d.\-eE]+)", line)
-                if std_m:
-                    sec["std"] = float(std_m.group(1))
-
-                # anomalies (可能多个, 用逗号分隔)
-                anom_m = re.search(r"anomalies=([^,\n]+(?:,\s*[^,\n]+)*)", line)
-                if anom_m and anom_m.group(1).strip() != "none":
-                    anom_str = anom_m.group(1)
-                    anom_count = anom_str.count("<point>")
-                    sec["anomaly_count"] = anom_count
-                    if anom_count > 0:
-                        features.append(f"{sec_name}.anomalies={anom_count}")
-
-                sections.append(sec)
-                # summary 行
-                parts = [f"{sec_name}"]
-                if "trend" in sec:
-                    parts.append(f"trend={sec['trend']}")
-                if "peak" in sec and "min" in sec:
-                    parts.append(f"range=[{sec['min']:.4f}, {sec['peak']:.4f}]")
-                if "anomaly_count" in sec and sec["anomaly_count"] > 0:
-                    parts.append(f"{sec['anomaly_count']} anomalies")
-                summary_parts.append(", ".join(parts))
+            parsed = _parse_visual_section_line(line)
+            if parsed is None:
+                continue
+            sec, sec_features = parsed
+            features.extend(sec_features)
+            sections.append(sec)
+            # summary 行
+            summary_parts.append(_visual_section_summary(sec))
 
         summary = "; ".join(summary_parts) if summary_parts else ""
         return {"features": features, "summary": summary, "sections": sections}
 
-    def _compare_visual_data(
-        self, description: str, visual_ctx: str
-    ) -> dict[str, Any]:
+    def _compare_visual_data(self, description: str, visual_ctx: str) -> dict[str, Any]:
         """v8: 比较两组数据. 用 extract_comparative_primitives 做差分.
 
         ponytail: visual_hook.extract_comparative_primitives 已有, 直接复用.
@@ -644,28 +737,14 @@ class VisualInspect:
         if not visual_ctx:
             return {"note": "No visual context to compare", "diff": {}}
         # 文本级差分: 找 visual_ctx 里的关键指标, 算数量级
-        import re
-        peaks = re.findall(r"peak=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", visual_ctx)
-        mins = re.findall(r"min=<point>\[\d+,\d+\]</point>\(([\d.\-eE]+)\)", visual_ctx)
-        anomalies = re.findall(r"anomalies=([^,\n]+)", visual_ctx)
-        diff: dict[str, Any] = {}
-        if peaks:
-            peak_vals = [float(p) for p in peaks if p]
-            diff["peak_range"] = [min(peak_vals), max(peak_vals)]
-            diff["peak_count"] = len(peak_vals)
-        if mins:
-            min_vals = [float(m) for m in mins if m]
-            diff["min_range"] = [min(min_vals), max(min_vals)]
-        if anomalies:
-            diff["anomaly_count"] = sum(1 for a in anomalies if a.strip() and a.strip() != "none")
+        diff = _compare_visual_diff(visual_ctx)
         # 检查描述里有没有指定比较对象 (e.g. "compare band 3 and band 5")
-        compare_match = re.search(r"compare\s+(\w+\s*\d*)\s+(?:and|with|vs\.?)\s+(\w+\s*\d*)", description, re.IGNORECASE)
-        target = None
-        if compare_match:
-            target = f"{compare_match.group(1).strip()} vs {compare_match.group(2).strip()}"
+        target = _compare_target(description)
         note_parts = []
         if diff:
-            note_parts.append(f"Found {diff.get('peak_count', 0)} peaks, {diff.get('anomaly_count', 0)} anomalies")
+            note_parts.append(
+                f"Found {diff.get('peak_count', 0)} peaks, {diff.get('anomaly_count', 0)} anomalies"
+            )
         if target:
             note_parts.append(f"Requested: {target}")
         if not note_parts:
@@ -676,21 +755,13 @@ class VisualInspect:
 # ── self-check ─────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """A3 selfcheck: histogram correlation + zoom re-ask consistency.
-
-    ponytail: 合成两张灰度图验相关性, 再用 mock engine 跑 zoom 动作验 low_confidence.
-    ceiling: mock engine 只覆盖 zoom 路径, measure/annotate/compare 走 _selfcheck_*
-    升级路径见 acceptance test.
-    """
-    import asyncio
-    import base64 as b64
+def _selfcheck_histogram() -> None:
+    """_histogram_correlation: 相同图 → 1.0, 极端差异图 → <0.8 (验证阈值)."""
     import io as _io
 
     import numpy as np
     from PIL import Image
 
-    # 1. _histogram_correlation: 相同图 → 1.0, 极端差异图 → <0.8 (验证阈值)
     # ponytail: 用渐变 vs 二值图, 直方图分布形状完全不同 → corr 低
     arr_a = np.tile(np.linspace(0, 255, 100, dtype=np.uint8), (100, 1))  # 渐变
     arr_b = np.zeros((100, 100), dtype=np.uint8)
@@ -702,10 +773,20 @@ def _selfcheck() -> None:
     same = _histogram_correlation(buf_a.getvalue(), buf_a.getvalue())
     diff = _histogram_correlation(buf_a.getvalue(), buf_b.getvalue())
     assert same > 0.9, f"相同图相关性应 >0.9, got {same}"
-    assert diff < 0.8, f"渐变 vs 二值图相关性应 <0.8 (验证 low_confidence 阈值), got {diff}"
+    assert diff < 0.8, (
+        f"渐变 vs 二值图相关性应 <0.8 (验证 low_confidence 阈值), got {diff}"
+    )
     print(f"1. histogram_correlation: same={same:.3f}, diff={diff:.3f} OK")
 
-    # 2. zoom + consistency_check=True → 有 consistency_score 字段
+
+def _build_mock_engine() -> VisualInspect:
+    """构造 selfcheck 用 mock engine (上半黑下半白, +5px 跨界时直方图剧变)."""
+    import base64 as b64
+    import io as _io
+
+    import numpy as np
+    from PIL import Image
+
     # 构造一张有明显区域差异的图, 第二次 +5px 偏移后落入不同灰度区
     img_arr = np.full((200, 200), 255, dtype=np.uint8)
     img_arr[0:100, :] = 0  # 上半黑下半白, +5px 跨界时直方图剧变
@@ -719,47 +800,90 @@ def _selfcheck() -> None:
             object.__setattr__(self, "_last_visual_context", "")
             object.__setattr__(self, "_visual_base64", img_b64)
 
-    engine = _MockEngine()
+    return _MockEngine()
+
+
+def _selfcheck_zoom_stable(engine: VisualInspect) -> None:
+    """zoom 同色区: consistency_score 存在, 不触发 low_confidence."""
+    import asyncio
+
+    # 2. zoom + consistency_check=True → 有 consistency_score 字段
     # 选区域 [0,0]-[60,60] (归一化坐标), 落在 200px 图上 → [0,0]-[12,12] 黑色区
     # 第二次 +5px → [5,5]-[17,17] 仍在黑色区, 相关性高 → 不触发 low_confidence
     desc_stable = "zoom into region [0,0]-[60,60]"
-    res_stable = asyncio.run(engine._execute_visual_inspect(
-        desc_stable, {}, consistency_check=True))
+    res_stable = asyncio.run(
+        engine._execute_visual_inspect(desc_stable, {}, consistency_check=True)
+    )
     assert res_stable["success"], res_stable
     zoom_action = res_stable["actions"][0]
     assert "consistency_score" in zoom_action, zoom_action
-    assert zoom_action.get("low_confidence") is not True, \
+    assert zoom_action.get("low_confidence") is not True, (
         f"同色区不应标 low_confidence: {zoom_action}"
+    )
     print(f"2a. zoom stable region: corr={zoom_action['consistency_score']:.3f} OK")
+
+
+def _selfcheck_zoom_unstable(engine: VisualInspect) -> None:
+    """zoom 跨黑白边界: 相关性 <0.8 时必须标 low_confidence."""
+    import asyncio
 
     # 选区域 [490,490]-[550,550] → 落在 [98,98]-[110,110], 跨黑白边界
     # +5px → [103,103]-[115,115], 偏移后白色比例增加 → 直方图差异大
     desc_unstable = "zoom into region [490,490]-[550,550]"
-    res_unstable = asyncio.run(engine._execute_visual_inspect(
-        desc_unstable, {}, consistency_check=True))
+    res_unstable = asyncio.run(
+        engine._execute_visual_inspect(desc_unstable, {}, consistency_check=True)
+    )
     zoom_action2 = res_unstable["actions"][0]
     assert "consistency_score" in zoom_action2, zoom_action2
     # 跨界偏移导致相关性低
     if zoom_action2.get("consistency_score", 1.0) < 0.8:
         assert zoom_action2.get("low_confidence") is True, zoom_action2
-        print(f"2b. zoom boundary region: corr={zoom_action2['consistency_score']:.3f}, "
-              f"low_confidence=True OK")
+        print(
+            f"2b. zoom boundary region: corr={zoom_action2['consistency_score']:.3f}, "
+            f"low_confidence=True OK"
+        )
     else:
         # 偏移太小未触发, 接受但提示
-        print(f"2b. zoom boundary region: corr={zoom_action2['consistency_score']:.3f} "
-              f"(未触发 low_confidence, 偏移量太小可接受)")
+        print(
+            f"2b. zoom boundary region: corr={zoom_action2['consistency_score']:.3f} "
+            f"(未触发 low_confidence, 偏移量太小可接受)"
+        )
+
+
+def _selfcheck_zoom(engine: VisualInspect) -> None:
+    """zoom + consistency_check=True/False 三路一致性断言."""
+    import asyncio
+
+    _selfcheck_zoom_stable(engine)
+    _selfcheck_zoom_unstable(engine)
 
     # 3. consistency_check=False → 无 consistency_score 字段
-    res_no_check = asyncio.run(engine._execute_visual_inspect(
-        "zoom into region [100,100]-[200,200]", {}, consistency_check=False))
-    assert "consistency_score" not in res_no_check["actions"][0], \
+    res_no_check = asyncio.run(
+        engine._execute_visual_inspect(
+            "zoom into region [100,100]-[200,200]", {}, consistency_check=False
+        )
+    )
+    assert "consistency_score" not in res_no_check["actions"][0], (
         "consistency_check=False 时不应有 consistency_score"
+    )
     print("3. consistency_check=False → no consistency_score OK")
+
+
+def _selfcheck() -> None:
+    """A3 selfcheck: histogram correlation + zoom re-ask consistency.
+
+    ponytail: 合成两张灰度图验相关性, 再用 mock engine 跑 zoom 动作验 low_confidence.
+    ceiling: mock engine 只覆盖 zoom 路径, measure/annotate/compare 走 _selfcheck_*
+    升级路径见 acceptance test.
+    """
+    # 1. _histogram_correlation: 相同图 → 1.0, 极端差异图 → <0.8 (验证阈值)
+    _selfcheck_histogram()
+
+    engine = _build_mock_engine()
+    _selfcheck_zoom(engine)
 
     print("visual_inspect A3 selfcheck OK")
 
 
 if __name__ == "__main__":
     _selfcheck()
-
-

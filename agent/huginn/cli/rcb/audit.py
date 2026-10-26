@@ -38,7 +38,7 @@ def _rcb_drift_check(evals_history: list) -> tuple[bool, str]:
         if ev_low:
             return True, (
                 f"RCB drift: 2 consecutive unsure/false with low evidence "
-                f"(iter {len(evals_history)-1}, {len(evals_history)})"
+                f"(iter {len(evals_history) - 1}, {len(evals_history)})"
             )
     return False, ""
 
@@ -177,6 +177,132 @@ def _count_failed_attempts(ws: Path, evals_history: list, component: str) -> int
     return n
 
 
+def _substitution_report(
+    components: list,
+    missing: list,
+    subs: list,
+    variant_blocked: list,
+    remediated: list,
+    unresolved: list,
+    log: list,
+) -> dict:
+    """A3 audit 报告 dict (键序即契约)."""
+    return {
+        "exact_components": components,
+        "missing": missing,
+        "substitutions": subs,
+        "variant_blocked": variant_blocked,
+        "remediated": remediated,
+        "unresolved": unresolved,
+        "raw_log": log,
+    }
+
+
+def _classify_missing_components(
+    ws: Path,
+    traces: dict,
+    sub_names: set,
+    evals_history: list,
+    variant_min_failures: int,
+) -> tuple[list, list]:
+    """按实现痕迹/SUBSTITUTE 声明/失败次数把缺失组件分成 missing 与 variant_blocked."""
+    missing = []
+    variant_blocked = []
+    for name, found in traces.items():
+        if found:
+            continue
+        # 缺失: 已有 SUBSTITUTE header 记录则视为合规降级
+        if name.lower() in sub_names:
+            continue
+        # 无 SUBSTITUTE — 检查失败次数是否达 variant 阈值
+        n_fail = _count_failed_attempts(ws, evals_history, name)
+        if n_fail >= variant_min_failures:
+            # 达到降级阈值, 但仍未声明 SUBSTITUTE — 提示补声明
+            variant_blocked.append(
+                {
+                    "component": name,
+                    "failures": n_fail,
+                    "issue": "达到降级阈值但未声明 METHOD SUBSTITUTE",
+                }
+            )
+            continue
+        # 未尝试就缺失 — silent substitution, 必须回退执行
+        missing.append({"component": name, "failures": n_fail})
+    return missing, variant_blocked
+
+
+def _build_substitution_remediate_prompt(unresolved: list, missing: list) -> str:
+    """构造 A3 一次性回退执行的强提示."""
+    prompt = (
+        "STEP-2 SUBSTITUTION AUDIT FAILED — 以下 [EXACT] 组件既无实现痕迹, "
+        "也未在 report/report.md 顶部声明 METHOD SUBSTITUTE:\n"
+    )
+    for item in unresolved:
+        tag = "MISSING" if item in missing else "VARIANT_BLOCKED"
+        prompt += f"  [{tag}] {item['component']} (失败 {item.get('failures', 0)} 次)\n"
+    prompt += (
+        "\n这是结构性拦截 — 不允许 silent substitution.\n"
+        "对每个组件, 必须 EITHER:\n"
+        "  (a) 用 code_tool / bash_tool 实际实现并跑通 (产物文件里留下痕迹); OR\n"
+        "  (b) 在 report/report.md 顶部添加 header 行:\n"
+        "      'METHOD SUBSTITUTE: <组件名> replaced <替代方案> because <原因 + ≥2 次失败的报错摘要>'\n"
+        "未尝试 (失败 0 次) 的组件不允许标 VARIANT — 先实际尝试.\n"
+        "现在补做或补声明. 这是最后一次回退执行机会."
+    )
+    return prompt
+
+
+def _rescan_substitutions(
+    ws: Path, unresolved: list, remediated: list
+) -> tuple[list, list]:
+    """回退执行后重扫: 补齐的记 remediated, 仍缺的留在 unresolved."""
+    traces = _scan_implementation_traces(ws, [it["component"] for it in unresolved])
+    report_md = ws / "report" / "report.md"
+    subs = _parse_substitute_headers(report_md)
+    sub_names = {s["replaced"].lower() for s in subs}
+    still = []
+    for item in unresolved:
+        name = item["component"]
+        if traces.get(name, False) or name.lower() in sub_names:
+            remediated.append(name)
+        else:
+            still.append(item)
+    return subs, still
+
+
+async def _remediate_substitutions(
+    ws: Path,
+    missing: list,
+    variant_blocked: list,
+    subs: list,
+    stream_chat_fn,
+    max_remediate: int,
+    log: list,
+) -> tuple[list, list, list]:
+    """回退执行 (一次性强提示) 后重扫; 返回 (subs, remediated, unresolved)."""
+    # 回退执行: 一次性注入强提示. ponytail: max_remediate=1 防无限循环.
+    remediated = []
+    unresolved = list(missing) + list(variant_blocked)
+    for _ in range(max_remediate):
+        if not unresolved:
+            break
+        prompt = _build_substitution_remediate_prompt(unresolved, missing)
+        log.append(f"remediate attempt: {len(unresolved)} items")
+        try:
+            await stream_chat_fn(prompt, "step2_audit_remediate")
+        except Exception as e:
+            log.append(f"remediate chat failed: {e}")
+            break
+        # 重扫
+        subs, unresolved = _rescan_substitutions(ws, unresolved, remediated)
+        log.append(
+            f"after remediate: remediated={len(remediated)} unresolved={len(unresolved)}"
+        )
+        if not unresolved:
+            break
+    return subs, remediated, unresolved
+
+
 async def _step2_substitution_audit(
     ws: Path,
     checklist: str,
@@ -202,116 +328,30 @@ async def _step2_substitution_audit(
     components = _extract_exact_components(checklist)
     log.append(f"extracted {len(components)} [EXACT] components")
     if not components:
-        return {
-            "exact_components": [],
-            "missing": [],
-            "substitutions": [],
-            "variant_blocked": [],
-            "remediated": [],
-            "unresolved": [],
-            "raw_log": log,
-        }
+        return _substitution_report([], [], [], [], [], [], log)
 
     traces = _scan_implementation_traces(ws, components)
     report_md = ws / "report" / "report.md"
     subs = _parse_substitute_headers(report_md)
     sub_names = {s["replaced"].lower() for s in subs}
 
-    missing = []
-    variant_blocked = []
-    for name, found in traces.items():
-        if found:
-            continue
-        # 缺失: 已有 SUBSTITUTE header 记录则视为合规降级
-        if name.lower() in sub_names:
-            continue
-        # 无 SUBSTITUTE — 检查失败次数是否达 variant 阈值
-        n_fail = _count_failed_attempts(ws, evals_history, name)
-        if n_fail >= variant_min_failures:
-            # 达到降级阈值, 但仍未声明 SUBSTITUTE — 提示补声明
-            variant_blocked.append(
-                {
-                    "component": name,
-                    "failures": n_fail,
-                    "issue": "达到降级阈值但未声明 METHOD SUBSTITUTE",
-                }
-            )
-            continue
-        # 未尝试就缺失 — silent substitution, 必须回退执行
-        missing.append({"component": name, "failures": n_fail})
+    missing, variant_blocked = _classify_missing_components(
+        ws, traces, sub_names, evals_history, variant_min_failures
+    )
 
     log.append(
         f"missing={len(missing)} variant_blocked={len(variant_blocked)} subs={len(subs)}"
     )
     if not missing and not variant_blocked:
-        return {
-            "exact_components": components,
-            "missing": [],
-            "substitutions": subs,
-            "variant_blocked": [],
-            "remediated": [],
-            "unresolved": [],
-            "raw_log": log,
-        }
+        return _substitution_report(components, [], subs, [], [], [], log)
 
     # 回退执行: 一次性注入强提示. ponytail: max_remediate=1 防无限循环.
-    remediated = []
-    unresolved = list(missing) + list(variant_blocked)
-    for _ in range(max_remediate):
-        if not unresolved:
-            break
-        prompt = (
-            "STEP-2 SUBSTITUTION AUDIT FAILED — 以下 [EXACT] 组件既无实现痕迹, "
-            "也未在 report/report.md 顶部声明 METHOD SUBSTITUTE:\n"
-        )
-        for item in unresolved:
-            tag = "MISSING" if item in missing else "VARIANT_BLOCKED"
-            prompt += (
-                f"  [{tag}] {item['component']} (失败 {item.get('failures', 0)} 次)\n"
-            )
-        prompt += (
-            "\n这是结构性拦截 — 不允许 silent substitution.\n"
-            "对每个组件, 必须 EITHER:\n"
-            "  (a) 用 code_tool / bash_tool 实际实现并跑通 (产物文件里留下痕迹); OR\n"
-            "  (b) 在 report/report.md 顶部添加 header 行:\n"
-            "      'METHOD SUBSTITUTE: <组件名> replaced <替代方案> because <原因 + ≥2 次失败的报错摘要>'\n"
-            "未尝试 (失败 0 次) 的组件不允许标 VARIANT — 先实际尝试.\n"
-            "现在补做或补声明. 这是最后一次回退执行机会."
-        )
-        log.append(f"remediate attempt: {len(unresolved)} items")
-        try:
-            await stream_chat_fn(prompt, "step2_audit_remediate")
-        except Exception as e:
-            log.append(f"remediate chat failed: {e}")
-            break
-        # 重扫
-        traces = _scan_implementation_traces(ws, [it["component"] for it in unresolved])
-        report_md = ws / "report" / "report.md"
-        subs = _parse_substitute_headers(report_md)
-        sub_names = {s["replaced"].lower() for s in subs}
-        still = []
-        for item in unresolved:
-            name = item["component"]
-            if traces.get(name, False) or name.lower() in sub_names:
-                remediated.append(name)
-            else:
-                still.append(item)
-        unresolved = still
-        log.append(
-            f"after remediate: remediated={len(remediated)} unresolved={len(unresolved)}"
-        )
-        if not unresolved:
-            break
-
-    return {
-        "exact_components": components,
-        "missing": missing,
-        "substitutions": subs,
-        "variant_blocked": variant_blocked,
-        "remediated": remediated,
-        "unresolved": unresolved,
-        "raw_log": log,
-    }
+    subs, remediated, unresolved = await _remediate_substitutions(
+        ws, missing, variant_blocked, subs, stream_chat_fn, max_remediate, log
+    )
+    return _substitution_report(
+        components, missing, subs, variant_blocked, remediated, unresolved, log
+    )
 
 
 # A2: 产物级门控 — 路线图 P1-A2 / 12 报告 P1-1.
@@ -369,34 +409,19 @@ _B4_NUMERIC_RE = re.compile(r"\b\d+\.?\d*(?:[eE][-+]?\d+)?\b")
 _B4_MARKERS = ("[EXECUTED]", "[EXPECTED]", "[NOT EXECUTED]")
 
 
-def _lint_report_markers(report_path: Path) -> dict:
-    """B4: 扫描 report.md, 统计数值声明的标记情况.
+def _empty_marker_report() -> dict:
+    """report.md 缺失或读取失败时的零值报告."""
+    return {
+        "total_numbers": 0,
+        "tagged": 0,
+        "untagged": 0,
+        "untagged_samples": [],
+        "marker_counts": {},
+    }
 
-    返回 {total_numbers, tagged, untagged, untagged_samples, marker_counts}.
-    ponytail: 句子级扫描 — 数值所在句子含 marker 即算 tagged.
-      ceiling: 不区分 marker 是否真实 (agent 可能瞎标), 只检测存在性.
-      升级路径: 跟 outputs/ 文件交叉验证 [EXECUTED] 数值是否真有产物支撑.
-    """
-    if not report_path.exists():
-        return {
-            "total_numbers": 0,
-            "tagged": 0,
-            "untagged": 0,
-            "untagged_samples": [],
-            "marker_counts": {},
-        }
-    try:
-        text = report_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return {
-            "total_numbers": 0,
-            "tagged": 0,
-            "untagged": 0,
-            "untagged_samples": [],
-            "marker_counts": {},
-        }
-    # 按行扫描 (句子级太粗, 行级够用)
-    lines = text.splitlines()
+
+def _scan_marker_lines(lines: list) -> tuple[int, int, list, dict]:
+    """逐行统计数值标记: 返回 (total, tagged, untagged_samples, marker_counts)."""
     total = 0
     tagged = 0
     untagged_samples: list[str] = []
@@ -429,12 +454,59 @@ def _lint_report_markers(report_path: Path) -> dict:
         else:
             if len(untagged_samples) < 5:
                 untagged_samples.append(stripped[:120])
+    return total, tagged, untagged_samples, marker_counts
+
+
+def _lint_report_markers(report_path: Path) -> dict:
+    """B4: 扫描 report.md, 统计数值声明的标记情况.
+
+    返回 {total_numbers, tagged, untagged, untagged_samples, marker_counts}.
+    ponytail: 句子级扫描 — 数值所在句子含 marker 即算 tagged.
+      ceiling: 不区分 marker 是否真实 (agent 可能瞎标), 只检测存在性.
+      升级路径: 跟 outputs/ 文件交叉验证 [EXECUTED] 数值是否真有产物支撑.
+    """
+    if not report_path.exists():
+        return _empty_marker_report()
+    try:
+        text = report_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return _empty_marker_report()
+    # 按行扫描 (句子级太粗, 行级够用)
+    total, tagged, untagged_samples, marker_counts = _scan_marker_lines(
+        text.splitlines()
+    )
     return {
         "total_numbers": total,
         "tagged": tagged,
         "untagged": total - tagged,
         "untagged_samples": untagged_samples,
         "marker_counts": marker_counts,
+    }
+
+
+def _outputs_gate_prompt() -> str:
+    """产物级 blocker remediate task 的强提示."""
+    return (
+        "STEP-2 OUTPUTS GATE FAILED — outputs/ 目录无真实 metrics 文件.\n"
+        "禁止虚写 Results / Discussion — 没有产物支撑的数值声明将被 Step 3 降权.\n\n"
+        "现在必须 EITHER:\n"
+        "  (a) 用 code_tool / bash_tool 实际跑一次实验, 把结果写入 outputs/*.json "
+        '(至少包含一个数值字段, e.g. {"loss": 0.5, "rmse": 0.1}); OR\n'
+        "  (b) 若任务确实无法执行 (e.g. 数据缺失/模型太大), 在 report/report.md 顶部添加:\n"
+        "      'EXECUTION BLOCKER: <原因>'\n"
+        '      并在 outputs/blocker.json 写 {"reason": "...", "attempted": [...]}.\n'
+        "诚实失败 > 沉默虚写. 现在补做或声明 blocker."
+    )
+
+
+def _outputs_gate_report(metrics: list, remediated: bool, log: list) -> dict:
+    """A2 audit 报告 dict (blocker = 仍无真实 metrics)."""
+    return {
+        "has_real_metrics": bool(metrics),
+        "metrics_files": [str(p) for p in metrics],
+        "remediated": remediated,
+        "blocker": not bool(metrics),
+        "raw_log": log,
     }
 
 
@@ -454,29 +526,13 @@ async def _step2_outputs_gate(
     metrics = _scan_real_metrics(ws)
     log.append(f"initial metrics files: {len(metrics)}")
     if metrics:
-        return {
-            "has_real_metrics": True,
-            "metrics_files": [str(p) for p in metrics],
-            "remediated": False,
-            "blocker": False,
-            "raw_log": log,
-        }
+        return _outputs_gate_report(metrics, False, log)
 
     # 触发 blocker remediate — ResearchClaw 风格的 remediation task.
     remediated = False
     for _ in range(max_remediate):
         log.append("triggering outputs remediate (blocker task)")
-        prompt = (
-            "STEP-2 OUTPUTS GATE FAILED — outputs/ 目录无真实 metrics 文件.\n"
-            "禁止虚写 Results / Discussion — 没有产物支撑的数值声明将被 Step 3 降权.\n\n"
-            "现在必须 EITHER:\n"
-            "  (a) 用 code_tool / bash_tool 实际跑一次实验, 把结果写入 outputs/*.json "
-            '(至少包含一个数值字段, e.g. {"loss": 0.5, "rmse": 0.1}); OR\n'
-            "  (b) 若任务确实无法执行 (e.g. 数据缺失/模型太大), 在 report/report.md 顶部添加:\n"
-            "      'EXECUTION BLOCKER: <原因>'\n"
-            '      并在 outputs/blocker.json 写 {"reason": "...", "attempted": [...]}.\n'
-            "诚实失败 > 沉默虚写. 现在补做或声明 blocker."
-        )
+        prompt = _outputs_gate_prompt()
         try:
             await stream_chat_fn(prompt, "step2_outputs_gate_remediate")
         except Exception as e:
@@ -488,17 +544,11 @@ async def _step2_outputs_gate(
             remediated = True
             break
 
-    blocker = not bool(metrics)
-    return {
-        "has_real_metrics": bool(metrics),
-        "metrics_files": [str(p) for p in metrics],
-        "remediated": remediated,
-        "blocker": blocker,
-        "raw_log": log,
-    }
+    return _outputs_gate_report(metrics, remediated, log)
 
 
 # --- 主循环决策函数 (从 rcb_runner.py 剥离) -----------------------------------
+
 
 def _should_retry_execute(
     verdict: str,
@@ -530,9 +580,13 @@ def _derive_gap_type(object_verdict: dict) -> str:
     """
     if not object_verdict:
         return "none"
-    if object_verdict.get("recomputed_red_flags") or object_verdict.get("implausible_metrics"):
+    if object_verdict.get("recomputed_red_flags") or object_verdict.get(
+        "implausible_metrics"
+    ):
         return "numeric_recompute"
-    if object_verdict.get("silent_substitutions") or object_verdict.get("missing_components"):
+    if object_verdict.get("silent_substitutions") or object_verdict.get(
+        "missing_components"
+    ):
         return "exact_component_missing"
     if object_verdict.get("overall_verdict") == "fix_needed":
         return "text_description"
@@ -558,13 +612,17 @@ def _infer_beta_1_simple(ws: Path) -> int:
 
 
 def _write_directive_rejection(
-    ws: Path, gap_type: str, verdict: str, retry_count: int,
+    ws: Path,
+    gap_type: str,
+    verdict: str,
+    retry_count: int,
 ) -> None:
     """回退上限触发 — 写 directive_rejections.jsonl.
 
     spec §"回退次数上限": retry 2 次仍 fix_needed 时强制 finalize 并留痕.
     """
     import time as _t
+
     _rej_path = ws / HUGINN_DIR_NAME / "directive_rejections.jsonl"
     _rej_path.parent.mkdir(parents=True, exist_ok=True)
     _entry = {
@@ -591,8 +649,9 @@ _METRIC_RE = re.compile(
 def _recompute_report_metrics(report_text: str, ws: Path) -> list[dict]:
     """Compare report claimed metrics vs outputs/ actual, return >10% deviation flags."""
     flags: list[dict] = []
-    claimed = {m.group(1).upper(): float(m.group(2))
-               for m in _METRIC_RE.finditer(report_text)}
+    claimed = {
+        m.group(1).upper(): float(m.group(2)) for m in _METRIC_RE.finditer(report_text)
+    }
     if not claimed:
         return flags
     outputs_dir = ws / "outputs"
@@ -618,8 +677,12 @@ def _recompute_report_metrics(report_text: str, ws: Path) -> list[dict]:
             continue
         dev = abs(claim_val - ref) / abs(ref)
         if dev > 0.10:
-            flags.append({
-                "metric": k, "claimed": claim_val, "actual": ref,
-                "deviation_pct": round(dev * 100, 1),
-            })
+            flags.append(
+                {
+                    "metric": k,
+                    "claimed": claim_val,
+                    "actual": ref,
+                    "deviation_pct": round(dev * 100, 1),
+                }
+            )
     return flags

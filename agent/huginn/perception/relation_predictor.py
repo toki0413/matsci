@@ -51,7 +51,10 @@ _CAPTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 _IMPLICIT_PATTERNS: list[tuple[re.Pattern[str], str | None]] = [
     # English
     (re.compile(r"as\s+shown\s+(?:above|below|in\s+the)", re.IGNORECASE), None),
-    (re.compile(r"as\s+(?:depicted|illustrated|mentioned|discussed)", re.IGNORECASE), None),
+    (
+        re.compile(r"as\s+(?:depicted|illustrated|mentioned|discussed)", re.IGNORECASE),
+        None,
+    ),
     (re.compile(r"the\s+results\s+indicate", re.IGNORECASE), None),
     (re.compile(r"see\s+(?:above|below)", re.IGNORECASE), None),
     # Chinese -- the phrase usually pins down figure vs. table
@@ -137,59 +140,126 @@ class RelationPredictor:
                 groups[(m.mention_type, m.mention_number)].append(m)
 
         for (kind, number), group_mentions in groups.items():
-            candidates = caption_index.get((kind, number), [])
-
-            if not candidates:
-                # No caption with this number -- try positional fallback.
-                # Fragile by design, only kicks in when caption parsing
-                # didn't surface a match.
-                target = self._positional_lookup(graph, kind, number)
-                if target is not None:
-                    for m in group_mentions:
-                        edges.append(self._make_edge(
-                            m, target, confidence=0.7,
-                            match_type="explicit_positional"))
-                continue
-
-            if len(group_mentions) == 1 and len(candidates) == 1:
-                # Clean 1:1 -- highest confidence.
-                m = group_mentions[0]
-                cap, target = candidates[0]
-                edges.append(self._make_edge(
-                    m, target, confidence=1.0,
-                    match_type="explicit_unique", caption_id=cap.element_id))
-
-            elif len(group_mentions) == 1:
-                # One mention, several candidates -- pick the closest.
-                m = group_mentions[0]
-                cap, target = max(
-                    candidates,
-                    key=lambda ct: self._spatial_score(m, ct[1]),
+            edges.extend(
+                self._resolve_mention_group(
+                    graph, kind, number, group_mentions, caption_index
                 )
-                edges.append(self._make_edge(
-                    m, target, confidence=0.9,
-                    match_type="explicit_disambiguated", caption_id=cap.element_id))
-
-            elif len(candidates) == 1:
-                # Several mentions, one candidate -- they all point at it.
-                cap, target = candidates[0]
-                for m in group_mentions:
-                    edges.append(self._make_edge(
-                        m, target, confidence=0.9,
-                        match_type="explicit_shared", caption_id=cap.element_id))
-
-            else:
-                # Many-to-many -- let the Hungarian algorithm sort it out.
-                targets = [t for _, t in candidates]
-                matches = self._bipartite_match(group_mentions, targets, graph)
-                cap_by_target = {t.element_id: c for c, t in candidates}
-                for m, target in matches:
-                    cap_id = cap_by_target.get(target.element_id)
-                    edges.append(self._make_edge(
-                        m, target, confidence=0.85,
-                        match_type="explicit_bipartite", caption_id=cap_id))
+            )
 
         return edges
+
+    def _resolve_mention_group(
+        self,
+        graph: DocumentGraph,
+        kind: str,
+        number: int,
+        group_mentions: list[DocumentElement],
+        caption_index: dict[
+            tuple[str, int], list[tuple[DocumentElement, DocumentElement]]
+        ],
+    ) -> list[GraphEdge]:
+        candidates = caption_index.get((kind, number), [])
+
+        if not candidates:
+            # No caption with this number -- try positional fallback.
+            # Fragile by design, only kicks in when caption parsing
+            # didn't surface a match.
+            return self._positional_mention_edges(graph, kind, number, group_mentions)
+
+        if len(group_mentions) == 1:
+            return self._single_mention_group_edges(group_mentions, candidates)
+
+        if len(candidates) == 1:
+            # Several mentions, one candidate -- they all point at it.
+            return self._shared_candidate_mention_edges(group_mentions, candidates)
+
+        # Many-to-many -- let the Hungarian algorithm sort it out.
+        return self._bipartite_mention_edges(graph, group_mentions, candidates)
+
+    def _positional_mention_edges(
+        self,
+        graph: DocumentGraph,
+        kind: str,
+        number: int,
+        group_mentions: list[DocumentElement],
+    ) -> list[GraphEdge]:
+        target = self._positional_lookup(graph, kind, number)
+        if target is None:
+            return []
+        return [
+            self._make_edge(m, target, confidence=0.7, match_type="explicit_positional")
+            for m in group_mentions
+        ]
+
+    def _single_mention_group_edges(
+        self,
+        group_mentions: list[DocumentElement],
+        candidates: list[tuple[DocumentElement, DocumentElement]],
+    ) -> list[GraphEdge]:
+        m = group_mentions[0]
+        if len(candidates) == 1:
+            # Clean 1:1 -- highest confidence.
+            cap, target = candidates[0]
+            return [
+                self._make_edge(
+                    m,
+                    target,
+                    confidence=1.0,
+                    match_type="explicit_unique",
+                    caption_id=cap.element_id,
+                )
+            ]
+        # One mention, several candidates -- pick the closest.
+        cap, target = max(
+            candidates,
+            key=lambda ct: self._spatial_score(m, ct[1]),
+        )
+        return [
+            self._make_edge(
+                m,
+                target,
+                confidence=0.9,
+                match_type="explicit_disambiguated",
+                caption_id=cap.element_id,
+            )
+        ]
+
+    def _shared_candidate_mention_edges(
+        self,
+        group_mentions: list[DocumentElement],
+        candidates: list[tuple[DocumentElement, DocumentElement]],
+    ) -> list[GraphEdge]:
+        cap, target = candidates[0]
+        return [
+            self._make_edge(
+                m,
+                target,
+                confidence=0.9,
+                match_type="explicit_shared",
+                caption_id=cap.element_id,
+            )
+            for m in group_mentions
+        ]
+
+    def _bipartite_mention_edges(
+        self,
+        graph: DocumentGraph,
+        group_mentions: list[DocumentElement],
+        candidates: list[tuple[DocumentElement, DocumentElement]],
+    ) -> list[GraphEdge]:
+        targets = [t for _, t in candidates]
+        matches = self._bipartite_match(group_mentions, targets, graph)
+        cap_by_target = {t.element_id: c for c, t in candidates}
+        return [
+            self._make_edge(
+                m,
+                target,
+                confidence=0.85,
+                match_type="explicit_bipartite",
+                caption_id=cap_by_target.get(target.element_id),
+            )
+            for m, target in matches
+        ]
 
     def _build_caption_index(
         self, graph: DocumentGraph
@@ -200,9 +270,9 @@ class RelationPredictor:
         figure/table. A caption whose text we can't parse is skipped
         silently -- it just won't be a match target.
         """
-        index: dict[
-            tuple[str, int], list[tuple[DocumentElement, DocumentElement]]
-        ] = defaultdict(list)
+        index: dict[tuple[str, int], list[tuple[DocumentElement, DocumentElement]]] = (
+            defaultdict(list)
+        )
         for cap in graph.get_elements(ElementType.CAPTION):
             parsed = self._extract_caption_number(cap.content)
             if parsed is None:
@@ -249,7 +319,8 @@ class RelationPredictor:
             return edges
 
         figures_tables = [
-            e for e in graph.get_elements()
+            e
+            for e in graph.get_elements()
             if e.element_type in (ElementType.FIGURE, ElementType.TABLE)
         ]
         if not figures_tables:
@@ -263,53 +334,69 @@ class RelationPredictor:
                 continue
 
             implied_type, phrase = cue
-
-            # Narrow the pool when the phrase itself says figure vs. table.
-            if implied_type is not None:
-                pool = [
-                    e for e in figures_tables
-                    if _TYPE_LABEL.get(e.element_type) == implied_type
-                ]
-                if not pool:
-                    # Phrase said "图" but there are no figures -- fall
-                    # back to searching everything rather than giving up.
-                    pool = figures_tables
-            else:
-                pool = figures_tables
-
-            target = self._nearest_figure_table(text, pool)
-            if target is None:
-                continue
-
-            confidence = 0.6
-            match_type = "implicit_spatial"
-
-            # LLM gets a chance to override the spatial pick. If it bombs
-            # or returns garbage we keep the geometry-based target.
-            if self.llm is not None:
-                llm_pick = self._llm_resolve(text.content, pool)
-                if llm_pick is not None:
-                    target = llm_pick
-                    confidence = 0.7
-                    match_type = "implicit_llm"
-
-            edges.append(GraphEdge(
-                source=text.element_id,
-                target=target.element_id,
-                edge_type=EdgeType.REFERENCES,
-                confidence=confidence,
-                metadata={
-                    "match_type": match_type,
-                    "phrase": phrase,
-                    "implied_type": implied_type,
-                },
-            ))
+            pool = self._implicit_candidate_pool(figures_tables, implied_type)
+            edge = self._implicit_reference_edge(text, pool, phrase, implied_type)
+            if edge is not None:
+                edges.append(edge)
 
         return edges
 
-    def _detect_implicit_reference(
-        self, text: str
-    ) -> tuple[str | None, str] | None:
+    def _implicit_candidate_pool(
+        self,
+        figures_tables: list[DocumentElement],
+        implied_type: str | None,
+    ) -> list[DocumentElement]:
+        # Narrow the pool when the phrase itself says figure vs. table.
+        if implied_type is not None:
+            pool = [
+                e
+                for e in figures_tables
+                if _TYPE_LABEL.get(e.element_type) == implied_type
+            ]
+            if not pool:
+                # Phrase said "图" but there are no figures -- fall
+                # back to searching everything rather than giving up.
+                pool = figures_tables
+        else:
+            pool = figures_tables
+        return pool
+
+    def _implicit_reference_edge(
+        self,
+        text: DocumentElement,
+        pool: list[DocumentElement],
+        phrase: str,
+        implied_type: str | None,
+    ) -> GraphEdge | None:
+        target = self._nearest_figure_table(text, pool)
+        if target is None:
+            return None
+
+        confidence = 0.6
+        match_type = "implicit_spatial"
+
+        # LLM gets a chance to override the spatial pick. If it bombs
+        # or returns garbage we keep the geometry-based target.
+        if self.llm is not None:
+            llm_pick = self._llm_resolve(text.content, pool)
+            if llm_pick is not None:
+                target = llm_pick
+                confidence = 0.7
+                match_type = "implicit_llm"
+
+        return GraphEdge(
+            source=text.element_id,
+            target=target.element_id,
+            edge_type=EdgeType.REFERENCES,
+            confidence=confidence,
+            metadata={
+                "match_type": match_type,
+                "phrase": phrase,
+                "implied_type": implied_type,
+            },
+        )
+
+    def _detect_implicit_reference(self, text: str) -> tuple[str | None, str] | None:
         """Return (implied_type, matched_phrase) or None.
 
         implied_type is "figure"/"table" when the phrase itself commits,
@@ -427,14 +514,9 @@ class RelationPredictor:
             for j, c in enumerate(candidates):
                 cost[i, j] = 1.0 - self._similarity(m, c)
         row_ind, col_ind = linear_sum_assignment(cost)
-        return [
-            (mentions[r], candidates[c])
-            for r, c in zip(row_ind, col_ind)
-        ]
+        return [(mentions[r], candidates[c]) for r, c in zip(row_ind, col_ind)]
 
-    def _similarity(
-        self, a: DocumentElement, b: DocumentElement
-    ) -> float:
+    def _similarity(self, a: DocumentElement, b: DocumentElement) -> float:
         """Blend embedding cosine with spatial proximity.
 
         At Level 1 (no embeddings) this is just the spatial score.
@@ -457,9 +539,7 @@ class RelationPredictor:
     # Spatial scoring
     # ------------------------------------------------------------------
 
-    def _spatial_score(
-        self, elem1: DocumentElement, elem2: DocumentElement
-    ) -> float:
+    def _spatial_score(self, elem1: DocumentElement, elem2: DocumentElement) -> float:
         """Page proximity + bbox distance, 0..1, higher = closer.
 
         Same page: start at 1.0, lose 0.1 per 100pt of center distance,
@@ -480,9 +560,7 @@ class RelationPredictor:
     # Caption number extraction
     # ------------------------------------------------------------------
 
-    def _extract_caption_number(
-        self, caption_text: str
-    ) -> tuple[str, int] | None:
+    def _extract_caption_number(self, caption_text: str) -> tuple[str, int] | None:
         """Pull (kind, number) out of caption text.
 
         Handles "Figure 3: ...", "Fig. 3 ...", "Table 2 ...",

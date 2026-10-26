@@ -89,40 +89,13 @@ class MyAPIClient:
       except urllib_error.HTTPError as e:
         self.last_request_time = time.monotonic()
         if e.code == 429:
-          # Rate limited — exponential backoff before retry
-          wait = 2**attempt
-          print(
-              f'Rate limited (429), retrying in {wait}s '
-              f'(attempt {attempt + 1}/{retries})...',
-              file=sys.stderr,
-          )
-          if attempt == retries - 1:
-            raise RateLimitError(
-                f'HTTP 429 Too Many Requests from {self.BASE_URL}. '
-                f'The API rate limit ({self.REQUESTS_PER_SECOND} req/s) has '
-                f'been exceeded after {retries} retries.'
-            ) from e
-          time.sleep(wait)
+          self._handle_rate_limit(e, attempt, retries)
           continue
         if e.code >= 500:
-          # Transient server error — exponential backoff
-          wait = 2**attempt
-          print(
-              f'Server error {e.code}, retrying in {wait}s '
-              f'(attempt {attempt + 1}/{retries})...',
-              file=sys.stderr,
-          )
-          if attempt == retries - 1:
-            raise RuntimeError(
-                f'Server error {e.code} from {url} after {retries} retries.'
-            ) from e
-          time.sleep(wait)
+          self._handle_server_error(e, url, attempt, retries)
           continue
         # Non-retriable client error — read the response body for details
-        try:
-          body = e.read().decode('utf-8', errors='replace')[:1000]
-        except OSError:
-          body = e.reason
+        body = self._read_error_body(e)
         raise RuntimeError(f'HTTP {e.code} from {url}: {body}') from e
       except urllib_error.URLError as e:
         if attempt == retries - 1:
@@ -130,6 +103,43 @@ class MyAPIClient:
               f'Failed to connect to {url} after {retries} attempts: {e}'
           ) from e
         time.sleep(2**attempt)
+
+  def _handle_rate_limit(self, e, attempt, retries):
+    """Handles HTTP 429 with exponential backoff before retrying."""
+    wait = 2**attempt
+    print(
+        f'Rate limited (429), retrying in {wait}s '
+        f'(attempt {attempt + 1}/{retries})...',
+        file=sys.stderr,
+    )
+    if attempt == retries - 1:
+      raise RateLimitError(
+          f'HTTP 429 Too Many Requests from {self.BASE_URL}. '
+          f'The API rate limit ({self.REQUESTS_PER_SECOND} req/s) has '
+          f'been exceeded after {retries} retries.'
+      ) from e
+    time.sleep(wait)
+
+  def _handle_server_error(self, e, url, attempt, retries):
+    """Handles transient HTTP 5xx responses with exponential backoff."""
+    wait = 2**attempt
+    print(
+        f'Server error {e.code}, retrying in {wait}s '
+        f'(attempt {attempt + 1}/{retries})...',
+        file=sys.stderr,
+    )
+    if attempt == retries - 1:
+      raise RuntimeError(
+          f'Server error {e.code} from {url} after {retries} retries.'
+      ) from e
+    time.sleep(wait)
+
+  def _read_error_body(self, e):
+    """Reads a short response body from a non-retriable HTTP error."""
+    try:
+      return e.read().decode('utf-8', errors='replace')[:1000]
+    except OSError:
+      return e.reason
 
   def search(self, query, limit=100):
     """Example search method. Replace with your API's search endpoint."""
@@ -157,9 +167,30 @@ def write_output(data, output_file):
 
 
 def main():
+  parser = _build_parser()
+  args = parser.parse_args()
+  client = MyAPIClient()
+
+  if args.command == 'search':
+    data = client.search(args.query, limit=args.limit)
+  elif args.command == 'details':
+    data = client.get_details(args.item_id)
+  else:
+    print(f'Unknown command: {args.command}', file=sys.stderr)
+    sys.exit(1)
+
+  write_output(data, args.output)
+
+
+def _build_parser():
   parser = argparse.ArgumentParser(description='Example API Wrapper Script')
   subparsers = parser.add_subparsers(dest='command', required=True)
+  _add_search_parser(subparsers)
+  _add_details_parser(subparsers)
+  return parser
 
+
+def _add_search_parser(subparsers):
   # --- Subcommand: search ---
   p_search = subparsers.add_parser(
       'search',
@@ -182,6 +213,8 @@ def main():
       help='Output JSON file path',
   )
 
+
+def _add_details_parser(subparsers):
   # --- Subcommand: details ---
   p_details = subparsers.add_parser(
       'details',
@@ -198,19 +231,6 @@ def main():
       required=True,
       help='Output JSON file path',
   )
-
-  args = parser.parse_args()
-  client = MyAPIClient()
-
-  if args.command == 'search':
-    data = client.search(args.query, limit=args.limit)
-  elif args.command == 'details':
-    data = client.get_details(args.item_id)
-  else:
-    print(f'Unknown command: {args.command}', file=sys.stderr)
-    sys.exit(1)
-
-  write_output(data, args.output)
 
 
 if __name__ == '__main__':
