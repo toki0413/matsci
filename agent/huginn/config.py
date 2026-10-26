@@ -14,7 +14,7 @@ import shutil
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -673,12 +673,12 @@ class HuginnConfig:
         return None
 
     @staticmethod
-    def _cfg_provider_and_api_key(env: Mapping[str, str]) -> tuple[str, str | None]:
+    def _cfg_provider_and_api_key() -> tuple[str, str | None]:
         """Resolve the provider name and API key (generic key, then provider key)."""
-        provider = env.get("HUGINN_PROVIDER", "default").lower().strip()
+        provider = os.environ.get("HUGINN_PROVIDER", "default").lower().strip()
 
         # Resolve API key with provider-specific fallback
-        api_key = env.get("HUGINN_API_KEY")
+        api_key = os.environ.get("HUGINN_API_KEY")
         if not api_key:
             provider_key_map = {
                 "anthropic": "ANTHROPIC_API_KEY",
@@ -692,13 +692,12 @@ class HuginnConfig:
             }
             env_key = provider_key_map.get(provider)
             if env_key:
-                api_key = env.get(env_key)
+                api_key = os.environ.get(env_key)
         return provider, api_key
 
     @classmethod
     def _cfg_model_pool(
         cls,
-        env: Mapping[str, str],
         provider: str,
         api_key: str | None,
     ) -> tuple[
@@ -719,9 +718,9 @@ class HuginnConfig:
                     alias="default",
                     # provider 来自 env/CLI 的 str, 字段是 Literal; 运行时无法静态收窄
                     provider=provider,  # type: ignore[arg-type]
-                    model=env.get("HUGINN_MODEL"),
+                    model=os.environ.get("HUGINN_MODEL"),
                     api_key=api_key,
-                    base_url=env.get("HUGINN_BASE_URL"),
+                    base_url=os.environ.get("HUGINN_BASE_URL"),
                     thinking=thinking,
                     max_tokens=max_tokens,
                 )
@@ -735,192 +734,223 @@ class HuginnConfig:
                     id="lead",
                     name="Lead",
                     model_alias=model_alias,
-                    persona=env.get("HUGINN_PERSONA", "default").strip(),
+                    persona=os.environ.get("HUGINN_PERSONA", "default").strip(),
                     thinking=thinking,
                 )
             ]
         return models, agents, thinking, max_tokens
 
     @staticmethod
-    def _cfg_team(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_team() -> dict[str, Any]:
         return {
-            "team_mode_enabled": env.get("HUGINN_TEAM_MODE", "").lower() == "true",
+            "team_mode_enabled": os.environ.get("HUGINN_TEAM_MODE", "").lower()
+            == "true",
             "max_concurrent_subagents": int(
-                env.get("HUGINN_MAX_CONCURRENT_SUBAGENTS", "3")
+                os.environ.get("HUGINN_MAX_CONCURRENT_SUBAGENTS", "3")
             ),
-            "plan_auto_confirm": env.get("HUGINN_PLAN_AUTO_CONFIRM", "0") == "1",
-            "ollama_host": env.get("OLLAMA_HOST", "http://localhost:11434"),
+            "plan_auto_confirm": os.environ.get("HUGINN_PLAN_AUTO_CONFIRM", "0") == "1",
+            "ollama_host": os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
         }
 
     @staticmethod
-    def _cfg_science_tools(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_science_tools() -> dict[str, Any]:
         return {
-            "vasp_executable": env.get("VASP_EXECUTABLE"),
-            "lammps_executable": env.get("LAMMPS_EXECUTABLE"),
-            "mp_api_key": env.get("MP_API_KEY") or None,
-            "oqmd_api_key": env.get("OQMD_API_KEY") or None,
+            "vasp_executable": os.environ.get("VASP_EXECUTABLE"),
+            "lammps_executable": os.environ.get("LAMMPS_EXECUTABLE"),
+            "mp_api_key": os.environ.get("MP_API_KEY") or None,
+            "oqmd_api_key": os.environ.get("OQMD_API_KEY") or None,
             "mineru_api_keys": [
                 k.strip()
-                for k in env.get("MINERU_API_KEYS", "").split(",")
+                for k in os.environ.get("MINERU_API_KEYS", "").split(",")
                 if k.strip()
             ],
         }
 
     @staticmethod
-    def _cfg_execution(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_execution() -> dict[str, Any]:
         # 以下两处 Literal 字段从 env str 读取, mypy 无法静态收窄 str → Literal
         return {
-            "execution_backend": env.get("HUGINN_EXECUTION_BACKEND", "local").lower(),
-            "container_runtime": env.get("HUGINN_CONTAINER_RUNTIME", "none").lower(),
-            "container_image": env.get("HUGINN_CONTAINER_IMAGE") or None,
+            "execution_backend": os.environ.get(
+                "HUGINN_EXECUTION_BACKEND", "local"
+            ).lower(),
+            "container_runtime": os.environ.get(
+                "HUGINN_CONTAINER_RUNTIME", "none"
+            ).lower(),
+            "container_image": os.environ.get("HUGINN_CONTAINER_IMAGE") or None,
         }
 
     @staticmethod
-    def _cfg_hpc(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_hpc() -> dict[str, Any]:
         return {
-            "hpc_scheduler": env.get("HPC_SCHEDULER", "local"),
-            "hpc_host": env.get("HPC_HOST"),
-            "hpc_username": env.get("HPC_USERNAME"),
-            "hpc_key_path": env.get("HPC_KEY_PATH") or None,
-            "hpc_password": env.get("HPC_PASSWORD") or None,
-            "hpc_port": int(env.get("HPC_PORT", "22")),
-            "remote_work_dir": env.get("HUGINN_REMOTE_WORK_DIR", "~/huginn_jobs"),
-            "hpc_default_queue": env.get("HPC_DEFAULT_QUEUE") or None,
-            "hpc_gpu_queue": env.get("HPC_GPU_QUEUE") or None,
-            "hpc_queue_map": _parse_queue_map(env.get("HPC_QUEUE_MAP")),
-            "hpc_default_walltime": env.get("HPC_DEFAULT_WALLTIME", "24:00:00"),
-            "hpc_default_nodes": int(env.get("HPC_DEFAULT_NODES", "1")),
-            "hpc_default_ntasks_per_node": int(
-                env.get("HPC_DEFAULT_NTASKS_PER_NODE", "4")
+            "hpc_scheduler": os.environ.get("HPC_SCHEDULER", "local"),
+            "hpc_host": os.environ.get("HPC_HOST"),
+            "hpc_username": os.environ.get("HPC_USERNAME"),
+            "hpc_key_path": os.environ.get("HPC_KEY_PATH") or None,
+            "hpc_password": os.environ.get("HPC_PASSWORD") or None,
+            "hpc_port": int(os.environ.get("HPC_PORT", "22")),
+            "remote_work_dir": os.environ.get(
+                "HUGINN_REMOTE_WORK_DIR", "~/huginn_jobs"
             ),
-            "hpc_default_gpus_per_node": int(env.get("HPC_DEFAULT_GPUS_PER_NODE", "0")),
-            "hpc_max_retries": int(env.get("HPC_MAX_RETRIES", "3")),
-            "hpc_retry_backoff": float(env.get("HPC_RETRY_BACKOFF", "1.0")),
-            "hpc_strict_host_key_checking": env.get(
+            "hpc_default_queue": os.environ.get("HPC_DEFAULT_QUEUE") or None,
+            "hpc_gpu_queue": os.environ.get("HPC_GPU_QUEUE") or None,
+            "hpc_queue_map": _parse_queue_map(os.environ.get("HPC_QUEUE_MAP")),
+            "hpc_default_walltime": os.environ.get("HPC_DEFAULT_WALLTIME", "24:00:00"),
+            "hpc_default_nodes": int(os.environ.get("HPC_DEFAULT_NODES", "1")),
+            "hpc_default_ntasks_per_node": int(
+                os.environ.get("HPC_DEFAULT_NTASKS_PER_NODE", "4")
+            ),
+            "hpc_default_gpus_per_node": int(
+                os.environ.get("HPC_DEFAULT_GPUS_PER_NODE", "0")
+            ),
+            "hpc_max_retries": int(os.environ.get("HPC_MAX_RETRIES", "3")),
+            "hpc_retry_backoff": float(os.environ.get("HPC_RETRY_BACKOFF", "1.0")),
+            "hpc_strict_host_key_checking": os.environ.get(
                 "HPC_STRICT_HOST_KEY_CHECKING", "true"
             ).lower()
             != "false",
         }
 
     @staticmethod
-    def _cfg_mcp(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_mcp() -> dict[str, Any]:
         return {
-            "abaqus_mcp_server": env.get("ABAQUS_MCP_SERVER_PATH"),
+            "abaqus_mcp_server": os.environ.get("ABAQUS_MCP_SERVER_PATH"),
             "mcp_allowed_commands": [
                 c.strip()
-                for c in env.get("HUGINN_MCP_ALLOWED_COMMANDS", "").split(",")
+                for c in os.environ.get("HUGINN_MCP_ALLOWED_COMMANDS", "").split(",")
                 if c.strip()
             ]
             or list(_DEFAULT_MCP_ALLOWED_COMMANDS),
         }
 
     @staticmethod
-    def _cfg_agent_runtime(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_agent_runtime() -> dict[str, Any]:
         return {
-            "workspace": env.get("HUGINN_WORKSPACE", "."),
-            "auto_approve": env.get("HUGINN_AUTO_APPROVE", "").lower() == "true",
-            "enable_exploration": env.get("HUGINN_ENABLE_EXPLORATION", "true").lower()
+            "workspace": os.environ.get("HUGINN_WORKSPACE", "."),
+            "auto_approve": os.environ.get("HUGINN_AUTO_APPROVE", "").lower() == "true",
+            "enable_exploration": os.environ.get(
+                "HUGINN_ENABLE_EXPLORATION", "true"
+            ).lower()
             == "true",
-            "max_parallel_branches": int(env.get("HUGINN_MAX_BRANCHES", "5")),
-            "rag_enabled": env.get("HUGINN_RAG_ENABLED", "").lower() == "true",
-            "kg_enabled": env.get("HUGINN_KG_ENABLED", "").lower() == "true",
-            "kg_depth": int(env.get("HUGINN_KG_DEPTH", "1")),
-            "kg_top_k": int(env.get("HUGINN_KG_TOP_K", "10")),
+            "max_parallel_branches": int(os.environ.get("HUGINN_MAX_BRANCHES", "5")),
+            "rag_enabled": os.environ.get("HUGINN_RAG_ENABLED", "").lower() == "true",
+            "kg_enabled": os.environ.get("HUGINN_KG_ENABLED", "").lower() == "true",
+            "kg_depth": int(os.environ.get("HUGINN_KG_DEPTH", "1")),
+            "kg_top_k": int(os.environ.get("HUGINN_KG_TOP_K", "10")),
         }
 
     @staticmethod
-    def _cfg_persona(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_persona() -> dict[str, Any]:
         return {
-            "persona": env.get("HUGINN_PERSONA", "default").strip(),
-            "persona_auto_route": env.get("HUGINN_PERSONA_AUTO_ROUTE", "true").lower()
+            "persona": os.environ.get("HUGINN_PERSONA", "default").strip(),
+            "persona_auto_route": os.environ.get(
+                "HUGINN_PERSONA_AUTO_ROUTE", "true"
+            ).lower()
             != "false",
             "persona_auto_route_threshold": float(
-                env.get("HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD", "0.3")
+                os.environ.get("HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD", "0.3")
             ),
-            "persona_auto_sync": env.get("HUGINN_PERSONA_AUTO_SYNC", "").lower()
+            "persona_auto_sync": os.environ.get("HUGINN_PERSONA_AUTO_SYNC", "").lower()
             in ("1", "true", "yes"),
-            "persona_sync_dir": env.get("HUGINN_PERSONA_SYNC_DIR", "").strip(),
+            "persona_sync_dir": os.environ.get("HUGINN_PERSONA_SYNC_DIR", "").strip(),
         }
 
     @staticmethod
-    def _cfg_security(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_security() -> dict[str, Any]:
         return {
-            "local_only_mode": env.get("HUGINN_LOCAL_ONLY", "").lower() == "true",
-            "allow_local_bash": env.get("HUGINN_ALLOW_LOCAL_BASH", "").lower()
-            in ("1", "true", "yes"),
-            "encryption_enabled": env.get("HUGINN_ENCRYPTION_ENABLED", "").lower()
+            "local_only_mode": os.environ.get("HUGINN_LOCAL_ONLY", "").lower()
             == "true",
-            "encrypt_config": env.get("HUGINN_ENCRYPT_CONFIG", "").lower() == "true",
-            "privacy_redact_secrets": env.get(
+            "allow_local_bash": os.environ.get("HUGINN_ALLOW_LOCAL_BASH", "").lower()
+            in ("1", "true", "yes"),
+            "encryption_enabled": os.environ.get(
+                "HUGINN_ENCRYPTION_ENABLED", ""
+            ).lower()
+            == "true",
+            "encrypt_config": os.environ.get("HUGINN_ENCRYPT_CONFIG", "").lower()
+            == "true",
+            "privacy_redact_secrets": os.environ.get(
                 "HUGINN_PRIVACY_REDACT_SECRETS", "true"
             ).lower()
             != "false",
-            "encryption_password": env.get("HUGINN_ENCRYPTION_PASSWORD") or None,
-            "encryption_key_file": env.get("HUGINN_ENCRYPTION_KEY_FILE") or None,
-            "encrypt_rag_documents": env.get("HUGINN_ENCRYPT_RAG_DOCS", "true").lower()
+            "encryption_password": os.environ.get("HUGINN_ENCRYPTION_PASSWORD") or None,
+            "encryption_key_file": os.environ.get("HUGINN_ENCRYPTION_KEY_FILE") or None,
+            "encrypt_rag_documents": os.environ.get(
+                "HUGINN_ENCRYPT_RAG_DOCS", "true"
+            ).lower()
             == "true",
-            "encrypt_rag_metadata": env.get("HUGINN_ENCRYPT_RAG_META", "true").lower()
+            "encrypt_rag_metadata": os.environ.get(
+                "HUGINN_ENCRYPT_RAG_META", "true"
+            ).lower()
             == "true",
-            "privacy_block_on_secrets": env.get(
+            "privacy_block_on_secrets": os.environ.get(
                 "HUGINN_PRIVACY_BLOCK_ON_SECRETS", ""
             ).lower()
             == "true",
         }
 
     @staticmethod
-    def _cfg_limits(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_limits() -> dict[str, Any]:
         return {
             "max_tool_output_tokens": int(
-                env.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
+                os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
             ),
-            "context_budget_tokens": int(env.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")),
-            "prompt_cache_control": env.get(
+            "context_budget_tokens": int(
+                os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")
+            ),
+            "prompt_cache_control": os.environ.get(
                 "HUGINN_PROMPT_CACHE_CONTROL", "true"
             ).lower()
             != "false",
-            "checkpointer_path": env.get("HUGINN_CHECKPOINTER_PATH") or None,
-            "telemetry_enabled": env.get("HUGINN_TELEMETRY_ENABLED", "true").lower()
+            "checkpointer_path": os.environ.get("HUGINN_CHECKPOINTER_PATH") or None,
+            "telemetry_enabled": os.environ.get(
+                "HUGINN_TELEMETRY_ENABLED", "true"
+            ).lower()
             != "false",
             "tool_compression_max_tokens": int(
-                env.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")
+                os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")
             ),
         }
 
     @staticmethod
-    def _cfg_memory(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_memory() -> dict[str, Any]:
         return {
-            "memory_decay_enabled": env.get("HUGINN_MEMORY_DECAY_ENABLED", "").lower()
+            "memory_decay_enabled": os.environ.get(
+                "HUGINN_MEMORY_DECAY_ENABLED", ""
+            ).lower()
             == "true",
             "memory_decay_interval_turns": int(
-                env.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")
+                os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")
             ),
             "memory_decay_prune_threshold": float(
-                env.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")
+                os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")
             ),
         }
 
     @staticmethod
-    def _cfg_pet(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_pet() -> dict[str, Any]:
         return {
-            "pet_name": env.get("HUGINN_PET_NAME", "渡鸦").strip() or "渡鸦",
+            "pet_name": os.environ.get("HUGINN_PET_NAME", "渡鸦").strip() or "渡鸦",
             # env str → Literal 收窄
-            "pet_personality": env.get("HUGINN_PET_PERSONALITY", "cheerful")
+            "pet_personality": os.environ.get("HUGINN_PET_PERSONALITY", "cheerful")
             .strip()
             .lower()
             or "cheerful",
         }
 
     @staticmethod
-    def _cfg_advanced(env: Mapping[str, str]) -> dict[str, Any]:
+    def _cfg_advanced() -> dict[str, Any]:
         return {
-            "extreme_dispatch": env.get("HUGINN_EXTREME_DISPATCH", "0").lower()
+            "extreme_dispatch": os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower()
             in ("1", "true"),
-            "wm_summarize": env.get("HUGINN_WM_SUMMARIZE", "rule").strip().lower()
+            "wm_summarize": os.environ.get("HUGINN_WM_SUMMARIZE", "rule")
+            .strip()
+            .lower()
             or "rule",
-            "wm_token_budget": int(env.get("HUGINN_WM_TOKEN_BUDGET", "8192")),
-            "em_recall_top_k": int(env.get("HUGINN_EM_RECALL_TOP_K", "5")),
-            "pm_c_min": float(env.get("HUGINN_PM_C_MIN", "0.2")),
-            "wm_summarize_every_n": int(env.get("HUGINN_WM_SUMMARIZE_EVERY_N", "5")),
+            "wm_token_budget": int(os.environ.get("HUGINN_WM_TOKEN_BUDGET", "8192")),
+            "em_recall_top_k": int(os.environ.get("HUGINN_EM_RECALL_TOP_K", "5")),
+            "pm_c_min": float(os.environ.get("HUGINN_PM_C_MIN", "0.2")),
+            "wm_summarize_every_n": int(
+                os.environ.get("HUGINN_WM_SUMMARIZE_EVERY_N", "5")
+            ),
         }
 
     @classmethod
@@ -931,33 +961,30 @@ class HuginnConfig:
         1. HUGINN_API_KEY (generic)
         2. Provider-specific env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
         """
-        env = os.environ
-        provider, api_key = cls._cfg_provider_and_api_key(env)
-        models, agents, thinking, max_tokens = cls._cfg_model_pool(
-            env, provider, api_key
-        )
+        provider, api_key = cls._cfg_provider_and_api_key()
+        models, agents, thinking, max_tokens = cls._cfg_model_pool(provider, api_key)
 
         return cls(
             provider=provider,
-            model=env.get("HUGINN_MODEL"),
+            model=os.environ.get("HUGINN_MODEL"),
             api_key=api_key,
-            base_url=env.get("HUGINN_BASE_URL"),
+            base_url=os.environ.get("HUGINN_BASE_URL"),
             models=models,
             agents=agents,
             thinking=thinking,
             max_tokens=max_tokens,
-            **cls._cfg_team(env),
-            **cls._cfg_science_tools(env),
-            **cls._cfg_execution(env),
-            **cls._cfg_hpc(env),
-            **cls._cfg_mcp(env),
-            **cls._cfg_agent_runtime(env),
-            **cls._cfg_persona(env),
-            **cls._cfg_security(env),
-            **cls._cfg_limits(env),
-            **cls._cfg_memory(env),
-            **cls._cfg_pet(env),
-            **cls._cfg_advanced(env),
+            **cls._cfg_team(),
+            **cls._cfg_science_tools(),
+            **cls._cfg_execution(),
+            **cls._cfg_hpc(),
+            **cls._cfg_mcp(),
+            **cls._cfg_agent_runtime(),
+            **cls._cfg_persona(),
+            **cls._cfg_security(),
+            **cls._cfg_limits(),
+            **cls._cfg_memory(),
+            **cls._cfg_pet(),
+            **cls._cfg_advanced(),
         )
 
     @staticmethod

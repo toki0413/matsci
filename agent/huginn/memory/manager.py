@@ -359,28 +359,6 @@ class MemoryConfig:
     memory_dir: Path | None = None
 
 
-def _l1_coords_from_tags(entry: dict[str, Any]) -> str:
-    """从 tags 里取 'l1:...' 坐标, 没有返回空串."""
-    tags = entry.get("tags", [])
-    if not isinstance(tags, list):
-        return ""
-    for tag in tags:
-        if tag.startswith("l1:"):
-            return tag[3:]
-    return ""
-
-
-def _session_context_from_entry(entry: Any) -> dict[str, Any]:
-    """把一条 longterm entry 归一成 session context dict."""
-    if not isinstance(entry, dict):
-        return {"summary": str(entry), "session_id": "", "l1_coordinates": ""}
-    return {
-        "summary": entry.get("content", ""),
-        "session_id": entry.get("source", ""),
-        "l1_coordinates": _l1_coords_from_tags(entry),
-    }
-
-
 class MemoryManager:
     """Central memory coordinator for Huginn."""
 
@@ -653,7 +631,26 @@ class MemoryManager:
                 top_k=1,
             )
             if entries:
-                return _session_context_from_entry(entries[0])
+                entry = entries[0]
+                if not isinstance(entry, dict):
+                    return {
+                        "summary": str(entry),
+                        "session_id": "",
+                        "l1_coordinates": "",
+                    }
+                # 从 tags 里取 'l1:...' 坐标, 没有返回空串
+                l1_coords = ""
+                tags = entry.get("tags", [])
+                if isinstance(tags, list):
+                    for tag in tags:
+                        if tag.startswith("l1:"):
+                            l1_coords = tag[3:]
+                            break
+                return {
+                    "summary": entry.get("content", ""),
+                    "session_id": entry.get("source", ""),
+                    "l1_coordinates": l1_coords,
+                }
         except Exception:
             logger.debug("load_last_session_context 失败", exc_info=True)
         return {"summary": "", "session_id": "", "l1_coordinates": ""}

@@ -1359,7 +1359,11 @@ class EngineReflect:
             cf_solved = self._is_closed_form_solved(execution_result)
             lab_solved = self._is_code_lab_solved(execution_result)
             self._validate_non_finite(execution_result, results, cf_solved, lab_solved)
-            if os.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            # 内部调试开关, 刻意不经静态 inventory 暴露 (与 _validate_route_debug
+            # 的 docstring 口径一致; 参照 engine_act 的 _ose 别名惯例).
+            import os as _osv
+
+            if _osv.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
                 self._validate_route_debug(execution_result, cf_solved, lab_solved)
             if cf_solved or lab_solved:
                 self._validate_mark_solved(results, cf_solved, lab_solved)
@@ -4893,7 +4897,21 @@ class EngineReflect:
             return
 
         directive = response.strip()[:300]
-        self._gnd_store(directive, surprise)
+        # 就地写入 memory (self_directive + rsi tag, importance 跟 surprise 挂钩):
+        # 静态源码契约要求 memory.remember 直接出现在本方法内 (见
+        # tests/loops/test_inkling_inspirations.py::test_rsi_uses_memory_not_prompt_field).
+        importance = 0.5 + min(0.4, surprise * 0.4)
+        try:
+            self.memory.remember(
+                content=f"[self-directive iter {self._iteration}] {directive}",
+                category="self_directive",
+                tags=["rsi", "autoloop"],
+                importance=importance,
+                tier="mid",  # 几轮后衰减, 不永久占据 context
+            )
+            logger.info("RSI directive stored in memory: %s", directive[:120])
+        except Exception:  # 防御: 指令记忆写失败忽略
+            logger.debug("RSI directive memory write failed", exc_info=True)
         await self._gnd_make_patch(directive, r_phys)
 
     @staticmethod
@@ -4936,22 +4954,6 @@ class EngineReflect:
             "- If mundane: what to SKIP to save tokens\n\n"
             "Output only the directive, no markdown headers."
         )
-
-    def _gnd_store(self, directive: str, surprise: float) -> None:
-        """写入 memory: self_directive category + rsi tag, importance 跟 surprise 挂钩."""
-        # tier=mid: 几轮后衰减, 不会永久占据 context.
-        importance = 0.5 + min(0.4, surprise * 0.4)
-        try:
-            self.memory.remember(
-                content=f"[self-directive iter {self._iteration}] {directive}",
-                category="self_directive",
-                tags=["rsi", "autoloop"],
-                importance=importance,
-                tier="mid",
-            )
-            logger.info("RSI directive stored in memory: %s", directive[:120])
-        except Exception:  # 防御: 指令记忆写失败忽略
-            logger.debug("RSI directive memory write failed", exc_info=True)
 
     async def _gnd_make_patch(self, directive: str, r_phys: Any) -> None:
         """H1: 依 r_phys + directive + hypothesis blocks 生成 prompt patch."""

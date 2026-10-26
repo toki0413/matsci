@@ -899,7 +899,7 @@ class LiteratureTool(HuginnTool):
                 error=f"LLM 初始化失败: {exc}",
             )
 
-        content = await invoke_llm_text(model, _SUMMARY_SYSTEM_PROMPT, user_prompt)
+        content = await self._llm_invoke(model, _SUMMARY_SYSTEM_PROMPT, user_prompt)
 
         # 顺带生成 bibtex, 方便用户直接拿去用
         bibtex = self._to_bibtex(papers)
@@ -1136,7 +1136,7 @@ class LiteratureTool(HuginnTool):
             f"请抽出关于 {system} 的 {property} 报道值."
         )
         try:
-            content = await invoke_llm_text(
+            content = await self._llm_invoke(
                 model, _BENCHMARK_SYSTEM_PROMPT, user_prompt
             )
         except Exception as exc:
@@ -2650,7 +2650,7 @@ class LiteratureTool(HuginnTool):
                 f"请用 '{lens_name}' 透镜分析, 按 JSON 格式输出."
             )
             try:
-                content = await invoke_llm_text(model, system_prompt, user_prompt)
+                content = await self._llm_invoke(model, system_prompt, user_prompt)
                 parsed = self._parse_json(content)
                 if not parsed or "findings" not in parsed:
                     logger.warning(
@@ -2925,6 +2925,16 @@ class LiteratureTool(HuginnTool):
 
         config = getattr(context, "config", None)
         return get_model(config=config, temperature=0.2, max_tokens=6000)
+
+    async def _llm_invoke(
+        self, model: Any, system_prompt: str, user_prompt: str
+    ) -> str:
+        """调 model 并返回纯文本 (共享实现在 ``huginn.tools._llm``).
+
+        保留为实例方法: 测试以 ``monkeypatch.setattr(tool, "_llm_invoke", ...)``
+        注入假模型输出, 因此调用点必须走 ``self._llm_invoke``.
+        """
+        return await invoke_llm_text(model, system_prompt, user_prompt)
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any] | None:
