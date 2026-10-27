@@ -33,6 +33,38 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c082ef17",
+      "objective": "[DIM: measure]** — the stochastic-ordering / dose–response shape hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "本轮用 bash_tool 从 UCI 下载 Cleveland 心脏病数据并转存为 data/heart.csv，同时写 download_record.json（source_url、download_utc_time、bytes、sha256、n_rows、n_columns）；然后写 analysis.py 完成全部分析（描述统计+缺失/异常处理、Welch t 检验/χ²、logistic 回归、假设检查、稳健性），输出 results/ 下 descriptive_stats.csv、group_comparison.csv、logistic_regression_summary.csv、roc_curve.png、forest_plot.png；最后写 report.md。先跑下载+验证命令。",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "download_data.py",
+            "analysis.py",
+            "report.md"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T18:56:35.352381+00:00",
+      "confirmed_at": "2026-10-27T18:56:35.353649+00:00",
+      "completed_at": "2026-10-27T18:56:36.994264+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
