@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "352082d19ed7",
+    "reason": "plan 的 DESCRIPTION 和 PREDICTION 在统计内容上覆盖 hypothesis（Welch 检验、t 分布 95% CI、point-biserial r_pb、方向与效应量），但 MODE=workflow 在当前预算档位（medium）不被允许，系统明确要求改用 coder/explore。且前两次迭代已因同一理由拒绝：plan 未含可直接运行的数值脚本片段，仅以文字描述代替执行。因此该 plan 形式上不可通过，无法进入 execute→validate 带回真实数值。",
+    "missing_steps": [
+      "将 mode 改为 coder（或 explore），并嵌入可直接运行的 python 脚本（import pandas/scipy/numpy + 数据加载 + Welch t 检验 + t 分布 CI + point-biserial r 及其 CI + Shapiro/Levene/bootstrap/Cohen's d + 写入 results.json）",
+      "先实际运行脚本并带回数值（n、均值、SD、t、p、CI、r_pb），再进入 execute→validate 验证 hypothesis 的三个硬性条件",
+      "处理 col 13 目标变量 0→4 的二元化逻辑与缺失值/异常值说明"
+    ],
+    "mode": "workflow",
+    "description": "Choose source A (UCI Cleveland heart disease, 14 cols, 303 rows). Step 1: bash_tool runs `python3 -c \"import urllib.request,hashlib; urllib.request.urlretrieve('https://archive.ics.uci.edu/ml/machine-"
+  }
+]
