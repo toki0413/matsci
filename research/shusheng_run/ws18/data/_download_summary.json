@@ -1,0 +1,22 @@
+{
+  "path": "data/heart.csv",
+  "source": "primary",
+  "sha256": "a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8",
+  "bytes": 18461,
+  "rows": 303,
+  "cols": 14,
+  "columns": [
+    "age",
+    "sex",
+    "chest_pain_type",
+    "resting_bp",
+    "cholesterol",
+    "fasting_blood_sugar",
+    "rest_ecg",
+    "max_hr",
+    "exercise_angina",
+    "st_depression",
+    "st_slope",
+    "num"
+  ]
+}

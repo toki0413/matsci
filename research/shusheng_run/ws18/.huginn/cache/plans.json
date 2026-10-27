@@ -1,0 +1,39 @@
+{
+  "plans": [
+    {
+      "id": "plan_719a32a3",
+      "objective": "** **[DIM: measure]** — the Welch t-test / permutation-bootstrap route on max_hr between disease groups. It is the most testable because it requires no model expansion (no interaction terms, no classifier training), its predictions are mutually exclusive (d ≈ 0 with permutation p > 0.05 vs. |d| ≥ 0.5 with p < 0.05 and CI excluding 0), and every required output (t, df, p, Cohen's d, t-based 95% CI, permutation p, bootstrap CI) falls out of a single script. It also maps directly onto the verification checklist: the primary conclusion is a single statistic with a p-value and a t-distribution interval, and the permutation test serves as the required robustness check.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "下载 UCI Heart Disease (Cleveland) 数据集到 data/heart.csv（主 URL: https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data，失败则走 fallback zip），计算 sha256/字节数/行列数并打印；随后编写 analysis.py 实现：(1) 显式列名加载、'?'→NaN、缺失报告；(2) 按 target 分层的描述统计 + IQR 异常值；(3) 主检验：Welch t 检验比较 max_hr 均值（target=0 vs 1-4），报告 t、Welch-Satterthwaite df、双侧 p、Cohen's d、基于 t 分布临界值的 95% CI；(4) 稳健性：置换检验 p、bootstrap CI、Mann-Whitney U、IQR 剔除后重跑；(5) 前提假设：Shapiro-Wilk + Levene + Q-Q 图；(6) 次要：chest_pain_type 卡方 + Cramér's V、logistic 回归。运行 python3 analysis.py > analysis_output.txt 2>&1 并生成 plots/ 图、research_report.md、results_summary.json。",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "data/heart.csv",
+            "analysis.py",
+            "analysis_output.txt",
+            "plots/*",
+            "research_report.md",
+            "results_summary.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T18:40:23.878173+00:00",
+      "confirmed_at": "2026-10-27T18:41:23.979433+00:00",
+      "completed_at": "2026-10-27T18:50:01.263036+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
+    }
+  ]
+}
