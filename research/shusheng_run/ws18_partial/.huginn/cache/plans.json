@@ -34,6 +34,34 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7d6c20b7",
+      "objective": "** **[DIM: measure]** — the Welch t-test / permutation-bootstrap route on max_hr between disease groups. It is the most testable because it requires no model expansion (no interaction terms, no classifier training), its predictions are mutually exclusive (d ≈ 0 with permutation p > 0.05 vs. |d| ≥ 0.5 with p < 0.05 and CI excluding 0), and every required output (t, df, p, Cohen's d, t-based 95% CI, permutation p, bootstrap CI) falls out of a single script. It also maps directly onto the verification checklist: the primary conclusion is a single statistic with a p-value and a t-distribution interval, and the permutation test serves as the required robustness check.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: 代码实验走真实执行] This hypothesis is a statistical-testability claim about the max_hr variable across disease groups, not a physics simulation. Plan: (1) locate the dataset (find CSV/parquet in the workspace, identify columns for group label and max_hr); (2) run a single Python script that computes Welch's t (with Welch–Satterthwaite df), two-sided p, Cohen's d, the t-based 95% CI for the mean difference, a permutation-bootstrap p, and a bootstrap percentile CI; (3) report whether the outcome falls in the \"d≈0, p>0.05, CI contains 0\" branch or the \"|d|≥0.5, p<0.05, CI excludes 0\" branch; (4) write the script and a plain-text results table to disk so the claim is reproducible. Because the terminal is idle and no files are currently changed, this is a fresh analysis run, not a code edit.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T18:51:35.907535+00:00",
+      "confirmed_at": "2026-10-27T18:51:35.908808+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
