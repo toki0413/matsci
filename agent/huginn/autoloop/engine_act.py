@@ -522,6 +522,35 @@ class EngineAct:
         low = text.lower()
         return any(h in low for h in self._CODE_EXPERIMENT_HINTS)
 
+    # 「必须外部取证」信号: Code Lab 沙箱移除 ``open()``、import 白名单不含
+    # urllib/requests/socket、``bash_tool``/``code_tool`` 在 _BLOCKED_TOOLS ——
+    # 它**物理上**无法下载也无法落盘. 目标一旦要求真实数据获取, 让 code_lab
+    # 接管 execute 就只能交出一段"合成 stand-in"(ws13 实测: 书生自述
+    # "real data fetch is handled by the outer orchestrator"), 而报告仍把它
+    # 当执行证据抄出去. 这类目标改道 coder: 唯一带 bash_tool/写文件能力的
+    # 真实执行路径.
+    _IO_REQUIRED_HINTS = (
+        "下载",
+        "download",
+        "抓取",
+        "fetch",
+        "csv",
+        "数据集",
+        "dataset",
+        "sha256",
+        "source_url",
+        "http://",
+        "https://",
+        "落盘",
+    )
+
+    def _needs_external_data_io(self, text: Any) -> bool:
+        """启发式: 该项是否要求"从外部取数/落盘"(Code Lab 结构性做不到)."""
+        if not isinstance(text, str) or not text.strip():
+            return False
+        low = text.lower()
+        return any(h in low for h in self._IO_REQUIRED_HINTS)
+
     @staticmethod
     def _codelab_author_prompt(
         goal: str,
@@ -1004,6 +1033,15 @@ class EngineAct:
             or self._is_code_experiment(str(getattr(self, "_objective", "") or ""))
         ):
             return None
+        # 目标要求外部取数/落盘时, code_lab 没有 open()/网络 import → 必然只能
+        # 拿合成 stand-in 交差. 这类目标不走快路, 交给 dispatch 里的 coder 真跑.
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            logger.info(
+                "code_lab fast-path skipped: 目标要求真实数据获取/落盘 (code_lab 无 open/无网络)"
+            )
+            return None
         _lab = await self._execute_code_lab(description, context)
         # 成败都记: 失败的内建实验也占用了真实算力, 不能从遥测里消失.
         self._record_internal_tool_call("code_lab", plan, _lab)
@@ -1175,6 +1213,15 @@ class EngineAct:
                 mode = "coder"
             return result, mode
         # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
+        # 但目标要真实数据获取/落盘时改道 coder: code_lab 无 open()/无网络 import,
+        # 放它接管只能产出合成 stand-in, 反被报告当执行证据.
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            logger.info(
+                "dispatch %s→coder: 目标要求真实数据获取/落盘, code_lab 无法取证", mode
+            )
+            return await self._execute_coder(description, context), "coder"
         return await self._execute_code_lab(description, context), mode
 
     def _act_explore_is_idle(self, result: Any, description: Any) -> bool:
@@ -1187,7 +1234,12 @@ class EngineAct:
         deterministic = self._is_deterministic_numeric(
             description
         ) or self._is_deterministic_numeric(str(getattr(self, "_objective", "") or ""))
-        return empty and deterministic
+        # 需要外部取数的目标: explore 的空转同样不算证据, 必须回落 coder
+        # (explore 只搜索注册过的设计空间, 不负责下载/落盘).
+        io_required = self._needs_external_data_io(
+            description
+        ) or self._needs_external_data_io(str(getattr(self, "_objective", "") or ""))
+        return empty and (deterministic or io_required)
 
     async def _act_dispatch_inspect(
         self,

@@ -1,0 +1,64 @@
+{
+  "plans": [
+    {
+      "id": "plan_e77ab9c2",
+      "objective": "Hypothesis B (optimization dimension)",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "本轮目标：从零完成一次真实数据驱动的自主科研。先选定一个可公开下载的 ≤5 MB 单文件 CSV（UCI / raw.githubusercontent.com / seaborn 示例），程序化下载到 data/ 并做完整性校验（字节数、sha256、行数、列数、source_url、下载时间戳）。然后提出一个与数据结构匹配的可证伪研究问题（明确分析单位、样本量、自变量/因变量、分组或配对结构），跑描述统计（含缺失值与异常值处理）、与设计匹配的假设检验（统计量、p 值、效应量、95% CI），以及至少一项前提假设检查或稳健性/敏感性分析。最后生成报告，区分数据支持的结论与领域推测，列出 ≥2 条真实局限，并确保每个数字都可追溯到脚本输出/表格/图。产出：原始 CSV、分析脚本、可复现的数字与图表、研究报告。",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "data/*.csv",
+            "scripts/*.py",
+            "report.md"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T17:41:58.117619+00:00",
+      "confirmed_at": "2026-10-27T17:41:58.118492+00:00",
+      "completed_at": "2026-10-27T17:42:16.902020+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_70e199e8",
+      "objective": "I need to ground this in real computation rather than dimension-shuffling. Let me first check what's actually in the workspace and what data I can genuinely obtain.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T17:46:37.135095+00:00",
+      "confirmed_at": "2026-10-27T17:46:37.136281+00:00",
+      "completed_at": "2026-10-27T17:47:32.693709+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    }
+  ]
+}
