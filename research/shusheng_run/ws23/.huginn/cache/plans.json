@@ -1,0 +1,38 @@
+{
+  "plans": [
+    {
+      "id": "plan_bb1350a7",
+      "objective": "** [DIM: measure] 在 Cleveland 心脏病数据中，target≥1（确诊冠心病，n≈160–170）患者的最大心率 thalach（第 14 列之前的连续列）均值显著低于 target=0（无病，n≈130–140）组，且 Welch 检验的均值差 95% 置信区间（用 t 分布临界值）完全位于 0 以下；同时 thalach 与 target 的 point-biserial 相关系数 r_pb 的绝对值 ≥ 0.30（中等效应量），方向为负。",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "选择数据源 A (UCI Cleveland heart disease)。分两步执行：(1) 用 bash_tool 跑 python3 urllib 下载 processed.cleveland.data 到 data/，比对 sha256 与已知凭证 a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8，写入 data/download_summary.json（含 source_url、timestamp、bytes、sha256、rows=303、cols=14、error）。(2) file_write 写 analysis.py：加载无表头 303×14 数据，列名按 UCI 约定 (age, sex, cp, trestbps, chol, fbs, restecg, thalach, exang, oldpeak, slope, ca, thal, target)，把 target≥1 归为确诊冠心病组、target=0 为无病组；thalach 是第 8 列；报告两组 n/均值/SD、Welch t 统计量与 Welch–Satterthwaite df、双尾 p、Cohen's d、均值差 95% CI（用 t_{0.975,df}）、point-biserial r_pb 及其 95% CI（Fisher z 变换）；前提假设检查用 Shapiro-Wilk（分组正态）与 Levene 方差齐性；稳健性/敏感性分析：(i) 排除 thalach±3SD 极值后重跑 Welch，(ii) bootstrap 均值差 95% CI (BCa 或百分位, B=5000)，(iii) 把 target 二分为 1 vs 2-4 的敏感性。结果落盘 data/results.json 与 data/report.md（含研究问题、方法、结果、数据支持 vs 领域推测、≥2 条真实局限、每个数字的可追溯路径）。最终用 sha256sum / wc 验证产物。",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "data/download_summary.json",
+            "data/processed.cleveland.data",
+            "analysis.py",
+            "data/results.json",
+            "data/report.md"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T19:32:58.584039+00:00",
+      "confirmed_at": "2026-10-27T19:32:58.584985+00:00",
+      "completed_at": "2026-10-27T19:38:56.482155+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    }
+  ]
+}
