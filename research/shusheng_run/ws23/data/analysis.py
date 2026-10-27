@@ -189,7 +189,7 @@ def main() -> dict:
                 "sd": descriptives["disease"]["sd"],
                 "missing": descriptives["disease"]["missing"],
             },
-        ]
+        ],
     ).to_csv(DESCR, index=False)
 
     print(f"[info] wrote {RESULTS} and {DESCR}")
