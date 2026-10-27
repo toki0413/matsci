@@ -1,0 +1,27 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "571fe83bf8c3",
+    "reason": "The hypothesis is explicitly a **stochastic-ordering / dose–response shape** claim (DIM: measure), which requires testing monotone / ordered trends across ordered exposure levels (e.g., Cochran–Armitage trend test, isotonic regression, dose–response curve shape analysis, or stochastic dominance tests). The plan only performs binary group comparisons (num=0 vs num≥1), multivariable logistic regression with ORs, and ROC/AUC — none of which directly assess dose–response shape or stochastic ordering. A significant OR and AUC 0.80–0.88 do not entail the shape/ordering hypothesis. Additionally, the known failure mode flags that no runnable numeric script is yet embedded/validated before execution.",
+    "missing_steps": [
+      "Add explicit stochastic-ordering tests (e.g., Cochran–Armitage trend test for ordered categorical exposures, Jonckheere–Terpstra / Kruskal–Wallis with monotone contrast, or likelihood-ratio test comparing monotone vs non-monotone logistic terms).",
+      "Add dose–response shape modeling (e.g., restricted cubic splines or isotonic regression on ordered exposure levels) with a shape test (linearity vs curvature, or monotonicity test).",
+      "Embed and execute a minimal runnable Python snippet (import + formula + print) before the full workflow, per the known failure-mode advisory.",
+      "State the specific ordered exposure variable(s) and the predicted shape (monotone increasing/decreasing, threshold, U-shaped) so the prediction is falsifiable."
+    ],
+    "mode": "workflow",
+    "description": "用 bash_tool 真下载 UCI Heart Disease 数据到 data/，计算 sha256/行列数并写 data/download_record.json；若失败则 fallback 到 raw.githubusercontent 的 heart.csv。然后写 analysis.py 一次性跑完：(1) 描述统计 + 缺失值/异常值（IQR + 临床合理范围）处理；(2) 按 n"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "571fe83bf8c3",
+    "reason": "PLAN 在 DESCRIPTION 层面已经补上了历史失败指出的缺口（Cochran–Armitage、Jonckheere–Terpstra、Spearman、rcs + LRT、isotonic regression、形状判定），但当前文本仍未嵌入一段已被真实运行的最小可执行 Python 片段作为前置验证——已知失败模式的核心就是『未落地可运行数值脚本就进 workflow』。此外 PREDICTION 中 ROC AUC 写『由实测决定、不预先绑定区间』，对 DIM:measure 假设而言该部分不可 falsifiable；且若数据集列名/结局定义（num≥1）与实际 UCI Cleveland 文件不一致，整个流程会在预处理阶段失效而无数值回传。因此 plan 方向正确但尚未通过可执行性闸门。",
+    "missing_steps": [
+      "在 analysis.py 之前显式插入并真实运行一段最小 Python 片段：import pandas/numpy/scipy/statsmodels + 读取 data/ 文件 + 打印 df.shape、列名、num 分布、age 分档后的趋势检验 p 值，确认环境与数据可通后再跑完整 workflow",
+      "将 ROC AUC 的预测改为可 falsifiable 的数值区间或明确声明它不是本假设的核心判据，避免不可验证的占位预测",
+      "核实 UCI Heart Disease 实际列名与缺失值编码（如 '?'），确保结局定义 num≥1 和 age 变量名与下载文件一致"
+    ],
+    "mode": "workflow",
+    "description": "用 bash_tool 下载 UCI Heart Disease 到 data/ 并写 download_record.json（含 sha256/行数/列数，fallback raw.githubusercontent heart.csv）。先跑一段最小可验证 Python 片段（`import pandas, scipy, statsmodels, numpy; print`）确认环境可用，再"
+  }
+]

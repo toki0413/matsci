@@ -65,6 +65,67 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c5857c82",
+      "objective": "[DIM: measure]** — the stochastic-ordering / dose–response shape hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "用 bash_tool 执行 Python 下载脚本，把 UCI Heart Disease 数据集下载到 data/ 目录并计算 sha256 与行列数，生成 data/download_record.json。因 archive.ics.uci.edu 被环境阻断，直接走 fallback_url: https://raw.githubusercontent.com/plotly/datasets/master/heart.csv。然后写 analysis.py 做完整统计分析（描述统计、Welch t 检验、χ²/Fisher、logistic 回归、前提假设检查、稳健性分析、绘图），输出 results/ 下全部产物。",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "data/download_record.json",
+            "data/heart.csv",
+            "analysis.py",
+            "results/*"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T18:56:57.555351+00:00",
+      "confirmed_at": "2026-10-27T18:56:57.556672+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_281c4232",
+      "objective": "[DIM: measure]** — the stochastic-ordering / dose–response shape hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "用 bash_tool 下载 UCI Heart Disease 到 data/ 并写 download_record.json（含 sha256/行数/列数，fallback raw.githubusercontent heart.csv）。先跑一段最小可验证 Python 片段（`import pandas, scipy, statsmodels, numpy; print`）确认环境可用，再写 analysis.py：(1) 预处理 + 缺失/异常值处理；(2) 指定 age 为有序暴露变量（连续 ordinal 化 10 年为档），预设单调递增；(3) 随机排序检验：Cochran–Armitage trend test（age 档 vs 二分类结局）、Jonckheere–Terpstra 检验、Spearman 单调相关；(4) 剂量–反应建模：带 age 限制性三次样条 (rcs) 的多变量 logistic（LRT 对比 rcs vs 线性 vs 空），并做 isotonic regression 验证单调性，报告 shape（线性 / 阈值 / U 形 / 非单调）；(5) 稳健性：Mann-Whitney U + 年龄限制子集复现；(6) 绘图：rcs 剂量–反应曲线 + 95% CI、isotonic 拟合曲线、ROC。产物写入 results/。最后依据脚本输出写 report.md，每个数字标注来源文件。",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "draft",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T18:57:55.940154+00:00",
+      "confirmed_at": null,
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

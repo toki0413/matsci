@@ -1,0 +1,26 @@
+{
+  "url": "https://raw.githubusercontent.com/plotly/datasets/master/heart.csv",
+  "dest": "/workspace/research/shusheng_run/ws20/data/heart.csv",
+  "success": false,
+  "error": "HTTP 404",
+  "fallback": "/workspace/research/shusheng_run/ws20/data/titanic.csv",
+  "fallback_rows": 891,
+  "fallback_cols": 15,
+  "fallback_columns": [
+    "survived",
+    "pclass",
+    "sex",
+    "age",
+    "sibsp",
+    "parch",
+    "fare",
+    "embarked",
+    "class",
+    "who",
+    "adult_male",
+    "deck",
+    "embark_town",
+    "alive",
+    "alone"
+  ]
+}
