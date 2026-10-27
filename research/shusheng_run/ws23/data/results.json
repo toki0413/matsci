@@ -5,7 +5,7 @@
     "n_total": 303,
     "n_no_disease": 164,
     "n_disease": 139,
-    "thalach_column": "original c13 (0-index 13 of target-removed frame)"
+    "thalach_column": "original c7 (index 7); target is original c13 (index 13)"
   },
   "descriptives": {
     "no_disease": {

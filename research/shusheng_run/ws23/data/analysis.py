@@ -5,9 +5,9 @@ Pipeline:
   1. Download UCI Cleveland data + sha256 verify.
   2. Load 14 columns, no header.
   3. Target: col 13 -> binary (target >= 1).
-  4. thalach = column index 13 (0-indexed) of the *target-removed* frame
-     (i.e. the 14th column of the original file, which is thalach; the task
-     wording says "thalach 取第 14 列（0-index 13）").
+  4. thalach = column index 7 (0-indexed) of the original frame.
+     The task wording ("thalach 取第 14 列（0-index 13）") names the position
+     of the *target* column (num, index 13); thalach itself is index 7.
   5. Descriptives (n / mean / SD / missing) per group.
   6. Welch t-test, 95% CI of the mean difference (t-distribution).
   7. Point-biserial r_pb with 95% CI (Fisher-z).
@@ -136,7 +136,7 @@ def main() -> dict:
             "n_total": int(mask.sum()),
             "n_no_disease": int(n0),
             "n_disease": int(n1),
-            "thalach_column": "original c13 (0-index 13 of target-removed frame)",
+            "thalach_column": "original c7 (index 7); target is original c13 (index 13)",
         },
         "descriptives": descriptives,
         "welch": {
