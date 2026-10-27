@@ -1018,10 +1018,39 @@ class PlanCheck:
                 st["files"] = PlanCheck._pp_files(line)
         return st
 
+    @staticmethod
+    def _pp_desc_after_field(response: str) -> str:
+        """DESCRIPTION 值落在下一行时的补捞.
+
+        模型常把 ``DESCRIPTION:`` 单独占一行、正文另起（尤其长描述）。
+        ``_pp_scan`` 逐行取值 → 拿到空串 → execute 收到空任务（ws14 实测
+        plan→execute 缺证据 ['description']，coder 只能瞎逛）。这里把
+        ``DESCRIPTION:`` 之后、下一个字段行之前的正文整体当描述。
+        """
+        lines = response.split("\n")
+        idx = next(
+            (i for i, l in enumerate(lines) if l.startswith("DESCRIPTION:")), None
+        )
+        if idx is None:
+            return ""
+        head = lines[idx].replace("DESCRIPTION:", "", 1).strip()
+        if head:
+            return head
+        tail: list[str] = []
+        for line in lines[idx + 1 :]:
+            if line.startswith(tuple(_PLAN_TEXT_FIELDS)) or line.startswith(
+                ("SLOTS:", "FILES:")
+            ):
+                break
+            tail.append(line)
+        return "\n".join(tail).strip()
+
     def _parse_plan(self, response: str) -> dict[str, Any]:
         """Parse LLM plan response."""
         st = PlanCheck._pp_scan(response)
         plan = {"mode": st["mode"], "description": st["description"]}
+        if not str(plan["description"]).strip():
+            plan["description"] = PlanCheck._pp_desc_after_field(response)
         for src, dst in _PLAN_OPTIONAL_FIELDS:
             if st[src]:
                 plan[dst] = st[src]

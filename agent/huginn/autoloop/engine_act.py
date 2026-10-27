@@ -1075,6 +1075,16 @@ class EngineAct:
             if self._is_deterministic_numeric(description)
             else str(getattr(self, "_objective", "") or "")
         )
+        # 需要外部取数的目标: probe 只会在内存里现编一段算式的数值, 拿不到真实
+        # 数据也落不了盘 —— 用它顶替 execute 就是"合成代替真实"的老毛病.
+        # 交给 coder 真跑(下载+落盘+分析).
+        if self._needs_external_data_io(
+            description
+        ) or self._needs_external_data_io(str(getattr(self, "_objective", "") or "")):
+            logger.info(
+                "numeric-probe fast-path skipped: 目标要求真实数据获取/落盘 (probe 无 I/O)"
+            )
+            return None
         _probe = await self._request_numeric_probe(_src)
         if not _probe:
             return None
@@ -1191,6 +1201,19 @@ class EngineAct:
         if mode == "coder":
             # Use CoderRunner to modify code
             return await self._execute_coder(description, context), mode
+        # 目标要求真实数据获取/落盘时, 除 coder 外的模式都缺"手": workflow 只跑
+        # 模板管线, dynamic_workflow 只并发预置 subtask, explore 只搜设计空间,
+        # skill 是预置流程, code_lab 无 open()/无网络 import. ws16 实测 plan 把
+        # "下载 UCI CSV 再分析"写成 MODE: workflow → 下载根本不会发生.
+        # 一律改道 coder: 唯一带 bash_tool + file_write 的真实执行路径.
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            logger.info(
+                "dispatch %s→coder: 目标要求真实数据获取/落盘 (该模式无 I/O 能力)",
+                mode,
+            )
+            return await self._execute_coder(description, context), "coder"
         if mode == "workflow":
             # Use WorkflowEngine to run computational pipeline
             result = await self._execute_workflow(description, context)
@@ -1213,15 +1236,6 @@ class EngineAct:
                 mode = "coder"
             return result, mode
         # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
-        # 但目标要真实数据获取/落盘时改道 coder: code_lab 无 open()/无网络 import,
-        # 放它接管只能产出合成 stand-in, 反被报告当执行证据.
-        if self._needs_external_data_io(description) or self._needs_external_data_io(
-            str(getattr(self, "_objective", "") or "")
-        ):
-            logger.info(
-                "dispatch %s→coder: 目标要求真实数据获取/落盘, code_lab 无法取证", mode
-            )
-            return await self._execute_coder(description, context), "coder"
         return await self._execute_code_lab(description, context), mode
 
     def _act_explore_is_idle(self, result: Any, description: Any) -> bool:
@@ -1234,12 +1248,7 @@ class EngineAct:
         deterministic = self._is_deterministic_numeric(
             description
         ) or self._is_deterministic_numeric(str(getattr(self, "_objective", "") or ""))
-        # 需要外部取数的目标: explore 的空转同样不算证据, 必须回落 coder
-        # (explore 只搜索注册过的设计空间, 不负责下载/落盘).
-        io_required = self._needs_external_data_io(
-            description
-        ) or self._needs_external_data_io(str(getattr(self, "_objective", "") or ""))
-        return empty and (deterministic or io_required)
+        return empty and deterministic
 
     async def _act_dispatch_inspect(
         self,
@@ -1779,9 +1788,11 @@ class EngineAct:
         )
         usable = n_tool_results - len(tool_errors)
         hit_limit = final.startswith(self._CODER_LIMIT_PREFIX)
-        success = (
-            bool(n_tool_calls) and not hit_limit and usable > 0 and bool(final.strip())
-        )
+        # hit_limit 只作诊断, 不再作失败判据: 数据/科研任务里 coder 常在产出可用
+        # 结果后继续探索到上限 (ws22 实测: UCI 数据已下载且 sha256 与源站逐位一致,
+        # 仍被判 failed → validate 反复重规划, 动作全耗在同一件事上). 判据改为
+        # "发生过真实工具调用且有可用回执", 上限命中单独记录供审计区分"做完未收尾".
+        success = bool(n_tool_calls) and usable > 0 and bool(final.strip())
 
         diag: dict[str, Any] = {
             "tool_calls": n_tool_calls,
@@ -1836,17 +1847,66 @@ class EngineAct:
             return "all_tool_calls_failed"
         return "empty_answer"
 
+    def _coder_task_tail(self, task_desc: str) -> str:
+        """coder 任务收尾指令: 数据/研究类任务明确"在工作区跑脚本", 别改源码.
+
+        默认收尾是 "modify the code" —— 科研任务会被引去读仓库/跑 pytest
+        (ws18 实测: 下载已完成后转去查 research_records、生成 .pytest_cache).
+        取数类任务改成"在工作区写脚本并真跑", 产物落当前工作区.
+        """
+        if self._needs_external_data_io(task_desc) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            return (
+                "Do this inside the current workspace: write the needed scripts and run "
+                "them with bash_tool. Do NOT modify the huginn source tree or run repo "
+                "test suites; all artifacts (data/, scripts, results, figures) belong in "
+                "the current working directory."
+            )
+        return "Please modify the code to address this task."
+
+    def _fallback_coder_task(self) -> str:
+        """plan DESCRIPTION 为空时的替代任务.
+
+        整份 objective 塞给 coder 会被理解成"一次做完所有事", 再撞 coder 迭代
+        上限 (ws22 实测). 优先用当前假设的陈述 —— 它才是本轮该做的实验;
+        没有就取 objective「研究任务」段的开头, 绝不把规则清单当任务下发.
+        """
+        hid = getattr(self, "_current_hyp_id_for_plan", None)
+        if hid:
+            with contextlib.suppress(Exception):
+                statement = str(
+                    getattr(self.hypothesis_graph.get(hid), "statement", "") or ""
+                ).strip()
+                if statement:
+                    return statement
+        obj = str(getattr(self, "_objective", "") or "").strip()
+        marker = "【研究任务】"
+        if marker in obj:
+            obj = obj.split(marker, 1)[1].strip()
+        return obj[:600]
+
     async def _execute_coder(
         self, description: str, context: dict[str, Any]
     ) -> dict[str, Any]:
         """Run the coder loop on the description, reusing self.coder."""
-        task = f"""Task: {description}
+        # plan 偶尔产出空 DESCRIPTION (模型把值写在下一行/被截断), phase_gate 只
+        # advisory 放行 → coder 收到空任务, 只能去翻自己的 sqlite 瞎逛 (ws17 实测
+        # 写了 _code_tool_script.py 查 research_records).
+        task_desc = str(description or "").strip()
+        if not task_desc:
+            task_desc = self._fallback_coder_task()
+            logger.warning(
+                "coder 收到空 description, 以当前假设/研究任务段兜底 (len=%d)",
+                len(task_desc),
+            )
+        task = f"""Task: {task_desc}
 
 Context:
 - Changed files: {context.get("changed_files", [])}
 - Git diff: {context.get("git_diff", "")[:500]}
 
-Please modify the code to address this task."""
+{self._coder_task_tail(task_desc)}"""
         try:
             # CoderRunner.run 是同步的, 丢线程里避免阻塞事件循环
             result = await asyncio.to_thread(self.coder.run, task)
@@ -1889,6 +1949,17 @@ Please modify the code to address this task."""
         """
         reasons: list[str] = []
         objective = str(getattr(self, "_objective", "") or "")
+        # 目标要真实数据获取/落盘时, 回落链 (code_lab → probe_exec) 结构性做不到:
+        # code_lab 无 open()/无网络 import, probe 只在内存里现编算式. 让它们"成功"
+        # 就是把合成数当真实证据 —— 宁可如实失败, 也不产假证据 (ws13 教训).
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            objective
+        ):
+            logger.warning(
+                "coder 失败且目标要求真实数据获取/落盘: 跳过 code_lab/probe 回落"
+                "(二者无 I/O, 只会产出合成证据)"
+            )
+            return None
         lab = await EngineAct._fb_code_lab(self, description, context, reasons)
         if lab is not None:
             return lab
