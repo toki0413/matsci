@@ -122,6 +122,40 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_34ad89fd",
+      "objective": "** [DIM: measure] 在 Cleveland 心脏病数据中，target≥1（确诊冠心病，n≈160–170）患者的最大心率 thalach（第 14 列之前的连续列）均值显著低于 target=0（无病，n≈130–140）组，且 Welch 检验的均值差 95% 置信区间（用 t 分布临界值）完全位于 0 以下；同时 thalach 与 target 的 point-biserial 相关系数 r_pb 的绝对值 ≥ 0.30（中等效应量），方向为负。",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "在 UCI Cleveland 数据上完成完整的实证分析流水线：(1) 检查 data/ 下是否已有 sha256 匹配的 processed.cleveland.data，若无则用 bash_tool 跑 python3 -c urllib 下载到 data/ 并校验哈希；(2) 用 file_write 写/更新 analysis.py，完成数据加载（14列、无表头、列名按 UCI 约定：age, sex, cp, trestbps, chol, fbs, restecg, thalach, exang, oldpeak, slope, ca, thal, target）、缺失值处理（\"?\"→NaN，按列报告缺失率）、异常值规则（IQR 1.5× 或 z>3 并记录剔除数）；(3) 描述统计（target=0 vs target≥1 分组，n、均值、SD、中位数）；(4) Welch 检验：thalach 两组均值差、t、df、p、Cohen's d、point-biserial r_pb（验证 |r_pb|≥0.30）、均值差 95% CI 用 t 分布临界值；(5) 前提假设检查：Shapiro-Wilk 正态性 + Levene 方差齐性；(6) 稳健性：bootstrap 均值差 95% CI 与剔除异常值后重跑 Welch，比较方向与显著性是否一致；(7) 输出 results.json。随后用 file_write 写 report.md。预期产物：data/processed.cleveland.data（~18461B, sha256 a74b7efa...）、analysis.py、results.json、report.md。",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "data/processed.cleveland.data",
+            "data/download_summary.json",
+            "analysis.py",
+            "results.json",
+            "report.md"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T19:48:37.871686+00:00",
+      "confirmed_at": "2026-10-27T19:49:37.906005+00:00",
+      "completed_at": "2026-10-27T19:52:38.559444+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }
