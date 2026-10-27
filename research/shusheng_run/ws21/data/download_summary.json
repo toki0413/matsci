@@ -1,0 +1,28 @@
+{
+  "task": "titanic-download-and-integrity-check",
+  "primary_source": "seaborn-titanic",
+  "fallback_source": "uci-cleveland",
+  "attempts": [
+    {
+      "source": "seaborn-titanic",
+      "source_url": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/titanic.csv",
+      "status": "ok",
+      "error": null,
+      "download_time": 0.4119,
+      "bytes": 57018,
+      "sha256": "81787d320d7f7b03df935e91de8bd19e11d45c5bbcab86ef4d4a76dc91b7d4f2",
+      "rows": 891,
+      "columns": 15
+    }
+  ],
+  "final": {
+    "source": "seaborn-titanic",
+    "source_url": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/titanic.csv",
+    "status": "ok",
+    "download_time": 0.4119,
+    "bytes": 57018,
+    "sha256": "81787d320d7f7b03df935e91de8bd19e11d45c5bbcab86ef4d4a76dc91b7d4f2",
+    "rows": 891,
+    "columns": 15
+  }
+}
