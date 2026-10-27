@@ -1,33 +1,5 @@
 {
-  "task": "uci-cleveland-heart-disease-download",
-  "dataset": "A (UCI Cleveland heart disease)",
-  "expected_sha256": "a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8",
-  "attempts": [
-    {
-      "source_url": "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",
-      "status": null,
-      "error": null,
-      "http_status": 200,
-      "download_time": 1.4789,
-      "bytes": 18461,
-      "sha256": "a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8",
-      "digest_match": true,
-      "rows": 303,
-      "cols": 14
-    }
-  ],
-  "final": {
-    "source_url": "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",
-    "timestamp": "2026-10-27T19:34:29.688539+00:00",
-    "status": "ok",
-    "http_status": 200,
-    "error": null,
-    "download_time": 1.4789,
-    "bytes": 18461,
-    "sha256": "a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8",
-    "rows": 303,
-    "cols": 14,
-    "digest_match": true,
-    "shape_match": true
-  }
+  "error": "TypeError: int() argument must be a string, a bytes-like object or a real number, not 'Series'",
+  "traceback": "Traceback (most recent call last):\n  File \"/workspace/research/shusheng_run/ws23/analysis.py\", line 581, in main\n    results = build_results(df)\n  File \"/workspace/research/shusheng_run/ws23/analysis.py\", line 357, in build_results\n    \"n_missing_values\": int(df[COLUMNS].isna().sum()),\n                        ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: int() argument must be a string, a bytes-like object or a real number, not 'Series'\n",
+  "dataset": "UCI Cleveland heart disease (dataset A)"
 }
