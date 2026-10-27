@@ -1,0 +1,38 @@
+{
+  "plans": [
+    {
+      "id": "plan_42c46dbd",
+      "objective": "H_C (adjusted-odds-ratio attenuation hypothesis), with H_B embedded as a competing model.**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Two-step pipeline. Step 1 (bash_tool): download the UCI Cleveland heart-disease CSV to data/heart.csv and record source_url, download timestamp, bytes, sha256, n_rows, n_cols; verify against the fallback URL if the primary fails. Step 2 (code_tool): write analysis.py that (a) loads data, (b) runs descriptive statistics + missing/outlier handling, (c) fits logistic regression of diagnosis (num≥1) on chest-pain type (cp) with age/trestbps/chol/thalach as covariates — this is H_B (direct association), (d) fits the same model additionally adjusting for exercise-induced angina (exang) and ST slope (slope) as mediators/confounders — this is H_C (attenuation of the cp coefficient), (e) compares the two models via coefficient attenuation Δβ/β_B, likelihood-ratio test, AIC/BIC, and Wald ORs with 95% CIs using t-distribution critical values (n−p df), (f) checks assumptions (VIF, Hosmer–Lemeshow, residual leverage), (g) runs a leave-one-out sensitivity analysis, (h) plots ROC + calibration and dumps results.json + figures/*.png. Then bash_tool to run it, and file_write for report.md.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "data/heart.csv",
+            "analysis.py",
+            "results.json",
+            "figures/",
+            "report.md"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-27T18:28:25.653438+00:00",
+      "confirmed_at": "2026-10-27T18:29:25.754674+00:00",
+      "completed_at": "2026-10-27T18:29:28.574589+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
+    }
+  ]
+}
