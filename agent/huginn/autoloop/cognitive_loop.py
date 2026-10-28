@@ -79,6 +79,13 @@ _MAX_ACTION_HIST = int(os.environ.get("HUGINN_ACTION_HIST_MAX", "1000"))
 # 迭代历史栈上限: 50 轮足够回溯一个完整 autoresearch run 的试错路径
 _MAX_ITER_HIST = int(os.environ.get("HUGINN_ITER_HIST_MAX", "50"))
 
+# 结构性失败: 与模型能力无关 (执行对象/交付物缺失), 同因连续两次即熔断 ——
+# 继续重试的期望收益为零, 只会把挂钟烧在同一个确定性的坑里.
+_STRUCTURAL_FAILURE_KINDS = frozenset(
+    {"empty_description", "deliverable_missing", "plan_rejected"}
+)
+_STRUCTURAL_SAME_CAUSE_LIMIT = 2
+
 
 def _trim_action_history(history: list[str]) -> None:
     """截断到滑动窗口, 防 700 万步极限场景内存爆炸.
@@ -1886,6 +1893,16 @@ class CognitiveRunner:
         run_id = f"loop_{uuid.uuid4().hex[:8]}"
         self._run_start_time = time.time()
         self._objective = objective
+        # 确定性验收锚点: 交付物清单只从 objective 解析, agent 不能改写.
+        from huginn.autoloop.deliverables import parse_manifest
+
+        self._deliverable_manifest = parse_manifest(objective)
+        self._last_plan_failure = None
+        if self._deliverable_manifest:
+            logger.warning(
+                "交付物清单 (objective 确定性解析, agent 不可改写): %s",
+                [d.path for d in self._deliverable_manifest],
+            )
         # 工作区收敛: 工具/沙箱的缺省 work_dir 由 cwd 改为本 run 的 workspace.
         # engine.workspace 是权威值 (构造时已解析 env), 每个 run 显式覆盖 —— 不
         # 用 setdefault: 同进程连跑多个 run 时会被上一轮的 workspace 钉住.
@@ -2387,6 +2404,20 @@ Physical time series collected this run:
         if action == "pivot":
             return bool(cog.get("current_hyp_id") or cog.get("hypothesis"))
         return False
+
+    def _deliverables_ok(self) -> dict[str, Any]:
+        """确定性交付物验收; 无声明时 passed=True (不适用).
+
+        清单来自 objective (见 ``_prepare_run``), agent 无法在运行中改写 ——
+        这是"验收标准不由模型自己生成"的锚点.
+        """
+        manifest = getattr(self, "_deliverable_manifest", None) or []
+        if not manifest:
+            return {"passed": True, "declared": [], "checked": 0}
+        from huginn.autoloop.deliverables import check_manifest
+
+        return check_manifest(self.workspace, manifest)
+
     async def _finalize_run(
         self,
         objective: str, phases: list[LoopPhase], run_id: str,
@@ -2405,6 +2436,20 @@ Physical time series collected this run:
         goal_achieved, goal_judgment = self._finalize_goal_judge(
             objective, trajectory_data, report_phase
         )
+        # 确定性验收锚点: 声明的交付物缺失/空/无效时, 无论 LLM judge 怎么评,
+        # 本次 run 都不算成功 (修 "跑满步数即 success" / "自评 0.3 仍 success").
+        deliverable_gate = self._deliverables_ok()
+        if not deliverable_gate["passed"]:
+            goal_achieved = False
+            goal_judgment = dict(goal_judgment or {})
+            goal_judgment["deliverable_gate"] = deliverable_gate
+            goal_judgment["reason"] = (
+                "声明交付物未通过确定性验收: "
+                f"missing={deliverable_gate['missing']} "
+                f"empty={deliverable_gate['empty']} "
+                f"invalid={deliverable_gate['invalid']}"
+            )
+            logger.error("交付物验收失败 → success=False: %s", goal_judgment["reason"])
         provenance_path = self._finalize_provenance(
             provenance_record, trajectory_data
         )
@@ -2423,7 +2468,10 @@ Physical time series collected this run:
             run_id=run_id,
             objective=objective,
             phases=phases,
-            success=all(p.status == "completed" for p in phases[-7:]),
+            success=(
+                all(p.status == "completed" for p in phases[-7:])
+                and deliverable_gate["passed"]
+            ),
             report_path=report_phase.result,
             total_time_seconds=total_time,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
@@ -3187,6 +3235,28 @@ Physical time series collected this run:
             return None
         self._consecutive_failures += 1
         ftype, count, type_max = self._count_failure_by_type(validation)
+        # 结构性失败熔断: 同因两次就停. 这类失败不是"假设错了需要换方向",
+        # 而是执行对象/交付物缺失 —— 重试只会复制同一次失败.
+        if ftype in _STRUCTURAL_FAILURE_KINDS and count >= _STRUCTURAL_SAME_CAUSE_LIMIT:
+            _diag = (
+                getattr(self, "_last_failure_diagnostic", None)
+                or validation.get("diagnostic")
+                or getattr(self, "_last_plan_failure", None)
+                or {}
+            )
+            self._control_trace(
+                "structural_circuit_breaker",
+                f"type={ftype} count={count} diag={_diag}",
+                action="stop",
+                iteration=state.iteration,
+            )
+            return ReflectionResult(
+                should_stop=True,
+                advice=(
+                    f"结构性失败熔断: {count} 次同因 {ftype}; "
+                    f"诊断={str(_diag.get('diagnostic', ''))[:200]}"
+                ),
+            )
         if count >= type_max:
             logger.warning("cognitive stop: %d consecutive %s failures", count, ftype)
             self._control_trace(
@@ -3730,6 +3800,22 @@ Physical time series collected this run:
         cog["phases"].append(phase)
         cog["completed_steps"] += 1
         cog["plan"] = phase.result
+        # 结构性锚点: plan 被确定性拒绝 (空 DESCRIPTION 重试后仍空) 时不再
+        # "继续下一轮碰运气" —— 停机并输出诊断, 让调用方看到拒绝原因.
+        if phase.result is None and getattr(self, "_last_plan_failure", None):
+            state.should_stop = True
+            self._emit_campaign(
+                "campaign.rejected",
+                {
+                    "iteration": state.iteration,
+                    "reason": "plan_rejected",
+                    "diagnostic": self._last_plan_failure,
+                },
+            )
+            logger.error(
+                "plan rejected → stop: %s",
+                self._last_plan_failure.get("diagnostic"),
+            )
         return phase.result
 
     def _exec_prepare_prediction(self, plan: dict) -> None:

@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 291 站点, 按值域 Jaccard 重叠自动聚成 264 簇 (其中闭集簇 177). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 292 站点, 按值域 Jaccard 重叠自动聚成 265 簇 (其中闭集簇 178). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -346,10 +346,11 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4084`, `huginn/autoloop/cognitive_loop.py:4120` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1823`, `huginn/autoloop/engine_observe.py:956`, `huginn/autoloop/engine_reflect.py:2399` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3863` | `huginn/events/audit_log.py:586` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3884` | `huginn/events/audit_log.py:586` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4170`, `huginn/autoloop/cognitive_loop.py:4206` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1830`, `huginn/autoloop/engine_observe.py:956`, `huginn/autoloop/engine_reflect.py:2399` | — |
+| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3807` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3949` | `huginn/events/audit_log.py:586` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3970` | `huginn/events/audit_log.py:586` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:606`, `huginn/events/unified_bus.py:346` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:249` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:239`, `huginn/knowledge/store.py:253`, `huginn/knowledge/store.py:372` | — |
@@ -382,7 +383,7 @@
 | 通道 | URL 片段 | 生产帧名 |
 |---|---|---|
 | `progress` | `progress` | `campaign`, `heartbeat`, `snapshot`, `update` |
-| `event_bus` | `event_bus` | `agent.step.retrying`, `campaign.budget_exhausted`, `campaign.control_trace`, `campaign.hypothesis`, `campaign.iteration`, `campaign.refine`, `campaign.retry`, `campaign.suspect`, `cognitive.csm.transition`, `compact.end`, `compact.start`, `context.overflow`, `cost.narrative`, `decision.point`, `embedding.download.done`, `embedding.download.error`, `embedding.download.progress`, `embedding.download.start`, `event_bus.dropped`, `heat_engine.health`, `llm.response`, `pet.mood`, `pipeline.stage_change`, `pipeline.suggest`, `quality.check`, `session.end`, `session.start`, `snapshot.revert`, `snapshot.take`, `team.batch.start`, `team.member.done`, `team.member.start`, `team.member.tool`, `team.run.done`, `team.run.start`, `tool.blocked`, `tool.call`, `tool.error`, `tool.result` |
+| `event_bus` | `event_bus` | `agent.step.retrying`, `campaign.budget_exhausted`, `campaign.control_trace`, `campaign.hypothesis`, `campaign.iteration`, `campaign.refine`, `campaign.rejected`, `campaign.retry`, `campaign.suspect`, `cognitive.csm.transition`, `compact.end`, `compact.start`, `context.overflow`, `cost.narrative`, `decision.point`, `embedding.download.done`, `embedding.download.error`, `embedding.download.progress`, `embedding.download.start`, `event_bus.dropped`, `heat_engine.health`, `llm.response`, `pet.mood`, `pipeline.stage_change`, `pipeline.suggest`, `quality.check`, `session.end`, `session.start`, `snapshot.revert`, `snapshot.take`, `team.batch.start`, `team.member.done`, `team.member.start`, `team.member.tool`, `team.run.done`, `team.run.start`, `tool.blocked`, `tool.call`, `tool.error`, `tool.result` |
 | `pet` | `pet` | — (无名帧) |
 
 ### 前端帧监听 (按通道归属)
@@ -427,6 +428,7 @@
 - `event_bus` / `campaign.hypothesis` (经 payload 字段消费)
 - `event_bus` / `campaign.iteration` (经 payload 字段消费)
 - `event_bus` / `campaign.refine` (经 payload 字段消费)
+- `event_bus` / `campaign.rejected`
 - `event_bus` / `campaign.retry` (经 payload 字段消费)
 - `event_bus` / `campaign.suspect` (经 payload 字段消费)
 - `event_bus` / `cognitive.csm.transition`
@@ -992,6 +994,7 @@ SSE 消费面只核「帧名认不认」(监听挂没挂对 EventSource); 本面
 | `event_bus` | `campaign.hypothesis` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.iteration` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.refine` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.rejected` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.retry` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `campaign.suspect` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
 | `event_bus` | `cognitive.csm.transition` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
@@ -1337,6 +1340,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_TOOL_USE_FAILURE
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.budget_exhausted
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.control_trace
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.rejected
 - 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.retry
 - 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.suspect
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): cognitive.csm.transition

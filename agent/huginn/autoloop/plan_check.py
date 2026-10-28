@@ -915,8 +915,18 @@ class PlanCheck:
         "write code and run",
     )
 
+    _NEGATION_WINDOW_RE = re.compile(
+        r"(?:不要|禁止|勿|无需|不必|不得|do\s+not|don['’]?t|without|no\s+need)"
+        r"[^,.;。；\n]{0,40}"
+    )
+
+    @classmethod
+    def _strip_negated_windows(cls, text: str) -> str:
+        """剥离否定窗口, 避免"不要写代码"命中"写代码"标记."""
+        return cls._NEGATION_WINDOW_RE.sub(" ", text or "")
+
     def _asks_to_write_and_run_code(self, plan: dict[str, Any]) -> bool:
-        """目标/plan 是否明确要求"写并运行代码"."""
+        """目标/plan 是否明确要求"写并运行代码" (否定句先剥离)."""
         blob = " ".join(
             str(x)
             for x in (
@@ -924,6 +934,7 @@ class PlanCheck:
                 plan.get("description", "") or "",
             )
         ).lower()
+        blob = self._strip_negated_windows(blob)
         return any(m in blob for m in self._CODE_TASK_MARKERS)
 
     def _is_code_experiment_plan(self, plan: dict[str, Any]) -> bool:

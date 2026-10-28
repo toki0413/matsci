@@ -6,7 +6,7 @@ PerceptionLayer) are stubbed — the LLM decision path is never mocked.
 
 Test matrix:
   1. Full 7-phase pipeline completes
-  2. Phase gate blocks invalid plan → retry succeeds
+  2. 空 description 在 plan 内部重试, 合法 plan 过 phase gate
   3. Iteration budget (max_iterations) limits the loop
 """
 
@@ -215,51 +215,49 @@ class TestAutoloopFullCycle:
         assert fake_llm.call_count >= 3
 
 
-# ── 2. phase gate: invalid plan → rejected → retry ────────────────
+# ── 2. phase gate: 空 description → plan 重试 → 合法 plan 过门 ───────
 
 
 def _gate_retry_plan_fn():
-    """First plan has an empty description (gate blocks), later plans succeed."""
+    """First plan 空 description, 重试补全.
+
+    结构性锚点: 空 description 不得作为执行对象下发, `_plan` 内部重试一次;
+    门控看到的是补全后的 plan, 不会再出现「空 plan 被 advisory 放行」的 phase.
+    """
     plan_calls = [0]
 
     def plan_fn():
         plan_calls[0] += 1
         if plan_calls[0] == 1:
-            # empty string → _parse_plan gives description="" → gate blocks
             return ""
         return "MODE: coder\nDESCRIPTION: Add a convergence check to the script."
 
-    return plan_fn
+    return plan_fn, plan_calls
 
 
-def _assert_gate_retry_phases(result) -> None:
-    # First plan was blocked (empty description), second succeeded — so we
-    # should see at least 2 plan attempts.
+def _assert_gate_retry_phases(result, plan_calls) -> None:
+    # 空描述重试发生在 plan 阶段内部, plan phase 记录的是补全后的 plan.
     plan_phases = [p for p in result.phases if p.name == "plan"]
-    assert len(plan_phases) >= 2, (
-        f"expected >= 2 plan phases (gate retry), got {len(plan_phases)}"
+    names = [p.name for p in result.phases]
+    assert len(plan_phases) >= 1, f"缺 plan phase, 实际 {names}"
+    assert plan_calls[0] >= 2, f"空描述应触发 plan 内部重试, 实际调用 {plan_calls[0]} 次"
+    assert all(p.result["description"] != "" for p in plan_phases), (
+        f"空 description 不得作为 plan 结果留下: {[p.result for p in plan_phases]}"
     )
 
-    # First plan had empty description (gate blocked it)
-    assert plan_phases[0].result["description"] == ""
-
-    # A later plan had a real description and the pipeline continued
-    assert plan_phases[-1].result["description"] != ""
-
-    # Execute phase exists (pipeline got past the gate on retry)
-    execute_phases = [p for p in result.phases if p.name == "execute"]
-    assert len(execute_phases) >= 1
-
-    # Report still ran
-    report_phases = [p for p in result.phases if p.name == "report"]
-    assert len(report_phases) >= 1
+    # 重试补全后流水线继续
+    assert any(p.name == "execute" for p in result.phases), names
+    assert any(p.name == "report" for p in result.phases), names
 
 
 class TestAutoloopPhaseGate:
     @pytest.mark.asyncio
-    async def test_gate_blocks_then_retries(self, tmp_path, monkeypatch):
-        """First plan has empty description → gate blocks → second plan passes."""
-        fake_llm = _make_stage_llm(plan_fn=_gate_retry_plan_fn())
+    async def test_empty_plan_description_retried_before_gate(
+        self, tmp_path, monkeypatch
+    ):
+        """First plan 空 description → plan 内部重试 → 合法 plan 过门后继续."""
+        plan_fn, plan_calls = _gate_retry_plan_fn()
+        fake_llm = _make_stage_llm(plan_fn=plan_fn)
         engine, _ = _make_engine(tmp_path, fake_llm, monkeypatch)
 
         (tmp_path / "test_smoke.py").write_text(
@@ -277,7 +275,7 @@ class TestAutoloopPhaseGate:
         finally:
             _restore_gate(gate_state)
 
-        _assert_gate_retry_phases(result)
+        _assert_gate_retry_phases(result, plan_calls)
 
 
 # ── 3. budget exhaustion: max_iterations limit → stops ─────────────

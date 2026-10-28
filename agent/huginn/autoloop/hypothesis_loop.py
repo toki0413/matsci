@@ -3552,6 +3552,11 @@ class HypothesisLoop:
         # 由 _validate 阶段 _metacog_check_completion 设的 tag.
         if self.get("failure_kind") == "effort_floor_retry":
             return "tool_error"
+        # 结构性失败 (执行对象/交付物缺失) 保留独立类别: 上层按"同因"计数,
+        # 连续两次即熔断, 不与假设错/工具错混为一类.
+        _fk = str(self.get("failure_kind") or "")
+        if _fk in ("empty_description", "deliverable_missing", "plan_rejected"):
+            return _fk
         # 工具失败: 超时/崩溃/连接/OOM — 不是假设错, 重试即可
         if any(m in text for m in _CF_TOOL_MARKERS):
             return "tool_error"

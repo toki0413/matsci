@@ -68,15 +68,23 @@ class TestPhaseGateHook:
         assert gate.is_blocked is False
         assert gate.missing_evidence == []
 
-    def test_advisory_when_evidence_missing(self):
-        # R6 advisory: 缺证据不阻断, 只 warning + feedback (非 checkpoint)
+    def test_hard_block_when_description_missing(self):
+        # 结构性锚点: plan→execute 的 mode/description 是确定性证据,
+        # 缺失即硬阻断 (不再 advisory 放行空执行对象).
         hook = PhaseGateHook()
         gate = hook.evaluate("plan", "execute", {"mode": "coder"})
         # description 缺失
-        assert gate.status == "approved"  # advisory 放行
-        assert gate.is_blocked is False
+        assert gate.status == "blocked"
+        assert gate.is_blocked is True
         assert "description" in gate.missing_evidence
         assert gate.feedback  # 有反馈文本
+        assert "确定性门" in gate.feedback
+
+    def test_advisory_still_applies_to_non_deterministic_evidence(self):
+        # 非确定性转移仍走 advisory 放行, 不阻断正常研究流程.
+        hook = PhaseGateHook()
+        gate = hook.evaluate("hypothesize", "plan", {})
+        assert gate.status == "approved"
         assert "advisory" in gate.feedback.lower()
 
     def test_blocked_when_human_checkpoint_evidence_missing(self):
@@ -88,13 +96,13 @@ class TestPhaseGateHook:
         assert "description" in gate.missing_evidence
         assert gate.feedback
 
-    def test_advisory_when_evidence_empty_string(self):
-        """空串视同缺失, 仍走 advisory 放行."""
+    def test_hard_block_when_evidence_empty_string(self):
+        """空串视同缺失, 确定性证据缺失 → 硬阻断."""
         hook = PhaseGateHook()
         gate = hook.evaluate(
             "plan", "execute", {"mode": "", "description": ""}
         )
-        assert gate.status == "approved"
+        assert gate.status == "blocked"
         assert set(gate.missing_evidence) == {"mode", "description"}
 
     def test_reviewer_reject_returns_rejected(self):
@@ -119,10 +127,11 @@ class TestPhaseGateHook:
         assert gate.status == "approved"
 
     def test_non_dict_evidence_normalized(self):
-        """裸值 evidence 归一成 {"value": ...}, 缺证据走 advisory 放行."""
+        """裸值 evidence 归一成 {"value": ...}; plan→execute 缺确定性证据 → 阻断."""
         hook = PhaseGateHook()
         gate = hook.evaluate("plan", "execute", "just a hypothesis string")
-        assert gate.status == "approved"  # advisory
+        assert gate.status == "blocked"
+        assert set(gate.missing_evidence) == {"mode", "description"}
 
     def test_no_requirement_always_approved(self):
         """learn→report 无证据要求, 总放行."""
@@ -311,8 +320,8 @@ class TestPhaseToolRequestReview:
         assert state.last_gate().status == "approved"
         assert state.pending_transition == ("plan", "execute")
 
-    def test_review_advisory_missing_evidence(self, tool, ctx):
-        # R6 advisory: 缺证据返回 approved + missing_evidence (非 checkpoint)
+    def test_review_hard_block_missing_evidence(self, tool, ctx):
+        # 确定性证据缺失 → 门硬阻断 (不再 advisory 放行).
         r = _call(
             tool,
             {
@@ -324,7 +333,7 @@ class TestPhaseToolRequestReview:
             ctx,
         )
         assert r.success is True  # tool 调用成功
-        assert r.data["gate"]["status"] == "approved"  # advisory
+        assert r.data["gate"]["status"] == "blocked"
         assert "description" in r.data["gate"]["missing_evidence"]
 
     def test_review_uses_accumulated_evidence(self, tool, ctx):

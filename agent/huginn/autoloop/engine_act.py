@@ -388,6 +388,16 @@ class EngineAct:
         self._current_plan_target_files = list(plan.get("target_files") or [])
         return plan
 
+    #: plan 空 DESCRIPTION 的强制重写指令 (只重试一次).
+    _PLAN_DESC_RETRY_SUFFIX = (
+        "\n\nCRITICAL: DESCRIPTION is mandatory and must be non-empty. "
+        "It is the exact task handed to the executor. Output it on one line."
+    )
+
+    @staticmethod
+    def _plan_description_missing(plan: dict[str, Any] | None) -> bool:
+        return not str((plan or {}).get("description") or "").strip()
+
     async def _plan(
         self, hypothesis: str, context: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -395,13 +405,43 @@ class EngineAct:
 
         以前只返回一个临时 dict, turn 结束就丢了. 现在往 PlanStore 落一份,
         跨会话可恢复, 用户也能 confirm/reject. PlanStore 不可用时退回老行为.
+
+        结构性锚点: DESCRIPTION 是下发给执行器的**执行对象**, 不能为空.
+        空描述先强制重写一次; 仍空则 fail-fast 出诊断, 不再用"当前假设"兜底
+        (兜底会让模型自造执行对象 → 假设漂移).
         """
+        self._last_plan_failure = None
         prompt = self._build_plan_prompt(hypothesis, context)
         response, plan = await self._plan_llm(prompt)
         if response is None:
             return None
         self._plan_grill_exit(response)
         if not plan:
+            self._last_plan_failure = {
+                "kind": "empty_description",
+                "attempts": 1,
+                "diagnostic": "planner 未产出可解析的 MODE/DESCRIPTION",
+            }
+            return None
+        if self._plan_description_missing(plan):
+            logger.warning("plan DESCRIPTION 为空 → 强制重写一次")
+            response, _retry = await self._plan_llm(
+                prompt + self._PLAN_DESC_RETRY_SUFFIX
+            )
+            if response is None:
+                return None
+            self._plan_grill_exit(response)
+            if _retry:
+                plan = _retry
+        if self._plan_description_missing(plan):
+            self._last_plan_failure = {
+                "kind": "empty_description",
+                "attempts": 2,
+                "diagnostic": "planner 连续两次产出空 DESCRIPTION, 拒绝下发执行器",
+            }
+            logger.error(
+                "plan 连续两次 DESCRIPTION 为空 → fail-fast (不再用当前假设兜底)"
+            )
             return None
         plan = await self._plan_postprocess(plan, hypothesis, context)
         return await self._plan_persist(hypothesis, plan)
@@ -1865,41 +1905,23 @@ class EngineAct:
             )
         return "Please modify the code to address this task."
 
-    def _fallback_coder_task(self) -> str:
-        """plan DESCRIPTION 为空时的替代任务.
-
-        整份 objective 塞给 coder 会被理解成"一次做完所有事", 再撞 coder 迭代
-        上限 (ws22 实测). 优先用当前假设的陈述 —— 它才是本轮该做的实验;
-        没有就取 objective「研究任务」段的开头, 绝不把规则清单当任务下发.
-        """
-        hid = getattr(self, "_current_hyp_id_for_plan", None)
-        if hid:
-            with contextlib.suppress(Exception):
-                statement = str(
-                    getattr(self.hypothesis_graph.get(hid), "statement", "") or ""
-                ).strip()
-                if statement:
-                    return statement
-        obj = str(getattr(self, "_objective", "") or "").strip()
-        marker = "【研究任务】"
-        if marker in obj:
-            obj = obj.split(marker, 1)[1].strip()
-        return obj[:600]
-
     async def _execute_coder(
         self, description: str, context: dict[str, Any]
     ) -> dict[str, Any]:
         """Run the coder loop on the description, reusing self.coder."""
-        # plan 偶尔产出空 DESCRIPTION (模型把值写在下一行/被截断), phase_gate 只
-        # advisory 放行 → coder 收到空任务, 只能去翻自己的 sqlite 瞎逛 (ws17 实测
-        # 写了 _code_tool_script.py 查 research_records).
+        # 结构性锚点: 没有执行对象就不执行. 旧代码在 description 为空时用
+        # "当前假设"兜底下发 coder —— 那等于让模型自造执行对象, 是 ws28 的
+        # 假设漂移通道. 现在直接 fail-fast 出诊断, 由上层重写 plan.
         task_desc = str(description or "").strip()
         if not task_desc:
-            task_desc = self._fallback_coder_task()
-            logger.warning(
-                "coder 收到空 description, 以当前假设/研究任务段兜底 (len=%d)",
-                len(task_desc),
-            )
+            logger.error("coder 收到空 description → fail-fast (拒绝执行)")
+            return {
+                "mode": "coder",
+                "status": "failed",
+                "success": False,
+                "error": "empty_description",
+                "diagnostic": "plan DESCRIPTION 为空, 执行对象不存在; 需重写 plan",
+            }
         task = f"""Task: {task_desc}
 
 Context:

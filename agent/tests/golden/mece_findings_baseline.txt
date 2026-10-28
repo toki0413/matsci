@@ -2,6 +2,7 @@
 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.suspect
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.budget_exhausted
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.control_trace
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.rejected
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): cognitive.csm.transition
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.done
 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.error
