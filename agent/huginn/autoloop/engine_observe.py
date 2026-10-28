@@ -14,8 +14,9 @@ engine_act / plan_check) 零改动。不再靠多继承把认知中枢堆成 god
 设计关键 (ponytail):
 - 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义属性
   读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
-- own-method 覆写槽 _OWN_ATTRS: 对自身方法名赋值落本对象实例 dict(测试 mock),
-  其余名字(引擎状态字段)转发回引擎。
+- own-method 覆写槽: 对自身方法名赋值落本对象实例 dict(测试 mock),
+  其余名字(引擎状态字段)转发回引擎; 判定由 _facade.EngineFacade 自动推导,
+  不再维护手工 _OWN_ATTRS 名单。
 - 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
   (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
 - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
@@ -31,6 +32,7 @@ import os
 import re
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
 from huginn.autoloop.signals import (
     hypothesis_strength,
     routing_surprise,
@@ -41,77 +43,12 @@ from huginn.autoloop.signals import (
 
 logger = logging.getLogger(__name__)
 
-
-class EngineObserve:
+class EngineObserve(EngineFacade):
     """prompt 拼装 + 元认知层方法族协作对象.
 
     未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
     引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _build_hypothesis_prompt),
-        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
-        if name in self._OWN_ATTRS:
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
-
-    #: EngineObserve 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
-    _OWN_ATTRS: frozenset[str] = frozenset(
-        {
-            "_compress_block",
-            "_scan_block_conflicts",
-            "_get_prompt_budget",
-            "_files_jaccard",
-            "_is_related_chain",
-            "_apply_block_patches",
-            "_trim_to_budget",
-            "_persona_system_prompt",
-            "_build_curiosity_block",
-            "_build_world_model_block",
-            "_build_world_catalog_block",
-            "_matching_domains",
-            "_build_metacog_imagery_block",
-            "_imagery_value",
-            "_pick_imagery_spec",
-            "_build_skill_context_block",
-            "_episodic_replay",
-            "_build_episodic_replay_block",
-            "_build_pmk_block",
-            "_format_pmk_fallback",
-            "_write_pmk_conflict_to_episodic",
-            "_ensure_hypo_manifold",
-            "_build_hypothesis_prompt",
-            "_get_metacog_auditor",
-            "_get_metacog_block_registry",
-            "_get_metacog_method_registry",
-            "_get_metacog_convergence_detector",
-            "_get_metacog_completion_auditor",
-            "trigger_isomorphic_anomaly_hypothesis",
-            "trigger_alignment_surprise_hypothesis",
-            "_metacog_check_effort_floor",
-            "_metacog_check_completion",
-            "_metacog_check_topology_collapse",
-            "_metacog_component_representatives",
-            "_metacog_dominant_family",
-            "_extract_lucid_prereqs",
-        }
-    )
 
     # 上下文预算: 防止 prompt block 累积超过 token 上限.
     # 优先级: body > math > kg > visual > kb > mem > pm > hint > skill > composite > pipeline
@@ -1724,9 +1661,7 @@ Hypothesis:"""
                 result[key] = val[:300]  # 长度限制, 防异常输入
         return result
 
-
 # ── _apply_block_patches / _trim_to_budget 的模块级辅助 ──────────────────
-
 
 def _track_applied_patch_ids(host: Any, phase: str, store: Any) -> None:
     """重算 by_block, 记录实际应用的 patch ids 供 _learn 更新 Beta."""
@@ -1747,7 +1682,6 @@ def _track_applied_patch_ids(host: Any, phase: str, store: Any) -> None:
     if applied_ids:
         host._last_applied_patches = (phase, applied_ids)
 
-
 def _compress_low_priority_blocks(
     host: Any,
     kept: list[tuple[str, str]],
@@ -1767,7 +1701,6 @@ def _compress_low_priority_blocks(
         kept[i] = (name, compressed)
     return total
 
-
 def _drop_low_priority_blocks(
     kept: list[tuple[str, str]], total: int, budget: int
 ) -> None:
@@ -1781,9 +1714,7 @@ def _drop_low_priority_blocks(
         total -= len(text)
         kept[i] = (name, "")
 
-
 # ── _build_pmk_block 的模块级辅助 ─────────────────────────────────────────
-
 
 def _gather_pmk_state(host: Any, build_pmk_state: Any) -> tuple[Any, Any, Any, dict]:
     """收集 persona/eval/kb, 构建 PMK state."""
@@ -1805,7 +1736,6 @@ def _gather_pmk_state(host: Any, build_pmk_state: Any) -> tuple[Any, Any, Any, d
         timeseries_ctx=host._format_timeseries_context() or None,
     )
     return persona_obj, last_eval, kb, pmk_state
-
 
 def _apply_pmk_conflict_side_effects(
     host: Any, pmk_state: dict, reason: str, cur_iter: int
@@ -1842,7 +1772,6 @@ def _apply_pmk_conflict_side_effects(
             exc_info=True,
         )
 
-
 def _format_pmk_text(
     host: Any,
     persona_obj: Any,
@@ -1873,9 +1802,7 @@ def _format_pmk_text(
         pmk_text = host._format_pmk_fallback(pmk_state, is_inconsistent)
     return pmk_text
 
-
 # ── _metacog_check_completion 的模块级辅助 ────────────────────────────────
-
 
 def _extract_unexplored_declaration(raw: str) -> str:
     """从 LLM 原始输出提取 UNEXPLORED: 块 (到下一个大写标记或结尾)."""
@@ -1889,9 +1816,7 @@ def _extract_unexplored_declaration(raw: str) -> str:
             break
     return unexplored
 
-
 # ── _build_metacog_imagery_block 的模块级辅助 ─────────────────────────────
-
 
 def _format_imagery_block(out: dict, verify: dict) -> str:
     """把 sketch→verify 结果格式化成 prompt block (无有效 verify 值返空)."""

@@ -22,6 +22,7 @@ from huginn.agent_config import (
     AgentConfig,
     resolve_tool_budget,
 )
+from huginn.agent_modes import LONG_HORIZON_MODES, SETTABLE_MODES, AgentMode
 from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.context_manager import (
@@ -689,7 +690,7 @@ class HuginnAgent(
 
     def _core_init_internal_state(self) -> None:
         """内部模式标记."""
-        self._mode: str = "chat"
+        self._mode: AgentMode = "chat"
 
         self._evolution_engine: Any | None = None
 
@@ -714,7 +715,8 @@ class HuginnAgent(
 
     # 长程模式: research / extreme 都是长程任务, 需要开 trajectory 召回 +
     # cycle 检测才不重复犯错. chat/plan 是短程, 不开.
-    _LONG_HORIZON_MODES = ("research", "extreme")
+    # 词表单一来源 (A3): 值域见 huginn.agent_modes.LONG_HORIZON_MODES.
+    _LONG_HORIZON_MODES = LONG_HORIZON_MODES
 
     # tool 预算单一数据源在 agent_config.MODE_TOOL_BUDGET, 这里不再自持一份.
     # 科研长工具链吃单工具上限, 默认 5 次一碰就卡死 — mode 联动已在统一入口做.
@@ -767,9 +769,9 @@ class HuginnAgent(
         保留公开 API 向后兼容. CSM transition 是 advisory — 当前状态不允许转 S3
         时返回当前 state 不强制, 不破坏现有 mode 逻辑.
         """
-        if mode not in ("chat", "research", "plan", "extreme"):
+        if mode not in SETTABLE_MODES:
             raise ValueError(
-                f"unknown mode: {mode}. options: chat, research, plan, extreme"
+                f"unknown mode: {mode}. options: {', '.join(SETTABLE_MODES)}"
             )
         if mode == self._mode:
             return
@@ -788,7 +790,7 @@ class HuginnAgent(
         logger.info("agent mode switched to '%s'", mode)
         HuginnAgent._delegate_mode_switch(self, mode)
 
-    def get_mode(self) -> str:
+    def get_mode(self) -> AgentMode:
         return self._mode
 
     def is_research_mode(self) -> bool:

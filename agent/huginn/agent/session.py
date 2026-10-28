@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from huginn.agent_modes import SETTABLE_MODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -134,7 +136,8 @@ class SessionMixin:
 
     def _restore_snapshot_mode(self, snap: dict) -> None:
         mode = snap.get("mode")
-        if mode in ("chat", "research", "plan", "extreme"):
+        # 词表单一来源 (A3): 可恢复的 mode == set_mode() 值域.
+        if mode in SETTABLE_MODES:
             # 不覆盖 plan 恢复触发的 S4_CONSTRUCT, 只在 csm 还是 S0 时恢复
             self._mode = mode
 

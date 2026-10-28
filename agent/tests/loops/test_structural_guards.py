@@ -5,12 +5,16 @@ a) plan DESCRIPTION 为空 → 重写一次 → fail-fast (不再用当前假设
 b) objective 交付物清单确定性解析 + 验收 (agent 不可改写)
 c) plan→execute 缺确定性证据 → 硬阻断 (原 advisory 放行)
 d) 同因连续两次结构性失败 → 熔断
+另加:
+e) A2 — 核心循环钩子失败可见化 (LoopState.failures)
+f) 第0批门禁 — autoloop except 处理器总数 / 静默宽捕获棘轮
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
-
+from pathlib import Path
 
 # ===== Task 1: deliverables 模块 =====
 
@@ -252,3 +256,167 @@ def test_affirmative_write_code_still_routed():
 
     pc = PlanCheck(E())
     assert pc._asks_to_write_and_run_code({"description": "跑实验"}) is True
+
+
+# ===== Task 7 (A2): 核心循环钩子失败可见化 =====
+
+
+def _run_one_iteration(**overrides):
+    """跑一轮 CognitiveLoop, 允许按 stage 注入会抛异常的钩子."""
+    from huginn.autoloop.cognitive_loop import (
+        ActionDecision,
+        CognitiveLoop,
+        LoopState,
+        ReflectionResult,
+    )
+
+    async def _observe(state):
+        return {"ok": True}
+
+    async def _decide(state, obs):
+        return ActionDecision(action="stop")
+
+    async def _execute(state, decision):
+        return "result"
+
+    async def _reflect(state, decision, result):
+        return ReflectionResult()
+
+    fns = {
+        "observe_fn": _observe,
+        "decide_fn": _decide,
+        "execute_fn": _execute,
+        "reflect_fn": _reflect,
+    }
+    fns.update(overrides)
+    loop = CognitiveLoop(max_iterations=1, **fns)
+    return asyncio.run(loop.run(LoopState(max_iterations=1)))
+
+
+def test_observe_failure_is_recorded_not_silently_degraded():
+    async def boom(state):
+        raise RuntimeError("observe boom")
+
+    state = _run_one_iteration(observe_fn=boom)
+    assert state.failed is True
+    assert state.failures[0].stage == "observe"
+    assert state.failures[0].error == "RuntimeError: observe boom"
+
+
+def test_decide_failure_is_recorded_and_stops():
+    async def boom(state, obs):
+        raise RuntimeError("decide boom")
+
+    state = _run_one_iteration(decide_fn=boom)
+    assert state.failed is True
+    assert state.failures[0].stage == "decide"
+    assert state.should_stop is True
+
+
+def test_execute_failure_is_recorded_and_redirects():
+    async def boom(state, decision):
+        raise RuntimeError("execute boom")
+
+    state = _run_one_iteration(execute_fn=boom)
+    assert state.failed is True
+    assert state.failures[0].stage == "execute"
+    assert "action=stop" in state.failures[0].error
+    assert state.should_redirect is False  # 非超时只在 reflect 里评估
+
+
+def test_reflect_failure_is_recorded():
+    async def boom(state, decision, result):
+        raise RuntimeError("reflect boom")
+
+    state = _run_one_iteration(reflect_fn=boom)
+    assert state.failed is True
+    assert state.failures[0].stage == "reflect"
+
+
+def test_degradable_writer_failure_is_not_a_loop_failure():
+    class _BoomWriter:
+        def write_step(self, **kwargs):
+            raise RuntimeError("write boom")
+
+    state = _run_one_iteration(output_writer=_BoomWriter())
+    assert state.failed is False
+    assert state.failures == []
+
+
+def test_step_failure_to_dict_is_serializable():
+    from huginn.autoloop.cognitive_loop import StepFailure
+
+    assert StepFailure("observe", "RuntimeError: x", 3).to_dict() == {
+        "stage": "observe",
+        "error": "RuntimeError: x",
+        "iteration": 3,
+    }
+
+
+# ===== Task 8 (第0批门禁): autoloop except 卫生棘轮 =====
+#
+# 口径: AST 统计 huginn/autoloop 下所有 ExceptHandler.
+#   broad  = type 为 Exception / BaseException 或裸 except;
+#   silent = handler 内既没有 raise, 也没有 warning/error/critical/exception 级日志,
+#            即失败在常规日志里不可见.
+# 基线只减不增: 新增静默宽捕获 → 红. 收敛后请下调基线.
+
+_AUTOLOOP_ROOT = Path(__file__).resolve().parents[2] / "huginn" / "autoloop"
+_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 575
+_AUTOLOOP_BROAD_SILENT_BASELINE = 473
+_LOUD_LOG_METHODS = frozenset({"warning", "error", "critical", "exception", "fatal"})
+
+
+def _except_stats() -> tuple[int, int]:
+    total = broad_silent = 0
+    for py in sorted(_AUTOLOOP_ROOT.rglob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            total += 1
+            if not _is_broad_handler(node):
+                continue
+            has_raise = any(isinstance(n, ast.Raise) for n in ast.walk(node))
+            has_loud_log = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr in _LOUD_LOG_METHODS
+                for n in ast.walk(node)
+            )
+            if not has_raise and not has_loud_log:
+                broad_silent += 1
+    return total, broad_silent
+
+
+def _is_broad_handler(node: ast.ExceptHandler) -> bool:
+    t = node.type
+    if t is None:
+        return True
+    if isinstance(t, ast.Name):
+        return t.id in ("Exception", "BaseException")
+    if isinstance(t, ast.Tuple):
+        return any(
+            isinstance(e, ast.Name) and e.id in ("Exception", "BaseException")
+            for e in t.elts
+        )
+    return False
+
+
+def test_autoloop_except_handler_total_does_not_grow():
+    total, _ = _except_stats()
+    assert total <= _AUTOLOOP_EXCEPT_TOTAL_BASELINE, (
+        f"autoloop except 处理器 {total} 个, 超过基线 {_AUTOLOOP_EXCEPT_TOTAL_BASELINE}. "
+        "新增 except 前先问: 这个失败真能被吞吗? 能就显式降级并记录, 不能就别捕获."
+    )
+
+
+def test_autoloop_silent_broad_except_does_not_grow():
+    _, broad_silent = _except_stats()
+    assert broad_silent <= _AUTOLOOP_BROAD_SILENT_BASELINE, (
+        f"autoloop 静默宽捕获 {broad_silent} 个, 超过基线 "
+        f"{_AUTOLOOP_BROAD_SILENT_BASELINE}. 宽捕获里必须至少记 warning/error 级日志, "
+        "或把失败上报到调用方 —— 只记 debug 等于把故障埋掉."
+    )
+
+

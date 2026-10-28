@@ -146,6 +146,65 @@ class TestRunReturnContract:
         assert result.report_path == expected
 
 
+class TestHookFailuresSurfaceInResult:
+    """A2: 核心循环钩子抛异常 → 记录进 AutoloopResult 且 success=False."""
+
+    def test_observe_hook_failure_marks_run_unsuccessful(
+        self, engine: AutoloopEngine
+    ):
+        _patch_all_phases(engine)
+        engine._cognitive_runner._rc_observe = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("observe boom")
+        )
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=1))
+        assert result.loop_failures, "钩子失败必须进 AutoloopResult.loop_failures"
+        assert result.loop_failures[0]["stage"] == "observe"
+        assert "observe boom" in result.loop_failures[0]["error"]
+        assert result.success is False, "harness 钩子失败不能算 run 成功"
+
+
+class TestSnapshotPersistence:
+    """D1: 快照原子写 + in_progress 清理 + 崩溃重跑幂等."""
+
+    @staticmethod
+    def _result(objective: str = "o") -> AutoloopResult:
+        return AutoloopResult(run_id="r", objective=objective, phases=[], success=True)
+
+    def test_save_is_atomic_and_reloadable(self, tmp_path: Path):
+        from huginn.autoloop.types import load_autoloop_snapshot, save_autoloop_snapshot
+
+        path = save_autoloop_snapshot(self._result(), tmp_path)
+        assert path is not None and path.exists()
+        # 原子写不留 tmp
+        assert not list(path.parent.glob("*.tmp"))
+        snap = load_autoloop_snapshot(tmp_path, "o")
+        assert snap is not None and snap["objective"] == "o"
+
+    def test_final_snapshot_clears_stale_in_progress_marker(self, tmp_path: Path):
+        from huginn.autoloop.types import save_autoloop_snapshot
+
+        result = self._result()
+        save_autoloop_snapshot(result, tmp_path, in_progress=True)
+        snap_dir = tmp_path / ".huginn" / "autoloop_results"
+        stale = list(snap_dir.glob("*.in_progress.json"))
+        assert len(stale) == 1, "in_progress 快照未落盘"
+        save_autoloop_snapshot(result, tmp_path)
+        assert not stale[0].exists(), "最终快照落盘后 in_progress 标记必须被清掉"
+
+    def test_truncated_snapshot_loads_none_and_resave_recovers(self, tmp_path: Path):
+        from huginn.autoloop.types import load_autoloop_snapshot, save_autoloop_snapshot
+
+        result = self._result()
+        path = save_autoloop_snapshot(result, tmp_path)
+        assert path is not None
+        # 模拟旧非原子写崩溃后留下的半截 JSON: 读侧不抛, 重跑能覆盖恢复.
+        path.write_text('{"objective": "o", "succ', encoding="utf-8")
+        assert load_autoloop_snapshot(tmp_path, "o") is None
+        save_autoloop_snapshot(result, tmp_path)
+        snap = load_autoloop_snapshot(tmp_path, "o")
+        assert snap is not None and snap["success"] is True
+
+
 class TestMaxIterations:
     def test_two_iterations_double_the_inner_phases(self, engine: AutoloopEngine):
         _patch_all_phases(engine)

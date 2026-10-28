@@ -13,6 +13,7 @@ from fastapi import APIRouter, Response
 
 from huginn import __version__
 from huginn.config import HuginnConfig, get_config
+from huginn.env_access import env_str
 from huginn.server_core import _check_ollama_available, get_context
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,7 @@ async def health_guidance() -> dict[str, Any]:
     available_providers = _detect_key_providers()
     keyless_providers: list[dict[str, Any]] = []
 
-    ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    ollama_host = env_str("OLLAMA_HOST")
     ollama_ok = await _check_ollama_available(ollama_host)
     if ollama_ok:
         keyless_providers.append(

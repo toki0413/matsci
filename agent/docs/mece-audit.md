@@ -63,14 +63,14 @@
 
 ## 模式面: agent 顶层模式词表一致性
 
-来源: prompt 段 (`_MODE_INSTRUCTIONS`) / session 恢复白名单 / `critique._VALID_MODES` / `core._LONG_HORIZON_MODES` / `set_mode()` 实参. 任何一处都不是全集即 MECE 违例 (mutex: 词表互不一致; exhaustive: 缺口).
+来源: prompt 段 (`_MODE_INSTRUCTIONS`) / `huginn/agent_modes.py` 的 `SETTABLE_MODES` / `CRITIQUE_MODES` / `LONG_HORIZON_MODES` / `set_mode()` 实参. 任何一处都不是全集即 MECE 违例 (mutex: 词表互不一致; exhaustive: 缺口).
 
 | 来源 | 集合 |
 |---|---|
 | prompt_builder._MODE_INSTRUCTIONS | `chat`, `code`, `extreme`, `fusion`, `research` |
-| session 恢复白名单 | `chat`, `extreme`, `plan`, `research` |
-| critique._VALID_MODES | `chat`, `plan`, `research` |
-| core._LONG_HORIZON_MODES | `extreme`, `research` |
+| agent_modes.SETTABLE_MODES | `chat`, `extreme`, `plan`, `research` |
+| agent_modes.CRITIQUE_MODES | `chat`, `plan`, `research` |
+| agent_modes.LONG_HORIZON_MODES | `extreme`, `research` |
 | task_state 注释 | `chat`, `plan`, `research` |
 | set_mode() 运行时实参 | `chat`, `plan`, `research` |
 
@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 292 站点, 按值域 Jaccard 重叠自动聚成 265 簇 (其中闭集簇 178). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 296 站点, 按值域 Jaccard 重叠自动聚成 265 簇 (其中闭集簇 178). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -89,7 +89,7 @@
 |---|---|---|
 | `KINDS` | ⚠️ 异 | `huginn/catalog/models.py:20`(7), `huginn/evolution/semantic_distiller.py:46`(4), `huginn/research/cspace.py:32`(3) |
 | `Severity` | ⚠️ 异 | `huginn/execution/physics_auditor.py:24`(3), `huginn/metacog/failure_modes.py:27`(3) |
-| `_DEFAULT_MCP_ALLOWED_COMMANDS` | ✅ 同 | `huginn/config.py:317`(5), `huginn/mcp_client.py:67`(5) |
+| `_DEFAULT_MCP_ALLOWED_COMMANDS` | ✅ 同 | `huginn/config.py:318`(5), `huginn/mcp_client.py:67`(5) |
 | `_EXPENSIVE_TOOLS` | ✅ 同 | `huginn/hooks/research_safety_hook.py:18`(8), `huginn/research_budget.py:24`(8) |
 | `_KINDS` | ⚠️ 异 | `huginn/share.py:21`(5), `huginn/workflows/registry.py:25`(4) |
 | `_NEGATIVE_WORDS` | ⚠️ 异 | `huginn/persona_emotion.py:147`(22), `huginn/tools/design/gap_analysis_tool.py:59`(31) |
@@ -107,6 +107,7 @@
 | `bash_tool` | `huginn/modes/pi.py::PRIMITIVES`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/routes/ws_helpers.py::_DANGEROUS_TOOLS`, `huginn/tools/adapter.py::_CODING_TOOLS` |
 | `block` | `huginn/autoloop/control_mechanisms.py::EFFECTS`, `huginn/metacog/failure_modes.py::Severity` |
 | `body` | `huginn/events/audit_log.py::_BODY_KEYS`, `huginn/harness/joint_optimizer.py::_CORE_BLOCKS` |
+| `code` | `huginn/agent_modes.py::AgentMode`, `huginn/ontology/actions.py::class ActionCategory` |
 | `code_tool` | `huginn/modes/pi.py::PRIMITIVES`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/adapter.py::_CODING_TOOLS` |
 | `coding` | `huginn/models/router.py::TaskT`, `huginn/pet/__init__.py::class PetMood` |
 | `cp2k_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
@@ -126,6 +127,7 @@
 | `file_write_tool` | `huginn/modes/pi.py::PRIMITIVES`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/runtime/task_tool_router.py::CORE_TOOL_NAMES`, `huginn/tools/adapter.py::_HASHLINE_TOOLS` |
 | `fit` | `huginn/hooks/clarify_questions_hook.py::_COMPUTE_VERBS_EN`, `huginn/tools/bash_tool.py::_PY_LONG_RUN_KEYWORDS` |
 | `formula` | `huginn/core_types.py::class HandleType`, `huginn/perception/doc_types.py::class ElementType` |
+| `fusion` | `huginn/agent_modes.py::AgentMode`, `huginn/capabilities/capability.py::DIMENSIONS` |
 | `gaussian_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_QC_TOOLS` |
 | `goal` | `huginn/routes/deep_research.py::_STR_KEYS`, `huginn/runtime/context_router.py::CONTEXT_SEGMENTS` |
 | `hypothesis` | `huginn/autoloop/cognitive_persist.py::_RUN_CONTEXT_KEYS`, `huginn/harness/joint_optimizer.py::_CORE_BLOCKS`, `huginn/phases.py::class ResearchPhase` |
@@ -152,7 +154,7 @@
 | `orca_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_QC_TOOLS` |
 | `password` | `huginn/events/audit_log.py::_SECRET_KEYS`, `huginn/rag/vector_store.py::SENSITIVE_META_FIELDS` |
 | `pivot` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/hypothesis_loop.py::EdgeType` |
-| `plan` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/core_types.py::class PermissionMode`, `huginn/memory/reasoning.py::class ReasoningPhase`, `huginn/metacog/critique.py::_VALID_MODES`, `huginn/runtime/context_router.py::CONTEXT_SEGMENTS`, `huginn/session_state.py::class SessionPhase` |
+| `plan` | `huginn/agent_modes.py::AgentMode`, `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/core_types.py::class PermissionMode`, `huginn/memory/reasoning.py::class ReasoningPhase`, `huginn/runtime/context_router.py::CONTEXT_SEGMENTS`, `huginn/session_state.py::class SessionPhase` |
 | `prompt` | `huginn/catalog/models.py::KINDS`, `huginn/cli/lazy_loader.py::CommandType` |
 | `provenance` | `huginn/routes/knowledge.py::ALLOWED_SOURCES`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES` |
 | `qe_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
@@ -160,7 +162,7 @@
 | `reflect` | `huginn/memory/reasoning.py::class ReasoningPhase`, `huginn/session_state.py::class SessionPhase` |
 | `relax` | `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
 | `report` | `huginn/autoloop/engine.py::AUTOLOOP_PHASES`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/session_state.py::class SessionPhase` |
-| `research` | `huginn/metacog/critique.py::_VALID_MODES`, `huginn/workflows/registry.py::_KINDS` |
+| `research` | `huginn/agent_modes.py::AgentMode`, `huginn/workflows/registry.py::_KINDS` |
 | `result` | `huginn/autoloop/exec_observation.py::_EVIDENCE_KEYS`, `huginn/cli/slash_commands.py::_BG_SUBCOMMANDS`, `huginn/workflows/registry.py::_STAGE_RUNTIME_FIELDS` |
 | `run` | `huginn/memory/anchor.py::ANCHOR_KINDS`, `huginn/tools/sim/lammps_tool.py::_LAMMPS_COMPUTE_ACTIONS` |
 | `scipy` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/provenance/_legacy.py::_TRACKED_PACKAGES` |
@@ -192,11 +194,11 @@
   - `huginn/hooks/research_safety_hook.py:18` _EXPENSIVE_TOOLS
   - `huginn/research_budget.py:24` _EXPENSIVE_TOOLS
 - 簇 huginn/config.py::ThinkingIntensity (并集 6 词):
-  - `huginn/config.py:29` ThinkingIntensity 缺 `critical`, `none`
+  - `huginn/config.py:30` ThinkingIntensity 缺 `critical`, `none`
   - `huginn/core_types.py:29` class RiskLevel 缺 `max`
   - `huginn/ontology/actions.py:41` class RiskLevel 缺 `max`
 - 簇 huginn/config.py::ContainerRuntimeLiteral (并集 5 词):
-  - `huginn/config.py:59` ContainerRuntimeLiteral
+  - `huginn/config.py:60` ContainerRuntimeLiteral
   - `huginn/security/container_executor.py:179` _VALID_RUNTIMES 缺 `none`
 - 簇 huginn/core_types.py::class BudgetDecision (并集 4 词):
   - `huginn/core_types.py:46` class BudgetDecision 缺 `ask`
@@ -229,7 +231,7 @@
 |---|---|---|---|---|---|---|---|---|
 | `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:239` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
 | `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:249` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
-| `_READONLY_PHASE_TOOLS` | `huginn/autoloop/engine_act.py:137` | 7 | 7 | registry | `internal-only` | 0 | 0 | 0 |
+| `_READONLY_PHASE_TOOLS` | `huginn/autoloop/engine_act.py:119` | 7 | 7 | registry | `internal-only` | 0 | 0 | 0 |
 | `_DFT_MD_TOOLS` | `huginn/execution/compute_router.py:15` | 8 | 4 | registry | `internal-only` | 0 | 0 | 4 |
 | `_QC_TOOLS` | `huginn/execution/compute_router.py:29` | 4 | 2 | registry | `internal-only` | 0 | 0 | 2 |
 | `CORE_BOOTSTRAP_TOOLS` | `huginn/harness/promotion.py:25` | 2 | 2 | registry | `internal-only` | 0 | 0 | 0 |
@@ -346,11 +348,11 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4170`, `huginn/autoloop/cognitive_loop.py:4206` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1830`, `huginn/autoloop/engine_observe.py:956`, `huginn/autoloop/engine_reflect.py:2399` | — |
-| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3807` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3949` | `huginn/events/audit_log.py:586` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3970` | `huginn/events/audit_log.py:586` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4166`, `huginn/autoloop/cognitive_loop.py:4202` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1811`, `huginn/autoloop/engine_observe.py:893`, `huginn/autoloop/engine_reflect.py:2399` | — |
+| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3803` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3945` | `huginn/events/audit_log.py:586` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3966` | `huginn/events/audit_log.py:586` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:606`, `huginn/events/unified_bus.py:346` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:249` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:239`, `huginn/knowledge/store.py:253`, `huginn/knowledge/store.py:372` | — |

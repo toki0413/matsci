@@ -32,19 +32,19 @@ import re
 from collections import Counter
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
 from huginn.autoloop.signals import routing_surprise
 from huginn.memory.longterm import load_stable_principles
+from huginn.utils.json_extract import extract_json_text
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
-
 
 def _get_math_signals():
     """Delayed import to avoid circular dependency (engine imports PlanCheck)."""
     from huginn.autoloop.engine import _MATH_SIGNALS
 
     return _MATH_SIGNALS
-
 
 # planner 提示教的 MODE 候选基线. 不要在源码里把它改成 f-string 占位符:
 # contract_audit 的 workflow 面用正则静态解析本文件里 "MODE:" 后的候选枚举
@@ -68,7 +68,6 @@ _PLAN_OPTIONAL_FIELDS: tuple[tuple[str, str], ...] = (
     ("formula", "plan_formula"),
     ("files", "target_files"),
 )
-
 
 # ---------------------------------------------------------------------------
 # plan prompt 拼接片段 (_build_plan_prompt 外提; 文本内容与拼接顺序逐字节不变)
@@ -114,7 +113,6 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
 SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
 """
 
-
 def _pc_task_prompt(
     hypothesis: str, context: dict[str, Any], extra_mode_lines: str
 ) -> str:
@@ -133,7 +131,6 @@ Choose ONE mode and describe the plan:
 {extra_mode_lines}
 """
 
-
 def _pc_plan_body(
     hypothesis: str, context: dict[str, Any], extra_mode_lines: str
 ) -> str:
@@ -145,7 +142,6 @@ def _pc_plan_body(
         + _PC_ALIGNMENT_GATE_PROMPT
         + _PC_OUTPUT_FORMAT_PROMPT
     )
-
 
 def _pc_retrieval_blocks(
     pc: Any, hypothesis: str
@@ -183,7 +179,6 @@ def _pc_retrieval_blocks(
         )
     return kb_block, kg_block, mem_block, pm_block, metacog_block, principles_block
 
-
 def _pc_world_model_block(pc: Any, hypothesis: str) -> str:
     """P1 Task 5: world model 预测注入 (懒路, toggle HUGINN_WORLD_MODEL)."""
     block = pc._build_world_model_block(hypothesis)
@@ -191,14 +186,12 @@ def _pc_world_model_block(pc: Any, hypothesis: str) -> str:
         block = f"\n### World Model Prediction (analogy-based)\n{block}"
     return block
 
-
 def _pc_visual_block(pc: Any) -> str:
     """视觉基元注入 (同 hypothesize)."""
     block = getattr(pc, "_last_visual_context", "")
     if block:
         block = f"\n### Visual Primitives (from last tool output)\n{block}\n"
     return block
-
 
 def _pc_math_block(pc: Any, hypothesis: str, context: dict[str, Any]) -> str:
     """条件化 math_block (同 hypothesize)."""
@@ -212,7 +205,6 @@ def _pc_math_block(pc: Any, hypothesis: str, context: dict[str, Any]) -> str:
         if not related_chain and any(s in hyp_blob for s in _get_math_signals())
         else ""
     )
-
 
 def _pc_learning_blocks(pc: Any, hypothesis: str) -> tuple[str, str]:
     """evolution 学到的 skills + prompt patches 提示行."""
@@ -243,7 +235,6 @@ def _pc_learning_blocks(pc: Any, hypothesis: str) -> tuple[str, str]:
             exc_info=True,
         )
     return skill_hints, patch_hints
-
 
 def _pc_composite_block(hypothesis: str) -> str:
     """条件化 composite skills 列表 (仿真/计算类 hypothesis 才注入)."""
@@ -293,7 +284,6 @@ def _pc_composite_block(hypothesis: str) -> str:
             logger.debug("composite skill lookup failed", exc_info=True)
     return composite_block
 
-
 def _pc_pipeline_block(pc: Any) -> str:
     """Pipeline 建议: 基于 provenance 规则推荐下一步工具."""
     # 42 条领域规则, 零 LLM 调用. 让 plan 知道"这类任务通常下一步是 X".
@@ -325,7 +315,6 @@ def _pc_pipeline_block(pc: Any) -> str:
             "best-effort op failed", exc_info=True
         )  # pipeline 是 advisory, 失败不阻塞
     return pipeline_block
-
 
 # 场景关键词表 (快路径). 顺序即优先级: dft > md > workflow, 之后按 mode 判
 # skill, 再 fem; 自动发现的关键词 (_scene_tag_extra_keywords) 走最后.
@@ -374,7 +363,6 @@ _PC_STOPWORDS = frozenset(
     }
 )
 
-
 def _match_scene_keywords(
     desc: str, table: tuple[tuple[str, tuple[str, ...]], ...]
 ) -> str | None:
@@ -384,7 +372,6 @@ def _match_scene_keywords(
             return label
     return None
 
-
 def _collect_other_scene_descs(history: Any) -> list[str]:
     """收集 scene='other' 的 plan descriptions (小写)."""
     out: list[str] = []
@@ -393,7 +380,6 @@ def _collect_other_scene_descs(history: Any) -> list[str]:
         if c.get("scene_tag") == "other" and snapshot.get("description"):
             out.append(snapshot["description"].lower())
     return out
-
 
 def _count_plan_ngrams(descs: list[str]) -> tuple[Counter[str], Counter[str]]:
     """unigram (>=4 chars, 去停用词) + bigram 词频."""
@@ -410,7 +396,6 @@ def _count_plan_ngrams(descs: list[str]) -> tuple[Counter[str], Counter[str]]:
             bigram_counts[f"{words[i]} {words[i + 1]}"] += 1
     return word_counts, bigram_counts
 
-
 def _apply_discovered_tags(
     target: dict[str, set[str]], counts: Counter[str], limit: int
 ) -> None:
@@ -421,12 +406,10 @@ def _apply_discovered_tags(
         label = f"auto_{gram.replace(' ', '_')}"
         target.setdefault(label, set()).add(gram)
 
-
 # 抓 "<number> <unit>" 量, e.g. "210 GPa" / "1.5e3 kg/m3"
 _DIM_QUANTITY_RE = re.compile(
     r"([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s+([A-Za-z][A-Za-z0-9/\^\-\*\.\(\)]+)"
 )
-
 
 def _dimensional_text(plan: Any, hypothesis: str) -> str:
     """拼 plan + hypothesis 文本 (取 description/prediction 字段)."""
@@ -436,7 +419,6 @@ def _dimensional_text(plan: Any, hypothesis: str) -> str:
         if isinstance(v, str) and v:
             parts.append(v)
     return "\n".join(parts)
-
 
 def _dimensional_line_warning(validator: Any, line: str) -> str | None:
     """单行等式量纲校验; 不可解析或量纲一致时返回 None."""
@@ -460,7 +442,6 @@ def _dimensional_line_warning(validator: Any, line: str) -> str | None:
         f"dimensional inconsistency: '{line.strip()[:80]}' "
         f"LHS={result.lhs_dimensions} RHS={result.rhs_dimensions}"
     )
-
 
 def _pcp_render_prompt(
     hypothesis: str,
@@ -508,22 +489,13 @@ PREDICTION: {plan.get("expected_prediction", "N/A")}
   "risks": ["潜在风险"]
 }}"""
 
-
 def _extract_json_object(text: str) -> tuple[str, str]:
-    """括号配平法抓第一个完整 JSON 对象; 返回 (对象文本, 错误原因)."""
-    start = text.find("{")
-    if start < 0:
-        return "", "no json, skip"
-    depth = 0
-    for i, ch in enumerate(text[start:], start=start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1], ""
-    return "", "no closing brace, skip"
+    """括号配平法抓第一个完整 JSON 对象; 返回 (对象文本, 错误原因).
 
+    薄封装: 实现见 huginn/utils/json_extract.py, 这里保留原二元组契约.
+    """
+    blob, err = extract_json_text(text, prefer="first", openers=("{",))
+    return blob, f"{err}, skip" if err else ""
 
 def _rp_render_prompt(
     plan: dict[str, Any],
@@ -557,78 +529,12 @@ DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""
 
-
-class PlanCheck:
+class PlanCheck(EngineFacade):
     """plan_check 方法族协作对象.
 
     未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
     引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _plan_check),
-        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
-        if name in self._OWN_ATTRS:
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
-
-    #: PlanCheck 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
-    _OWN_ATTRS: frozenset[str] = frozenset(
-        {
-            "_build_subgoal_block",
-            "_build_plan_prompt",
-            "_plan_context_hint",
-            "_override_plan_mode",
-            "_ovr_force_coder",
-            "_ovr_code_experiment",
-            "_ovr_dual_coverage",
-            "_ovr_force_explore",
-            "_asks_to_write_and_run_code",
-            "_is_code_experiment_plan",
-            "_log_plan_override",
-            "_pp_slots",
-            "_pp_files",
-            "_pp_scan",
-            "_parse_plan",
-            "_plan_check_and_refine",
-            "_pcr_loop",
-            "_pcr_record",
-            "_pcr_pass",
-            "_pcr_fail",
-            "_maybe_trigger_plan_check_clarify",
-            "_plan_check_tier",
-            "_plan_check_complexity_thresholds",
-            "_plan_check_scene_tag",
-            "_discover_scene_tags",
-            "_plan_check_complexity",
-            "_plan_check_max_refines",
-            "_plan_check",
-            "_dimensional_pre_check",
-            "_build_plan_check_prompt",
-            "_pcp_similar_history",
-            "_record_plan_check_failure",
-            "_load_plan_check_patterns",
-            "_save_plan_check_patterns",
-            "_parse_plan_check",
-            "_rp_few_shot",
-            "_refine_plan",
-        }
-    )
 
     def _build_subgoal_block(self) -> str:
         """从 agent 或 self 上读 sub_goals, 注入到 prompt."""

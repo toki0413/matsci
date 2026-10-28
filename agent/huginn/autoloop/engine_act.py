@@ -33,6 +33,8 @@ import time
 import uuid
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
+
 # 提示面升级阈值 (与 engine_reflect 同一旋钮): 由本对象在组装作者提示时**消费**,
 # 故常量必须同源. engine_reflect 不反向 import 本模块, 无循环风险.
 # with_retry: autoloop 的 LLM 调用此前**绕开**了统一重试层 (agent/streaming.py 有,
@@ -56,7 +58,6 @@ _EXEC_LEDGER_ENTRY_CHARS = 600
 _CODELAB_MIN_TIMEOUT_S = 60.0
 # 未拿到显式超时时的兜底 (与 HUGINN_CODELAB_TIMEOUT_S 的默认档一致).
 _CODELAB_FALLBACK_TIMEOUT_S = 600.0
-
 
 def _ledger_text(output: Any) -> str:
     """执行回执 → 紧凑 JSON 文本; 超长时在词边界截断并补窗口外数值面."""
@@ -82,7 +83,6 @@ def _ledger_text(output: Any) -> str:
     tail_nums = sorted(_numeric_tokens(text[cut:], _CITATION_MIN_MAGNITUDE))
     return text[:cut] + (" nums_after_cut=" + " ".join(tail_nums) if tail_nums else "")
 
-
 def _next_timeout_cap(
     current_cap: float | None,
     effective_timeout: float | None,
@@ -105,31 +105,13 @@ def _next_timeout_cap(
     )
     return max(_CODELAB_MIN_TIMEOUT_S, base / 2.0), True
 
-
-class EngineAct:
+class EngineAct(EngineFacade):
     """plan / execute 阶段方法族协作对象.
 
     未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
     引擎字段/方法(如 _grill_active / _current_prediction / model / _llm_chat 等)
     不会被复制两份, 方法体零改动、行为完全等价.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (mock/selfcheck) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
 
     #: plan / validate 阶段允许挂载的**只读**工具白名单.
     #: 只收 read_only=True 且无副作用的工具 —— 这两个阶段此前完全没有工具面,

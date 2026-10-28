@@ -237,6 +237,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_LOCAL_ONLY": EnvSpec("int", "0", "tuning"),
     "HUGINN_LOCAL_VISION_TIMEOUT": EnvSpec("int", "20", "tuning"),
     "HUGINN_LOCAL_VISION_TTL": EnvSpec("float", "2.0", "tuning"),
+    "HUGINN_LOOP_FAILURES_MAX": EnvSpec("int", "200", "tuning"),
     "HUGINN_LOOP_LIGHT_ON_TRACK": EnvSpec("int", "1", "tuning"),
     "HUGINN_LOOP_ROLLBACK": EnvSpec("int", "1", "tuning"),
     "HUGINN_MAX_BRANCHES": EnvSpec("int", "5", "tuning"),
@@ -453,9 +454,36 @@ SCHEMA: dict[str, EnvSpec] = {
 }
 
 
+# 部署/工具链外部变量 (非 HUGINN_ 前缀). 名字由外部工具约定, 不能改名, 但
+# **解析口径** (类型 / 权威默认值) 仍必须只有一处 —— 与 SCHEMA 共用 EnvSpec,
+# 由 env_access 同一套访问器读取. 典型来源: config.py 部署边界 + 各工具直连.
+#
+# 只登记"我们拥有解释权"的变量; PATH/HOME/HTTP_PROXY 及第三方 SDK 的 key
+# (OPENAI_API_KEY 等) 不在此列 —— 它们的语义属于外部环境, 不归本仓库声明.
+DEPLOY_SCHEMA: dict[str, EnvSpec] = {
+    # ---- 科学计算可执行文件 ----
+    "LAMMPS_EXECUTABLE": EnvSpec("str", "", "deployment"),
+    "VASP_EXECUTABLE": EnvSpec("str", "", "deployment"),
+    # ---- 材料数据库 key ----
+    "MP_API_KEY": EnvSpec("str", "", "deployment"),
+    "OQMD_API_KEY": EnvSpec("str", "", "deployment"),
+    # ---- HPC 连接 ----
+    "HPC_HOST": EnvSpec("str", "", "deployment"),
+    "HPC_KEY_PATH": EnvSpec("str", "", "deployment"),
+    "HPC_USERNAME": EnvSpec("str", "", "deployment"),
+    # ---- 外部服务 ----
+    "ABAQUS_MCP_SERVER_PATH": EnvSpec("str", "", "deployment"),
+    "OLLAMA_HOST": EnvSpec("str", "http://localhost:11434", "deployment"),
+}
+
+
 # 裸读站点棘轮基线 = 当前代码里字面量 HUGINN_* 读点总数.
 # 治理测试断言实际值 <= 此数, 即只减不增; 迁移读点到 env_access 后应下调此数.
-RAW_READ_BASELINE = 467
+RAW_READ_BASELINE = 464
+
+# 同模块重复读棘轮基线 = Σ(max(0, 同一模块读同一变量的次数 - 1)), 只算非规范读点.
+# 同一模块第二次读同一变量是在重复解析同一份配置, 应抽模块级常量或走 env_access.
+RAW_DUP_READ_BASELINE = 42
 
 
 # 已知默认值分散: 同一变量在代码多处字面量默认值不一致 (双真值来源).

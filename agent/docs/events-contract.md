@@ -18,11 +18,11 @@
 | ON_TOOL_CALL | 工具调用三段式 | api/event.py:121, api/filter.py:224, events/unified_bus.py:249 +1 处 |
 | ON_TOOL_EXECUTE | 工具调用三段式 | tools/adapter.py:1409 |
 | ON_TOOL_RESPOND | 工具调用三段式 | api/event.py:134, api/filter.py:242, events/unified_bus.py:255 +1 处 |
-| ON_WORKFLOW_BEGIN | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:361 |
-| ON_WORKFLOW_STAGE_START | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:922, autoloop/cognitive_loop.py:966 |
-| ON_WORKFLOW_STAGE_DONE | Workflow 钩子 (材料科研特色) | api/filter.py:255, autoloop/cognitive_loop.py:1020, autoloop/cognitive_loop.py:939 +1 处 |
-| ON_WORKFLOW_DONE | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:368 |
-| ON_WORKFLOW_FAILED | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:1024, autoloop/cognitive_loop.py:941 |
+| ON_WORKFLOW_BEGIN | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:378 |
+| ON_WORKFLOW_STAGE_START | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:907, autoloop/cognitive_loop.py:951 |
+| ON_WORKFLOW_STAGE_DONE | Workflow 钩子 (材料科研特色) | api/filter.py:255, autoloop/cognitive_loop.py:1005, autoloop/cognitive_loop.py:924 +1 处 |
+| ON_WORKFLOW_DONE | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:385 |
+| ON_WORKFLOW_FAILED | Workflow 钩子 (材料科研特色) | autoloop/cognitive_loop.py:1009, autoloop/cognitive_loop.py:926 |
 | ON_MESSAGE_RECEIVED | 消息 | api/filter.py:129, api/filter.py:143, api/filter.py:157 +2 处 |
 | ON_BEFORE_MESSAGE_SENT | 消息 | events/unified_bus.py:309 |
 | ON_AFTER_MESSAGE_SENT | 消息 | events/unified_bus.py:318 |
