@@ -1913,13 +1913,24 @@ class EngineAct(EngineFacade):
                 "error": "empty_description",
                 "diagnostic": "plan DESCRIPTION 为空, 执行对象不存在; 需重写 plan",
             }
+        # 结构性缺陷 (ws35 实测): 验收缺口只到 decider, 不到真正动手的 coder ——
+        # 模型按旧计划把产物写进 results/ 子目录, 根目录清单一直判 missing, 循环
+        # 反复 execute 同一份计划. 谁要动手, 缺口就必须拼进谁的任务文本里.
+        from huginn.autoloop.deliverables import acceptance_block_for
+
+        acceptance = acceptance_block_for(
+            self,
+            "Acceptance (deterministic engine gate; your edit must close these"
+            " gaps; files are checked at the workspace ROOT with the exact"
+            " declared names — copies in subdirectories do not count):",
+        )
         task = f"""Task: {task_desc}
 
 Context:
 - Changed files: {context.get("changed_files", [])}
 - Git diff: {context.get("git_diff", "")[:500]}
 
-{self._coder_task_tail(task_desc)}"""
+{self._coder_task_tail(task_desc)}{acceptance}"""
         try:
             # CoderRunner.run 是同步的, 丢线程里避免阻塞事件循环
             result = await asyncio.to_thread(self.coder.run, task)
