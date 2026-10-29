@@ -470,6 +470,31 @@ class CognitiveLoop:
         # 超过 2 倍上限仍未换方向 → 真死循环, 强制 stop
         if repeated < self._max_repeated_actions * 2:
             return False
+        # 交付物硬门: 声明清单还没通过确定性验收时, 死循环的处置是"换回执行",
+        # 不是收工 —— ws33 实测: 模型连发 skip 到 6 次被强制 stop, iteration 11
+        # 收口, 三个交付物全缺. 停机权不能绕开验收.
+        gate = self._deliverables_ok()
+        if not gate.get("passed", True):
+            _gap = (
+                f"missing={gate.get('missing') or []} "
+                f"empty={gate.get('empty') or []} "
+                f"invalid={gate.get('invalid') or []}"
+            )
+            nxt = "execute" if getattr(self, "_last_good_plan", None) else "plan"
+            logger.error(
+                "CognitiveLoop: %d consecutive '%s' (2x limit) — 交付物未验收, "
+                "改判为 %s 而不是 stop: %s",
+                repeated, decision.action, nxt, _gap,
+            )
+            decision.action = nxt
+            self._append_hint(
+                f"[交付物硬门] 死循环判定成立, 但交付物未通过确定性验收: {_gap}. "
+                "不要收结: 把缺的文件真实落盘后再继续."
+            )
+            self._control_trace(
+                "stop_gate", _gap, iteration=state.iteration, action=f"force_{nxt}"
+            )
+            return False
         logger.error(
             "CognitiveLoop: %d consecutive '%s' (2x limit), forcing stop",
             repeated, decision.action,

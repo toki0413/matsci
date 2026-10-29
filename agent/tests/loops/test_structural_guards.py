@@ -89,6 +89,73 @@ def test_stop_gate_allows_stop_when_deliverables_pass():
     assert out.action == "stop"
 
 
+def test_repetition_guard_forces_execute_when_deliverables_missing():
+    """连续 skip 到 2 倍上限时, 交付物未验收 → 改判 execute, 不是强制停机.
+
+    ws33 实测: 模型连发 6 次 skip, 引擎 forcing stop, iteration 11 收口,
+    loop_log.jsonl / results.json / report.md 全缺 → success=False.
+    """
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    hints: list[str] = []
+    stub = SimpleNamespace(
+        _max_repeated_actions=3,
+        _deliverables_ok=lambda: {"passed": False, "missing": ["loop_log.jsonl"],
+                                  "empty": [], "invalid": []},
+        _append_hint=hints.append,
+        _control_trace=lambda *a, **k: None,
+        _last_good_plan={"description": "x"},
+    )
+    state = SimpleNamespace(iteration=11, should_stop=False, should_redirect=False,
+                            redirect_reason="")
+    decision = ActionDecision(action="skip")
+    quit_loop = CognitiveLoop._guard_repetition(stub, state, decision, 6)
+    assert quit_loop is False
+    assert state.should_stop is False
+    assert decision.action == "execute"
+    assert hints and "交付物硬门" in hints[0]
+
+
+def test_repetition_guard_forces_plan_when_no_plan_yet():
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    stub = SimpleNamespace(
+        _max_repeated_actions=3,
+        _deliverables_ok=lambda: {"passed": False, "missing": ["report.md"]},
+        _append_hint=lambda _h: None,
+        _control_trace=lambda *a, **k: None,
+        _last_good_plan=None,
+    )
+    state = SimpleNamespace(iteration=5, should_stop=False, should_redirect=False,
+                            redirect_reason="")
+    decision = ActionDecision(action="skip")
+    assert CognitiveLoop._guard_repetition(stub, state, decision, 6) is False
+    assert decision.action == "plan"
+
+
+def test_repetition_guard_still_stops_when_deliverables_pass():
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    stub = SimpleNamespace(
+        _max_repeated_actions=3,
+        _deliverables_ok=lambda: {"passed": True},
+        _append_hint=lambda _h: None,
+        _control_trace=lambda *a, **k: None,
+        _last_good_plan={"description": "x"},
+    )
+    state = SimpleNamespace(iteration=9, should_stop=False, should_redirect=False,
+                            redirect_reason="")
+    decision = ActionDecision(action="skip")
+    assert CognitiveLoop._guard_repetition(stub, state, decision, 6) is True
+    assert state.should_stop is True
+
+
 def test_check_manifest_reports_missing_and_empty(tmp_path):
     from huginn.autoloop.deliverables import Deliverable, check_manifest
 
