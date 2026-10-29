@@ -1,0 +1,27 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "b1af41e2e24e",
+    "reason": "Plan is invalid because it lacks a concrete, executable numerical script that implements the hypothesis tests (H1-H5). The DESCRIPTION only mentions writing a script but does not contain the actual code, formulas, or expected output values needed to verify the hypothesis. According to the failure pattern, this is a 'DIM/换名式重述' (vague description instead of executable computation) which will cause validation failure. The plan needs to include the actual Python code with imports, calculations, and print statements for the metrics to be verifiable.",
+    "missing_steps": [
+      "Write executable Python script implementing all H1-H5 calculations with specific formulas",
+      "Include data loading/cleaning steps for the MgH2 dataset",
+      "Implement H1: paired ΔEa calculation with random-effects meta-analysis",
+      "Implement H2: η² estimation and permutation test for family effects",
+      "Implement H3: method comparison pairs and median comparison",
+      "Implement H4: LOSO cross-validation with RMSE/MAE/coverage metrics",
+      "Implement H5: out-of-sample prediction with 95% prediction interval",
+      "Add print statements to output all required metrics for validation"
+    ],
+    "mode": "coder",
+    "description": "The recall didn't find any cached data about the dataset. Let me use the file_write_tool to first write a script that examines the data, then I can see the output. Actually, I need to work with what t"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "b1af41e2e24e",
+    "reason": "DESCRIPTION is a high-level summary ('Write executable Python script...') but lacks the actual executable code, specific formulas, data loading/cleaning steps, and print statements required to produce numerical results. This matches the exact 'known failure pattern' cited in the prompt: the plan mentions writing a script but does not contain the concrete, runnable numerical implementation needed to validate the hypotheses. Without the actual code and output values in the plan, it cannot be verified as executable.",
+    "missing_steps": [],
+    "mode": "coder",
+    "description": "Write executable Python script implementing all H1-H5 calculations with specific formulas, including data loading/cleaning, paired ΔEa meta-analysis, η² permutation test, method noise comparison, LOSO"
+  }
+]
