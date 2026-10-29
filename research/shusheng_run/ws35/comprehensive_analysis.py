@@ -23,30 +23,10 @@ def load_data(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
+            row = dict(row)
+            row['Ea_parsed'] = float(row['Ea_parsed']) if row['Ea_parsed'] else None
             data.append(row)
     return data
-
-
-def parse_ea_value(val):
-    """Parse Ea value from string, handling 'x +/- y' and '~x' formats."""
-    if not val or val.strip() == '':
-        return None
-    val = val.strip()
-    # Handle approximate values (~)
-    if val.startswith('~'):
-        val = val[1:].strip()
-    # Split on +/-
-    parts = val.split('±')
-    if len(parts) > 1:
-        val = parts[0].strip()
-    # Extract first number
-    parts = val.split()
-    if parts:
-        try:
-            return float(parts[0])
-        except ValueError:
-            return None
-    return None
 
 
 def filter_desorption_only(data):
@@ -55,15 +35,12 @@ def filter_desorption_only(data):
 
 
 def filter_out_special_cases(data):
-    """Exclude the MgH2 + 5 wt% V row (already excluded in cleaned data, but check)."""
-    # The cleaned data already excludes this row, but we verify
+    """Exclude the MgH2 + 5 wt% V row."""
     return [r for r in data if r.get('material', '') != 'MgH2 + 5 wt% V']
 
 
 def get_paired_samples(data):
-    """Find paired samples: pure_MgH2 vs catalyzed from the same paper (same doi).
-    Only use desorption data where both pure and catalyzed samples exist in the same paper."""
-    # Group by doi
+    """Find paired samples: pure_MgH2 vs catalyzed from the same paper."""
     by_doi = defaultdict(list)
     for row in data:
         by_doi[row['doi']].append(row)
@@ -74,12 +51,8 @@ def get_paired_samples(data):
         catalyzed_rows = [r for r in rows if r['material_class'] == 'catalyzed_MgH2']
         for pur in pure_rows:
             for cat in catalyzed_rows:
-                # Ensure they're different materials
                 if pur['material'] != cat['material']:
-                    # Convert Ea_parsed to float
-                    pur_ea = float(pur['Ea_parsed'])
-                    cat_ea = float(cat['Ea_parsed'])
-                    delta_ea = cat_ea - pur_ea
+                    delta_ea = cat['Ea_parsed'] - pur['Ea_parsed']
                     pairs.append((doi, delta_ea, pur, cat))
 
     return pairs
@@ -95,7 +68,6 @@ def hypothesis_1(data):
     print("HYPOTHESIS 1: Catalysts Reduce Activation Energy (Paired Comparison)")
     print("=" * 70)
 
-    # Get paired samples
     pairs = get_paired_samples(data)
 
     if not pairs:
@@ -108,45 +80,40 @@ def hypothesis_1(data):
     n_pairs = len(delta_eas)
 
     print(f"  Found {n_pairs} paired samples (pure_MgH2 vs catalyzed_MgH2 from same paper)")
-    print(f"  Mean ΔEa (catalyzed - pure): {mean_dea:.2f} kJ/mol")
-    print(f"  Std ΔEa: {std_dea:.2f} kJ/mol")
+    print(f"  Mean Delta_Ea (catalyzed - pure): {mean_dea:.2f} kJ/mol")
+    print(f"  Std Delta_Ea: {std_dea:.2f} kJ/mol")
 
-    # Paired t-test
     if n_pairs > 1:
         t_stat, p_value = stats.ttest_1samp(delta_eas, 0)
         print(f"  Paired t-test: t = {t_stat:.3f}, p = {p_value:.4f}")
 
-        # Confidence interval for mean difference
         se = std_dea / np.sqrt(n_pairs)
         ci_lower = mean_dea - stats.t.ppf(0.975, n_pairs - 1) * se
         ci_upper = mean_dea + stats.t.ppf(0.975, n_pairs - 1) * se
-        print(f"  95% CI for mean ΔEa: [{ci_lower:.2f}, {ci_upper:.2f}] kJ/mol")
+        print(f"  95% CI for mean Delta_Ea: [{ci_lower:.2f}, {ci_upper:.2f}] kJ/mol")
 
-        # Effect size (Cohen's d for paired samples)
         cohens_d = mean_dea / std_dea
         print(f"  Effect size (Cohen's d): {cohens_d:.3f}")
 
-        # Direction: negative means catalyzed has lower Ea
         if mean_dea < 0:
-            print("  RESULT: ΔEa is significantly negative → catalysts reduce Ea")
+            print("  RESULT: Delta_Ea is significantly negative -> catalysts reduce Ea")
             print("  SUPPORT: H1 is supported")
         else:
-            print("  RESULT: ΔEa is positive or not significant → no clear reduction")
+            print("  RESULT: Delta_Ea is positive or not significant -> no clear reduction")
             print("  RESULT: H1 not supported")
 
-        # Print individual pairs
         print("\n  Individual paired samples:")
         for doi, delta, pur, cat in pairs:
-            print(f"    {doi[:40]}... | pure: {pur['Ea_parsed']:.2f} | cat: {cat['Ea_parsed']:.2f} | Δ: {delta:.2f}")
+            print(f"    {doi[:40]}... | pure: {pur['Ea_parsed']:.2f} | cat: {cat['Ea_parsed']:.2f} | Delta: {delta:.2f}")
 
         return {
             'n_pairs': n_pairs,
             'mean_delta_ea': mean_dea,
             'std_delta_ea': std_dea,
-            't_statistic': t_stat if n_pairs > 1 else None,
-            'p_value': p_value if n_pairs > 1 else None,
-            'ci_lower': ci_lower if n_pairs > 1 else None,
-            'ci_upper': ci_upper if n_pairs > 1 else None,
+            't_statistic': t_stat,
+            'p_value': p_value,
+            'ci_lower': ci_lower,
+            'ci_upper': ci_upper,
             'cohens_d': cohens_d,
             'pairs': pairs
         }
@@ -165,57 +132,52 @@ def hypothesis_2(data):
     print("HYPOTHESIS 2: Catalyst Family Effect on Activation Energy")
     print("=" * 70)
 
-    # Filter to catalyzed_MgH2 only
     catalyzed = [r for r in data if r['material_class'] == 'catalyzed_MgH2']
-
-    # Group by catalyst family
-    by_family = defaultdict(list)
-    for row in catalyzed:
-        by_family[row['catalyst_family']].append(row['Ea_parsed'])
-
-    # Also include pure_MgH2 as baseline
     pure = [r for r in data if r['material_class'] == 'pure_MgH2']
-    pure_eas = [r['Ea_parsed'] for r in pure]
+
+    pure_eas = np.array([r['Ea_parsed'] for r in pure if r['Ea_parsed'] is not None])
 
     print(f"\n  Pure MgH2 baseline (n={len(pure_eas)}):")
-    print(f"    Mean Ea: {np.mean(pure_eas):.2f} ± {np.std(pure_eas, ddof=1):.2f} kJ/mol")
+    print(f"    Mean Ea: {pure_eas.mean():.2f} +/- {pure_eas.std(ddof=1):.2f} kJ/mol")
+
+    by_family = defaultdict(list)
+    for row in catalyzed:
+        if row['Ea_parsed'] is not None:
+            by_family[row['catalyst_family']].append(row['Ea_parsed'])
 
     family_results = {}
     for family, eas in sorted(by_family.items()):
         if len(eas) >= 2:
-            mean_ea = float(np.mean(eas))
-            std_ea = float(np.std(eas, ddof=1))
+            eas_arr = np.array(eas)
+            mean_ea = float(eas_arr.mean())
+            std_ea = float(eas_arr.std(ddof=1))
             n = len(eas)
-            # Reduction from pure baseline
-            reduction = mean_ea - np.mean(pure_eas)
+            reduction = mean_ea - pure_eas.mean()
             family_results[family] = {
                 'n': n, 'mean_ea': mean_ea, 'std_ea': std_ea,
                 'reduction_from_pure': reduction
             }
             print(f"\n  {family} (n={n}):")
-            print(f"    Mean Ea: {mean_ea:.2f} ± {std_ea:.2f} kJ/mol")
+            print(f"    Mean Ea: {mean_ea:.2f} +/- {std_ea:.2f} kJ/mol")
             print(f"    Reduction from pure baseline: {reduction:.2f} kJ/mol")
 
-            # One-sample t-test against pure baseline
-            t_stat, p_val = stats.ttest_1samp(eas, np.mean(pure_eas))
+            t_stat, p_val = stats.ttest_1samp(eas_arr, pure_eas.mean())
             print(f"    t-test vs pure baseline: t = {t_stat:.3f}, p = {p_val:.4f}")
 
         elif len(eas) == 1:
             print(f"\n  {family} (n=1): Ea = {eas[0]:.2f} kJ/mol")
 
-    # ANOVA across catalyst families (excluding 'none' which has no catalyst)
     family_groups = [eas for family, eas in by_family.items() if family != 'none' and len(eas) >= 2]
     if len(family_groups) >= 2:
         f_stat, p_anova = stats.f_oneway(*family_groups)
         print(f"\n  ANOVA across catalyst families: F = {f_stat:.3f}, p = {p_anova:.4f}")
 
-        # Post-hoc pairwise comparisons (Tukey-like with t-tests)
         family_names = sorted([f for f in by_family.keys() if f != 'none' and len(by_family[f]) >= 2])
-        print(f"\n  Pairwise comparisons (catalyzed vs pure baseline):")
+        print(f"\n  Pairwise comparisons:")
         for i, f1 in enumerate(family_names):
             for f2 in family_names[i+1:]:
-                eas1 = by_family[f1]
-                eas2 = by_family[f2]
+                eas1 = np.array(by_family[f1])
+                eas2 = np.array(by_family[f2])
                 t_stat, p_val = stats.ttest_ind(eas1, eas2, equal_var=False)
                 print(f"    {f1} vs {f2}: t = {t_stat:.3f}, p = {p_val:.4f}")
 
@@ -223,7 +185,7 @@ def hypothesis_2(data):
 
 
 # ============================================================
-# HYPOTHESIS 3: Cross-method comparison (same sample, different methods)
+# HYPOTHESIS 3: Cross-method comparison
 # ============================================================
 
 def hypothesis_3(data):
@@ -232,7 +194,6 @@ def hypothesis_3(data):
     print("HYPOTHESIS 3: Cross-Method Comparison (Same Sample, Different Methods)")
     print("=" * 70)
 
-    # Group by material and doi to find same sample with different methods
     by_material_doi = defaultdict(list)
     for row in data:
         key = (row['material'], row['doi'])
@@ -247,29 +208,23 @@ def hypothesis_3(data):
                 if k['material'] == a['material']:
                     cross_method_pairs.append((k, a))
 
-    print(f"\n  Found {len(cross_method_pairs)} cross-method pairs (same material, same paper, different methods)")
+    print(f"\n  Found {len(cross_method_pairs)} cross-method pairs")
 
     if cross_method_pairs:
         deltas = []
         for k, a in cross_method_pairs:
             delta = a['Ea_parsed'] - k['Ea_parsed']
             deltas.append(delta)
-            print(f"    {k['material']} (doi: {k['doi'][:30]}...):")
-            print(f"      Kissinger: {k['Ea_parsed']:.2f} kJ/mol")
-            print(f"      Isothermal Arrhenius: {a['Ea_parsed']:.2f} kJ/mol")
-            print(f"      ΔEa (Arrhenius - Kissinger): {delta:.2f} kJ/mol")
+            print(f"    {k['material'][:40]}...: Kissinger={k['Ea_parsed']:.2f}, Arrhenius={a['Ea_parsed']:.2f}, Delta={delta:.2f}")
 
         mean_delta = float(np.mean(deltas))
         std_delta = float(np.std(deltas, ddof=1))
-        print(f"\n  Mean ΔEa (Arrhenius - Kissinger): {mean_delta:.2f} kJ/mol")
-        print(f"  Std ΔEa: {std_delta:.2f} kJ/mol")
+        print(f"\n  Mean Delta_Ea (Arrhenius - Kissinger): {mean_delta:.2f} kJ/mol")
+        print(f"  Std Delta_Ea: {std_delta:.2f} kJ/mol")
 
-        # Test if mean difference is significantly different from zero
         if len(deltas) > 1:
             t_stat, p_val = stats.ttest_1samp(deltas, 0)
             print(f"  One-sample t-test: t = {t_stat:.3f}, p = {p_val:.4f}")
-        else:
-            print(f"  Only one cross-method pair; cannot perform statistical test.")
 
         return {
             'n_pairs': len(cross_method_pairs),
@@ -283,7 +238,7 @@ def hypothesis_3(data):
 
 
 # ============================================================
-# HYPOTHESIS 4: Meta-analysis with bootstrap (fixed effects & random effects)
+# HYPOTHESIS 4: Meta-analysis with bootstrap
 # ============================================================
 
 def hypothesis_4(data):
@@ -292,23 +247,20 @@ def hypothesis_4(data):
     print("HYPOTHESIS 4: Meta-Analysis with Bootstrap (Fixed Effects & Random Effects)")
     print("=" * 70)
 
-    # Use catalyzed_MgH2 samples for meta-analysis
     catalyzed = [r for r in data if r['material_class'] == 'catalyzed_MgH2']
     pure = [r for r in data if r['material_class'] == 'pure_MgH2']
 
-    catalyzed_eas = np.array([r['Ea_parsed'] for r in catalyzed])
-    pure_eas = np.array([r['Ea_parsed'] for r in pure])
+    catalyzed_eas = np.array([r['Ea_parsed'] for r in catalyzed if r['Ea_parsed'] is not None])
+    pure_eas = np.array([r['Ea_parsed'] for r in pure if r['Ea_parsed'] is not None])
 
     print(f"\n  Catalyzed MgH2 samples (n={len(catalyzed_eas)}):")
-    print(f"    Mean Ea: {catalyzed_eas.mean():.2f} ± {catalyzed_eas.std(ddof=1):.2f} kJ/mol")
+    print(f"    Mean Ea: {catalyzed_eas.mean():.2f} +/- {catalyzed_eas.std(ddof=1):.2f} kJ/mol")
     print(f"    Range: [{catalyzed_eas.min():.2f}, {catalyzed_eas.max():.2f}] kJ/mol")
 
     print(f"\n  Pure MgH2 baseline samples (n={len(pure_eas)}):")
-    print(f"    Mean Ea: {pure_eas.mean():.2f} ± {pure_eas.std(ddof=1):.2f} kJ/mol")
+    print(f"    Mean Ea: {pure_eas.mean():.2f} +/- {pure_eas.std(ddof=1):.2f} kJ/mol")
     print(f"    Range: [{pure_eas.min():.2f}, {pure_eas.max():.2f}] kJ/mol")
 
-    # Fixed effects model: weighted average by inverse variance
-    # For simplicity, assume equal weights (fixed effects with equal variance)
     n_cat = len(catalyzed_eas)
     mean_fe = float(np.mean(catalyzed_eas))
     se_fe = float(catalyzed_eas.std(ddof=1) / np.sqrt(n_cat))
@@ -318,39 +270,29 @@ def hypothesis_4(data):
     print(f"    Standard error: {se_fe:.2f} kJ/mol")
     print(f"    95% CI: [{mean_fe - 1.96*se_fe:.2f}, {mean_fe + 1.96*se_fe:.2f}] kJ/mol")
 
-    # Random effects model (DerSimonian-Laird)
-    # Estimate between-study variance (tau^2)
     if n_cat > 1:
-        # Simple random effects: treat each study as having its own true effect
-        # and estimate between-study variance
         tau_sq = max(0, catalyzed_eas.var(ddof=1) - catalyzed_eas.var(ddof=1) / n_cat)
-        # More proper DL estimator
         Q = np.sum((catalyzed_eas - mean_fe)**2)
         df = n_cat - 1
-        C = n_cat - np.sum([1/n_cat] * n_cat)  # Simplified
-        if df > 0 and C > 0:
-            tau_sq_dl = (Q - (df - se_fe**2 * n_cat)) / (1 - sum(1/n_cat for _ in range(n_cat)) / n_cat)
-            tau_sq_dl = max(0, tau_sq_dl)
+        if df > 0:
+            tau_sq_dl = max(0, (Q - (df - se_fe**2 * n_cat)) / (1 - sum(1/n_cat for _ in range(n_cat)) / n_cat))
         else:
             tau_sq_dl = 0.0
 
         tau = float(np.sqrt(tau_sq_dl))
-        # Random effects standard error
         se_re = float(np.sqrt(tau_sq_dl + catalyzed_eas.var(ddof=1) / n_cat))
-        mean_re = mean_fe  # Same point estimate
+        mean_re = mean_fe
 
         print(f"\n  Random Effects Model (DerSimonian-Laird):")
-        print(f"    Between-study variance (τ²): {tau_sq_dl:.2f}")
-        print(f"    Between-study std (τ): {tau:.2f} kJ/mol")
+        print(f"    Between-study variance (tau^2): {tau_sq_dl:.2f}")
+        print(f"    Between-study std (tau): {tau:.2f} kJ/mol")
         print(f"    Pooled mean Ea: {mean_re:.2f} kJ/mol")
         print(f"    Standard error: {se_re:.2f} kJ/mol")
         print(f"    95% CI: [{mean_re - 1.96*se_re:.2f}, {mean_re + 1.96*se_re:.2f}] kJ/mol")
 
-        # Bootstrap for both models
         np.random.seed(42)
         n_bootstrap = 10000
 
-        # Bootstrap for fixed effects
         fe_bootstrap_means = []
         for _ in range(n_bootstrap):
             sample = np.random.choice(catalyzed_eas, size=n_cat, replace=True)
@@ -364,10 +306,8 @@ def hypothesis_4(data):
         print(f"    Bootstrap 95% CI: [{fe_ci_lower:.2f}, {fe_ci_upper:.2f}] kJ/mol")
         print(f"    Bootstrap SE: {fe_bootstrap_means.std():.2f} kJ/mol")
 
-        # Bootstrap for random effects (parametric bootstrap)
         re_bootstrap_means = []
         for _ in range(n_bootstrap):
-            # Simulate from random effects model
             true_effect = np.random.normal(mean_re, tau)
             simulated = np.random.normal(true_effect, catalyzed_eas.std(ddof=1), size=n_cat)
             re_bootstrap_means.append(np.mean(simulated))
@@ -426,19 +366,14 @@ def hypothesis_5(data):
     print("HYPOTHESIS 5: Cross-Validation for Ea Prediction")
     print("=" * 70)
 
-    # Separate pure and catalyzed
     pure = [r for r in data if r['material_class'] == 'pure_MgH2']
     catalyzed = [r for r in data if r['material_class'] == 'catalyzed_MgH2']
 
-    pure_eas = np.array([r['Ea_parsed'] for r in pure])
-    catalyzed_eas = np.array([r['Ea_parsed'] for r in catalyzed])
+    pure_eas = np.array([r['Ea_parsed'] for r in pure if r['Ea_parsed'] is not None])
+    catalyzed_eas = np.array([r['Ea_parsed'] for r in catalyzed if r['Ea_parsed'] is not None])
 
     print(f"\n  Pure MgH2 samples (n={len(pure_eas)}): mean = {pure_eas.mean():.2f} kJ/mol")
     print(f"  Catalyzed MgH2 samples (n={len(catalyzed_eas)}): mean = {catalyzed_eas.mean():.2f} kJ/mol")
-
-    # Simple prediction model: predicted Ea = pure_mean - observed_reduction
-    # For cross-validation, we'll use leave-one-out on catalyzed samples
-    # and predict based on pure baseline
 
     n_cv = len(catalyzed_eas)
     predictions = []
@@ -446,18 +381,13 @@ def hypothesis_5(data):
     errors = []
 
     for i in range(n_cv):
-        # Leave out one catalyzed sample
         train_catalyzed = np.delete(catalyzed_eas, i)
         true_val = catalyzed_eas[i]
 
-        # Predict: use the mean reduction from other catalyzed samples
-        # relative to pure baseline
         pure_mean = pure_eas.mean()
-        # Observed reduction for training samples
         reductions = pure_mean - train_catalyzed
         mean_reduction = np.mean(reductions)
 
-        # Predict the held-out sample
         predicted = pure_mean - mean_reduction
 
         predictions.append(predicted)
@@ -477,48 +407,47 @@ def hypothesis_5(data):
     print(f"  MAE: {mae:.2f} kJ/mol")
     print(f"  Mean prediction error: {errors.mean():.2f} kJ/mol")
 
-    # Also compute prediction accuracy
     within_10 = np.sum(np.abs(errors) <= 10)
     within_20 = np.sum(np.abs(errors) <= 20)
-    print(f"  Predictions within ±10 kJ/mol: {within_10}/{n_cv} ({within_10/n_cv*100:.1f}%)")
-    print(f"  Predictions within ±20 kJ/mol: {within_20}/{n_cv} ({within_20/n_cv*100:.1f}%)")
+    print(f"  Predictions within +/-10 kJ/mol: {within_10}/{n_cv} ({within_10/n_cv*100:.1f}%)")
+    print(f"  Predictions within +/-20 kJ/mol: {within_20}/{n_cv} ({within_20/n_cv*100:.1f}%)")
 
-    # Individual predictions
     print(f"\n  Individual predictions:")
     for i in range(n_cv):
         print(f"    Sample {i+1}: True={true_values[i]:.2f}, Pred={predictions[i]:.2f}, Error={errors[i]:.2f}")
 
-    # Also do a simple regression using catalyst family as categorical predictor
-    # (one-hot encoded)
+    # Linear regression with catalyst family effects
     family_to_idx = {}
     family_features = []
     for r in catalyzed:
+        if r['Ea_parsed'] is None:
+            continue
         fam = r['catalyst_family']
         if fam not in family_to_idx:
             family_to_idx[fam] = len(family_to_idx)
-        # One-hot encode
-        vec = [0] * len(family_to_idx)
-        vec[family_to_idx[fam]] = 1
+
+    n_cat_reg = len(family_to_idx)
+    # Create one-hot encoded features with fixed length
+    family_features = []
+    for r in catalyzed:
+        if r['Ea_parsed'] is None:
+            continue
+        vec = [0.0] * n_cat_reg
+        vec[family_to_idx[r['catalyst_family']]] = 1.0
         family_features.append(vec)
 
     family_features = np.array(family_features)
+    y = np.array([r['Ea_parsed'] for r in catalyzed if r['Ea_parsed'] is not None])
 
-    # Simple linear regression: Ea = intercept + family_effects
-    # Add pure baseline as a feature
-    X = np.column_stack([np.ones(n_cv), family_features])
-    y = catalyzed_eas
-
-    # Least squares
+    X = np.column_stack([np.ones(len(y)), family_features])
     coeffs, residuals, rank, s = np.linalg.lstsq(X, y, rcond=None)
 
-    print(f"\n  Linear Regression (with catalyst family effects):")
-    print(f"  Intercept (pure baseline estimate): {coeffs[0]:.2f} kJ/mol")
-    for idx, fam in sorted(family_to_idx.items()):
-        print(f"  {fam} effect: {coeffs[idx+1]:.2f} kJ/mol")
-
-    # Predictions from regression
     y_pred = X @ coeffs
     rmse_reg = float(np.sqrt(np.mean((y - y_pred)**2)))
+    print(f"\n  Linear Regression (with catalyst family effects):")
+    print(f"  Intercept (pure baseline estimate): {coeffs[0]:.2f} kJ/mol")
+    for fam_name, fam_idx in sorted(family_to_idx.items()):
+        print(f"  {fam_name} effect: {coeffs[fam_idx+1]:.2f} kJ/mol")
     print(f"  Regression RMSE: {rmse_reg:.2f} kJ/mol")
 
     return {
@@ -526,8 +455,8 @@ def hypothesis_5(data):
         'rmse': rmse,
         'mae': mae,
         'mean_error': errors.mean(),
-        'within_10': within_10,
-        'within_20': within_20,
+        'within_10': int(within_10),
+        'within_20': int(within_20),
         'true_values': true_values.tolist(),
         'predictions': predictions.tolist(),
         'errors': errors.tolist(),
@@ -546,17 +475,14 @@ def main():
     print("COMPREHENSIVE ANALYSIS OF CATALYST EFFECTS ON MgH2 ACTIVATION ENERGY")
     print("=" * 70)
 
-    # Load data
     data_path = '/workspace/research/shusheng_run/ws35/data/cleaned_ea_dataset.csv'
     data = load_data(data_path)
     print(f"\n  Loaded {len(data)} rows from {data_path}")
 
-    # Filter data
     data = filter_desorption_only(data)
     data = filter_out_special_cases(data)
     print(f"  After filtering (desorption only, special cases excluded): {len(data)} rows")
 
-    # Summary statistics
     print("\n" + "=" * 70)
     print("DATA SUMMARY")
     print("=" * 70)
@@ -598,8 +524,25 @@ def main():
     results_dir = '/workspace/research/shusheng_run/ws35/results'
     os.makedirs(results_dir, exist_ok=True)
 
+    # Convert non-serializable objects to serializable format
+    def serialize(obj):
+        if isinstance(obj, dict):
+            return {k: serialize(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [serialize(v) for v in obj]
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return obj
+
+    report_serialized = serialize(report)
+
     with open(os.path.join(results_dir, 'analysis_results.json'), 'w') as f:
-        json.dump(report, f, indent=2, ensure_ascii=False)
+        json.dump(report_serialized, f, indent=2, ensure_ascii=False)
     print(f"\n  Results saved to {results_dir}/analysis_results.json")
 
     # Print key findings
@@ -609,22 +552,22 @@ def main():
 
     if h1_result:
         print(f"\n  H1 (Catalyst effect):")
-        print(f"    Mean ΔEa = {h1_result['mean_delta_ea']:.2f} kJ/mol (p={h1_result['p_value']:.4f})")
+        print(f"    Mean Delta_Ea = {h1_result['mean_delta_ea']:.2f} kJ/mol (p={h1_result['p_value']:.4f})")
         if h1_result['mean_delta_ea'] < 0:
-            print("    → SUPPORTED: Catalysts significantly reduce Ea")
+            print("    -> SUPPORTED: Catalysts significantly reduce Ea")
         else:
-            print("    → NOT SUPPORTED: No clear reduction in Ea")
+            print("    -> NOT SUPPORTED: No clear reduction in Ea")
 
     if h4_result:
         print(f"\n  H4 (Meta-analysis):")
         print(f"    Fixed effects mean Ea: {h4_result['fixed_effects']['mean']:.2f} kJ/mol")
         print(f"    Random effects mean Ea: {h4_result['random_effects']['mean']:.2f} kJ/mol")
-        print(f"    Between-study variance τ² = {h4_result['random_effects']['tau_sq']:.2f}")
+        print(f"    Between-study variance tau^2 = {h4_result['random_effects']['tau_sq']:.2f}")
 
     if h5_result:
         print(f"\n  H5 (Cross-validation):")
         print(f"    RMSE = {h5_result['rmse']:.2f} kJ/mol")
-        print(f"    Accuracy within ±10 kJ/mol: {h5_result['within_10']}/{h5_result['n_samples']}")
+        print(f"    Accuracy within +/-10 kJ/mol: {h5_result['within_10']}/{h5_result['n_samples']}")
 
     print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE")
