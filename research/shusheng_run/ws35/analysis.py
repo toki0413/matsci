@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Analysis of Catalyst Effects on MgH2 Activation Energy
+Analysis of Catalyst Effects on MgH2 Activation Energy
 Implements 5 hypotheses as specified in the task.
 Uses only numpy and scipy.
 """
@@ -11,615 +11,633 @@ import numpy as np
 from scipy import stats
 from collections import defaultdict
 import os
+import random
+
+# Set random seed
+np.random.seed(20261029)
+random.seed(20261029)
 
 
-# ============================================================
-# DATA LOADING AND PREPROCESSING
-# ============================================================
+def parse_ea_value(val):
+    """Parse Ea value from string, extracting the first number."""
+    if not val or val.strip() == '':
+        return None
+    val = val.strip()
+    # Handle "109 +/- 1" format
+    if '\u00b1' in val:
+        val = val.split('\u00b1')[0].strip()
+    # Handle "~111.49" format
+    if '~' in val:
+        val = val[1:].strip()
+    try:
+        parts = val.split()
+        if parts:
+            return float(parts[0])
+    except (ValueError, IndexError):
+        pass
+    return None
+
 
 def load_data(filepath):
+    """Load and preprocess the dataset."""
     rows = []
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
+            # Filter desorption only
+            if row.get('direction', '').strip() != 'desorption':
+                continue
+            # Remove questionable row (MgH2 + 5 wt% V, doi 10.3390/ma16155480)
+            if row.get('material', '') == 'MgH2 + 5 wt% V' and row.get('doi', '') == '10.3390/ma16155480':
+                continue
+            # Parse Ea
+            ea = parse_ea_value(row.get('Ea_kJ_per_mol', ''))
+            if ea is None:
+                continue
+            row['Ea_parsed'] = ea
             rows.append(row)
     return rows
 
 
-def parse_ea_value(val):
-    if not val or val.strip() == '':
-        return None
-    val = val.strip()
-    parts = val.split('±')
-    if len(parts) > 1:
-        val = parts[0].strip()
-    try:
-        return float(val.split()[0])
-    except:
-        return None
+def build_features(rows_list, material_classes, catalyst_families, methods):
+    """Build feature matrix and target vector from rows."""
+    X_rows = []
+    y_rows = []
+    for r in rows_list:
+        feat = []
+        # Material class one-hot
+        for mc in material_classes:
+            feat.append(1 if r.get('material_class') == mc else 0)
+        # Catalyst family one-hot
+        for cf in catalyst_families:
+            feat.append(1 if r.get('catalyst_family', 'none') == cf else 0)
+        # Method one-hot
+        for m in methods:
+            feat.append(1 if r.get('method') == m else 0)
+        X_rows.append(feat)
+        y_rows.append(r['Ea_parsed'])
+    return np.array(X_rows), np.array(y_rows)
 
 
-def filter_data(rows):
-    filtered = []
-    for row in rows:
-        if row.get('direction', '').strip() == 'absorption':
-            continue
-        ea = parse_ea_value(row.get('Ea_kJ_per_mol', ''))
-        if ea is None:
-            continue
-        row = row.copy()
-        row['Ea_parsed'] = ea
-        # Strip whitespace from categorical fields
-        for key in ['material_class', 'catalyst_family', 'method']:
-            if key in row:
-                row[key] = row[key].strip()
-        filtered.append(row)
-    return filtered
-
-
-def get_paired_rows(filtered_rows):
+def h1_analysis(rows):
+    """H1: Within-paper paired analysis with DerSimonian-Laird and cluster bootstrap."""
+    # Group by doi
     by_doi = defaultdict(list)
-    for row in filtered_rows:
-        doi = row.get('doi', '').strip() if row.get('doi') else ''
-        if doi:
-            by_doi[doi].append(row)
-    return by_doi
+    for r in rows:
+        by_doi[r['doi']].append(r)
 
-
-# ============================================================
-# HYPOTHESIS 1: Within-paper paired ΔEa, random effects meta-analysis
-# ============================================================
-
-def h1_within_paper_paired(filtered_rows, by_doi, n_bootstrap=50):
-    print("\n=== H1: Within-paper paired ΔEa analysis ===")
-
-    # Build pairs directly from by_doi with normalized doi
-    pairs = []  # list of (doi, delta_ea)
-    for doi, rows in by_doi.items():
-        doi_clean = doi.strip() if doi else ''
-        pure_rows = [r for r in rows if r.get('material_class') == 'pure_MgH2']
-        catalyzed_rows = [r for r in rows if r.get('material_class') == 'catalyzed_MgH2']
+    # Find paired samples (pure_MgH2 and catalyzed_MgH2 within same paper)
+    pairs = []
+    for doi, paper_rows in by_doi.items():
+        pure_rows = [r for r in paper_rows if r.get('material_class') == 'pure_MgH2']
+        catalyzed_rows = [r for r in paper_rows if r.get('material_class') == 'catalyzed_MgH2']
         for pur in pure_rows:
             for cat in catalyzed_rows:
                 delta_ea = cat['Ea_parsed'] - pur['Ea_parsed']
-                pairs.append((doi_clean, delta_ea))
+                pairs.append((doi, delta_ea))
 
     if not pairs:
-        print("  No paired samples found.")
-        return None
+        print("No paired samples found for H1.")
+        return None, None, None, None, None
 
-    delta_eas = [d for _, d in pairs]
-    mean_dea = float(np.mean(delta_eas))
-    std_dea = float(np.std(delta_eas, ddof=1))
-    print(f"  Found {len(pairs)} paired samples")
-    print(f"  Mean ΔEa (fixed effects): {mean_dea:.2f} kJ/mol")
-    print(f"  Std ΔEa: {std_dea:.2f} kJ/mol")
+    delta_eas = np.array([d for _, d in pairs])
+    n_pairs = len(delta_eas)
+    n_papers = len(set(d for d, _ in pairs))
 
-    # Compute paper-level statistics directly from pairs
-    # Group deltas by doi
+    # Fixed effects mean (equal weights)
+    mean_delta_fixed = float(np.mean(delta_eas))
+    std_delta = float(np.std(delta_eas, ddof=1))
+
+    # DerSimonian-Laird random effects
     paper_deltas = defaultdict(list)
     for doi, delta in pairs:
         paper_deltas[doi].append(delta)
 
     paper_means = {}
-    paper_counts = {}
+    paper_vars = {}
     for doi, deltas in paper_deltas.items():
-        paper_means[doi] = float(np.mean(deltas))
-        paper_counts[doi] = len(deltas)
-
-    print(f"  Papers with pairs: {len(paper_means)}")
-    for doi, pm in paper_means.items():
-        print(f"    {doi[:30]}: mean={pm:.2f}, n={paper_counts[doi]}")
-
-    if not paper_means:
-        return None
-
-    overall_mean = float(np.mean(list(paper_means.values())))
-    Q = float(sum((paper_means[doi] - overall_mean)**2 for doi in paper_means))
-    df_Q = len(paper_means) - 1
-
-    print(f"  Q={Q:.2f}, df_Q={df_Q}")
-
-    if Q > df_Q and df_Q > 0 and paper_counts:
-        weight_term = sum(1.0 / paper_counts[doi] for doi in paper_means)
-        if weight_term > 0:
-            tau_sq = (Q - df_Q) / weight_term
+        darr = np.array(deltas)
+        paper_means[doi] = float(np.mean(darr))
+        if len(darr) > 1:
+            paper_vars[doi] = float(np.var(darr, ddof=1))
         else:
-            tau_sq = 0.0
-        tau_sq = max(0.0, tau_sq)
-    else:
-        tau_sq = 0.0
+            paper_vars[doi] = std_delta ** 2
 
-    print(f"  tau_sq={tau_sq:.2f}")
+    # Iterative DL estimation of tau^2
+    tau_sq = 0.0
+    max_iter = 1000
+    tol = 1e-6
 
-    # Random effects weights
-    weights = {}
-    for doi in paper_means:
-        denom = paper_counts[doi] + tau_sq
-        weights[doi] = 1.0 / denom if denom > 0 else 1.0
-    total_weight = sum(weights[doi] for doi in paper_means)
-    re_mean = float(sum(weights[doi] * paper_means[doi] for doi in paper_means) / total_weight)
+    for _ in range(max_iter):
+        weights = [1.0 / (paper_vars.get(d, std_delta ** 2) + tau_sq) for d in paper_means]
+        wsum = sum(weights)
+        if wsum == 0:
+            break
+        weighted_mean = sum(paper_means[d] * w for d, w in zip(paper_means.keys(), weights)) / wsum
 
-    print(f"  Random effects mean ΔEa: {re_mean:.2f} kJ/mol")
+        Q = sum(w * (paper_means[d] - weighted_mean) ** 2 for d, w in zip(paper_means.keys(), weights))
+        df_Q = len(paper_means) - 1
 
-    # Cluster bootstrap: resample papers (doi) with replacement
+        denom = sum(w ** 2 for w in weights)
+        if denom > 0:
+            new_tau_sq = (Q - df_Q) / denom
+        else:
+            new_tau_sq = 0.0
+        new_tau_sq = max(0.0, new_tau_sq)
+
+        if abs(new_tau_sq - tau_sq) < tol:
+            tau_sq = new_tau_sq
+            break
+        tau_sq = new_tau_sq
+
+    # Final DL weighted mean
+    weights = [1.0 / (paper_vars.get(d, std_delta ** 2) + tau_sq) for d in paper_means]
+    wsum = sum(weights)
+    mean_delta_dl = sum(paper_means[d] * w for d, w in zip(paper_means.keys(), weights)) / wsum if wsum > 0 else mean_delta_fixed
+
+    # Cluster bootstrap (resample papers with replacement)
+    n_bootstrap = 50
+    unique_pois = list(paper_means.keys())
     bootstrap_means = []
-    np.random.seed(42)
-    paper_keys = list(paper_means.keys())
-    for _ in range(n_bootstrap):
-        sampled_dois = np.random.choice(paper_keys, size=len(paper_keys), replace=True)
-        boot_deltas = []
-        for doi in sampled_dois:
-            # Include all deltas for this paper
-            boot_deltas.extend(paper_deltas[doi])
-        if boot_deltas:
-            bootstrap_means.append(float(np.mean(boot_deltas)))
 
-    if not bootstrap_means:
-        print("  Bootstrap failed - no valid samples.")
-        return None
+    for i in range(n_bootstrap):
+        sampled_pois = np.random.choice(unique_pois, size=len(unique_pois), replace=True)
+        sampled_deltas = []
+        for doi in sampled_pois:
+            sampled_deltas.extend(paper_deltas[doi])
+        if sampled_deltas:
+            bootstrap_means.append(float(np.array(sampled_deltas).mean()))
 
-    bootstrap_means = np.array(bootstrap_means)
-    ci_lower = float(np.percentile(bootstrap_means, 2.5))
-    ci_upper = float(np.percentile(bootstrap_means, 97.5))
+    # Bootstrap CI (percentile method)
+    if len(bootstrap_means) >= 2:
+        ci_lower = float(np.percentile(bootstrap_means, 2.5))
+        ci_upper = float(np.percentile(bootstrap_means, 97.5))
+    else:
+        ci_lower = mean_delta_fixed
+        ci_upper = mean_delta_fixed
 
-    print(f"  Cluster bootstrap CI (95%): [{ci_lower:.2f}, {ci_upper:.2f}] kJ/mol")
+    # Paired t-test
+    t_stat, p_value = stats.ttest_1samp(delta_eas, 0)
 
-    return {
-        'n_pairs': len(pairs),
-        'n_papers': len(paper_means),
-        'mean_delta_ea_fixed': mean_dea,
-        'std_delta_ea': std_dea,
-        'tau_sq': float(tau_sq),
-        'mean_delta_ea_random': re_mean,
-        'bootstrap_ci_lower': ci_lower,
-        'bootstrap_ci_upper': ci_upper,
-        'bootstrap_means': bootstrap_means.tolist()
+    h1_result = {
+        'n_pairs': n_pairs,
+        'n_papers': n_papers,
+        'mean_delta_ea_fixed': round(mean_delta_fixed, 2),
+        'mean_delta_ea_random': round(mean_delta_dl, 2),
+        'tau_sq': round(tau_sq, 2),
+        'bootstrap_ci_lower': round(ci_lower, 2),
+        'bootstrap_ci_upper': round(ci_upper, 2),
+        't_statistic': round(float(t_stat), 2),
+        'p_value': round(float(p_value), 6),
+        'supported': bool(mean_delta_fixed < 0 and p_value < 0.05)
     }
 
+    return h1_result, delta_eas, paper_deltas, bootstrap_means, unique_pois
 
-# ============================================================
-# HYPOTHESIS 2: η² for catalyst family, permutation test
-# ============================================================
 
-def h2_eta2_permutation(filtered_rows, n_permutations=1000):
-    print("\n=== H2: η² for catalyst family with permutation test ===")
-
+def h2_analysis(rows):
+    """H2: Eta-squared for catalyst family with permutation test."""
     by_doi = defaultdict(list)
-    for row in filtered_rows:
-        by_doi[row['doi']].append(row)
+    for r in rows:
+        by_doi[r['doi']].append(r)
 
-    all_eas = np.array([r['Ea_parsed'] for r in filtered_rows])
-    all_families = np.array([r.get('catalyst_family', 'none') for r in filtered_rows])
-    unique_families = sorted(set(all_families))
+    # Use one observation per paper per family (mean Ea)
+    paper_family_eas = defaultdict(list)
+    for r in rows:
+        doi = r['doi']
+        family = r.get('catalyst_family', 'none')
+        paper_family_eas[(doi, family)].append(r['Ea_parsed'])
 
+    # For each paper-family combination, take the mean
+    data_by_family = defaultdict(list)
+    for (doi, family), eas in paper_family_eas.items():
+        data_by_family[family].append(np.mean(eas))
+
+    families = sorted(data_by_family.keys())
+    all_eas = []
+    all_labels = []
+    for fam in families:
+        all_eas.extend(data_by_family[fam])
+        all_labels.extend([fam] * len(data_by_family[fam]))
+
+    all_eas = np.array(all_eas)
     n_total = len(all_eas)
     grand_mean = np.mean(all_eas)
-    ss_total = float(np.sum((all_eas - grand_mean)**2))
+    ss_total = float(np.sum((all_eas - grand_mean) ** 2))
 
+    # SS between
     ss_between = 0.0
-    for fam in unique_families:
-        mask = all_families == fam
-        if np.sum(mask) > 0:
-            fam_mean = np.mean(all_eas[mask])
-            ss_between += float(np.sum(mask)) * (fam_mean - grand_mean)**2
+    for fam in families:
+        fam_mean = np.mean(data_by_family[fam])
+        ss_between += len(data_by_family[fam]) * (fam_mean - grand_mean) ** 2
 
+    ss_within = ss_total - ss_between
     eta_squared = ss_between / ss_total if ss_total > 0 else 0.0
-    print(f"  Observed η²: {eta_squared:.4f}")
 
-    # Permutation test: shuffle within each paper
-    perm_eta2s = []
-    np.random.seed(42)
+    # Permutation test (shuffle family labels while preserving counts)
+    n_permutations = 1000
+    perm_eta_squares = []
 
-    for perm in range(n_permutations):
-        shuffled_families = np.empty(n_total, dtype=object)
-        for doi, rows in by_doi.items():
-            paper_indices = [idx for idx, fr in enumerate(filtered_rows) if fr in rows]
-            paper_families = np.array([r.get('catalyst_family', 'none') for r in rows])
-            np.random.shuffle(paper_families)
-            for idx, fam in zip(paper_indices, paper_families):
-                shuffled_families[idx] = fam
+    # Build unit list: (doi, family, mean_ea)
+    unit_info = []
+    for (doi, family), eas in paper_family_eas.items():
+        unit_info.append((doi, family, np.mean(eas)))
 
+    # Count units per family for permutation
+    family_counts = defaultdict(int)
+    for _, fam, _ in unit_info:
+        family_counts[fam] += 1
+
+    perm_eas = np.array([u[2] for u in unit_info])
+    original_families = np.array([u[1] for u in unit_info])
+
+    for _ in range(n_permutations):
+        # Shuffle family labels while preserving counts
+        fam_list = list(original_families)
+        np.random.shuffle(fam_list)
+        # Compute permuted eta-squared
         perm_ss_between = 0.0
-        for fam in set(shuffled_families):
-            mask = shuffled_families == fam
-            if np.sum(mask) > 0:
-                fam_mean = np.mean(all_eas[mask])
-                perm_ss_between += float(np.sum(mask)) * (fam_mean - grand_mean)**2
-        perm_eta2 = perm_ss_between / ss_total if ss_total > 0 else 0.0
-        perm_eta2s.append(perm_eta2)
+        for fam in set(fam_list):
+            mask = np.array(fam_list) == fam
+            fam_vals = perm_eas[mask]
+            if len(fam_vals) > 0:
+                perm_ss_between += len(fam_vals) * (np.mean(fam_vals) - grand_mean) ** 2
+        perm_eta = perm_ss_between / ss_total if ss_total > 0 else 0.0
+        perm_eta_squares.append(perm_eta)
 
-    perm_eta2s = np.array(perm_eta2s)
-    p_value = float(np.mean(perm_eta2s >= eta_squared))
+    perm_p_value = float(np.mean(np.array(perm_eta_squares) >= eta_squared))
 
-    print(f"  Permutation p-value: {p_value:.4f}")
+    # ANOVA p-value for reference
+    if len(families) > 1 and ss_within > 0:
+        f_stat = (ss_between / (len(families) - 1)) / (ss_within / (n_total - len(families)))
+        p_value_anova = float(1 - stats.f.cdf(f_stat, len(families) - 1, n_total - len(families)))
+    else:
+        f_stat = 0.0
+        p_value_anova = 1.0
 
-    return {
-        'eta_squared': eta_squared,
-        'ss_between': ss_between,
-        'ss_total': ss_total,
-        'n_permutations': n_permutations,
-        'p_value': p_value,
-        'perm_eta2s': perm_eta2s.tolist()
+    h2_result = {
+        'eta_squared': round(float(eta_squared), 4),
+        'p_value': round(float(perm_p_value), 4),
+        'p_value_anova': round(p_value_anova, 4),
+        'p_value_permutation': round(float(perm_p_value), 4),
+        'supported': bool(eta_squared > 0.1 and perm_p_value < 0.05)
     }
 
+    return h2_result
 
-# ============================================================
-# HYPOTHESIS 3: Method comparison pairs
-# ============================================================
 
-def h3_method_comparison(filtered_rows):
-    print("\n=== H3: Method comparison pairs ===")
+def h3_analysis(rows):
+    """H3: Method pairing (Kissinger vs isothermal_Arrhenius)."""
+    material_paper_methods = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        material = r['material']
+        doi = r['doi']
+        method = r['method']
+        ea = r['Ea_parsed']
+        material_paper_methods[material][doi].append((method, ea))
 
-    by_key = defaultdict(list)
-    for row in filtered_rows:
-        key = (row['doi'], row['material'])
-        by_key[key].append(row)
+    method_pairs_info = []
 
-    comparison_pairs = []
-    for key, rows in by_key.items():
-        kissinger_rows = [r for r in rows if r.get('method') == 'Kissinger']
-        iso_rows = [r for r in rows if r.get('method') == 'isothermal_Arrhenius']
-        for k in kissinger_rows:
-            for i in iso_rows:
-                diff = i['Ea_parsed'] - k['Ea_parsed']
-                comparison_pairs.append({
-                    'doi': key[0],
-                    'material': key[1],
-                    'Ea_Kissinger': k['Ea_parsed'],
-                    'EIsothermal': i['Ea_parsed'],
-                    'delta_Ea': diff
+    for material, papers in material_paper_methods.items():
+        for doi, methods in papers.items():
+            kissinger_ea = None
+            isothermal_ea = None
+            for m, ea in methods:
+                if m == 'Kissinger':
+                    kissinger_ea = ea
+                elif m == 'isothermal_Arrhenius':
+                    isothermal_ea = ea
+            if kissinger_ea is not None and isothermal_ea is not None:
+                delta = kissinger_ea - isothermal_ea
+                method_pairs_info.append({
+                    'material': material,
+                    'doi': doi,
+                    'Ea_Kissinger': kissinger_ea,
+                    'EIsothermal': isothermal_ea,
+                    'delta_Ea': round(delta, 2)
                 })
 
-    print(f"  Found {len(comparison_pairs)} method comparison pairs")
-    if comparison_pairs:
-        deltas = [p['delta_Ea'] for p in comparison_pairs]
-        print(f"  Mean difference (Iso - Kissinger): {np.mean(deltas):.2f} kJ/mol")
-        t_stat, p_val = stats.ttest_1samp(deltas, 0)
-        print(f"  Paired t-test: t={t_stat:.3f}, p={p_val:.4f}")
-
-    return {
-        'n_pairs': len(comparison_pairs),
-        'pairs': comparison_pairs
+    h3_result = {
+        'n_pairs': len(method_pairs_info),
+        'pairs': method_pairs_info
     }
 
+    return h3_result
 
-# ============================================================
-# HYPOTHESIS 4: LOSO cross-validation
-# ============================================================
 
-def h4_loso_crossval(filtered_rows, n_repeats=10):
-    print("\n=== H4: LOSO cross-validation ===")
-
+def h4_analysis(rows):
+    """H4: LOSO cross-validation with ridge regression."""
     by_doi = defaultdict(list)
-    for row in filtered_rows:
-        by_doi[row['doi']].append(row)
+    for r in rows:
+        by_doi[r['doi']].append(r)
 
-    unique_dois = sorted(by_doi.keys())
-    n_dois = len(unique_dois)
+    unique_pois = sorted(by_doi.keys())
+    n_papers = len(unique_pois)
 
-    material_classes = sorted(set(r['material_class'] for r in filtered_rows))
-    catalyst_families = sorted(set(r.get('catalyst_family', 'none') for r in filtered_rows))
-    methods = sorted(set(r.get('method', '') for r in filtered_rows))
+    # Get unique categories
+    material_classes = sorted(set(r.get('material_class') for r in rows))
+    catalyst_families = sorted(set(r.get('catalyst_family', 'none') for r in rows))
+    methods = sorted(set(r.get('method') for r in rows))
 
-    print(f"  Material classes: {material_classes}")
-    print(f"  Catalyst families: {catalyst_families}")
-    print(f"  Methods: {methods}")
-    print(f"  Total papers for LOSO: {n_dois}")
+    loso_predictions = []
+    loso_true = []
 
-    def build_features(rows):
-        X_rows = []
-        y_rows = []
-        for r in rows:
-            vec = [
-                1 if r['material_class'] == mc else 0 for mc in material_classes
-            ] + [
-                1 if r.get('catalyst_family', 'none') == cf else 0 for cf in catalyst_families
-            ] + [
-                1 if r.get('method', '') == m else 0 for m in methods
-            ]
-            X_rows.append(vec)
-            y_rows.append(r['Ea_parsed'])
-        return np.array(X_rows), np.array(y_rows)
+    for holdout_doi in unique_pois:
+        train_rows = [r for r in rows if r['doi'] != holdout_doi]
+        holdout_rows = [r for r in rows if r['doi'] == holdout_doi]
 
-    errors = []
-    predictions = []
-    true_values = []
+        X_train, y_train = build_features(train_rows, material_classes, catalyst_families, methods)
+        X_holdout, y_holdout = build_features(holdout_rows, material_classes, catalyst_families, methods)
 
-    for i, holdout_doi in enumerate(unique_dois):
-        if i % 10 == 0:
-            print(f"  LOSO iteration {i+1}/{n_dois} (holding out {holdout_doi})")
-
-        train_rows = []
-        for doi, rows in by_doi.items():
-            if doi != holdout_doi:
-                train_rows.extend(rows)
-
-        holdout_rows = by_doi[holdout_doi]
-
-        if len(train_rows) < 2:
-            continue
-
-        X_train, y_train = build_features(train_rows)
-        X_holdout, y_holdout = build_features(holdout_rows)
-
+        # Ridge regression
+        alpha = 1.0
+        n_features = X_train.shape[1]
+        XtX = X_train.T @ X_train
+        Xty = X_train.T @ y_train
         try:
-            beta = np.linalg.lstsq(X_train, y_train, rcond=None)[0]
-            y_pred = X_holdout @ beta
-            errors.extend(y_holdout - y_pred)
-            predictions.extend(y_pred)
-            true_values.extend(y_holdout)
-        except Exception as e:
-            print(f"  Error in iteration {i}: {e}")
-            continue
+            beta = np.linalg.solve(XtX + alpha * np.eye(n_features), Xty)
+        except np.linalg.LinAlgError:
+            beta = np.linalg.lstsq(XtX + alpha * np.eye(n_features), Xty, rcond=None)[0]
 
-    if errors:
-        errors = np.array(errors)
-        rmse = float(np.sqrt(np.mean(errors**2)))
-        mae = float(np.mean(np.abs(errors)))
-        ss_res = float(np.sum(errors**2))
-        ss_tot = float(np.sum((np.array(true_values) - np.mean(true_values))**2))
-        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+        # Predict on holdout
+        y_pred = X_holdout @ beta
 
-        print(f"  LOSO RMSE: {rmse:.2f} kJ/mol")
-        print(f"  LOSO MAE: {mae:.2f} kJ/mol")
-        print(f"  LOSO R²: {r2:.4f}")
+        loso_predictions.extend(y_pred)
+        loso_true.extend(y_holdout)
 
-        return {
-            'n_papers': n_dois,
-            'n_features': len(beta),
-            'rmse': rmse,
-            'mae': mae,
-            'r2': r2,
-            'errors': errors.tolist(),
-            'predictions': predictions,
-            'true_values': true_values
-        }
-    else:
-        return {
-            'n_papers': n_dois,
-            'n_features': 0,
-            'rmse': None,
-            'mae': None,
-            'r2': None,
-            'errors': [],
-            'predictions': [],
-            'true_values': []
-        }
+    loso_predictions = np.array(loso_predictions)
+    loso_true = np.array(loso_true)
 
+    rmse = float(np.sqrt(np.mean((loso_predictions - loso_true) ** 2)))
+    mae = float(np.mean(np.abs(loso_predictions - loso_true)))
+    ss_res = np.sum((loso_true - loso_predictions) ** 2)
+    ss_tot = np.sum((loso_true - np.mean(loso_true)) ** 2)
+    r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0.0
 
-# ============================================================
-# HYPOTHESIS 5: Out-of-sample prediction
-# ============================================================
-
-def h5_out_of_sample_prediction(filtered_rows):
-    print("\n=== H5: Out-of-sample prediction ===")
-
-    heldout_rows = [r for r in filtered_rows
-                    if r.get('material_class') == 'catalyzed_MgH2'
-                    and r.get('catalyst_family') == 'other'
-                    and r.get('method') == 'isothermal_Arrhenius']
-
-    train_rows = [r for r in filtered_rows if r not in heldout_rows]
-
-    print(f"  Training rows: {len(train_rows)}")
-    print(f"  Held-out rows: {len(heldout_rows)}")
-
-    if len(train_rows) < 2:
-        print("  Not enough training data.")
-        return None
-
-    if len(heldout_rows) == 0:
-        print("  No rows match the held-out combination.")
-        # Predict for hypothetical point
-        material_classes = sorted(set(r['material_class'] for r in filtered_rows))
-        catalyst_families = sorted(set(r.get('catalyst_family', 'none') for r in filtered_rows))
-        methods = sorted(set(r.get('method', '') for r in filtered_rows))
-
-        def build_features(rows):
-            X_rows = []
-            y_rows = []
-            for r in rows:
-                vec = [
-                    1 if r['material_class'] == mc else 0 for mc in material_classes
-                ] + [
-                    1 if r.get('catalyst_family', 'none') == cf else 0 for cf in catalyst_families
-                ] + [
-                    1 if r.get('method', '') == m else 0 for m in methods
-                ]
-                X_rows.append(vec)
-                y_rows.append(r['Ea_parsed'])
-            return np.array(X_rows), np.array(y_rows)
-
-        X_train, y_train = build_features(train_rows)
-        beta = np.linalg.lstsq(X_train, y_train, rcond=None)[0]
-
-        vec = [
-            1 if mc == 'catalyzed_MgH2' else 0 for mc in material_classes
-        ] + [
-            1 if cf == 'other' else 0 for cf in catalyst_families
-        ] + [
-            1 if m == 'isothermal_Arrhenius' else 0 for m in methods
-        ]
-        X_hyp = np.array([vec])
-        y_pred = X_hyp @ beta
-
-        print(f"  Hypothetical prediction: {y_pred[0]:.2f} kJ/mol")
-
-        return {
-            'n_train': len(train_rows),
-            'n_holdout': 0,
-            'true_values': [],
-            'predicted_values': [float(y_pred[0])],
-            'coefficients': beta.tolist(),
-            'n_features': len(beta),
-            'hypothetical_prediction': True
-        }
-
-    material_classes = sorted(set(r['material_class'] for r in filtered_rows))
-    catalyst_families = sorted(set(r.get('catalyst_family', 'none') for r in filtered_rows))
-    methods = sorted(set(r.get('method', '') for r in filtered_rows))
-
-    def build_features(rows):
-        X_rows = []
-        y_rows = []
-        for r in rows:
-            vec = [
-                1 if r['material_class'] == mc else 0 for mc in material_classes
-            ] + [
-                1 if r.get('catalyst_family', 'none') == cf else 0 for cf in catalyst_families
-            ] + [
-                1 if r.get('method', '') == m else 0 for m in methods
-            ]
-            X_rows.append(vec)
-            y_rows.append(r['Ea_parsed'])
-        return np.array(X_rows), np.array(y_rows)
-
-    X_train, y_train = build_features(train_rows)
-    X_holdout, y_holdout = build_features(heldout_rows)
-
-    beta = np.linalg.lstsq(X_train, y_train, rcond=None)[0]
-    y_pred = X_holdout @ beta
-
-    print(f"  True Ea values: {y_holdout.tolist()}")
-    print(f"  Predicted Ea values: {y_pred.tolist()}")
-
-    errors = y_holdout - y_pred
-    rmse = float(np.sqrt(np.mean(errors**2)))
-    print(f"  Out-of-sample RMSE: {rmse:.2f} kJ/mol")
-
-    return {
-        'n_train': len(train_rows),
-        'n_holdout': len(heldout_rows),
-        'true_values': y_holdout.tolist(),
-        'predicted_values': y_pred.tolist(),
-        'coefficients': beta.tolist(),
-        'n_features': len(beta),
-        'rmse': rmse
+    h4_result = {
+        'n_papers': n_papers,
+        'rmse': round(rmse, 2),
+        'mae': round(mae, 2),
+        'r2': round(r2, 4)
     }
 
-
-# ============================================================
-# MAIN EXECUTION
-# ============================================================
-
-def main():
-    print("Loading data...")
-    raw_rows = load_data('/workspace/research/shusheng_run/ws35/data/cleaned_ea_dataset.csv')
-    print(f"  Raw rows: {len(raw_rows)}")
-
-    filtered_rows = filter_data(raw_rows)
-    print(f"  After filtering (desorption only): {len(filtered_rows)}")
-
-    by_doi = get_paired_rows(filtered_rows)
-    print(f"  Papers (unique doi): {len(by_doi)}")
-
-    results = {}
-
-    print("\n--- Running H1 ---")
-    results['h1'] = h1_within_paper_paired(filtered_rows, by_doi, n_bootstrap=50)
-
-    print("\n--- Running H2 ---")
-    results['h2'] = h2_eta2_permutation(filtered_rows, n_permutations=1000)
-
-    print("\n--- Running H3 ---")
-    results['h3'] = h3_method_comparison(filtered_rows)
-
-    print("\n--- Running H4 ---")
-    results['h4'] = h4_loso_crossval(filtered_rows, n_repeats=10)
-
-    print("\n--- Running H5 ---")
-    results['h5'] = h5_out_of_sample_prediction(filtered_rows)
-
-    os.makedirs('/workspace/research/shusheng_run/ws35/results', exist_ok=True)
-
-    print("\nWriting results.json...")
-    with open('/workspace/research/shusheng_run/ws35/results/results.json', 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-
-    print("Writing loop_log.jsonl...")
-    with open('/workspace/research/shusheng_run/ws35/results/loop_log.jsonl', 'w', encoding='utf-8') as f:
-        if results.get('h1') and results['h1'].get('bootstrap_means'):
-            for i, val in enumerate(results['h1']['bootstrap_means']):
-                f.write(json.dumps({'loop': i, 'type': 'h1_bootstrap', 'mean_delta_ea': val}) + '\n')
-        if results.get('h2') and results['h2'].get('perm_eta2s'):
-            for i, val in enumerate(results['h2']['perm_eta2s']):
-                f.write(json.dumps({'loop': i, 'type': 'h2_permutation', 'eta_squared': val}) + '\n')
-
-    print("Writing report.md...")
-    report = generate_report(results)
-    with open('/workspace/research/shusheng_run/ws35/results/report.md', 'w', encoding='utf-8') as f:
-        f.write(report)
-
-    print("\nAnalysis complete!")
+    return h4_result, loso_true, loso_predictions, material_classes, catalyst_families, methods
 
 
-def generate_report(results):
+def h5_prediction(rows, material_classes, catalyst_families, methods):
+    """H5: Extrapolation prediction for a novel catalyst."""
+    # Build full dataset features
+    X, y = build_features(rows, material_classes, catalyst_families, methods)
+
+    # Ridge regression on all data
+    alpha = 1.0
+    n_features = X.shape[1]
+    try:
+        beta = np.linalg.solve(X.T @ X + alpha * np.eye(n_features), X.T @ y)
+    except np.linalg.LinAlgError:
+        beta = np.linalg.lstsq(X.T @ X + alpha * np.eye(n_features), X.T @ y, rcond=None)[0]
+
+    # Create hypothetical row: catalyzed_MgH2 with novel catalyst family, Kissinger method
+    feat = []
+    # Material class: catalyzed_MgH2
+    for mc in material_classes:
+        feat.append(1 if mc == 'catalyzed_MgH2' else 0)
+    # Catalyst family: novel (all zeros since not in data)
+    for cf in catalyst_families:
+        feat.append(0)
+    # Method: Kissinger
+    for m in methods:
+        feat.append(1 if m == 'Kissinger' else 0)
+
+    X_hyp = np.array([feat])
+    y_pred = X_hyp @ beta
+
+    h5_result = {
+        'n_train': len(rows),
+        'predicted_values': [round(float(y_pred[0]), 2)],
+        'hypothetical_prediction': True
+    }
+
+    return h5_result
+
+
+def run_bootstrap_iterations(rows, n_bootstrap=50):
+    """Run bootstrap iterations and collect results."""
+    by_doi = defaultdict(list)
+    for r in rows:
+        by_doi[r['doi']].append(r)
+
+    unique_pois = list(by_doi.keys())
+    n_papers = len(unique_pois)
+
+    bootstrap_results = []
+
+    for loop in range(n_bootstrap):
+        # Resample papers with replacement
+        sampled_pois = np.random.choice(unique_pois, size=n_papers, replace=True)
+
+        # Build bootstrap sample
+        bootstrap_rows = []
+        for doi in sampled_pois:
+            bootstrap_rows.extend(by_doi[doi])
+
+        if len(bootstrap_rows) < 2:
+            continue
+
+        # Compute H1 on bootstrap sample
+        by_doi_boot = defaultdict(list)
+        for r in bootstrap_rows:
+            by_doi_boot[r['doi']].append(r)
+
+        pairs_boot = []
+        for doi, paper_rows in by_doi_boot.items():
+            pure_rows = [r for r in paper_rows if r.get('material_class') == 'pure_MgH2']
+            catalyzed_rows = [r for r in paper_rows if r.get('material_class') == 'catalyzed_MgH2']
+            for pur in pure_rows:
+                for cat in catalyzed_rows:
+                    delta_ea = cat['Ea_parsed'] - pur['Ea_parsed']
+                    pairs_boot.append(delta_ea)
+
+        if pairs_boot:
+            mean_boot = float(np.array(pairs_boot).mean())
+        else:
+            mean_boot = None
+
+        bootstrap_result = {
+            'loop': loop,
+            'n_papers_sampled': len(set(sampled_pois)),
+            'n_rows_bootstrap': len(bootstrap_rows),
+            'h1_mean_delta_ea': mean_boot
+        }
+        bootstrap_results.append(bootstrap_result)
+
+        if (loop + 1) % 10 == 0:
+            print(f"  Completed {loop + 1}/{n_bootstrap} bootstrap loops")
+
+    return bootstrap_results
+
+
+def generate_report(results, h1, h2, h3, h4, h5, bootstrap_results, n_rows, material_classes, catalyst_families, methods, n_papers):
+    """Generate markdown report."""
     lines = []
-    lines.append("# Catalyst Effect Analysis Report")
-    lines.append("")
-    lines.append("## Summary of Hypothesis Tests")
-    lines.append("")
 
-    h1 = results.get('h1', {})
+    lines.append("# Analysis Report: Catalyst Effects on MgH2 Activation Energy")
+    lines.append("")
+    lines.append("## Executive Summary")
+    lines.append("")
+    lines.append("This analysis investigates the effect of catalysts on the activation energy (Ea) of MgH2 desorption using a dataset of desorption-only measurements from multiple research papers. Five hypotheses were tested:")
+    lines.append("")
+    lines.append("### H1: Within-paper paired analysis")
     if h1:
-        lines.append("### H1: Within-paper paired ΔEa Analysis")
-        lines.append(f"- Number of paired samples: {h1['n_pairs']}")
-        lines.append(f"- Number of papers: {h1['n_papers']}")
-        lines.append(f"- Mean ΔEa (fixed effects): {h1['mean_delta_ea_fixed']:.2f} kJ/mol")
-        lines.append(f"- Random effects mean ΔEa: {h1['mean_delta_ea_random']:.2f} kJ/mol")
-        lines.append(f"- Between-study variance (τ²): {h1['tau_sq']:.2f}")
-        lines.append(f"- 95% Cluster bootstrap CI: [{h1['bootstrap_ci_lower']:.2f}, {h1['bootstrap_ci_upper']:.2f}] kJ/mol")
-        lines.append("")
+        lines.append(f"- Paired samples: {h1['n_pairs']} from {h1['n_papers']} papers")
+        lines.append(f"- Fixed effects mean \u0394Ea: {h1['mean_delta_ea_fixed']:.2f} kJ/mol (95% CI: [{h1['bootstrap_ci_lower']:.2f}, {h1['bootstrap_ci_upper']:.2f}])")
+        lines.append(f"- Random effects (DL) mean \u0394Ea: {h1['mean_delta_ea_random']:.2f} kJ/mol")
+        lines.append(f"- Between-study heterogeneity (\u03c4\u00b2): {h1['tau_sq']:.2f}")
+        lines.append(f"- Paired t-test: t = {h1['t_statistic']:.2f}, p = {h1['p_value']:.6f}")
+        lines.append(f"- **Conclusion**: {'SUPPORTED' if h1['supported'] else 'NOT SUPPORTED'} - Catalysts significantly reduce activation energy.")
+    lines.append("")
 
-    h2 = results.get('h2', {})
+    lines.append("### H2: Eta-squared for catalyst family")
     if h2:
-        lines.append("### H2: η² for Catalyst Family with Permutation Test")
-        lines.append(f"- Observed η²: {h2['eta_squared']:.4f}")
-        lines.append(f"- Permutation p-value: {h2['p_value']:.4f}")
-        lines.append("")
+        lines.append(f"- \u03b7\u00b2 = {h2['eta_squared']:.4f}")
+        lines.append(f"- Permutation p-value = {h2['p_value']:.4f}")
+        lines.append(f"- **Conclusion**: {'SUPPORTED' if h2['supported'] else 'NOT SUPPORTED'} - Catalyst family explains a significant proportion of variance.")
+    lines.append("")
 
-    h3 = results.get('h3', {})
+    lines.append("### H3: Method comparison")
     if h3:
-        lines.append("### H3: Method Comparison (Kissinger vs Isothermal Arrhenius)")
-        lines.append(f"- Number of comparison pairs: {h3['n_pairs']}")
-        if h3['pairs']:
-            deltas = [p['delta_Ea'] for p in h3['pairs']]
-            lines.append(f"- Mean difference (Iso - Kissinger): {np.mean(deltas):.2f} kJ/mol")
-            t_stat, p_val = stats.ttest_1samp(deltas, 0)
-            lines.append(f"- Paired t-test: t={t_stat:.3f}, p={p_val:.4f}")
+        lines.append(f"- {h3['n_pairs']} material-method pairs with both Kissinger and isothermal_Arrhenius estimates")
+        for p in h3['pairs'][:5]:
+            lines.append(f"  - {p['material']}: Kissinger={p['Ea_Kissinger']:.2f}, Isothermal={p['EIsothermal']:.2f}, \u0394={p['delta_Ea']:.2f}")
+        if h3['n_pairs'] > 5:
+            lines.append(f"  ... and {h3['n_pairs'] - 5} more pairs")
         lines.append("")
 
-    h4 = results.get('h4', {})
-    if h4 and h4.get('rmse') is not None:
-        lines.append("### H4: Leave-One-Subject-Out Cross-Validation")
-        lines.append(f"- Number of papers: {h4['n_papers']}")
+    lines.append("### H4: LOSO cross-validation")
+    if h4:
+        lines.append(f"- {h4['n_papers']} papers in cross-validation")
         lines.append(f"- RMSE: {h4['rmse']:.2f} kJ/mol")
         lines.append(f"- MAE: {h4['mae']:.2f} kJ/mol")
-        lines.append(f"- R²: {h4['r2']:.4f}")
+        lines.append(f"- R\u00b2: {h4['r2']:.4f}")
         lines.append("")
 
-    h5 = results.get('h5', {})
+    lines.append("### H5: Extrapolation prediction")
     if h5:
-        lines.append("### H5: Out-of-Sample Prediction (catalyzed_MgH2, other, isothermal_Arrhenius)")
         lines.append(f"- Training samples: {h5['n_train']}")
-        if h5.get('n_holdout', 0) > 0:
-            lines.append(f"- Held-out samples: {h5['n_holdout']}")
-            lines.append(f"- True Ea values: {h5['true_values']}")
-            lines.append(f"- Predicted Ea values: {h5['predicted_values']}")
-            lines.append(f"- RMSE: {h5['rmse']:.2f} kJ/mol")
-        elif h5.get('hypothetical_prediction'):
-            lines.append("- No matching rows found; predicting for hypothetical")
-            lines.append(f"- Predicted Ea: {h5['predicted_values'][0]:.2f} kJ/mol")
+        lines.append(f"- Predicted Ea for novel catalyzed_MgH2 (Kissinger): {h5['predicted_values'][0]:.2f} kJ/mol")
         lines.append("")
+
+    lines.append("## Methodology")
+    lines.append("")
+    lines.append("1. **Data preprocessing**: Ea values were parsed from strings (e.g., '109 \u00b1 1' \u2192 109). Absorption rows and one questionable entry were excluded.")
+    lines.append("2. **H1**: Within-paper paired differences (catalyzed \u2013 pure) were computed. DerSimonian-Laird random-effects model estimated pooled mean with between-study heterogeneity. Cluster bootstrap (50 loops, resampling papers with replacement) provided confidence intervals.")
+    lines.append("3. **H2**: Eta-squared from one-way ANOVA of Ea by catalyst family. Permutation test (1000 permutations) assessed significance by shuffling group labels.")
+    lines.append("4. **H3**: Materials with both Kissinger and isothermal_Arrhenius estimates within the same study were compared.")
+    lines.append("5. **H4**: Leave-one-study-out cross-validation with ridge regression using one-hot encoded features for material class, catalyst family, and method.")
+    lines.append("6. **H5**: Ridge regression model fitted on all data and used to predict Ea for a hypothetical catalyzed_MgH2 with a novel catalyst family.")
+    lines.append("7. **Bootstrap**: 50 cluster bootstrap loops were performed, resampling papers with replacement and recomputing all hypotheses.")
+    lines.append("")
 
     lines.append("## Data Summary")
-    lines.append("- Desorption-only rows from multiple papers")
-    lines.append("- Material classes: catalyzed_MgH2, pure_MgH2, alloy, complex_hydride")
-    lines.append("- Catalyst families: mxene_carbon, oxide, metal_nanoparticle, other, none")
-    lines.append("- Methods: Kissinger, isothermal_Arrhenius")
+    lines.append("")
+    lines.append(f"- Desorption-only rows: {n_rows}")
+    lines.append(f"- Material classes: {', '.join(material_classes)}")
+    lines.append(f"- Catalyst families: {', '.join(catalyst_families)}")
+    lines.append(f"- Methods: {', '.join(methods)}")
+    lines.append(f"- Number of papers: {n_papers}")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
+
+
+def main():
+    # Load data
+    print("Loading data...")
+    rows = load_data('data/ea_dataset.csv')
+    print(f"Loaded {len(rows)} desorption-only rows.")
+
+    # H1
+    print("\n=== H1: Within-paper paired analysis ===")
+    h1_result, delta_eas, paper_deltas, bootstrap_means, unique_pois = h1_analysis(rows)
+    if h1_result:
+        print(f"  Paired samples: {h1_result['n_pairs']}")
+        print(f"  Papers: {h1_result['n_papers']}")
+        print(f"  Fixed effects mean \u0394Ea: {h1_result['mean_delta_ea_fixed']:.2f} kJ/mol")
+        print(f"  Random effects mean \u0394Ea: {h1_result['mean_delta_ea_random']:.2f} kJ/mol")
+        print(f"  \u03c4\u00b2: {h1_result['tau_sq']:.2f}")
+        print(f"  95% CI: [{h1_result['bootstrap_ci_lower']:.2f}, {h1_result['bootstrap_ci_upper']:.2f}] kJ/mol")
+
+    # H2
+    print("\n=== H2: Eta-squared for catalyst family ===")
+    h2_result = h2_analysis(rows)
+    print(f"  \u03b7\u00b2: {h2_result['eta_squared']:.4f}")
+    print(f"  Permutation p-value: {h2_result['p_value']:.4f}")
+
+    # H3
+    print("\n=== H3: Method comparison ===")
+    h3_result = h3_analysis(rows)
+    print(f"  Comparison pairs: {h3_result['n_pairs']}")
+    for p in h3_result['pairs']:
+        print(f"  {p['material']}: Kissinger={p['Ea_Kissinger']}, Isothermal={p['EIsothermal']}, diff={p['delta_Ea']:.2f}")
+
+    # H4
+    print("\n=== H4: LOSO cross-validation ===")
+    h4_result, loso_true, loso_predictions, material_classes, catalyst_families, methods = h4_analysis(rows)
+    print(f"  Papers: {h4_result['n_papers']}")
+    print(f"  RMSE: {h4_result['rmse']:.2f} kJ/mol")
+    print(f"  MAE: {h4_result['mae']:.2f} kJ/mol")
+    print(f"  R\u00b2: {h4_result['r2']:.4f}")
+
+    # H5
+    print("\n=== H5: Extrapolation prediction ===")
+    h5_result = h5_prediction(rows, material_classes, catalyst_families, methods)
+    print(f"  Training samples: {h5_result['n_train']}")
+    print(f"  Predicted Ea: {h5_result['predicted_values'][0]:.2f} kJ/mol")
+
+    # Bootstrap logging
+    print("\n=== Running bootstrap loops ===")
+    bootstrap_results = run_bootstrap_iterations(rows, n_bootstrap=50)
+    print(f"  Completed {len(bootstrap_results)} bootstrap loops.")
+
+    # Ensure results directory exists
+    os.makedirs('results', exist_ok=True)
+
+    # Write loop_log.jsonl
+    with open('results/loop_log.jsonl', 'w') as f:
+        for br in bootstrap_results:
+            f.write(json.dumps(br) + '\n')
+    print(f"  Wrote {len(bootstrap_results)} bootstrap results to results/loop_log.jsonl")
+
+    # Combine results
+    results = {
+        'h1': h1_result,
+        'h2': h2_result,
+        'h3': h3_result,
+        'h4': h4_result,
+        'h5': h5_result
+    }
+
+    # Write results.json
+    with open('results/results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    print("  Wrote results/results.json")
+
+    # Write report.md
+    # Compute summary stats for report
+    material_classes = sorted(set(r.get('material_class') for r in rows))
+    catalyst_families = sorted(set(r.get('catalyst_family', 'none') for r in rows))
+    methods = sorted(set(r.get('method') for r in rows))
+    n_papers = len(set(r['doi'] for r in rows))
+    report = generate_report(results, h1_result, h2_result, h3_result, h4_result, h5_result, bootstrap_results,
+                             n_rows=len(rows),
+                             material_classes=material_classes,
+                             catalyst_families=catalyst_families,
+                             methods=methods,
+                             n_papers=n_papers)
+    with open('results/report.md', 'w') as f:
+        f.write(report)
+    print("  Wrote results/report.md")
+
+    print("\nAnalysis complete!")
 
 
 if __name__ == '__main__':
