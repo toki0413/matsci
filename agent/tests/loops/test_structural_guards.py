@@ -35,6 +35,60 @@ def test_parse_manifest_ignores_source_paths():
     assert [d.path for d in m] == ["out/report.md"]
 
 
+def test_parse_manifest_ignores_absolute_paths():
+    """绝对路径是引用材料, 不是交付物.
+
+    ws31 实测: "/workspace/.../design_solid_h2.md" 的匹配跳过前导 "/" 从
+    "workspace" 开始, 被当成 workspace 下的相对路径 → 必然判 missing,
+    把一次真实跑通的 run 判成 success=False.
+    """
+    from huginn.autoloop.deliverables import parse_manifest
+
+    obj = (
+        "背景材料：/workspace/research/design_solid_h2.md\n\n"
+        "交付物（全部写到当前 workspace 目录下）：\n"
+        "- results.json：数值汇总\n- report.md：报告\n- loop_log.jsonl：台账\n"
+    )
+    m = parse_manifest(obj)
+    assert [d.path for d in m] == ["results.json", "report.md", "loop_log.jsonl"]
+
+
+def test_stop_gate_rejects_stop_when_deliverables_missing():
+    """交付物未验收时, 模型单方面 stop 不被接受 (确定性门)."""
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveRunner
+
+    hints: list[str] = []
+    stub = SimpleNamespace(
+        _deliverables_ok=lambda: {"passed": False, "missing": ["report.md"],
+                                  "empty": [], "invalid": []},
+        _append_hint=hints.append,
+        _control_trace=lambda *a, **k: None,
+    )
+    state = SimpleNamespace(iteration=3)
+    cog = {"plan": {"description": "x"}}
+    out = CognitiveRunner._rc_gate_stop(stub, ActionDecision(action="stop"), state, cog)
+    assert out.action == "execute"
+    assert hints and "交付物硬门" in hints[0]
+
+
+def test_stop_gate_allows_stop_when_deliverables_pass():
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveRunner
+
+    stub = SimpleNamespace(
+        _deliverables_ok=lambda: {"passed": True},
+        _append_hint=lambda _h: None,
+        _control_trace=lambda *a, **k: None,
+    )
+    out = CognitiveRunner._rc_gate_stop(
+        stub, ActionDecision(action="stop"), SimpleNamespace(iteration=3), {"plan": None}
+    )
+    assert out.action == "stop"
+
+
 def test_check_manifest_reports_missing_and_empty(tmp_path):
     from huginn.autoloop.deliverables import Deliverable, check_manifest
 

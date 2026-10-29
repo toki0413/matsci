@@ -60,7 +60,14 @@ def parse_manifest(objective: str) -> list[Deliverable]:
     text = _section_text(objective) or objective
     seen: set[str] = set()
     out: list[Deliverable] = []
-    for raw in _ARTIFACT_RE.findall(text):
+    # 用 finditer 而不是 findall: 需要知道匹配起点, 才能判定它前面是不是 "/".
+    # 绝对路径 "/workspace/.../design.md" 的匹配会**跳过前导斜杠**从 "workspace"
+    # 开始, findall 拿不到那个 "/", startswith("/") 守卫永远不生效 → 绝对路径被
+    # 当成 workspace 下的相对路径去验收, 必然判 missing (ws31 实测).
+    for m in _ARTIFACT_RE.finditer(text):
+        raw = m.group(0)
+        if m.start() > 0 and text[m.start() - 1] == "/":
+            continue  # 绝对路径: 引用材料不是交付物
         path = raw.strip().strip("'\"`，,。；;：:")
         if not path or path.startswith(("/", "..", "./")):
             continue

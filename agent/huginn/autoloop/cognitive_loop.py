@@ -4728,24 +4728,61 @@ Physical time series collected this run:
         # Step C: LLM 自主选 action (优先) → 规则版兜底.
         # 顺序守卫必须逐个短路, 不能预先全部求值 (会破坏 stall/hint 的副作用序).
         decision = self._dec_post_redirect(state, cog)
-        if decision is not None:
+        if decision is None:
+            decision = self._dec_stall_action(state)
+        if decision is None:
+            decision = self._dec_hint_action(cog)
+        if decision is None:
+            decision = self._dec_progress_invariant(state, cog)
+        if decision is None:
+            decision = self._dec_monitor_hold()
+        if decision is None:
+            decision = await self._dec_llm(state, cog, obs)
+        if decision is None:
+            decision = self._dec_rule_fallback(state, cog)
+        return self._rc_gate_stop(decision, state, cog)
+
+    def _rc_gate_stop(
+        self, decision: ActionDecision, state: LoopState, cog: CognitiveState
+    ) -> ActionDecision:
+        """交付物硬门: 声明清单未通过确定性验收时, 不接受单方面 stop.
+
+        ``_deliverables_ok`` 的清单来自 objective, agent 无法改写; 模型选 stop
+        只是"它认为做完了", 不是"验收通过". ws31 实测: 模型一轮就 stop,
+        声明的 4 个交付物全缺, success=False —— 停机权不能只归模型.
+        无声明清单时不适用 (保持原行为).
+        """
+        if decision.action != "stop":
             return decision
-        decision = self._dec_stall_action(state)
-        if decision is not None:
+        gate = self._deliverables_ok()
+        if gate.get("passed", True):
             return decision
-        decision = self._dec_hint_action(cog)
-        if decision is not None:
-            return decision
-        decision = self._dec_progress_invariant(state, cog)
-        if decision is not None:
-            return decision
-        decision = self._dec_monitor_hold()
-        if decision is not None:
-            return decision
-        decision = await self._dec_llm(state, cog, obs)
-        if decision is not None:
-            return decision
-        return self._dec_rule_fallback(state, cog)
+        _gap = (
+            f"missing={gate.get('missing') or []} "
+            f"empty={gate.get('empty') or []} "
+            f"invalid={gate.get('invalid') or []}"
+        )
+        logger.warning(
+            "stop 被交付物硬门拒绝 (iter %d): %s", state.iteration, _gap
+        )
+        self._append_hint(
+            "[交付物硬门] 声明的交付物尚未通过确定性验收: "
+            f"{_gap}. 现在不要收结: 继续执行并落盘, 直到这些文件真实存在、"
+            "非空且结构化文件可解析."
+        )
+        self._control_trace(
+            "stop_gate",
+            _gap,
+            iteration=state.iteration,
+            action="advisory_continue",
+        )
+        # plan 已在手 → 继续执行; 否则先补齐计划. 不选 stop/skip, 那等于空转.
+        nxt = "execute" if cog.get("plan") else "plan"
+        return ActionDecision(
+            action=nxt,
+            rationale="交付物未验收通过, 继续推进 (确定性门)",
+            expected_outcome="补齐声明交付物后再收结",
+        )
 
     async def _rc_execute(
         self, state: LoopState, decision: ActionDecision, cog: CognitiveState

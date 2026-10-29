@@ -70,6 +70,15 @@ def _ledger_text(output: Any) -> str:
         for k, v in payload.items()
         if k not in ("script", "code", "stdout", "stderr")
     }
+    # stdout/stderr 恰恰是 coder 真跑出来的数值所在 —— 整段丢弃后报告面只
+    # 剩"没有任何数字可引用"的结论 (ws31 实测: 执行成功但报告自述无数). 只
+    # 保留数值面: 证据在, 体量仍可控.
+    for _k in ("stdout", "stderr"):
+        _v = payload.get(_k)
+        if isinstance(_v, str) and _v.strip():
+            _nums = sorted(_numeric_tokens(_v, _CITATION_MIN_MAGNITUDE))
+            if _nums:
+                slim[_k + "_nums"] = " ".join(_nums[:200])
     text = json.dumps(slim, ensure_ascii=False, default=str)
     if len(text) <= _EXEC_LEDGER_ENTRY_CHARS:
         return text
