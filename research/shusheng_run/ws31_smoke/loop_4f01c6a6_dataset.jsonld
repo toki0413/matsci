@@ -1,0 +1,43 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_4f01c6a6",
+  "description": "Compute 500 N / 0.01 m^2 in MPa and say PASS/FAIL against 250 MPa yield. Keep it to one line.",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-10-29T11:22:01.075774+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_4f01c6a6",
+    "description": "Compute 500 N / 0.01 m^2 in MPa and say PASS/FAIL against 250 MPa yield. Keep it to one line.",
+    "instrument": "/workspace/research/shusheng_run/ws31_smoke/.huginn/trajectories/loop_4f01c6a6.json",
+    "object": "/workspace/research/shusheng_run/ws31_smoke/.huginn/provenance.jsonl",
+    "startTime": "2026-10-29T19:19:18.194455",
+    "endTime": "2026-10-29T19:22:01.070501"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research/shusheng_run/ws31_smoke/huginn_autoloop_report_loop_4f01c6a6.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research/shusheng_run/ws31_smoke/.huginn/trajectories/loop_4f01c6a6.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}
