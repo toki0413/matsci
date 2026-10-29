@@ -18,6 +18,7 @@ __all__ = [
     "LineSpec",
     "check_contract",
     "check_manifest",
+    "fixed_protocol_hypothesis",
     "objective_block_for",
     "parse_contract",
     "parse_manifest",
@@ -96,6 +97,79 @@ def parse_manifest(objective: str) -> list[Deliverable]:
         seen.add(path)
         out.append(Deliverable(path))
     return out
+
+
+_PROTOCOL_FIX_RE = re.compile(
+    r"不允许事后改口径|不得改口径|不得换检验|不允许换检验|不许改口径|口径固定"
+    r"|固定假设|预先注册|pre-registered|preregistered",
+    re.I,
+)
+_H_ITEM_RE = re.compile(r"^\s*(?:[-*]\s*)?H\d\s*[（(:：]", re.M)
+_FIXED_H_ITEM_MAX = 220
+
+
+def fixed_protocol_hypothesis(objective: str) -> str:
+    """objective 把假设/口径钉死时返回锚定陈述, 否则空串.
+
+    ws35 实测 (结构性缺陷 I): objective 已写死 H1–H5 与"不允许事后改口径换检验",
+    引擎仍走 hypothesize/pivot 生成合成假设 (ΔEa=α/L、ΔEa(f) 递减), 再拿这条合成
+    假设去 plan_check 对齐 —— iter 10 的计划被判"与假设不对齐", 而 objective 的
+    H1–H5 与已落盘交付物被搁在一边. objective 自带固定假设清单时, 它**就是**执行
+    对象, 不该再由模型另立假设.
+    """
+    if not isinstance(objective, str) or not objective.strip():
+        return ""
+    if not _PROTOCOL_FIX_RE.search(objective):
+        return ""
+    items = list(_H_ITEM_RE.finditer(objective))
+    if len(items) < 3:
+        return ""
+    lines: list[str] = []
+    for i, m in enumerate(items):
+        end = items[i + 1].start() if i + 1 < len(items) else len(objective)
+        chunk = " ".join(objective[m.start():end].split())
+        lines.append(chunk[:_FIXED_H_ITEM_MAX])
+    body = "\n".join(f"- {ln}" for ln in lines)
+    return (
+        "【objective 已固定的分析协议 — 不要另立假设, 也不要 pivot 换方向】\n"
+        f"{body}\n"
+        "执行口径: 严格按 objective 写死的方法要求与交付物键名落地; 逐轮修的是"
+        "交付物本身 (文件缺失 / 键名不符 / 数值未算), 不是换假设。"
+    )
+
+
+def render_acceptance_gap(gate: dict[str, Any]) -> str:
+    """交付物验收缺口 (确定性门) 的 prompt 摘要 — 独立字段, 不挤在 spec_hint 里.
+
+    ws35 实测: 门的缺口只写进 ``_speculator_hint``, 而 decider prompt 里该字段
+    只取前 300 字符 (``[:300]``), 门拒绝原因根本没到决策者眼前 → 模型以为已
+    完成, 继续 skip. 这里把它抬成独立 block, 并给出可执行的修复目标.
+    """
+    if not isinstance(gate, dict) or gate.get("passed", True):
+        return ""
+    _cap = 8
+
+    def _fmt(key: str) -> str:
+        vals = gate.get(key) or []
+        if not isinstance(vals, list):
+            vals = [vals]
+        if not vals:
+            return f"{key}=[]"
+        shown = ", ".join(str(v) for v in vals[:_cap])
+        more = f" (+{len(vals) - _cap} more)" if len(vals) > _cap else ""
+        return f"{key}=[{shown}]{more}"
+
+    parts = [_fmt(k) for k in ("missing", "empty", "invalid")]
+    contract = gate.get("contract")
+    if isinstance(contract, dict) and not contract.get("passed", True):
+        cparts = [
+            f"{k}=[{', '.join(str(x) for x in (contract.get(k) or [])[:_cap])}]"
+            for k in ("missing_keys", "short_lines", "bad_lines", "missing_fields")
+            if contract.get(k)
+        ]
+        if cparts:
+            parts.append("contract: " + "; ".join(cparts))
+    return "; ".join(p for p in parts if p)[:600]
 
 
 def _json_has_substance(payload: Any) -> bool:

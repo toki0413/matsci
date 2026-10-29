@@ -325,37 +325,10 @@ class ReflectionResult:
     advice: str = ""
 
 def _acceptance_gap_text(gate: dict[str, Any]) -> str:
-    """交付物验收缺口 (确定性门) 的 prompt 摘要 — 独立字段, 不挤在 spec_hint 里.
+    """兼容别名: 实现在 deliverables.render_acceptance_gap (plan prompt 也用同一份)."""
+    from huginn.autoloop.deliverables import render_acceptance_gap
 
-    ws35 实测: 门的缺口只写进 ``_speculator_hint``, 而 decider prompt 里该字段
-    只取前 300 字符 (``[:300]``), 门拒绝原因根本没到决策者眼前 → 模型以为已
-    完成, 继续 skip. 这里把它抬成独立 block, 并给出可执行的修复目标.
-    """
-    if not isinstance(gate, dict) or gate.get("passed", True):
-        return ""
-    _cap = 8
-
-    def _fmt(key: str) -> str:
-        vals = gate.get(key) or []
-        if not isinstance(vals, list):
-            vals = [vals]
-        if not vals:
-            return f"{key}=[]"
-        shown = ", ".join(str(v) for v in vals[:_cap])
-        more = f" (+{len(vals) - _cap} more)" if len(vals) > _cap else ""
-        return f"{key}=[{shown}]{more}"
-
-    parts = [_fmt(k) for k in ("missing", "empty", "invalid")]
-    contract = gate.get("contract")
-    if isinstance(contract, dict) and not contract.get("passed", True):
-        cparts = [
-            f"{k}=[{', '.join(str(x) for x in (contract.get(k) or [])[:_cap])}]"
-            for k in ("missing_keys", "short_lines", "bad_lines", "missing_fields")
-            if contract.get(k)
-        ]
-        if cparts:
-            parts.append("contract: " + "; ".join(cparts))
-    return "; ".join(p for p in parts if p)[:600]
+    return render_acceptance_gap(gate)
 
 
 def _plan_available_for(host: Any) -> bool:
@@ -373,6 +346,20 @@ def _plan_available_for(host: Any) -> bool:
     except Exception:  # 防御: 探针失败按"无 plan"处理 (改判 plan 是安全侧)
         logger.debug("plan_ready_fn failed", exc_info=True)
         return False
+
+
+def _seed_fixed_protocol(cog: dict[str, Any], fixed: str) -> bool:
+    """objective 固定假设时把它当 cog 的初始假设 (结构性缺陷 I).
+
+    返回是否发生注入. 已有假设时不覆盖 (外部注入的假设优先).
+    """
+    if not fixed or cog.get("hypothesis"):
+        return False
+    cog["hypothesis"] = fixed
+    ctx = cog.get("context")
+    if isinstance(ctx, dict):
+        ctx["objective_fixed_protocol"] = True
+    return True
 
 
 class CognitiveLoop:
@@ -516,6 +503,23 @@ class CognitiveLoop:
                 decision.action,
             )
             decision.action = "skip"
+        # 结构性缺陷 I: objective 已钉死假设/口径时, 换假设类动作没有语义 —— 模型
+        # 仍可能选 hypothesize/pivot (规则兜底每轮也回 hypothesize). 一律改判到
+        # 已有计划就 execute, 否则 plan, 把轮次花在交付物上.
+        _fixed_hyp = getattr(self, "_objective_fixed_hypothesis", "")
+        if _fixed_hyp and decision.action in ("hypothesize", "pivot"):
+            nxt = "execute" if _plan_available_for(self) else "plan"
+            logger.warning(
+                "CognitiveLoop: action=%s 被拒 (objective 固定假设), 改判为 %s",
+                decision.action, nxt,
+            )
+            decision.action = nxt
+            if getattr(self, "_control_trace_fn", None) is not None:
+                self._control_trace_fn(
+                    "objective_fixed_protocol",
+                    f"action_replaced={nxt}",
+                    action="force_route",
+                )
         # P4-3: 钩子间中断检查 — decide 后 should_stop 可能被外部设
         return None if state.should_stop else decision
 
@@ -1978,8 +1982,16 @@ class CognitiveRunner(EngineFacade):
         self._run_start_time = time.time()
         self._objective = objective
         # 确定性验收锚点: 交付物清单只从 objective 解析, agent 不能改写.
-        from huginn.autoloop.deliverables import parse_contract, parse_manifest
+        from huginn.autoloop.deliverables import (
+            fixed_protocol_hypothesis,
+            parse_contract,
+            parse_manifest,
+        )
 
+        # 结构性缺陷 I: objective 自带固定假设清单 (H1..Hn + "不允许改口径") 时,
+        # 执行对象就是它. 仍走 hypothesize/pivot 会让引擎另立合成假设, 再拿它去
+        # plan_check 对齐 → 已落盘的交付物被搁置 (ws35 实测 iter 10).
+        self._objective_fixed_hypothesis = fixed_protocol_hypothesis(objective)
         self._deliverable_manifest = parse_manifest(objective)
         # 同一锚点覆盖**内容契约** (必需键名 / JSONL 行 schema): 只验文件存在
         # 会让"自造一套键名/假设"的交付物判绿 (ws35 实测).
@@ -4807,6 +4819,10 @@ Physical time series collected this run:
             objective, max_iterations, run_id, timeout_seconds
         )
         self._rc_progress_bridge(run_id)
+        cog = self._rc_new_cog()
+        # 结构性缺陷 I: objective 固定假设 → 直接当 cog["hypothesis"], 首轮起
+        # 就 plan 到 H1–H5 的实现上, 不给 hypothesize/pivot 另立假设的机会.
+        _seed_fixed_protocol(cog, getattr(self, "_objective_fixed_hypothesis", ""))
         return _RcContext(
             objective=objective,
             max_iterations=max_iterations,
@@ -4816,7 +4832,7 @@ Physical time series collected this run:
             run_collector=run_collector,
             tracker=tracker,
             progress_task_id=progress_task_id,
-            cog=self._rc_new_cog(),
+            cog=cog,
         )
 
     async def _rc_observe(self, state: LoopState, objective: str, max_iterations: int,

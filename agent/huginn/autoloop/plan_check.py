@@ -206,6 +206,36 @@ def _pc_math_block(pc: Any, hypothesis: str, context: dict[str, Any]) -> str:
         else ""
     )
 
+def _pc_acceptance_block(pc: Any) -> str:
+    """当前交付物验收缺口 → plan prompt 块 (修复目标就写在这里).
+
+    ws35 实测: 门只把缺口报给了 decider (下一步选什么), 而"怎么修"由 plan 编写;
+    plan prompt 里没有缺口时, 计划仍按自造键名走, 再被判红 (ws35 iter 8 的
+    results.json 用 h1..h5 嵌套 → 17 个必需键全缺). 缺口必须到作者手里.
+    """
+    from huginn.autoloop.deliverables import check_manifest, render_acceptance_gap
+
+    gate_fn = getattr(pc, "_deliverables_ok", None)
+    if callable(gate_fn):
+        gate = gate_fn()
+    else:
+        manifest = getattr(pc, "_deliverable_manifest", None) or []
+        if not manifest:
+            return ""
+        gate = check_manifest(
+            getattr(pc, "workspace", None),
+            manifest,
+            getattr(pc, "_deliverable_contract", None),
+        )
+    gap = render_acceptance_gap(gate)
+    if not gap:
+        return ""
+    return (
+        "\nAcceptance (deterministic engine gate; the plan must close these gaps):\n"
+        f"{gap}\n"
+    )
+
+
 def _pc_learning_blocks(pc: Any, hypothesis: str) -> tuple[str, str]:
     """evolution 学到的 skills + prompt patches 提示行."""
     # Inject learned skills + prompt patches from evolution engine.
@@ -640,6 +670,7 @@ class PlanCheck(EngineFacade):
             [
                 ("body", _pc_plan_body(hypothesis, context, extra_mode_lines)),
                 ("objective", objective_block_for(self)),
+                ("acceptance", _pc_acceptance_block(self)),
                 ("math", math_block),
                 ("kg", kg_block),
                 ("visual", visual_block),

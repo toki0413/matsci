@@ -820,6 +820,48 @@ def test_plan_prompt_carries_full_objective(monkeypatch):
 # ===== H: 减负/空转把确定性验收门绕过 → 连 skip 空转 =====
 
 
+def test_plan_prompt_carries_acceptance_gap(monkeypatch):
+    """契约缺口必须进 plan prompt —— 修复方案是在 plan 里写的, 不是 decider 里.
+
+    ws35 实测: results.json 用 h1..h5 嵌套, 17 个必需键全缺, 但 plan prompt 里
+    没有缺口 → 计划继续按自造键名走, 门第二次判红.
+    """
+    from types import SimpleNamespace
+
+    from huginn.autoloop import plan_check as pc
+
+    monkeypatch.setattr(pc, "_pc_retrieval_blocks", lambda s, h: ("",) * 6)
+    monkeypatch.setattr(pc, "_pc_world_model_block", lambda s, h: "")
+    monkeypatch.setattr(pc, "_pc_visual_block", lambda s: "")
+    monkeypatch.setattr(pc, "_pc_math_block", lambda s, h, c: "")
+    monkeypatch.setattr(pc, "_pc_learning_blocks", lambda s, h: ("", ""))
+    monkeypatch.setattr(pc, "_pc_composite_block", lambda h: "")
+    monkeypatch.setattr(pc, "_pc_pipeline_block", lambda s: "")
+    host = SimpleNamespace(
+        _objective="objective 原文",
+        _deliverable_contract=None,
+        _deliverables_ok=lambda: {
+            "passed": False, "missing": ["report.md"], "empty": [], "invalid": [],
+            "contract": {"passed": False,
+                         "missing_keys": ["results.json:q1_delta_ea",
+                                          "results.json:q3_catalyst_median_delta"],
+                         "short_lines": [], "bad_lines": [],
+                         "missing_fields": ["loop_log.jsonl:1:status"]},
+        },
+        _plan_extra_mode_lines=lambda: "",
+        _apply_block_patches=lambda blocks, phase: blocks,
+        _build_pmk_block=lambda ctx: "",
+        _build_subgoal_block=lambda: "",
+        _plan_context_hint=lambda: "",
+        _extend_mode_enum=lambda s: s,
+        _trim_to_budget=lambda blocks, phase=None: "".join(v for _, v in blocks),
+    )
+    out = pc.PlanCheck._build_plan_prompt(host, "hyp", {})
+    assert "Acceptance (deterministic engine gate" in out
+    assert "q1_delta_ea" in out, "缺口键名没进 plan prompt"
+    assert "loop_log.jsonl:1:status" in out
+
+
 def test_monitor_hold_yields_when_deliverables_unverified():
     """交付物未验收时不许 hold: ws35 实测 29 连 skip 空转到迭代耗尽."""
     from types import SimpleNamespace
@@ -941,6 +983,108 @@ def test_decider_prompt_carries_acceptance_gap():
     assert "loop_log.jsonl" in prompt
 
 
+# ===== I: objective 固定假设被合成假设劫持 =====
+
+_I_OBJ = (
+    "分析假设（H1–H5，数值阈值在本任务里固定，不允许事后改口径换检验）：\n"
+    "- H1（催化效应量）：只在同一篇论文内部配对，合并 ΔEa ≥ 25 kJ/mol。\n"
+    "- H2（催化剂家族解释力）：η² 与论文整群置换检验 p。\n"
+    "- H3（方法噪声）：|Δ_method| 对比 median(ΔEa)。\n"
+    "- H4（样本外可预测性）：LOSO RMSE 与基线比较。\n"
+    "- H5（外推预测）：给出点预测与 95% PI。\n"
+)
+
+
+def test_fixed_protocol_detected_from_objective():
+    """objective 自带 H1..Hn + 固定口径措辞 → 锚定陈述 (ws35 实测场景)."""
+    from huginn.autoloop.deliverables import fixed_protocol_hypothesis
+
+    stmt = fixed_protocol_hypothesis(_I_OBJ)
+    assert stmt, "固定假设的 objective 没有被识别"
+    assert "H1（催化效应量）" in stmt
+    assert "不要另立假设" in stmt
+
+
+def test_fixed_protocol_not_detected_for_open_ended_objective():
+    """没有固定措辞时交还模型自由探索假设."""
+    from huginn.autoloop.deliverables import fixed_protocol_hypothesis
+
+    assert fixed_protocol_hypothesis("研究 MgH2 的催化脱氢机理, 自主提出可验证假设") == ""
+
+
+def test_fixed_protocol_requires_enumerated_hypotheses():
+    """只有"口径固定"措辞、没有 H1..Hn 清单时不锚定 (避免误判普通任务)."""
+    from huginn.autoloop.deliverables import fixed_protocol_hypothesis
+
+    assert fixed_protocol_hypothesis("口径固定, 自行提出 3 个假设再验证") == ""
+
+
+def test_fixed_protocol_seeds_cog_hypothesis():
+    from huginn.autoloop.cognitive_loop import _seed_fixed_protocol
+
+    cog = {"context": {}, "hypothesis": None}
+    assert _seed_fixed_protocol(cog, "【fixed】H1..H5") is True
+    assert cog["hypothesis"] == "【fixed】H1..H5"
+    assert cog["context"]["objective_fixed_protocol"] is True
+    # 已有假设不被覆盖 (外部注入优先)
+    cog2 = {"context": {}, "hypothesis": "external"}
+    assert _seed_fixed_protocol(cog2, "fixed") is False
+    assert cog2["hypothesis"] == "external"
+
+
+def _real_loop(decide_action: str, fixed: bool, traces: list[str]):
+    """真实内核实例 (不是 stub): 内核属性必须由构造参数注入 (D 类教训)."""
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    async def _noop(*_a, **_k):
+        return None
+
+    async def _decide(_state, _obs):
+        return ActionDecision(action=decide_action)
+
+    return CognitiveLoop(
+        observe_fn=_noop,
+        decide_fn=_decide,
+        execute_fn=_noop,
+        reflect_fn=_noop,
+        max_iterations=5,
+        max_repeated_actions=3,
+        plan_ready_fn=lambda: True,
+        control_trace_fn=lambda name, *a, **k: traces.append(name),
+        objective_fixed_protocol=fixed,
+    )
+
+
+def _run_decide_once(loop, decision_action: str):
+    import asyncio
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    async def _decide(_state, _obs):
+        return ActionDecision(action=decision_action)
+
+    loop._decide = _decide
+    state = type("S", (), {"should_stop": False})()
+    return asyncio.run(CognitiveLoop._run_decide(loop, state, {}))
+
+
+def test_decide_replaces_hypothesize_when_protocol_fixed():
+    """objective 已钉死假设 → hypothesize/pivot 没有语义, 必须改判到 plan/execute."""
+    traces: list[str] = []
+    loop = _real_loop("hypothesize", fixed=True, traces=traces)
+    out = _run_decide_once(loop, "hypothesize")
+    assert out is not None and out.action == "execute", "固定协议下仍去另立假设"
+    out = _run_decide_once(loop, "pivot")
+    assert out.action == "execute"
+    assert traces and traces[0] == "objective_fixed_protocol"
+
+
+def test_decide_keeps_pivot_without_fixed_protocol():
+    loop = _real_loop("pivot", fixed=False, traces=[])
+    out = _run_decide_once(loop, "pivot")
+    assert out is not None and out.action == "pivot"
+
+
 # ===== 缺陷台账: 按 class 记账, 不按实例记账 =====
 #
 # 规则 (用户定): 同一类缺陷第 2 次复发起, **禁止再提交实例补丁**, 必须先有结构性修复
@@ -1033,6 +1177,7 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
         "probes": (
             "test_objective_block_is_not_truncated_by_prompt_budget",
             "test_plan_prompt_carries_full_objective",
+            "test_plan_prompt_carries_acceptance_gap",
             "test_decider_prompt_carries_acceptance_gap",
         ),
     },
@@ -1045,6 +1190,20 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
             "test_monitor_hold_yields_when_deliverables_unverified",
             "test_monitor_hold_still_holds_when_deliverables_pass",
             "test_repetition_guard_gap_reports_contract_failure",
+        ),
+    },
+    {
+        "class_id": "I-objective-fixed-protocol-hijacked",
+        "symptom": "objective 已写死 H1–Hn 与固定口径, 引擎仍 hypothesize/pivot 生成合成假设, 再拿合成假设去 plan_check 对齐 → 已落盘交付物被搁置、轮次烧在换假设上",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": (
+            "test_fixed_protocol_detected_from_objective",
+            "test_fixed_protocol_not_detected_for_open_ended_objective",
+            "test_fixed_protocol_requires_enumerated_hypotheses",
+            "test_fixed_protocol_seeds_cog_hypothesis",
+            "test_decide_replaces_hypothesize_when_protocol_fixed",
+            "test_decide_keeps_pivot_without_fixed_protocol",
         ),
     },
 )
