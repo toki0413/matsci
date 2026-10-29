@@ -1,0 +1,2148 @@
+SRC https://pmc.ncbi.nlm.nih.gov/articles/PMC12400306/
+
+ 
+ 
+     
+
+         
+         
+         
+         
+         
+
+        
+        
+
+        
+        
+   
+ 
+
+   
+ 
+ 
+
+  
+  
+     
+
+  
+
+
+
+        
+             
+             
+             
+             
+             
+             
+             
+             
+        
+
+         
+            Tailoring hydrogen storage performance of Mg-Mg2Ni alloys: synergistic effects of composition and phase formation with first-principles insights - PMC
+         
+
+        
+        
+  
+   
+ 
+ 
+ 
+ 
+ 
+ 
+  
+     
+
+    
+         
+    
+
+     
+     
+
+
+     
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+    
+    
+
+     
+     
+        
+     
+      Skip to main content
+     
+
+
+        
+            
+
+ 
+     
+         
+             
+                 
+                     
+                 
+
+                 
+                     
+                        An official website of the United States government
+                     
+                     Here's how you know 
+                 
+
+                
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                     Here's how you know 
+                
+
+        
+    
+        
+             
+        
+
+
+             
+         
+
+         
+             
+                 
+                     
+                     
+                         
+                             Official websites use .gov 
+                             
+                            A
+                             .gov  website belongs to an official
+                            government organization in the United States.
+                         
+                     
+                 
+
+                 
+                     
+
+                     
+                         
+                             Secure .gov websites use HTTPS 
+                             
+                            A  lock  (
+                             
+                                 
+                                     Lock 
+                                     
+                                    Locked padlock icon
+                                     
+                                     
+                                 
+ ) or  https://  means you've safely
+                                connected to the .gov website. Share sensitive
+                                information only on official, secure websites.
+                             
+                         
+                     
+                 
+             
+         
+     
+
+        
+
+        
+    
+    
+    
+
+ 
+ 
+
+
+
+ 
+     
+         
+             
+                 
+             
+
+             
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                 
+                     
+                 
+            
+
+        
+    
+        
+             
+        
+
+
+
+            
+                 
+                 
+                    
+                         
+                        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                            
+
+
+
+     
+
+
+                            Search
+                        
+
+        
+    
+        
+             
+        
+
+
+                    
+
+                     
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                                
+
+
+
+     
+
+
+
+                                 Log in 
+
+                                 
+                                
+
+
+
+     
+
+
+
+                                 
+                                
+
+
+
+     
+
+
+                            
+
+        
+    
+        
+             
+        
+
+
+
+                             
+                             
+                                
+                                     
+                                         
+                                        
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Dashboard
+        
+
+        
+     
+
+
+                                     
+                                
+                                     
+                                         
+                                        
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Publications
+        
+
+        
+     
+
+
+                                     
+                                
+                                     
+                                         
+                                        
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Account settings
+        
+
+        
+     
+
+
+                                     
+                                
+                                 
+                                    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        Log out
+
+        
+    
+        
+             
+        
+
+
+                                 
+                             
+                         
+                    
+                 
+            
+         
+     
+
+     
+    
+         
+             
+                 
+                     
+                        Search…
+                     
+                     
+                    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                         
+                            Search NCBI
+                         
+                    
+
+        
+    
+        
+             
+        
+
+
+                 
+
+                
+             
+         
+    
+
+     
+         
+            Primary site navigation
+         
+
+         
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+             
+        
+
+        
+    
+        
+             
+        
+
+
+
+        
+             
+             
+                 
+                    Search
+                 
+
+                 
+
+                
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                     
+                     
+                
+
+        
+    
+        
+             
+        
+
+
+             
+
+            
+        
+
+         
+         
+        
+
+        
+             
+                 
+                    Logged in as:
+                      
+                 
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Dashboard
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Publications
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Account settings
+        
+
+        
+     
+
+
+                         
+                    
+                 
+             
+        
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        Log in
+
+        
+    
+        
+             
+        
+
+
+     
+ 
+
+    
+    
+        
+
+ 
+     
+         
+            
+                 
+            
+             
+                 
+                 
+             
+         
+         
+            
+
+
+ 
+ Search PMC Full-Text Archive 
+ 
+ 
+ 
+ 
+ Search in PMC 
+ 
+ 
+ 
+             
+                 
+                     
+                        
+                             
+                                Journal List
+                             
+                        
+                     
+                     
+                        
+                             
+                                User Guide
+                             
+                        
+                     
+                 
+             
+         
+     
+ 
+
+    
+
+
+        
+        
+
+       
+   
+
+    
+
+   
+
+
+
+ 
+     
+         
+              
+                 
+                     
+                         
+                             
+                         
+                     
+                    
+                     
+                         
+                                 
+                         
+                     
+                    
+                    
+                         
+                              
+
+                                  
+                             
+                         
+                    
+                     
+                         
+                             
+                             
+                         
+                     
+                    
+                     
+                         
+                             
+                         
+                     
+                    
+                     
+                          
+                             
+                         
+                        
+
+ 
+     
+           PERMALINK 
+           
+               
+               
+                   
+                   Copy 
+               
+           
+     
+ 
+                     
+                 
+             
+             
+                 
+             
+         
+     
+ 
+     
+       
+         
+             
+                 
+                     
+                         
+    As a library, NLM provides access to scientific literature. Inclusion in an NLM database does not imply endorsement of, or agreement with,
+    the contents by NLM or the National Institutes of Health. 
+    Learn more:
+     PMC Disclaimer 
+    |
+     
+        PMC Copyright Notice
+     
+ 
+                     
+                 
+                 
+                     
+                     
+
+                      
+                                  
+  RSC Adv  . 2025 Sep 1;15(38):31240–31254. doi:  10.1039/d5ra04356e 
+ 
+  
+  Search in PMC  
+  Search in PubMed  
+  View in NLM Catalog  
+  Add to search  
+     
+  Tailoring hydrogen storage performance of Mg-Mg 2 Ni alloys: synergistic effects of composition and phase formation with first-principles insights   
+  Duy Van Lai   
+  Duy Van Lai  
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ Find articles by   Duy Van Lai  
+ 
+ 
+ a ,   Son Hung Nguyen   
+  Son Hung Nguyen  
+ 
+ b FPTUniversit Campuses Ha Noi, Education Zone, Hoa Lac Hi-tech Park, Km29, Thang Long Boulevard, Thach Hoa, Thach That, Ha Noi, Vietnam 
+ Find articles by   Son Hung Nguyen  
+ 
+ 
+ b ,   Anh Hoang Nguyen   
+  Anh Hoang Nguyen  
+ 
+ c Department of Geophysics, Colorado School of Mines, Golden, CO 80401, USA 
+ Find articles by   Anh Hoang Nguyen  
+ 
+ 
+ c ,   Toan Van Nguyen   
+  Toan Van Nguyen  
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ Find articles by   Toan Van Nguyen  
+ 
+ 
+ a ,   Linh Chi Dinh   
+  Linh Chi Dinh  
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ Find articles by   Linh Chi Dinh  
+ 
+ 
+ a ,   Phuong Dinh Doan   
+  Phuong Dinh Doan  
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ Find articles by   Phuong Dinh Doan  
+ 
+ 
+ a ,   Trang Thi Pham   
+  Trang Thi Pham  
+ 
+ d Graduate University of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam 
+ 
+ e Hanoi University of Natural Resources and Environment, No. 41A, Phu Dien Str., Phu Dien Ward, Hanoi, Vietnam 
+ Find articles by   Trang Thi Pham  
+ 
+ 
+ d,  e ,   Van Hong Thi Phung   
+  Van Hong Thi Phung  
+ 
+ e Hanoi University of Natural Resources and Environment, No. 41A, Phu Dien Str., Phu Dien Ward, Hanoi, Vietnam 
+ Find articles by   Van Hong Thi Phung  
+ 
+ 
+ e ,   Matteo Tonezzer   
+  Matteo Tonezzer  
+ 
+ f Department of Chemical and Geological Sciences, University of Cagliari, Campus of Monserrato (CA), I09042, Monserrato, Italy 
+ Find articles by   Matteo Tonezzer  
+ 
+ 
+ f ,   Duong Duc La   
+  Duong Duc La  
+ 
+ g Institute of Materials, Biology and Environment, 17 Hoang Sam, Nghia Do, Hanoi, Vietnam 
+ Find articles by   Duong Duc La  
+ 
+ 
+ g ,   Tung Thanh Nguyen   
+  Tung Thanh Nguyen  
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ Find articles by   Tung Thanh Nguyen  
+ 
+ 
+ a ,   Trung Bao Tran   
+  Trung Bao Tran  
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ 
+ d Graduate University of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam 
+ Find articles by   Trung Bao Tran  
+ 
+ 
+ a,  d,  ✉ 
+ 
+ 
+  Author information  
+  Article notes  
+  Copyright and License information  
+ 
+ 
+ 
+ 
+ a Institute of Materials Science, Vietnam Academy of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam, Email: trungtb@ims.vast.ac.vn, Phone: +84 912 774 333 
+ 
+ b FPTUniversit Campuses Ha Noi, Education Zone, Hoa Lac Hi-tech Park, Km29, Thang Long Boulevard, Thach Hoa, Thach That, Ha Noi, Vietnam 
+ 
+ c Department of Geophysics, Colorado School of Mines, Golden, CO 80401, USA 
+ 
+ d Graduate University of Science and Technology, No. 18 Hoang Quoc Viet Str., Nghia Do Ward, Hanoi, Vietnam 
+ 
+ e Hanoi University of Natural Resources and Environment, No. 41A, Phu Dien Str., Phu Dien Ward, Hanoi, Vietnam 
+ 
+ f Department of Chemical and Geological Sciences, University of Cagliari, Campus of Monserrato (CA), I09042, Monserrato, Italy 
+ 
+ g Institute of Materials, Biology and Environment, 17 Hoang Sam, Nghia Do, Hanoi, Vietnam 
+  
+ ✉  Corresponding author. 
+  
+ 
+    Received 2025 Jun 19; Accepted 2025 Aug 19; Collection date 2025 Aug 29.    
+ 
+ This journal is © The Royal Society of Chemistry 
+ This article is licensed under a  Creative Commons Attribution-Non Commercial 3.0 Unported Licence . You can use material from this article in other publications without requesting further permissions from the RSC, provided that the correct acknowledgement is given and it is not used for commercial purposes. 
+  PMC Copyright notice  
+ 
+ 
+ PMCID: PMC12400306  PMID:  40901461 
+ 
+       Abstract 
+ This work investigates the impact of Mg/Ni atomic ratios (75 : 25 and 66.7 : 33.3) on the formation of Mg 2 Ni phases and their hydrogen storage performance. Mg-Ni alloys were synthesized by vacuum casting at 1073 K followed by high-energy ball milling and were evaluated through both experimental methods and density functional theory (DFT) simulations. DFT calculations revealed that hydrogen absorption in Mg 2 Ni is thermodynamically more favorable than in pure Mg, with enthalpy values consistent with experimental results. Hydrogenation tests at 588 K under 20 MPa demonstrated superior performance for the Mg-25Ni alloy, which achieved a higher storage capacity (3.76 wt%) and faster kinetics than Mg-33Ni (3.53 wt%). The improved performance is attributed to the enhanced formation of MgH 2  and the synergistic interaction between Mg and Mg 2 Ni. Kinetic analysis using the Johnson–Mehl–Avrami–Kolmogorov (JMAK) model indicated a lower activation energy for Mg-25Ni (56.74 kJ mol −1 ), confirming faster desorption kinetics. Pressure–composition–temperature (PCT) isotherms and van't Hoff analysis further supported the favorable thermodynamics of Mg-25Ni. Notably, this alloy exhibited excellent cyclic stability with minimal capacity loss over 10 cycles. These findings establish Mg-25Ni as a promising candidate for high-efficiency, reversible hydrogen storage, bridging fundamental insights with practical material design.    
+ This work investigates the impact of Mg/Ni atomic ratios (75 : 25 and 66.7 : 33.3) on the formation of Mg 2 Ni phases and their hydrogen storage performance.       Introduction 
+ The depletion of fossil fuels and their adverse environmental impact have intensified the search for renewable and clean energy sources. Among the candidates, hydrogen has emerged as a highly promising energy carrier due to its abundance, high energy content, and zero emissions potential when used in fuel cells.  1,2   However, the widespread adoption of hydrogen energy technologies is still limited by the challenge of efficient, safe and reversible storage. Hydrogen storage technologies are broadly classified into physical and chemical methods. Among the chemical options, solid-state storage using metal hydrides offers several advantages, including high volumetric density, safety, and potentially reversible hydrogen absorption and desorption under moderate conditions.  3   
+ Among various metal hydrides, magnesium hydride (MgH 2 ) stands out due to its high theoretical hydrogen capacity (7.6 wt%), low cost, and abundance in the Earth's crust.  4,5   Additionally, MgH 2  exhibits promising properties for practical hydrogen storage applications, including high thermal stability, reusability, and reversible hydrogen adsorption/desorption. Despite its favorable characteristics, MgH 2  exhibits slow absorption/desorption kinetics and high thermodynamic stability, resulting in high operating temperatures (typically above 623 K) and susceptibility to oxidation.  6–9   
+ These limitations have prompted extensive research aimed at improving the thermodynamics and kinetics of Mg-based systems. One effective strategy is the formation of binary alloys, particularly with nickel, which reacts with magnesium to form Mg 2 Ni, an intermetallic compound that also absorbs hydrogen to form Mg 2 NiH 4 .  10   
+ The Mg 2 Ni phase offers significant improvements in reaction kinetics and hydrogen diffusion pathways compared to pure MgH 2 .  11,12   
+ It exhibits a hydrogen capacity of 3.6 wt%, and its dehydrogenation temperature (∼513 K) is significantly lower than that of MgH 2 .  13   
+ However, the drawback is its lower overall capacity and potential structural degradation during cycling. Therefore, finding the right balance between Mg and Ni content is crucial to synergize the high capacity of Mg with the favorable kinetics of Mg 2 Ni.  14–16   However, due to the significant differences in vapor pressure and melting points between Mg and Ni, the synthesis of pure Mg 2 Ni phases  via  conventional melting techniques remains challenging.  17   Alternative methods such as mechanical alloying, vacuum arc melting, and combustion synthesis have been developed, yet they often fail to produce bulk alloys with homogeneous microstructures and high phase purity on a large scale.  7   
+ High-energy ball milling (HEBM) has proven effective in enhancing hydrogen absorption/desorption properties by reducing grain size, increasing defect density, and activating particle surfaces.  18   Nonetheless, its high energy consumption, prolonged processing time, and safety concerns limit its industrial applicability.  19   In this context, the isothermal evaporation casting process (IECP), combined with ball milling, emerges as a promising approach to produce Mg-Ni alloys with high phase purity, structural homogeneity, and better control over amorphization.  7,17,20–22   
+ Previous studies have shown that the Ni content directly influences phase formation mechanisms during milling. A short milling duration was strategically chosen to promote nanocrystallinity and surface activation, while minimizing amorphization, which is known to adversely affect hydrogen storage performance.  22   
+ These methods help refine grain size, introduce lattice strain, and enhance solid solution formation, all of which contribute to improved hydrogenation behavior. Additionally, Density Functional Theory (DFT) simulations have been employed to provide atomic-scale insight into hydrogen binding energies and preferred sites within the Mg and Mg 2 Ni lattice structures.  23–25   
+ In contrast to previous studies that often focus separately on either alloy composition or synthesis technique, the present work integrates both aspects to provide a more comprehensive understanding of the structure–properties–performance relationships in Mg-Mg 2 Ni-based hydrogen storage systems. By tailoring the Mg/Ni atomic ratio (75 : 25 and 66.7 : 33.3) and employing a controlled two-step synthesis route involving vacuum casting followed by short-time high-energy ball milling, we successfully promote the formation of nanocrystalline Mg 2 Ni phases with improved purity, defect-rich grain boundaries, and refined microstructures. These structural features, combined with the increased reactivity of the milled powders, significantly enhance the hydrogen absorption/desorption kinetics while maintaining favorable thermodynamic characteristics. Furthermore, by coupling experimental observations with DFT calculations and applying kinetic models such as JMAK and Arrhenius analysis, this study uniquely elucidates the activation mechanisms governing the hydrogenation behavior. This novel, synergistic approach to compositional control and microstructural engineering offers a viable pathway for optimizing Mg-based hydrides toward practical, reversible, and durable hydrogen storage applications.    Experimental 
+  Synthesis process of Mg-Ni alloy 
+ High-purity magnesium (≥99.99%, particle size 50 µm) and nickel powder (≥99.99%, particle size 10 µm), both supplied by Sigma-Aldrich, were used to synthesize Mg-25Ni and Mg-33Ni alloys. Precursors were weighed to achieve atomic ratios of 55.4 wt% Mg-44.6 wt% Ni and 45.3 wt% Mg-54.7 wt% Ni, respectively, with a total batch mass of 50 g for each composition. The powders were mixed homogeneously under argon to avoid oxidation, then compacted into cylindrical pellets (20 mm diameter x 20 mm height) in a nitrogen-filled glove box (≥99.95%). The pellets were sealed in steel tubes containing 1 bar of argon and subjected to sintering at 1073 K for 1 hour at a rate of 10 K min −1 . After cooling to room temperature, the sintered alloy was mechanically crushed and sieved to obtain powders with particle sizes below 100 µm. The resulting powders were further subjected to high-energy ball milling using a planetary ball mill (PULVERISETTE 7, FRITSCH, Germany) at a rotation speed of 300 rpm for 20 min. The ball-to-powder weight ratio (BPR) was maintained at 10 : 1, and milling was carried out under argon to prevent oxidation. To minimize temperature rise and avoid amorphization, the milling direction was reversed every minute and the process was paused for 10 min after every 5 min of milling. This post-sintering milling step aimed to refine the microstructure, promote homogeneous alloying, and enhance the material's hydrogen storage performance.    Characterization 
+ The morphology and microstructure of the alloys were characterized  via  field-emission scanning electron microscopy (FESEM, JEOL JSM-7600F), while phase composition was analyzed using X-ray diffraction (XRD, D8 Advance, Bruker, Germany) with Cu-K α1  radiation ( l  = 0.15406 nm). Elemental composition and distribution were assessed using energy-dispersive X-ray spectroscopy (EDS, 7395H, Horiba). Textural properties were evaluated by nitrogen adsorption–desorption isotherms at 77 K using a Micromeritics Gemini VII 2390 system. Specific surface area was calculated by the Brunauer–Emmett–Teller (BET) method. 
+ Hydrogen storage behavior was studied using a high-precision gravimetric analyzer (XEMIS-001, Hidden Isochema, UK) under pressures up to 20 MPa. 50 mg of each sample was placed in the reaction chamber and initially degassed under high vacuum (0.0005–0.001 MPa). Samples were activated by three hydrogenation/dehydrogenation cycles at 573 K and 2 MPa prior to testing. 
+ Hydrogen absorption kinetics were measured at 523 K, 573 K, and 588 K, under 2 MPa hydrogen pressure, with a heating rate of 10 °C min −1 . Desorption tests were conducted at the same temperatures under a vacuum of 0.01 MPa. After each cycle, the chamber was evacuated at 523 K for 30 minutes to ensure complete hydrogen removal. Cycling stability was evaluated over 10 consecutive cycles at 573 K.    Computational method 
+ Density functional theory (DFT) calculations were carried out using the open-source Quantum ESPRESSO package  26   to investigate the hydrogen absorption behavior of Mg, MgH 2 , MgNi, Mg 2 Ni and Mg 2 NiH 4  at 0 K. Plane-wave pseudopotential were used, and all structures underwent full geometric relaxation before total energy calculations. Variable-cell relaxation was performed with convergence criteria of 2.8 × 10 −6  Ry for total energy and 1.0 × 10 −3  Ry per bohr for ionic forces. A mixing factor ( β ) of 0.7 was used to aid electronic convergence. Total forces and stress tensors were reported for each structure. 
+ Brillouin zone sampling employed Monkhorst–Pack grids  27   (detailed in Table S1). Hydrogen absorption energies were computed using the following reactions: 
+  
+  Mg 2 Ni + 2H 2  → Mg 2 NiH 4   
+ 1 
+  
+  
+  Mg 2  + 2H 2  → 2MgH 2   
+ 2 
+  
+ For each system, total energies of the materials before and after hydrogen absorption, along with the energy of an isolated H 2  molecule, were computed. The absorption energy per hydrogen molecule was then calculated using: 
+  
+     
+ 3 
+  
+  
+     
+ 4 
+  
+ where:  E (Mg 4 H 8 ) is total energy of the Mg 4  system after H 2  absorption.  E (Mg 8 Ni 4 H 16 ) is total energy of the Mg 8 Ni 4  system after H 2  absorption.  E (Mg 8 Ni 4 ) is total energy of the Mg 8 Ni 4  system before H 2  absorption.  E (Mg 4 ) is total energy of the Mg 4  system before H 2  absorption.  E  r (H 2 ) is total energy of a free H 2  molecule. 
+ The primitive cell of Mg 2 NiH 4  was converted to a conventional cell to align with experimental data for comparison.     Results and discussion 
+  Morphology and structure 
+ 
+ Fig. 1  shows field emission scanning electron microscopy (FE-SEM) images of Mg-25Ni (a–c) and Mg-33Ni (d–f) alloys after high-energy ball milling under argon atmosphere. Both samples exhibit irregularly shaped particles, mostly smaller than 10 µm, indicating significant refinement due to severe plastic deformation. The short milling duration was selected to promote nanocrystallinity and surface activation while minimizing amorphization, which is known to impair hydrogen storage performance.  22   
+  Fig. 1. FE-SEM micrographs of mechanically milled Mg-25Ni (a–c) and Mg-33Ni (d–f) alloys at low magnification. 
+     
+  Open in a new tab    Mg-25Ni ( Fig. 1a–c ) exhibits extensive fragmentation and numerous surface defects, such as cracks and grooves, which likely enhance hydrogen kinetics through increased surface area and diffusion pathsways.  28–30   In contrast, Mg-33Ni ( Fig. 1d–f ) shows smoother particle surfaces and fewer defects, implying a more ductile deformation behavior due to the higher Ni content. This difference suggests that Ni enrichment improves mechanical plasticity but may reduce surface reactivity by limiting defect formation.    Microstructural evolution after cycling 
+ 
+ Fig. 2  shows FE-SEM images of the Mg-25Ni and Mg-33Ni alloys after three hydrogenation/dehydrogenation cycles conducted at 573 K and 2 MPa. Post-cycling, both materials exhibit notable changes in surface morphology, reflecting mechanical and structural responses to repeated hydrogen adsorption and desorption. The Mg-25Ni alloy undergoes substantial morphological alteration. Particles appear more fractured and roughened compared to the as-milled state, with an increased presence of fine cracks and jagged edges. These changes indicate structural degradation due to repeated cycling, but also suggest that the exposure of fresh surfaces could be beneficial for hydrogen absorption kinetics by increasing the number of active sites and improving hydrogen diffusion.  31,32   
+  Fig. 2. FE-SEM micrographs of as-synthesized Mg-25Ni (a–c) and Mg-33Ni (d–f) alloys at low magnification, showing surface morphology after hydrogen absorption. 
+     
+  Open in a new tab    In contrast, the Mg-33Ni alloy retains a more compact and stable morphology after cycling. Particle surfaces remain relatively smooth, and large-scale fragmentation is less pronounced. This greater structural integrity may be linked to the higher nickel content, which can confer improved mechanical resilience and reduce pulverization during phase transitions. 
+ However, while the Mg-33Ni alloy may benefit from enhanced mechanical stability, its smoother surfaces and lower density of surface defects may result in reduced hydrogen reaction kinetics compared to the more fragmented and porous Mg-25Ni alloy. 
+ Energy-dispersive X-ray spectroscopy (EDS) confirms the elemental composition of the Mg-25Ni and Mg-33Ni alloys, as illustrated in Fig. S1(a–d) and S2(a–d) (SI). The measured mass fractions −55.4% Mg and 44.6% Ni for Mg-25Ni, and 44.11% Mg and 55.89% Ni for Mg-33Ni-closely match the theoretical compositions. No impurity peaks or contamination were detected in the EDS spectra, confirming the high purity of both alloys and aligning with values reported in previous studies. Elemental mapping (Fig. S1(b–d) and S2(b–d)) further demonstrates a uniform distribution of Mg and Ni across the samples, indicating homogenous microstructures.    Microstructural analysis before and after hydrogen absorption 
+ Fig. S3 shows TEM and HRTEM images of the Mg-25Ni and Mg-33Ni alloys after mechanical milling. The presence of the Mg 2 Ni phase is clearly identified in both materials. Indeed, high-resolution HRTEM images (Fig. S3c and f) reveal clear lattice fringes with an interplanar spacing of 0.20 nm, corresponding to the (023) plane of the Mg 2 Ni phase, confirming the preservation of high crystallinity after milling.  33   
+ 
+ Fig. 3  shows TEM and HRTEM images of the Mg-25Ni and Mg-33Ni alloys after hydrogen absorption. The Mg-25Ni (a–c) alloy maintains a clear crystalline structure with an interplanar spacing of 0.24 nm, attributed to the (112) plane of the Mg 2 Ni hydride phase.  34   In contrast, the Mg-33Ni alloy (d–f) exhibits a largely amorphous microstructure after hydrogenation, indicating severe lattice degradation. 
+  Fig. 3. TEM and HRTEM images of Mg-25Ni (a–c) and Mg-33Ni (d–f) alloys after hydrogen absorption. 
+     
+  Open in a new tab    The partial amorphization observed in Mg-33Ni after hydrogenation can be attributed to the combined effect of interstitial hydrogen insertion, lattice distortion, and internal stress accumulation. Hydrogen absorption induces local volumetric expansion and destabilizes the crystalline order, particularly in Ni-rich compositions.  35   Additionally, hydrogen-enhanced embrittlement at grain boundaries  36   and the thermodynamic favorability of disordered Mg 2 NiH 4  formation  37   contribute to the transition from a nanocrystalline to an amorphous structure. Furthermore, increased Ni content promotes grain refinement and enhances hydrogen diffusion pathways, which facilitate the development of local structural disorder.  38   Experimental evidence also shows that higher Ni concentrations accelerate amorphization by lowering the activation barrier for structural disruption during hydrogenation.  39   These effects are consistent with prior observations in Mg-Ni systems and are interpreted as a structural response to hydrogen-induced strain rather than to chemical side reactions. 
+ X-ray diffraction (XRD) patterns and Rietveld refinement analyses ( Fig. 4(a), (c)  and  Table 1 ) reveal the phase evolution of the alloys through three states: as-synthesized, post-hydrogenation, and after three hydrogenation/dehydrogenation (H-cycling) cycles. 
+  Fig. 4. X-ray diffraction patterns and Rietveld refinement results of Mg-Ni alloys at different stages: (a–c) Mg-25Ni alloy and (d–f) Mg-33Ni alloy in three states: as-synthesized, after initial hydrogenation, and after three hydrogen absorption/desorption (H-cycling) cycles. 
+     
+  Open in a new tab     Table 1. Phase composition and crystallite size of Mg-25Ni and Mg-33Ni alloy after treatment. 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Composition 
+ Mg-25Ni 
+ Mg-33Ni 
+ 
+ 
+ Sample 
+ Phase 
+ Crystallinity (%) 
+ Grain size (nm) 
+ Crystallinity (%) 
+ Grain size (nm) 
+ 
+ 
+ 
+ 
+ As-synthesized 
+ Mg 2 Ni 
+ 100 
+ 31.59 
+ 100 
+ 32 
+ 
+ 
+ Hydrided 
+ Mg 2 Ni 
+ 1.7 
+ 25.61 
+ 10.6 
+ 26.06 
+ 
+ 
+ Mg 2 NiH 4 
+ 
+ 92.9 
+ 22.17 
+ 84.5 
+ 23.23 
+ 
+ 
+ MgH 2 
+ 
+ 5.4 
+ 31.04 
+ 4.9 
+ 30.2 
+ 
+ 
+ After ten cycles 
+ Mg 2 Ni 
+ 74.5 
+ 24.15 
+ 79 
+ 26.54 
+ 
+ 
+ Mg 2 NiH 4 
+ 
+ 22.7 
+ 23.89 
+ 6.6 
+ 24.94 
+ 
+ 
+ MgH 2 
+ 
+ 2.8 
+ 28.73 
+ 14.4 
+ 29.89 
+ 
+ 
+  
+  Open in a new tab    In the as-cast state, both alloys primarily form single-phase Mg 2 Ni with a hexagonal crystal lattice structure, consistent with JCPDS card no. 35-1225.  40   The absence of peaks corresponding to MgH 2  or Mg 2 NiH 4  confirms that hydrogen absorption has not yet occurred. Higher Ni content leads to noticeable broadening of the Mg 2 Ni diffraction peaks, suggesting increased lattice strain or solid-solution effects due to Ni enrichment.  19,20   
+ After the hydrogenation process, both Mg-25Ni and Mg-33Ni alloys exhibited significant structural transformations, particularly the conversion of Mg 2 Ni into Mg 2 NiH 4 . This phase transformation is evidenced by the substantial reduction in the intensity of the diffraction peaks corresponding to Mg 2 Ni, and the simultaneous appearance of peaks related to Mg 2 NiH 4 . Indeed, X-ray diffraction patterns of the hydrogenated alloys, measured at 537 K (red curves in  Fig. 4a and b ), show prominent reflections at 2 θ  values of 19.43°, 23.24°, 37.77°, 39.15°, 41.39°, 51.35°, 55.93°, and 71.84°, attributable to monoclinic Mg 2 NiH 4 . Additional diffraction peaks at 2 θ  = 24.22°, 47.15°, and 57.59° correspond to a cubic Mg 2 NiH 4  phase. These results confirm the coexistence of both monoclinic and cubic hydride phases following hydrogen absorption. The observed diffraction peaks are in excellent agreement with standard reference patterns for the monoclinic phase (JCPDS: 00-038-0792) and the cubic phase (JCPDS: 00-037-1159). This phase evolution highlights the effective hydrogenation of Mg-Ni alloys under the applied conditions and agrees well with previous literature data.  41–43   These changes indicate effective hydrogen uptake and formation of hydride phases. Rietveld refinement quantifies the phase conversion, with Mg 2 NiH 4  formation efficiencies of 92.9% for Mg-25Ni and 84.5% and Mg-33Ni. Concurrently, the crystallite sizes of major phases decrease, particularly for Mg 2 NiH 4  (22.17 nm in Mg-25Ni and 23.23 nm in Mg-33Ni;  Fig. 3(b and e) ), confirming rapid and homogeneous hydrogenation. 
+ Following three hydrogenation/dehydrogenation cycles, partial reformation of the Mg 2 Ni phase is observed. Recovery ratios reach 74.5% for Mg-25Ni and 79% for Mg-33Ni ( Fig. 4(c and f) ), though the regenerated Mg 2 Ni displays broader, less intense peaks relative to the original alloy, indicating microstructural degradation. This may be attributed to as defect formation, lattice distortion, or partial amorphization induced by cyclic hydrogenation.  44   The persistence of residual MgH 2  and Mg 2 NiH 4  peaks suggests incomplete reversibility of the hydrogen sorption process under the tested conditions. 
+ Despite these changes, the crystallite sizes remain within a relatively narrow range (22–32 nm), indicating some structural stability under thermal and mechanical stress. Notably, Mg-25Ni produces a more crystalline Mg 2 NiH 4  phase than Mg-33Ni, which may explain its enhanced hydrogenation kinetics and overall performance. These observations highlight the influence of Mg/Ni ratio on phase transformation dynamics and hydrogen storage behavior.  33   
+ Nevertheless, the observed broadening of Mg 2 Ni peaks and declining hydride signal intensity with repeated cycling suggest structural fatigue, potentially limiting long-term performance. To improve durability and reversibility, further strategies such as catalytic doping, advanced mechanical processing, or compositional optimization may be necessary.  45   
+ Overall, these results highlight a well-defined and tunable phase transition pathway among Mg 2 Ni, MgH 2 , and Mg 2 NiH 4  in Mg-Ni alloys, reinforcing their potential as high-capacity hydrogen storage materials, while also emphasizing the importance of improving cyclic stability for practical applications.    Surface area and porosity evolution 
+ Fig. S4 and S5 (SI) display the nitrogen adsorption–desorption isotherms and the evolution of surface area and porosity in Mg-25Ni and Mg-33Ni alloys before and after hydrogenation. Both materials exhibit type IV isotherms with H3 hysteresis loops, indicative of mesoporous structures with slit-shaped pores, according to IUPAC classification. 
+ Notably, the extent of surface area and pore volume change after hydrogenation differs significantly between the two alloys. The Brunauer–Emmett–Teller (BET) surface area of Mg-25Ni increases substantially from 6.79 to 32.54 m 2  g −1 , whereas Mg-33Ni exhibits a more moderate increase from 2.89 to 17.18 m 2  g −1 . Similarly, the total pore volume of Mg-25Ni increases to 0.06 cm 3  g −1  compared to only 0.033 cm 3  g −1  for Mg-33Ni. 
+ These findings suggest that higher Ni content may hinder the development of an effective pore network during hydrogenation, likely due to denser phase packing or reduced mechanical fragmentation. In contrast, Mg-25Ni generates more extensive surface area and porosity, offering improved pathways for hydrogen diffusion and sorption. This difference in microstructural evolution highlights the critical role of Ni concentration in tuning the adsorption kinetics and storage capacity of Mg-Ni alloys. 
+ Thus, optimizing Ni content emerges as a viable strategy for engineering high-performance hydrogen storage materials, where pore architecture and active surface area are essential for fast and reversible hydrogen uptake.    Hydrogen absorption and desorption performance 
+ 
+ Fig. 5(a and b)  compare the hydrogen absorption behavior of Mg-25Ni and Mg-33Ni alloys during three initial activation cycles. The activation was performed at 537 K under 2 MPa H 2  for absorption and 0.01 MPa for desorption, conditions designed to remove oxide layers and initiate efficient hydrogen–metal interaction. 
+  Fig. 5. Hydrogenation behavior of Mg-25Ni (a) and Mg-33Ni (b) alloys synthesized at 573 K and 2 MPa. 
+     
+  Open in a new tab    Mg-25Ni consistently outperforms Mg-33Ni in both capacity and kinetics throughout the activation cycles. In the third cycle, Mg-25Ni reaches a hydrogen capacity of 3.65 wt% after 29.3 minutes, while Mg-33Ni only achieves 2.97 wt% H 2  in 22.9 minutes. Although Mg-33Ni shows some kinetic improvement with cycling, its overall storage performance remains inferior. 
+ This discrepancy is attributed to the higher proportion of Mg 2 Ni in the Mg-33Ni alloy. While Mg 2 Ni promotes fast kinetics, its hydrogen storage capacity is lower than that of the Mg matrix. Therefore, increasing Ni content to 33.3 at% effectively reduces the contribution of pure Mg to overall hydrogen uptake. 
+ Moreover, morphological differences between the two alloys significantly impact their hydrogenation behavior. Mg-25Ni features a rougher, more fractured surface morphology with microcracks and porous structures, which enhance surface area and provide rapid hydrogen diffusion channels. In contrast, Mg-33Ni forms smaller, more uniform particles with a smoother and more amorphous surface layer, which can hinder hydrogen diffusion and slow down absorption kinetics. 
+ Additionally, the fragmented surface of Mg-25Ni promotes oxide layer removal during activation, enabling more efficient hydrogen uptake. On the other hand, the denser amorphous layer in Mg-33Ni can act as a barrier, delaying the onset of hydrogen–metal interaction.  46      Hydrogenation and dehydrogenation kinetics 
+ 
+ Fig. 6a  compares the hydrogen absorption and desorption curves of Mg-25Ni and Mg-33Ni alloys at 588 K under a hydrogen pressure of 20 MPa. The two alloys exhibit significant differences in both storage capacity and kinetic behavior. 
+  Fig. 6. Hydrogen absorption and desorption performance of Mg-25Ni (a) and Mg-33Ni (b) alloys at 588 K. 
+     
+  Open in a new tab    The Mg-25Ni alloy achieves a maximum hydrogen uptake of 3.76 wt%, exceeding the 3.53 wt% recorded for Mg-33Ni. More significantly, Mg-25Ni reaches 90% of its full absorption capacity in just 50 minutes, whereas Mg-33Ni requires 83 minutes to reach a similar level. These results indicate a clearly faster hydrogenation rate and higher overall storage performance for the Mg-25Ni composition. 
+ The enhanced kinetics observed in Mg-25Ni are primarily attributed to its phase composition and the hydride formation pathway. XRD confirms the formation of both MgH 2  and Mg 2 NiH 4  in both alloys upon hydrogenation. However, the higher Mg content in Mg-25Ni favors the formation of MgH 2  at lower temperatures, which plays a pivotal role in accelerating the initial hydrogenation process. 
+ While the formation of MgH 2  introduces lattice expansion and local compressive stress that could, in theory, impede the growth of the Mg 2 NiH 4  phase, this effect is less detrimental in Mg-25Ni due to its greater Mg availability. In contrast, the Mg-33Ni alloy, with lower Mg content, forms less MgH 2  and experiences more pronounced structural constraints that hinder Mg 2 NiH 4  phase development. 
+ As a result, the Mg-25Ni alloy benefits from both rapid initial hydrogen uptake  via  MgH 2  formation and a more favorable microstructural environment for subsequent Mg 2 NiH 4  growth. These combined effects account for its superior hydrogenation kinetics and overall absorption capacity.  47      Temperature-dependent hydrogenation kinetics 
+ To further investigate the superior hydrogen absorption performance of Mg-25Ni relative to Mg-33Ni, the absorption kinetics of both alloys were studied at three different temperatures: 523 K, 573 K, and 588 K ( Fig. 7a and d ). 
+  Fig. 7. Hydrogen absorption and desorption kinetics of Mg-Ni alloys: (a) absorption kinetics at 2 MPa under various temperatures (523 K, 573 K, 588 K) for the Mg-25Ni alloy; (b) desorption kinetics at 0.01 MPa under various temperatures (523 K, 573 K, 588 K) for the Mg-25Ni alloy; (c) absorption kinetics at 2 MPa under various temperatures (523 K, 573 K, 588 K) for the Mg-33Ni alloy; (d) desorption kinetics at 0.01 MPa under various temperatures (523 K, 573 K, 588 K) for the Mg-33Ni alloy. 
+     
+  Open in a new tab    As expected, increasing the temperature significantly enhances the hydrogen uptake rate for both compositions. At 588 K, Mg-25Ni reaches a hydrogen capacity of 3.76 wt%, while Mg-33Ni achieves 3.53 wt%. These values are slightly lower than those observed under higher pressure conditions ( Fig. 7a ), but they reaffirm the compositional advantage of Mg-25Ni at lower thermal input. 
+ The hydrogen absorption curves reveal a characteristic induction period—particularly for Mg-25Ni—of approximately 30 minutes before a sharp uptake occurs. The total absorption time for Mg-25Ni varies between 40 and 100 minutes across the tested temperatures, decreasing notably with increasing temperature. 
+ This behavior reflects the temperature-dependent nature of hydrogen diffusion and hydride nucleation. At elevated temperatures, higher thermal energy enhances atomic mobility, facilitating faster hydrogen penetration into the alloy matrix. In the early stages, hydrogen dissociates at the metal surface and diffuses into the bulk, where hydride phases such as MgH 2  and Mg 2 NiH 4  begin to form. The induction period corresponds to the time required for sufficient hydride nucleation sites to develop—particularly relevant for materials with surface oxides or amorphous layers. 
+ The sharper kinetics and shorter activation times observed in Mg-25Ni are consistent with its rougher surface morphology and more porous microstructure (Section 3.2), which provide abundant sites for hydrogen interaction and reduce diffusion resistance.    Hydrogen desorption behavior and activation energy analysis 
+ 
+ Fig. 8(a–c)  show the hydrogen desorption kinetics of Mg-25Ni and Mg-33Ni alloys at various temperatures. As expected, the desorption rate increases with temperature, reflecting the thermal instability of hydride phases and the reduced energy barrier for hydrogen under high thermal conditions. XRD analysis reveals that the desorption induces microstructural changes in both alloys. The Mg 2 Ni crystallite size decreases significantly after desorption, from 32 nm to 26.06 nm in Mg-33Ni, and from 31.59 nm to 25.61 nm in Mg-25Ni. Additionally, the crystallinity of the Mg 2 Ni phase is significantly reduced after hydrogenation, with only 10.6% and 1.7% remaining for Mg-33Ni and Mg-25Ni, respectively. This sharp decline indicates partial decomposition of the original crystal lattice during hydride formation, specifically the transition to Mg 2 NiH 4  and MgH 2  phases. 
+  Fig. 8. JMA plots for the hydrogen desorption process of Mg-Ni alloys: (a) Mg-25Ni and (b) Mg-33Ni; (c) plot of ln  k versus  1000/ RT  for the hydrogen desorption process. 
+     
+  Open in a new tab    Although partial recrystallization of Mg 2 Ni is observed after three hydrogenation–dehydrogenation cycles, the recovered crystallite sizes (26.54 nm and 24.15 nm) remain smaller than in the as-synthesized alloys. Furthermore, the crystallinity does not fully recover, suggesting the accumulation of lattice defects structural distortion, or localized amorphization during cyclic operation. This progressive microstructural degradation contributes to the observed decline in hydrogen storage performance and underscores the importance of improving cycling stability for practical applications. 
+ To quantitatively assess the hydrogen sorption dynamics, kinetic modeling was performed using the Johnson–Mehl–Avrami–Kolmogorov (JMAK) approach, which describes solid-state phase transformations  via  nucleation and growth mechanism. 
+ The JMAK equation is given by:  48,49   
+  
+  ln[−ln(1 −  α )] =  η  ln  k  +  η  ln  t   
+ 5 
+  
+ where:  α  is the fractional conversion ( i.e. , hydrogen that has reacted) at time  t ,  k  is the reaction rate constant,  η  is the Avrami exponent, reflecting the reaction mechanism and dimensionality of growth. By plotting ln[−ln(1 −  α )]  versus  ln  t  at constant temperature, it is possible to determine  η  from the slope and extract ln  k  from the intercept. The kinetic parameter  k  can then be evaluated across different temperatures to obtain the apparent activation energy using the Arrhenius equation:  50,51   
+  
+   
+ 6 
+  
+  
+   
+ 7 
+  
+ where  E  a  is the apparent activation energy (kJ mol −1 ),  R  is the universal gas constant (8.314 J mol −1  K −1 ),  T  is the absolute temperature (K),  A  is the pre-exponential factor, related to the frequency of effective molecular collisions. 
+ Arrhenius plots of ln  k versus  1/ T  ( Fig. 8c ) reveal that the Mg-25Ni alloy exhibits a lower activation energy for hydrogen desorption (56.74 kJ mol −1 ) compared to Mg-33Ni (61.25 kJ mol −1 ). This difference suggests that Mg-25Ni undergoes more facile hydrogen release, likely due to its more defective and reactive microstructure formed during cycling. The addition of Ni contributes to improving desorption kinetics, yet excessive Ni—as in the Mg-33Ni composition—appears to impose structural constraints that limit performance.  32,52   
+ These findings confirm that the Mg/Ni ratio strongly influences the reaction mechanism and energy barrier for hydrogen release. The lower activation energy of Mg-25Ni highlights its superior potential as a hydrogen storage material, combining faster desorption kinetics with better microstructural adaptability during cycling. 
+ Together, the JMAK and Arrhenius models offer a robust framework to interpret and quantify the effect of alloy composition on hydrogen sorption behavior, guiding the design of high-performance hydrogen storage materials. 
+ 
+ Fig. 9  presents the hydrogen absorption/desorption behavior of the Mg-25Ni alloy over 10 consecutive cycles following an initial activation at 588 K for 30 hours. The cycling tests were performed under alternating hydrogen pressures of 2 MPa (absorption) and 0.01 MPa (desorption). 
+  Fig. 9. Hydrogen absorption/desorption cycles of the Mg-25Ni alloy after activation at 588 K. 
+     
+  Open in a new tab    Throughout the 10-cycle test, the alloy exhibits excellent stability in both hydrogen uptake and release. The average absorption capacity remains consistent at approximately 3.70 wt%, while the corresponding desorption capacity stabilizes around 3.65 wt%, indicating minimal hysteresis and nearly complete reversibility. No significant loss in capacity or deterioration in reaction kinetics is observed across the cycles. Both the absorption and desorption curves retain their characteristic shapes, suggesting that the material maintains its structural and kinetic integrity under repeated hydrogenation–dehydrogenation conditions. 
+ Moreover, the residual MgH 2  content following desorption remains extremely low (&lt;0.1 wt%), confirming near-complete dehydrogenation at the tested conditions. This minimal residual hydride fraction demonstrates the alloy's ability to fully release hydrogen and reset its structure effectively between cycles. 
+ These results validate the high cyclic durability of the Mg-25Ni alloy and its capability to sustain long-term hydrogen storage performance without significant degradation. Such stability makes it a promising candidate for practical hydrogen storage systems, particularly those requiring extended operation, high reversibility, and consistent efficiency over many cycles.    Thermodynamic analysis of hydrogen absorption 
+ To gain insight into the thermodynamic behavior of the hydrogen absorption process, pressure–composition–temperature (PCT) measurements were conducted at three isothermal conditions: 523 K, 573 K, and 588 K. The PCT curves for the Mg-25Ni alloy ( Fig. 10a ) exhibit characteristic plateaus, confirming the formation of stable hydride phases. 
+  Fig. 10. (a–c) PCT isotherms of Mg-25Ni and Mg-33Ni alloys at 523, 573, and 588 K; (b–d) corresponding van't Hoff plots (ln  P vs.  1000/ T ). 
+     
+  Open in a new tab    The van't Hoff equation was employed to determine the enthalpy (Δ H ) and the entropy (Δ S ) changes associated with the hydrogenation reaction:  44   
+  
+   
+ 8 
+  
+ where  P  eq  is the equilibrium hydrogen pressure (Pa),  P  0  is the standard atmospheric pressure (Pa), Δ H  is the enthalpy change (J mol −1 ), Δ S  is the entropy change (J mol −1  K −1 ),  R  is the universal gas constant (8.314 J mol −1  K −1 ),  T  is the absolute temperature (K). 
+ By plotting ln  P  against 1/ T , the slope and intercept of the resulting linear regressionprovide direct estimates of Δ H  and Δ S , respectively.  42   
+ For the Mg-25Ni alloy, the van't Hoff plot yields lower enthalpy values (Δ H  abs  = 68.2 kJ per mol H 2 , Δ H  des  = 66.7 kJ per mol H 2 ) compared to those of Mg-33Ni (Δ H  abs  = 72.5 kJ per mol H 2 , Δ H  des  = 70.3 kJ per mol H 2 ). These values are in line with previously reported data for Mg-Ni-based hydride systems, and they indicate that hydrogen absorption is an exothermic process, thermodynamically favored at lower temperatures. 
+ The slope of the absorption plateau in the PCT curve remains fairly consistent across the three tested temperatures, implying that the alloy retains a stable phase equilibrium and does not undergo phase separation or significant hysteresis under cycling conditions. The reversible nature of the hydrogenation reaction in Mg-25Ni is further supported by the low residual hydride content after desorption (Section 3.9), affirming its strong potential for long-term applications. 
+ The lower enthalpy of Mg-25Ni suggests that hydrogen absorption and desorption occur more energetically favorable. Although Mg-33Ni forms thermodynamically more stable hydrides due to stronger metal–hydrogen interactions, it requires higher temperatures for hydrogen desorption. However, since the entropy difference (Δ S ) is small, the improvement in thermodynamic performance remains limited, and entropy does not play a decisive role in enhancing the hydrogen absorption–desorption behavior of the Mg 2 Ni-based system.  52      Hydrogen absorption and desorption mechanisms of Mg-25Ni and Mg-33Ni alloys: influence of nickel content 
+ The hydrogen storage performance of Mg-Ni alloys is strongly influenced by the Mg-to-Ni atomic ratio, which governs phase formation, reaction kinetics, and hydrogen diffusion behavior within the alloy matrix.  53   In this study, Mg-25Ni and Mg-33Ni alloys—synthesized  via  vacuum melting and processed by mechanical milling—exhibit distinct hydrogenation and dehydrogenation mechanisms due to their differing Ni content. 
+ Mechanical milling under an inert atmosphere reduces the as-cast microstructure into nanocrystalline Mg 2 Ni and eutectic phases embedded in the Mg matrix. Average crystallite sizes are approximately of 31.6 nm for Mg-25Ni and 32.0 nm for Mg-33Ni. The smaller grain size and higher grain boundary density in Mg-25Ni promote enhanced hydrogen diffusion through an interconnected network of fast diffusion pathsways.  47   These nanostructures shorten the diffusion distance and accelerate hydrogen uptake, while the expanded lattice of Mg 2 Ni further assists as a transport channel for hydrogen mobility. 
+ Within the eutectic regions, the abundant interfaces between Mg and Mg 2 Ni create fast hydrogen diffusion pathways, improving absorption kinetics. However, large primary Mg grains-especially in the coarser microstructure of Mg-33Ni. Exhibit lower boundary density, which can impede deep hydrogen penetration. 
+ These microstructural distinctions explain the faster hydrogenation and higher capacity observed for Mg-25Ni, as shown in  Fig. 11 . The alloy's lower Ni content results in a higher proportion of reactive Mg phase, which is known for its larger hydrogen capacity and lower activation pressure compared to Mg 2 Ni. Consequently, Mg-25Ni achieves faster hydrogen uptake despite containing less catalytic Ni phase. A schematic illustration of the proposed hydrogenation mechanisms is provided in  Fig. 11 .  52,54   
+  Fig. 11. Schematic illustration of the hydrogen absorption and desorption mechanisms in (a) Mg-25Ni and (b) Mg-33Ni alloys. 
+     
+  Open in a new tab    In Mg-25Ni, hydrogen absorption is dominated by the formation of MgH 2  in Mg-rich domains. This phase forms readily under moderate pressure and contributes to rapid kinetics. Although the Mg 2 Ni content is lower, the contribution from MgH 2 —combined with enhanced surface reactivity—leads to superior absorption performance. Conversely, Mg-33Ni, with a higher Mg 2 Ni fraction, favors the formation of Mg 2 NiH 4 , a stable hydride with moderate capacity. While Ni catalyzes H 2  dissociation at the surface, the ordered crystal structure and strong Ni–H bonding in Mg 2 NiH 4  impose greater thermodynamic and kinetic constraints, requiring higher energy for phase transformation. 
+ During the hydrogenation process, Ni serves as a catalytic centerfor H 2  molecule dissociation and facilitates the initial stages of the hydrogen diffusion. The higher Ni content in Mg-33Ni indeed accelerates Mg 2 NiH 4  formation, but this comes at the cost of reduced MgH 2  formation, limiting total capacity and slowing down kinetics relative to Mg-25Ni. 
+ During dehydrogenation, Mg 2 NiH 4  decomposes first, generating Mg 2 Ni and releasing hydrogen. This reaction induces lattice contraction due to the smaller unit cell of Mg 2 Ni compared to its hydride form. Hydrogen released from the Mg 2 NiH 4  phase then diffuses outward, decreasing local hydrogen concentration and triggering further hydride decomposition in adjacent regions. The resulting tensile stress and local hydrogen gradient also promote the breakdown of MgH 2 , even under relatively high hydrogen pressure. 
+ In Mg-33Ni, the larger among of Mg 2 NiH 4  contributes to more uniform and stable hydrogen release at intermediate temperatures. 
+ In terms of desorption behavior, the Mg 2 NiH 4 -rich structure of Mg-33Ni enables stable hydrogen release at intermediate temperatures, as the hydride decomposes uniformly. High local Ni concentrations also enhance H atom recombination into molecular hydrogen. In contrast, Mg-25Ni relies more heavily on MgH 2  decomposition, which can occur at lower temperatures but tends to proceed in a less uniform manner due to local strain effects and less thermodynamically stable reaction pathways. 
+ Although the two alloys have comparable surface compositions, their hydrogen penetration capabilities differ significantly. As shown in  Fig. 10a and b , the unreacted Mg core in Mg-25Ni is notably smaller than that in Mg-33Ni, indicating more effective hydrogen penetration efficiency in the Ni-lean sample under identical hydrogenation conditions. 
+ This discrepancy primarily arises from the higher density of lattice defects in Mg-25Ni, including high-angle grain boundaries, tangled dislocations, and surface microcracks introduced during mechanical milling. These defects serve as preferential nucleation sites for hydride formation and as pathways for hydrogen diffusion and decomposition, thus lowering the activation energy and accelerating hydrogen release. 
+ Notably, MgH 2  can form at relatively low temperatures (approximately 300–350 °C), offering a significant kinetic advantage. Compared to Mg 2 NiH 4 , MgH 2  has a weaker Mg-H bond and a lower decomposition enthalpy, thus requiring less energy and a lower temperature for desorption. Moreover, the presence of residual Mg grains within the MgH 2  matrix has been shown to facilitate desorption  via  an epitaxial growth mechanism of metallic Mg.  55   
+ A comparative analysis highlights that the Ni content has a decisive influence on the hydrogen absorption and desorption performance of Mg-Ni alloys by altering the hydride phases, diffusion characteristics, and microstructural evolution during thermal cycling. The Mg-25Ni alloy, with a higher Mg/Ni ratio and defect-rich microstructure, exhibits faster absorption/desorption kinetics and improved low-temperature reactivity. In contrast, Mg-33Ni, despite its superior thermal stability and higher Mg 2 NiH 4  content, exhibits slower kinetics and lower overall capacity. 
+ Therefore, tailoring the Mg/Ni ratio and controlling the microstructure represents a viable strategy for balancing hydrogen capacity, reaction kinetics, and cycling stability in Mg-based hydrogen storage materials.    DFT results 
+ The optimized configurations of Mg 2 , MgH 2 , Mg 2 Ni, and Mg 2 NiH 4  were obtained through density functional theory. For direct comparison with experimental crystallographic data, the primitive cell of Mg 2 NiH 4  was converted into its conventional unit cell (Fig. S6). A summary of the computed lattice parameters and interaxial angles for all compounds, alongside corresponding experimental values, is provided in Table S2. 
+ For hexagonal close-packed (hcp) Mg, the DFT-optimized lattice constants were  a  = 3.296 Å,  b  = 3.296 Å,  c  = 9.743 Å, with interaxial angles of (90°, 90°, 120°). These values closely match the experimental parameters  a  = 3.202 Å,  b  = 3.202 Å,  c  = 10.4 Å (ref.  56 ) confirming that the anisotropic crystal structure of Mg was well-reproduced in the simulation. For MgH 2 , a tetragonal structure was obtained, with optimized parameters  a  = 4.493 Å,  b  = 4.868 Å,  c  = 5.358 Å, and angles of (90°, 90°, 90°). These values show good agreement with the corresponding experimental data ( a  = 4.505 Å,  b  = 4.916 Å,  c  = 5.419 Å).  57   
+ For Mg 2 Ni, the DFT optimization yielded  a  = 5.721 Å,  b  = 5.713 Å,  c  = 6.970 Å, with interaxial angles of (113.41°, 114.14°, 90.08°). These parameters are reasonably consistent with experimental values of  a  = 6.06 Å,  b  = 6.08 Å,  c  = 7.46 Å, and angles of (113.28°, 113.85°, 90.10°).  58   
+ For Mg 2 NiH 4 , the optimized lattice constants were  a  = 13.294 Å,  b  = 6.0275 Å,  c  = 6.0470 Å, with angles of (90°, 114.77°, 90°). These results are reasonably close to the experimental values of  a  = 14.22 Å,  b  = 6.34 Å,  c  = 6.42 Å, and angles (90°, 113.33°, 90°), validating the structural modelling approach. 
+ In terms of energetics, the reaction enthalpy for hydrogen absorption in MgH 2  was calculated as −72.2 kJ mol −1 , which is in close agreement with the experimental value of −74.5 kJ mol −1 . For Mg 2 NiH 4 , the calculated enthalpy was −80.08 kJ mol −1 , more exothermic than the experimental value of −64.0 kJ mol −1 . The observed deviation may be attributed to known limitations of DFT, including the choice of pseudopotentials, neglect of zero-point vibrational energy, and experimental uncertainties. Despite these quantitative differences, the trends remain consistent: Mg 2 NiH 4  exhibits a more negative formation enthalpy than MgH 2 , indicating stronger thermodynamic driving force for hydrogen uptake. This finding supports experimental observations that Mg-Ni alloys, particularly those rich in Mg 2 NiH 4 , offer enhanced hydrogenation behavior, likely due to the electronic and catalytic influence of Ni on H 2  dissociation and absorption processes. These theoretical results confirm that Mg 2 NiH 4  is a thermodynamically favorable hydride phase and underscore its potential as a key component in high-performance hydrogen storage systems. The consistency between simulation and experiment further validates the use of DFT as a tool for screening and optimizing Mg-based hydride materials (Table S3).     Conclusions 
+ This work demonstrates that Mg-25Ni alloy outperforms Mg-33Ni in terms of hydrogen storage capacity, absorption/desorption kinetics, and cycling stability. The optimized Mg/Ni ratio enhances MgH 2  formation and facilitates a favorable interaction with Mg 2 Ni, resulting in a maximum hydrogen capacity of 3.76 wt% and rapid kinetics at 588 K under 20 MPa. Kinetic modelling using the JMAK approach confirms lower activation energy for Mg-25Ni, while DFT simulations and PCT analysis validate its superior thermodynamic behavior. Notably, Mg-25Ni maintains excellent cyclic stability with negligible capacity loss over ten hydrogenation–dehydrogenation cycles. 
+ Structural analyses further reveal the reversibility of the Mg 2 Ni phase, supporting the nanomaterial long-term durability. 
+ These results underscore the critical role of alloy composition in designing advanced hydrogen storage materials. The integration of experimental and theoretical insights positions Mg-25Ni as a promising and practical candidate for efficient, reversible solid-state hydrogen storage.    Author contributions 
+ Author contributions: conceptualization, Trung Bao Tran, Phuong Dinh Doan, and Tung Thanh Nguyen; methodology, Trung Bao Tran and Tung Thanh Nguyen; software, Matteo Tonezzer and Trang Thi Pham, and Van Hong Thi Phung; formal analysis, Duy Van Lai, Son Hung Nguyen, and Anh Hoang Nguyen; investigation, Duy Van Lai, Toan Van Nguyen, and Linh Chi Dinh; resources, Trung Bao Tran, Tung Thanh Nguyen and Duong Duc La; data curation, Duy Van Lai, Son Hung Nguyen, and Anh Hoang Nguyen; writing—original draft preparation, Duy Van Lai, Matteo Tonezzer, Son Hung Nguyen, and Anh Hoang Nguyen; writing—review and editing, Trung Bao Tran; visualization, Duy Van Lai and Trung Bao Tran; supervision, Trung Bao Tran, and Tung Thanh Nguyen; funding acquisition, Trung Bao Tran. All authors have read and agreed to the published version of the manuscript.    Conflicts of interest 
+ The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.    Supplementary Material 
+   RA-015-D5RA04356E-s001  
+  
+ RA-015-D5RA04356E-s001.pdf   (1.8MB, pdf)  
+      Acknowledgments 
+ This work was financially supported by the Vietnam Academy of Science and Technology under the project: TĐHYD0.03/22-24.    Data availability 
+ Data for this article, including SEM, EDS, XRD, BET, and electronics properties measurements are available at Open Science Framework at  https://osf.io/7aht8/ . 
+ The supplementary information includes the EDS spectra, EDS mapping, HR-TEM, and BET analysis of Mg–Ni alloys. See DOI:  https://doi.org/10.1039/d5ra04356e .    Notes and references 
+  
+ 
+ Yadav Y. K. Shaz M. A. Yadav T. P. Int. J. Hydrogen Energy. 2025;137:1137–1147. doi: 10.1016/j.ijhydene.2024.08.095.  [ DOI ] [ Google Scholar ] 
+ 
+ Qureshi T. Khan M. M. Pali H. S. J. Alloys Compd. 2024;1004:175668. doi: 10.1016/j.jallcom.2024.175668.  [ DOI ] [ Google Scholar ] 
+ 
+ Guo F. Zhang T. Shi L. Song L. J. Magnesium Alloys. 2023;11:1180–1192. doi: 10.1016/j.jma.2021.06.013.  [ DOI ] [ Google Scholar ] 
+ 
+ Chen Y. Zheng D. Zhou L. Cai X. Int. J. Hydrogen Energy. 2024;95:888–900. doi: 10.1016/j.ijhydene.2024.11.180.  [ DOI ] [ Google Scholar ] 
+ 
+ Fadonougbo J. O. Kim H.-J. Suh B.-C. Suh J.-Y. Lee Y.-S. Shim J.-H. Yim C. D. Cho Y. W. Int. J. Hydrogen Energy. 2020;45:29009–29022. doi: 10.1016/j.ijhydene.2020.07.181.  [ DOI ] [ Google Scholar ] 
+ 
+ Fu Y. Ding Z. Ren S. Li X. Zhou S. Zhang L. Wang W. Wu L. Li Y. Han S. Int. J. Hydrogen Energy. 2020;45:28154–28162. doi: 10.1016/j.ijhydene.2020.03.089.  [ DOI ] [ Google Scholar ] 
+ 
+ Kodera Y. Yamasaki N. Yamamoto T. Kawasaki T. Ohyanagi M. Munir Z. A. J. Alloys Compd. 2007;446–447:138–141.  [ Google Scholar ] 
+ 
+ Chen Y. Dai J. Song Y. Int. J. Hydrogen Energy. 2018;43:16598–16608. doi: 10.1016/j.ijhydene.2018.07.031.  [ DOI ] [ Google Scholar ] 
+ 
+ Rahmaninasab M. A. Raygan S. Abdizadeh H. Pourabdoli M. Mirghaderi S. H. Mater. Renew. Sustain. Energy. 2018;7:1–11. doi: 10.1007/s40243-017-0108-2.  [ DOI ] [ Google Scholar ] 
+ 
+ Zhang H. Bu Y. Xiong W. He K. Yu T. Liu Z. Wu J. Li B. Sun L. Zou Y. Sun W. Guo R. Xu F. Zhang K. Zhang H. J. Alloys Compd. 2023;965:171431. doi: 10.1016/j.jallcom.2023.171431.  [ DOI ] [ Google Scholar ] 
+ 
+ Zhou D. Zheng C. Zhang Y. Sun H. Sheng P. Zhang X. Li J. Guo S. Zhao D. J. Magnesium Alloys. 2025;13:41–70. doi: 10.1016/j.jma.2024.12.020.  [ DOI ] [ Google Scholar ] 
+ 
+ Ding X. Chen R. Zhang J. Chen X. Su Y. Guo J. Int. J. Hydrogen Energy. 2022;47:6755–6766. doi: 10.1016/j.ijhydene.2021.12.010.  [ DOI ] [ Google Scholar ] 
+ 
+ Skryabina N. Aptukov V. de Rango P. Fruchart D. Int. J. Hydrogen Energy. 2020;45:3008–3015. doi: 10.1016/j.ijhydene.2019.11.157.  [ DOI ] [ Google Scholar ] 
+ 
+ Yong H. Guo S. Yuan Z. Qi Y. Zhao D. Zhang Y. Renewable Energy. 2020;157:828–839. doi: 10.1016/j.renene.2020.05.043.  [ DOI ] [ Google Scholar ] 
+ 
+ Zolliker P. Yvon K. Jorgensen J. D. Rotella F. J. Inorg. Chem. 1986;25:3590–3593. doi: 10.1021/ic00240a012.  [ DOI ] [ Google Scholar ] 
+ 
+ Zhang Y. Hu F. Li Z. Lü K. Guo S. Wang X. J. Alloys Compd. 2011;509:294–300. doi: 10.1016/j.jallcom.2010.09.007.  [ DOI ] [ Google Scholar ] 
+ 
+ Hsu C.-W. Lee S.-L. Jeng R.-R. Lin J.-C. Int. J. Hydrogen Energy. 2007;32:4907–4911. doi: 10.1016/j.ijhydene.2007.06.023.  [ DOI ] [ Google Scholar ] 
+ 
+ Matheus F. H. Zepon G. Oliveira V. B. Leiva D. R. Int. J. Hydrogen Energy. 2024;51:320–328. doi: 10.1016/j.ijhydene.2023.04.295.  [ DOI ] [ Google Scholar ] 
+ 
+ Wen J. de Rango P. Allain N. Laversenne L. Grosdidier T. J. Power Sources. 2020;480:228823. doi: 10.1016/j.jpowsour.2020.228823.  [ DOI ] [ Google Scholar ] 
+ 
+ Varin R. A. Czujko T. Mizera J. J. Alloys Compd. 2003;354:281–295. doi: 10.1016/S0925-8388(03)00016-1.  [ DOI ] [ Google Scholar ] 
+ 
+ Nohara S. Fujita N. Zhang S. G. Inoue H. Iwakura C. J. Alloys Compd. 1998;267:76–78. doi: 10.1016/S0925-8388(97)00491-X.  [ DOI ] [ Google Scholar ] 
+ 
+ House S. D. Vajo J. J. Ren C. Rockett A. A. Robertson I. M. Acta Mater. 2015;86:55–68. doi: 10.1016/j.actamat.2014.11.047.  [ DOI ] [ Google Scholar ] 
+ 
+ Wu Z. Zhu L. Zhang Z. Jiang Z. Yang F. Wang Y. Int. J. Hydrogen Energy. 2017;42:24868–24876. doi: 10.1016/j.ijhydene.2017.08.047.  [ DOI ] [ Google Scholar ] 
+ 
+ Zhang J. Zhou D. W. He L. P. Peng P. Liu J. S. J. Phys. Chem. Solids. 2009;70:32–39. doi: 10.1016/j.jpcs.2008.09.018.  [ DOI ] [ Google Scholar ] 
+ 
+ Weng Z. Retita I. Tseng Y.-S. Berry A. J. Scott D. R. Leung D. Wang Y. Chan S. L. I. Int. J. Hydrogen Energy. 2021;46:5441–5448. doi: 10.1016/j.ijhydene.2020.11.044.  [ DOI ] [ Google Scholar ] 
+ 
+ Giannozzi P. Baroni S. Bonini N. Calandra M. Car R. Cavazzoni C. Ceresoli D. Chiarotti G. L. Cococcioni M. Dabo I. Corso A. D. Fabris S. Fratesi G. de Gironcoli S. Gebauer R. Gerstmann U. Gougoussis C. Kokalj A. Lazzeri M. Martin-Samos L. Marzari N. Mauri F. Mazzarello R. Paolini S. Pasquarello A. Paulatto L. Sbraccia C. Scandolo S. Sclauzero G. Seitsonen A. P. Smogunov A. Umari P. Wentzcovitch R. M. J. Phys. Condens. Matter. 2009;21:395502. doi: 10.1088/0953-8984/21/39/395502.  [ DOI ] [ PubMed ] [ Google Scholar ] 
+ 
+ Monkhorst H. J. Pack J. D. Phys. Rev. B. 1976;13:5188–5192. doi: 10.1103/PhysRevB.13.5188.  [ DOI ] [ Google Scholar ] 
+ 
+ Liu X. Zhou L. Li W. Wu S. Huang Q. Wang Y. Cai X. Adv. Mater. Sci. Eng. 2022;2023 doi: 10.1155/2022/2661424.  [ DOI ] [ Google Scholar ] 
+ 
+ Moshtaghi M. Safyari M. Kuramoto S. Hojo T. Int. J. Hydrogen Energy. 2021;46:8285–8299. doi: 10.1016/j.ijhydene.2020.12.028.  [ DOI ] [ Google Scholar ] 
+ 
+ li Bi G. Wang Y. Jiang J. Gu J. Li Y. Chen T. Ma Y. J. Alloys Compd. 2021;881:160577. doi: 10.1016/j.jallcom.2021.160577.  [ DOI ] [ Google Scholar ] 
+ 
+ Guo Y. Bai J. He Z. Yun H. Li Q. Wang Y. Cao S. Verma S. K. Xu Y. Int. J. Hydrogen Energy. 2025;141:709–720. doi: 10.1016/j.ijhydene.2024.08.198.  [ DOI ] [ Google Scholar ] 
+ 
+ Liu X. Wu S. Cai X. Zhou L. Int. J. Hydrogen Energy. 2023;48:17202–17215. doi: 10.1016/j.ijhydene.2023.01.180.  [ DOI ] [ Google Scholar ] 
+ 
+ Cao W. Ding X. Chen R. Zhang J. Zhang Y. Fu H. J. Alloys Compd. 2023;960:170551. doi: 10.1016/j.jallcom.2023.170551.  [ DOI ] [ Google Scholar ] 
+ 
+ Guo Z. Qiu J. Wan H. Hu Y. Yong M. Sun S. Ding Z. Chen Y. Pan F. J. Alloys Compd. 2025;1030:180903. doi: 10.1016/j.jallcom.2025.180903.  [ DOI ] [ Google Scholar ] 
+ 
+ Wu Y. Ding D. Pan S. Yang F. Ren G. J. Alloys Compd. 2011;509:366–371. doi: 10.1016/j.jallcom.2010.09.027.  [ DOI ] [ Google Scholar ] 
+ 
+ Li Y. Ren H. Zhang Y. Liu Z. Zhang H. Int. J. Hydrogen Energy. 2015;40:7093–7102.  [ Google Scholar ] 
+ 
+ Zhou X. Yuan Y. Liu T. Chen T. Wang J. Zhang L. Wu L. Tang A. Chen X. Atrens A. Pan F. J. Magnesium Alloys. 2025 doi: 10.1016/j.jma.2025.01.022.  [ DOI ] [ Google Scholar ] 
+ 
+ Hou Z. Yuan Z. Feng D. Sun H. Zhang Y. J. Wuhan Univ. Technol., Mater. Sci. Ed. 2021;36:116–126. doi: 10.1007/s11595-021-2384-z.  [ DOI ] [ Google Scholar ] 
+ 
+ Feng H. Jin X. Junyu B. Ruihan L. Yifei Y. Jianyi X. Guofang Z. Xin Z. Dandan K. J. Alloys Compd. 2025;1010:177324. doi: 10.1016/j.jallcom.2024.177324.  [ DOI ] [ Google Scholar ] 
+ 
+ Guo S. Yu Z. Li Y. Fu Y. Zhang Z. Han S. J. Alloys Compd. 2024;976:173035. doi: 10.1016/j.jallcom.2023.173035.  [ DOI ] [ Google Scholar ] 
+ 
+ Varnagiris S. Urbonavicius M. Int. J. Hydrogen Energy. 2021;46:36323–36335. doi: 10.1016/j.ijhydene.2021.08.139.  [ DOI ] [ Google Scholar ] 
+ 
+ Khan D. Zou J. Zeng X. Ding W. Int. J. Hydrogen Energy. 2018;43:22391–22400. doi: 10.1016/j.ijhydene.2018.10.055.  [ DOI ] [ Google Scholar ] 
+ 
+ Grasso M. L. Puszkiel J. Gennari F. C. Santoru A. Dornheim M. Pistidda C. Phys. Chem. Chem. Phys. 2020;22:1944–1952. doi: 10.1039/C9CP05697A.  [ DOI ] [ PubMed ] [ Google Scholar ] 
+ 
+ Cho E. S. Ruminski A. M. Liu Y.-S. Shea P. T. Kang S. Zaia E. W. Park J. Y. Chuang Y.-D. Yuk J. M. Zhou X. Heo T. W. Guo J. Wood B. C. Urban J. J. Adv. Funct. Mater. 2017;27:1704316. doi: 10.1002/adfm.201704316.  [ DOI ] [ Google Scholar ] 
+ 
+ López Gómez E. I. Gonzalez J. Cubero-Sesin J. M. Huot J. Reactions. 2024;5:651–663. doi: 10.3390/reactions5040033.  [ DOI ] [ Google Scholar ] 
+ 
+ Luo Q. Gu Q. Liu B. Zhang T.-F. Liu W. Li Q. J. Mater. Chem. A. 2018;6:23308–23317. doi: 10.1039/C8TA06668J.  [ DOI ] [ Google Scholar ] 
+ 
+ Cao W. Ding X. Chen R. Zhang J. Zhang Y. Fu H. J. Mater. Res. Technol. 2023;25:252–264. doi: 10.1016/j.jmrt.2023.05.208.  [ DOI ] [ Google Scholar ] 
+ 
+ Choi Y. J. Lu J. Sohn H. Y. Fang Z. Z. Rönnebro E. J. Phys. Chem. C. 2009;113:19344–19350. doi: 10.1021/jp907218t.  [ DOI ] [ Google Scholar ] 
+ 
+ Pang Y. Sun D. Gu Q. Chou K.-C. Wang X. Li Q. Cryst. Growth Des. 2016;16:2404–2415. doi: 10.1021/acs.cgd.6b00187.  [ DOI ] [ Google Scholar ] 
+ 
+ Kissinger H. E. Anal. Chem. 1957;29:1702–1706. doi: 10.1021/ac60131a045.  [ DOI ] [ Google Scholar ] 
+ 
+ Xinglin Y. Xiaohui L. Jiaqi Z. Quanhui H. Junhu Z. Mater. Today Adv. 2023;19:100387. doi: 10.1016/j.mtadv.2023.100387.  [ DOI ] [ Google Scholar ] 
+ 
+ Ding X. Chen R. Chen X. Fang H. Wang Q. Su Y. Guo J. J. Magnesium Alloys. 2023;11:903–915. doi: 10.1016/j.jma.2021.06.003.  [ DOI ] [ Google Scholar ] 
+ 
+ Hong H. Guo H. Cui Z. Ball A. Nie B. Int. J. Hydrogen Energy. 2024;78:793–804. doi: 10.1016/j.ijhydene.2024.06.327.  [ DOI ] [ Google Scholar ] 
+ 
+ Cao W. Ding X. Chen R. Zhang J. Zhang Y. Shen H. Fu H. Chem. Eng. J. 2023;475:146252. doi: 10.1016/j.cej.2023.146252.  [ DOI ] [ Google Scholar ] 
+ 
+ Tran X. Q. McDonald S. D. Gu Q. Yamamoto T. Shigematsu K. Aso K. Tanaka E. Matsumura S. Nogita K. J. Power Sources. 2017;341:130–138. doi: 10.1016/j.jpowsour.2016.11.105.  [ DOI ] [ Google Scholar ] 
+ 
+ Liu M. Qiu D. Zhao M.-C. Song G. Atrens A. Scr. Mater. 2008;58:421–424. doi: 10.1016/j.scriptamat.2007.10.027.  [ DOI ] [ Google Scholar ] 
+ 
+ Bortz M. Bertheville B. Böttger G. Yvon K. J. Alloys Compd. 1999;287:L4–L6. doi: 10.1016/S0925-8388(99)00028-6.  [ DOI ] [ Google Scholar ] 
+ 
+ Hong Q.-J. Ushakov S. V. van de Walle A. Navrotsky A. Proc. Natl. Acad. Sci. U. S. A. 2022;119:e2209630119. doi: 10.1073/pnas.2209630119.  [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ] 
+     Associated Data 
+  This section collects any data citations, data availability statements, or supplementary materials included in this article.  
+  Supplementary Materials 
+   RA-015-D5RA04356E-s001  
+  
+ RA-015-D5RA04356E-s001.pdf   (1.8MB, pdf)  
+      Data Availability Statement 
+ Data for this article, including SEM, EDS, XRD, BET, and electronics properties measurements are available at Open Science Framework at  https://osf.io/7aht8/ . 
+ The supplementary information includes the EDS spectra, EDS mapping, HR-TEM, and BET analysis of Mg–Ni alloys. See DOI:  https://doi.org/10.1039/d5ra04356e .      
+ Articles from RSC Advances are provided here courtesy of  Royal Society of Chemistry     
+
+                      
+
+                     
+                 
+             
+         
+
+        
+
+
+
+ 
+ 
+     
+         
+             
+         
+     
+        
+               ACTIONS 
+            
+               
+                
+                      
+                          
+                          View on publisher site 
+                      
+                
+               
+               
+                
+                     
+                          
+                         PDF (2.0 MB) 
+                     
+                
+               
+                
+                
+                    
+                        
+                        Cite 
+                     
+                
+                
+                
+
+                         
+                             
+                             
+                             Collections 
+                        
+                
+                
+                     
+                         
+                         Permalink 
+                     
+                   
+
+ 
+     
+           PERMALINK 
+           
+               
+               
+                   
+                   Copy 
+               
+           
+     
+ 
+                
+            
+        
+      
+
+         
+             RESOURCES 
+            
+                 
+                     
+                         
+                            Similar articles
+                         
+                     
+                     
+                        
+                     
+                     
+                         
+                             Cited by other articles
+                         
+                     
+                     
+                          
+                     
+                    
+                         
+                             
+                                 Links to NCBI Databases
+                             
+                         
+                         
+                         
+                    
+                    
+                 
+            
+         
+
+
+          
+     
+ 
+
+        
+
+ 
+     
+         
+             Cite 
+              
+                  
+              
+         
+
+        
+
+ 
+    
+   
+       
+         
+             
+             Copy 
+         
+       
+       
+           
+                 
+                 Download .nbib 
+                 .nbib 
+             
+       
+       
+          
+
+ 
+   Format: 
+   
+    
+       
+        AMA
+       
+    
+       
+        APA
+       
+    
+       
+        MLA
+       
+    
+       
+        NLM
+       
+    
+   
+ 
+       
+   
+ 
+     
+ 
+
+         
+   
+    
+         Add to Collections 
+     
+     
+      
+
+
+ 
+
+     
+
+     
+         
+             
+             Create a new collection 
+         
+         
+             
+             Add to an existing collection 
+         
+     
+
+     
+         
+            
+                Name your collection
+                * 
+           
+           
+         
+         
+              
+                Choose a collection
+               
+               
+               
+               
+                Unable to load your collection due to an error 
+                 Please try again 
+               
+         
+     
+
+     
+         
+          Add
+         
+         
+          Cancel
+         
+     
+ 
+     
+   
+ 
+
+        
+
+       
+     
+   
+
+
+
+        
+    
+    
+
+ 
+    
+         
+             
+                Follow NCBI
+             
+
+             
+                
+                     
+                         
+                             
+                             
+                         
+                         NCBI on X (formerly known as Twitter) 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                         
+                         NCBI on Facebook 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                             
+                             
+                             
+                             
+                         
+                         NCBI on LinkedIn 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                         
+                         NCBI on GitHub 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                             
+                             
+                             
+                             
+                         
+                         NCBI RSS feed 
+                     
+                
+             
+         
+    
+
+     
+         
+            
+                 
+                    
+                         
+                            Connect with NLM
+                         
+                    
+
+                     
+                        
+                             
+                                 
+                                     
+                                     
+                                 
+                                 NLM on X (formerly known as Twitter) 
+                             
+                        
+
+                        
+                             
+                                 
+                                     
+                                     
+                                 
+                                 NLM on Facebook 
+                             
+                        
+
+                        
+                             
+                                 
+                                     
+                                 
+                                 NLM on YouTube 
+                             
+                        
+                     
+                 
+            
+
+            
+                 
+                    
+         
+             National Library of Medicine
+              8600 Rockville Pike  Bethesda, MD 20894 
+         
+    
+                 
+            
+
+            
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Web Policies
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            FOIA
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            HHS Vulnerability Disclosure
+        
+
+        
+     
+
+
+                         
+                    
+                 
+            
+
+            
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Help
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Accessibility
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Careers
+        
+
+        
+     
+
+
+                         
+                    
+                 
+            
+         
+
+        
+             
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            NLM
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            NIH
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            HHS
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            USA.gov
+        
+
+        
+     
+
+
+                         
+                    
+                 
+             
+        
+     
+ 
+
+    
+
+
+        
+        
+    
+   
+
+
+    
+        
+
+ 
+     Back to Top 
+     
+ 
+    
+
+
+        
+    
+      
+    
+    
+        
+     
+     
+ 
+    
+     
+     
+
+
+     
+      
+
+     
+ 
+ 
+ 
+    
+    
+
+     
+ 

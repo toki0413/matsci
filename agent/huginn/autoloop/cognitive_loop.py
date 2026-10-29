@@ -352,6 +352,7 @@ class CognitiveLoop:
         max_repeated_actions: int = 3,  # 死循环防护: 连续重复 action 超过此数 → stop
         turn_timeout: float | None = None,  # P4-3: 单 turn 超时 (秒), None 不限时
         on_execute_failure: Callable[[LoopState, ActionDecision, BaseException], None] | None = None,
+        deliverables_fn: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._observe = observe_fn
         self._decide = decide_fn
@@ -360,6 +361,9 @@ class CognitiveLoop:
         self._output_writer = output_writer
         self._max_iterations = max_iterations
         self._max_repeated_actions = max_repeated_actions
+        # 交付物验收回调: 内核不认识 workspace/清单, 由调用方注入 (autoloop 传
+        # CognitiveRunner._deliverables_ok). None → 不适用 (rcb 路径保持原行为).
+        self._deliverables_fn = deliverables_fn
         # P4-3: TurnEngine 特性 — turn 级超时. execute 钩子最可能卡住 (DFT/MD 计算),
         # 超时后跳过该 turn, 不阻塞后续. None 时向后兼容 (不限时).
         self._turn_timeout = turn_timeout
@@ -473,7 +477,11 @@ class CognitiveLoop:
         # 交付物硬门: 声明清单还没通过确定性验收时, 死循环的处置是"换回执行",
         # 不是收工 —— ws33 实测: 模型连发 skip 到 6 次被强制 stop, iteration 11
         # 收口, 三个交付物全缺. 停机权不能绕开验收.
-        gate = self._deliverables_ok()
+        gate = (
+            self._deliverables_fn()
+            if self._deliverables_fn is not None
+            else {"passed": True}
+        )
         if not gate.get("passed", True):
             _gap = (
                 f"missing={gate.get('missing') or []} "
@@ -4915,6 +4923,7 @@ Physical time series collected this run:
             max_iterations=ctx.max_iterations,
             max_repeated_actions=3,
             on_execute_failure=self._rollback_on_execute_failure,
+            deliverables_fn=self._deliverables_ok,
         )
 
     async def _rc_post_run(self, ctx: _RcContext, state: LoopState) -> None:

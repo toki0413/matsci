@@ -102,7 +102,7 @@ def test_repetition_guard_forces_execute_when_deliverables_missing():
     hints: list[str] = []
     stub = SimpleNamespace(
         _max_repeated_actions=3,
-        _deliverables_ok=lambda: {"passed": False, "missing": ["loop_log.jsonl"],
+        _deliverables_fn=lambda: {"passed": False, "missing": ["loop_log.jsonl"],
                                   "empty": [], "invalid": []},
         _append_hint=hints.append,
         _control_trace=lambda *a, **k: None,
@@ -125,7 +125,7 @@ def test_repetition_guard_forces_plan_when_no_plan_yet():
 
     stub = SimpleNamespace(
         _max_repeated_actions=3,
-        _deliverables_ok=lambda: {"passed": False, "missing": ["report.md"]},
+        _deliverables_fn=lambda: {"passed": False, "missing": ["report.md"]},
         _append_hint=lambda _h: None,
         _control_trace=lambda *a, **k: None,
         _last_good_plan=None,
@@ -144,7 +144,7 @@ def test_repetition_guard_still_stops_when_deliverables_pass():
 
     stub = SimpleNamespace(
         _max_repeated_actions=3,
-        _deliverables_ok=lambda: {"passed": True},
+        _deliverables_fn=lambda: {"passed": True},
         _append_hint=lambda _h: None,
         _control_trace=lambda *a, **k: None,
         _last_good_plan={"description": "x"},

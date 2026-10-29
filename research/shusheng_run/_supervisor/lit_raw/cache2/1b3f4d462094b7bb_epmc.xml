@@ -1,0 +1,767 @@
+
+<!DOCTYPE article
+  PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD with MathML3 v1.4 20241031//EN" "JATS-archivearticle1-4-mathml3.dtd">
+<article xml:lang="en" article-type="research-article" dtd-version="1.4"><processing-meta base-tagset="archiving" mathml-version="3.0" table-model="xhtml" tagset-family="jats"><restricted-by>pmc</restricted-by></processing-meta><front><journal-meta><journal-id journal-id-type="nlm-ta">RSC Adv</journal-id><journal-id journal-id-type="iso-abbrev">RSC Adv</journal-id><journal-id journal-id-type="pmc-domain-id">4079</journal-id><journal-id journal-id-type="pmc-domain">rscadv</journal-id><journal-id journal-id-type="nlm-id">101581657</journal-id><journal-id journal-id-type="publisher-id">RA</journal-id><journal-title-group><journal-title>RSC Advances</journal-title></journal-title-group><issn pub-type="epub">2046-2069</issn><?publisher_abbrev rsc?><publisher><publisher-name>Royal Society of Chemistry</publisher-name></publisher></journal-meta><article-meta><article-id pub-id-type="pmcid">PMC11289713</article-id><article-id pub-id-type="pmcid-ver">PMC11289713.1</article-id><article-id pub-id-type="pmcaid">11289713</article-id><article-id pub-id-type="pmcaiid">11289713</article-id><article-id pub-id-type="pmid">39086527</article-id><article-id pub-id-type="doi">10.1039/d4ra03460k</article-id><article-id pub-id-type="publisher-id">d4ra03460k</article-id><article-version article-version-type="pmc-version">1</article-version><article-categories><subj-group subj-group-type="heading"><subject>Chemistry</subject></subj-group></article-categories><title-group><article-title>Enhanced hydrogen storage property of MgH<sub>2</sub> caused by a BaCrO<sub>4</sub> nanocatalyst<xref rid="fn1" ref-type="fn">†</xref></article-title><fn-group><fn id="fn1"><label>†</label><p>Electronic supplementary information (ESI) available. See DOI: <uri xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://doi.org/10.1039/d4ra03460k">https://doi.org/10.1039/d4ra03460k</uri></p></fn></fn-group></title-group><contrib-group><contrib contrib-type="author"><name name-style="western"><surname>Liang</surname><given-names initials="C">Chenxi</given-names></name><xref rid="affa" ref-type="aff">a</xref><xref rid="affb" ref-type="aff">b</xref><xref rid="affc" ref-type="aff">c</xref></contrib><contrib contrib-type="author"><contrib-id contrib-id-type="orcid" authenticated="false">https://orcid.org/0000-0001-7235-6581</contrib-id><name name-style="western"><surname>Wang</surname><given-names initials="Z">Zhenbin</given-names></name><xref rid="affa" ref-type="aff">a</xref><xref rid="affb" ref-type="aff">b</xref><xref rid="affc" ref-type="aff">c</xref></contrib><contrib contrib-type="author" corresp="yes"><contrib-id contrib-id-type="orcid" authenticated="false">https://orcid.org/0000-0001-6524-4928</contrib-id><name name-style="western"><surname>Zhang</surname><given-names initials="M">Mingjin</given-names></name><xref rid="affa" ref-type="aff">a</xref><xref rid="affb" ref-type="aff">b</xref><xref rid="affc" ref-type="aff">c</xref></contrib><contrib contrib-type="author" corresp="yes"><contrib-id contrib-id-type="orcid" authenticated="false">https://orcid.org/0009-0003-4905-9142</contrib-id><name name-style="western"><surname>Ma</surname><given-names initials="C">Cunhua</given-names></name><xref rid="affa" ref-type="aff">a</xref><xref rid="affb" ref-type="aff">b</xref><xref rid="affc" ref-type="aff">c</xref></contrib><aff id="affa">
+<label>a</label>
+<institution>School of Chemistry and Chemical Engineering, Qinghai Normal University</institution>
+<city>Xining 810008</city>
+<country>China</country>
+<email>zhangmingjin@qhnu.edu.cn</email>
+<email>20211001@qhnu.edu.cn</email>
+<phone>+86-971-5213524</phone>
+</aff><aff id="affb">
+<label>b</label>
+<institution>Academy of Plateau Science and Sustainability, People's Government of Qinghai Province &amp; Beijing Normal University</institution>
+<city>Xining</city>
+<postal-code>810016</postal-code>
+<country>China</country>
+</aff><aff id="affc">
+<label>c</label>
+<institution>Qinghai Provincial Key Laboratory of Advanced Technology and Application of Environment Functional Materials</institution>
+<city>Xining 810008</city>
+<country>China</country>
+</aff></contrib-group><pub-date publication-format="electronic" date-type="pub" iso-8601-date="2024-07-31"><day>31</day><month>7</month><year>2024</year></pub-date><pub-date publication-format="electronic" date-type="collection" iso-8601-date="2024-07-26"><day>26</day><month>7</month><year>2024</year></pub-date><volume>14</volume><issue>33</issue><issue-id pub-id-type="pmc-issue-id">467550</issue-id><fpage>23930</fpage><lpage>23942</lpage><history><date date-type="received" iso-8601-date="2024-05-10"><day>10</day><month>5</month><year>2024</year></date><date date-type="accepted" iso-8601-date="2024-07-02"><day>2</day><month>7</month><year>2024</year></date></history><pub-history><event event-type="pmc-release"><date><day>31</day><month>07</month><year>2024</year></date></event><event event-type="pmc-live"><date><day>31</day><month>07</month><year>2024</year></date></event><event event-type="pmc-last-change"><date iso-8601-date="2024-08-01 09:25:40.043"><day>01</day><month>08</month><year>2024</year></date></event></pub-history><permissions><copyright-statement>This journal is © The Royal Society of Chemistry</copyright-statement><copyright-year>2024</copyright-year><copyright-holder>The Royal Society of Chemistry</copyright-holder><ali:free_to_read xmlns:ali="http://www.niso.org/schemas/ali/1.0/"/><license><ali:license_ref xmlns:ali="http://www.niso.org/schemas/ali/1.0/" specific-use="textmining" content-type="ccbynclicense" start_date="2024-07-31">https://creativecommons.org/licenses/by-nc/3.0/</ali:license_ref><license-p>This article is licensed under a <ext-link xmlns:xlink="http://www.w3.org/1999/xlink" ext-link-type="uri" xlink:href="https://creativecommons.org/licenses/by-nc/3.0/">Creative Commons Attribution-Non Commercial 3.0 Unported Licence</ext-link>. You can use material from this article in other publications without requesting further permissions from the RSC, provided that the correct acknowledgement is given and it is not used for commercial purposes.</license-p></license></permissions><self-uri xmlns:xlink="http://www.w3.org/1999/xlink" content-type="pmc-pdf" xlink:href="RA-014-D4RA03460K.pdf"><?pdf-name RA-014-D4RA03460K.pdf?><?pdf-size 2192460?><?pdf-md5 619ab48561a91aa65e8626911babd1b1?><?pdf-image-server-status NEVER_LOAD?><?pdf-cloudpmc-urn urn:app:efb2/11289713/619ab48561a9/RA-014-D4RA03460K.pdf?></self-uri><abstract><p>Magnesium hydroxide (MgH<sub>2</sub>) has a broad application prospect in solid hydrogen storage, but the associated higher dehydrogenation temperature and undesirable cycling capacity limit its large-scale application. In this study, a BaCrO<sub>4</sub> nanocatalyst prepared <italic toggle="yes">via</italic> a wet chemistry method was added to MgH<sub>2</sub> to achieve better kinetic and thermodynamic performances. Kinetic tests suggested that the onset hydrogen desorption temperature was decreased for milled MgH<sub>2</sub> from 390 °C to below 280 °C after the introduction of a 5 wt% BaCrO<sub>4</sub> nanocatalyst and the maximum dehydrogenation amount was up to 6.32 wt%. With regard to hydrogen absorption, MgH<sub>2</sub> incorporated with 10 wt% BaCrO<sub>4</sub> could fully absorb 5.78 wt% H<sub>2</sub> within 10 min at 300 °C and recharge 3.1 wt% H<sub>2</sub> at a low temperature of 250 °C. In comparison, the hydrogen uptake amounts for MgH<sub>2</sub> under the same conditions were only 3.98 wt% and 1.52 wt%. With regard to hydrogen desorption, 5 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> could discharge 4.25 wt% H<sub>2</sub> within 10 min at 325 °C and 4.81 wt% H<sub>2</sub> at 300 °C, while MgH<sub>2</sub> could not dehydrogenate at 300 °C. Meanwhile, only 5% of the performance decayed for 5 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> during ten cycles. Dehydrogenation <italic toggle="yes">E</italic><sub>a</sub> reduced to 106.75 kJ mol<sup>−1</sup> in contrast to 156.55 kJ mol<sup>−1</sup> for MgH<sub>2</sub>. In addition, DFT results verified that the BaCrO<sub>4</sub> nanocatalyst reduced the band gap from 2.78 eV to 2.16 eV to improve the thermodynamic property of MgH<sub>2</sub> and contributed to the decrease in the dehydrogenation energy barrier from 2.27 eV to 1.54 eV. This work provides an insight into the performance of ternary transition metal nanocatalysts for MgH<sub>2</sub> hydrogen storage systems.</p></abstract><abstract abstract-type="toc"><p>Magnesium hydroxide (MgH<sub>2</sub>) has a broad application prospect in solid hydrogen storage, but the associated higher dehydrogenation temperature and undesirable cycling capacity limit its large-scale application.<graphic xmlns:xlink="http://www.w3.org/1999/xlink" id="ga" position="float" orientation="portrait" xlink:href="d4ra03460k-ga.jpg"><?image-name d4ra03460k-ga.jpg?><?image-size 121776?><?image-md5 d1465c81bfd71d34e88819563599ae9e?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 945?><?image-original-width 1090?><?image-scaled-height 629?><?image-scaled-width 726?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/d1465c81bfd7/d4ra03460k-ga.jpg?></graphic></p></abstract><counts><page-count count="13"/></counts><custom-meta-group><custom-meta><meta-name>pmc-status-qastatus</meta-name><meta-value>0</meta-value></custom-meta><custom-meta><meta-name>pmc-status-live</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-status-embargo</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-status-released</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-open-access</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-olf</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-manuscript</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-legally-suppressed</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-has-pdf</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-has-supplement</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-pdf-only</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-suppress-copyright</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-is-real-version</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-is-scanned-article</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-preprint</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-in-epmc</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-license-ref</meta-name><meta-value>CC BY-NC</meta-value></custom-meta><custom-meta><meta-name>pubstatus</meta-name><meta-value>Paginated Article</meta-value></custom-meta></custom-meta-group></article-meta></front><body><sec><label>1</label><title>Introduction</title><p>Since the 20th century, with the large-scale consumption of traditional fossil energy sources, which produce a large amount of greenhouse gases, researchers have conducted in-depth studies on renewable energy sources.<sup><xref rid="cit1" ref-type="bibr">1–5</xref></sup> Regarded as one of the ideal energy carriers, hydrogen energy possesses the advantages of abundant resources, a high calorific value (33.3 kW h kg<sup>−1</sup>), environment friendliness and intrinsic clean nature characteristics, which are of great significance to sustainable energy systems.<sup><xref rid="cit6" ref-type="bibr">6–10</xref></sup> However, the key problem hindering the widespread application of hydrogen energy is the shortage of effective and secure storage systems. At present, hydrogen storage techniques mainly consist of the following categories: high-pressure gaseous state,<sup><xref rid="cit11" ref-type="bibr">11</xref></sup> liquid state,<sup><xref rid="cit12" ref-type="bibr">12</xref></sup> and solid state.<sup><xref rid="cit13" ref-type="bibr">13</xref></sup> Gaseous state storage requires high pressures, and the compression process is hazardous. Liquid state storage can increase the hydrogen content to a certain extent, but energy consumption in the liquefaction process is high.<sup><xref rid="cit14" ref-type="bibr">14,15</xref></sup> In contrast, owing to its excellent hydrogen storage performance (7.6 wt%), non-toxicity, excellent reversibility, abundant resources, and hydrogen purification function characteristics, MgH<sub>2</sub> is proven as an excellent system in the solid hydrogen storage field.<sup><xref rid="cit16" ref-type="bibr">16–18</xref></sup> Nevertheless, the stable thermodynamic and sluggish kinetic properties limit the large-scale applications of MgH<sub>2</sub> to some extent.<sup><xref rid="cit19" ref-type="bibr">19–21</xref></sup> In order to overcome these challenges, nanosizing,<sup><xref rid="cit22" ref-type="bibr">22–25</xref></sup> alloying,<sup><xref rid="cit26" ref-type="bibr">26–29</xref></sup> and catalyst doping<sup><xref rid="cit30" ref-type="bibr">30–33</xref></sup> have been specifically studied.</p><p>Alloying improves kinetic/thermodynamic properties by changing the reaction path. However, the lower hydrogen storage density of Mg-based alloys needs to be improved further. Nanosizing could reduce the grain size and shorten the diffusion path length to improve the hydrogen storage performance of MgH<sub>2</sub>. High-energy ball milling (HEBM) is the most commonly used method for nanotization. Schulz <italic toggle="yes">et al.</italic><sup><xref rid="cit34" ref-type="bibr">34</xref></sup> prepared MgH<sub>2</sub> nanoparticles with high specific surface area by HEBM, which could adsorb 7 wt% H<sub>2</sub> at 300 °C and desorb completely at 350 °C. Varin <italic toggle="yes">et al.</italic><sup><xref rid="cit35" ref-type="bibr">35</xref></sup> prepared MgH<sub>2</sub> with different particle sizes and found that when the particle size was reduced to 600 nm, the dehydrogenation temperature was reduced by 60 °C. However, HEBM will lead to agglomeration and growth, reducing the cycling stability of the material.</p><p>The combination of nanosizing with transition metal catalyst doping is an approach that takes into account both kinetic and cycling properties. The corresponding interaction force between the d electrons of the metal catalysts and the electrons in the H<sub>2</sub>/H orbital can dramatically cut down the dehydrogenation <italic toggle="yes">E</italic><sub>a</sub> of MgH<sub>2</sub>. After ball milling, the catalyst coated on the surface of MgH<sub>2</sub> can inhibit the agglomeration of MgH<sub>2</sub> and achieve ideal cycling performance.<sup><xref rid="cit36" ref-type="bibr">36–38</xref></sup> Wang <italic toggle="yes">et al.</italic><sup><xref rid="cit39" ref-type="bibr">39</xref></sup> prepared a highly refined cadmium-based catalyst on nitrogen-doped carbon (Cr–N–C) and added it to MgH<sub>2</sub><italic toggle="yes">via</italic> HEBM. Theoretical calculations showed that the dehydrogenation <italic toggle="yes">E</italic><sub>a</sub> of MgH<sub>2</sub> was reduced from 156.5 kJ mol<sup>−1</sup> to 133 kJ mol<sup>−1</sup>, and the hydrogen storage account did not decay after cycling (volume retention rate is 95%). The Cr element could interact strongly with H and destabilize the interaction of the Mg–H bond. Kurdyumov <italic toggle="yes">et al.</italic><sup><xref rid="cit40" ref-type="bibr">40</xref></sup> fabricated a MgH<sub>2</sub>-MIL-101 (Cr) compound system through milling technology, and the results indicated that chromium oxide particles and MIL-101 (Cr) were dispersed uniformly on the surface of MgH<sub>2</sub>. The compound system could discharge 5.0 wt% H<sub>2</sub> within 3000 s at 255 °C and recharge 4.8 wt% within 2000 s at 320 °C, while MgH<sub>2</sub> did not hydrogenate and dehydrogenate. It was obvious that Cr-based catalysts could dramatically ameliorate the kinetic capacity of MgH<sub>2</sub>.</p><p>Compared with single-metal catalysts, multiple metal oxides have higher brittleness, which are more easily dispersed in a MgH<sub>2</sub> matrix by ball milling technology. Sazelee <italic toggle="yes">et al.</italic><sup><xref rid="cit41" ref-type="bibr">41</xref></sup> prepared MgH<sub>2</sub> doped with BaFe<sub>12</sub>O<sub>19</sub>, which could start dehydrogenization at 270 °C compared to MgH<sub>2</sub> (418 °C). No obvious capacity decay phenomenon occurred during cycling. MgO-, Fe- and Ba-based substances achieved heterogeneous catalytic effects on MgH<sub>2</sub>, thereby ameliorating the hydrogen storage performance. Chen <italic toggle="yes">et al.</italic><sup><xref rid="cit42" ref-type="bibr">42</xref></sup> prepared BaTiO<sub>3</sub> to catalytically modify MgH<sub>2</sub>, and MgH<sub>2</sub>-20 wt% BaTiO<sub>3</sub> could fully discharge 6.0 wt% H<sub>2</sub> within 20 min at 310 °C. the <italic toggle="yes">E</italic><sub>a</sub> value of the composite decreased to 60 kJ mol<sup>−1</sup> in contrast to that of pure MgH<sub>2</sub> (101 kJ mol<sup>−1</sup>). It is worth noting that MgH<sub>2</sub>-20 wt% BaTiO<sub>3</sub> could absorb 3.5 and 4.0 wt% H<sub>2</sub> in 120 minutes at 50 °C and 100 °C, respectively, whereas milled MgH<sub>2</sub> only absorbed ∼1.0 wt% H<sub>2</sub>. Ismail <italic toggle="yes">et al.</italic><sup><xref rid="cit43" ref-type="bibr">43</xref></sup> fabricated MgH<sub>2</sub>-10 wt% BaMnO<sub>3</sub>. Benefiting from the strong electron-withdrawing effect of O, as well as the kinetic modulation of Ba or Ba-based substances, the <italic toggle="yes">T</italic><sub>onset</sub> value of MgH<sub>2</sub>-10 wt% BaMnO<sub>3</sub> reduced from 343 °C to 282 °C, with an ideal hydrogen absorption content of 5.22 wt% at 250 °C and a hydrogen desorption content of 5.36 wt% at 300 °C. Without doubt, ternary transition metal oxides, particularly Ba-based oxides, have exhibited generally distinguished catalytic effect on MgH<sub>2</sub>.</p><p>In view of the ideal catalytic effect of Cr-based catalysts/Ba-based transition metal catalysts and the high-energy ball milling nanotization method, we successfully synthesized a BaCrO<sub>4</sub> nanocatalyst through wet chemical technology to reveal the catalytic effect on MgH<sub>2</sub>. Up to now, there are no relevant research studies on the introduction of the BaCrO<sub>4</sub> catalyst into MgH<sub>2</sub> to improve the hydrogen storage performance. We focused on investigating the dynamic and thermodynamic performances of MgH<sub>2</sub>-<italic toggle="yes">x</italic> wt% BaCrO<sub>4</sub> (<italic toggle="yes">x</italic> = 5, 10, and 15) through a series of kinetic test and theoretical calculation. Meantime, the structural evolution and catalytic mechanism were explored deeply.</p></sec><sec><label>2</label><title>Experimental details</title><sec><label>2.1</label><title>Synthesis of BaCrO<sub>4</sub> nanocatalysts</title><p>A BaCrO<sub>4</sub> nanocatalyst was fabricated through the wet chemical technology. In detail, 0.174 g dodecylbenzene sulfonic acid sodium salt (DBSS) and 0.88 g Na<sub>2</sub>CrO<sub>4</sub> (AR, 98%, Sigma-Aldrich) were dissolved in 100 mL of distilled water in a beaker. After that, vigorous stirring was carried out for two hours at room temperature to ensure that all the reagents were evenly dispersed in the solution. Then 20 mL 0.1875 mol L<sup>−1</sup> Ba(NO<sub>3</sub>)<sub>2</sub> (AR, 99%, Sigma-Aldrich) was added dropwise to the above solution for 10 min at room temperature under magnetic stirring. Yellow precipitates were produced during the addition process. After finishing the addition process, the mixture was deposited <italic toggle="yes">via</italic> continuous stirring for another 30 min, which was conducive to the formation of BaCrO<sub>4</sub> nanocrystals. Finally, precipitates were washed three times with distilled water and absolute ethanol to remove the remaining DBSS and dried at 150 °C for 2 h in a vacuum oven. The detailed procedure is shown in Fig. S1(a).<xref rid="fn1" ref-type="fn">†</xref></p></sec><sec><label>2.2</label><title>Preparation of MgH<sub>2-</sub><italic toggle="yes">x</italic> wt% BaCrO<sub>4</sub> compounds</title><p>The MgH<sub>2</sub> (AR, 98%, Langfang Beida Trading Co., Ltd)-<italic toggle="yes">x</italic> wt% BaCrO<sub>4</sub> (<italic toggle="yes">x</italic> = 5, 10, and 15) compound system were prepared <italic toggle="yes">via</italic> ball milling technology under vacuum in planetary ball milling equipment (JX-4GL, Shanghai Jingxin). Each sample was milled for 4 h (ball milling for 25 minutes and rest for 5 minutes in different directions to prevent the ball mill tank from overheating) at a speed of 400 rpm. The ratio of ball to powder was 40/1. To prevent oxidation, the loading and sampling processes were carried out in a glove box filled with 5 bar argon gas and a water oxygen content less than 0.1 ppm.</p></sec></sec><sec><label>3</label><title>Characterization</title><p>An X-ray diffractometer (XRD, Brucker D8 ADVACE A25) with Cu Kα radiation was used to detect the phase evolution with 2<italic toggle="yes">θ</italic> ranging from 10–80° at a step of 10° min<sup>−1</sup>. The microstructures and element distributions were researched through Scanning electron microscopy (SEM, JEOL JSM-6610LV) and transmission electron microscopy (TEM, JEOL JEM-2100F) with an energy-dispersive spectroscopy (EDS).</p><p>A differential scanning calorimetry (DSC, NETZSCH STA449F3) instrument was used at different heating rates (5, 8, 10, and 12 °C min<sup>−1</sup>) to analyze the dehydrogenation capacity. The hydrogenation kinetics was studied using a high-pressure gas absorption instrument (BSD 3H-2000 PH) at different temperatures under 3.3 MPa hydrogen pressure, and the dehydrogenation kinetics was studied under 0.001 MPa hydrogen pressure. The temperature-programmed desorption (TPD) test was applied with a temperature range from 20 °C to 500 °C at a speed of 5 °C min<sup>−1</sup>.</p></sec><sec><label>4</label><title>Computational details</title><p>The density functional theory (DFT) calculations were performed using the CASTEP package with the Perdew–Burke–Ernzerhof (PBE) generalized gradient approximation (GGA) exchange–correlation functional. Interactions between core and valence electrons were described using Vanderbilt ultra-soft pseudopotentials. The energy cut-off for the plane-wave basis set was 400 eV.</p><p>The threshold values of the convergence criteria are specified as follows: 0.002 Å for maximum displacement, 0.05 eV Å<sup>−1</sup> for maximum force, 0.1 GPa for maximum stress, 10–5 eV per atom for energy, and 2.0 × 10<sup>−6</sup> eV per atom for self-consistent field tolerance. The 1.5 Å thickness of the MgH<sub>2</sub>(101) surface was cleaved with <italic toggle="yes">a</italic> = 25.8 Å and <italic toggle="yes">b</italic> = 8.16 Å. A 15 Å vacuum space was implemented into the model to eliminate undesirable interactions between the bottom side of the slab and the molecules in the vacuum space. The (4 × 2) unit cell of MgH<sub>2</sub> (101)–BaCrO<sub>4</sub> (203) was used to inhibit the lateral interactions between the molecules on the surface.</p><p>The charge density difference of MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> was calculated, which is defined as Δ<italic toggle="yes">ρ</italic> = <italic toggle="yes">ρ</italic><sub>tot</sub> − <italic toggle="yes">ρ</italic><sub>substrate</sub> − <italic toggle="yes">ρ</italic><sub>cluster</sub>, where <italic toggle="yes">ρ</italic><sub>tot</sub>, <italic toggle="yes">ρ</italic><sub>substrate</sub>, and <italic toggle="yes">ρ</italic><sub>cluster</sub> are the total charge densities of the MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> compound, the MgH<sub>2</sub> substrate, and the BaCrO<sub>4</sub> catalyst, respectively.</p><p>When the optimization was completed, the density difference calculations were performed. Moreover, the diffusion barrier energy was located utilizing the well-known linear synchronous transit (LST) and quadratic synchronous transit (QST) methods.</p></sec><sec><label>5</label><title>Results and discussion</title><sec><label>5.1</label><title>Characterization of BaCrO<sub>4</sub> nanocatalysts</title><p>Fig. S1(b)<xref rid="fn1" ref-type="fn">†</xref> exhibits the XRD patterns of the BaCrO<sub>4</sub> catalyst. Obviously, the diffraction peaks coincide with the standard card (JCPDS No. 78-1401), with no detection of impurity peaks. Fig. S1(c and d)<xref rid="fn1" ref-type="fn">†</xref> present the morphology and particle size distribution of the BaCrO<sub>4</sub> nanocatalyst. Obviously, the BaCrO<sub>4</sub> nanocatalyst exists in a relatively nano-blocky structure with a particle size ranging from 100 to 500 nm with an average size of 225 ± 17.68 nm. The micronano structure and composition of the nanocatalyst were further determined through the TEM images shown in Fig. S1(e and f).<xref rid="fn1" ref-type="fn">†</xref> The nano-blocky morphology can be seen in Fig. S1(e).<xref rid="fn1" ref-type="fn">†</xref> Meantime, the high-resolution transmission electron microscopic (HRTEM) images shown in Fig. S1(f)<xref rid="fn1" ref-type="fn">†</xref> detect interplanar crystal spacings of 0.399, 0.352, and 0.275 nm, corresponding to the (111), (210), and (200) planes of the BaCrO<sub>4</sub> crystal respectively, which confirms the XRD pattern above. The diffraction rings observed in the SAED image correspond to the (111), (210), and (200) planes of BaCrO<sub>4</sub> (Fig. S1(g)<xref rid="fn1" ref-type="fn">†</xref>). Further, the EDS test of BaCrO<sub>4</sub> indicates the uniform distribution of Ba, Cr and O (Fig. S1(h–k)),<xref rid="fn1" ref-type="fn">†</xref> and the elemental composition is shown in Fig. S2.<xref rid="fn1" ref-type="fn">†</xref></p></sec><sec><label>5.2</label><title>Hydrogen storage property of MgH<sub>2</sub>–BaCrO<sub>4</sub></title><p>MgH<sub>2</sub> with different contents of BaCrO<sub>4</sub> samples was fabricated to investigate the catalytic action of BaCrO<sub>4</sub> on MgH<sub>2</sub>. The TPD test shown in <xref rid="fig1" ref-type="fig">Fig. 1(a and b)</xref> reveals the occurrence of the hydrogenation desorption process for the four groups of MgH<sub>2</sub>-<italic toggle="yes">x</italic> wt% BaCrO<sub>4</sub> (<italic toggle="yes">x</italic> = 5, 10, and 15) samples at 390, 310, 280, and 275 °C, which have total hydrogen contents of 6.80, 6.77, 6.32 and 5.74 wt%. The onset dehydrogenation temperature and the maximum dehydrogenation amount continue to decrease with the increase in BaCrO<sub>4</sub> nanocatalyst. It is obvious that the excellent <italic toggle="yes">T</italic><sub>onset</sub> and higher hydrogen storage capacity are taken into account for the MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> sample. The <italic toggle="yes">T</italic><sub>onset</sub> value of MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> is 110 °C lower than that of milled MgH<sub>2</sub>. In comparison to milled MgH<sub>2</sub> (6.80 wt%), the hydrogen storage content of the MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> sample is 6.32 wt%, which is attenuated to some extent, but it still meets the practical application standard. The lower <italic toggle="yes">T</italic><sub>onset</sub> value of MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> remarkably exceeds those of other catalyst-MgH<sub>2</sub> systems, which are reported in <xref rid="fig1" ref-type="fig">Fig. 1(c)</xref>.<sup><xref rid="cit44" ref-type="bibr">44–51</xref></sup></p><fig position="float" id="fig1" orientation="portrait"><label>Fig. 1</label><caption><title>(a) TPD curves and (b) several performance factors of milled MgH<sub>2</sub> and MgH<sub>2</sub>-<italic toggle="yes">x</italic> wt% (<italic toggle="yes">x</italic> = 5, 10, and 15) BaCrO<sub>4</sub> systems. (c) Comparison of the onset desorption temperature of MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> with other catalyst-MgH<sub>2</sub> systems.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f1.jpg"><?image-name d4ra03460k-f1.jpg?><?image-size 122603?><?image-md5 423ba6645ed4572f5119feeb5196edf7?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2835?><?image-original-width 3271?><?image-scaled-height 629?><?image-scaled-width 726?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/423ba6645ed4/d4ra03460k-f1.jpg?><?thumb-name d4ra03460k-f1.gif?><?thumb-size 13867?><?thumb-md5 9729ef3b7f7f73f31f7e8bb3231abc72?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 87?><?thumb-scaled-width 100?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/9729ef3b7f7f/d4ra03460k-f1.gif?></graphic></fig><p>Based on the above-mentioned conclusions, we selected 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> for an in-depth study. The hydrogenation recharge and discharge kinetic tests were carried out at different temperatures. <xref rid="fig2" ref-type="fig">Fig. 2(a)</xref> depicts that milled MgH<sub>2</sub> absorbs 1.22, 3.15, 5.38 and 6.35 wt% H<sub>2</sub> at 250, 275, 300 and 350 °C within 60 min, respectively. <xref rid="fig2" ref-type="fig">Fig. 2(c)</xref> presents the kinetics of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. It is proposed that a complete hydrogen uptake of 5.78 wt% H<sub>2</sub> is achieved within 10 min at 300 °C. Additionally, 3.09 and 4.30 wt% of H<sub>2</sub> are absorbed from 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> at 250 and 275 °C within 60 min. The considerable hydrogen storage performance is in sharp contrast to milled MgH<sub>2</sub>, which indicates that the BaCrO<sub>4</sub> nanocatalyst exhibits excellent catalytic effects at low temperatures.</p><fig position="float" id="fig2" orientation="portrait"><label>Fig. 2</label><caption><title>(a) Hydrogen release curves of milled MgH<sub>2</sub> and (c) 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. (b) Hydrogen uptake curves of milled MgH<sub>2</sub> and (d) 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. (e) De/hydrogenation cycle curves and (f) decay curves of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f2.jpg"><?image-name d4ra03460k-f2.jpg?><?image-size 207840?><?image-md5 65c93ba24290f35aa1abd992284e1633?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 4961?><?image-original-width 3852?><?image-scaled-height 992?><?image-scaled-width 770?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/65c93ba24290/d4ra03460k-f2.jpg?><?thumb-name d4ra03460k-f2.gif?><?thumb-size 16654?><?thumb-md5 358d861a8fdf1cd1a3a758dd1006b4cb?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 129?><?thumb-scaled-width 100?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/358d861a8fdf/d4ra03460k-f2.gif?></graphic></fig><p>To understand the kinetics of the dehydrogenation process, <xref rid="fig2" ref-type="fig">Fig. 2(b and d)</xref> illustrate the hydrogen discharge curves of MgH<sub>2</sub> and 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. The desorption content of milled MgH<sub>2</sub> is only 0.11 wt% in 60 min at 300 °C. While 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> could desorb 4.50 wt% H<sub>2</sub> under the same operating conditions, and the rate of dehydrogenation is remarkably faster than that of milled MgH<sub>2</sub>. Meantime, 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> achieves complete dehydrogenation capacities of 5.03 wt% and 5.53 wt% within 40 min at 325 and 350 °C. In contrast, only 3.76 wt% H<sub>2</sub> and 4.38 wt% H<sub>2</sub> are released within 40 min at 350 and 375 °C for milled MgH<sub>2</sub>. To sum up, it is obviously observed that after the incorporation of 10 wt% BaCrO<sub>4</sub> nanocatalyst, the hydrogen recharge and discharge kinetic performances of MgH<sub>2</sub> has been strikingly promoted.</p><p>Moreover, the long-term stable cycle dynamic capacity is an important parameter that inhibits the application of hydrogen storage materials. Therefore, the ten-cycle performance was studied, as shown in <xref rid="fig2" ref-type="fig">Fig. 2(e and f)</xref>. The 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> sample has a hydrogen storage content of 6.47 wt% and desorption content of 5.66 wt% in the first cycle, during the second to tenth cycle, the amounts of hydrogenation and dehydrogenation is maintained at approximately 5.95 wt% and 5.2 wt%, and the volume retention rate is as high as 95%, which exhibits excellent cycling dynamic performances. Meanwhile, the SEM morphology and particle size distribution shown in Fig. S3(a)<xref rid="fn1" ref-type="fn">†</xref> manifest that the average size decreases from 225 ± 17.68 nm of BaCrO<sub>4</sub> to 125 ± 6.23 nm after ball milling treatment, which has an excellent nano-refinement effect. Additionally, as shown in Fig. S3(b),<xref rid="fn1" ref-type="fn">†</xref> with an average size of 175 ± 8.52 nm, 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> does not show obvious agglomeration after 10 cycles. This fine particle size provides a lot of diffusion channels and reaction sites for H<sub>2</sub> recharge and H discharge processes, which contribute to ameliorate the hydrogen storage property and achieve ideal cycling stability.</p><p>
+<xref rid="fig3" ref-type="fig">Fig. 3(a and c)</xref> show the DSC curves of milled MgH<sub>2</sub> and 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> to further study the dehydrogenation kinetic property. The peak hydrogen desorption temperatures of milled MgH<sub>2</sub> at heating rates of 5, 8, 10 and 12 °C min<sup>−1</sup> are 390, 394, 399 and 410 °C. While the peak hydrogen desorption temperatures of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> are 343, 355, 360 and 368 °C at the same rates. It is proposed that the peak hydrogenation desorption temperature increases with the increase in heating rate. Furthermore, it is obvious that the peak temperature decreases after the introduction of the BaCrO<sub>4</sub> nanocatalyst. This ameliorative capacity is related to the <italic toggle="yes">E</italic><sub>a</sub> value of MgH<sub>2</sub>. Combined with the heating rate peak temperature, we used the Kissinger equation to calculate the dehydrogenation <italic toggle="yes">E</italic><sub>a</sub> value of the MgH<sub>2</sub>–BaCrO<sub>4</sub> compound system and MgH<sub>2</sub> to explore the kinetics in depth. The detailed equation is expressed as follows:<sup><xref rid="cit52" ref-type="bibr">52</xref></sup><disp-formula id="eqn1"><label>1</label>ln(<italic toggle="yes">β</italic>/<italic toggle="yes">T</italic><sub>p</sub><sup>2</sup>) = −<italic toggle="yes">E</italic><sub>a</sub>/<italic toggle="yes">RT</italic><sub>p</sub> + <italic toggle="yes">A</italic></disp-formula>where <italic toggle="yes">β</italic> represents the heating rate, <italic toggle="yes">T</italic><sub>p</sub> represents the peak hydrogen desorption temperature, <italic toggle="yes">E</italic><sub>a</sub> represents the activation energy barrier, <italic toggle="yes">R</italic> represents the gas constant and <italic toggle="yes">A</italic> represents the linear constant. <xref rid="fig3" ref-type="fig">Fig. 3(b and d)</xref> illustrate the <italic toggle="yes">E</italic><sub>a</sub> value of milled MgH<sub>2</sub> calculated to be 156.55 kJ mol<sup>−1</sup>, while that of the MgH<sub>2</sub>–BaCrO<sub>4</sub> system is only 106.75 kJ mol<sup>−1</sup>. It is suggested that the catalyst of BaCrO<sub>4</sub> realizes a reduction in dehydrogenation <italic toggle="yes">E</italic><sub>a</sub> and improves the dynamics of MgH<sub>2</sub>. Notably, 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> exhibits a lower hydrogenation desorption activation energy than that of MgH<sub>2</sub> added with other catalysts, as shown in <xref rid="tab1" ref-type="table">Table 1</xref>.</p><fig position="float" id="fig3" orientation="portrait"><label>Fig. 3</label><caption><title>(a) DSC profiles of milled MgH<sub>2</sub> and (c) 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. (b) Kissinger plots of milled MgH<sub>2</sub> and (d) 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f3.jpg"><?image-name d4ra03460k-f3.jpg?><?image-size 119025?><?image-md5 3cba9cc0c1e63e87a2fddae175240242?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 3163?><?image-original-width 4063?><?image-scaled-height 575?><?image-scaled-width 738?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/3cba9cc0c1e6/d4ra03460k-f3.jpg?><?thumb-name d4ra03460k-f3.gif?><?thumb-size 11567?><?thumb-md5 e533fd3984e7ca51e781bf409c866456?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 79?><?thumb-scaled-width 102?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/e533fd3984e7/d4ra03460k-f3.gif?></graphic></fig><table-wrap position="float" id="tab1" orientation="portrait"><caption><title>Hydrogen desorption activation energies of MgH<sub>2</sub>/Mg compound systems reported in recent years</title></caption><table frame="hsides" rules="groups"><colgroup span="1"><col span="1"/><col span="1"/><col span="1"/></colgroup><thead><tr><th rowspan="1" colspan="1">Compound</th><th rowspan="1" colspan="1">
+<italic toggle="yes">E</italic>
+<sub>a</sub> (kJ mol<sup>−1</sup>)</th><th rowspan="1" colspan="1">Ref.</th></tr></thead><tbody><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–LaFeO<sub>3</sub></td><td align="char" char="." rowspan="1" colspan="1">107.00</td><td rowspan="1" colspan="1">
+<xref rid="cit44" ref-type="bibr">44</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–BaFe<sub>12</sub>O<sub>16</sub></td><td align="char" char="." rowspan="1" colspan="1">115.00</td><td rowspan="1" colspan="1">
+<xref rid="cit41" ref-type="bibr">41</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–MnFe<sub>2</sub>O<sub>4</sub></td><td align="char" char="." rowspan="1" colspan="1">108.40</td><td rowspan="1" colspan="1">
+<xref rid="cit53" ref-type="bibr">53</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–K<sub>2</sub>Ti<sub>8</sub>O<sub>17</sub></td><td align="char" char="." rowspan="1" colspan="1">116.00</td><td rowspan="1" colspan="1">
+<xref rid="cit54" ref-type="bibr">54</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–Sc<sub>2</sub>TiO<sub>3</sub></td><td align="char" char="." rowspan="1" colspan="1">109.00</td><td rowspan="1" colspan="1">
+<xref rid="cit55" ref-type="bibr">55</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–MoO<sub>3</sub></td><td align="char" char="." rowspan="1" colspan="1">114.70</td><td rowspan="1" colspan="1">
+<xref rid="cit56" ref-type="bibr">56</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–Na<sub>3</sub>AlF<sub>6</sub></td><td align="char" char="." rowspan="1" colspan="1">129.00</td><td rowspan="1" colspan="1">
+<xref rid="cit57" ref-type="bibr">57</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–Zn<sub>2</sub>TiO<sub>4</sub></td><td align="char" char="." rowspan="1" colspan="1">105.50</td><td rowspan="1" colspan="1">
+<xref rid="cit58" ref-type="bibr">58</xref>
+</td></tr><tr><td rowspan="1" colspan="1">MgH<sub>2</sub>–BaCrO<sub>4</sub></td><td align="char" char="." rowspan="1" colspan="1">106.75</td><td rowspan="1" colspan="1">This work</td></tr></tbody></table></table-wrap></sec><sec><label>5.3</label><title>Rate-controlling step kinetic model of dehydrogenation</title><p>Aiming to further analyze the kinetic behavior of hydrogen desorption, we employed the approach proposed by Sharp and Jones to explore the possible models of rate-controlling step kinetics.<sup><xref rid="cit59" ref-type="bibr">59,60</xref></sup><xref rid="tab2" ref-type="table">Table 2</xref> presents the specific description of some common kinetic models, which include diffusion control, geometric contraction, nucleation at growth and first-order reaction model. The specific kinetic expression is as follows:<disp-formula id="eqn2"><label>2</label><italic toggle="yes">d</italic><sub>a</sub>/<italic toggle="yes">d</italic><sub>t</sub> = <italic toggle="yes">kf</italic>(<italic toggle="yes">α</italic>)</disp-formula>where <italic toggle="yes">k</italic> is a reaction rate constant, <italic toggle="yes">α</italic> represents the reaction extent and <italic toggle="yes">f</italic>(<italic toggle="yes">α</italic>) is a function depending on the reaction mechanism. <italic toggle="yes">f</italic>(<italic toggle="yes">α</italic>) could be represented using the following formula:<disp-formula id="eqn3"><label>3</label><italic toggle="yes">f</italic>(<italic toggle="yes">α</italic>) = <italic toggle="yes">A</italic>(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</disp-formula>where <italic toggle="yes">A</italic> represents the constant in connection with the kinetic model and <italic toggle="yes">t</italic><sub>0.5</sub> represents the time when <italic toggle="yes">α</italic> achieves 0.5. The model with the fitting slope closest to 1 is the most suited kinetic model. <xref rid="fig4" ref-type="fig">Fig. 4(a)</xref> displays the hydrogen desorption curve at 350 °C for various kinetic models. It is proposed that the slope of the R3 model (0.937) is closest to 1.0. Moreover, <xref rid="fig4" ref-type="fig">Fig. 4(b)</xref> displays <italic toggle="yes">g</italic>(<italic toggle="yes">α</italic>) at different temperatures. It is worth noting that the linear fitting constants are 0.9716, 0.9930, which demonstrates that the R3 model is the most suited kinetic model for the 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> system, which reveals that the hydrogen desorption of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> is controlled by the three-dimension phase boundary kinetic model. Specifically, the kinetics of hydrogen emission is controlled by the migration of the gas–solid interface towards the center of the nanoparticles.</p><table-wrap position="float" id="tab2" orientation="portrait"><caption><title>Common theoretical kinetic models for desorption curve analysis</title></caption><table frame="hsides" rules="groups"><colgroup span="1"><col span="1"/><col span="1"/><col span="1"/><col span="1"/></colgroup><thead><tr><th rowspan="1" colspan="1">Symbol</th><th rowspan="1" colspan="1">
+<italic toggle="yes">g</italic>(<italic toggle="yes">α</italic>)</th><th rowspan="1" colspan="1">Mechanisms</th><th rowspan="1" colspan="1">Sharp's equation</th></tr></thead><tbody><tr><td rowspan="1" colspan="1">D1</td><td rowspan="1" colspan="1">
+<italic toggle="yes">α</italic>
+<sup>2</sup>
+</td><td rowspan="1" colspan="1">One-dimensional diffusion</td><td rowspan="1" colspan="1">0.2500(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">D2</td><td rowspan="1" colspan="1">
+<italic toggle="yes">α</italic> + (1 − <italic toggle="yes">α</italic>)ln(1 − <italic toggle="yes">α</italic>)</td><td rowspan="1" colspan="1">Two-dimensional diffusion</td><td rowspan="1" colspan="1">0.1534(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">D3</td><td rowspan="1" colspan="1">[1 − (1 − <italic toggle="yes">α</italic>)<sup>1/3</sup>]<sup>2</sup></td><td rowspan="1" colspan="1">Three-dimensional diffusion (Jander equation)</td><td rowspan="1" colspan="1">0.0426(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">D4</td><td rowspan="1" colspan="1">1 − (2<italic toggle="yes">α</italic>/3) − (1 − <italic toggle="yes">α</italic>)<sup>2/3</sup></td><td rowspan="1" colspan="1">Three-dimensional diffusion (Ginstling-Brounstein equation)</td><td rowspan="1" colspan="1">0.0367(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">F1</td><td rowspan="1" colspan="1">−ln(1 − <italic toggle="yes">α</italic>)</td><td rowspan="1" colspan="1">First-order reaction</td><td rowspan="1" colspan="1">−0.6931(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">R2</td><td rowspan="1" colspan="1">1 − (1 − <italic toggle="yes">α</italic>)<sup>1/2</sup></td><td rowspan="1" colspan="1">Two-dimension phase boundary (contracting area)</td><td rowspan="1" colspan="1">0.2929(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">R3</td><td rowspan="1" colspan="1">1 − (1 − <italic toggle="yes">α</italic>)<sup>1/3</sup></td><td rowspan="1" colspan="1">Three-dimension phase boundary (contracting volume)</td><td rowspan="1" colspan="1">0.2063(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">A2</td><td rowspan="1" colspan="1">[−ln(1 − <italic toggle="yes">α</italic>)]<sup>1/2</sup></td><td rowspan="1" colspan="1">Avrami <xref rid="eqn1" ref-type="disp-formula">eqn (1)</xref></td><td rowspan="1" colspan="1">0.8326(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr><tr><td rowspan="1" colspan="1">A3</td><td rowspan="1" colspan="1">[−ln(1 − <italic toggle="yes">α</italic>)]<sup>1/3</sup></td><td rowspan="1" colspan="1">Avrami <xref rid="eqn2" ref-type="disp-formula">eqn (2)</xref></td><td rowspan="1" colspan="1">0.8850(<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)</td></tr></tbody></table></table-wrap><fig position="float" id="fig4" orientation="portrait"><label>Fig. 4</label><caption><title>(a) (<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)<sub>theo</sub><italic toggle="yes">vs.</italic> (<italic toggle="yes">t</italic>/<italic toggle="yes">t</italic><sub>0.5</sub>)<sub>exp</sub> of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> at 350 °C through fitting different kinetic models. (b) Time dependence of kinetic modeling equations <italic toggle="yes">g</italic>(<italic toggle="yes">α</italic>) with 0.1 &lt; <italic toggle="yes">α</italic> &lt; 0.9 for 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> at different temperatures.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f4.jpg"><?image-name d4ra03460k-f4.jpg?><?image-size 79984?><?image-md5 183ea9ec23be582dced4c12c7276c43d?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1628?><?image-original-width 4063?><?image-scaled-height 296?><?image-scaled-width 738?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/183ea9ec23be/d4ra03460k-f4.jpg?><?thumb-name d4ra03460k-f4.gif?><?thumb-size 11088?><?thumb-md5 75f5d19cd02de7c5e59d15a63f58c998?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 199?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/75f5d19cd02d/d4ra03460k-f4.gif?></graphic></fig></sec><sec><label>5.4</label><title>Catalytic mechanism of BaCrO<sub>4</sub> on MgH<sub>2</sub></title><p>To further understand the catalytic mechanism in connection with the hydrogen storage capacity of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>, XRD and TEM were employed aiming to clarify the phase evolution of the MgH<sub>2</sub>–BaCrO<sub>4</sub> system after ball milling, dehydrogenating and rehydrogenating processes. The XRD patterns are shown in <xref rid="fig5" ref-type="fig">Fig. 5</xref>. Owing to the grain refinement during ball milling, the crystallinity and diffraction peak intensity of MgH<sub>2</sub>–BaCrO<sub>4</sub> are attenuated to some extent.<sup><xref rid="cit61" ref-type="bibr">61</xref></sup> After milling, BaCrO<sub>4</sub> could still be detected and there is no MgO generation during this possess, which reflects that there is no obvious oxidation during the preparation process. For the system after dehydrogenation, MgH<sub>2</sub> is fully transformed into Mg, and BaCrO<sub>4</sub> still remains without any changes. The diffraction peaks of MgH<sub>2</sub> are found again in the hydrogen release process, which reflects the reversible phase conversion process among the Mg and MgH<sub>2</sub> phases.</p><fig position="float" id="fig5" orientation="portrait"><label>Fig. 5</label><caption><title>XRD patterns of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> at different processes.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f5.jpg"><?image-name d4ra03460k-f5.jpg?><?image-size 131368?><?image-md5 4570d64538852a57bbfe0271d67830fe?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1574?><?image-original-width 1865?><?image-scaled-height 630?><?image-scaled-width 746?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/4570d6453885/d4ra03460k-f5.jpg?><?thumb-name d4ra03460k-f5.gif?><?thumb-size 12303?><?thumb-md5 70145e3c9ea41fecded9ed2d078fdb59?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 84?><?thumb-scaled-width 100?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/70145e3c9ea4/d4ra03460k-f5.gif?></graphic></fig><p>Afterward, the HRTEM images and SAED patterns were acquired to verify the phase and structural evolution, The (203) crystal plane of BaCrO<sub>4</sub> and the (211) and (101) crystal planes of MgH<sub>2</sub> after milling state with interplanar crystal spacings of 0.216, 0.168 and 0.253 nm are shown in <xref rid="fig6" ref-type="fig">Fig. 6(a–c)</xref>, which indicate that the BaCrO<sub>4</sub> phase exists stably during the milling possess. As shown in <xref rid="fig6" ref-type="fig">Fig. 6(d–f)</xref>, three groups with interplanar crystal spacings of 0.211 nm, 0.163 nm and 0.260 nm were detected, corresponding to the (410), Mg (110) and Mg (002) crystal planes of BaCrO<sub>4</sub>, respectively. Meanwhile, the HRTEM and SAED characterizations of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> after rehydrogenation are exhibited in <xref rid="fig6" ref-type="fig">Fig. 6(g–i)</xref>. It is proposed that Mg is transformed into MgH<sub>2</sub>. Interplanar crystal spacings of 0.213, 0.169, and 0.249 nm correspond to the (203) plane of BaCrO<sub>4</sub>, and the (101) and (211) planes of MgH<sub>2</sub>, respectively. Moreover, the uniform Cr Ba and O elements distributed on the Mg/MgH<sub>2</sub> system can be detected obviously through the EDS mapping test, as shown in <xref rid="fig7" ref-type="fig">Fig. 7(a–c)</xref>, which exerts a positive effect on the hydrogen storage capacity of MgH<sub>2</sub>.</p><fig position="float" id="fig6" orientation="portrait"><label>Fig. 6</label><caption><title>TEM, HRTEM and SAED patterns of the 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> sample (a–c) after milling, (d–f) after dehydrogenation and (g–i) after rehydrogenation.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f6.jpg"><?image-name d4ra03460k-f6.jpg?><?image-size 226164?><?image-md5 1da691d79a715e2b1176a994aab76f98?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2949?><?image-original-width 3307?><?image-scaled-height 655?><?image-scaled-width 734?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/1da691d79a71/d4ra03460k-f6.jpg?><?thumb-name d4ra03460k-f6.gif?><?thumb-size 16063?><?thumb-md5 5c6b0d49c1b5968c77f6bed0ba2c02df?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 89?><?thumb-scaled-width 100?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/5c6b0d49c1b5/d4ra03460k-f6.gif?></graphic></fig><fig position="float" id="fig7" orientation="portrait"><label>Fig. 7</label><caption><title>EDS images of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> (a) at the milling state, (b) at the dehydrogenation state and (c) after rehydrogenation.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f7.jpg"><?image-name d4ra03460k-f7.jpg?><?image-size 165839?><?image-md5 a378f223c3612707071650b04c3c9e3d?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2334?><?image-original-width 3520?><?image-scaled-height 519?><?image-scaled-width 782?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/a378f223c361/d4ra03460k-f7.jpg?><?thumb-name d4ra03460k-f7.gif?><?thumb-size 14341?><?thumb-md5 c065e63a895212967f2bd8b1852e0911?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 120?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/c065e63a8952/d4ra03460k-f7.gif?></graphic></fig><p>Aiming to thoroughly investigate the action mechanism of BaCrO<sub>4</sub> on the Mg–H bonds, theoretical calculations were performed using DFT (density functional theory). Based on the HRTEM and XRD characterization, we selected the MgH<sub>2</sub> (101) and BaCrO<sub>4</sub> (203) crystal planes to successfully construct the MgH<sub>2</sub>/BaCrO<sub>4</sub> heterojunction optimization model, and the results are shown in <xref rid="fig8" ref-type="fig">Fig. 8</xref>. The bond length analysis presented in Table S1<xref rid="fn1" ref-type="fn">†</xref> illustrates that with the addition of BaCrO<sub>4</sub>, the average Mg–H bond length is significantly extended from 1.935 Å to 2.904 Å, which reflects that the BaCrO<sub>4</sub> catalyst is favorable for weakening the Mg–H bond strength to ameliorate hydrogen release. To reveal the nature of the Mg–H bond interaction in the 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> optimized model, the density-of-states maps of MgH<sub>2</sub> and 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> were calculated.</p><fig position="float" id="fig8" orientation="portrait"><label>Fig. 8</label><caption><title>Optimized structure of the 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> heterojunction (green, blue, red, white and orange represent Ba, Cr, O, H and Mg atoms, respectively).</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f8.jpg"><?image-name d4ra03460k-f8.jpg?><?image-size 117986?><?image-md5 8f85215ebb41535f63241a92b7ab40d4?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1045?><?image-original-width 2622?><?image-scaled-height 299?><?image-scaled-width 749?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/8f85215ebb41/d4ra03460k-f8.jpg?><?thumb-name d4ra03460k-f8.gif?><?thumb-size 16898?><?thumb-md5 1fcac8da9c4a871954f91ae9624b8c5c?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 200?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/1fcac8da9c4a/d4ra03460k-f8.gif?></graphic></fig><p>As shown in <xref rid="fig9" ref-type="fig">Fig. 9(a and b)</xref>, the binding energy at 0 is set to the Fermi level, as can be seen from the DOS diagram of MgH<sub>2</sub>, and the conduction band is mainly composed of the s orbital of H, and the valence charge is mainly composed of the s and p orbitals of Mg. There is a certain hybridization between the s, p and H s orbitals of Mg at the valence band, indicating that MgH<sub>2</sub> is mainly composed of ionic bonds with a small amount of covalent bonds, which leads to the high thermodynamic property and undesirable dehydrogenation capacity. With the addition of BaCrO<sub>4</sub>, the electrons of the MgH<sub>2</sub>-10 wt% BaCrO<sub>4</sub> system are mainly contributed by Ba, Cr, and O orbitals. The hybridization between Mg and H in the valence band is weakened, and the band gap decreased from MgH<sub>2</sub> (2.78 eV) to 2.16 eV. This results in a decrease in the stability of the MgH<sub>2</sub> system and an increase in the electron mobility, thereby improving the dehydrogenation performance of MgH<sub>2</sub>. <xref rid="fig10" ref-type="fig">Fig. 10</xref> gives the differential charge density maps of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. It is obvious that the charges around Mg are lacking; in addition to being transferred to H, O will also attract part of the valence charges of Mg, weakening the strong interaction of Mg–H bonds and promoting the fracture of Mg–H bonds and the release of H.</p><fig position="float" id="fig9" orientation="portrait"><label>Fig. 9</label><caption><title>DOS graphs of (a) MgH<sub>2</sub> and (b) 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f9.jpg"><?image-name d4ra03460k-f9.jpg?><?image-size 146523?><?image-md5 faa539f6c147bc4c682265a3b6129f1a?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2359?><?image-original-width 3425?><?image-scaled-height 524?><?image-scaled-width 761?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/faa539f6c147/d4ra03460k-f9.jpg?><?thumb-name d4ra03460k-f9.gif?><?thumb-size 13675?><?thumb-md5 5f5b9f92d35101d7da3f97df9d65b65e?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 116?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/5f5b9f92d351/d4ra03460k-f9.gif?></graphic></fig><fig position="float" id="fig10" orientation="portrait"><label>Fig. 10</label><caption><title>Differential charge density maps of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> (blue represents charge stacking and yellow represents charge lacking).</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f10.jpg"><?image-name d4ra03460k-f10.jpg?><?image-size 129395?><?image-md5 fbd496ccde9c438677328dc7159f8056?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1216?><?image-original-width 2622?><?image-scaled-height 347?><?image-scaled-width 749?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/fbd496ccde9c/d4ra03460k-f10.jpg?><?thumb-name d4ra03460k-f10.gif?><?thumb-size 20379?><?thumb-md5 8aa40978757d5078cc77e9c20426a6cf?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 172?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/8aa40978757d/d4ra03460k-f10.gif?></graphic></fig><p>According to the above-mentioned calculation analyses, BaCrO<sub>4</sub> ameliorates the thermodynamic capacity <italic toggle="yes">via</italic> weakening the Mg–H bond. However, the kinetics of hydrogen emission in MgH<sub>2</sub> could also affect the hydrogen desorption performance. Specifically, H atoms need to overcome a certain hydrogen release energy barrier from the bond cleavage of Mg–H to the recombination of H molecules. As shown in <xref rid="fig11" ref-type="fig">Fig. 11(a)</xref>, the transition state (TS) of MgH<sub>2</sub> has a higher dehydrogenation energy barrier of 2.27 eV, and the Mg–H bond energy is still stronger. Interestingly, with the modification of BaCrO<sub>4</sub>, the dehydrogenation energy barrier of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> is decreased to 1.54 eV, indicating the significant improvement in the kinetics of hydrogen desorption. These results are consistent with the decreasing trend of activation energy calculated by DSC. The optimized models of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> in the initial state (IS), transition state (TS) and final state (FS) are shown in <xref rid="fig11" ref-type="fig">Fig. 11(b–d)</xref>.</p><fig position="float" id="fig11" orientation="portrait"><label>Fig. 11</label><caption><title>(a) Dehydrogenation barrier energy of MgH<sub>2</sub> and 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>. (b–d) IS, TS, FS states of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub>.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f11.jpg"><?image-name d4ra03460k-f11.jpg?><?image-size 86108?><?image-md5 b3e3a4b9fc17942f2a2df0a6e2c5af4a?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1421?><?image-original-width 2835?><?image-scaled-height 355?><?image-scaled-width 708?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/b3e3a4b9fc17/d4ra03460k-f11.jpg?><?thumb-name d4ra03460k-f11.gif?><?thumb-size 11000?><?thumb-md5 f988498933e00a8ee5ab97d26df944f3?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 159?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/f988498933e0/d4ra03460k-f11.gif?></graphic></fig><p>The specific catalytic mechanism of 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> is summarized in <xref rid="fig12" ref-type="fig">Fig. 12</xref>. The H atom preferentially diffuses on the BaCrO<sub>4</sub> nanocatalyst surface rather than the Mg/MgH<sub>2</sub> surface during hydrogen absorption and desorption periods, because BaCrO<sub>4</sub> could shorten the length of the Mg–H bond and reduce the band gap as well as the diffusion energy barrier or <italic toggle="yes">E</italic><sub>a</sub>, which is shown in the calculation or DSC test section above. The strong electron-withdrawing effect of O and the catalytic effect of Ba and Cr play an important role in improving the kinetic and thermodynamic properties of MgH<sub>2</sub>. Meantime, the BaCrO<sub>4</sub> nanocatalyst provides a number of sites for nucleation and channels for hydrogen diffusion to ameliorate the hydrogen storage capacity.</p><fig position="float" id="fig12" orientation="portrait"><label>Fig. 12</label><caption><title>Schematic catalytic mechanism of MgH<sub>2</sub> added with BaCrO<sub>4</sub>.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="d4ra03460k-f12.jpg"><?image-name d4ra03460k-f12.jpg?><?image-size 105560?><?image-md5 631859db79ac71714e298dc00bed385d?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1231?><?image-original-width 1937?><?image-scaled-height 492?><?image-scaled-width 774?><?image-cloudpmc-urn urn:cdn:blobs/efb2/11289713/631859db79ac/d4ra03460k-f12.jpg?><?thumb-name d4ra03460k-f12.gif?><?thumb-size 15129?><?thumb-md5 cc581e89507df038c44115691425171b?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 79?><?thumb-scaled-width 125?><?thumb-cloudpmc-urn urn:cdn:blobs/efb2/11289713/cc581e89507d/d4ra03460k-f12.gif?></graphic></fig><p>Additionally, after refinement of the high-energy ball mill technology, the BaCrO<sub>4</sub> nanocatalyst uniformly dispersed on the surface of MgH<sub>2</sub> efficiently prevents aggregation and crystal growth phenomenon, which results in excellent cycling property.</p></sec></sec><sec><label>6</label><title>Conclusions</title><p>In this work, we have successfully fabricated a BaCrO<sub>4</sub> nanocatalyst <italic toggle="yes">via</italic> wet chemical technology and introduced it into MgH<sub>2</sub> to study the catalytic effect in detail. The <italic toggle="yes">T</italic><sub>onset</sub> value of MgH<sub>2</sub> modified with 10 wt% BaCrO<sub>4</sub> was decreased to 280 °C, which is in sharp contrast to milled MgH<sub>2</sub> (390 °C). The 10 wt% BaCrO<sub>4</sub>-modified MgH<sub>2</sub> sample could fully absorb 5.78 wt% H<sub>2</sub> within 10 min at 300 °C. and release 4.25 wt% H<sub>2</sub> in 10 min at 325 °C, which is higher than that of undoped MgH<sub>2</sub> that adsorbed 1.25 wt% H<sub>2</sub> and desorbed 0.15 wt% H<sub>2</sub> during the same period. The desorption <italic toggle="yes">E</italic><sub>a</sub> value decreased from 156.55 kJ mol<sup>−1</sup> to 106.75 kJ mol<sup>−1</sup>. Notably, the results of the cycle dynamic test indicated that BaCrO<sub>4</sub>-modified MgH<sub>2</sub> could store 5.95 wt% H<sub>2</sub> after 10 cycles, with a 95% volume retention rate. The DFT calculations illustrated that BaCrO<sub>4</sub> could shorten the length of Mg–H bonds and reduce the band gap from 2.78 eV (milled MgH<sub>2</sub>) to 2.16 eV, thereby improving the thermodynamic property. Impressively, the dehydrogenation energy barrier decreased from 2.27 eV (milled MgH<sub>2</sub>) to 1.54 eV owing to the BaCrO<sub>4</sub> nanocatalyst. In conclusion, the above-mentioned results reveal that BaCrO<sub>4</sub> is an ideal modified material to ameliorate the kinetics and thermodynamics of MgH<sub>2</sub>, which could contribute to the strong electron-withdrawing effect of oxygen atoms and the catalytic effect of Ba and Cr elements.</p></sec><sec sec-type="data-availability"><title>Data availability</title><p>Data will be made available on request.</p></sec><sec sec-type="COI-statement"><title>Conflicts of interest</title><p>The authors declare that they have no conflict of interest.</p></sec><sec sec-type="supplementary-material"><title>Supplementary Material</title><supplementary-material id="RA-014-D4RA03460K-s001" position="float" content-type="local-data" orientation="portrait"><label>RA-014-D4RA03460K-s001</label><media xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="RA-014-D4RA03460K-s001.pdf" id="d67e1901" position="anchor" orientation="portrait"><?suppdata-name RA-014-D4RA03460K-s001.pdf?><?suppdata-size 764785?><?suppdata-md5 f5af173bd6008d2beb17d198d65a9738?><?suppdata-image-server-status NEVER_LOAD?><?suppdata-mime-type application?><?suppdata-mime-sub-type pdf?><?suppdata-cloudpmc-urn urn:app:efb2/11289713/f5af173bd600/RA-014-D4RA03460K-s001.pdf?></media></supplementary-material></sec></body><back><ack><p>This work was financially supported by Applied Basic Research Project of Qinghai province (2022-ZJ-769).</p></ack><ref-list><title>References</title><ref id="cit1"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Tarhan</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cil</surname><given-names>M. A.</given-names></name>
+</person-group><source>J. Energy Storage</source><year>2021</year><volume>40</volume><fpage>102676</fpage><lpage>102686</lpage></element-citation></ref><ref id="cit2"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>Z.-Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>Y.-J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>C.-C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wei</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhao</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zeng</surname><given-names>J.-L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cao</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zou</surname><given-names>Y.-J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chu</surname><given-names>H.-L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xu</surname><given-names>F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>L.-X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pan</surname><given-names>H.-G.</given-names></name>
+</person-group><source>J. Mater. Sci. Technol.</source><year>2023</year><volume>141</volume><fpage>221</fpage><lpage>235</lpage></element-citation></ref><ref id="cit3"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Dutt</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Singh</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mahadeva</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sundramoorthy</surname><given-names>A. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gupta</surname><given-names>V.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><source>Diamond Relat. Mater.</source><year>2024</year><volume>141</volume><fpage>110554</fpage></element-citation></ref><ref id="cit4"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Thakur</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Singh</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dubey</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sundramoorthy</surname><given-names>A. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kumar</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><source>Emergent Mater.</source><year>2024</year><pub-id pub-id-type="doi">10.1007/s42247-024-00729-7</pub-id></element-citation></ref><ref id="cit5"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Murugan</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sundramoorthy</surname><given-names>A. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Nagarajan</surname><given-names>R. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Atchudan</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shanmugam</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ganapathy</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Alothman</surname><given-names>A. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ouladsmane</surname><given-names>M.</given-names></name>
+</person-group><source>J. Nanomater.</source><year>2022</year><volume>2022</volume><fpage>9866111</fpage><lpage>9866121</lpage></element-citation></ref><ref id="cit6"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ishaq</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dincer</surname><given-names>I.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Crawford</surname><given-names>C.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2022</year><volume>47</volume><fpage>26238</fpage><lpage>26264</lpage></element-citation></ref><ref id="cit7"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Somo</surname><given-names>T. R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mabokela</surname><given-names>T. E.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Teffu</surname><given-names>D. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sekgobela</surname><given-names>T. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hato</surname><given-names>M. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Modibane</surname><given-names>K. D.</given-names></name>
+</person-group><source>Chem. Pap.</source><year>2021</year><volume>75</volume><fpage>2237</fpage><lpage>2251</lpage></element-citation></ref><ref id="cit8"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Taie</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Villaverde</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Speaks Morris</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lavrich</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chittum</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>White</surname><given-names>K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hagen</surname><given-names>C.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2021</year><volume>46</volume><fpage>3365</fpage><lpage>3378</lpage></element-citation></ref><ref id="cit9"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Brey</surname><given-names>J. J.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2021</year><volume>46</volume><fpage>17447</fpage><lpage>17457</lpage></element-citation></ref><ref id="cit10"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Kumar Mishra</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jin Choi</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Verma</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hun Jin</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bhardwaj</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Singh</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Seog Gwag</surname><given-names>J.</given-names></name>
+</person-group><source>Mater. Sci. Eng., B</source><year>2024</year><volume>303</volume><fpage>117292</fpage></element-citation></ref><ref id="cit11"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>J. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>J. C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Park</surname><given-names>K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kwon</surname><given-names>J. T.</given-names></name>
+</person-group><source>Case Stud. Therm. Eng.</source><year>2022</year><volume>37</volume><fpage>102143</fpage><lpage>102155</lpage></element-citation></ref><ref id="cit12"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Lamb</surname><given-names>K. E.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Webb</surname><given-names>C. J.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2022</year><volume>906</volume><fpage>164235</fpage><lpage>164245</lpage></element-citation></ref><ref id="cit13"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Jiang</surname><given-names>L.</given-names></name>
+</person-group><source>Engineering</source><year>2021</year><volume>7</volume><fpage>731</fpage><lpage>733</lpage></element-citation></ref><ref id="cit14"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhong</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>J. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>D. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fang</surname><given-names>F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Q. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ouyang</surname><given-names>L. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>M.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2016</year><volume>680</volume><fpage>419</fpage><lpage>426</lpage></element-citation></ref><ref id="cit15"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wei</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gao</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Qi</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ren</surname><given-names>H.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2020</year><volume>45</volume><fpage>33832</fpage><lpage>33845</lpage></element-citation></ref><ref id="cit16"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yang</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pan</surname><given-names>F.</given-names></name>
+</person-group><source>J. Magnesium Alloys</source><year>2021</year><volume>9</volume><fpage>1835</fpage><lpage>1836</lpage></element-citation></ref><ref id="cit17"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Luo</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Tan</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dong</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dang</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiang</surname><given-names>B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pan</surname><given-names>F.</given-names></name>
+</person-group><source>J. Magnesium Alloys</source><year>2021</year><volume>9</volume><fpage>1922</fpage><lpage>1941</lpage></element-citation></ref><ref id="cit18"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Patelli</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Migliori</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Morandi</surname><given-names>V.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pasquini</surname><given-names>L.</given-names></name>
+</person-group><source>Nano Energy</source><year>2020</year><volume>72</volume><fpage>104654</fpage><lpage>104664</lpage></element-citation></ref><ref id="cit19"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Duan</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Tian</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fu</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lv</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Su</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xue</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>Y.</given-names></name>
+</person-group><source>Renewable Energy</source><year>2022</year><volume>187</volume><fpage>417</fpage><lpage>427</lpage></element-citation></ref><ref id="cit20"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ren</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hu</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gao</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pan</surname><given-names>H.</given-names></name>
+</person-group><source>Energy Environ. Sci.</source><year>2021</year><volume>14</volume><fpage>2302</fpage><lpage>2313</lpage></element-citation></ref><ref id="cit21"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>Z. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yu</surname><given-names>H. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Song</surname><given-names>M. C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>F. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zheng</surname><given-names>J. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>Z. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>L. T.</given-names></name>
+</person-group><source>Rare Met.</source><year>2021</year><volume>40</volume><fpage>3195</fpage><lpage>3205</lpage></element-citation></ref><ref id="cit22"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Vajeeston</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ravindran</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fichtner</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fjellvåg</surname><given-names>H.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2012</year><volume>116</volume><fpage>18965</fpage><lpage>18972</lpage></element-citation></ref><ref id="cit23"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ma</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Panda</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Khan</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dong</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ding</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zou</surname><given-names>J.</given-names></name>
+</person-group><source>Sustainable Energy Fuels</source><year>2020</year><volume>4</volume><fpage>4694</fpage><lpage>4703</lpage></element-citation></ref><ref id="cit24"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ma</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Panda</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Khan</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ding</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zou</surname><given-names>J.</given-names></name>
+</person-group><source>Chem. Eng. J.</source><year>2021</year><volume>406</volume><fpage>126790</fpage><lpage>126800</lpage></element-citation></ref><ref id="cit25"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Singh</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shah</surname><given-names>S. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sharma</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gupta</surname><given-names>V.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sundramoorthy</surname><given-names>A. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kumar</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><source>J. Environ. Chem. Eng.</source><year>2024</year><volume>12</volume><fpage>113032</fpage></element-citation></ref><ref id="cit26"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yong</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wei</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hu</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhao</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Y.</given-names></name>
+</person-group><source>Renewable Energy</source><year>2020</year><volume>162</volume><fpage>2153</fpage><lpage>2165</lpage></element-citation></ref><ref id="cit27"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zou</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zeng</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ding</surname><given-names>W.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2016</year><volume>41</volume><fpage>14795</fpage><lpage>14806</lpage></element-citation></ref><ref id="cit28"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wei</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ge</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Qi</surname><given-names>Y.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2022</year><volume>47</volume><fpage>12653</fpage><lpage>12664</lpage></element-citation></ref><ref id="cit29"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Balu</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ganapathy</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Atchudan</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sundramoorthy</surname><given-names>A. K.</given-names></name>
+</person-group><source>RSC Adv.</source><year>2024</year><volume>14</volume><fpage>14392</fpage><lpage>14424</lpage><pub-id pub-id-type="pmid">38699688</pub-id><pub-id pub-id-type="doi" assigning-authority="pmc">10.1039/d4ra01307g</pub-id><pub-id pub-id-type="pmcid">PMC11064126</pub-id></element-citation></ref><ref id="cit30"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Kajiwara</surname><given-names>K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sugime</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Noda</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hanada</surname><given-names>N.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2022</year><volume>893</volume><fpage>162206</fpage><lpage>162213</lpage></element-citation></ref><ref id="cit31"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yao</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chou</surname><given-names>K.-C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lyu</surname><given-names>T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>Q.</given-names></name>
+</person-group><source>J. Magnesium Alloys</source><year>2020</year><volume>8</volume><fpage>461</fpage><lpage>471</lpage></element-citation></ref><ref id="cit32"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Antiqueira</surname><given-names>F. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Leiva</surname><given-names>D. R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zepon</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Cunha</surname><given-names>B. F. R. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Figueroa</surname><given-names>S. J. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Botta</surname><given-names>W. J.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2020</year><volume>45</volume><fpage>12408</fpage><lpage>12418</lpage></element-citation></ref><ref id="cit33"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Perera</surname><given-names>H. C. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gurunanthanan</surname><given-names>V.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Singh</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mantilaka</surname><given-names>M. M. M. G. P. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Das</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Arya</surname><given-names>S.</given-names></name>
+</person-group><source>J. Magnesium Alloys</source><year>2024</year><volume>12</volume><fpage>1709</fpage><lpage>1773</lpage></element-citation></ref><ref id="cit34"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Schulz</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huot</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liang</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Boily</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lalande</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Denis</surname><given-names>M. C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dodelet</surname><given-names>J. P.</given-names></name>
+</person-group><source>Mater. Sci. Eng., A</source><year>1999</year><volume>267</volume><fpage>240</fpage><lpage>245</lpage></element-citation></ref><ref id="cit35"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Varin</surname><given-names>R. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Czujko</surname><given-names>T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wronski</surname><given-names>Z.</given-names></name>
+</person-group><source>Nanotechnology</source><year>2006</year><volume>17</volume><fpage>3856</fpage><lpage>3865</lpage></element-citation></ref><ref id="cit36"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hou</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Guo</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xu</surname><given-names>G.</given-names></name>
+</person-group><source>ChemistrySelect</source><year>2021</year><volume>6</volume><fpage>8809</fpage><lpage>8829</lpage></element-citation></ref><ref id="cit37"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Pukazhselvan</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sandhya</surname><given-names>K. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ramasamy</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shaula</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fagg</surname><given-names>D. P.</given-names></name>
+</person-group><source>ChemPhysChem</source><year>2020</year><volume>21</volume><fpage>1195</fpage><lpage>1201</lpage><pub-id pub-id-type="pmid">32314857</pub-id><pub-id pub-id-type="doi" assigning-authority="pmc">10.1002/cphc.202000031</pub-id></element-citation></ref><ref id="cit38"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Rizo-Acosta</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cuevas</surname><given-names>F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Latroche</surname><given-names>M.</given-names></name>
+</person-group><source>J. Mater. Chem. A</source><year>2019</year><volume>7</volume><fpage>23064</fpage><lpage>23076</lpage></element-citation></ref><ref id="cit39"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>An</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zang</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shao</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y.</given-names></name>
+</person-group><source>Nano Energy</source><year>2021</year><volume>80</volume><fpage>105535</fpage><lpage>105545</lpage></element-citation></ref><ref id="cit40"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Kudiiarov</surname><given-names>V. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kurdyumov</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Elman</surname><given-names>R. R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Laptev</surname><given-names>R. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kruglyakov</surname><given-names>M. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ushakov</surname><given-names>I. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Tereshchenko</surname><given-names>A. V.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lider</surname><given-names>A. M.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2023</year><volume>966</volume><fpage>171534</fpage><lpage>171548</lpage></element-citation></ref><ref id="cit41"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sazelee</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Idris</surname><given-names>N. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Md Din</surname><given-names>M. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mustafa</surname><given-names>N. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ali</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Halim Yap</surname><given-names>F. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sulaiman</surname><given-names>N. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2018</year><volume>43</volume><fpage>20853</fpage><lpage>20860</lpage></element-citation></ref><ref id="cit42"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Adedeji Bolarin</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cao</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>He</surname><given-names>T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>P.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2021</year><volume>125</volume><fpage>19631</fpage><lpage>19641</lpage></element-citation></ref><ref id="cit43"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sazelee</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ali</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Din</surname><given-names>M. F. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2023</year><volume>48</volume><fpage>30844</fpage><lpage>30857</lpage></element-citation></ref><ref id="cit44"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sazelee</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Idris</surname><given-names>N. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Md Din</surname><given-names>M. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ali</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Results Phys.</source><year>2020</year><volume>16</volume><fpage>102844</fpage><lpage>102851</lpage></element-citation></ref><ref id="cit45"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhou</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wei</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wan</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dai</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>Y. a.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pan</surname><given-names>F.</given-names></name>
+</person-group><source>Inorg. Chem. Front.</source><year>2022</year><volume>9</volume><fpage>5495</fpage><lpage>5506</lpage></element-citation></ref><ref id="cit46"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Abdul Rahman</surname><given-names>M. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shamsudin</surname><given-names>M. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Klimkowicz</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Uematsu</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Takasaki</surname><given-names>A.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2019</year><volume>44</volume><fpage>29196</fpage><lpage>29202</lpage></element-citation></ref><ref id="cit47"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sazelee</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Md Din</surname><given-names>M. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Rather</surname><given-names>S.-U.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bamufleh</surname><given-names>H. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Alhumade</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Taimoor</surname><given-names>A. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Saeed</surname><given-names>U.</given-names></name>
+</person-group><source>Materials</source><year>2023</year><volume>16</volume><issue>6</issue><fpage>2449</fpage><lpage>2463</lpage><pub-id pub-id-type="pmid">36984329</pub-id><pub-id pub-id-type="doi" assigning-authority="pmc">10.3390/ma16062449</pub-id><pub-id pub-id-type="pmcid">PMC10057918</pub-id></element-citation></ref><ref id="cit48"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Gao</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shi</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shao</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>L.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2022</year><volume>47</volume><fpage>9346</fpage><lpage>9356</lpage></element-citation></ref><ref id="cit49"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Fu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Guo</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yu</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ren</surname><given-names>K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Peng</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Han</surname><given-names>S.</given-names></name>
+</person-group><source>J. Mater. Sci. Technol.</source><year>2023</year><volume>138</volume><fpage>59</fpage><lpage>69</lpage></element-citation></ref><ref id="cit50"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Kesarwani</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bhatnagar</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Verma</surname><given-names>S. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hudson</surname><given-names>M. S. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shaz</surname><given-names>M. A.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2024</year><volume>67</volume><fpage>1026</fpage><lpage>1032</lpage></element-citation></ref><ref id="cit51"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Cheng</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Pei</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>F.</given-names></name>
+</person-group><source>RSC Adv.</source><year>2023</year><volume>13</volume><fpage>9091</fpage><lpage>9098</lpage><pub-id pub-id-type="pmid">36950077</pub-id><pub-id pub-id-type="doi" assigning-authority="pmc">10.1039/d3ra00232b</pub-id><pub-id pub-id-type="pmcid">PMC10025938</pub-id></element-citation></ref><ref id="cit52"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Kissinger</surname><given-names>H. E.</given-names></name>
+</person-group><source>Anal. Chem.</source><year>1957</year><volume>29</volume><fpage>1702</fpage><lpage>1706</lpage></element-citation></ref><ref id="cit53"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Idris</surname><given-names>N. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mustafa</surname><given-names>N. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2017</year><volume>42</volume><fpage>21114</fpage><lpage>21120</lpage></element-citation></ref><ref id="cit54"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Hu</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fan</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fan</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>B.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2021</year><volume>881</volume><fpage>160571</fpage><lpage>160579</lpage></element-citation></ref><ref id="cit55"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>J. Energy Chem.</source><year>2019</year><volume>28</volume><fpage>46</fpage><lpage>53</lpage></element-citation></ref><ref id="cit56"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Dan</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hu</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>M.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2019</year><volume>44</volume><fpage>29249</fpage><lpage>29254</lpage></element-citation></ref><ref id="cit57"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Halim Yap</surname><given-names>F. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sulaiman</surname><given-names>N. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2019</year><volume>44</volume><fpage>30583</fpage><lpage>30590</lpage></element-citation></ref><ref id="cit58"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ali</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sazelee</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Md Din</surname><given-names>M. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Nasef</surname><given-names>M. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jalil</surname><given-names>A. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>J. Magnesium Alloys</source><year>2023</year><volume>11</volume><fpage>2205</fpage><lpage>2215</lpage></element-citation></ref><ref id="cit59"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sharp</surname><given-names>J. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Brindley</surname><given-names>G. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Achar</surname><given-names>B. N. N.</given-names></name>
+</person-group><source>J. Am. Ceram. Soc.</source><year>1966</year><volume>49</volume><fpage>379</fpage><lpage>382</lpage></element-citation></ref><ref id="cit60"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Jones</surname><given-names>L. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dollimore</surname><given-names>D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Nicklin</surname><given-names>T.</given-names></name>
+</person-group><source>Thermochim. Acta</source><year>1975</year><volume>13</volume><fpage>240</fpage><lpage>245</lpage></element-citation></ref><ref id="cit61"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wan</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>An</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kong</surname><given-names>Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Feng</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zha</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sun</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>L.</given-names></name>
+</person-group><source>Adv. Powder Technol.</source><year>2021</year><volume>32</volume><fpage>1380</fpage><lpage>1389</lpage></element-citation></ref></ref-list></back></article>
