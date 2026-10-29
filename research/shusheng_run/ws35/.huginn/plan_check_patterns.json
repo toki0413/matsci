@@ -23,5 +23,22 @@
     "missing_steps": [],
     "mode": "coder",
     "description": "Write executable Python script implementing all H1-H5 calculations with specific formulas, including data loading/cleaning, paired ΔEa meta-analysis, η² permutation test, method noise comparison, LOSO"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "b1af41e2e24e",
+    "reason": "Plan is invalid because it describes writing a script but does not include the actual executable code, specific formulas, or expected output values. The plan lacks concrete implementation details for H1-H5 calculations. While the plan mentions 'Write analysis.py' and lists what the script should do, it doesn't provide the actual code that would be executed. This matches the historical failure mode where plans were rejected for lacking executable numerical scripts with specific formulas and print statements.",
+    "missing_steps": [
+      "Provide the actual Python code implementing H1 (paired ΔEa calculation with DerSimonian-LairD random-effects meta-analysis)",
+      "Include data loading and cleaning steps for the MgH2 dataset",
+      "Implement H2 with η² estimation and permutation test using paper-level label shuffling",
+      "Implement H3 with method comparison pairs and median comparison logic",
+      "Implement H4 with LOSO cross-validation using material_class + catalyst_family + method features",
+      "Implement H5 with out-of-sample prediction for the specified empty cell",
+      "Add print statements to output all required metrics for validation",
+      "Include cluster bootstrap implementation with sampling by doi"
+    ],
+    "mode": "coder",
+    "description": "[auto-routed: 写码目标需真实执行] Write analysis.py that reads data/ea_dataset.csv, performs H1 (catalytic effect with DerSimonian-Laird + cluster bootstrap), H2 (η² with paper-level permutation), H3 (method n"
   }
 ]
