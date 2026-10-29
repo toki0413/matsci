@@ -41,5 +41,31 @@
     "Ea_parsed"
   ],
   "ea_mean_cleaned": 109.19021739130434,
-  "ea_median_cleaned": 109.03
+  "ea_median_cleaned": 109.03,
+  "ea_std_cleaned": 38.19325242844346,
+  "ea_min_cleaned": 34.84,
+  "ea_max_cleaned": 210.0,
+  "desorption_rows": 40,
+  "absorption_rows": 6,
+  "catalyst_family_counts": {
+    "none": 22,
+    "mxene_carbon": 10,
+    "oxide": 8,
+    "metal_nanoparticle": 4,
+    "other": 2
+  },
+  "material_class_counts": {
+    "catalyzed_MgH2": 24,
+    "pure_MgH2": 14,
+    "alloy": 6,
+    "complex_hydride": 2
+  },
+  "method_counts": {
+    "Kissinger": 34,
+    "isothermal_Arrhenius": 12
+  },
+  "year_range": [
+    2018,
+    2026
+  ]
 }
