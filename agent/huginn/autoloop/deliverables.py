@@ -172,6 +172,32 @@ def render_acceptance_gap(gate: dict[str, Any]) -> str:
     return "; ".join(p for p in parts if p)[:600]
 
 
+def acceptance_block_for(host: Any, header: str) -> str:
+    """把当前验收缺口渲染成 prompt 块 —— 谁要动手, 缺口就必须到谁手里.
+
+    ws35 实测: 缺口只进 decider prompt, 而"怎么改"由 plan 写、"改哪段"由 coder
+    做; 两者都看不到缺口时, 模型会把旧计划再执行一遍 (iter 4–9 反复 execute,
+    results.json 一直缺). host 优先用 ``_deliverables_ok``, 没有时按 manifest +
+    契约自己算 (engine 侧只有这两个字段).
+    """
+    gate_fn = getattr(host, "_deliverables_ok", None)
+    if callable(gate_fn):
+        gate = gate_fn()
+    else:
+        manifest = getattr(host, "_deliverable_manifest", None) or []
+        if not manifest:
+            return ""
+        gate = check_manifest(
+            getattr(host, "workspace", None),
+            manifest,
+            getattr(host, "_deliverable_contract", None),
+        )
+    gap = render_acceptance_gap(gate)
+    if not gap:
+        return ""
+    return f"\n{header}\n{gap}\n"
+
+
 def _json_has_substance(payload: Any) -> bool:
     """结构化交付物必须含至少一个非空叶子值.
 
