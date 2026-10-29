@@ -353,6 +353,8 @@ class CognitiveLoop:
         turn_timeout: float | None = None,  # P4-3: 单 turn 超时 (秒), None 不限时
         on_execute_failure: Callable[[LoopState, ActionDecision, BaseException], None] | None = None,
         deliverables_fn: Callable[[], dict[str, Any]] | None = None,
+        append_hint_fn: Callable[[str], None] | None = None,
+        control_trace_fn: Callable[..., None] | None = None,
     ) -> None:
         self._observe = observe_fn
         self._decide = decide_fn
@@ -364,6 +366,11 @@ class CognitiveLoop:
         # 交付物验收回调: 内核不认识 workspace/清单, 由调用方注入 (autoloop 传
         # CognitiveRunner._deliverables_ok). None → 不适用 (rcb 路径保持原行为).
         self._deliverables_fn = deliverables_fn
+        # hint 通道: 内核没有 _speculator_hint, 由调用方注入
+        # (autoloop 传 CognitiveRunner._append_hint). None → 只记录日志.
+        self._append_hint_fn = append_hint_fn
+        # 控制面观测通道 (同道理: 内核不持有 event bus). None → 只记 debug.
+        self._control_trace_fn = control_trace_fn
         # P4-3: TurnEngine 特性 — turn 级超时. execute 钩子最可能卡住 (DFT/MD 计算),
         # 超时后跳过该 turn, 不阻塞后续. None 时向后兼容 (不限时).
         self._turn_timeout = turn_timeout
@@ -495,13 +502,20 @@ class CognitiveLoop:
                 repeated, decision.action, nxt, _gap,
             )
             decision.action = nxt
-            self._append_hint(
+            _hint = (
                 f"[交付物硬门] 死循环判定成立, 但交付物未通过确定性验收: {_gap}. "
                 "不要收结: 把缺的文件真实落盘后再继续."
             )
-            self._control_trace(
-                "stop_gate", _gap, iteration=state.iteration, action=f"force_{nxt}"
-            )
+            if getattr(self, "_append_hint_fn", None) is not None:
+                self._append_hint_fn(_hint)
+            else:
+                logger.warning("交付物硬门 hint 无通道, 仅记录: %s", _hint)
+            if getattr(self, "_control_trace_fn", None) is not None:
+                self._control_trace_fn(
+                    "stop_gate", _gap, iteration=state.iteration, action=f"force_{nxt}"
+                )
+            else:
+                logger.debug("control_trace 无通道: stop_gate %s force_%s", _gap, nxt)
             return False
         logger.error(
             "CognitiveLoop: %d consecutive '%s' (2x limit), forcing stop",
@@ -4924,6 +4938,8 @@ Physical time series collected this run:
             max_repeated_actions=3,
             on_execute_failure=self._rollback_on_execute_failure,
             deliverables_fn=self._deliverables_ok,
+            append_hint_fn=self._append_hint,
+            control_trace_fn=self._control_trace,
         )
 
     async def _rc_post_run(self, ctx: _RcContext, state: LoopState) -> None:

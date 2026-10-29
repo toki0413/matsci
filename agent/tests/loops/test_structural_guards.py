@@ -104,7 +104,7 @@ def test_repetition_guard_forces_execute_when_deliverables_missing():
         _max_repeated_actions=3,
         _deliverables_fn=lambda: {"passed": False, "missing": ["loop_log.jsonl"],
                                   "empty": [], "invalid": []},
-        _append_hint=hints.append,
+        _append_hint_fn=hints.append,
         _control_trace=lambda *a, **k: None,
         _last_good_plan={"description": "x"},
     )
@@ -126,7 +126,7 @@ def test_repetition_guard_forces_plan_when_no_plan_yet():
     stub = SimpleNamespace(
         _max_repeated_actions=3,
         _deliverables_fn=lambda: {"passed": False, "missing": ["report.md"]},
-        _append_hint=lambda _h: None,
+        _append_hint_fn=lambda _h: None,
         _control_trace=lambda *a, **k: None,
         _last_good_plan=None,
     )
@@ -145,7 +145,7 @@ def test_repetition_guard_still_stops_when_deliverables_pass():
     stub = SimpleNamespace(
         _max_repeated_actions=3,
         _deliverables_fn=lambda: {"passed": True},
-        _append_hint=lambda _h: None,
+        _append_hint_fn=lambda _h: None,
         _control_trace=lambda *a, **k: None,
         _last_good_plan={"description": "x"},
     )
@@ -154,6 +154,48 @@ def test_repetition_guard_still_stops_when_deliverables_pass():
     decision = ActionDecision(action="skip")
     assert CognitiveLoop._guard_repetition(stub, state, decision, 6) is True
     assert state.should_stop is True
+
+
+def test_repetition_guard_runs_on_real_kernel_instance():
+    """真实例回归: 桩对象自带 _append_hint / _control_trace, 掩盖了内核没有这两个方法.
+
+    ws35 实跑在此崩: AttributeError: 'CognitiveLoop' object has no attribute
+    '_append_hint' —— 交付物硬门本该改判 execute, 结果整跑退出码 1.
+    """
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop, LoopState
+
+    hints: list[str] = []
+    traces: list[tuple[str, str, dict]] = []
+
+    async def _observe(_s):
+        return {}
+
+    async def _decide(_s, _o):
+        return ActionDecision(action="skip")
+
+    async def _exec(_s, _d):
+        return None
+
+    async def _reflect(_s, _d, _r):
+        return None
+
+    loop = CognitiveLoop(
+        observe_fn=_observe,
+        decide_fn=_decide,
+        execute_fn=_exec,
+        reflect_fn=_reflect,
+        deliverables_fn=lambda: {"passed": False, "missing": ["results.json"],
+                                 "empty": [], "invalid": []},
+        append_hint_fn=hints.append,
+        control_trace_fn=lambda name, ev, **kw: traces.append((name, ev, kw)),
+    )
+    state = LoopState(iteration=7)
+    decision = ActionDecision(action="skip")
+    assert loop._guard_repetition(state, decision, 6) is False
+    assert state.should_stop is False
+    assert decision.action == "plan"
+    assert hints and "交付物硬门" in hints[0]
+    assert traces and traces[0][0] == "stop_gate"
 
 
 def test_check_manifest_reports_missing_and_empty(tmp_path):
